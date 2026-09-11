@@ -2,7 +2,7 @@ import type { TaskId } from "../kernel/contracts.js";
 
 export type HostTransport = "native" | "acp" | "other";
 export type EnforcementLevel = "enforced" | "advisory";
-export type ToolCapability = "read" | "mutation" | "process" | "credentials";
+export type ToolCapability = "read" | "mutation" | "process" | "credentials" | "network";
 
 export interface HostCapabilities {
   readonly transport: HostTransport;

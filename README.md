@@ -17,10 +17,11 @@ The v0 prototype currently demonstrates:
 - a host-neutral application API and capability-based enforcement reporting;
 - native Cline and ACP host translations without host types entering the kernel;
 - an MCP capability/evidence boundary that validates external observations before admission;
-- default-deny withholding for explicit process and credential capabilities at application authorization;
+- default-deny withholding for explicit process, credential, and host-network capabilities at application authorization;
+- an opt-in Linux Bubblewrap process backend with empty environment, explicit filesystem grants, and isolated networking by default;
 - interchangeable Ink TUI and browser UI projections over `WorkflowApplication`.
 
-This is not yet a release-ready autonomous execution system. The local JSON store provides versioned restart recovery and single-store writer exclusion, but complete MCP Toolbox integration and OS/container isolation remain later roadmap work in `TASKS.md`.
+This is not yet a release-ready autonomous execution system. The local JSON store provides versioned restart recovery and single-store writer exclusion. W019 adds a bounded Linux process-containment backend, but complete MCP Toolbox integration and stronger container/VM isolation remain later work.
 
 ## Run
 
@@ -53,9 +54,9 @@ Within one live `WorkflowApplication`, the kernel deterministically rejects ille
 
 `enforced` has a deliberately narrow meaning: the configured host integration guarantees authoritative interception before a mutation and applies Workflow's decision before that mutation occurs. `advisory` means Workflow can evaluate and display policy but cannot guarantee that the host cannot mutate around it. Transport alone proves nothing: an ACP connection remains advisory unless its bridge guarantees authoritative permission interception.
 
-Workflow application policy is not a security sandbox. A process with filesystem, shell, network, or credentials outside the intercepted host path can bypass in-process policy. Unattended or high-impact operation therefore also requires least-privilege credentials plus OS/container/process isolation appropriate to the capability.
+Workflow application policy is not itself a security sandbox. A process outside the intercepted/contained path can bypass in-process policy. W019's optional Linux backend adds a separately evidenced Bubblewrap boundary for processes routed through `WorkflowContainedProcess`; higher-impact operation may still require stronger container/VM controls.
 
-`WorkflowApplication` treats `process` and `credentials` as explicit high-blast-radius capability classes and withholds them by default. Operators may opt them in independently of task state; doing so grants application policy permission only, not OS-level containment. See `THREAT_MODEL.md` for trust zones, controls, and residual risks.
+`WorkflowApplication` treats `process`, `credentials`, and `network` as explicit high-blast-radius capability classes and withholds them by default. Operators may opt them in independently of task state; doing so grants application policy permission only. See `docs/RUNTIME_CONTAINMENT.md` for the separate Linux runtime boundary and `THREAT_MODEL.md` for residual risks.
 
 MCP output is external, untrusted input. Shape validation and evidence admission do not prove that an MCP server is truthful or that its observation authority is sufficient for a particular production claim. Evidence requirements must select appropriate authorities and subjects.
 
@@ -71,4 +72,4 @@ Keep the kernel/application contract portable, but write a concrete adapter for 
 
 ## Roadmap
 
-`TASKS.md` is the durable roadmap and acceptance criteria. The local W015 persistence baseline does not imply completion of W016-W018: threat modeling, operator/extension documentation expansion, and final release verification remain distinct gates.
+`TASKS.md` is the durable roadmap and acceptance criteria. W001-W018 form the reviewed v0 policy/state baseline; W019 is the Linux-first runtime-containment milestone layered on top of it.

@@ -4,7 +4,7 @@ Workflow is a deterministic in-process authority for task transitions, dependenc
 
 Before treating a host as enforced, confirm that its concrete SDK adapter authoritatively intercepts every relevant mutation before execution. If it cannot, run it as advisory. Do not infer enforcement from transport names, prompts, model compliance, or the presence of a permission event.
 
-`WorkflowApplication` allows `read` and `mutation` capabilities by default. `process` and `credentials` are withheld unless explicitly granted when constructing the application. Granting either is application permission only. Keep sensitive credentials out of the agent environment where possible and use containers, OS permissions, network controls, and production access controls for actual containment.
+`WorkflowApplication` allows `read` and `mutation` capabilities by default. `process`, `credentials`, and `network` are withheld unless explicitly granted when constructing the application. Granting them is application permission only. On supported Linux systems, `WorkflowContainedProcess` can pair that permission with the Bubblewrap backend described in `RUNTIME_CONTAINMENT.md`; an application `allow` alone is never containment evidence.
 
 Evidence is subject-bound. Workflow accepts evidence only at the current mutation epoch and later stales it when a mutation affects the evidence subject. Unrelated mutations do not invalidate otherwise fresh evidence. MCP observations remain untrusted after normalization: normalization establishes shape, not truthfulness.
 

@@ -27,6 +27,7 @@
     "web": "tsx src/cli/web.ts",
     "test": "node --import tsx --test test/**/*.test.ts",
     "test:cline-runtime": "npm run build && node test/integration/cline-runtime.mjs",
+    "test:containment-runtime": "node --import tsx --test test/containment.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
