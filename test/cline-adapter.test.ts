@@ -57,3 +57,71 @@ test("Cline adapter rejects malformed recognized mutation subjects", () => {
     /invalid Cline tool subject/,
   );
 });
+
+test("Cline adapter exposes every batched read path to Workflow policy", () => {
+  const action = adapter.proposalFromBeforeTool({
+    tool: { name: "read_files" },
+    input: { files: [{ path: "/workspace/a.ts" }, { path: "/outside/secret" }] },
+  });
+
+  assert.deepEqual(action.subjects, ["/workspace/a.ts", "/outside/secret"]);
+});
+
+test("Cline adapter exposes apply_patch target paths to Workflow policy", () => {
+  const action = adapter.proposalFromBeforeTool({
+    tool: { name: "apply_patch" },
+    input: { input: "*** Begin Patch\n*** Update File: src/a.ts\n*** Move to: ../escaped.ts\n*** End Patch" },
+  });
+
+  assert.deepEqual(action.subjects, ["src/a.ts", "../escaped.ts"]);
+});
+
+test("Cline adapter resolves the active canonical task for every proposal", () => {
+  let activeTaskId = taskId("A");
+  const dynamic = new ClineHostAdapter({
+    sessionId: "dynamic-session",
+    taskId: () => activeTaskId,
+    isMutatingTool: () => true,
+  });
+
+  assert.equal(dynamic.proposalFromBeforeTool({ tool: { name: "write_file" }, input: { path: "a.txt" } }).taskId, taskId("A"));
+  activeTaskId = taskId("B");
+  assert.equal(dynamic.proposalFromBeforeTool({ tool: { name: "write_file" }, input: { path: "b.txt" } }).taskId, taskId("B"));
+});
+
+test("Cline adapter conservatively classifies editor, patch, and shell tools as mutating", () => {
+  const conservative = new ClineHostAdapter({
+    sessionId: "matrix",
+    taskId: taskId("A"),
+    isMutatingTool: () => false,
+  });
+
+  assert.equal(conservative.proposalFromBeforeTool({ tool: { name: "write_file" }, input: { path: "a.ts" } }).mutating, true);
+  assert.equal(conservative.proposalFromBeforeTool({ tool: { name: "apply_patch" }, input: "*** Begin Patch\n*** Update File: a.ts\n*** End Patch" }).mutating, true);
+  assert.equal(conservative.proposalFromBeforeTool({ tool: { name: "run_commands" }, input: { commands: ["npm test"] } }).mutating, true);
+  assert.equal(conservative.proposalFromBeforeTool({ tool: { name: "read_file" }, input: { path: "a.ts" } }).mutating, false);
+});
+
+test("Cline adapter permits explicit least-privilege classification for extension tools only", () => {
+  const extension = new ClineHostAdapter({
+    sessionId: "s", taskId: taskId("A"), isMutatingTool: () => false,
+    capabilityForTool: (tool) => tool === "mcp_fixture_lookup" ? "read" : "mutation",
+  });
+  const readOnlyMcp = extension.proposalFromBeforeTool({ tool: { name: "mcp_fixture_lookup" }, input: { query: "x" } });
+  assert.equal(readOnlyMcp.capability, "read");
+  assert.equal(readOnlyMcp.mutating, false);
+
+  const editor = extension.proposalFromBeforeTool({ tool: { name: "write_file" }, input: { path: "a.ts" } });
+  assert.equal(editor.capability, "mutation", "host metadata cannot downgrade a built-in mutation tool");
+  assert.equal(editor.mutating, true);
+});
+
+test("Cline adapter cannot downgrade built-in network authority", () => {
+  const network = new ClineHostAdapter({
+    sessionId: "s", taskId: taskId("A"), isMutatingTool: () => false,
+    capabilityForTool: () => "read",
+  }).proposalFromBeforeTool({ tool: { name: "fetch_web_content" }, input: { url: "https://example.invalid" } });
+
+  assert.equal(network.capability, "network");
+  assert.deepEqual(network.requiredCapabilities, ["network", "read"]);
+});

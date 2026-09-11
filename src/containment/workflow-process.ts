@@ -16,7 +16,17 @@ export class WorkflowContainedProcess {
     if (Object.keys(request.environment ?? {}).length > 0) requiredCapabilities.add("credentials");
     if (request.network === "host") requiredCapabilities.add("network");
     const mutating = action.mutating || Boolean(request.writablePaths?.length);
-    const decision = this.application.authorize({ ...action, mutating, requiredCapabilities: [...requiredCapabilities] });
+    const filesystemSubjects = [
+      ...(request.cwd === undefined ? [] : [request.cwd]),
+      ...(request.readablePaths ?? []),
+      ...(request.writablePaths ?? []),
+    ];
+    const decision = this.application.authorize({
+      ...action,
+      mutating,
+      requiredCapabilities: [...requiredCapabilities],
+      subjects: [...action.subjects, ...filesystemSubjects],
+    });
     if (decision.kind === "deny") {
       throw new Error(`Workflow denied process execution: ${decision.code}: ${decision.reason}`);
     }

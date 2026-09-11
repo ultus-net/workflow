@@ -30,6 +30,8 @@ Use Node 22 or newer.
 ```sh
 npm install
 npm test
+npm run test:e2e
+npm run contained-shell
 npm run typecheck
 npm run build
 npm run tui
@@ -37,6 +39,10 @@ npm run web
 ```
 
 The browser demo listens on `127.0.0.1:4173` by default; set `PORT` to override it. The standalone TUI deliberately assigns no semantic foreground or background colors. It inherits the user's terminal theme and communicates state through labels, markers, emphasis, and layout.
+
+`npm run test:e2e` builds the package and exercises the composed Cline-shaped proposal -> Workflow authorization -> Linux Bubblewrap execution -> mutation/evidence -> verified-state path. It requires a working Bubblewrap installation and fails rather than skips when containment cannot be established.
+
+For a manual containment check, run `npm run contained-shell`. It creates a temporary writable workspace, prints its path, and accepts commands at the `Workflow>` prompt until `exit` or `quit`. Every command gets its own Workflow task and authorization/verification lifecycle, then runs with isolated networking, cleared credentials, and only the shared temporary session workspace writable; the workspace is deleted when the session ends. Each successful command reports `Policy: ALLOW`, `Containment: ENFORCED`, and `Task: VERIFIED`. A denied or nonzero command is reported as `Task: FAILED` without ending the session. Use the printed absolute workspace path when testing a write, for example `printf hello > /tmp/workflow-interactive-.../demo.txt`.
 
 ## Architecture
 

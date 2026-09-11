@@ -14,7 +14,7 @@ const LEGAL_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
   IN_PROGRESS: ["VERIFYING", "FAILED"],
   VERIFYING: ["VERIFIED", "FAILED"],
   VERIFIED: [],
-  FAILED: [],
+  FAILED: ["READY", "BLOCKED"],
 };
 
 export class TaskGraph {
@@ -98,6 +98,19 @@ export class TaskGraph {
 
   evidence(): readonly Evidence[] {
     return [...this.#evidence];
+  }
+
+  addTask(task: WorkflowTask): void {
+    if (this.#tasks.has(task.id)) throw new TypeError(`duplicate task: ${task.id}`);
+    this.#tasks.set(task.id, { ...task, dependencies: [...task.dependencies] });
+    try {
+      this.#validateDependencies();
+      this.#assertAcyclic();
+    } catch (error) {
+      this.#tasks.delete(task.id);
+      throw error;
+    }
+    this.#recomputeReadiness();
   }
 
   recordEvidence(evidence: Evidence): void {

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -43,6 +46,74 @@ test("application is the policy authority for host proposals", () => {
   graph.transition(taskId("A"), "IN_PROGRESS");
   assert.equal(application.authorize(mutation("A")).kind, "allow");
   assert.equal(application.authorize(mutation("B")).kind, "deny");
+});
+
+test("application confines file subjects to its authorized workspace", () => {
+  const graph = new TaskGraph([task("A")]);
+  graph.transition(taskId("A"), "IN_PROGRESS");
+  const application = new WorkflowApplication(
+    graph,
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+    [],
+    new Set(["read", "mutation"]),
+    "/workspace/repository",
+  );
+
+  assert.equal(application.authorize({ ...mutation("A"), subjects: ["src/a.ts"] }).kind, "allow");
+  assert.deepEqual(application.authorize({ ...mutation("A"), subjects: ["../outside.txt"] }), {
+    kind: "deny",
+    code: "WORKSPACE_PATH_DENIED",
+    reason: "path ../outside.txt is outside authorized workspace /workspace/repository",
+  });
+  assert.equal(application.authorize({ ...mutation("A"), subjects: ["/workspace/repository/src/a.ts"] }).kind, "allow");
+  assert.equal(application.authorize({ ...mutation("A"), subjects: ["/workspace/other/a.ts"] }).kind, "deny");
+});
+
+test("application denies an in-workspace path that escapes through a symlink", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "workflow-workspace-policy-"));
+  const workspace = join(parent, "repository");
+  const outside = join(parent, "outside");
+  try {
+    await Promise.all([mkdir(workspace), mkdir(outside)]);
+    await writeFile(join(outside, "secret.txt"), "outside\n");
+    await symlink(outside, join(workspace, "linked-outside"));
+    const graph = new TaskGraph([task("A")]);
+    graph.transition(taskId("A"), "IN_PROGRESS");
+    const application = new WorkflowApplication(
+      graph,
+      hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+      [],
+      new Set(["read", "mutation"]),
+      workspace,
+    );
+
+    assert.equal(application.authorize({ ...mutation("A"), subjects: ["linked-outside/secret.txt"] }).kind, "deny");
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
+test("application denies a dangling in-workspace symlink whose missing target is outside", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "workflow-workspace-dangling-policy-"));
+  const workspace = join(parent, "repository");
+  const outsideTarget = join(parent, "outside-created-by-write.txt");
+  try {
+    await mkdir(workspace);
+    await symlink(outsideTarget, join(workspace, "escaped.txt"));
+    const graph = new TaskGraph([task("A")]);
+    graph.transition(taskId("A"), "IN_PROGRESS");
+    const application = new WorkflowApplication(
+      graph,
+      hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+      [],
+      new Set(["read", "mutation"]),
+      workspace,
+    );
+
+    assert.equal(application.authorize({ ...mutation("A"), subjects: ["escaped.txt"] }).kind, "deny");
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
 });
 
 test("high-blast-radius capabilities are withheld independently of task state and prompts", () => {
@@ -216,4 +287,92 @@ test("TUI interactive advancement only proposes legal forward states", () => {
   assert.equal(nextInteractiveState("VERIFYING"), "VERIFIED");
   assert.equal(nextInteractiveState("BLOCKED"), undefined);
   assert.equal(nextInteractiveState("VERIFIED"), undefined);
+});
+
+test("application commands add discovered tasks and dependencies without exposing graph mutation", () => {
+  const application = new WorkflowApplication(
+    new TaskGraph([task("A")]),
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+  );
+
+  application.addTask({
+    id: taskId("B"),
+    title: "Discovered prerequisite",
+    dependencies: [],
+    requiredEvidence: [{ authority: "environment", subject: "B:test" }],
+  });
+  application.addDependency(taskId("A"), taskId("B"));
+
+  const snapshot = application.snapshot();
+  assert.deepEqual(snapshot.tasks.map(({ id, state, blockers }) => ({ id, state, blockers })), [
+    { id: taskId("A"), state: "BLOCKED", blockers: [taskId("B")] },
+    { id: taskId("B"), state: "READY", blockers: [] },
+  ]);
+  assert.throws(() => application.addDependency(taskId("B"), taskId("A")), /dependency cycle/);
+});
+
+test("blocked canonical task cannot mutate while its eligible dependency can", () => {
+  const application = new WorkflowApplication(
+    new TaskGraph([
+      { ...task("A"), dependencies: [taskId("B")] },
+      task("B"),
+    ]),
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+  );
+
+  assert.deepEqual(application.authorize(mutation("A")), {
+    kind: "deny",
+    code: "TASK_NOT_IN_PROGRESS",
+    reason: "task A is BLOCKED, not IN_PROGRESS",
+  });
+  assert.equal(application.transition(taskId("B"), "IN_PROGRESS").kind, "accepted");
+  assert.equal(application.authorize(mutation("B")).kind, "allow");
+});
+
+test("application selects only an in-progress canonical task for SDK proposal correlation", () => {
+  const application = new WorkflowApplication(
+    new TaskGraph([{ ...task("A"), dependencies: [taskId("B")] }, task("B")]),
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+  );
+
+  assert.throws(() => application.selectActiveTask(taskId("A")), /BLOCKED/);
+  assert.equal(application.transition(taskId("B"), "IN_PROGRESS").kind, "accepted");
+  application.selectActiveTask(taskId("B"));
+  assert.equal(application.activeTaskId(), taskId("B"));
+});
+
+test("multi-step coding lifecycle unlocks work only after focused verification evidence", () => {
+  const application = new WorkflowApplication(
+    new TaskGraph([
+      { ...task("implementation", ["prerequisite"]), requiredEvidence: [{ authority: "environment", subject: "implementation:test" }] },
+      { ...task("prerequisite"), requiredEvidence: [{ authority: "environment", subject: "prerequisite:test" }] },
+    ]),
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+  );
+
+  assert.equal(application.authorize(mutation("implementation")).kind, "deny");
+  assert.equal(application.transition(taskId("prerequisite"), "IN_PROGRESS").kind, "accepted");
+  assert.equal(application.authorize(mutation("prerequisite")).kind, "allow");
+  application.recordMutation(["prerequisite:test"]);
+  assert.equal(application.transition(taskId("prerequisite"), "VERIFYING").kind, "accepted");
+  assert.equal(application.transition(taskId("prerequisite"), "VERIFIED").kind, "rejected");
+  application.recordEvidence({
+    id: evidenceId("prerequisite-evidence"), observationId: observationId("prerequisite-observation"),
+    authority: "environment", subject: "prerequisite:test", result: "passed", freshness: "fresh",
+    mutationEpoch: application.snapshot().mutationEpoch, observedAt: "2026-09-11T00:00:00.000Z",
+  });
+  assert.equal(application.transition(taskId("prerequisite"), "VERIFIED").kind, "accepted");
+  assert.equal(application.snapshot().tasks.find(({ id }) => id === taskId("implementation"))?.state, "READY");
+
+  assert.equal(application.transition(taskId("implementation"), "IN_PROGRESS").kind, "accepted");
+  application.recordMutation(["implementation:test"]);
+  assert.equal(application.transition(taskId("implementation"), "VERIFYING").kind, "accepted");
+  assert.equal(application.transition(taskId("implementation"), "VERIFIED").kind, "rejected");
+  application.recordEvidence({
+    id: evidenceId("implementation-evidence"), observationId: observationId("implementation-observation"),
+    authority: "environment", subject: "implementation:test", result: "passed", freshness: "fresh",
+    mutationEpoch: application.snapshot().mutationEpoch, observedAt: "2026-09-11T00:00:01.000Z",
+  });
+  assert.equal(application.transition(taskId("implementation"), "VERIFIED").kind, "accepted");
+  assert.equal(application.snapshot().tasks.every(({ state }) => state === "VERIFIED"), true);
 });

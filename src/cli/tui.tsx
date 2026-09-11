@@ -5,6 +5,7 @@ import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
+import { createConfiguredClineRuntime } from "../integrations/cline-runtime.js";
 import { WorkflowTui } from "../ui/tui.js";
 
 const tasks: WorkflowTask[] = [
@@ -27,7 +28,15 @@ const tasks: WorkflowTask[] = [
 const application = new WorkflowApplication(
   new TaskGraph(tasks),
   hostCapabilities({ transport: "native", authoritativePreMutation: false }),
+  [],
+  new Set(["read", "mutation", "process"]),
+  process.cwd(),
 );
 
-const instance = render(<WorkflowTui application={application} />);
-await instance.waitUntilExit();
+const runtime = await createConfiguredClineRuntime(application, process.cwd());
+try {
+  const instance = render(<WorkflowTui application={application} session={runtime.session} />);
+  await instance.waitUntilExit();
+} finally {
+  await runtime.dispose();
+}

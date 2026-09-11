@@ -26,7 +26,14 @@ export class JsonWorkflowStore {
       .filter((task) => task.state === "IN_PROGRESS")
       .map((task) => ({ taskId: task.id, from: "IN_PROGRESS" as const, to: "FAILED" as const }));
     return {
-      application: new WorkflowApplication(graph, host, [...persisted.state.history, ...recoveryHistory]),
+      application: new WorkflowApplication(
+        graph,
+        host,
+        [...persisted.state.history, ...recoveryHistory],
+        new Set(persisted.state.allowedCapabilities ?? ["read", "mutation"]),
+        persisted.state.workspaceRoot,
+        persisted.state.codingSessionCorrelation,
+      ),
       version: persisted.version,
     };
   }
@@ -105,7 +112,10 @@ function isPersistedWorkflow(value: unknown): value is PersistedWorkflow {
     Array.isArray(state.tasks) && state.tasks.every(isWorkflowTask) &&
     Array.isArray(state.evidence) && state.evidence.every(isEvidence) &&
     Array.isArray(state.history) && state.history.every(isTransitionRecord) &&
-    Number.isSafeInteger(state.mutationEpoch) && (state.mutationEpoch as number) >= 0
+    Number.isSafeInteger(state.mutationEpoch) && (state.mutationEpoch as number) >= 0 &&
+    (state.allowedCapabilities === undefined || (Array.isArray(state.allowedCapabilities) && state.allowedCapabilities.every(isToolCapability))) &&
+    (state.workspaceRoot === undefined || (typeof state.workspaceRoot === "string" && state.workspaceRoot.startsWith("/"))) &&
+    (state.codingSessionCorrelation === undefined || isNonEmptyString(state.codingSessionCorrelation))
   )) return false;
   const taskIds = new Set((state.tasks as Record<string, unknown>[]).map((task) => task.id));
   return taskIds.size === state.tasks.length &&
@@ -117,9 +127,14 @@ function isPersistedWorkflow(value: unknown): value is PersistedWorkflow {
 
 const TASK_STATES = new Set(["BLOCKED", "READY", "IN_PROGRESS", "VERIFYING", "VERIFIED", "FAILED"]);
 const EVIDENCE_AUTHORITIES = new Set(["environment", "host", "mcp", "reviewer"]);
+const TOOL_CAPABILITIES = new Set(["read", "mutation", "process", "credentials", "network"]);
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function isToolCapability(value: unknown): value is import("../adapters/host.js").ToolCapability {
+  return typeof value === "string" && TOOL_CAPABILITIES.has(value);
 }
 
 function isWorkflowTask(value: unknown): boolean {
@@ -156,7 +171,8 @@ function isLegalHistoryTransition(from: string, to: string): boolean {
   return (from === "READY" && to === "IN_PROGRESS") ||
     (from === "IN_PROGRESS" && (to === "VERIFYING" || to === "FAILED")) ||
     (from === "VERIFYING" && (to === "VERIFIED" || to === "FAILED")) ||
-    (from === "VERIFIED" && to === "VERIFYING");
+    (from === "VERIFIED" && to === "VERIFYING") ||
+    (from === "FAILED" && (to === "READY" || to === "BLOCKED"));
 }
 
 function isCoherentHistory(tasks: Record<string, unknown>[], history: Record<string, unknown>[]): boolean {

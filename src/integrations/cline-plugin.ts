@@ -2,7 +2,7 @@ import type { WorkflowApplication } from "../application/workflow.js";
 import type { ClineHostAdapter } from "../adapters/cline.js";
 
 export interface ClineBeforeToolHookInput {
-  readonly toolCall: { readonly toolName: string };
+  readonly toolCall: { readonly toolName: string; readonly toolCallId?: string };
   readonly input: unknown;
 }
 
@@ -17,6 +17,7 @@ export interface WorkflowClinePlugin {
 export function createWorkflowClinePlugin(
   application: WorkflowApplication,
   adapter: ClineHostAdapter,
+  onToolDenied?: (tool: string, reason: string, toolCallId?: string) => void,
 ): WorkflowClinePlugin {
   if (adapter.capabilities.enforcementLevel !== "enforced") {
     throw new TypeError("Cline plugin requires an adapter configured for authoritative pre-mutation interception");
@@ -27,7 +28,9 @@ export function createWorkflowClinePlugin(
     hooks: {
       async beforeTool({ toolCall, input }) {
         const proposal = adapter.proposalFromBeforeTool({ tool: { name: toolCall.toolName }, input });
-        return adapter.beforeToolControl(application.authorize(proposal));
+        const control = adapter.beforeToolControl(application.authorize(proposal));
+        if (control !== undefined) onToolDenied?.(proposal.tool, control.reason, toolCall.toolCallId);
+        return control;
       },
     },
   };

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,6 +59,46 @@ test("contained process requires Workflow process authorization before runtime e
     { executable: "/usr/bin/true", args: [] },
   );
   assert.equal(result.enforcement, "enforced");
+});
+
+test("contained process fails closed before runtime when a filesystem grant escapes the workspace", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "workflow-authorized-workspace-"));
+  try {
+    const graph = new TaskGraph([processTask]);
+    graph.transition(processTask.id, "IN_PROGRESS");
+    const application = new WorkflowApplication(
+      graph,
+      hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+      [],
+      new Set(["read", "mutation", "process"]),
+      workspace,
+    );
+    const process = new WorkflowContainedProcess(application, new LinuxBubblewrapContainment());
+
+    await assert.rejects(
+      () => process.execute(
+        {
+          sessionId: "session",
+          taskId: processTask.id,
+          tool: "contained-process",
+          capability: "process",
+          mutating: true,
+          subjects: [],
+          input: {},
+        },
+        {
+          executable: "/bin/sh",
+          args: ["-c", "printf escaped > ../escaped.txt"],
+          cwd: workspace,
+          readablePaths: [workspace],
+          writablePaths: [join(workspace, "..")],
+        },
+      ),
+      /WORKSPACE_PATH_DENIED/,
+    );
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
 });
 
 test("explicit environment requires Workflow credential authorization", async () => {
@@ -212,6 +253,34 @@ test("Linux containment permits writes only through an explicit writable grant",
 
     assert.equal(result.exitCode, 0);
     assert.equal(await readFile(output, "utf8"), "contained");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("repository-scoped contained writes preserve unrelated dirty worktree content", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-containment-dirty-"));
+  const dirty = join(directory, "dirty.txt");
+  const output = join(directory, "generated.txt");
+  try {
+    await writeFile(dirty, "committed\n");
+    execFileSync("git", ["init", "-q"], { cwd: directory });
+    execFileSync("git", ["add", "dirty.txt"], { cwd: directory });
+    execFileSync("git", ["-c", "user.name=Workflow Test", "-c", "user.email=workflow@example.invalid", "commit", "-qm", "fixture"], { cwd: directory });
+    await writeFile(dirty, "user change\n");
+    const runtime = new LinuxBubblewrapContainment();
+    const result = await runtime.execute({
+      executable: "/bin/sh",
+      args: ["-c", 'printf generated > "$1"', "workflow", output],
+      cwd: directory,
+      readablePaths: [directory],
+      writablePaths: [directory],
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(await readFile(output, "utf8"), "generated");
+    assert.equal(await readFile(dirty, "utf8"), "user change\n");
+    assert.match(execFileSync("git", ["status", "--short"], { cwd: directory, encoding: "utf8" }), /^ M dirty\.txt$/m);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

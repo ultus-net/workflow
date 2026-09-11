@@ -24,10 +24,14 @@
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint src test",
     "tui": "tsx src/cli/tui.tsx",
+    "contained-shell": "tsx src/cli/contained-shell.ts",
     "web": "tsx src/cli/web.ts",
     "test": "node --import tsx --test test/**/*.test.ts",
     "test:cline-runtime": "npm run build && node test/integration/cline-runtime.mjs",
+    "test:cline-coding-session": "npm run build && node test/integration/cline-coding-session.mjs",
+    "test:cline-resume": "npm run build && node test/integration/cline-resume.mjs",
     "test:containment-runtime": "node --import tsx --test test/containment.test.ts",
+    "test:e2e": "npm run build && node test/integration/workflow-e2e.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

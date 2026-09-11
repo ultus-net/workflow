@@ -64,6 +64,24 @@ test("adding a dependency rejects cycles without mutating the graph", () => {
   assert.deepEqual(graph.get(taskId("A")).dependencies, []);
 });
 
+test("adding a discovered task derives readiness and rejects invalid graph additions", () => {
+  const graph = new TaskGraph([task("A")]);
+
+  graph.addTask({
+    id: taskId("B"),
+    title: "Discovered prerequisite",
+    state: "BLOCKED",
+    dependencies: [taskId("A")],
+    requiredEvidence: [],
+  });
+  assert.equal(graph.get(taskId("B")).state, "BLOCKED");
+  assert.throws(
+    () => graph.addTask({ ...task("C"), dependencies: [taskId("missing")] }),
+    /missing dependency/,
+  );
+  assert.throws(() => graph.addTask(task("A")), /duplicate task/);
+});
+
 test("verification requires fresh passing evidence admitted at a valid mutation epoch", () => {
   const graph = new TaskGraph([
     {

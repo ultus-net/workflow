@@ -12,13 +12,14 @@ export class LinuxBubblewrapContainment implements ProcessContainment {
 
   async execute(request: ContainedProcessRequest): Promise<ContainedProcessResult> {
     requireAbsolutePath(request.executable, "executable");
+    if (request.cwd !== undefined) requireAbsolutePath(request.cwd, "cwd");
     for (const path of request.readablePaths ?? []) requireAbsolutePath(path, "readable path");
     for (const path of request.writablePaths ?? []) requireAbsolutePath(path, "writable path");
 
     const network = request.network ?? "isolated";
     if (network !== "isolated" && network !== "host") throw new TypeError("network must be isolated or host");
     const environment = request.environment ?? {};
-    const args = this.#baseArgs();
+    const args = this.#baseArgs(request.cwd);
     if (network === "isolated") args.push("--unshare-net");
     for (const [name, value] of Object.entries(environment)) args.push("--setenv", name, value);
     for (const path of request.readablePaths ?? []) args.push("--ro-bind", path, path);
@@ -37,7 +38,7 @@ export class LinuxBubblewrapContainment implements ProcessContainment {
     if (result.exitCode !== 0) throw new Error("containment backend failed runtime probe");
   }
 
-  #baseArgs(): string[] {
+  #baseArgs(cwd = "/"): string[] {
     return [
       "--ro-bind", "/usr", "/usr",
       "--symlink", "usr/bin", "/bin",
@@ -46,7 +47,7 @@ export class LinuxBubblewrapContainment implements ProcessContainment {
       "--symlink", "usr/lib64", "/lib64",
       "--proc", "/proc",
       "--dev", "/dev",
-      "--chdir", "/",
+      "--chdir", cwd,
       "--clearenv",
       "--die-with-parent",
     ];

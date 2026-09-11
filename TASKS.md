@@ -320,3 +320,217 @@ W013/W014/W016 -> W017 -> W018
 **Verification:** `npm run lint`, `npm test`, `npm run typecheck`, `npm run build`, runtime containment integration tests on Linux, package dry-run, audit, diff check, and independent five-axis review against the final change.
 
 W019 is complete. The v0 W001-W018 baseline remains the trusted host-policy/application foundation; W019 strengthens execution containment without weakening or conflating those existing authorization semantics.
+
+### W020 - Composed end-to-end runtime verification
+
+**Objective:** Prove the built Workflow package can carry one realistic host proposal through policy authorization, Linux runtime containment, observable mutation, evidence admission, and final task verification.
+
+**Depends on:** W019
+
+**Acceptance criteria:**
+- [x] The E2E runner imports the built package rather than source modules.
+- [x] A Cline-shaped process event is normalized by the real host adapter and authorized by `WorkflowApplication`.
+- [x] The authorized operation executes through the real Linux Bubblewrap backend with an explicit writable grant and produces an observable host artifact.
+- [x] The observed mutation is recorded, fresh environment evidence is admitted at the resulting mutation epoch, and the task reaches `VERIFIED` through legal application transitions.
+- [x] The E2E runner is exposed as a stable package command and fails rather than skips when its Linux/Bubblewrap prerequisite is unavailable.
+
+**Verification:** `npm run test:e2e` plus the existing lint, test, containment-runtime, typecheck, build, package, audit, diff, and independent-review gates.
+
+### W021 - Interactive containment smoke driver
+
+**Objective:** Let an operator manually exercise the same Workflow authorization and Linux containment path without turning the existing task-navigation TUI into a shell.
+
+**Depends on:** W020
+
+**Acceptance criteria:**
+- [x] A package command presents a terminal prompt for one command and visibly reports policy, containment, command output, and final task state.
+- [x] Commands execute through `WorkflowContainedProcess` and the real Linux Bubblewrap backend rather than an uncontained child process.
+- [x] The session grants writes only to a fresh temporary workspace, keeps networking isolated and credentials cleared, and removes the workspace on exit.
+- [x] Successful execution records mutation and fresh environment evidence before the task reaches `VERIFIED`.
+- [x] Automated CLI coverage proves the visible allow/enforced/output/verified flow.
+
+**Verification:** focused interactive CLI test plus lint, full test suite, containment/E2E runtime checks, typecheck, build, diff check, and independent review.
+
+### W022 - Persistent interactive containment session
+
+**Objective:** Allow multiple manual commands in one containment smoke session without weakening terminal Workflow task states.
+
+**Depends on:** W021
+
+**Acceptance criteria:**
+- [x] The prompt accepts multiple commands until the operator enters `exit` or `quit`.
+- [x] Every command independently crosses Workflow authorization, real Bubblewrap containment, mutation/evidence admission, and a terminal `VERIFIED` task state.
+- [x] Each command uses a distinct Workflow task rather than reopening a terminal verified task.
+- [x] The session shares only its temporary writable workspace; network isolation and cleared ambient credentials remain unchanged.
+- [x] Automated CLI coverage proves two commands are independently allowed, contained, observed, and verified before clean exit.
+- [x] A denied or nonzero command remains unverified and does not terminate the persistent session.
+
+**Verification:** focused persistent CLI test plus lint, full test suite, containment/E2E runtime checks, typecheck, build, diff check, and independent review.
+
+## Phase 6: SDK-Driven Coding Workflow
+
+The product target from this point is not a richer containment demo. It is an interactive coding harness that can progressively replace the current OpenCode workflow while preserving Workflow's deterministic safety and verification boundaries.
+
+The existing responsibility split remains fixed:
+
+- The agent SDK/host owns model interaction, streaming, conversation/context handling, and its native tool-call lifecycle.
+- Workflow owns canonical task/dependency state, authorization, capability policy, evidence, verification, persistence/recovery, and runtime-containment requirements.
+- Host SDK schemas remain in host adapters. Model/provider types do not enter the kernel.
+- The standalone Workflow TUI is the primary operator surface; host-native and browser surfaces remain replaceable adapters/proofs rather than sources of canonical state.
+- `contained-shell` remains a diagnostic/runtime smoke surface. It is not the target coding UX and must not become a second hand-built agent runtime.
+
+### W023 - Cline execution-containment bridge
+
+**Objective:** Extend the existing `createWorkflowClinePlugin`/Cline hook integration with a supported SDK execution seam so process actions authorized by Workflow execute through `WorkflowContainedProcess` rather than Cline's ambient native executor.
+
+**Depends on:** W022
+
+**Acceptance criteria:**
+- [x] Current Cline SDK/runtime APIs are used to identify a supported execution seam; Workflow does not implement a parallel model, shell, or tool loop to obtain containment.
+- [x] A Cline process proposal is authoritatively intercepted and the exact authorized executable/arguments are bound into `WorkflowContainedProcess` before real Bubblewrap execution.
+- [x] The result is returned through the SDK's normal tool-result lifecycle so the host/model can continue without treating Workflow as the conversation runtime.
+- [x] If the installed/current Cline SDK cannot replace or delegate native process execution at an authoritative seam, the integration fails closed and the limitation is recorded rather than claiming containment from `beforeTool` authorization alone.
+
+**Verification:** real Cline runtime integration test for authorization -> Workflow-contained execution -> SDK-visible result, plus existing adapter/containment gates and independent review of the execution binding.
+
+W023 is complete against the installed `@cline/core` 0.0.82 public `ShellExecutor`/`createShellTool` seam. The runtime regression exercises the real Cline shell tool around Workflow's injected executor and real Bubblewrap containment, including SDK-visible success, working-directory semantics, and nonzero-command failure semantics.
+
+### W024 - Real SDK coding-session vertical slice
+
+**Objective:** Accept one natural-language coding request through the existing Cline SDK integration and prove that the SDK's consequential tool activity is governed by Workflow without a hand-built model/tool loop.
+
+**Depends on:** W023
+
+**Acceptance criteria:**
+- [x] A real Cline model session can receive a natural-language coding request against a disposable Git repository and inspect the repository through its normal coding-agent lifecycle.
+- [x] Every mutation/process action exercised by the slice is normalized by the concrete Cline adapter and must receive Workflow authorization before execution; process execution crosses the W023 containment bridge.
+- [x] The SDK uses observed tool results to continue the same model session, produces a bounded code change, runs its verification, and returns a final response while Cline continues to own model streaming, conversation history, and its native agent loop.
+- [x] The resulting repository state and verification result are independently observable in a controlled runtime test; model narration alone cannot satisfy completion.
+- [x] The slice fails closed when authoritative host interception, containment, required credentials, or another required runtime capability is unavailable rather than silently downgrading the guarantee.
+
+**Verification:** controlled disposable-repository coding task through the real Cline SDK runtime, resulting Git diff and verification evidence inspection, full existing gates, and independent review.
+
+W024 is complete against installed `@cline/core` 0.0.82. `npm run test:cline-coding-session` starts a real local `ClineCore` model session using the operator's configured Cline provider, gives it a natural-language task in a disposable Git repository, observes Cline `read_files`/`run_commands` lifecycle traffic, and routes command execution through the Workflow-backed `ShellExecutor` and real Bubblewrap containment. The regression requires the model to run `git diff --check`, then independently checks the resulting tracked-file diff and content rather than accepting the model's completion claim. Missing Cline/provider configuration fails the runtime test instead of substituting an advisory or mocked session.
+
+### W025 - Real workspace capability and mutation scope
+
+**Objective:** Replace the disposable all-session writable directory assumption with explicit repository-scoped authority suitable for normal coding work.
+
+**Depends on:** W024
+
+**Acceptance criteria:**
+- [x] A coding session can read the intended repository while writes are confined to explicitly authorized workspace paths and ambient filesystem access remains unavailable by default.
+- [x] Workflow can distinguish ordinary repository mutation from process, credential, network, and out-of-workspace capabilities without relying on model intent text.
+- [x] Host-native file mutations outside the authorized repository/workspace are denied by deterministic path policy; OS-level filesystem confinement is claimed only for execution paths actually routed through the containment backend.
+- [x] Attempted contained-process writes outside the authorized repository/workspace fail closed and are covered by runtime tests.
+- [x] Existing user changes in a dirty worktree are observable and are not silently reverted or overwritten by Workflow lifecycle machinery.
+
+**Verification:** disposable clean/dirty repository fixtures exercise permitted edits, denied path escape, process execution, and unchanged containment/credential/network boundaries.
+
+W025 is complete. `WorkflowApplication` now optionally owns an absolute workspace root and deterministically rejects lexical and symlink-mediated path escapes for host-native proposals. Cline exposes batched read and patch target paths to that authority, while `WorkflowContainedProcess` subjects its working directory and readable/writable grants to the same policy before Bubblewrap execution. Runtime coverage proves escaped grants fail closed, ambient filesystem/credential/network boundaries remain enforced, a real dirty Git fixture retains its pre-existing user edit, and the real Cline coding-session fixture runs with Workflow's repository authority enabled.
+
+### W026 - Workflow-owned coding task lifecycle
+
+**Objective:** Connect an SDK coding session to Workflow's canonical decomposition, readiness, evidence, and verification model so a long coding request cannot be completed merely by model narration.
+
+**Depends on:** W024, W025
+
+**Acceptance criteria:**
+- [x] Coding work is represented by canonical Workflow tasks with explicit dependencies and verification requirements outside model conversation state.
+- [x] SDK tool proposals are correlated with the active eligible Workflow task; blocked work cannot mutate merely because the model requests it.
+- [x] Successful tool execution does not itself mark a task verified; admitted evidence must satisfy the task's verification requirements.
+- [x] Host-neutral application commands support controlled task/dependency creation for newly discovered prerequisites without exposing `TaskGraph` directly or allowing the model to bypass cycle, readiness, or transition validation.
+
+**Verification:** multi-step coding fixture proves blocked dependency rejection, focused verification, evidence-driven unlocking, and final completion only after all required tasks are verified.
+
+W026 is complete. `WorkflowApplication` exposes controlled task and dependency commands while `TaskGraph` continues to derive readiness and reject missing, duplicate, self, or cyclic dependency changes. Application regressions prove blocked canonical work cannot mutate, tool success alone cannot satisfy verification, and fresh environment evidence unlocks downstream work. The real Cline coding-session fixture exercises the authoritative `beforeTool` seam against a blocked implementation task, then proves prerequisite evidence unlocks that same canonical task and final completion occurs only after each task's required evidence is admitted.
+
+### Checkpoint C - Usable Coding Prompt
+
+- [x] An operator can give Workflow a normal coding request rather than individual shell commands.
+- [x] A real SDK supplies the model/agent loop; Workflow does not duplicate that machinery.
+- [x] The agent can inspect, edit, test, and iterate in a real disposable repository while Workflow authorizes consequential actions and containment remains observable.
+- [x] The final response reflects independently verified repository state rather than model-only completion claims.
+- [x] Failure/denial remains diagnosable and does not silently become advisory execution.
+
+Checkpoint C is reconciled from the configured real-Cline coding fixture: the fixture submits a natural-language coding request through `WorkflowCodingSession`, uses the real SDK-owned agent loop, exercises repository inspection plus contained mutation and verification, independently checks the resulting Git diff and repository content, and separately proves an authoritative Workflow denial never reaches execution. `npm run test:cline-coding-session` remains the executable evidence for this checkpoint.
+
+## Phase 7: Daily-Driver OpenCode Replacement
+
+### W027 - Host-neutral coding session port
+
+**Objective:** Normalize SDK session input/output at the application boundary before attaching the standalone TUI to Cline activity.
+
+**Depends on:** W026
+
+**Acceptance criteria:**
+- [x] A host-neutral application port represents prompt submission, streaming assistant/session activity, normalized tool proposal/outcome events, cancellation, and terminal session state without exposing Cline/model-provider types to UI or kernel modules.
+- [x] The Cline integration translates its SDK lifecycle into that port while Workflow application state remains the authority for tasks, policy, evidence, and enforcement state.
+- [x] A fake session adapter can drive the same application-facing event contract in tests, proving the TUI need not depend directly on Cline.
+
+**Verification:** application/session contract tests plus Cline translation tests; existing kernel/application contracts remain unchanged where no session concern is involved.
+
+W027 is complete. `WorkflowCodingSession` owns the application-facing prompt, activity subscription, cancellation, and terminal-state contract while a replaceable `CodingSessionDriver` keeps SDK details outside UI and kernel modules. `ClineSessionDriver` translates Cline status, assistant text, normalized tool proposal/result, error, completion, and stop behavior through that contract, reusing `ClineHostAdapter` subject normalization without moving task/policy/evidence authority out of `WorkflowApplication`. Fake-driver tests prove host independence, Cline event fixtures cover translation and cancellation, and the real configured Cline coding fixture now runs through the same host-neutral session boundary.
+
+### W028 - TUI coding-session integration
+
+**Objective:** Make the selected standalone Workflow TUI the usable operator surface for the SDK-driven coding lifecycle proven at Checkpoint C.
+
+**Depends on:** W027
+
+**Acceptance criteria:**
+- [x] The TUI accepts prompts, streams model/session activity, and displays proposed/authorized/denied tool activity without owning canonical workflow state.
+- [x] Task readiness, blockers, evidence, enforcement/containment state, and verification outcomes remain inspectable during the coding session.
+- [x] Cancellation, ordinary command/model failure, and session completion have explicit operator-visible states and do not corrupt canonical Workflow state.
+- [x] Terminal interaction remains keyboard-accessible and usable for routine repository work.
+
+**Verification:** real terminal interaction tests plus controlled SDK coding session through the TUI and unchanged application/kernel contract tests.
+
+W028 is complete. The TUI accepts an injected host-neutral `WorkflowCodingSession`, has explicit prompt-entry and cancellation controls, and renders bounded status/assistant/tool/completion/failure activity alongside canonical task, blocker, evidence, enforcement, and history projections. Component and PTY tests cover streaming, cancellation, keyboard interaction, and canonical-state separation, while the standalone CLI composes the configured Cline runtime rather than introducing a second provider contract.
+
+### W029 - Session resume and long-context recovery
+
+**Objective:** Make real coding sessions survive process/model context boundaries without treating conversation summaries as authoritative workflow state.
+
+**Depends on:** W015, W026, W028
+
+**Acceptance criteria:**
+- [x] A persisted coding session can resume with task/evidence/journal authority restored from Workflow state; Workflow persists only canonical workflow/session correlation required for its authority, while conversation/context persistence uses SDK-native facilities as non-authoritative host state.
+- [x] Interrupted `IN_PROGRESS`/`VERIFYING` work follows deterministic recovery rules before further mutations are authorized.
+- [x] Context compaction, unavailable SDK conversation restoration, or model-session restart cannot erase unfinished canonical tasks or manufacture verification.
+
+**Verification:** restart during a multi-task coding fixture, resume, re-observation where required, and successful completion without skipped work.
+
+W029 is complete. Persisted Workflow state retains only canonical authority plus an opaque Cline session correlation; conversation history is restored from Cline through `readMessages` and is never canonical Workflow state. Orphaned `IN_PROGRESS` work recovers to `FAILED`, retry re-establishes readiness and authorization explicitly, unavailable correlated history fails closed, and `npm run test:cline-resume` proves restart-through-completion requires fresh post-restart evidence.
+
+### W030 - Coding tool and integration parity
+
+**Objective:** Close the practical tool gaps required for the user's routine OpenCode workload while preserving the established adapter/capability boundaries.
+
+**Depends on:** W028
+
+**Acceptance criteria:**
+- [x] Repository file discovery/read/edit/patch, diagnostics/tests, shell/process, and Git inspection used by normal coding sessions are supported through the SDK and correctly classified/authorized by Workflow, including direct `apply_patch` registration through the public `localRuntime.extraTools` surface.
+- [x] Required MCP capabilities can participate through the existing MCP boundary without becoming orchestration authority.
+- [x] Image or other user-input modalities required by the chosen SDK workflow remain host/application concerns and do not introduce model-provider types into the kernel; image prompt input is supported through the host-neutral application port.
+- [x] Parity gaps are tracked from observed real-session failures rather than speculative reimplementation of every OpenCode feature.
+
+**Verification:** representative repository tasks exercise the supported tool matrix and policy-denial cases through the real SDK runtime.
+
+W030 is complete as an observed parity assessment. Built-in mutation/process classification is conservative even when host callback metadata incorrectly reports a known editor, patch, or shell tool as non-mutating; extension tools can carry explicit least-privilege metadata without downgrading built-ins. The real SDK fixture covers repository reads, contained shell/test/Git work, deterministic SDK editor and direct `apply_patch` execution, authoritative denial, and SDK-native MCP participation. Image prompt input remains host-neutral and translates to Cline's public `userImages` field. The direct patch follow-up uses Cline's public tool factory and `localRuntime.extraTools`; Workflow does not own a parallel model/tool implementation.
+
+### W031 - OpenCode replacement qualification
+
+**Objective:** Decide from evidence whether Workflow is ready to become the default coding harness for the user's normal work.
+
+**Depends on:** W029, W030
+
+**Acceptance criteria:**
+- [x] A representative suite of real coding prompts succeeds end to end across clean and dirty repositories, including edit/test/debug and multi-step tasks.
+- [x] Recovery, cancellation, denial, malformed host input, containment failure, and verification failure cases remain fail-closed and understandable to the operator.
+- [x] Remaining feature gaps versus the user's actual OpenCode usage are documented with explicit severity/workarounds; no critical daily-driver gap is hidden by the qualification result.
+- [x] Full verification and independent review find no unresolved P0/P1 safety, state-integrity, or data-loss defects.
+
+**Verification:** dogfood matrix over representative coding prompts, full automated/runtime gates, restart/recovery scenarios, and independent five-axis review before switching the default workflow.
+
+W031's current matrix has no observed P2 daily-driver parity gap: real Cline coding, clean-to-dirty continuation, restart recovery, containment, policy denial, Git verification, editor/direct-patch mutation, image prompt input, and MCP participation are covered. OpenCode interoperability now has a separate authoritative `tool.execute.before` adapter/plugin and a host-neutral SDK session driver; SDK lifecycle events remain non-authoritative telemetry. A real OpenCode runtime E2E is not claimed by that contract coverage. Fresh full verification and independent review remain required before changing the default harness.

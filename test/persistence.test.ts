@@ -87,6 +87,12 @@ test("restart fails orphaned in-progress work instead of guessing mutation outco
   const restored = await store.load(host);
   assert.equal(restored.application.snapshot().tasks[0]?.state, "FAILED");
   assert.deepEqual(restored.application.snapshot().history.at(-1), { taskId: "A", from: "IN_PROGRESS", to: "FAILED" });
+
+  assert.equal(restored.application.retryFailedTask(taskId("A")).kind, "accepted");
+  assert.equal(restored.application.snapshot().tasks[0]?.state, "READY");
+  assert.equal(restored.application.authorize({ sessionId: "s", taskId: taskId("A"), tool: "write_file", mutating: true, subjects: [], input: {} }).kind, "deny");
+  assert.equal(restored.application.transition(taskId("A"), "IN_PROGRESS").kind, "accepted");
+  assert.equal(restored.application.authorize({ sessionId: "s", taskId: taskId("A"), tool: "write_file", mutating: true, subjects: [], input: {} }).kind, "allow");
 });
 
 test("restart preserves verifying work for repeat verification", async (context) => {
@@ -101,6 +107,84 @@ test("restart preserves verifying work for repeat verification", async (context)
 
   const restored = await store.load(host);
   assert.equal(restored.application.snapshot().tasks[0]?.state, "VERIFYING");
+});
+
+test("restart restores workspace confinement and capability withholding", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const workspace = join(directory, "repo");
+  await import("node:fs/promises").then(({ mkdir }) => mkdir(workspace));
+  const store = new JsonWorkflowStore(join(directory, "state.json"));
+  const application = new WorkflowApplication(
+    new TaskGraph([{ id: taskId("A"), title: "Scoped", state: "BLOCKED", dependencies: [], requiredEvidence: [] }]),
+    host,
+    [],
+    new Set(["read"]),
+    workspace,
+  );
+  await store.create(application);
+
+  const restored = (await store.load(host)).application;
+  assert.equal(restored.workspaceRoot, workspace);
+  assert.deepEqual([...restored.allowedCapabilities], ["read"]);
+  assert.equal(restored.authorize({ sessionId: "s", taskId: taskId("A"), tool: "shell", capability: "process", mutating: false, subjects: [], input: {} }).kind, "deny");
+  assert.equal(restored.authorize({ sessionId: "s", taskId: taskId("A"), tool: "read", capability: "read", mutating: false, subjects: ["../escape"], input: {} }).kind, "deny");
+});
+
+test("pre-W029 persisted workflows load with their historical authority defaults", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.json");
+  const store = new JsonWorkflowStore(path);
+  await writeFile(path, JSON.stringify({ version: 0, state: {
+    mutationEpoch: 0,
+    tasks: [{ id: "A", title: "Legacy", state: "READY", dependencies: [], requiredEvidence: [] }],
+    evidence: [],
+    history: [],
+  } }));
+
+  const restored = (await store.load(host)).application;
+  assert.equal(restored.workspaceRoot, undefined);
+  assert.deepEqual([...restored.allowedCapabilities], ["read", "mutation"]);
+});
+
+test("persisted Workflow state retains only opaque SDK session correlation", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new JsonWorkflowStore(join(directory, "state.json"));
+  const application = new WorkflowApplication(new TaskGraph([
+    { id: taskId("A"), title: "Resume", state: "BLOCKED", dependencies: [], requiredEvidence: [] },
+  ]), host);
+  application.setCodingSessionCorrelation("cline-session-42");
+  await store.create(application);
+
+  const restored = (await store.load(host)).application;
+  assert.equal(restored.codingSessionCorrelation, "cline-session-42");
+  assert.equal("messages" in restored.persistedState(), false);
+});
+
+test("retrying recovered work with unfinished prerequisites remains persistently blocked", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new JsonWorkflowStore(join(directory, "state.json"));
+  const application = new WorkflowApplication(new TaskGraph([
+    { id: taskId("A"), title: "Dependency", state: "BLOCKED", dependencies: [], requiredEvidence: [{ authority: "environment", subject: "build" }] },
+    { id: taskId("B"), title: "Dependent", state: "BLOCKED", dependencies: [taskId("A")], requiredEvidence: [] },
+  ]), host);
+  application.transition(taskId("A"), "IN_PROGRESS");
+  application.transition(taskId("A"), "VERIFYING");
+  application.recordEvidence({ id: evidenceId("retry-e"), observationId: observationId("retry-o"), authority: "environment", subject: "build", result: "passed", freshness: "fresh", mutationEpoch: 0, observedAt: "2026-09-11T00:00:00Z" });
+  application.transition(taskId("A"), "VERIFIED");
+  application.transition(taskId("B"), "IN_PROGRESS");
+  application.transition(taskId("B"), "FAILED");
+  application.recordMutation(["build"]);
+  await store.create(application);
+
+  const retry = application.retryFailedTask(taskId("B"));
+  assert.equal(retry.kind, "accepted");
+  assert.equal(application.snapshot().tasks.find((task) => task.id === "B")?.state, "BLOCKED");
+  await store.save(application, 0);
+  assert.equal((await store.load(host)).application.snapshot().tasks.find((task) => task.id === "B")?.state, "BLOCKED");
 });
 
 test("leftover writer lock fails closed", async (context) => {
@@ -142,6 +226,7 @@ test("persisted verified state cannot self-certify without required evidence", a
       tasks: [{ id: "A", title: "Forged", state: "VERIFIED", dependencies: [], requiredEvidence: [{ authority: "environment", subject: "build" }] }],
       evidence: [],
       history: [],
+      allowedCapabilities: ["read", "mutation"],
     },
   }));
   await assert.rejects(() => store.load(host), /persisted verified task A does not have fresh passing evidence/);
@@ -211,6 +296,7 @@ test("persisted readiness must match dependency state", async (context) => {
     ],
     evidence: [],
     history: [],
+    allowedCapabilities: ["read", "mutation"],
   } }));
   await assert.rejects(() => store.load(host), /persisted task B has inconsistent dependency readiness/);
 });

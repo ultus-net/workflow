@@ -1,6 +1,7 @@
 export interface ContainedProcessRequest {
   readonly executable: string;
   readonly args: readonly string[];
+  readonly cwd?: string;
   readonly readablePaths?: readonly string[];
   readonly writablePaths?: readonly string[];
   readonly network?: "isolated" | "host";
