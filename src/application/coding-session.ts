@@ -8,6 +8,7 @@ export type CodingSessionEvent =
   | { readonly type: "decision-brief"; readonly brief: DecisionBrief }
   | { readonly type: "tutor-checkpoint"; readonly opportunity: LearningOpportunity }
   | { readonly type: "diagnostic-lesson"; readonly lesson: DiagnosticLesson }
+  | { readonly type: "log"; readonly level: "debug" | "info" | "warning" | "error"; readonly message: string; readonly source?: string }
   | { readonly type: "completed"; readonly result: string }
   | { readonly type: "failed"; readonly reason: string };
 

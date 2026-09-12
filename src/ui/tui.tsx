@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 
-import type { CodingSessionEvent } from "../application/coding-session.js";
+import type { CodingSessionEvent, CodingSessionState } from "../application/coding-session.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
 import type { WorkflowApplication, WorkflowSnapshot } from "../application/workflow.js";
 import type { TaskState } from "../kernel/contracts.js";
@@ -109,11 +109,22 @@ export function WorkflowTui({
   const [decisionBrief, setDecisionBrief] = useState<DecisionBrief | undefined>();
   const [checkpoint, setCheckpoint] = useState<LearningOpportunity | undefined>();
   const [lesson, setLesson] = useState<DiagnosticLesson | undefined>();
+  const [pendingTools, setPendingTools] = useState<readonly string[]>([]);
+  const [recentLogs, setRecentLogs] = useState<readonly SessionLog[]>([]);
 
   useEffect(() => session?.subscribe((event) => {
     if (event.type === "decision-brief") setDecisionBrief(event.brief);
     if (event.type === "tutor-checkpoint") setCheckpoint(event.opportunity);
     if (event.type === "diagnostic-lesson") setLesson(event.lesson);
+    if (event.type === "tool-proposal") {
+      setPendingTools((current) => [...current, event.tool]);
+    }
+    if (event.type === "tool-outcome") {
+      setPendingTools((current) => current.filter((tool) => tool !== event.tool));
+    }
+    if (event.type === "log") {
+      setRecentLogs((current) => [...current, event].slice(-3));
+    }
     setTranscript((current) => [...current, formatSessionEvent(event)]);
     setScrollOffset(0);
     setSessionState(session.snapshot());
@@ -202,7 +213,7 @@ export function WorkflowTui({
     if (input.length > 0 && !key.ctrl && !key.meta) updatePrompt((value) => value + input);
   });
 
-  const transcriptRows = Math.max(4, (stdout.rows ?? 24) - (showWorkflow ? 16 : 10));
+  const transcriptRows = Math.max(4, (stdout.rows ?? 24) - (showWorkflow ? 16 : 10) - panelRows(snapshot, session));
   const end = Math.max(0, transcript.length - scrollOffset);
   const visibleTranscript = transcript.slice(Math.max(0, end - transcriptRows), end);
   const taskSummary = summarizeTasks(snapshot);
@@ -223,6 +234,10 @@ export function WorkflowTui({
             <Text bold>Symbol Inspect</Text>
             <Text dimColor>Type a symbol name and press Enter{inspectQuery.length > 0 ? `: ${inspectQuery}` : ""}</Text>
           </Box>
+        ) : null}
+        <TaskListPanel snapshot={snapshot} />
+        {session !== undefined ? (
+          <SessionActivityPanel state={sessionState} pendingTools={pendingTools} recentLogs={recentLogs} />
         ) : null}
         <Box flexDirection="column" minHeight={4}>
         {transcript.length === 0 ? (
@@ -268,6 +283,57 @@ export function WorkflowTui({
 
         {showWorkflow ? <WorkflowDetails snapshot={snapshot} /> : null}
       </Box>
+    </Box>
+  );
+}
+
+type SessionLog = Extract<CodingSessionEvent, { readonly type: "log" }>;
+
+const TASK_PANEL_MAX_ROWS = 6;
+
+/** Estimate of rows the monitoring panels occupy, used to bound the transcript. */
+function panelRows(snapshot: WorkflowSnapshot, session: WorkflowCodingSession | undefined): number {
+  const taskRows = snapshot.tasks.length === 0 ? 4 : 3 + Math.min(snapshot.tasks.length, TASK_PANEL_MAX_ROWS) + (snapshot.tasks.length > TASK_PANEL_MAX_ROWS ? 1 : 0);
+  const activityRows = session === undefined ? 0 : 4;
+  return taskRows + activityRows;
+}
+
+function TaskListPanel({ snapshot }: { readonly snapshot: WorkflowSnapshot }) {
+  const total = snapshot.tasks.length;
+  const verified = snapshot.tasks.filter((task) => task.state === "VERIFIED").length;
+  const visible = snapshot.tasks.slice(0, TASK_PANEL_MAX_ROWS);
+  return (
+    <Box marginTop={1} flexDirection="column" borderStyle="round" paddingX={1}>
+      <Text bold>Tasks <Text dimColor>{verified}/{total} verified</Text></Text>
+      {total === 0 ? <Text dimColor>No workflow tasks.</Text> : visible.map((task) => (
+        <Text key={task.id} dimColor={task.state === "BLOCKED" || task.state === "VERIFIED"}>
+          {task.id.padEnd(8)} {task.state.padEnd(11)} {task.title}
+        </Text>
+      ))}
+      {total > TASK_PANEL_MAX_ROWS ? <Text dimColor>… {total - TASK_PANEL_MAX_ROWS} more (Ctrl+W for details)</Text> : null}
+    </Box>
+  );
+}
+
+function SessionActivityPanel({
+  state,
+  pendingTools,
+  recentLogs,
+}: {
+  readonly state: CodingSessionState | undefined;
+  readonly pendingTools: readonly string[];
+  readonly recentLogs: readonly SessionLog[];
+}) {
+  return (
+    <Box marginTop={1} flexDirection="column" borderStyle="round" paddingX={1}>
+      <Text bold>Activity <Text dimColor>{state?.state ?? "idle"}</Text></Text>
+      {pendingTools.length > 0 ? <Text bold>  in flight: {pendingTools.join(", ")}</Text> : null}
+      {recentLogs.map((log, index) => (
+        <Text key={index} dimColor={log.level === "debug"}>
+          {`  [${log.level}] ${log.source === undefined ? "" : `${log.source}: `}${log.message}`}
+        </Text>
+      ))}
+      {pendingTools.length === 0 && recentLogs.length === 0 ? <Text dimColor>No live activity.</Text> : null}
     </Box>
   );
 }
@@ -367,6 +433,10 @@ function formatSessionEvent(event: CodingSessionEvent): TranscriptEntry {
   }
   if (event.type === "diagnostic-lesson") {
     return { label: "[lesson]", text: `TS${event.lesson.code}: ${event.lesson.plainEnglishExplanation}` };
+  }
+  if (event.type === "log") {
+    const source = event.source === undefined ? "" : `${event.source}: `;
+    return { label: `[${event.level}]`, text: `${source}${event.message}`, dim: event.level === "debug" };
   }
   if (event.type === "completed") return { label: "completed", text: event.result };
   return { label: "failed", text: event.reason };
