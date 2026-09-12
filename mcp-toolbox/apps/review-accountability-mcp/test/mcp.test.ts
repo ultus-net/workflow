@@ -48,3 +48,20 @@ test("compiled MCP rejects approval with configured blockers and malformed subje
   const invalid = await client.callTool({ name: "record_review", arguments: { workspaceRoot: workspace, reviewer: "mcp-reviewer", verdict: "approved", subject: { kind: "workspace", value: workspace }, blockingSeverities: ["P0"], findings: [] } });
   assert.equal(invalid.isError, true);
 });
+
+test("emits MCP log and progress notifications for tool calls", async () => {
+  const { LoggingMessageNotificationSchema, ProgressNotificationSchema } = await import("@modelcontextprotocol/sdk/types.js");
+  const logs: { level: string; data: { tool?: string; phase?: string } }[] = [];
+  const progress: { message?: string }[] = [];
+  client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => { logs.push(notification.params as never); });
+  client.setNotificationHandler(ProgressNotificationSchema, (notification) => { progress.push(notification.params as never); });
+
+  await client.callTool({ name: "list_reviews", arguments: { workspaceRoot: process.cwd() }, _meta: { progressToken: "rollout-probe" } });
+
+  assert.ok(logs.some((log) => log.level === "debug" && log.data.phase === "start"), "expected debug start log, got " + JSON.stringify(logs));
+  assert.ok(
+    logs.some((log) => (log.level === "info" && log.data.phase === "done") || (log.level === "error" && log.data.phase === "error")),
+    "expected done or error log, got " + JSON.stringify(logs),
+  );
+  assert.equal(progress[0]?.message, "start");
+});

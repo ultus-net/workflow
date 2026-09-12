@@ -64,3 +64,20 @@ test("returns file history and blame with public bounds", async (t) => {
   assert.equal((await client.callTool({ name: "file_history", arguments: { workspaceRoot: fixture.root, path: "tracked.txt", limit: 201 } })).isError, true);
   assert.equal((await client.callTool({ name: "file_blame", arguments: { workspaceRoot: fixture.root, path: "tracked.txt", limit: 1001 } })).isError, true);
 });
+
+test("emits MCP log and progress notifications for tool calls", async () => {
+  const { LoggingMessageNotificationSchema, ProgressNotificationSchema } = await import("@modelcontextprotocol/sdk/types.js");
+  const logs: { level: string; data: { tool?: string; phase?: string } }[] = [];
+  const progress: { message?: string }[] = [];
+  client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => { logs.push(notification.params as never); });
+  client.setNotificationHandler(ProgressNotificationSchema, (notification) => { progress.push(notification.params as never); });
+
+  await client.callTool({ name: "local_diff", arguments: { workspaceRoot: process.cwd(), scope: "unstaged" }, _meta: { progressToken: "rollout-probe" } });
+
+  assert.ok(logs.some((log) => log.level === "debug" && log.data.phase === "start"), "expected debug start log, got " + JSON.stringify(logs));
+  assert.ok(
+    logs.some((log) => (log.level === "info" && log.data.phase === "done") || (log.level === "error" && log.data.phase === "error")),
+    "expected done or error log, got " + JSON.stringify(logs),
+  );
+  assert.equal(progress[0]?.message, "start");
+});

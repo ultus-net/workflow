@@ -174,3 +174,20 @@ test("rejects path shapes that violate the public MCP contract", async () => {
     assert.equal(result.isError, true);
   }
 });
+
+test("emits MCP log and progress notifications for tool calls", async () => {
+  const { LoggingMessageNotificationSchema, ProgressNotificationSchema } = await import("@modelcontextprotocol/sdk/types.js");
+  const logs: { level: string; data: { tool?: string; phase?: string } }[] = [];
+  const progress: { message?: string }[] = [];
+  client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => { logs.push(notification.params as never); });
+  client.setNotificationHandler(ProgressNotificationSchema, (notification) => { progress.push(notification.params as never); });
+
+  await client.callTool({ name: "diagnostics", arguments: { workspaceRoot: resolve("test/fixtures/typescript-project"), file: "src/main.ts", limit: 10 }, _meta: { progressToken: "rollout-probe" } });
+
+  assert.ok(logs.some((log) => log.level === "debug" && log.data.phase === "start"), "expected debug start log, got " + JSON.stringify(logs));
+  assert.ok(
+    logs.some((log) => (log.level === "info" && log.data.phase === "done") || (log.level === "error" && log.data.phase === "error")),
+    "expected done or error log, got " + JSON.stringify(logs),
+  );
+  assert.equal(progress[0]?.message, "start");
+});

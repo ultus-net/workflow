@@ -54,3 +54,20 @@ test("recorded memory survives MCP calls and is returned as assertion provenance
   assert.equal(result.records[0]?.content, "Use alpha storage");
   assert.equal(result.truncated, false);
 });
+
+test("emits MCP log and progress notifications for tool calls", async () => {
+  const { LoggingMessageNotificationSchema, ProgressNotificationSchema } = await import("@modelcontextprotocol/sdk/types.js");
+  const logs: { level: string; data: { tool?: string; phase?: string } }[] = [];
+  const progress: { message?: string }[] = [];
+  client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => { logs.push(notification.params as never); });
+  client.setNotificationHandler(ProgressNotificationSchema, (notification) => { progress.push(notification.params as never); });
+
+  await client.callTool({ name: "search_memory", arguments: { workspaceRoot: process.cwd(), query: "x" }, _meta: { progressToken: "rollout-probe" } });
+
+  assert.ok(logs.some((log) => log.level === "debug" && log.data.phase === "start"), "expected debug start log, got " + JSON.stringify(logs));
+  assert.ok(
+    logs.some((log) => (log.level === "info" && log.data.phase === "done") || (log.level === "error" && log.data.phase === "error")),
+    "expected done or error log, got " + JSON.stringify(logs),
+  );
+  assert.equal(progress[0]?.message, "start");
+});

@@ -9,7 +9,38 @@ import { GitStatusAdapter } from "./git-status-adapter.js";
 import { GitDiffAdapter } from "./git-diff-adapter.js";
 import { GitHistoryAdapter } from "./git-history-adapter.js";
 
-const server = new McpServer({ name: "git-intelligence-mcp", version: "0.1.0" });
+const server = new McpServer(
+  { name: "git-intelligence-mcp", version: "0.1.0" },
+  { capabilities: { logging: {} } },
+);
+
+// Stream leveled MCP log notifications (and progress when the caller supplies
+// a progressToken) for every tool call, so hosts surfacing MCP logging see
+// server activity in the session stream. See learning-mcp for the pattern.
+type ToolExtra = {
+  _meta?: { progressToken?: string | number };
+  sendNotification: (notification: unknown) => Promise<void>;
+};
+const registerTool = server.registerTool.bind(server);
+server.registerTool = ((name: string, config: unknown, handler: (input: never, extra: ToolExtra) => Promise<unknown>) =>
+  registerTool(name as never, config as never, (async (input: never, extra: ToolExtra) => {
+    const progressToken = extra._meta?.progressToken;
+    const progress = async (message: string, value: number) => {
+      if (progressToken === undefined) return;
+      await extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress: value, total: 2, message } } as never);
+    };
+    await server.server.sendLoggingMessage({ level: "debug", logger: "git-intelligence-mcp", data: { tool: name, phase: "start" } });
+    await progress("start", 0);
+    try {
+      const result = await handler(input, extra);
+      await server.server.sendLoggingMessage({ level: "info", logger: "git-intelligence-mcp", data: { tool: name, phase: "done" } });
+      await progress("done", 2);
+      return result;
+    } catch (error) {
+      await server.server.sendLoggingMessage({ level: "error", logger: "git-intelligence-mcp", data: { tool: name, phase: "error", message: error instanceof Error ? error.message : String(error) } });
+      throw error;
+    }
+  }) as never)) as typeof server.registerTool;
 const adapter = new GitStatusAdapter();
 const diffAdapter = new GitDiffAdapter();
 const historyAdapter = new GitHistoryAdapter();

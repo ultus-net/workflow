@@ -6,7 +6,38 @@ import { z } from "zod";
 import { createAuthorityPorts } from "./authority-ports.js";
 import { defaultDataRoot, VerificationStore, type RecordVerificationInput } from "./verification.js";
 
-const server = new McpServer({ name: "verification-accountability-mcp", version: "0.1.0" });
+const server = new McpServer(
+  { name: "verification-accountability-mcp", version: "0.1.0" },
+  { capabilities: { logging: {} } },
+);
+
+// Stream leveled MCP log notifications (and progress when the caller supplies
+// a progressToken) for every tool call, so hosts surfacing MCP logging see
+// server activity in the session stream. See learning-mcp for the pattern.
+type ToolExtra = {
+  _meta?: { progressToken?: string | number };
+  sendNotification: (notification: unknown) => Promise<void>;
+};
+const registerTool = server.registerTool.bind(server);
+server.registerTool = ((name: string, config: unknown, handler: (input: never, extra: ToolExtra) => Promise<unknown>) =>
+  registerTool(name as never, config as never, (async (input: never, extra: ToolExtra) => {
+    const progressToken = extra._meta?.progressToken;
+    const progress = async (message: string, value: number) => {
+      if (progressToken === undefined) return;
+      await extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress: value, total: 2, message } } as never);
+    };
+    await server.server.sendLoggingMessage({ level: "debug", logger: "verification-accountability-mcp", data: { tool: name, phase: "start" } });
+    await progress("start", 0);
+    try {
+      const result = await handler(input, extra);
+      await server.server.sendLoggingMessage({ level: "info", logger: "verification-accountability-mcp", data: { tool: name, phase: "done" } });
+      await progress("done", 2);
+      return result;
+    } catch (error) {
+      await server.server.sendLoggingMessage({ level: "error", logger: "verification-accountability-mcp", data: { tool: name, phase: "error", message: error instanceof Error ? error.message : String(error) } });
+      throw error;
+    }
+  }) as never)) as typeof server.registerTool;
 const authorities = createAuthorityPorts();
 const store = new VerificationStore(defaultDataRoot(), authorities);
 const localResult = z.object({ outcome: z.enum(["completed", "timed_out", "cancelled"]), exitCode: z.number().int().nullable(), passed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), skipped: z.number().int().nonnegative(), todo: z.number().int().nonnegative(), testsTruncated: z.boolean(), failuresTruncated: z.boolean(), diagnosticsTruncated: z.boolean() });
