@@ -1,3 +1,7 @@
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -94,6 +98,20 @@ export async function createWorkflowGuardMcpProvider(options: { serverPath: stri
 }
 
 /** Maps a guard decision to normalized MCP evidence for the policy subject. */
+/** Resolves the vendored workflow-guard-mcp server entrypoint, building first if needed. */
+export function defaultToolboxGuardServerPath(): string {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const serverPath = resolve(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "dist", "server.js");
+  if (!existsSync(serverPath)) {
+    throw new Error(`workflow-guard-mcp is not built; run: npm run toolbox:build (expected ${serverPath})`);
+  }
+  return serverPath;
+}
+
+export function createDefaultToolboxGuardProvider(): Promise<WorkflowGuardProvider> {
+  return createWorkflowGuardMcpProvider({ serverPath: defaultToolboxGuardServerPath() });
+}
+
 export function guardPolicyEvidence(decision: GuardDecision, mutationEpoch: number): Evidence {
   return normalizeMcpEvidence(
     {

@@ -8,6 +8,7 @@ import { WorkflowCodingSession } from "../application/coding-session.js";
 import type { WorkflowApplication } from "../application/workflow.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import { WorkflowContainedProcess } from "../containment/workflow-process.js";
+import { createDefaultToolboxGuardProvider } from "./mcp-toolbox-guard.js";
 import { createWorkflowClinePlugin } from "./cline-plugin.js";
 import { ClineSessionDriver } from "./cline-session.js";
 import { createWorkflowClineShellExecutor } from "./cline-shell-executor.js";
@@ -50,8 +51,12 @@ export async function createConfiguredClineRuntime(application: WorkflowApplicat
   });
   const plugin = createWorkflowClinePlugin(application, adapter, (tool, reason, toolCallId) => driver?.recordToolDenial(tool, reason, toolCallId));
   const containment = new LinuxBubblewrapContainment();
+  const guard = await createDefaultToolboxGuardProvider().catch((error) => {
+    console.warn(`Workflow guard unavailable (advisory): ${error instanceof Error ? error.message : error}`);
+    return undefined;
+  });
   const shellExecutor = createWorkflowClineShellExecutor(
-    new WorkflowContainedProcess(application, containment),
+    new WorkflowContainedProcess(application, containment, guard),
     adapter,
     (exitCode, output) => new core.CommandExitError(exitCode, output),
   );
@@ -99,7 +104,7 @@ export async function createConfiguredClineRuntime(application: WorkflowApplicat
       localRuntime: { hooks: plugin.hooks, extraTools: [applyPatchTool] },
     }),
   });
-  return { session: new WorkflowCodingSession(driver), dispose: () => cline.dispose() };
+  return { session: new WorkflowCodingSession(driver), dispose: () => Promise.all([cline.dispose(), guard?.close() ?? Promise.resolve()]).then(() => undefined) };
 }
 
 async function loadClineCore(): Promise<ClineRuntimeCore> {

@@ -7,10 +7,15 @@ import { ClineHostAdapter } from "../adapters/cline.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import { WorkflowContainedProcess } from "../containment/workflow-process.js";
+import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 import { evidenceId, observationId, taskId } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 
 const workspace = await mkdtemp(join(tmpdir(), "workflow-interactive-"));
+const guard = await createDefaultToolboxGuardProvider().catch((error) => {
+  console.error(`Workflow guard unavailable (advisory): ${error instanceof Error ? error.message : error}`);
+  return undefined;
+});
 const input = createInterface({ input: process.stdin, output: process.stdout });
 
 try {
@@ -66,7 +71,7 @@ try {
       throw new TypeError("invalid process proposal command");
     }
 
-    const execution = await new WorkflowContainedProcess(application, containment)
+    const execution = await new WorkflowContainedProcess(application, containment, guard)
       .execute(proposal, { executable, args, writablePaths: [workspace] });
     console.log(`Containment: ${execution.enforcement.toUpperCase()}`);
     if (execution.stdout.length > 0) process.stdout.write(execution.stdout);
@@ -97,6 +102,7 @@ try {
     input.prompt();
   }
 } finally {
+  await guard?.close();
   input.close();
   await rm(workspace, { recursive: true, force: true });
 }
