@@ -5,53 +5,23 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { hostCapabilities } from "../adapters/host.js";
-import { WorkflowApplication } from "../application/workflow.js";
-import { createWorkflowClineTuiBridge } from "../integrations/cline-tui-bridge.js";
-import { taskId, type WorkflowTask } from "../kernel/contracts.js";
-import { TaskGraph } from "../kernel/task-graph.js";
+import { resolveWorkflowHub } from "./hub-client.js";
 import { collectToolboxMcpServers, mergeMcpSettings, readUserMcpSettings } from "./mcp-settings.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 
 const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const clineRoot = resolve(root, ".workflow-cline", "cline");
-const tasks: WorkflowTask[] = [
-  {
-    id: taskId("W001"),
-    title: "Inspect the runnable Workflow TUI",
-    state: "BLOCKED",
-    dependencies: [],
-    requiredEvidence: [],
-  },
-  {
-    id: taskId("W002"),
-    title: "Observe dependency-derived readiness",
-    state: "BLOCKED",
-    dependencies: [taskId("W001")],
-    requiredEvidence: [],
-  },
-];
 
-const application = new WorkflowApplication(
-  new TaskGraph(tasks),
-  hostCapabilities({ transport: "native", authoritativePreMutation: true }),
-  [],
-  new Set(["read", "mutation", "process"]),
-  workspace,
-);
-
-application.startInteractiveTask();
-const bridge = await createWorkflowClineTuiBridge(application);
+// The Workflow hub is the single authority for every Cline surface; the
+// launcher resolves it through the discovery file and fails closed when the
+// daemon is not running. See `docs/HUB.md`.
+const hub = await resolveWorkflowHub();
 const toolboxRoot = resolve(root, "mcp-toolbox");
 const mcpServers = collectToolboxMcpServers(toolboxRoot);
 const mcpSettingsPath = await writeMcpSettings(mcpServers);
-try {
-  const exitCode = await runClineTui(clineRoot, workspace, bridge.url, bridge.token, mcpSettingsPath);
-  process.exitCode = exitCode;
-} finally {
-  await bridge.close();
-}
+const exitCode = await runClineTui(clineRoot, workspace, hub.url, hub.token, mcpSettingsPath);
+process.exitCode = exitCode;
 
 async function writeMcpSettings(servers: Record<string, unknown>): Promise<string> {
   if (Object.keys(servers).length === 0) {
