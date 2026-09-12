@@ -639,6 +639,118 @@ index 452484a..e9362c0 100644
  		}
  	}
  
+diff --git a/sdk/packages/core/src/extensions/mcp/manager.test.ts b/sdk/packages/core/src/extensions/mcp/manager.test.ts
+index 435e726..fcd4f56 100644
+--- a/sdk/packages/core/src/extensions/mcp/manager.test.ts
++++ b/sdk/packages/core/src/extensions/mcp/manager.test.ts
+@@ -13,6 +13,37 @@ function createClient(overrides?: Partial<McpServerClient>): McpServerClient {
+ }
+ 
+ describe("InMemoryMcpManager", () => {
++	it("middle-truncates oversized MCP text results before they reach the conversation", async () => {
++		const client = createClient({
++			callTool: vi.fn(async () => ({
++				content: [
++					{ type: "text", text: "x".repeat(200_000) },
++					{ type: "text", text: "small" },
++					{ type: "resource", resource: { uri: "file:///big", text: "y".repeat(200_000) } },
++				],
++			})),
++		});
++		const manager = new InMemoryMcpManager({
++			clientFactory: vi.fn(async () => client),
++		});
++		await manager.registerServer({
++			name: "verbose",
++			transport: { type: "streamableHttp", url: "https://mcp.example.test" },
++		});
++
++		const result = (await manager.callTool({ serverName: "verbose", toolName: "dump" })) as {
++			content: Array<{ type: string; text?: string; resource?: { text?: string } }>;
++		};
++		const [big, small, resource] = result.content;
++		expect(big!.text!.length).toBeLessThanOrEqual(48_200);
++		expect(big!.text).toContain("output truncated");
++		expect(big!.text!.startsWith("x".repeat(100))).toBe(true);
++		expect(big!.text!.endsWith("x".repeat(100))).toBe(true);
++		expect(small!.text).toBe("small");
++		expect(resource!.resource!.text!.length).toBeLessThanOrEqual(48_200);
++		expect(resource!.resource!.text).toContain("output truncated");
++	});
++
+ 	it("registers servers, connects on demand, and calls tools", async () => {
+ 		const toolDescriptors: readonly McpToolDescriptor[] = [
+ 			{
+diff --git a/sdk/packages/core/src/extensions/mcp/manager.ts b/sdk/packages/core/src/extensions/mcp/manager.ts
+index ce26bac..ddfd468 100644
+--- a/sdk/packages/core/src/extensions/mcp/manager.ts
++++ b/sdk/packages/core/src/extensions/mcp/manager.ts
+@@ -2,6 +2,7 @@ import {
+ 	isMcpTimeoutConfigured,
+ 	resolveMcpTimeoutSeconds,
+ } from "@cline/shared";
++import { truncateCommandOutput } from "../tools/executors/output-limits";
+ import type {
+ 	McpConnectionStatus,
+ 	McpManager,
+@@ -170,11 +171,14 @@ export class InMemoryMcpManager implements McpManager {
+ 			const state = this.requireServer(request.serverName);
+ 			const client = await this.ensureConnectedClient(state);
+ 			state.updatedAt = nowMs();
+-			return client.callTool({
++			const result = await client.callTool({
+ 				name: request.toolName,
+ 				arguments: request.arguments,
+ 				context: request.context,
+ 			});
++			// MCP results bypass the built-in executor output caps, so bound them
++			// here before they enter the conversation (and get re-sent every turn).
++			return truncateMcpResultContent(result);
+ 		});
+ 	}
+ 
+@@ -274,3 +278,41 @@ export class InMemoryMcpManager implements McpManager {
+ 		}
+ 	}
+ }
++
++/**
++ * Middle-truncates oversized text payloads inside an MCP tool result using
++ * the same head/tail discipline as built-in command output. Unknown shapes
++ * pass through untouched.
++ */
++function truncateMcpResultContent(result: unknown): unknown {
++	if (typeof result !== "object" || result === null) return result;
++	const content = (result as { content?: unknown }).content;
++	if (!Array.isArray(content)) return result;
++	return {
++		...(result as Record<string, unknown>),
++		content: content.map((item) => {
++			if (typeof item !== "object" || item === null) return item;
++			const entry = item as Record<string, unknown>;
++			if (entry.type === "text" && typeof entry.text === "string") {
++				return { ...entry, text: truncateCommandOutput(entry.text) };
++			}
++			if (entry.type === "resource") {
++				const resource = entry.resource;
++				if (
++					typeof resource === "object" &&
++					resource !== null &&
++					typeof (resource as Record<string, unknown>).text === "string"
++				) {
++					return {
++						...entry,
++						resource: {
++							...(resource as Record<string, unknown>),
++							text: truncateCommandOutput((resource as Record<string, unknown>).text as string),
++						},
++					};
++				}
++			}
++			return item;
++		}),
++	};
++}
 diff --git a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts b/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
 index 7371b78..4a7b0f0 100644
 --- a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
