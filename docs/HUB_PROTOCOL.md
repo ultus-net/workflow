@@ -68,10 +68,33 @@ Registers a scheduled/attended run as its own Workflow task, so the run's
 tool calls authorize against an `IN_PROGRESS` task and the run records its
 own evidence (instead of sharing the interactive task).
 
-Request: `{ "runId": "schedule:<uuid>", "title": "Nightly audit", "workspace": "/abs/dir" }`
-(`workspace` optional; same validation as `/before-tool`.)
+Request: `{ "runId": "schedule:<uuid>", "title": "Nightly audit", "workspace": "/abs/dir", "requiresReview": true }`
+(`workspace` and `requiresReview` optional; workspace validated as in
+`/before-tool`. `requiresReview` makes the run task require `reviewer`
+evidence before it can reach `VERIFIED` — the review gate.)
 
 Response `200`: `{}`. Duplicate `runId` → authority error (fail closed).
+
+### `POST /review/rubric` — fetch the 5-axis review rubric
+
+Request: `{ "diffText": "<unified diff>", "taskPrompt": "optional context" }`
+Response `200`: `{ "rubric": "<prompt for an independent reviewer subagent>" }`.
+The rubric embeds the diff (capped at 30k chars), the 5 review axes (test
+integrity, task completeness, cleanliness, security, platform), P0–P3
+severities, and the verdict format. Ported from opencode-workflow-guard.
+
+### `POST /run/review` — record an independent review verdict
+
+Request: `{ "runId": "schedule:<author>", "reviewerRunId": "schedule:<reviewer>", "verdict": "approved" | "changes_requested" | "rejected", "summary": "<findings>" }`
+
+Anti-rubber-stamp rules (authority errors → clients fail closed):
+
+- `reviewerRunId` must name an existing run **different** from `runId`.
+- `approved` verdicts must reference **at least 3 of the 5 axes** by name.
+
+An approved verdict records fresh `reviewer` evidence for the run (enabling
+`VERIFIED` for review-gated runs). Other verdicts record nothing and return
+`{ "recorded": false }`.
 
 ### `POST /run/finish` — close a run with evidence
 

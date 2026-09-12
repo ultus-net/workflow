@@ -26,5 +26,7 @@ export * from "./pedagogy/diagnostic-tutor.js";
 export * from "./pedagogy/checkpoints.js";
 export * from "./pedagogy/primm.js";
 export * from "./integrations/response-style.js";
+export * from "./review/rubric.js";
+export * from "./integrations/run-registry.js";
 export * from "./ui/tui.js";
 export * from "./ui/web.js";

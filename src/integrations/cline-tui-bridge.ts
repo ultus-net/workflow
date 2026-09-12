@@ -5,6 +5,7 @@ import { ClineHostAdapter } from "../adapters/cline.js";
 import type { WorkflowApplication } from "../application/workflow.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import { WorkflowContainedProcess } from "../containment/workflow-process.js";
+import { buildReviewRubric } from "../review/rubric.js";
 import { createWorkflowClinePlugin, type ClineBeforeToolHookInput } from "./cline-plugin.js";
 import { createWorkflowClineShellExecutor, type WorkflowClineShellExecutor } from "./cline-shell-executor.js";
 
@@ -17,8 +18,9 @@ export interface WorkflowClineTuiBridge {
 export type WorkflowApplicationResolver = (workspace?: string, runId?: string) => WorkflowApplication;
 
 export interface WorkflowRunController {
-  begin(input: { runId: string; title: string; workspace?: string }): Promise<void>;
+  begin(input: { runId: string; title: string; workspace?: string; requiresReview?: boolean }): Promise<void>;
   finish(input: { runId: string; outcome: "verified" | "failed" }): Promise<void>;
+  review(input: { runId: string; reviewerRunId: string; verdict: "approved" | "changes_requested" | "rejected"; summary: string }): Promise<{ recorded: boolean }>;
 }
 
 export async function createWorkflowClineTuiBridge(
@@ -61,6 +63,17 @@ async function handleRequest(
     if (!authorized(request, token) || request.method !== "POST") return send(response, 401, { error: "unauthorized" });
     if (request.url === "/health") return send(response, 200, { status: "ok" });
     const body = await readJson(request);
+    if (request.url === "/review/rubric") {
+      if (!isRecord(body) || typeof body.diffText !== "string") {
+        return send(response, 400, { error: "invalid review rubric request" });
+      }
+      return send(response, 200, {
+        rubric: buildReviewRubric({
+          diffText: body.diffText,
+          ...(typeof body.taskPrompt === "string" ? { taskPrompt: body.taskPrompt } : {}),
+        }),
+      });
+    }
     if (request.url === "/run/begin") {
       if (runController === undefined) return send(response, 404, { error: "not found" });
       if (!isRecord(body) || typeof body.runId !== "string" || typeof body.title !== "string") {
@@ -70,8 +83,23 @@ async function handleRequest(
         runId: body.runId,
         title: body.title,
         ...(typeof body.workspace === "string" ? { workspace: body.workspace } : {}),
+        ...(body.requiresReview === true ? { requiresReview: true } : {}),
       });
       return send(response, 200, {});
+    }
+    if (request.url === "/run/review") {
+      if (runController === undefined) return send(response, 404, { error: "not found" });
+      if (
+        !isRecord(body) || typeof body.runId !== "string" || typeof body.reviewerRunId !== "string" ||
+        !(body.verdict === "approved" || body.verdict === "changes_requested" || body.verdict === "rejected") ||
+        typeof body.summary !== "string"
+      ) {
+        return send(response, 400, { error: "invalid run review request" });
+      }
+      const result = await runController.review({
+        runId: body.runId, reviewerRunId: body.reviewerRunId, verdict: body.verdict, summary: body.summary,
+      });
+      return send(response, 200, result);
     }
     if (request.url === "/run/finish") {
       if (runController === undefined) return send(response, 404, { error: "not found" });

@@ -25,6 +25,7 @@ trip over.
 | Hub protocol v1 (discovery, `/health`, `/before-tool`, `/bash`, `/run/*`) | Complete | `docs/HUB_PROTOCOL.md`; conformance: `test/hub-protocol.test.ts` |
 | Per-surface workspace binding | Complete | surfaces declare workspace per request |
 | Dedicated task + evidence per scheduled run | Complete | `/run/begin`, `/run/finish` |
+| Review gate (5-axis rubric, cross-run adversarial reviews) | Complete | `/review/rubric`, `/run/review`; cross-run + ≥3-axis anti-rubber-stamp, kernel-enforced via `reviewer` evidence; ported from opencode-workflow-guard |
 | systemd user unit | Complete | `packaging/workflow-hub.service`; Linux/systemd only |
 | Surface coverage: TUI, headless, zen, connectors, cron, desktop (`cline-hub`) | Complete | all resolve via env or discovery file, fail closed |
 
@@ -61,7 +62,7 @@ trip over.
 
 | Feature | Status | Notes |
 |---|---|---|
-| **Review gate (subagent reviews diff before VERIFYING)** | **Planned** | pieces exist (`reviewer` evidence authority, review-accountability-mcp, agent teams) but **nothing drives a review today** — this is the largest missing confidence feature |
+| **Orchestrator flow: auto-fetch rubric + spawn reviewer subagent per run** | **Planned** | hub enforces provenance; the agent-side flow (fetch rubric → spawn reviewer → record verdict) is guidance-level, not yet automatic |
 | Cross-platform containment (macOS Seatbelt, Windows) | Planned | containment is Linux-only; policy gating works everywhere |
 | Web-UI monitoring panels | Planned | port of the Ink panels |
 | Auto style-savings measurement | Planned | style token savings are model-dependent, currently unmeasured |
