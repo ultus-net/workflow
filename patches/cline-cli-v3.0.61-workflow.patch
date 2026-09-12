@@ -639,6 +639,18 @@ index 452484a..e9362c0 100644
  		}
  	}
  
+diff --git a/sdk/packages/core/src/extensions/mcp/index.ts b/sdk/packages/core/src/extensions/mcp/index.ts
+index c8d4043..f53f254 100644
+--- a/sdk/packages/core/src/extensions/mcp/index.ts
++++ b/sdk/packages/core/src/extensions/mcp/index.ts
+@@ -60,6 +60,7 @@ export {
+ 	createDisabledMcpToolPolicy,
+ } from "./policies";
+ export { augmentMcpTimeoutError } from "./timeout";
++export { createLazyMcpTools } from "./lazy-tools";
+ export { createMcpTools } from "./tools";
+ export type {
+ 	CreateMcpToolsOptions,
 diff --git a/sdk/packages/core/src/extensions/mcp/manager.test.ts b/sdk/packages/core/src/extensions/mcp/manager.test.ts
 index 435e726..fcd4f56 100644
 --- a/sdk/packages/core/src/extensions/mcp/manager.test.ts
@@ -751,6 +763,39 @@ index ce26bac..ddfd468 100644
 +		}),
 +	};
 +}
+diff --git a/sdk/packages/core/src/extensions/mcp/tools.ts b/sdk/packages/core/src/extensions/mcp/tools.ts
+index 8a39e48..a2e5875 100644
+--- a/sdk/packages/core/src/extensions/mcp/tools.ts
++++ b/sdk/packages/core/src/extensions/mcp/tools.ts
+@@ -1,4 +1,5 @@
+ import { type AgentTool, createTool } from "@cline/shared";
++import { createLazyMcpTools } from "./lazy-tools";
+ import { defaultMcpToolNameTransform } from "./name-transform";
+ import type { CreateMcpToolsOptions, McpToolDescriptor } from "./types";
+ 
+@@ -16,6 +17,9 @@ function defaultMcpDescription(
+ export async function createMcpTools(
+ 	options: CreateMcpToolsOptions,
+ ): Promise<AgentTool[]> {
++	if (options.lazy === true) {
++		return createLazyMcpTools(options);
++	}
+ 	const descriptors = await options.provider.listTools(options.serverName);
+ 	const nameTransform = options.nameTransform ?? defaultMcpToolNameTransform;
+ 
+diff --git a/sdk/packages/core/src/extensions/mcp/types.ts b/sdk/packages/core/src/extensions/mcp/types.ts
+index 646d2b4..e82aabe 100644
+--- a/sdk/packages/core/src/extensions/mcp/types.ts
++++ b/sdk/packages/core/src/extensions/mcp/types.ts
+@@ -32,6 +32,8 @@ export interface CreateMcpToolsOptions {
+ 	timeoutMs?: number;
+ 	retryable?: boolean;
+ 	maxRetries?: number;
++	/** When true, expose cheap discover/call meta-tools instead of full schemas. */
++	lazy?: boolean;
+ }
+ 
+ export type McpConnectionStatus = "disconnected" | "connecting" | "connected";
 diff --git a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts b/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
 index 7371b78..4a7b0f0 100644
 --- a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
@@ -1230,3 +1275,24 @@ index 4081a4c..1796176 100644
  export * from "./daemon/start-shared-server";
  export * from "./discovery";
  export * from "./discovery/defaults";
+diff --git a/sdk/packages/core/src/runtime/orchestration/runtime-builder.ts b/sdk/packages/core/src/runtime/orchestration/runtime-builder.ts
+index 631392b..6a44de0 100644
+--- a/sdk/packages/core/src/runtime/orchestration/runtime-builder.ts
++++ b/sdk/packages/core/src/runtime/orchestration/runtime-builder.ts
+@@ -230,11 +230,16 @@ async function loadConfiguredMcpTools(logger?: BasicLogger): Promise<{
+ 	}
+ 
+ 	const enabled = registrations.filter((r) => r.disabled !== true);
++	// Lazy MCP tool loading keeps full schemas out of the model's context;
++	// the model discovers them on demand. Enabled via environment so hosts
++	// (e.g. Workflow) can opt in without config migrations.
++	const lazyMcpTools = process.env.CLINE_LAZY_MCP_TOOLS === "1";
+ 	const results = await Promise.allSettled(
+ 		enabled.map((r) =>
+ 			createMcpTools({
+ 				serverName: r.name,
+ 				provider: manager,
++				lazy: lazyMcpTools,
+ 				// Keep the tool wrapper timeout in agreement with the MCP
+ 				// request timeout: both derive from the server's registration.
+ 				timeoutMs: resolveMcpTimeoutSeconds(r.timeoutSeconds) * 1000,

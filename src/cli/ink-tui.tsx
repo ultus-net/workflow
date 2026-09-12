@@ -41,6 +41,10 @@ const application = new WorkflowApplication(
   workspace,
 );
 
+// Lazy MCP tool loading: schemas enter the model context on demand via
+// discover/call meta-tools instead of up-front for every server.
+process.env.CLINE_LAZY_MCP_TOOLS ??= "1";
+
 const runtime = await createConfiguredClineRuntime(application, workspace);
 const { waitUntilExit } = render(
   React.createElement(WorkflowTui, { application, session: runtime.session }),

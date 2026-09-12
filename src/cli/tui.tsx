@@ -55,6 +55,9 @@ function runClineTui(clineRoot: string, cwd: string, bridgeUrl: string, bridgeTo
           ...process.env,
           WORKFLOW_CLINE_BRIDGE_URL: bridgeUrl,
           WORKFLOW_CLINE_BRIDGE_TOKEN: bridgeToken,
+          // Lazy MCP tool loading: schemas enter the model context on demand
+          // via discover/call meta-tools instead of up-front for every server.
+          CLINE_LAZY_MCP_TOOLS: process.env.CLINE_LAZY_MCP_TOOLS ?? "1",
           ...(mcpSettingsPath ? { CLINE_MCP_SETTINGS_PATH: mcpSettingsPath } : {}),
         },
       },
