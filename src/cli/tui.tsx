@@ -43,8 +43,8 @@ const application = new WorkflowApplication(
   workspace,
 );
 
-const PET_HOME_CELL_WIDTH = 24;
-const PET_STATUS_CELL_WIDTH = 10;
+const PET_HOME_CELL_WIDTH = 32;
+const PET_STATUS_CELL_WIDTH = 14;
 const PET_FRAME_DELAY_MS = 120;
 
 application.startInteractiveTask();

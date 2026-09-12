@@ -4,10 +4,35 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 import { parseCodexPet } from "../src/ui/pets/codex-pet.js";
-import { renderCodexPetFrame, codexPetStateFrames, petStateForActivity } from "../src/ui/pets/codex-pet-renderer.js";
+import { renderCodexPetFrame, codexPetStateFrames, petStateForActivity, cropCodexPetFrame } from "../src/ui/pets/codex-pet-renderer.js";
 
 const fixture = (name: string): Uint8Array =>
   new Uint8Array(readFileSync(fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url))));
+
+test("cropCodexPetFrame trims transparent margins", () => {
+  // 8x8 frame: content occupies columns 1..6, rows 2..7 only
+  const rgba = new Uint8ClampedArray(8 * 8 * 4);
+  const paint = (x: number, y: number) => {
+    const off = (y * 8 + x) * 4;
+    rgba[off] = 200; rgba[off + 1] = 200; rgba[off + 2] = 200; rgba[off + 3] = 255;
+  };
+  for (let y = 2; y <= 7; y++) for (let x = 1; x <= 6; x++) paint(x, y);
+  const cropped = cropCodexPetFrame({ width: 8, height: 8, rgba });
+  assert.equal(cropped.width, 6);
+  assert.equal(cropped.height, 6);
+  assert.equal(cropped.rgba.length, 6 * 6 * 4);
+  // cropping is idempotent
+  const again = cropCodexPetFrame(cropped);
+  assert.equal(again.width, 6);
+  assert.equal(again.height, 6);
+});
+
+test("cropCodexPetFrame keeps a fully transparent frame untouched", () => {
+  const rgba = new Uint8ClampedArray(4 * 4 * 4);
+  const cropped = cropCodexPetFrame({ width: 4, height: 4, rgba });
+  assert.equal(cropped.width, 4);
+  assert.equal(cropped.height, 4);
+});
 
 const PET_JSON = JSON.stringify({ id: "cat", displayName: "Cat", spritesheetPath: "spritesheet.webp" });
 
