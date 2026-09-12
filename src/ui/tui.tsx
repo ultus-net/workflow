@@ -3,6 +3,7 @@ import { Box, Text, useApp, useInput, useStdout } from "ink";
 
 import type { CodingSessionEvent, CodingSessionState } from "../application/coding-session.js";
 import { formatStyleStatus, nextBuildStyle, nextSpeechStyle, resolveStyleFromEnv, type SessionStyle } from "../integrations/response-style.js";
+import type { ReviewFollowUp } from "../integrations/review-followups.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
 import type { WorkflowApplication, WorkflowSnapshot } from "../application/workflow.js";
 import type { TaskState } from "../kernel/contracts.js";
@@ -78,6 +79,7 @@ export function WorkflowTui({
   onInspectSymbol,
   style: initialStyle,
   onStyleChange,
+  reviewFollowUps,
 }: {
   readonly application: WorkflowApplication;
   readonly session?: WorkflowCodingSession;
@@ -86,6 +88,7 @@ export function WorkflowTui({
   readonly onInspectSymbol?: (symbol: string) => void;
   readonly style?: SessionStyle;
   readonly onStyleChange?: (style: SessionStyle) => void;
+  readonly reviewFollowUps?: readonly ReviewFollowUp[];
 }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -235,6 +238,7 @@ export function WorkflowTui({
     if (input.length > 0 && !key.ctrl && !key.meta) updatePrompt((value) => value + input);
   });
 
+  const openReviewFollowUps = (reviewFollowUps ?? []).some((item) => item.status === "open");
   const transcriptRows = Math.max(4, (stdout.rows ?? 24) - (showWorkflow ? 16 : 10) - panelRows(snapshot, session));
   const end = Math.max(0, transcript.length - scrollOffset);
   const visibleTranscript = transcript.slice(Math.max(0, end - transcriptRows), end);
@@ -258,8 +262,8 @@ export function WorkflowTui({
           </Box>
         ) : null}
         <TaskListPanel snapshot={snapshot} />
-        {session !== undefined ? (
-          <SessionActivityPanel state={sessionState} pendingTools={pendingTools} recentLogs={recentLogs} />
+        {(session !== undefined || openReviewFollowUps) ? (
+          <SessionActivityPanel state={sessionState} pendingTools={pendingTools} recentLogs={recentLogs} {...(reviewFollowUps === undefined ? {} : { reviewFollowUps })} />
         ) : null}
         <Box flexDirection="column" minHeight={4}>
         {transcript.length === 0 ? (
@@ -341,11 +345,14 @@ function SessionActivityPanel({
   state,
   pendingTools,
   recentLogs,
+  reviewFollowUps,
 }: {
   readonly state: CodingSessionState | undefined;
   readonly pendingTools: readonly string[];
   readonly recentLogs: readonly SessionLog[];
+  readonly reviewFollowUps?: readonly ReviewFollowUp[];
 }) {
+  const openFollowUps = (reviewFollowUps ?? []).filter((item) => item.status === "open");
   return (
     <Box marginTop={1} flexDirection="column" borderStyle="round" paddingX={1}>
       <Text bold>Activity <Text dimColor>{state?.state ?? "idle"}</Text></Text>
@@ -355,7 +362,15 @@ function SessionActivityPanel({
           {`  [${log.level}] ${log.source === undefined ? "" : `${log.source}: `}${log.message}`}
         </Text>
       ))}
-      {pendingTools.length === 0 && recentLogs.length === 0 ? <Text dimColor>No live activity.</Text> : null}
+      {openFollowUps.length > 0 ? (
+        <Box flexDirection="column">
+          <Text dimColor>  review follow-ups ({openFollowUps.length} open)</Text>
+          {openFollowUps.slice(0, 3).map((item) => (
+            <Text key={item.id} dimColor>    [{item.severity}] {item.summary}</Text>
+          ))}
+        </Box>
+      ) : null}
+      {pendingTools.length === 0 && recentLogs.length === 0 && openFollowUps.length === 0 ? <Text dimColor>No live activity.</Text> : null}
     </Box>
   );
 }

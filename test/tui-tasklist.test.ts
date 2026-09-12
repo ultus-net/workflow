@@ -38,6 +38,23 @@ async function waitForFrame(view: { lastFrame(): string | undefined }, expected:
   }
 }
 
+test("TUI activity panel lists open review follow-ups", () => {
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    reviewFollowUps: [
+      { severity: "P2", summary: "missing edge coverage", paths: ["src/x.ts"], id: "1", reviewId: "r1", status: "open", createdAt: 1 },
+      { severity: "P3", summary: "nit: naming", paths: [], id: "2", reviewId: "r1", status: "open", createdAt: 2 },
+    ],
+  }));
+
+  const frame = view.lastFrame() ?? "";
+  assert.match(frame, /review follow-ups/i);
+  assert.match(frame, /2 open/);
+  assert.match(frame, /missing edge coverage/);
+  view.unmount();
+});
+
+
 test("TUI renders an always-visible task list with states and progress", () => {
   const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
 

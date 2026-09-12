@@ -5,6 +5,10 @@ import { render } from "ink";
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createConfiguredClineRuntime } from "../integrations/cline-runtime.js";
+import { createReviewFollowUpsClient, type ReviewFollowUp } from "../integrations/review-followups.js";
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui } from "../ui/tui.js";
@@ -46,12 +50,23 @@ const application = new WorkflowApplication(
 process.env.CLINE_LAZY_MCP_TOOLS ??= "1";
 
 const runtime = await createConfiguredClineRuntime(application, workspace);
+
+// Advisory: open review follow-ups (P2/P3 debt from adversarial reviews),
+// shown in the Activity panel. Missing server → empty list.
+const reviewServer = resolve(fileURLToPath(import.meta.url), "../../../mcp-toolbox/apps/review-accountability-mcp/dist/server.js");
+const followUpsClient = existsSync(reviewServer)
+  ? await createReviewFollowUpsClient({ serverScript: reviewServer, workspaceRoot: workspace }).catch(() => undefined)
+  : undefined;
+const reviewFollowUps: readonly ReviewFollowUp[] = followUpsClient === undefined ? [] : await followUpsClient.openFollowUps(8).catch(() => []);
+
 const { waitUntilExit } = render(
   React.createElement(WorkflowTui, {
     application,
     session: runtime.session,
+    reviewFollowUps,
     onStyleChange: (style) => runtime.setSessionStyle(style),
   }),
 );
 await waitUntilExit();
 await runtime.dispose();
+await followUpsClient?.close();
