@@ -28,18 +28,24 @@ export class ClineHostAdapter implements TranslatingHostAdapter<unknown, { stop:
     if (!isBeforeToolEvent(input)) {
       throw new TypeError("invalid Cline beforeTool event");
     }
-    const builtInCapability = clineCapability(input.tool.name);
-    const customCapability = this.options.capabilityForTool?.(input.tool.name);
+    // Lazy MCP mode (CLINE_LAZY_MCP_TOOLS): MCP calls arrive as
+    // `<server>__call_tool` with the real tool name and payload nested inside.
+    // Unwrap so authorization sees the effective tool, not the meta-tool.
+    const unwrapped = input.tool.name.endsWith("__call_tool") ? unwrapLazyCallTool(input.input) : undefined;
+    const effectiveTool = unwrapped?.toolName ?? input.tool.name;
+    const effectiveInput = unwrapped === undefined ? input.input : unwrapped.arguments;
+    const builtInCapability = clineCapability(effectiveTool);
+    const customCapability = this.options.capabilityForTool?.(effectiveTool);
     const capability = stricterCapability(builtInCapability, customCapability) ?? "mutation";
     return {
       sessionId: this.options.sessionId,
       taskId: typeof this.options.taskId === "function" ? this.options.taskId() : this.options.taskId,
-      tool: input.tool.name,
+      tool: effectiveTool,
       capability,
       requiredCapabilities: distinctCapabilities(builtInCapability, customCapability, capability),
-      mutating: capability === "mutation" || capability === "process" || this.options.isMutatingTool(input.tool.name),
-      subjects: extractSubjects(input.tool.name, input.input),
-      input: input.input,
+      mutating: capability === "mutation" || capability === "process" || this.options.isMutatingTool(effectiveTool),
+      subjects: extractSubjects(effectiveTool, effectiveInput),
+      input: effectiveInput,
     };
   }
 
@@ -75,12 +81,24 @@ function isBeforeToolEvent(input: unknown): input is { tool: { name: string }; i
   return typeof (value.tool as Record<string, unknown>).name === "string" && "input" in value;
 }
 
+/** Unwraps a lazy-MCP `__call_tool` payload; malformed payloads fail closed. */
+function unwrapLazyCallTool(input: unknown): { toolName: string; arguments: unknown } {
+  if (typeof input !== "object" || input === null) {
+    throw new TypeError("invalid lazy call_tool input: missing toolName");
+  }
+  const toolName = (input as Record<string, unknown>).toolName;
+  if (typeof toolName !== "string" || toolName.length === 0) {
+    throw new TypeError("invalid lazy call_tool input: missing toolName");
+  }
+  return { toolName, arguments: (input as Record<string, unknown>).arguments };
+}
+
 function extractSubjects(tool: string, input: unknown): readonly string[] {
   if (tool === "read_files" || tool === "read_file") return extractReadSubjects(input);
   if (tool === "apply_patch") return extractPatchSubjects(input);
   if (typeof input !== "object" || input === null) return [];
   const value = input as Record<string, unknown>;
-  for (const key of ["path", "file_path", "filePath"]) {
+  for (const key of ["path", "file_path", "filePath", "workspaceRoot"]) {
     if (!(key in value)) continue;
     const candidate = value[key];
     if (typeof candidate !== "string" || candidate.length === 0) {

@@ -10,6 +10,35 @@ const adapter = new ClineHostAdapter({
   authoritativePreMutation: true,
 });
 
+test("Cline adapter unwraps lazy MCP call_tool arguments for subject extraction", () => {
+  const action = adapter.proposalFromBeforeTool({
+    tool: { name: "workflow-guard__call_tool" },
+    input: { toolName: "guard_check", arguments: { action: "file_write", path: "/outside/secret.txt" } },
+  });
+
+  assert.equal(action.tool, "guard_check");
+  assert.deepEqual(action.subjects, ["/outside/secret.txt"]);
+  assert.equal(action.mutating, true); // unknown nested tools gate as mutation
+  assert.deepEqual(action.input, { action: "file_write", path: "/outside/secret.txt" });
+});
+
+test("Cline adapter treats nested workspaceRoot arguments as authorization subjects", () => {
+  const action = adapter.proposalFromBeforeTool({
+    tool: { name: "learning__call_tool" },
+    input: { toolName: "learning_checkpoint", arguments: { workspaceRoot: "/repo", concept: "x" } },
+  });
+
+  assert.equal(action.tool, "learning_checkpoint");
+  assert.deepEqual(action.subjects, ["/repo"]);
+});
+
+test("Cline adapter fails closed on a malformed lazy call_tool payload", () => {
+  assert.throws(
+    () => adapter.proposalFromBeforeTool({ tool: { name: "memory__call_tool" }, input: { arguments: {} } }),
+    /toolName/,
+  );
+});
+
 test("Cline adapter reports authoritative native pre-tool interception", () => {
   assert.equal(adapter.capabilities.transport, "native");
   assert.equal(adapter.capabilities.enforcementLevel, "enforced");
