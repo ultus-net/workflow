@@ -104,91 +104,186 @@ index 9b387e0..e017583 100644
  		};
  
  		const started = await sessionClient.startRuntimeSession(startRequest);
-diff --git a/apps/cli/src/utils/workflow-bridge.ts b/apps/cli/src/utils/workflow-bridge.ts
+diff --git a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts b/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
+index 7371b78..7a750f3 100644
+--- a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
++++ b/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
+@@ -15,6 +15,7 @@ import { SqliteSessionStore } from "../../services/storage/sqlite-session-store"
+ import { withSessionHistoryOriginMetadata } from "../../session/history-origin";
+ import { CoreSessionService } from "../../session/services/session-service";
+ import { SessionSource } from "../../types/common";
++import { createWorkflowHubHooks } from "./workflow-hooks";
+ 
+ function toChatTurnResult(result: {
+ 	text: string;
+@@ -126,6 +127,10 @@ export function createLocalHubScheduleRuntimeHandlers(
+ 				},
+ 				localRuntime: {
+ 					configExtensions: request.configExtensions,
++					// Workflow is the universal authorization authority: every
++					// hub-started session (scheduled agents included) gates tool
++					// execution through the Workflow bridge and fails closed.
++					hooks: createWorkflowHubHooks(),
+ 				},
+ 			});
+ 			return {
+diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
 new file mode 100644
-index 0000000..01b6a05
+index 0000000..edfcc35
 --- /dev/null
-+++ b/apps/cli/src/utils/workflow-bridge.ts
-@@ -0,0 +1,66 @@
-+import type { AgentHooks, ShellExecutor } from "@cline/core";
++++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
+@@ -0,0 +1,89 @@
++import { createServer, type Server } from "node:http";
++import type { AddressInfo } from "node:net";
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { createWorkflowHubHooks } from "./workflow-hooks";
++
++const toolCall = { toolCallId: "call-1", toolName: "read_file" };
++
++function beforeToolContext() {
++	return { toolCall, input: { path: "README.md" } } as never;
++}
++
++describe("createWorkflowHubHooks", () => {
++	let server: Server | undefined;
++	let lastBody: unknown;
++	let respondWith: { status?: number; body?: unknown } = {};
++
++	beforeEach(async () => {
++		lastBody = undefined;
++		respondWith = {};
++		server = createServer((request, response) => {
++			const chunks: Buffer[] = [];
++			request.on("data", (chunk) => chunks.push(chunk));
++			request.on("end", () => {
++				lastBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
++				if (request.headers.authorization !== "Bearer test-token") {
++					response.writeHead(401, { "content-type": "application/json" });
++					response.end(JSON.stringify({ error: "unauthorized" }));
++					return;
++				}
++				response.writeHead(respondWith.status ?? 200, {
++					"content-type": "application/json",
++				});
++				response.end(JSON.stringify(respondWith.body ?? {}));
++			});
++		});
++		await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
++		const { port } = server.address() as AddressInfo;
++		process.env.WORKFLOW_CLINE_BRIDGE_URL = `http://127.0.0.1:${port}`;
++		process.env.WORKFLOW_CLINE_BRIDGE_TOKEN = "test-token";
++	});
++
++	afterEach(async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		await new Promise<void>((resolve) => server?.close(() => resolve()));
++		server = undefined;
++	});
++
++	it("allows the tool when the Workflow authority does not stop it", async () => {
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBeFalsy();
++		expect(lastBody).toEqual({
++			toolCall,
++			input: { path: "README.md" },
++		});
++	});
++
++	it("propagates a stop decision from the Workflow authority", async () => {
++		respondWith = { body: { stop: true, reason: "denied by workflow" } };
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result).toEqual({ stop: true, reason: "denied by workflow" });
++	});
++
++	it("fails closed when the authority rejects the request", async () => {
++		respondWith = { status: 500, body: { error: "authority exploded" } };
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBe(true);
++		expect(result?.reason).toContain("authority exploded");
++	});
++
++	it("fails closed when the authority is unreachable", async () => {
++		process.env.WORKFLOW_CLINE_BRIDGE_URL = "http://127.0.0.1:1";
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBe(true);
++		expect(result?.reason).toMatch(/unavailable/i);
++	});
++
++	it("fails closed when the bridge environment is not configured", async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBe(true);
++		expect(result?.reason).toMatch(/WORKFLOW_CLINE_BRIDGE/);
++	});
++});
+diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
+new file mode 100644
+index 0000000..fffaba8
+--- /dev/null
++++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
+@@ -0,0 +1,59 @@
++import type { AgentHooks } from "@cline/shared";
 +
 +type BridgeResponse = {
 +	stop?: boolean;
 +	reason?: string;
-+	output?: string;
 +	error?: string;
 +};
 +
-+export function createWorkflowBridge() {
-+	const url = process.env.WORKFLOW_CLINE_BRIDGE_URL?.trim();
-+	const token = process.env.WORKFLOW_CLINE_BRIDGE_TOKEN?.trim();
-+	if (!url || !token) {
-+		throw new Error("Workflow authorization bridge is required for this Cline build");
-+	}
-+
-+	const request = async (path: string, body: unknown): Promise<BridgeResponse> => {
-+		const response = await fetch(`${url}${path}`, {
-+			method: "POST",
-+			headers: {
-+				authorization: `Bearer ${token}`,
-+				"content-type": "application/json",
-+			},
-+			body: JSON.stringify(body),
-+		});
-+		const payload = (await response.json()) as BridgeResponse;
-+		if (!response.ok) {
-+			throw new Error(payload.error || `Workflow bridge returned ${response.status}`);
-+		}
-+		return payload;
-+	};
-+
-+	const authorize = (hooks: AgentHooks | undefined): AgentHooks => ({
-+		...hooks,
++/**
++ * Workflow authorization hooks for sessions started inside the hub daemon
++ * (scheduled agents, chat connectors, teams). Every `beforeTool` decision is
++ * delegated to the Workflow authority over its loopback bridge and fails
++ * closed when the authority is unavailable. See `docs/HUB.md` in the Workflow
++ * repository.
++ */
++export function createWorkflowHubHooks(): AgentHooks {
++	return {
 +		beforeTool: async (ctx) => {
++			const url = process.env.WORKFLOW_CLINE_BRIDGE_URL?.trim();
++			const token = process.env.WORKFLOW_CLINE_BRIDGE_TOKEN?.trim();
++			if (!url || !token) {
++				return {
++					stop: true,
++					reason:
++						"Workflow authorization unavailable: WORKFLOW_CLINE_BRIDGE_URL/WORKFLOW_CLINE_BRIDGE_TOKEN are not configured",
++				};
++			}
 +			try {
-+				const decision = await request("/before-tool", {
-+					toolCall: ctx.toolCall,
-+					input: ctx.input,
++				const response = await fetch(`${url}/before-tool`, {
++					method: "POST",
++					headers: {
++						authorization: `Bearer ${token}`,
++						"content-type": "application/json",
++					},
++					body: JSON.stringify({ toolCall: ctx.toolCall, input: ctx.input }),
 +				});
-+				if (decision.stop) {
++				const payload = (await response.json()) as BridgeResponse;
++				if (!response.ok) {
 +					return {
 +						stop: true,
-+						reason: decision.reason || "Workflow denied tool execution",
++						reason: `Workflow authorization denied: ${payload.error || `bridge returned ${response.status}`}`,
 +					};
 +				}
++				if (payload.stop) {
++					return {
++						stop: true,
++						reason: payload.reason || "Workflow denied tool execution",
++					};
++				}
++				return undefined;
 +			} catch (error) {
 +				return {
 +					stop: true,
 +					reason: `Workflow authorization unavailable: ${error instanceof Error ? error.message : String(error)}`,
 +				};
 +			}
-+			return await hooks?.beforeTool?.(ctx);
 +		},
-+	});
-+
-+	const bash: ShellExecutor = async (command, cwd) => {
-+		const result = await request("/bash", { command, cwd });
-+		if (typeof result.output !== "string") {
-+			throw new Error(result.error || "Workflow bash executor returned no output");
-+		}
-+		return result.output;
 +	};
-+
-+	return { authorize, bash };
-+}
-diff --git a/apps/cli/src/utils/workflow-bridge-local-runtime.ts b/apps/cli/src/utils/workflow-bridge-local-runtime.ts
-new file mode 100644
-index 0000000..7b847fa
---- /dev/null
-+++ b/apps/cli/src/utils/workflow-bridge-local-runtime.ts
-@@ -0,0 +1,10 @@
-+import { createWorkflowBridge } from "./workflow-bridge";
-+
-+/**
-+ * Every hub-side session creator (zen, schedule, connectors) must attach the
-+ * Workflow authorization bridge as a localRuntime hook; the hub executes
-+ * these client-side hooks through its contribution RPC.
-+ */
-+export function workflowBridgeLocalRuntime(): { localRuntime: { hooks: import("@cline/core").AgentHooks } } {
-+	return { localRuntime: { hooks: createWorkflowBridge().authorize(undefined) } };
 +}
