@@ -14,25 +14,16 @@ export interface WorkflowClineTuiBridge {
   close(): Promise<void>;
 }
 
+export type WorkflowApplicationResolver = (workspace?: string) => WorkflowApplication;
+
 export async function createWorkflowClineTuiBridge(
   application: WorkflowApplication,
+  resolveApplication: WorkflowApplicationResolver = () => application,
 ): Promise<WorkflowClineTuiBridge> {
   const token = randomBytes(32).toString("hex");
-  const adapter = new ClineHostAdapter({
-    sessionId: "workflow-tui",
-    taskId: () => application.activeTaskId(),
-    isMutatingTool: () => false,
-    authoritativePreMutation: true,
-  });
-  const plugin = createWorkflowClinePlugin(application, adapter);
-  const shellExecutor = createWorkflowClineShellExecutor(
-    new WorkflowContainedProcess(application, new LinuxBubblewrapContainment()),
-    adapter,
-    (exitCode, output) => Object.assign(new Error(output), { exitCode }),
-  );
 
   const server = createServer((request, response) => {
-    void handleRequest(request, response, token, plugin.hooks.beforeTool, shellExecutor);
+    void handleRequest(request, response, token, resolveApplication);
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -57,26 +48,51 @@ async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
   token: string,
-  beforeTool: (input: ClineBeforeToolHookInput) => Promise<{ stop: true; reason: string } | undefined>,
-  shellExecutor: WorkflowClineShellExecutor,
+  resolveApplication: WorkflowApplicationResolver,
 ): Promise<void> {
   try {
     if (!authorized(request, token) || request.method !== "POST") return send(response, 401, { error: "unauthorized" });
     const body = await readJson(request);
     if (request.url === "/before-tool") {
-      const input = requireBeforeToolInput(body);
-      return send(response, 200, (await beforeTool(input)) ?? {});
+      const { input, workspace } = requireBeforeToolInput(body);
+      const plugin = pluginFor(resolveApplication(workspace));
+      return send(response, 200, (await plugin.hooks.beforeTool(input)) ?? {});
     }
     if (request.url === "/bash") {
       if (!isRecord(body) || typeof body.cwd !== "string" || !(typeof body.command === "string" || isRecord(body.command))) {
         return send(response, 400, { error: "invalid bash request" });
       }
+      const application = resolveApplication(
+        typeof body.workspace === "string" ? body.workspace : body.cwd,
+      );
+      const shellExecutor = shellExecutorFor(application);
       return send(response, 200, { output: await shellExecutor(body.command as never, body.cwd, undefined) });
     }
     send(response, 404, { error: "not found" });
   } catch (error) {
     send(response, 500, { error: error instanceof Error ? error.message : String(error) });
   }
+}
+
+function adapterFor(application: WorkflowApplication): ClineHostAdapter {
+  return new ClineHostAdapter({
+    sessionId: "workflow-tui",
+    taskId: () => application.activeTaskId(),
+    isMutatingTool: () => false,
+    authoritativePreMutation: true,
+  });
+}
+
+function pluginFor(application: WorkflowApplication) {
+  return createWorkflowClinePlugin(application, adapterFor(application));
+}
+
+function shellExecutorFor(application: WorkflowApplication): WorkflowClineShellExecutor {
+  return createWorkflowClineShellExecutor(
+    new WorkflowContainedProcess(application, new LinuxBubblewrapContainment()),
+    adapterFor(application),
+    (exitCode, output) => Object.assign(new Error(output), { exitCode }),
+  );
 }
 
 function authorized(request: IncomingMessage, token: string): boolean {
@@ -98,16 +114,19 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
 }
 
-function requireBeforeToolInput(value: unknown): ClineBeforeToolHookInput {
+function requireBeforeToolInput(value: unknown): { input: ClineBeforeToolHookInput; workspace?: string } {
   if (!isRecord(value) || !isRecord(value.toolCall) || typeof value.toolCall.toolName !== "string") {
     throw new TypeError("invalid before-tool request");
   }
   return {
-    toolCall: {
-      toolName: value.toolCall.toolName,
-      ...(typeof value.toolCall.toolCallId === "string" ? { toolCallId: value.toolCall.toolCallId } : {}),
+    input: {
+      toolCall: {
+        toolName: value.toolCall.toolName,
+        ...(typeof value.toolCall.toolCallId === "string" ? { toolCallId: value.toolCall.toolCallId } : {}),
+      },
+      input: value.input,
     },
-    input: value.input,
+    ...(typeof value.workspace === "string" ? { workspace: value.workspace } : {}),
   };
 }
 

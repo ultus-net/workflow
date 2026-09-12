@@ -62,9 +62,21 @@ Request:
 ```json
 {
   "toolCall": { "toolName": "read_file", "toolCallId": "optional-id" },
-  "input": { "...": "tool-specific payload" }
+  "input": { "...": "tool-specific payload" },
+  "workspace": "/absolute/path/to/surface-workspace"
 }
 ```
+
+`workspace` (optional, additive in v1): the surface's own workspace root. When
+present, the hub authorizes path subjects against the declared workspace
+instead of the hub daemon's cwd — this is what makes one hub correct for many
+concurrent surfaces in different projects. Requirements:
+
+- Must be an absolute path to an existing directory, otherwise the hub
+  responds with an authority error (clients fail closed per §4).
+- When omitted, authorization falls back to the hub daemon's own workspace.
+- Clients must send their real workspace (the agent cannot influence what the
+  trusted client shim sends; the bearer token remains the capability).
 
 Response `200`:
 

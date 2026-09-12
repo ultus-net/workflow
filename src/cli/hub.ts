@@ -28,15 +28,16 @@ const tasks: WorkflowTask[] = [
   },
 ];
 
+const graph = new TaskGraph(tasks);
 const application = new WorkflowApplication(
-  new TaskGraph(tasks),
+  graph,
   hostCapabilities({ transport: "native", authoritativePreMutation: true }),
   [],
   new Set(["read", "mutation", "process"]),
   workspace,
 );
 
-const hub = await createWorkflowHub(application);
+const hub = await createWorkflowHub(application, { graph });
 console.log(`Workflow hub listening at ${hub.url}`);
 console.log(`Discovery file: ${hub.discoveryPath}`);
 

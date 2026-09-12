@@ -1,9 +1,10 @@
-import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
 
-import type { WorkflowApplication } from "../application/workflow.js";
+import { WorkflowApplication } from "../application/workflow.js";
+import type { TaskGraph } from "../kernel/task-graph.js";
 import { createWorkflowClineTuiBridge, type WorkflowClineTuiBridge } from "./cline-tui-bridge.js";
 
 /**
@@ -27,12 +28,17 @@ export function resolveHubDiscoveryPath(dir: string): string {
 
 export async function createWorkflowHub(
   application: WorkflowApplication,
-  options: { discoveryDir?: string } = {},
+  options: { discoveryDir?: string; graph?: TaskGraph } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
   const discoveryPath = resolveHubDiscoveryPath(dir);
   application.startInteractiveTask();
-  const bridge: WorkflowClineTuiBridge = await createWorkflowClineTuiBridge(application);
+  const bridge: WorkflowClineTuiBridge = await createWorkflowClineTuiBridge(
+    application,
+    options.graph === undefined
+      ? undefined
+      : workspaceApplicationResolver(application, options.graph),
+  );
 
   mkdirSync(dirname(discoveryPath), { recursive: true });
   const temporaryPath = `${discoveryPath}.${process.pid}.tmp`;
@@ -55,5 +61,39 @@ export async function createWorkflowHub(
       await bridge.close();
       rmSync(discoveryPath, { force: true });
     },
+  };
+}
+
+/**
+ * Resolves the WorkflowApplication for a surface-declared workspace. Each
+ * workspace gets a lazily created application over the hub's shared task
+ * graph, so task/evidence state is global while workspace-path authorization
+ * is per surface. Invalid declarations throw, which the bridge surfaces as an
+ * authority error (clients fail closed). See `docs/HUB_PROTOCOL.md` §3.
+ */
+function workspaceApplicationResolver(
+  fallback: WorkflowApplication,
+  graph: TaskGraph,
+): (workspace?: string) => WorkflowApplication {
+  const applications = new Map<string, WorkflowApplication>();
+  return (workspace?: string): WorkflowApplication => {
+    if (workspace === undefined) return fallback;
+    if (!isAbsolute(workspace)) throw new TypeError(`declared workspace must be absolute: ${workspace}`);
+    if (!statSync(workspace, { throwIfNoEntry: false })?.isDirectory()) {
+      throw new TypeError(`declared workspace is not an existing directory: ${workspace}`);
+    }
+    let application = applications.get(workspace);
+    if (application === undefined) {
+      application = new WorkflowApplication(
+        graph,
+        fallback.host,
+        [],
+        fallback.allowedCapabilities,
+        workspace,
+      );
+      application.startInteractiveTask();
+      applications.set(workspace, application);
+    }
+    return application;
   };
 }

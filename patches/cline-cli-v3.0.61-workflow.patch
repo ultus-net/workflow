@@ -210,10 +210,10 @@ index 7371b78..7a750f3 100644
  			return {
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
 new file mode 100644
-index 0000000..53ff523
+index 0000000..4ff39d4
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
-@@ -0,0 +1,137 @@
+@@ -0,0 +1,139 @@
 +import { createServer, type Server } from "node:http";
 +import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 +import type { AddressInfo } from "node:net";
@@ -282,6 +282,7 @@ index 0000000..53ff523
 +		expect(lastBody).toEqual({
 +			toolCall,
 +			input: { path: "README.md" },
++			workspace: process.cwd(),
 +		});
 +	});
 +
@@ -332,6 +333,7 @@ index 0000000..53ff523
 +		expect(lastBody).toEqual({
 +			toolCall,
 +			input: { path: "README.md" },
++			workspace: process.cwd(),
 +		});
 +	});
 +
@@ -353,7 +355,7 @@ index 0000000..53ff523
 +});
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
 new file mode 100644
-index 0000000..15fc84f
+index 0000000..da5c0bb
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
 @@ -0,0 +1,87 @@
@@ -419,7 +421,7 @@ index 0000000..15fc84f
 +						authorization: `Bearer ${token}`,
 +						"content-type": "application/json",
 +					},
-+					body: JSON.stringify({ toolCall: ctx.toolCall, input: ctx.input }),
++					body: JSON.stringify({ toolCall: ctx.toolCall, input: ctx.input, workspace: process.cwd() }),
 +				});
 +				const payload = (await response.json()) as BridgeResponse;
 +				if (!response.ok) {
