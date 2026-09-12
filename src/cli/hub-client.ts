@@ -41,13 +41,12 @@ export function readHubDiscovery(discoveryPath: string): HubDiscovery | undefine
 
 export async function probeHub(discovery: HubDiscovery): Promise<boolean> {
   try {
-    const response = await fetch(`${discovery.endpoint}/before-tool`, {
+    const response = await fetch(`${discovery.endpoint}/health`, {
       method: "POST",
-      headers: { authorization: `Bearer ${discovery.token}`, "content-type": "application/json" },
-      body: JSON.stringify({ toolCall: { toolName: "read_file" }, input: { path: "." } }),
+      headers: { authorization: `Bearer ${discovery.token}` },
       signal: AbortSignal.timeout(2_000),
     });
-    return response.status !== 401;
+    return response.status === 200;
   } catch {
     return false;
   }

@@ -52,6 +52,7 @@ async function handleRequest(
 ): Promise<void> {
   try {
     if (!authorized(request, token) || request.method !== "POST") return send(response, 401, { error: "unauthorized" });
+    if (request.url === "/health") return send(response, 200, { status: "ok" });
     const body = await readJson(request);
     if (request.url === "/before-tool") {
       const { input, workspace } = requireBeforeToolInput(body);

@@ -39,6 +39,9 @@ Client requirements:
 - A missing file means the hub is not running. A file whose endpoint rejects
   the token (401) or is unreachable is **stale**: delete it and fail closed.
 - The hub removes the discovery file on clean shutdown.
+- The hub is **single-instance per data-dir**: it holds an atomic lock at
+  `<data-dir>/hub/lock` (containing the owning pid). A second daemon with a
+  live lock holder refuses to start; a lock owned by a dead pid is reclaimed.
 
 ## 2. Authentication
 
@@ -52,6 +55,12 @@ Comparison is constant-time. Any request with a missing or wrong token, or a
 non-POST method, returns `401`.
 
 ## 3. Endpoints
+
+### `POST /health` — liveness probe
+
+No request body. Response `200`: `{ "status": "ok" }`. Clients use this to
+validate a discovery file (200 = live hub, 401/unreachable = stale). It is
+also the recommended readiness check for service managers.
 
 ### `POST /before-tool` — authorization gate
 

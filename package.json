@@ -23,7 +23,8 @@
     "README.md",
     "THREAT_MODEL.md",
     "docs",
-    "mcp-toolbox"
+    "mcp-toolbox",
+    "packaging"
   ],
   "engines": {
     "node": ">=22"

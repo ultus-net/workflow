@@ -1,0 +1,20 @@
+# Systemd user unit for the Workflow authority daemon.
+# Install:  mkdir -p ~/.config/systemd/user
+#           cp packaging/workflow-hub.service ~/.config/systemd/user/
+#           systemctl --user daemon-reload
+#           systemctl --user enable --now workflow-hub
+# Requires the `workflow-hub` bin on PATH (npm global install or a local
+# checkout build). Adjust ExecStart to an absolute path when needed.
+[Unit]
+Description=Workflow hub — universal authorization authority for agent surfaces
+Documentation=https://github.com/ultus-net/workflow/blob/main/docs/HUB.md
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=workflow-hub
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

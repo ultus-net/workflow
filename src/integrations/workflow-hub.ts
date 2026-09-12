@@ -1,4 +1,4 @@
-import { mkdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { randomBytes } from "node:crypto";
@@ -32,36 +32,82 @@ export async function createWorkflowHub(
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
   const discoveryPath = resolveHubDiscoveryPath(dir);
-  application.startInteractiveTask();
-  const bridge: WorkflowClineTuiBridge = await createWorkflowClineTuiBridge(
-    application,
-    options.graph === undefined
-      ? undefined
-      : workspaceApplicationResolver(application, options.graph),
-  );
+  const lockDir = join(dir, "hub", "lock");
+  acquireInstanceLock(lockDir);
+  try {
+    application.startInteractiveTask();
+    const bridge: WorkflowClineTuiBridge = await createWorkflowClineTuiBridge(
+      application,
+      options.graph === undefined
+        ? undefined
+        : workspaceApplicationResolver(application, options.graph),
+    );
 
-  mkdirSync(dirname(discoveryPath), { recursive: true });
-  const temporaryPath = `${discoveryPath}.${process.pid}.tmp`;
-  writeFileSync(
-    temporaryPath,
-    JSON.stringify({
-      protocol: 1,
-      hubId: randomBytes(8).toString("hex"),
-      endpoint: bridge.url,
-      token: bridge.token,
-    }),
-    { encoding: "utf8", mode: 0o600 },
-  );
-  renameSync(temporaryPath, discoveryPath);
+    mkdirSync(dirname(discoveryPath), { recursive: true });
+    const temporaryPath = `${discoveryPath}.${process.pid}.tmp`;
+    writeFileSync(
+      temporaryPath,
+      JSON.stringify({
+        protocol: 1,
+        hubId: randomBytes(8).toString("hex"),
+        endpoint: bridge.url,
+        token: bridge.token,
+      }),
+      { encoding: "utf8", mode: 0o600 },
+    );
+    renameSync(temporaryPath, discoveryPath);
 
-  return {
-    url: bridge.url,
-    discoveryPath,
-    close: async () => {
-      await bridge.close();
-      rmSync(discoveryPath, { force: true });
-    },
-  };
+    return {
+      url: bridge.url,
+      discoveryPath,
+      close: async () => {
+        await bridge.close();
+        rmSync(discoveryPath, { force: true });
+        rmSync(lockDir, { recursive: true, force: true });
+      },
+    };
+  } catch (error) {
+    rmSync(lockDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/**
+ * Single-instance guard: the lock directory is created atomically (mkdir is
+ * atomic on POSIX) and holds the owning pid. A live pid means another hub is
+ * running; a dead pid means a crashed hub and the lock is reclaimed.
+ */
+function acquireInstanceLock(lockDir: string): void {
+  mkdirSync(dirname(lockDir), { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      mkdirSync(lockDir);
+      writeFileSync(join(lockDir, "pid"), String(process.pid), { encoding: "utf8", mode: 0o600 });
+      return;
+    } catch {
+      // Lock exists: inspect the owning pid.
+    }
+    let pid = Number.NaN;
+    try {
+      pid = Number(readFileSync(join(lockDir, "pid"), "utf8").trim());
+    } catch {
+      // Unreadable lock: treat as stale.
+    }
+    if (Number.isInteger(pid) && pid > 0 && processAlive(pid)) {
+      throw new Error(`Workflow hub is already running (pid ${pid})`);
+    }
+    rmSync(lockDir, { recursive: true, force: true });
+  }
+  throw new Error("Workflow hub instance lock could not be acquired");
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
