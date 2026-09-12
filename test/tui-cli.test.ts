@@ -88,15 +88,16 @@ test("patched Cline accepts only bounded truecolor SGR artwork outside printable
   assert.match(trackedRobot, /visibleLine\.length === width/);
 });
 
-test("patched Cline home no longer reserves space for large Workflow artwork", () => {
+test("patched Cline home renders the pet directly above the prompt box", () => {
   const homeView = readFileSync(
     resolve(process.cwd(), ".workflow-cline", "cline", "apps", "cli", "src", "tui", "views", "home-view.tsx"),
     "utf8",
   );
   assert.match(homeView, /<TrackedRobot workflowHome/);
+  assert.ok(homeView.indexOf("<TrackedRobot workflowHome") < homeView.indexOf("<InputBar"), "pet must render above the prompt box");
 });
 
-test("Workflow home removes the large artwork without adding a status sprite", () => {
+test("patched Cline status bar shows the pet during sessions", () => {
   const homeView = readFileSync(
     resolve(process.cwd(), ".workflow-cline", "cline", "apps", "cli", "src", "tui", "views", "home-view.tsx"),
     "utf8",
@@ -108,8 +109,11 @@ test("Workflow home removes the large artwork without adding a status sprite", (
   const launcher = readFileSync(resolve(process.cwd(), "src", "cli", "tui.tsx"), "utf8");
 
   assert.match(homeView, /workflowAnimationPath !== undefined/);
-  assert.doesNotMatch(launcher, /CROW|Crow|crow|WORKFLOW_TUI_STATUS_ANIMATION_PATH/);
-  assert.doesNotMatch(statusBar, /WorkflowCrow|resolveWorkflowCrowState|WORKFLOW_TUI_STATUS_ANIMATION_PATH/);
+  assert.match(statusBar, /WORKFLOW_TUI_STATUS_ANIMATION_PATH/);
+  assert.match(statusBar, /variant !== "home"/);
+  assert.match(launcher, /WORKFLOW_TUI_ANIMATION_PATH/);
+  assert.match(launcher, /WORKFLOW_TUI_STATUS_ANIMATION_PATH/);
+  assert.doesNotMatch(launcher, /CROW|Crow|crow/);
 });
 
 test("patched Cline refuses interactive startup without the Workflow authorization bridge", async () => {

@@ -44,31 +44,38 @@ const application = new WorkflowApplication(
 );
 
 application.startInteractiveTask();
-const petAnimationPath = petDir === undefined ? undefined : await writePetAnimation(petDir);
+const petAnimations = petDir === undefined ? undefined : await writePetAnimations(petDir);
 const bridge = await createWorkflowClineTuiBridge(application);
 try {
-  const exitCode = await runClineTui(clineRoot, workspace, bridge.url, bridge.token, petAnimationPath);
+  const exitCode = await runClineTui(clineRoot, workspace, bridge.url, bridge.token, petAnimations);
   process.exitCode = exitCode;
 } finally {
   await bridge.close();
 }
 
 const PET_HOME_CELL_WIDTH = 24;
-const PET_HOME_FRAME_DELAY_MS = 120;
+const PET_STATUS_CELL_WIDTH = 10;
+const PET_FRAME_DELAY_MS = 120;
 
-async function writePetAnimation(dir: string): Promise<string> {
+async function writePetAnimations(dir: string): Promise<{ home: string; status: string }> {
   const petJson = await readFile(join(dir, "pet.json"), "utf8");
   const spritesheet = new Uint8Array(await readFile(join(dir, "spritesheet.webp")).catch(() => readFile(join(dir, "sprite.webp"))));
   const pet = parseCodexPet(petJson, spritesheet);
-  const frames = codexPetStateFrames(pet, "idle", PET_HOME_CELL_WIDTH);
-  const height = frames[0]!.split("\n").length;
   const tempDir = await mkdtemp(join(tmpdir(), "workflow-pet-"));
-  const path = join(tempDir, "animation.json");
-  await writeFile(path, JSON.stringify({ frames, delays: frames.map(() => PET_HOME_FRAME_DELAY_MS), width: PET_HOME_CELL_WIDTH, height }));
-  return path;
+  const write = async (name: string, state: string, cellWidth: number): Promise<string> => {
+    const frames = codexPetStateFrames(pet, state, cellWidth);
+    const height = frames[0]!.split("\n").length;
+    const path = join(tempDir, name);
+    await writeFile(path, JSON.stringify({ frames, delays: frames.map(() => PET_FRAME_DELAY_MS), width: cellWidth, height }));
+    return path;
+  };
+  return {
+    home: await write("home-animation.json", "idle", PET_HOME_CELL_WIDTH),
+    status: await write("status-animation.json", "idle", PET_STATUS_CELL_WIDTH),
+  };
 }
 
-function runClineTui(clineRoot: string, cwd: string, bridgeUrl: string, bridgeToken: string, petAnimationPath: string | undefined): Promise<number> {
+function runClineTui(clineRoot: string, cwd: string, bridgeUrl: string, bridgeToken: string, petAnimations: { home: string; status: string } | undefined): Promise<number> {
   return new Promise((resolveExit, reject) => {
     const child = spawn(
       "npx",
@@ -80,7 +87,7 @@ function runClineTui(clineRoot: string, cwd: string, bridgeUrl: string, bridgeTo
           WORKFLOW_CLINE_BRIDGE_URL: bridgeUrl,
           WORKFLOW_CLINE_BRIDGE_TOKEN: bridgeToken,
           WORKFLOW_TUI_MARK_B64: Buffer.from(WORKFLOW_MARK).toString("base64"),
-          ...(petAnimationPath === undefined ? {} : { WORKFLOW_TUI_ANIMATION_PATH: petAnimationPath }),
+          ...(petAnimations === undefined ? {} : { WORKFLOW_TUI_ANIMATION_PATH: petAnimations.home, WORKFLOW_TUI_STATUS_ANIMATION_PATH: petAnimations.status }),
         },
       },
     );

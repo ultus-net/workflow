@@ -35,8 +35,36 @@ index 596cf93..bf58b65 100644
  			input.resolveToolPolicy,
  		);
  		return buildInteractiveSessionConfig({
+diff --git a/apps/cli/src/tui/components/status-bar.tsx b/apps/cli/src/tui/components/status-bar.tsx
+index 00c04a4..1dc4248 100644
+--- a/apps/cli/src/tui/components/status-bar.tsx
++++ b/apps/cli/src/tui/components/status-bar.tsx
+@@ -6,6 +6,7 @@ import {
+ } from "../../utils/usage-cost-display";
+ import { useTheme } from "../hooks/use-theme";
+ import { HOME_VIEW_MAX_WIDTH } from "../types";
++import { TrackedRobot } from "./tracked-robot";
+ 
+ export function createContextBar(
+ 	used: number,
+@@ -225,8 +226,15 @@ export function StatusBar(props: StatusBarProps) {
+ 		pathPart.length > pathMax
+ 			? `${pathPart.slice(0, pathMax - 3)}...`
+ 			: pathPart;
++	const workflowStatusAnimationPath =
++		props.variant !== "home" ? process.env.WORKFLOW_TUI_STATUS_ANIMATION_PATH : undefined;
+ 	return (
+ 		<box flexDirection="column" paddingX={1}>
++			{workflowStatusAnimationPath !== undefined ? (
++				<box flexShrink={0}>
++					<TrackedRobot animationPath={workflowStatusAnimationPath} />
++				</box>
++			) : null}
+ 			<box flexDirection="row" justifyContent="space-between">
+ 				<text fg="gray">
+ 					{truncatedModel}
 diff --git a/apps/cli/src/tui/components/tracked-robot.tsx b/apps/cli/src/tui/components/tracked-robot.tsx
-index 68f52ef..3934305 100644
+index 68f52ef..e118784 100644
 --- a/apps/cli/src/tui/components/tracked-robot.tsx
 +++ b/apps/cli/src/tui/components/tracked-robot.tsx
 @@ -1,4 +1,5 @@
@@ -51,8 +79,8 @@ index 68f52ef..3934305 100644
  }
  
 -export function TrackedRobot(props: { cursorX?: number; cursorY?: number }) {
-+export function TrackedRobot(props: { cursorX?: number; cursorY?: number; workflowHome?: boolean; animationWidth?: number; animationHeight?: number }) {
-+	const workflowAnimationPath = props.workflowHome ? process.env.WORKFLOW_TUI_ANIMATION_PATH : undefined;
++export function TrackedRobot(props: { cursorX?: number; cursorY?: number; workflowHome?: boolean; animationWidth?: number; animationHeight?: number; animationPath?: string }) {
++	const workflowAnimationPath = props.workflowHome ? process.env.WORKFLOW_TUI_ANIMATION_PATH : props.animationPath;
 +	const [workflowFrame, setWorkflowFrame] = useState(0);
 +	const workflowStartedAt = useRef(Date.now());
 +	const workflowAnimation = useRef<ReturnType<typeof loadWorkflowAnimation> | null>(null);
@@ -208,7 +236,7 @@ index 68f52ef..3934305 100644
 +	return output.map((row) => row.join("")).join("\n");
 +}
 diff --git a/apps/cli/src/tui/views/home-view.tsx b/apps/cli/src/tui/views/home-view.tsx
-index 753cf36..b96f9a3 100644
+index 753cf36..6f1aee0 100644
 --- a/apps/cli/src/tui/views/home-view.tsx
 +++ b/apps/cli/src/tui/views/home-view.tsx
 @@ -1,17 +1,16 @@
@@ -262,7 +290,7 @@ index 753cf36..b96f9a3 100644
  
  	return (
  		<box
-@@ -92,10 +77,14 @@ export function HomeView(props: {
+@@ -92,10 +77,9 @@ export function HomeView(props: {
  			width="100%"
  			height="100%"
  			alignItems="center"
@@ -271,16 +299,24 @@ index 753cf36..b96f9a3 100644
 +			justifyContent="flex-start"
  		>
 -			<TrackedRobot cursorX={trackedCursorX} cursorY={trackedCursorY} />
-+			{workflowAnimationPath !== undefined ? (
-+				<box marginTop={1} flexShrink={0}>
-+					<TrackedRobot workflowHome />
-+				</box>
-+			) : null}
 +			<box flexGrow={1} />
  			<box marginTop={1} marginBottom={1} flexShrink={0}>
  				<text fg={defaultFg}>
  					<strong>What can I do for you?</strong>
-@@ -120,7 +109,6 @@ export function HomeView(props: {
+@@ -108,7 +92,11 @@ export function HomeView(props: {
+ 					</em>
+ 				</text>
+ 			</box>
+-
++			{workflowAnimationPath !== undefined ? (
++				<box marginBottom={1} flexShrink={0}>
++					<TrackedRobot workflowHome />
++				</box>
++			) : null}
+ 			<box flexDirection="column" width={contentWidth} flexShrink={0}>
+ 				<InputBar
+ 					accent={accent}
+@@ -120,7 +108,6 @@ export function HomeView(props: {
  					inputKey={inputKey}
  					onSubmit={onSubmit}
  					onContentChange={onContentChange}
