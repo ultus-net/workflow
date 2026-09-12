@@ -84,10 +84,16 @@ Sandbox/isolation remains the same as the TUI router today.
 ## Implementation sequence (suggested)
 
 1. Extract hub daemon from existing `createWorkflowClineTuiBridge` + make it
-   long-running; expose discovery token.
+   long-running; expose discovery token. **(done — `workflow-hub` bin)**
 2. Launcher resolves against the global hub instead of spawning per-TUI helper.
+   **(done — `src/cli/hub-client.ts`, fail-closed)**
 3. Cron-runner in vendored clone uses the same authorize hooks (no CLI patch).
-4. TUI/headless/zen connectors converge to the hub.
+   **(done — hub daemon injects `createWorkflowHubHooks()` into every
+   hub-started session)**
+4. TUI/headless/zen connectors converge to the hub. **(done — every surface
+   resolves the Workflow authority via env, falling back to the hub discovery
+   file, so directly-launched and detached processes converge on the global
+   hub without launcher plumbing)**
 
 Acceptance for this milestone: a fresh session is *guarded by the hub* for
 every surface, even scheduled mode, and the patch only remains responsible for

@@ -104,6 +104,87 @@ index 9b387e0..e017583 100644
  		};
  
  		const started = await sessionClient.startRuntimeSession(startRequest);
+diff --git a/apps/cli/src/utils/workflow-bridge.test.ts b/apps/cli/src/utils/workflow-bridge.test.ts
+new file mode 100644
+index 0000000..6f72018
+--- /dev/null
++++ b/apps/cli/src/utils/workflow-bridge.test.ts
+@@ -0,0 +1,75 @@
++import { createServer, type Server } from "node:http";
++import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
++import type { AddressInfo } from "node:net";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { createWorkflowBridge } from "./workflow-bridge";
++
++describe("createWorkflowBridge authority resolution", () => {
++	let server: Server | undefined;
++	let home: string;
++	let originalHome: string | undefined;
++	let bridgeUrl: string;
++
++	beforeEach(async () => {
++		originalHome = process.env.HOME;
++		home = mkdtempSync(join(tmpdir(), "workflow-bridge-home-"));
++		process.env.HOME = home;
++		server = createServer((request, response) => {
++			const chunks: Buffer[] = [];
++			request.on("data", (chunk) => chunks.push(chunk));
++			request.on("end", () => {
++				if (request.headers.authorization !== "Bearer test-token") {
++					response.writeHead(401, { "content-type": "application/json" });
++					response.end(JSON.stringify({ error: "unauthorized" }));
++					return;
++				}
++				response.writeHead(200, { "content-type": "application/json" });
++				response.end(JSON.stringify({}));
++			});
++		});
++		await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
++		bridgeUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
++	});
++
++	afterEach(async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		if (originalHome === undefined) delete process.env.HOME;
++		else process.env.HOME = originalHome;
++		rmSync(home, { recursive: true, force: true });
++		await new Promise<void>((resolve) => server?.close(() => resolve()));
++		server = undefined;
++	});
++
++	it("prefers the launcher-provided environment", async () => {
++		process.env.WORKFLOW_CLINE_BRIDGE_URL = bridgeUrl;
++		process.env.WORKFLOW_CLINE_BRIDGE_TOKEN = "test-token";
++		const bridge = createWorkflowBridge();
++		const decision = await bridge.authorize(undefined).beforeTool?.({
++			toolCall: { toolName: "read_file" },
++			input: {},
++		} as never);
++		expect(decision?.stop).toBeFalsy();
++	});
++
++	it("falls back to the Workflow hub discovery file", async () => {
++		const discoveryDir = join(home, ".workflow", "hub");
++		mkdirSync(discoveryDir, { recursive: true });
++		writeFileSync(
++			join(discoveryDir, "discovery.json"),
++			JSON.stringify({ hubId: "hub-1", endpoint: bridgeUrl, token: "test-token" }),
++		);
++		const bridge = createWorkflowBridge();
++		const decision = await bridge.authorize(undefined).beforeTool?.({
++			toolCall: { toolName: "read_file" },
++			input: {},
++		} as never);
++		expect(decision?.stop).toBeFalsy();
++	});
++
++	it("throws when neither the environment nor a discovery file is available", () => {
++		expect(() => createWorkflowBridge()).toThrow(/Workflow authorization bridge/);
++	});
++});
 diff --git a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts b/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
 index 7371b78..7a750f3 100644
 --- a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
@@ -129,12 +210,15 @@ index 7371b78..7a750f3 100644
  			return {
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
 new file mode 100644
-index 0000000..edfcc35
+index 0000000..53ff523
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
-@@ -0,0 +1,89 @@
+@@ -0,0 +1,137 @@
 +import { createServer, type Server } from "node:http";
++import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 +import type { AddressInfo } from "node:net";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
 +import { afterEach, beforeEach, describe, expect, it } from "vitest";
 +import { createWorkflowHubHooks } from "./workflow-hooks";
 +
@@ -148,10 +232,16 @@ index 0000000..edfcc35
 +	let server: Server | undefined;
 +	let lastBody: unknown;
 +	let respondWith: { status?: number; body?: unknown } = {};
++	let home: string;
++	let originalHome: string | undefined;
++	let bridgeUrl: string;
 +
 +	beforeEach(async () => {
 +		lastBody = undefined;
 +		respondWith = {};
++		originalHome = process.env.HOME;
++		home = mkdtempSync(join(tmpdir(), "workflow-hooks-home-"));
++		process.env.HOME = home;
 +		server = createServer((request, response) => {
 +			const chunks: Buffer[] = [];
 +			request.on("data", (chunk) => chunks.push(chunk));
@@ -170,13 +260,17 @@ index 0000000..edfcc35
 +		});
 +		await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
 +		const { port } = server.address() as AddressInfo;
-+		process.env.WORKFLOW_CLINE_BRIDGE_URL = `http://127.0.0.1:${port}`;
++		bridgeUrl = `http://127.0.0.1:${port}`;
++		process.env.WORKFLOW_CLINE_BRIDGE_URL = bridgeUrl;
 +		process.env.WORKFLOW_CLINE_BRIDGE_TOKEN = "test-token";
 +	});
 +
 +	afterEach(async () => {
 +		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
 +		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		if (originalHome === undefined) delete process.env.HOME;
++		else process.env.HOME = originalHome;
++		rmSync(home, { recursive: true, force: true });
 +		await new Promise<void>((resolve) => server?.close(() => resolve()));
 +		server = undefined;
 +	});
@@ -221,13 +315,51 @@ index 0000000..edfcc35
 +		expect(result?.stop).toBe(true);
 +		expect(result?.reason).toMatch(/WORKFLOW_CLINE_BRIDGE/);
 +	});
++
++	it("resolves the Workflow hub through its discovery file when the environment is absent", async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		const discoveryDir = join(home, ".workflow", "hub");
++		mkdirSync(discoveryDir, { recursive: true });
++		writeFileSync(
++			join(discoveryDir, "discovery.json"),
++			JSON.stringify({ hubId: "hub-1", endpoint: bridgeUrl, token: "test-token" }),
++		);
++
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBeFalsy();
++		expect(lastBody).toEqual({
++			toolCall,
++			input: { path: "README.md" },
++		});
++	});
++
++	it("fails closed when the discovery file is stale", async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		const discoveryDir = join(home, ".workflow", "hub");
++		mkdirSync(discoveryDir, { recursive: true });
++		writeFileSync(
++			join(discoveryDir, "discovery.json"),
++			JSON.stringify({ hubId: "stale", endpoint: "http://127.0.0.1:1", token: "test-token" }),
++		);
++
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBe(true);
++		expect(result?.reason).toMatch(/unavailable/i);
++	});
 +});
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
 new file mode 100644
-index 0000000..fffaba8
+index 0000000..15fc84f
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,87 @@
++import { readFileSync } from "node:fs";
++import { homedir } from "node:os";
++import { join } from "node:path";
 +import type { AgentHooks } from "@cline/shared";
 +
 +type BridgeResponse = {
@@ -235,6 +367,31 @@ index 0000000..fffaba8
 +	reason?: string;
 +	error?: string;
 +};
++
++type BridgeAuthority = { url: string; token: string };
++
++/**
++ * Resolves the Workflow authority per hook call: launcher-provided
++ * environment first, then the global hub's discovery file. Per-call
++ * resolution keeps detached daemons working across hub restarts and token
++ * rotation. See `docs/HUB.md` in the Workflow repository.
++ */
++function resolveBridgeAuthority(): BridgeAuthority | undefined {
++	const url = process.env.WORKFLOW_CLINE_BRIDGE_URL?.trim();
++	const token = process.env.WORKFLOW_CLINE_BRIDGE_TOKEN?.trim();
++	if (url && token) return { url, token };
++	try {
++		const discovery = JSON.parse(
++			readFileSync(join(homedir(), ".workflow", "hub", "discovery.json"), "utf8"),
++		) as { endpoint?: unknown; token?: unknown };
++		if (typeof discovery.endpoint === "string" && typeof discovery.token === "string") {
++			return { url: discovery.endpoint, token: discovery.token };
++		}
++	} catch {
++		// No discovery file (or unreadable): fall through to fail closed.
++	}
++	return undefined;
++}
 +
 +/**
 + * Workflow authorization hooks for sessions started inside the hub daemon
@@ -246,15 +403,15 @@ index 0000000..fffaba8
 +export function createWorkflowHubHooks(): AgentHooks {
 +	return {
 +		beforeTool: async (ctx) => {
-+			const url = process.env.WORKFLOW_CLINE_BRIDGE_URL?.trim();
-+			const token = process.env.WORKFLOW_CLINE_BRIDGE_TOKEN?.trim();
-+			if (!url || !token) {
++			const authority = resolveBridgeAuthority();
++			if (!authority) {
 +				return {
 +					stop: true,
 +					reason:
-+						"Workflow authorization unavailable: WORKFLOW_CLINE_BRIDGE_URL/WORKFLOW_CLINE_BRIDGE_TOKEN are not configured",
++						"Workflow authorization unavailable: WORKFLOW_CLINE_BRIDGE_URL/WORKFLOW_CLINE_BRIDGE_TOKEN are not configured and no hub discovery file exists",
 +				};
 +			}
++			const { url, token } = authority;
 +			try {
 +				const response = await fetch(`${url}/before-tool`, {
 +					method: "POST",
