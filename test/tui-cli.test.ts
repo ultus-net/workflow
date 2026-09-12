@@ -3,7 +3,31 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 import { spawn } from "node-pty";
-import { resolveTuiWorkspace } from "../src/cli/tui-args.js";
+import { resolveTuiWorkspace, resolveTuiPetDir } from "../src/cli/tui-args.js";
+
+test("TUI accepts an optional --pet package directory", () => {
+  assert.equal(resolveTuiPetDir([]), undefined);
+  assert.equal(resolveTuiPetDir(["--pet", "/tmp/pet"]), "/tmp/pet");
+  assert.equal(resolveTuiPetDir(["--cwd", "/tmp/w", "--pet", "rel-pet"], "/base"), "/base/rel-pet");
+  assert.throws(() => resolveTuiPetDir(["--pet"]), /requires a path/);
+});
+
+test("TUI launcher feeds the pet into Cline via the animation env hook", () => {
+  const launcher = readFileSync(resolve(process.cwd(), "src", "cli", "tui.tsx"), "utf8");
+  assert.match(launcher, /resolveTuiPetDir/);
+  assert.match(launcher, /WORKFLOW_TUI_ANIMATION_PATH/);
+  assert.match(launcher, /parseCodexPet/);
+  assert.match(launcher, /codexPetStateFrames/);
+});
+
+test("patched Cline home renders the pet animation only when configured", () => {
+  const homeView = readFileSync(
+    resolve(process.cwd(), ".workflow-cline", "cline", "apps", "cli", "src", "tui", "views", "home-view.tsx"),
+    "utf8",
+  );
+  assert.match(homeView, /TrackedRobot workflowHome/);
+  assert.match(homeView, /process\.env\.WORKFLOW_TUI_ANIMATION_PATH/);
+});
 
 test("TUI workspace accepts Cline-compatible --cwd and -c arguments", () => {
   assert.equal(resolveTuiWorkspace(["--cwd", "/tmp/project"], "/fallback"), "/tmp/project");
@@ -48,7 +72,7 @@ test("patched Cline retains bounded truecolor frame rendering for Workflow statu
 
 test("TUI launcher does not load the old start-page raven artwork", () => {
   const launcher = readFileSync(resolve(process.cwd(), "src", "cli", "tui.tsx"), "utf8");
-  assert.doesNotMatch(launcher, /raven-small\.ans|homeArt|WORKFLOW_TUI_ANIMATION_PATH/);
+  assert.doesNotMatch(launcher, /raven-small\.ans|homeArt/);
 });
 
 test("patched Cline accepts only bounded truecolor SGR artwork outside printable ASCII", () => {
@@ -69,7 +93,7 @@ test("patched Cline home no longer reserves space for large Workflow artwork", (
     resolve(process.cwd(), ".workflow-cline", "cline", "apps", "cli", "src", "tui", "views", "home-view.tsx"),
     "utf8",
   );
-  assert.doesNotMatch(homeView, /TrackedRobot|maxAnimationHeight|maxAnimationWidth|animationWidth|animationHeight/);
+  assert.match(homeView, /<TrackedRobot workflowHome/);
 });
 
 test("Workflow home removes the large artwork without adding a status sprite", () => {
@@ -83,7 +107,7 @@ test("Workflow home removes the large artwork without adding a status sprite", (
   );
   const launcher = readFileSync(resolve(process.cwd(), "src", "cli", "tui.tsx"), "utf8");
 
-  assert.doesNotMatch(homeView, /<TrackedRobot/);
+  assert.match(homeView, /workflowAnimationPath !== undefined/);
   assert.doesNotMatch(launcher, /CROW|Crow|crow|WORKFLOW_TUI_STATUS_ANIMATION_PATH/);
   assert.doesNotMatch(statusBar, /WorkflowCrow|resolveWorkflowCrowState|WORKFLOW_TUI_STATUS_ANIMATION_PATH/);
 });

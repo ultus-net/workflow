@@ -26,6 +26,7 @@
     "tui": "node scripts/build-cline-tui.mjs && tsx src/cli/tui.tsx",
     "motion:examples": "tsx src/cli/motion-examples.ts",
     "motion:import": "tsx src/cli/motion-import.ts",
+    "pets": "tsx src/cli/pets.ts",
     "tui:cline:build": "node scripts/build-cline-tui.mjs",
     "contained-shell": "tsx src/cli/contained-shell.ts",
     "web": "tsx src/cli/web.ts",

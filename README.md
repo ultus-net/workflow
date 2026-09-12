@@ -74,6 +74,11 @@ MCP output is external, untrusted input. Shape validation and evidence admission
 
 ## Extension Contracts
 
+Pets: the repo can load Petdex/Codex desktop-pet packages (`pet.json` +
+lossless `spritesheet.webp`) with a pure TypeScript VP8L decoder and render
+them as terminal animations; see `docs/PETS.md`, `npm run pets`, and
+`npm run tui -- --pet <dir>`.
+
 Keep the kernel/application contract portable, but write a concrete adapter for each SDK/tool family. Do not build a universal adapter that guesses host semantics. `docs/HOST_ADAPTERS.md` documents capabilities, conformance expectations, capability classification, and advisory/enforced semantics.
 
 `docs/MCP_INTEGRATION.md` documents provider integration and the evidence trust boundary. MCP remains capability/observation plumbing rather than workflow truth.
