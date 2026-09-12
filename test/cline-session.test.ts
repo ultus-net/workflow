@@ -63,6 +63,46 @@ function driver(core: ClineCoreSessionClient): ClineSessionDriver {
   });
 }
 
+test("Cline session translation maps forwarded MCP notifications to log events", async () => {
+  class McpUpdateCore extends FakeClineCore {
+    override async start(input: unknown) {
+      this.starts.push(input);
+      this.emit({ type: "status", payload: { sessionId: "cline-1", status: "running" } });
+      this.emitAgent({
+        type: "tool-updated",
+        toolCall: { toolCallId: "call-1", toolName: "use_mcp_tool" },
+        update: { server: "learning-mcp", method: "notifications/message", params: { level: "info", data: "profile loaded" } },
+      });
+      this.emitAgent({
+        type: "tool-updated",
+        toolCall: { toolCallId: "call-1", toolName: "use_mcp_tool" },
+        update: { server: "learning-mcp", method: "notifications/progress", params: { progress: 2, total: 3, message: "gate-evaluated" } },
+      });
+      this.emitAgent({
+        type: "tool-updated",
+        toolCall: { toolCallId: "call-1", toolName: "use_mcp_tool" },
+        update: { server: "learning-mcp", method: "notifications/message", params: { level: "critical", data: { phase: "persist" } } },
+      });
+      this.emitAgent({ type: "tool-updated", toolCall: { toolCallId: "call-2", toolName: "bash" }, update: { output: "plain bash chunk" } });
+      return this.result;
+    }
+  }
+  const core = new McpUpdateCore();
+  const events: CodingSessionEvent[] = [];
+
+  await driver(core).start("run", (event) => events.push(event));
+
+  assert.deepEqual(events, [
+    { type: "status", status: "running" },
+    { type: "log", level: "info", message: "profile loaded", source: "learning-mcp" },
+    { type: "log", level: "info", message: "gate-evaluated (2/3)", source: "learning-mcp" },
+    { type: "log", level: "error", message: JSON.stringify({ phase: "persist" }), source: "learning-mcp" },
+    { type: "log", level: "info", message: "plain bash chunk" },
+    { type: "completed", result: "Stopped" },
+  ]);
+});
+
+
 test("Cline session translation emits host-neutral assistant, normalized tool, and completion activity", async () => {
   const core = new FakeClineCore();
   const events: CodingSessionEvent[] = [];

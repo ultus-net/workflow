@@ -137,6 +137,10 @@ export class ClineSessionDriver implements CodingSessionDriver {
         : { type: "tool-outcome", tool, outcome: "failed", detail: error });
       return;
     }
+    if (type === "tool-updated") {
+      emit(logEventFromToolUpdate(agentEvent.update));
+      return;
+    }
     if (type === "error" && agentEvent.recoverable === false) {
       this.#failed = true;
       emit({ type: "failed", reason: errorMessage(agentEvent.error) });
@@ -158,6 +162,46 @@ export class ClineSessionDriver implements CodingSessionDriver {
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : undefined;
+}
+
+/**
+ * Maps a tool `emitUpdate` payload to a session log event. MCP notifications
+ * forwarded by the Workflow-patched Cline MCP client carry {server, method,
+ * params}; plain tool updates (e.g. bash output chunks) pass through as
+ * info-level logs. See patches/cline-cli-v3.0.61-workflow.patch.
+ */
+function logEventFromToolUpdate(update: unknown): CodingSessionEvent {
+  const payload = record(update) ?? {};
+  const server = stringValue(payload.server);
+  const method = stringValue(payload.method);
+  const params = record(payload.params);
+  if (method === "notifications/message" && params !== undefined) {
+    const data = params.data;
+    return {
+      type: "log",
+      level: logLevel(stringValue(params.level)),
+      message: typeof data === "string" ? data : JSON.stringify(data ?? params),
+      ...(server === undefined ? {} : { source: server }),
+    };
+  }
+  if (method === "notifications/progress" && params !== undefined) {
+    const progress = typeof params.progress === "number" ? params.progress : undefined;
+    const total = typeof params.total === "number" ? params.total : undefined;
+    const label = stringValue(params.message) ?? "progress";
+    const detail = progress === undefined ? "" : total === undefined ? ` (${progress})` : ` (${progress}/${total})`;
+    return { type: "log", level: "info", message: `${label}${detail}`, ...(server === undefined ? {} : { source: server }) };
+  }
+  const message = stringValue(payload.output) ?? stringValue(payload.message) ?? JSON.stringify(payload);
+  return { type: "log", level: "info", message, ...(server === undefined ? {} : { source: server }) };
+}
+
+function logLevel(level: string | undefined): "debug" | "info" | "warning" | "error" {
+  switch (level) {
+    case "debug": return "debug";
+    case "warning": return "warning";
+    case "error": case "critical": case "alert": case "emergency": return "error";
+    default: return "info";
+  }
 }
 
 function stringValue(value: unknown): string | undefined {
