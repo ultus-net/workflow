@@ -58,7 +58,7 @@ test("patched Cline retains bounded truecolor frame rendering for Workflow statu
   assert.match(trackedRobot, /Date\.now\(\) - workflowStartedAt\.current/);
   assert.match(trackedRobot, /lines\.length > 10_000/);
   assert.match(trackedRobot, /line\.length > 10_000/);
-  assert.match(trackedRobot, /\/\^\[\\x20-\\x7e▀▄█\]\*\$\/u/);
+  assert.match(trackedRobot, /\/\^\[\\x20-\\x7e▀▄█⠀-⣿\]\*\$\/u/);
   assert.match(trackedRobot, /fitWorkflowFrame/);
   assert.match(trackedRobot, /workflowWidth && workflowHeight \? workflowFrames\[workflowFrame\]! : fitWorkflowFrame/);
   assert.match(trackedRobot, /renderWorkflowFrame\(frame\)/);
@@ -85,6 +85,7 @@ test("patched Cline accepts only bounded truecolor SGR artwork outside printable
   assert.match(trackedRobot, /line\.matchAll\(WORKFLOW_SGR\)/);
   assert.match(trackedRobot, /\(\?:38\|48\);2/);
   assert.match(trackedRobot, /\\x7e▀▄█/u);
+  assert.match(trackedRobot, /⠀-⣿/u);
   assert.match(trackedRobot, /visibleLine\.length === width/);
 });
 

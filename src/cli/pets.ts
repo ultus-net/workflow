@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import { parseCodexPet } from "../ui/pets/codex-pet.js";
-import { codexPetStateFrames, petStateForActivity } from "../ui/pets/codex-pet-renderer.js";
+import { codexPetStateFramesBraille } from "../ui/pets/codex-pet-braille.js";
+import { petStateForActivity } from "../ui/pets/codex-pet-renderer.js";
 
 process.stdout.on("error", (error: NodeJS.ErrnoException) => {
   if (error.code === "EPIPE") process.exit(0);
@@ -31,7 +32,7 @@ const spritesheet = new Uint8Array(await readFile(join(path, "spritesheet.webp")
 const pet = parseCodexPet(petJson, spritesheet);
 let art;
 try {
-  art = codexPetStateFrames(pet, state, width);
+  art = codexPetStateFramesBraille(pet, state, width);
 } catch {
   console.error(`Pet has no "${state}" state; available: ${[...pet.states.keys()].join(", ")}`);
   process.exit(1);

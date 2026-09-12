@@ -9,8 +9,8 @@ import { WorkflowApplication } from "../application/workflow.js";
 import { createWorkflowClineTuiBridge } from "../integrations/cline-tui-bridge.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
+import { codexPetStateFramesBraille } from "../ui/pets/codex-pet-braille.js";
 import { parseCodexPet } from "../ui/pets/codex-pet.js";
-import { codexPetStateFrames } from "../ui/pets/codex-pet-renderer.js";
 import { WORKFLOW_MARK } from "../ui/tui.js";
 import { resolveTuiPetDir, resolveTuiWorkspace } from "./tui-args.js";
 
@@ -71,7 +71,7 @@ async function writePetAnimations(dir: string): Promise<{ home: string; status: 
   const pet = parseCodexPet(petJson, spritesheet);
   const tempDir = await mkdtemp(join(tmpdir(), "workflow-pet-"));
   const write = async (name: string, state: string, cellWidth: number): Promise<string> => {
-    const frames = codexPetStateFrames(pet, state, cellWidth);
+    const frames = codexPetStateFramesBraille(pet, state, cellWidth);
     const height = frames[0]!.split("\n").length;
     const path = join(tempDir, name);
     await writeFile(path, JSON.stringify({ frames, delays: frames.map(() => PET_FRAME_DELAY_MS), width: cellWidth, height }));
