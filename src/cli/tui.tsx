@@ -43,6 +43,10 @@ const application = new WorkflowApplication(
   workspace,
 );
 
+const PET_HOME_CELL_WIDTH = 24;
+const PET_STATUS_CELL_WIDTH = 10;
+const PET_FRAME_DELAY_MS = 120;
+
 application.startInteractiveTask();
 const petAnimations = petDir === undefined ? undefined : await writePetAnimations(petDir);
 const bridge = await createWorkflowClineTuiBridge(application);
@@ -52,10 +56,6 @@ try {
 } finally {
   await bridge.close();
 }
-
-const PET_HOME_CELL_WIDTH = 24;
-const PET_STATUS_CELL_WIDTH = 10;
-const PET_FRAME_DELAY_MS = 120;
 
 async function writePetAnimations(dir: string): Promise<{ home: string; status: string }> {
   let petJson: string;
