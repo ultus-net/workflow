@@ -23,20 +23,32 @@ The v0 prototype currently demonstrates:
 
 This is not yet a release-ready autonomous execution system. The local JSON store provides versioned restart recovery and single-store writer exclusion. W019 adds a bounded Linux process-containment backend, but complete MCP Toolbox integration and stronger container/VM isolation remain later work.
 
-## Run
+## Install As An Everyday Tool
 
 Use Node 22 or newer.
 
 ```sh
 npm install
-npm test
-npm run test:e2e
-npm run contained-shell
-npm run typecheck
-npm run build
-npm run tui
-npm run web
+npm run build          # library + CLI bins
+npm run toolbox:install
+npm run toolbox:build  # required for the workflow guard
+npm run tui:cline:build  # pinned Cline launched by `workflow`
+
+npm i -g .             # from this directory
 ```
+
+The global `npm i -g .` places three commands on your PATH:
+
+- `workflow` — full TUI (alias for the pinned Cline launcher)
+- `workflow-shell` — interactive contained shell
+- `workflow-pets` — play a pet package in the terminal
+
+Run against any workspace with `workflow --cwd /path/to/project`. To update,
+re-run the build steps above and re-install.
+
+If the toolbox isn't built, the TUI and contained-shell degrade to advisory
+(un-guarded) with a visible warning rather than crashing — rebuild with
+`npm run toolbox:build` to restore enforcement.
 
 Run the coding TUI against another workspace with `npm run tui -- --cwd /path/to/project` (or `-c /path/to/project`). The launcher builds the pinned Cline CLI tag `cli-v3.0.61` on first use and then starts Cline's native interactive TUI. Slash commands, `@` mentions, Plan/Act controls, menus, queueing, keyboard behavior, and rendering come from that pinned Cline version rather than a Workflow reimplementation.
 

@@ -11,6 +11,11 @@
       "import": "./dist/index.js"
     }
   },
+  "bin": {
+    "workflow": "dist/cli/tui.js",
+    "workflow-shell": "dist/cli/contained-shell.js",
+    "workflow-pets": "dist/cli/pets.js"
+  },
   "files": [
     "dist",
     "README.md",
