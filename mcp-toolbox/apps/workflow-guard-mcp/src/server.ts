@@ -5,7 +5,10 @@ import { z } from "zod";
 
 import { checkPolicy } from "./policy.js";
 
-const server = new McpServer({ name: "workflow-guard-mcp", version: "0.1.0" });
+const server = new McpServer(
+  { name: "workflow-guard-mcp", version: "0.1.0" },
+  { capabilities: { logging: {} } },
+);
 
 server.registerTool(
   "guard_check",
@@ -32,6 +35,20 @@ server.registerTool(
   },
   async (input) => {
     const decision = checkPolicy(input);
+    // Stream the verdict as a leveled MCP log notification so hosts that
+    // surface MCP logging (e.g. the Workflow monitoring TUI) show guard
+    // activity in the session stream.
+    await server.server.sendLoggingMessage({
+      level: decision.decision === "deny" ? "error" : decision.decision === "ask" ? "warning" : "debug",
+      logger: "workflow-guard-mcp",
+      data: {
+        tool: "guard_check",
+        phase: "verdict",
+        verdict: decision.decision,
+        policy: decision.policy,
+        reason: decision.reason,
+      },
+    });
     return {
       content: [{ type: "text", text: JSON.stringify(decision) }],
       structuredContent: {

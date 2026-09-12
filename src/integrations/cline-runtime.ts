@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { platform } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { ClineHostAdapter } from "../adapters/cline.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
@@ -108,6 +109,17 @@ export async function createConfiguredClineRuntime(application: WorkflowApplicat
 }
 
 async function loadClineCore(): Promise<ClineRuntimeCore> {
+  // Prefer the vendored, Workflow-patched Cline core: it carries the MCP
+  // notification forwarding (progress/log streaming) that stock builds drop.
+  // Fall back to the globally installed Cline CLI.
+  const vendored = pathToFileURL(
+    resolve(fileURLToPath(import.meta.url), "../../../.workflow-cline/cline/sdk/packages/sdk/dist/index.js"),
+  );
+  try {
+    if (existsSync(vendored)) return await import(vendored.href) as ClineRuntimeCore;
+  } catch {
+    // Fall through to the global install.
+  }
   try {
     const npmRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
     const url = pathToFileURL(join(npmRoot, "cline", "node_modules", "@cline", "sdk", "dist", "index.js"));

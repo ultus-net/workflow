@@ -24,6 +24,23 @@ test("initializes the compiled stdio server and discovers its tools", async () =
   assert.match(tools.find((tool) => tool.name === "guard_status")?.description ?? "", /Proactively call at the start/);
 });
 
+test("emits leveled log notifications for guard verdicts", async () => {
+  const { LoggingMessageNotificationSchema } = await import("@modelcontextprotocol/sdk/types.js");
+  const logs: { level: string; data: unknown }[] = [];
+  client.setNotificationHandler(LoggingMessageNotificationSchema, (notification) => {
+    logs.push(notification.params as never);
+  });
+
+  await client.callTool({ name: "guard_check", arguments: { action: "shell", command: "git status" } });
+  await client.callTool({ name: "guard_check", arguments: { action: "shell", command: "rm -rf /" } });
+
+  const allowLog = logs.find((log) => (log.data as { verdict?: string }).verdict === "allow");
+  const denyLog = logs.find((log) => (log.data as { verdict?: string }).verdict === "deny");
+  assert.equal(allowLog?.level, "debug");
+  assert.equal(denyLog?.level, "error");
+  assert.match(String((denyLog?.data as { reason?: string }).reason), /./);
+});
+
 test("returns structured allow and deny policy decisions", async () => {
   const allowed = await client.callTool({
     name: "guard_check",
