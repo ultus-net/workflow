@@ -62,7 +62,7 @@ trip over.
 
 | Feature | Status | Notes |
 |---|---|---|
-| **Orchestrator flow: auto-fetch rubric + spawn reviewer subagent per run** | **Planned** | hub enforces provenance; the agent-side flow (fetch rubric → spawn reviewer → record verdict) is guidance-level, not yet automatic |
+| **Review-gate polish: P2/P3 findings → follow-ups ledger, monitor shows verdicts** | **Planned** | follow-up storage exists in review-accountability-mcp; verdict surfacing in the Activity panel not wired |
 | Cross-platform containment (macOS Seatbelt, Windows) | Planned | containment is Linux-only; policy gating works everywhere |
 | Web-UI monitoring panels | Planned | port of the Ink panels |
 | Auto style-savings measurement | Planned | style token savings are model-dependent, currently unmeasured |
