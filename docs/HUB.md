@@ -1,0 +1,96 @@
+# Workflow Hub Design (Option A)
+
+## Goal
+
+Workflow is the universal authority for every Cline surface. Interactive TUI,
+headless CLI, zen, chat connectors, scheduled agents, teams, and desktop all
+go through a single loopback hub that Workflow owns. `workflow` stops being a
+launcher-side helper and becomes the actual system authority.
+
+## Architecture
+
+```
+Cline (any surface, any version)
+  │  hub endpoint: ws://127.0.0.1:<hubPort>  (Workflow-controlled)
+  ▼
+Workflow Hub (long-running daemon; npm bin `workflow-hub`)
+  ├ Workflow authorization (today's loopback bridge, daemonized)
+  ├ vendored toolbox MCP registrations (merged settings already exist)
+  ├ containment / evidence authority over proposed actions
+  ├ records task/evidence state in WorkflowApplication
+  └ endpoint discovery file for Cline's `readHubDiscovery(...)`
+```
+
+The Workflow Hub is the *only* hub on the machine for this install. Cline's
+`ensureCliHubServer` path is replaced: instead of spawning its own detached
+hub, consumers connect to the Workflow hub for everything.
+
+## Daemon protocol
+
+- **Transport**: loopback WebSocket (host 127.0.0.1, port from config), auth
+  token issued at hub start and written to the discovery file.
+- **Discovery file**: `<data-dir>/hub/discovery.json` created atomically —
+  `{ hubId, endpoint, authToken }` so `readHubDiscovery` finds it.
+- **Hook protocol**: same shape as today's workflow bridge — `POST /before-tool`
+  for hook gating, `POST /bash` for executor routing.
+- **Authority migration**: today's per-TUI-loopback bridge is promoted into
+  the hub daemon; interactive/headless/zen/connectors keep working, cron
+  starts covering too.
+
+## Hook ↔ authority mapping
+
+| Hook invoked hub-side | Workflow hub does |
+|---|---|
+| `beforeTool` | Workflow kernel authorize; consult `workflow-guard-mcp` for safety |
+| `bash` executor | WorkflowContainedProcess (bubblewrap isolation, workspace limits) |
+| every ClientContribution | Registered and validated by the hub daemon, with audit history |
+
+All authority uses `WorkflowApplication` task/evidence state. Actions that
+can't be authorized fail **closed** (hub denies rather than guessing).
+
+## Related surfaces (post-hub)
+
+| Surface | Enforced via |
+|---|---|
+| Interactive TUI | direct hub client |
+| Headless CLI (`workflow "..."`) | direct hub client |
+| Zen | direct hub client |
+| Connectors (Slack, Telegram, Discord, GChat, Linear, WhatsApp) | hub-side localRuntime hooks |
+| **Scheduled agents** | hub-side cron with workflow-authorize hooks |
+| Teams/desktop | hub-side localRuntime hooks |
+
+## Commands
+
+- `workflow-hub` — start the detached authority daemon (discovery + token).
+- `workflow` — still the TUI launcher; resolves against the global Workflow hub.
+
+## Operational semantics (fail-closed)
+
+| Condition | Behavior |
+|---|---|
+| workflow-hub not running | Cline cannot authorize — startup fails |
+| authorization hook doesn't return `allow` | fails closed, task stays FAILED |
+| guard unavailable/offline | fails closed, not advisory-from-here |
+| obsolete hub discovery file | daemon in launcher's start transaction |
+
+Sandbox/isolation remains the same as the TUI router today.
+
+## Out of scope (deliberate)
+
+- Self-service MCP manager persistence (still per-run temp)
+- Pets UX (documented disabled)
+- Desktop app integration (same hub hook can be used after alpha)
+
+## Implementation sequence (suggested)
+
+1. Extract hub daemon from existing `createWorkflowClineTuiBridge` + make it
+   long-running; expose discovery token.
+2. Launcher resolves against the global hub instead of spawning per-TUI helper.
+3. Cron-runner in vendored clone uses the same authorize hooks (no CLI patch).
+4. TUI/headless/zen connectors converge to the hub.
+
+Acceptance for this milestone: a fresh session is *guarded by the hub* for
+every surface, even scheduled mode, and the patch only remains responsible for
+presentational overrides (art/view), not hook logic.
+
+Drafting the implementation is next stop.
