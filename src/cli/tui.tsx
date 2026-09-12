@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { hostCapabilities } from "../adapters/host.js";
@@ -7,6 +9,7 @@ import { WorkflowApplication } from "../application/workflow.js";
 import { createWorkflowClineTuiBridge } from "../integrations/cline-tui-bridge.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
+import { collectToolboxMcpServers } from "./mcp-settings.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 
 const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
@@ -39,14 +42,28 @@ const application = new WorkflowApplication(
 
 application.startInteractiveTask();
 const bridge = await createWorkflowClineTuiBridge(application);
+const toolboxRoot = resolve(root, "mcp-toolbox");
+const mcpServers = collectToolboxMcpServers(toolboxRoot);
+const mcpSettingsPath = await writeMcpSettings(mcpServers);
 try {
-  const exitCode = await runClineTui(clineRoot, workspace, bridge.url, bridge.token);
+  const exitCode = await runClineTui(clineRoot, workspace, bridge.url, bridge.token, mcpSettingsPath);
   process.exitCode = exitCode;
 } finally {
   await bridge.close();
 }
 
-function runClineTui(clineRoot: string, cwd: string, bridgeUrl: string, bridgeToken: string): Promise<number> {
+async function writeMcpSettings(servers: Record<string, unknown>): Promise<string> {
+  if (Object.keys(servers).length === 0) {
+    console.warn("no built toolbox MCP servers; run: npm run toolbox:build");
+    return "";
+  }
+  const dir = await mkdtemp(join(tmpdir(), "workflow-mcp-"));
+  const path = join(dir, "cline_mcp_settings.json");
+  await writeFile(path, JSON.stringify({ mcpServers: servers }));
+  return path;
+}
+
+function runClineTui(clineRoot: string, cwd: string, bridgeUrl: string, bridgeToken: string, mcpSettingsPath: string): Promise<number> {
   return new Promise((resolveExit, reject) => {
     const child = spawn(
       "npx",
@@ -57,6 +74,7 @@ function runClineTui(clineRoot: string, cwd: string, bridgeUrl: string, bridgeTo
           ...process.env,
           WORKFLOW_CLINE_BRIDGE_URL: bridgeUrl,
           WORKFLOW_CLINE_BRIDGE_TOKEN: bridgeToken,
+          ...(mcpSettingsPath ? { CLINE_MCP_SETTINGS_PATH: mcpSettingsPath } : {}),
         },
       },
     );
