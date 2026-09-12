@@ -58,8 +58,16 @@ const PET_STATUS_CELL_WIDTH = 10;
 const PET_FRAME_DELAY_MS = 120;
 
 async function writePetAnimations(dir: string): Promise<{ home: string; status: string }> {
-  const petJson = await readFile(join(dir, "pet.json"), "utf8");
-  const spritesheet = new Uint8Array(await readFile(join(dir, "spritesheet.webp")).catch(() => readFile(join(dir, "sprite.webp"))));
+  let petJson: string;
+  let spritesheet: Uint8Array;
+  try {
+    petJson = await readFile(join(dir, "pet.json"), "utf8");
+    spritesheet = new Uint8Array(await readFile(join(dir, "spritesheet.webp")).catch(() => readFile(join(dir, "sprite.webp"))));
+  } catch {
+    console.error(`Workflow TUI: no pet package found at ${dir}`);
+    console.error(`Install one first, e.g.: npx petscodex install cat   (or npx petdex install <name>)`);
+    process.exit(1);
+  }
   const pet = parseCodexPet(petJson, spritesheet);
   const tempDir = await mkdtemp(join(tmpdir(), "workflow-pet-"));
   const write = async (name: string, state: string, cellWidth: number): Promise<string> => {
