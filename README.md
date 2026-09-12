@@ -75,7 +75,9 @@ MCP output is external, untrusted input. Shape validation and evidence admission
 ## Extension Contracts
 
 The `mcp-toolbox/` directory vendors the MCP toolbox monorepo (workflow-guard
-and companion intelligence servers) as tracked source. Build and verify it with
+and companion intelligence servers) as tracked source. This vendored copy is
+canonical; the standalone toolbox and opencode-workflow-guard repositories are
+retired (see `docs/MCP_TOOLBOX.md`). Build and verify it with
 `npm run toolbox:install && npm run toolbox:verify` (requires pnpm 11.5.2). See
 `mcp-toolbox/README.md` for the tool catalog and `docs/MCP_INTEGRATION.md` for
 the evidence trust boundary.
