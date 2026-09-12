@@ -7,6 +7,21 @@ toolbox (workflow-guard-mcp and the companion intelligence servers). The
 standalone `mcp-toolbox` repository and the `opencode-workflow-guard` repository
 are retired once this repository is up and running.
 
+## First-class guard integration
+
+`src/integrations/mcp-toolbox-guard.ts` exposes the vendored
+workflow-guard-mcp server as a Workflow `McpProvider`:
+
+- `createWorkflowGuardMcpProvider({ serverPath })` spawns the built server
+  over stdio and exposes `capabilities()`, `guardCheck(input)`, and
+  `guardStatus()`.
+- `guardPolicyEvidence(decision, mutationEpoch)` normalizes an
+  `allow`/`deny`/`ask` decision into evidence with subject
+  `policy:<policy-id>` — `allow` records `passed`, anything else `failed`.
+
+The guard remains advisory unless a host wires the result into enforcement;
+Workflow's kernel owns task state and evidence freshness regardless.
+
 ## Rationale
 
 The toolbox's original umbrella-monorepo docs (PLAN.md,

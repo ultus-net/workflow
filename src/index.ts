@@ -15,6 +15,7 @@ export * from "./integrations/cline-session.js";
 export * from "./integrations/cline-runtime.js";
 export * from "./integrations/opencode-plugin.js";
 export * from "./integrations/opencode-session.js";
+export * from "./integrations/mcp-toolbox-guard.js";
 export * from "./containment/contracts.js";
 export * from "./containment/linux-bwrap.js";
 export * from "./containment/workflow-process.js";
