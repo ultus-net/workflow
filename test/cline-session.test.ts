@@ -63,6 +63,22 @@ function driver(core: ClineCoreSessionClient): ClineSessionDriver {
   });
 }
 
+test("Cline session driver accumulates provider usage for style evaluations", async () => {
+  class UsageCore extends FakeClineCore {
+    result = { sessionId: "cline-1", result: { text: "Done", usage: { inputTokens: 120, outputTokens: 45 } } };
+  }
+  const core = new UsageCore();
+  const driver2 = driver(core);
+
+  await driver2.start("Measure", () => {});
+  assert.deepEqual(driver2.usageSnapshot(), { inputTokens: 120, outputTokens: 45 });
+
+  core.result = { sessionId: "cline-1", result: { text: "Done", usage: { inputTokens: 130, outputTokens: 25 } } };
+  await driver2.start("Measure again", () => {});
+  assert.deepEqual(driver2.usageSnapshot(), { inputTokens: 250, outputTokens: 70 });
+});
+
+
 test("Cline session translation maps forwarded MCP notifications to log events", async () => {
   class McpUpdateCore extends FakeClineCore {
     override async start(input: unknown) {

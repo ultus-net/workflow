@@ -9,7 +9,13 @@ interface ClineCoreSessionEvent {
 export interface ClineCoreSessionClient {
   start(input: unknown): Promise<{
     readonly sessionId: string;
-    readonly result?: { readonly text?: string };
+    readonly result?: {
+      readonly text?: string;
+      readonly usage?: {
+        readonly inputTokens?: number;
+        readonly outputTokens?: number;
+      };
+    };
   }>;
   subscribe(listener: (event: ClineCoreSessionEvent) => void): () => void;
   stop(sessionId: string): Promise<void>;
@@ -31,6 +37,7 @@ export class ClineSessionDriver implements CodingSessionDriver {
   #failed = false;
   #reportedSessionId: string | undefined;
   #emit: ((event: CodingSessionEvent) => void) | undefined;
+  #usage = { inputTokens: 0, outputTokens: 0 };
   readonly #deniedTools = new Map<string, number>();
   readonly #deniedToolCalls = new Set<string>();
 
@@ -60,6 +67,7 @@ export class ClineSessionDriver implements CodingSessionDriver {
       const result = await this.options.core.start(this.options.startInput(prompt, initialMessages, userImages.length === 0 ? undefined : userImages));
       this.#sessionId ??= result.sessionId;
       this.#reportSessionId();
+      this.#accumulateUsage(result.result?.usage);
       await this.#stopIfCancelled();
       if (!this.#cancelRequested && !this.#failed) emit({ type: "completed", result: result.result?.text ?? "" });
     } catch (error) {
@@ -145,6 +153,18 @@ export class ClineSessionDriver implements CodingSessionDriver {
       this.#failed = true;
       emit({ type: "failed", reason: errorMessage(agentEvent.error) });
     }
+  }
+
+  #accumulateUsage(usage: { inputTokens?: number; outputTokens?: number } | undefined): void {
+    this.#usage = {
+      inputTokens: this.#usage.inputTokens + (usage?.inputTokens ?? 0),
+      outputTokens: this.#usage.outputTokens + (usage?.outputTokens ?? 0),
+    };
+  }
+
+  /** Cumulative provider token usage across this driver's submits. */
+  usageSnapshot(): { inputTokens: number; outputTokens: number } {
+    return { ...this.#usage };
   }
 
   async #stopIfCancelled(): Promise<void> {

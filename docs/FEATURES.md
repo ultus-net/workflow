@@ -38,6 +38,7 @@ trip over.
 | `workflow-monitor` (Ink monitoring TUI) | Complete | task panel, activity panel, log-enriched transcript; `npm run tui:workflow` |
 | Pedagogical modes (5 modes, checkpoints, learner profile, PRIMM) | Complete | `src/pedagogy/`; profile at `~/.local/share/workflow/learner-profile.json` |
 | Response/build styles (caveman speech, ponytail YAGNI build) | Complete | **model-advisory** — the model can ignore them; live switch with `,` and `.`; summaries kept by design |
+| Style-savings measurement (`npm run style:eval`) | Complete | `src/cli/style-eval.ts` — per-style output deltas from cumulative driver usage |
 | Browser projection | Partial | `src/ui/web.ts` demo; does not have the monitoring panels |
 | Pets | Disabled | `docs/PETS.md` |
 
@@ -66,4 +67,3 @@ trip over.
 | **Review-gate polish: P2/P3 findings → follow-ups ledger, monitor shows verdicts** | **Planned** | follow-up storage exists in review-accountability-mcp; verdict surfacing in the Activity panel not wired |
 | Cross-platform isolation (macOS Seatbelt, Windows) | Planned | policy-only passthrough ships now; native isolation tiers remain open |
 | Web-UI monitoring panels | Planned | port of the Ink panels |
-| Auto style-savings measurement | Planned | style token savings are model-dependent, currently unmeasured |

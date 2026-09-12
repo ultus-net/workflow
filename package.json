@@ -35,6 +35,7 @@
     "lint": "eslint src test",
     "tui": "node scripts/build-cline-tui.mjs && tsx src/cli/tui.tsx",
     "tui:workflow": "tsx src/cli/ink-tui.tsx",
+    "style:eval": "tsx src/cli/style-eval.ts",
     "motion:examples": "tsx src/cli/motion-examples.ts",
     "motion:import": "tsx src/cli/motion-import.ts",
     "pets": "tsx src/cli/pets.ts",

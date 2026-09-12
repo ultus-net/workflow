@@ -27,6 +27,8 @@ export interface CodingSessionImage {
 export interface CodingSessionDriver {
   start(prompt: string, emit: (event: CodingSessionEvent) => void, images?: readonly CodingSessionImage[]): Promise<void>;
   cancel(): Promise<void>;
+  /** Optional cumulative provider usage (e.g. Cline session driver). */
+  usageSnapshot?(): { inputTokens: number; outputTokens: number };
 }
 
 export class WorkflowCodingSession {
