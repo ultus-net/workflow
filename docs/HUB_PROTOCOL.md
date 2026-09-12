@@ -62,6 +62,25 @@ No request body. Response `200`: `{ "status": "ok" }`. Clients use this to
 validate a discovery file (200 = live hub, 401/unreachable = stale). It is
 also the recommended readiness check for service managers.
 
+### `POST /run/begin` — open a dedicated run task
+
+Registers a scheduled/attended run as its own Workflow task, so the run's
+tool calls authorize against an `IN_PROGRESS` task and the run records its
+own evidence (instead of sharing the interactive task).
+
+Request: `{ "runId": "schedule:<uuid>", "title": "Nightly audit", "workspace": "/abs/dir" }`
+(`workspace` optional; same validation as `/before-tool`.)
+
+Response `200`: `{}`. Duplicate `runId` → authority error (fail closed).
+
+### `POST /run/finish` — close a run with evidence
+
+Request: `{ "runId": "schedule:<uuid>", "outcome": "verified" | "failed" }`
+
+The hub records a mutation, records run evidence (`passed`/`failed`), and
+transitions the run task to `VERIFIED`/`FAILED`. Unknown `runId` → authority
+error (fail closed).
+
 ### `POST /before-tool` — authorization gate
 
 Called before **every** tool execution.
@@ -72,9 +91,14 @@ Request:
 {
   "toolCall": { "toolName": "read_file", "toolCallId": "optional-id" },
   "input": { "...": "tool-specific payload" },
-  "workspace": "/absolute/path/to/surface-workspace"
+  "workspace": "/absolute/path/to/surface-workspace",
+  "runId": "schedule:<uuid>"
 }
 ```
+
+`runId` (optional, additive in v1): binds the tool call to a run opened via
+`/run/begin`; authorization then targets the run's task. Unknown `runId` →
+authority error (fail closed).
 
 `workspace` (optional, additive in v1): the surface's own workspace root. When
 present, the hub authorizes path subjects against the declared workspace

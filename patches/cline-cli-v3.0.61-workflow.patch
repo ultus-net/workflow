@@ -186,34 +186,83 @@ index 0000000..6f72018
 +	});
 +});
 diff --git a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts b/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
-index 7371b78..7a750f3 100644
+index 7371b78..3d01b51 100644
 --- a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
 +++ b/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
-@@ -15,6 +15,7 @@ import { SqliteSessionStore } from "../../services/storage/sqlite-session-store"
+@@ -15,6 +15,8 @@ import { SqliteSessionStore } from "../../services/storage/sqlite-session-store"
  import { withSessionHistoryOriginMetadata } from "../../session/history-origin";
  import { CoreSessionService } from "../../session/services/session-service";
  import { SessionSource } from "../../types/common";
 +import { createWorkflowHubHooks } from "./workflow-hooks";
++import { beginWorkflowRun, finishWorkflowRun } from "./workflow-runs";
  
  function toChatTurnResult(result: {
  	text: string;
-@@ -126,6 +127,10 @@ export function createLocalHubScheduleRuntimeHandlers(
+@@ -86,9 +88,18 @@ export function createLocalHubScheduleRuntimeHandlers(
+ 		telemetry: options.telemetry,
+ 	});
+ 
++	// Maps hub session ids to their Workflow run ids so stop/abort can record
++	// the run outcome against the correct Workflow task.
++	const sessionRuns = new Map<string, string>();
++
+ 	return {
+ 		async startSession(request, options) {
+ 			const cwd = (request.cwd?.trim() || request.workspaceRoot).trim();
++			// Dedicated Workflow task/evidence per scheduled run: tool calls
++			// authorize against the run's IN_PROGRESS task and the run records
++			// its own evidence at completion. Lifecycle reporting is advisory;
++			// authorization remains fail-closed per tool call.
++			const runId = `schedule:${crypto.randomUUID()}`;
+ 			const started = await sessionHost.startSession({
+ 				source: SessionSource.CORE,
+ 				mode: "automation",
+@@ -126,8 +137,18 @@ export function createLocalHubScheduleRuntimeHandlers(
  				},
  				localRuntime: {
  					configExtensions: request.configExtensions,
 +					// Workflow is the universal authorization authority: every
 +					// hub-started session (scheduled agents included) gates tool
 +					// execution through the Workflow bridge and fails closed.
-+					hooks: createWorkflowHubHooks(),
++					hooks: createWorkflowHubHooks(runId),
  				},
  			});
++			sessionRuns.set(started.sessionId, runId);
++			await beginWorkflowRun({
++				runId,
++				title: `Scheduled run (${request.source?.trim() || "hub-schedule"})`,
++				workspace: request.workspaceRoot,
++			});
  			return {
+ 				sessionId: started.sessionId,
+ 				startResult: {
+@@ -153,10 +174,20 @@ export function createLocalHubScheduleRuntimeHandlers(
+ 		},
+ 		async abortSession(sessionId) {
+ 			await sessionHost.abort(sessionId, new Error("hub schedule abort"));
++			const runId = sessionRuns.get(sessionId);
++			if (runId !== undefined) {
++				sessionRuns.delete(sessionId);
++				await finishWorkflowRun({ runId, outcome: "failed" });
++			}
+ 			return { applied: true };
+ 		},
+ 		async stopSession(sessionId) {
+ 			await sessionHost.stopSession(sessionId);
++			const runId = sessionRuns.get(sessionId);
++			if (runId !== undefined) {
++				sessionRuns.delete(sessionId);
++				await finishWorkflowRun({ runId, outcome: "verified" });
++			}
+ 			return { applied: true };
+ 		},
+ 	};
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
 new file mode 100644
-index 0000000..4ff39d4
+index 0000000..bb0d5bb
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,151 @@
 +import { createServer, type Server } from "node:http";
 +import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 +import type { AddressInfo } from "node:net";
@@ -286,6 +335,18 @@ index 0000000..4ff39d4
 +		});
 +	});
 +
++	it("includes the run id in the authorization request when bound to a run", async () => {
++		const hooks = createWorkflowHubHooks("cron-1");
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBeFalsy();
++		expect(lastBody).toEqual({
++			toolCall,
++			input: { path: "README.md" },
++			workspace: process.cwd(),
++			runId: "cron-1",
++		});
++	});
++
 +	it("propagates a stop decision from the Workflow authority", async () => {
 +		respondWith = { body: { stop: true, reason: "denied by workflow" } };
 +		const hooks = createWorkflowHubHooks();
@@ -355,10 +416,10 @@ index 0000000..4ff39d4
 +});
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
 new file mode 100644
-index 0000000..da5c0bb
+index 0000000..6aba2f6
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,92 @@
 +import { readFileSync } from "node:fs";
 +import { homedir } from "node:os";
 +import { join } from "node:path";
@@ -378,7 +439,7 @@ index 0000000..da5c0bb
 + * resolution keeps detached daemons working across hub restarts and token
 + * rotation. See `docs/HUB.md` in the Workflow repository.
 + */
-+function resolveBridgeAuthority(): BridgeAuthority | undefined {
++export function resolveBridgeAuthority(): BridgeAuthority | undefined {
 +	const url = process.env.WORKFLOW_CLINE_BRIDGE_URL?.trim();
 +	const token = process.env.WORKFLOW_CLINE_BRIDGE_TOKEN?.trim();
 +	if (url && token) return { url, token };
@@ -402,7 +463,7 @@ index 0000000..da5c0bb
 + * closed when the authority is unavailable. See `docs/HUB.md` in the Workflow
 + * repository.
 + */
-+export function createWorkflowHubHooks(): AgentHooks {
++export function createWorkflowHubHooks(runId?: string): AgentHooks {
 +	return {
 +		beforeTool: async (ctx) => {
 +			const authority = resolveBridgeAuthority();
@@ -421,7 +482,12 @@ index 0000000..da5c0bb
 +						authorization: `Bearer ${token}`,
 +						"content-type": "application/json",
 +					},
-+					body: JSON.stringify({ toolCall: ctx.toolCall, input: ctx.input, workspace: process.cwd() }),
++					body: JSON.stringify({
++					toolCall: ctx.toolCall,
++					input: ctx.input,
++					workspace: process.cwd(),
++					...(runId !== undefined ? { runId } : {}),
++				}),
 +				});
 +				const payload = (await response.json()) as BridgeResponse;
 +				if (!response.ok) {
@@ -445,4 +511,133 @@ index 0000000..da5c0bb
 +			}
 +		},
 +	};
++}
+diff --git a/sdk/packages/core/src/hub/daemon/workflow-runs.test.ts b/sdk/packages/core/src/hub/daemon/workflow-runs.test.ts
+new file mode 100644
+index 0000000..1204ab3
+--- /dev/null
++++ b/sdk/packages/core/src/hub/daemon/workflow-runs.test.ts
+@@ -0,0 +1,75 @@
++import { createServer, type Server } from "node:http";
++import { mkdtempSync, rmSync } from "node:fs";
++import type { AddressInfo } from "node:net";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { beginWorkflowRun, finishWorkflowRun } from "./workflow-runs";
++
++describe("workflow run lifecycle", () => {
++	let server: Server | undefined;
++	let lastPath: string | undefined;
++	let lastBody: unknown;
++	let home: string;
++	let originalHome: string | undefined;
++	let status = 200;
++
++	beforeEach(async () => {
++		lastPath = undefined;
++		lastBody = undefined;
++		status = 200;
++		originalHome = process.env.HOME;
++		home = mkdtempSync(join(tmpdir(), "workflow-runs-home-"));
++		process.env.HOME = home;
++		server = createServer((request, response) => {
++			const chunks: Buffer[] = [];
++			request.on("data", (chunk) => chunks.push(chunk));
++			request.on("end", () => {
++				lastPath = request.url;
++				lastBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
++				response.writeHead(status, { "content-type": "application/json" });
++				response.end(JSON.stringify(status === 200 ? {} : { error: "boom" }));
++			});
++		});
++		await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
++		const { port } = server.address() as AddressInfo;
++		process.env.WORKFLOW_CLINE_BRIDGE_URL = `http://127.0.0.1:${port}`;
++		process.env.WORKFLOW_CLINE_BRIDGE_TOKEN = "test-token";
++	});
++
++	afterEach(async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		if (originalHome === undefined) delete process.env.HOME;
++		else process.env.HOME = originalHome;
++		rmSync(home, { recursive: true, force: true });
++		await new Promise<void>((resolve) => server?.close(() => resolve()));
++		server = undefined;
++	});
++
++	it("begins a run against the Workflow hub", async () => {
++		const ok = await beginWorkflowRun({ runId: "cron-1", title: "Nightly audit", workspace: "/repo" });
++		expect(ok).toBe(true);
++		expect(lastPath).toBe("/run/begin");
++		expect(lastBody).toEqual({ runId: "cron-1", title: "Nightly audit", workspace: "/repo" });
++	});
++
++	it("finishes a run against the Workflow hub", async () => {
++		const ok = await finishWorkflowRun({ runId: "cron-1", outcome: "verified" });
++		expect(ok).toBe(true);
++		expect(lastPath).toBe("/run/finish");
++		expect(lastBody).toEqual({ runId: "cron-1", outcome: "verified" });
++	});
++
++	it("is advisory when the hub rejects the lifecycle call", async () => {
++		status = 500;
++		expect(await beginWorkflowRun({ runId: "cron-1", title: "t" })).toBe(false);
++		expect(await finishWorkflowRun({ runId: "cron-1", outcome: "failed" })).toBe(false);
++	});
++
++	it("is advisory when no hub authority is resolvable", async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		expect(await beginWorkflowRun({ runId: "cron-1", title: "t" })).toBe(false);
++	});
++});
+diff --git a/sdk/packages/core/src/hub/daemon/workflow-runs.ts b/sdk/packages/core/src/hub/daemon/workflow-runs.ts
+new file mode 100644
+index 0000000..27978ec
+--- /dev/null
++++ b/sdk/packages/core/src/hub/daemon/workflow-runs.ts
+@@ -0,0 +1,42 @@
++import { resolveBridgeAuthority } from "./workflow-hooks";
++
++/**
++ * Run lifecycle reporting to the Workflow hub: each hub-started scheduled
++ * session gets a dedicated task and evidence in the Workflow task graph.
++ * Lifecycle calls are advisory — authorization itself is enforced per tool
++ * call via `createWorkflowHubHooks` and remains fail-closed; a missed
++ * lifecycle report must not block session management. See
++ * `docs/HUB_PROTOCOL.md` §3 in the Workflow repository.
++ */
++async function runRequest(path: string, body: unknown): Promise<boolean> {
++	const authority = resolveBridgeAuthority();
++	if (!authority) return false;
++	try {
++		const response = await fetch(`${authority.url}${path}`, {
++			method: "POST",
++			headers: {
++				authorization: `Bearer ${authority.token}`,
++				"content-type": "application/json",
++			},
++			body: JSON.stringify(body),
++		});
++		return response.ok;
++	} catch {
++		return false;
++	}
++}
++
++export async function beginWorkflowRun(input: {
++	runId: string;
++	title: string;
++	workspace?: string;
++}): Promise<boolean> {
++	return await runRequest("/run/begin", input);
++}
++
++export async function finishWorkflowRun(input: {
++	runId: string;
++	outcome: "verified" | "failed";
++}): Promise<boolean> {
++	return await runRequest("/run/finish", input);
 +}

@@ -14,16 +14,22 @@ export interface WorkflowClineTuiBridge {
   close(): Promise<void>;
 }
 
-export type WorkflowApplicationResolver = (workspace?: string) => WorkflowApplication;
+export type WorkflowApplicationResolver = (workspace?: string, runId?: string) => WorkflowApplication;
+
+export interface WorkflowRunController {
+  begin(input: { runId: string; title: string; workspace?: string }): Promise<void>;
+  finish(input: { runId: string; outcome: "verified" | "failed" }): Promise<void>;
+}
 
 export async function createWorkflowClineTuiBridge(
   application: WorkflowApplication,
   resolveApplication: WorkflowApplicationResolver = () => application,
+  runController?: WorkflowRunController,
 ): Promise<WorkflowClineTuiBridge> {
   const token = randomBytes(32).toString("hex");
 
   const server = createServer((request, response) => {
-    void handleRequest(request, response, token, resolveApplication);
+    void handleRequest(request, response, token, resolveApplication, runController);
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -49,14 +55,35 @@ async function handleRequest(
   response: ServerResponse,
   token: string,
   resolveApplication: WorkflowApplicationResolver,
+  runController?: WorkflowRunController,
 ): Promise<void> {
   try {
     if (!authorized(request, token) || request.method !== "POST") return send(response, 401, { error: "unauthorized" });
     if (request.url === "/health") return send(response, 200, { status: "ok" });
     const body = await readJson(request);
+    if (request.url === "/run/begin") {
+      if (runController === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body) || typeof body.runId !== "string" || typeof body.title !== "string") {
+        return send(response, 400, { error: "invalid run begin request" });
+      }
+      await runController.begin({
+        runId: body.runId,
+        title: body.title,
+        ...(typeof body.workspace === "string" ? { workspace: body.workspace } : {}),
+      });
+      return send(response, 200, {});
+    }
+    if (request.url === "/run/finish") {
+      if (runController === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body) || typeof body.runId !== "string" || !(body.outcome === "verified" || body.outcome === "failed")) {
+        return send(response, 400, { error: "invalid run finish request" });
+      }
+      await runController.finish({ runId: body.runId, outcome: body.outcome });
+      return send(response, 200, {});
+    }
     if (request.url === "/before-tool") {
-      const { input, workspace } = requireBeforeToolInput(body);
-      const plugin = pluginFor(resolveApplication(workspace));
+      const { input, workspace, runId } = requireBeforeToolInput(body);
+      const plugin = pluginFor(resolveApplication(workspace, runId));
       return send(response, 200, (await plugin.hooks.beforeTool(input)) ?? {});
     }
     if (request.url === "/bash") {
@@ -115,7 +142,7 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
 }
 
-function requireBeforeToolInput(value: unknown): { input: ClineBeforeToolHookInput; workspace?: string } {
+function requireBeforeToolInput(value: unknown): { input: ClineBeforeToolHookInput; workspace?: string; runId?: string } {
   if (!isRecord(value) || !isRecord(value.toolCall) || typeof value.toolCall.toolName !== "string") {
     throw new TypeError("invalid before-tool request");
   }
@@ -128,6 +155,7 @@ function requireBeforeToolInput(value: unknown): { input: ClineBeforeToolHookInp
       input: value.input,
     },
     ...(typeof value.workspace === "string" ? { workspace: value.workspace } : {}),
+    ...(typeof value.runId === "string" ? { runId: value.runId } : {}),
   };
 }
 
