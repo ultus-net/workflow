@@ -19,5 +19,8 @@ export * from "./containment/contracts.js";
 export * from "./containment/linux-bwrap.js";
 export * from "./containment/workflow-process.js";
 export * from "./application/persistence.js";
+export * from "./pedagogy/contracts.js";
+export * from "./pedagogy/learner-profile.js";
+export * from "./pedagogy/diagnostic-tutor.js";
 export * from "./ui/tui.js";
 export * from "./ui/web.js";

@@ -1,0 +1,279 @@
+diff --git a/apps/cli/src/runtime/interactive/session-runtime.ts b/apps/cli/src/runtime/interactive/session-runtime.ts
+index 596cf93..bf58b65 100644
+--- a/apps/cli/src/runtime/interactive/session-runtime.ts
++++ b/apps/cli/src/runtime/interactive/session-runtime.ts
+@@ -26,6 +26,7 @@ import { createRuntimeHooks } from "../../utils/hooks";
+ import { setActiveCliSession } from "../../utils/output";
+ import { loadInteractiveResumeMessages } from "../../utils/resume";
+ import type { Config } from "../../utils/types";
++import { createWorkflowBridge } from "../../utils/workflow-bridge";
+ import { markAbortInProgress } from "../active-runtime";
+ import type {
+ 	PendingPromptSnapshot,
+@@ -107,6 +108,7 @@ export function createInteractiveSessionRuntime(input: {
+ 	onPendingPrompts: (event: PendingPromptSnapshot) => void;
+ 	onPendingPromptSubmitted: (event: PendingPromptSubmittedEvent) => void;
+ }) {
++	const workflow = createWorkflowBridge();
+ 	let sessionManager: CliCore | undefined;
+ 	let runtimeHooks: RuntimeHooks | undefined;
+ 	let unsubscribeAgent = () => {};
+@@ -155,6 +157,7 @@ export function createInteractiveSessionRuntime(input: {
+ 				input.config.mode === "yolo" || input.config.sandbox === true,
+ 			capabilities: {
+ 				toolExecutors: {
++					bash: workflow.bash,
+ 					askQuestion: (question, options) => {
+ 						if (input.askQuestionRef.current) {
+ 							return input.askQuestionRef.current(question, options);
+@@ -197,7 +200,7 @@ export function createInteractiveSessionRuntime(input: {
+ 			throw new Error("interactive runtime hooks are unavailable");
+ 		}
+ 		const hooks = withInteractiveApprovalPolicyHook(
+-			runtimeHooks.hooks,
++			workflow.authorize(runtimeHooks.hooks),
+ 			input.resolveToolPolicy,
+ 		);
+ 		return buildInteractiveSessionConfig({
+diff --git a/apps/cli/src/tui/components/tracked-robot.tsx b/apps/cli/src/tui/components/tracked-robot.tsx
+index 68f52ef..bd39153 100644
+--- a/apps/cli/src/tui/components/tracked-robot.tsx
++++ b/apps/cli/src/tui/components/tracked-robot.tsx
+@@ -1,4 +1,5 @@
+-import { useCallback, useRef, useState } from "react";
++import { readFileSync } from "node:fs";
++import { useCallback, useEffect, useRef, useState } from "react";
+ import { useTheme } from "../hooks/use-theme";
+ import { RobotAnimation } from "./robot-animation";
+ 
+@@ -16,8 +17,47 @@ export function useMouseTracker() {
+ 	return { cursor, onMouseMove };
+ }
+ 
+-export function TrackedRobot(props: { cursorX?: number; cursorY?: number }) {
++export function TrackedRobot(props: { cursorX?: number; cursorY?: number; workflowHome?: boolean; animationWidth?: number; animationHeight?: number }) {
++	const workflowAnimationPath = props.workflowHome ? process.env.WORKFLOW_TUI_ANIMATION_PATH : undefined;
++	const [workflowFrame, setWorkflowFrame] = useState(0);
++	const workflowStartedAt = useRef(Date.now());
++	const workflowAnimation = useRef<ReturnType<typeof loadWorkflowAnimation> | null>(null);
++	if (workflowAnimation.current === null) workflowAnimation.current = loadWorkflowAnimation(workflowAnimationPath);
+ 	const defaultFg = useTheme().defaultForeground;
++	const workflowFrames = workflowAnimation.current?.frames;
++	const workflowFrameRate = workflowAnimation.current?.frameRate;
++	const workflowDelays = workflowAnimation.current?.delays;
++	const workflowWidth = workflowAnimation.current?.width;
++	const workflowHeight = workflowAnimation.current?.height;
++	useEffect(() => {
++		if (!workflowFrames?.length || (!workflowFrameRate && !workflowDelays)) return;
++		workflowStartedAt.current = Date.now();
++		const interval = setInterval(
++			() => setWorkflowFrame(workflowDelays
++				? frameAtElapsedTime(Date.now() - workflowStartedAt.current, workflowDelays)
++				: Math.floor((Date.now() - workflowStartedAt.current) * workflowFrameRate! / 1000) % workflowFrames.length),
++			workflowDelays ? Math.max(1, Math.min(...workflowDelays.filter((delay) => delay > 0), 100)) : Math.max(16, Math.floor(1000 / workflowFrameRate!)),
++		);
++		return () => clearInterval(interval);
++	}, [workflowFrames?.length, workflowFrameRate, workflowDelays]);
++	if (workflowFrames?.length) {
++		const width = workflowWidth ?? props.animationWidth ?? 100;
++		const height = workflowHeight ?? props.animationHeight ?? 40;
++		const frame = workflowWidth && workflowHeight ? workflowFrames[workflowFrame]! : fitWorkflowFrame(workflowFrames[workflowFrame]!, width, height);
++		return (
++			<box width={width} height={height} flexDirection="column" flexShrink={1} overflow="hidden" justifyContent="center">
++				{renderWorkflowFrame(frame)}
++			</box>
++		);
++	}
++	const workflowMark = process.env.WORKFLOW_TUI_MARK_B64;
++	if (workflowMark) {
++		return (
++			<box width={45} flexShrink={1} overflow="hidden">
++				<text>{Buffer.from(workflowMark, "base64").toString("utf8")}</text>
++			</box>
++		);
++	}
+ 	return (
+ 		<box width="100%" flexShrink={1} overflow="hidden">
+ 			<RobotAnimation
+@@ -28,3 +68,111 @@ export function TrackedRobot(props: { cursorX?: number; cursorY?: number }) {
+ 		</box>
+ 	);
+ }
++
++function loadWorkflowAnimation(path: string | undefined): { frames: string[]; frameRate?: number; delays?: number[]; width?: number; height?: number } | undefined {
++	try {
++		const decoded = path ? JSON.parse(readFileSync(path, "utf8")) : undefined;
++		const hasFrameRate = Number.isFinite(decoded?.frameRate) && decoded.frameRate > 0 && decoded.frameRate <= 60;
++		const hasDelays = Array.isArray(decoded?.delays) && decoded.delays.length === decoded.frames?.length &&
++			decoded.delays.every((delay: unknown) => Number.isFinite(delay) && Number(delay) >= 0 && Number(delay) <= 10_000);
++		const hasDimensions = Number.isInteger(decoded?.width) && decoded.width > 0 && decoded.width <= 300 &&
++			Number.isInteger(decoded?.height) && decoded.height > 0 && decoded.height <= 100;
++		if (
++			typeof decoded === "object" && decoded !== null &&
++			Array.isArray(decoded.frames) && decoded.frames.length > 0 && decoded.frames.length <= 120 &&
++			(hasFrameRate || hasDelays) &&
++			decoded.frames.every((frame: unknown) => validateWorkflowFrame(frame)) &&
++			(!hasDimensions || decoded.frames.every((frame: string) => validateWorkflowFrame(frame, decoded.width, decoded.height)))
++		) return { frames: decoded.frames, frameRate: hasFrameRate ? decoded.frameRate : undefined, delays: hasDelays ? decoded.delays : undefined, width: hasDimensions ? decoded.width : undefined, height: hasDimensions ? decoded.height : undefined };
++	} catch {
++		// Fall through to Cline's native artwork.
++	}
++	return undefined;
++}
++
++const WORKFLOW_SGR = /\x1b\[(?:0|(?:38|48);2;(?:25[0-5]|2[0-4]\d|1?\d?\d);(?:25[0-5]|2[0-4]\d|1?\d?\d);(?:25[0-5]|2[0-4]\d|1?\d?\d))m/g;
++
++function renderWorkflowFrame(frame: string) {
++	return frame.split("\n").map((line, row) => {
++		let fg: string | undefined;
++		let bg: string | undefined;
++		let offset = 0;
++		const segments: Array<{ text: string; fg?: string; bg?: string }> = [];
++		for (const match of line.matchAll(WORKFLOW_SGR)) {
++			if (match.index > offset) segments.push({ text: line.slice(offset, match.index), fg, bg });
++			const sgr = match[0].slice(2, -1);
++			if (sgr === "0") {
++				fg = undefined;
++				bg = undefined;
++			} else {
++				const [target, , red, green, blue] = sgr.split(";");
++				const color = `#${[red, green, blue].map((channel) => Number(channel).toString(16).padStart(2, "0")).join("")}`;
++				if (target === "38") fg = color;
++				else bg = color;
++			}
++			offset = match.index + match[0].length;
++		}
++		if (offset < line.length) segments.push({ text: line.slice(offset), fg, bg });
++		return (
++			<text key={`workflow-row-${row}`}>
++				{segments.map((segment, index) => <span key={`workflow-segment-${row}-${index}`} fg={segment.fg} bg={segment.bg}>{segment.text}</span>)}
++			</text>
++		);
++	});
++}
++
++function stripWorkflowSgr(line: string): string {
++	return line.replace(WORKFLOW_SGR, "");
++}
++
++function validateWorkflowFrame(frame: unknown, width?: number, height?: number): frame is string {
++	if (typeof frame !== "string") return false;
++	const lines = frame.split("\n");
++	if (lines.length > 10_000 || (height !== undefined && lines.length !== height)) return false;
++	return lines.every((line) => {
++		if (line.length > 10_000) return false;
++		const visibleLine = stripWorkflowSgr(line);
++		if (!/^[\x20-\x7e▀▄█]*$/u.test(visibleLine)) return false;
++		return width === undefined || visibleLine.length === width;
++	});
++}
++
++function frameAtElapsedTime(elapsed: number, delays: number[]): number {
++	const cycle = delays.reduce((total, delay) => total + delay, 0);
++	if (cycle === 0) return 0;
++	let remaining = elapsed % cycle;
++	for (let frame = 0; frame < delays.length; frame++) {
++		if (remaining < delays[frame]!) return frame;
++		remaining -= delays[frame]!;
++	}
++	return 0;
++}
++
++function fitWorkflowFrame(frame: string, width: number, height: number): string {
++	const source = frame.replace(/\r/g, "").replace(/\n$/, "").split("\n");
++	let sourceWidth = 0;
++	for (const row of source) sourceWidth = Math.max(sourceWidth, row.length);
++	if (sourceWidth === 0) return " ".repeat(width);
++	const output = Array.from({ length: height }, () => Array<string>(width).fill(" "));
++	for (let y = 0; y < height; y++) {
++		const fromY = Math.floor(y * source.length / height);
++		const toY = Math.max(fromY + 1, Math.floor((y + 1) * source.length / height));
++		for (let x = 0; x < width; x++) {
++			const fromX = Math.floor(x * sourceWidth / width);
++			const toX = Math.max(fromX + 1, Math.floor((x + 1) * sourceWidth / width));
++			const counts = new Map<string, number>();
++			for (let sy = fromY; sy < toY; sy++) for (let sx = fromX; sx < toX; sx++) {
++				const cell = source[sy]?.[sx] ?? " ";
++				if (cell !== " ") counts.set(cell, (counts.get(cell) ?? 0) + 1);
++			}
++			let selected = " ";
++			let selectedCount = 0;
++			for (const [cell, count] of counts) if (count > selectedCount) {
++				selected = cell;
++				selectedCount = count;
++			}
++			output[y]![x] = selected;
++		}
++	}
++	return output.map((row) => row.join("")).join("\n");
++}
+diff --git a/apps/cli/src/tui/views/home-view.tsx b/apps/cli/src/tui/views/home-view.tsx
+index 753cf36..3c91986 100644
+--- a/apps/cli/src/tui/views/home-view.tsx
++++ b/apps/cli/src/tui/views/home-view.tsx
+@@ -1,5 +1,4 @@
+ import { useTerminalDimensions } from "@opentui/react";
+-import { useState } from "react";
+ import {
+ 	AutocompleteDropdown,
+ 	type AutocompleteDropdownProps,
+@@ -11,7 +10,6 @@ import {
+ 	resolveModelMaxInputTokens,
+ 	StatusBar,
+ } from "../components/status-bar";
+-import { TrackedRobot, useMouseTracker } from "../components/tracked-robot";
+ import { useSession } from "../contexts/session-context";
+ import { useTheme } from "../hooks/use-theme";
+ import {
+@@ -54,12 +52,7 @@ export function HomeView(props: {
+ 		repoStatus,
+ 	} = props;
+ 	const session = useSession();
+-	const { width, height } = useTerminalDimensions();
+-	const mouse = useMouseTracker();
+-	const [inputCursor, setInputCursor] = useState<{
+-		visualCol: number;
+-		visualRow: number;
+-	} | null>(null);
++	const { width } = useTerminalDimensions();
+ 
+ 	const theme = useTheme();
+ 	const terminalBg = theme.background;
+@@ -75,16 +68,6 @@ export function HomeView(props: {
+ 	const hasAutocomplete =
+ 		props.autocomplete?.mode && props.autocomplete.options.length > 0;
+ 	const contentWidth = Math.min(width, HOME_VIEW_MAX_WIDTH);
+-	const hasTypedInput = inputValue.trim().length > 0;
+-	const inputStartX = Math.floor((width - contentWidth) / 2) + 2;
+-	const clamp = (value: number, min: number, max: number) =>
+-		Math.max(min, Math.min(max, value));
+-	const trackedCursorX = hasTypedInput
+-		? clamp(inputStartX + (inputCursor?.visualCol ?? 0), 0, width)
+-		: mouse.cursor.x;
+-	const trackedCursorY = hasTypedInput
+-		? clamp(height - 2 + (inputCursor?.visualRow ?? 0), 0, height)
+-		: mouse.cursor.y;
+ 
+ 	return (
+ 		<box
+@@ -92,10 +75,9 @@ export function HomeView(props: {
+ 			width="100%"
+ 			height="100%"
+ 			alignItems="center"
+-			justifyContent="center"
+-			onMouseMove={mouse.onMouseMove}
++			justifyContent="flex-start"
+ 		>
+-			<TrackedRobot cursorX={trackedCursorX} cursorY={trackedCursorY} />
++			<box flexGrow={1} />
+ 			<box marginTop={1} marginBottom={1} flexShrink={0}>
+ 				<text fg={defaultFg}>
+ 					<strong>What can I do for you?</strong>
+@@ -120,7 +102,6 @@ export function HomeView(props: {
+ 					inputKey={inputKey}
+ 					onSubmit={onSubmit}
+ 					onContentChange={onContentChange}
+-					onVisualCursorChange={setInputCursor}
+ 					onImagePaste={onImagePaste}
+ 					onLargeTextPaste={onLargeTextPaste}
+ 					onFocusRequest={props.onInputFocusRequest}

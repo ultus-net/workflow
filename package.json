@@ -23,9 +23,13 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint src test",
-    "tui": "tsx src/cli/tui.tsx",
+    "tui": "node scripts/build-cline-tui.mjs && tsx src/cli/tui.tsx",
+    "motion:examples": "tsx src/cli/motion-examples.ts",
+    "motion:import": "tsx src/cli/motion-import.ts",
+    "tui:cline:build": "node scripts/build-cline-tui.mjs",
     "contained-shell": "tsx src/cli/contained-shell.ts",
     "web": "tsx src/cli/web.ts",
+    "pretest": "node scripts/build-cline-tui.mjs",
     "test": "node --import tsx --test test/**/*.test.ts",
     "test:cline-runtime": "npm run build && node test/integration/cline-runtime.mjs",
     "test:cline-coding-session": "npm run build && node test/integration/cline-coding-session.mjs",
@@ -46,6 +50,7 @@
     "typescript-eslint": "^8.70.0"
   },
   "dependencies": {
+    "gifuct-js": "^2.1.2",
     "ink": "^7.1.1",
     "react": "^19.2.0"
   }

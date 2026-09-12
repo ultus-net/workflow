@@ -18,4 +18,6 @@ function taskRows(application: WorkflowApplication) {
 
 Render enforcement level visibly when users can act on policy results. `advisory` must not look equivalent to `enforced`. Rejected commands should remain rejected application outcomes rather than being repaired by optimistic UI state.
 
-`src/ui/tui.tsx` and `src/ui/web.ts` demonstrate two replaceable renderers over the same application boundary. New UIs should be testable against application snapshots and commands without changing kernel contracts.
+`src/ui/tui.tsx` and `src/ui/web.ts` demonstrate replaceable renderers over the same application boundary. The Ink renderer is a legacy projection example, not the runnable coding TUI contract. New UIs should be testable against application snapshots and commands without changing kernel contracts.
+
+The standalone product TUI is `src/cli/tui.tsx`. It launches exact Cline CLI `3.0.61` and therefore inherits Cline's native commands, mentions, Plan/Act controls, dialogs, queueing, keyboard behavior, and rendering. Workflow's upstream patch is intentionally limited to mandatory pre-tool authorization, contained bash execution, and replacement of the robot artwork with the Workflow mark. The authorization bridge is required at startup; the patched Cline runtime fails closed when it is unavailable rather than starting an advisory or unenforced interactive session.

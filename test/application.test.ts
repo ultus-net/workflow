@@ -341,6 +341,28 @@ test("application selects only an in-progress canonical task for SDK proposal co
   assert.equal(application.activeTaskId(), taskId("B"));
 });
 
+test("application starts a uniquely ready task for an interactive coding session", () => {
+  const application = new WorkflowApplication(
+    new TaskGraph([{ ...task("A"), dependencies: [taskId("B")] }, task("B")]),
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+  );
+
+  application.startInteractiveTask();
+
+  assert.equal(application.activeTaskId(), taskId("B"));
+  assert.equal(application.snapshot().tasks.find(({ id }) => id === taskId("B"))?.state, "IN_PROGRESS");
+});
+
+test("application refuses to guess between multiple ready interactive tasks", () => {
+  const application = new WorkflowApplication(
+    new TaskGraph([task("A"), task("B")]),
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+  );
+
+  assert.throws(() => application.startInteractiveTask(), /multiple READY tasks/);
+  assert.equal(application.snapshot().tasks.every(({ state }) => state === "READY"), true);
+});
+
 test("multi-step coding lifecycle unlocks work only after focused verification evidence", () => {
   const application = new WorkflowApplication(
     new TaskGraph([

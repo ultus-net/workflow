@@ -19,7 +19,7 @@ The v0 prototype currently demonstrates:
 - an MCP capability/evidence boundary that validates external observations before admission;
 - default-deny withholding for explicit process, credential, and host-network capabilities at application authorization;
 - an opt-in Linux Bubblewrap process backend with empty environment, explicit filesystem grants, and isolated networking by default;
-- interchangeable Ink TUI and browser UI projections over `WorkflowApplication`.
+- a standalone Cline `3.0.61` coding TUI with mandatory Workflow authorization, plus replaceable Ink/browser projections over `WorkflowApplication`.
 
 This is not yet a release-ready autonomous execution system. The local JSON store provides versioned restart recovery and single-store writer exclusion. W019 adds a bounded Linux process-containment backend, but complete MCP Toolbox integration and stronger container/VM isolation remain later work.
 
@@ -38,6 +38,10 @@ npm run tui
 npm run web
 ```
 
+Run the coding TUI against another workspace with `npm run tui -- --cwd /path/to/project` (or `-c /path/to/project`). The launcher builds the pinned Cline CLI tag `cli-v3.0.61` on first use and then starts Cline's native interactive TUI. Slash commands, `@` mentions, Plan/Act controls, menus, queueing, keyboard behavior, and rendering come from that pinned Cline version rather than a Workflow reimplementation.
+
+The patched Cline build requires an authenticated loopback Workflow bridge before its interactive runtime can start. Workflow supplies the pre-tool authorization hook and contained bash executor; if that bridge is absent or cannot initialize, startup fails closed instead of opening an unenforced Cline session. The only upstream presentation override is Cline's robot artwork, replaced with the Workflow mark.
+
 The browser demo listens on `127.0.0.1:4173` by default; set `PORT` to override it. The standalone TUI deliberately assigns no semantic foreground or background colors. It inherits the user's terminal theme and communicates state through labels, markers, emphasis, and layout.
 
 `npm run test:e2e` builds the package and exercises the composed Cline-shaped proposal -> Workflow authorization -> Linux Bubblewrap execution -> mutation/evidence -> verified-state path. It requires a working Bubblewrap installation and fails rather than skips when containment cannot be established.
@@ -52,7 +56,7 @@ For a manual containment check, run `npm run contained-shell`. It creates a temp
 
 `src/adapters/` contains replaceable external translations. A host adapter normalizes its lifecycle event into `ProposedToolAction`, reports host capabilities, and translates a `PolicyDecision` back to the host's native control. MCP providers expose discovery/invocation only; `normalizeMcpEvidence` validates observations before they can become evidence.
 
-`src/ui/` contains replaceable presentation adapters. Both the Ink TUI and browser prototype read `WorkflowSnapshot` and issue application commands. Neither can directly mutate the task graph.
+`src/ui/` contains replaceable presentation adapters. The legacy Ink projection and browser prototype read `WorkflowSnapshot` and issue application commands; neither can directly mutate the task graph. The runnable coding TUI is instead launched from `src/cli/tui.tsx` and reuses pinned Cline's native TUI while routing authorization and contained shell execution back through `WorkflowApplication`.
 
 ## Safety Guarantees And Limits
 

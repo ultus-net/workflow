@@ -126,6 +126,28 @@ export class WorkflowApplication {
     this.#activeTaskId = taskId;
   }
 
+  startInteractiveTask(): TaskId {
+    if (this.#activeTaskId !== undefined) return this.activeTaskId();
+
+    const inProgress = this.#graph.tasks().filter(({ state }) => state === "IN_PROGRESS");
+    if (inProgress.length === 1) {
+      this.selectActiveTask(inProgress[0]!.id);
+      return inProgress[0]!.id;
+    }
+    if (inProgress.length > 1) throw new TypeError("multiple IN_PROGRESS tasks require an explicit active task selection");
+
+    const ready = this.#graph.tasks().filter(({ state }) => state === "READY");
+    if (ready.length !== 1) {
+      if (ready.length === 0) throw new TypeError("no READY workflow task available for interactive coding");
+      throw new TypeError("multiple READY tasks require an explicit active task selection");
+    }
+    const selected = ready[0]!.id;
+    const transition = this.transition(selected, "IN_PROGRESS");
+    if (transition.kind !== "accepted") throw new TypeError(`cannot start interactive task ${selected}`);
+    this.selectActiveTask(selected);
+    return selected;
+  }
+
   activeTaskId(): TaskId {
     if (this.#activeTaskId === undefined) throw new TypeError("no active workflow task selected");
     const task = this.#graph.get(this.#activeTaskId);

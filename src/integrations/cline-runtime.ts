@@ -35,6 +35,7 @@ export interface WorkflowClineRuntime {
 }
 
 export async function createConfiguredClineRuntime(application: WorkflowApplication, workspaceRoot: string): Promise<WorkflowClineRuntime> {
+  application.startInteractiveTask();
   const core = await loadClineCore();
   const providerConfig = new core.ProviderSettingsManager().getLastUsedProviderConfig();
   const providerId = stringValue(providerConfig.providerId);
