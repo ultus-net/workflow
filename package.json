@@ -13,6 +13,7 @@
   },
   "bin": {
     "workflow": "dist/cli/tui.js",
+    "workflow-hub": "dist/cli/hub.js",
     "workflow-shell": "dist/cli/contained-shell.js",
     "workflow-pets": "dist/cli/pets.js"
   },
