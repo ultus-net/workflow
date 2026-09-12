@@ -27,6 +27,15 @@ test("TUI launcher registers vendored toolbox MCP servers", () => {
   assert.match(launcher, /cline_mcp_settings\.json/);
 });
 
+test("patched Cline headless mode is flow through the Workflow authorization bridge", () => {
+  const runAgent = readFileSync(
+    resolve(process.cwd(), ".workflow-cline", "cline", "apps", "cli", "src", "runtime", "run-agent.ts"),
+    "utf8",
+  );
+  assert.match(runAgent, /createWorkflowBridge/);
+  assert.match(runAgent, /workflow\.authorize\(runtimeHooks\.hooks\)/);
+});
+
 test("patched Cline refuses interactive startup without the Workflow authorization bridge", async () => {
   const clineRoot = resolve(process.cwd(), ".workflow-cline", "cline");
   const env = { ...process.env };
