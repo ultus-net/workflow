@@ -651,6 +651,212 @@ index c8d4043..f53f254 100644
  export { createMcpTools } from "./tools";
  export type {
  	CreateMcpToolsOptions,
+diff --git a/sdk/packages/core/src/extensions/mcp/lazy-tools.test.ts b/sdk/packages/core/src/extensions/mcp/lazy-tools.test.ts
+new file mode 100644
+index 0000000..537c522
+--- /dev/null
++++ b/sdk/packages/core/src/extensions/mcp/lazy-tools.test.ts
+@@ -0,0 +1,83 @@
++import { describe, expect, it, vi } from "vitest";
++import { createLazyMcpTools, createMcpTools } from "./index";
++import type { McpToolDescriptor, McpToolProvider } from "./types";
++
++const descriptors: readonly McpToolDescriptor[] = [
++	{
++		name: "search_memory",
++		description: "Search durable project memory with a bounded result set and a fairly long description that costs context tokens.",
++		inputSchema: {
++			type: "object",
++			properties: {
++				workspaceRoot: { type: "string", description: "Absolute workspace root" },
++				query: { type: "string" },
++				limit: { type: "number" },
++			},
++			required: ["workspaceRoot", "query"],
++		},
++	},
++	{
++		name: "record_memory",
++		description: "Record a durable fact, decision, constraint, or lesson for future sessions.",
++		inputSchema: { type: "object", properties: { content: { type: "string" } }, required: ["content"] },
++	},
++];
++
++function provider(result: unknown = { ok: true }): McpToolProvider {
++	return {
++		listTools: vi.fn(async () => descriptors),
++		callTool: vi.fn(async () => result),
++	};
++}
++
++describe("createLazyMcpTools", () => {
++	it("exposes cheap meta-tools instead of full tool schemas", async () => {
++		const tools = await createLazyMcpTools({ serverName: "memory", provider: provider() });
++		expect(tools).toHaveLength(2);
++		const [discover, call] = tools;
++		expect(discover!.name).toContain("discover");
++		expect(call!.name).toContain("call");
++		// The discovery tool description enumerates names+descriptions but no schemas.
++		expect(discover!.description).toContain("search_memory");
++		expect(discover!.description).toContain("record_memory");
++		expect(discover!.description).not.toContain("workspaceRoot");
++		// The full schemas do not enter the model's tool list.
++		expect(JSON.stringify(tools.map((t) => t.inputSchema))).not.toContain("workspaceRoot");
++	});
++
++	it("returns full input schemas on demand via the discover tool", async () => {
++		const [discover] = await createLazyMcpTools({ serverName: "memory", provider: provider() });
++		const result = (await discover!.execute(
++			{ toolNames: ["search_memory"] },
++			{} as never,
++		)) as { content: Array<{ text: string }> };
++		expect(result.content[0]!.text).toContain("workspaceRoot");
++		expect(result.content[0]!.text).not.toContain("record_memory");
++	});
++
++	it("routes calls through the provider by tool name", async () => {
++		const client = provider({ content: [{ type: "text", text: "found" }] });
++		const [, call] = await createLazyMcpTools({ serverName: "memory", provider: client });
++		const result = await call!.execute(
++			{ toolName: "search_memory", arguments: { query: "atomic" } },
++			{} as never,
++		);
++		expect(client.callTool).toHaveBeenCalledWith({
++			serverName: "memory",
++			toolName: "search_memory",
++			arguments: { query: "atomic" },
++			context: {},
++		});
++		expect(result).toEqual({ content: [{ type: "text", text: "found" }] });
++	});
++});
++
++describe("createMcpTools lazy mode", () => {
++	it("returns only the meta-tools when lazy is enabled", async () => {
++		const tools = await createMcpTools({ serverName: "memory", provider: provider(), lazy: true });
++		expect(tools).toHaveLength(2);
++		const eager = await createMcpTools({ serverName: "memory", provider: provider() });
++		expect(eager).toHaveLength(2);
++		expect(JSON.stringify(eager.map((t) => t.inputSchema))).toContain("workspaceRoot");
++	});
++});
+diff --git a/sdk/packages/core/src/extensions/mcp/lazy-tools.ts b/sdk/packages/core/src/extensions/mcp/lazy-tools.ts
+new file mode 100644
+index 0000000..7e16c4c
+--- /dev/null
++++ b/sdk/packages/core/src/extensions/mcp/lazy-tools.ts
+@@ -0,0 +1,111 @@
++import { type AgentTool, createTool } from "@cline/shared";
++import { defaultMcpToolNameTransform } from "./name-transform";
++import type { CreateMcpToolsOptions, McpToolDescriptor } from "./types";
++
++const MAX_ENUMERATED_TOOLS = 50;
++const MAX_DESCRIPTION_CHARS = 120;
++
++/**
++ * Lazy MCP tool loading: instead of registering every server's full input
++ * schemas into the model's context (a fixed per-turn token tax that grows
++ * with every enabled server), expose two cheap meta-tools per server:
++ * - `discover_tools` enumerates names + one-line descriptions and returns
++ *   full schemas only for the tools the model actually asks about.
++ * - `call_tool` executes a discovered tool by name.
++ * Enable per server with `createMcpTools({ lazy: true })`.
++ */
++export async function createLazyMcpTools(
++	options: CreateMcpToolsOptions,
++): Promise<AgentTool[]> {
++	const descriptors = await options.provider.listTools(options.serverName);
++	const nameTransform = options.nameTransform ?? defaultMcpToolNameTransform;
++
++	const catalog = descriptors
++		.slice(0, MAX_ENUMERATED_TOOLS)
++		.map((descriptor) => {
++			const description = (descriptor.description?.trim() ?? "").slice(0, MAX_DESCRIPTION_CHARS);
++			return `- ${descriptor.name}${description.length > 0 ? `: ${description}` : ""}`;
++		})
++		.join("\n");
++	const omitted = descriptors.length - Math.min(descriptors.length, MAX_ENUMERATED_TOOLS);
++
++	const discoverName = nameTransform({ serverName: options.serverName, toolName: "discover_tools" });
++	const callName = nameTransform({ serverName: options.serverName, toolName: "call_tool" });
++
++	const discover = createTool({
++		name: discoverName,
++		description:
++			`List input schemas for MCP tools on server "${options.serverName}". ` +
++			`Call this first to learn a tool's schema, then invoke it via "${callName}". ` +
++			`Available tools:\n${catalog}${omitted > 0 ? `\n- …and ${omitted} more` : ""}`,
++		inputSchema: {
++			type: "object",
++			properties: {
++				toolNames: {
++					type: "array",
++					items: { type: "string" },
++					description: "Tools to return full input schemas for. Omit to list names only.",
++				},
++			},
++		},
++		timeoutMs: options.timeoutMs,
++		execute: async (input: unknown) => {
++			const requested = Array.isArray((input as { toolNames?: unknown })?.toolNames)
++				? ((input as { toolNames: unknown[] }).toolNames.filter((name): name is string => typeof name === "string"))
++				: [];
++			const selected = requested.length === 0
++				? []
++				: descriptors.filter((descriptor) => requested.includes(descriptor.name));
++			const payload = selected.length === 0
++				? { tools: catalog }
++				: {
++					schemas: selected.map((descriptor) => ({
++						name: descriptor.name,
++						description: descriptor.description,
++						inputSchema: descriptor.inputSchema,
++					})),
++				};
++			return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
++		},
++	});
++
++	const call = createTool({
++		name: callName,
++		description:
++			`Execute an MCP tool on server "${options.serverName}" by name. ` +
++			`Use "${discoverName}" first to learn the tool's input schema.`,
++		inputSchema: {
++			type: "object",
++			properties: {
++				toolName: { type: "string", description: "Name of the MCP tool to execute." },
++				arguments: { type: "object", description: "Tool input payload." },
++			},
++			required: ["toolName"],
++		},
++		timeoutMs: options.timeoutMs,
++		retryable: options.retryable,
++		maxRetries: options.maxRetries,
++		execute: async (input: unknown, context) => {
++			const { toolName, arguments: toolArguments } = (input ?? {}) as {
++				toolName?: string;
++				arguments?: Record<string, unknown>;
++			};
++			if (typeof toolName !== "string" || toolName.length === 0) {
++				throw new TypeError("call_tool requires a toolName");
++			}
++			if (!descriptors.some((descriptor: McpToolDescriptor) => descriptor.name === toolName)) {
++				throw new Error(
++					`unknown MCP tool "${toolName}" on server "${options.serverName}"; call "${discoverName}" to list tools`,
++				);
++			}
++			return options.provider.callTool({
++				serverName: options.serverName,
++				toolName,
++				arguments: toolArguments,
++				context,
++			});
++		},
++	});
++
++	return [discover, call];
++}
 diff --git a/sdk/packages/core/src/extensions/mcp/manager.test.ts b/sdk/packages/core/src/extensions/mcp/manager.test.ts
 index 435e726..fcd4f56 100644
 --- a/sdk/packages/core/src/extensions/mcp/manager.test.ts
@@ -797,7 +1003,7 @@ index 646d2b4..e82aabe 100644
  
  export type McpConnectionStatus = "disconnected" | "connecting" | "connected";
 diff --git a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts b/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
-index 7371b78..4a7b0f0 100644
+index 7371b78..2e8a4e1 100644
 --- a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
 +++ b/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
 @@ -15,6 +15,8 @@ import { SqliteSessionStore } from "../../services/storage/sqlite-session-store"
@@ -809,7 +1015,7 @@ index 7371b78..4a7b0f0 100644
  
  function toChatTurnResult(result: {
  	text: string;
-@@ -86,9 +88,18 @@ export function createLocalHubScheduleRuntimeHandlers(
+@@ -86,9 +88,25 @@ export function createLocalHubScheduleRuntimeHandlers(
  		telemetry: options.telemetry,
  	});
  
@@ -825,10 +1031,17 @@ index 7371b78..4a7b0f0 100644
 +			// its own evidence at completion. Lifecycle reporting is advisory;
 +			// authorization remains fail-closed per tool call.
 +			const runId = `schedule:${crypto.randomUUID()}`;
++			// Review-gate flow (HUB_PROTOCOL.md §3): an authoring run is
++			// marked requiresReview by its orchestrator; an independent
++			// reviewer session (metadata.reviewOfRunId) is itself a plain
++			// run so it cannot recursively demand its own review.
++			const sessionMetadata = options?.sessionMetadata as Record<string, unknown> | undefined;
++			const isReviewRun = typeof sessionMetadata?.reviewOfRunId === "string";
++			const requiresReview = !isReviewRun && sessionMetadata?.requiresReview === true;
  			const started = await sessionHost.startSession({
  				source: SessionSource.CORE,
  				mode: "automation",
-@@ -126,8 +137,18 @@ export function createLocalHubScheduleRuntimeHandlers(
+@@ -126,8 +144,19 @@ export function createLocalHubScheduleRuntimeHandlers(
  				},
  				localRuntime: {
  					configExtensions: request.configExtensions,
@@ -843,11 +1056,12 @@ index 7371b78..4a7b0f0 100644
 +				runId,
 +				title: `Scheduled run (${request.source?.trim() || "hub-schedule"})`,
 +				workspace: request.workspaceRoot,
++				...(requiresReview ? { requiresReview: true } : {}),
 +			});
  			return {
  				sessionId: started.sessionId,
  				startResult: {
-@@ -153,10 +174,20 @@ export function createLocalHubScheduleRuntimeHandlers(
+@@ -153,10 +182,20 @@ export function createLocalHubScheduleRuntimeHandlers(
  		},
  		async abortSession(sessionId) {
  			await sessionHost.abort(sessionId, new Error("hub schedule abort"));
@@ -1038,10 +1252,10 @@ index 0000000..73a8df0
 +});
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
 new file mode 100644
-index 0000000..66bddf0
+index 0000000..078630f
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,98 @@
 +import { readFileSync } from "node:fs";
 +import { homedir } from "node:os";
 +import { join } from "node:path";
@@ -1084,6 +1298,12 @@ index 0000000..66bddf0
 + * delegated to the Workflow authority over its loopback bridge and fails
 + * closed when the authority is unavailable. See `docs/HUB.md` in the Workflow
 + * repository.
++ *
++ * Review gate: orchestrators running review-gated authoring sessions should
++ * fetch the 5-axis rubric via `POST /review/rubric`, spawn an independent
++ * reviewer session (session metadata `reviewOfRunId`), and submit its
++ * verdict via `POST /run/review` (`submitWorkflowReview`). See
++ * `docs/HUB_PROTOCOL.md` §3 in the Workflow repository.
 + */
 +export function createWorkflowHubHooks(runId?: string, workspace?: string): AgentHooks {
 +	return {
@@ -1136,17 +1356,22 @@ index 0000000..66bddf0
 +}
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-runs.test.ts b/sdk/packages/core/src/hub/daemon/workflow-runs.test.ts
 new file mode 100644
-index 0000000..1204ab3
+index 0000000..dab123b
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-runs.test.ts
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,139 @@
 +import { createServer, type Server } from "node:http";
 +import { mkdtempSync, rmSync } from "node:fs";
 +import type { AddressInfo } from "node:net";
 +import { tmpdir } from "node:os";
 +import { join } from "node:path";
 +import { afterEach, beforeEach, describe, expect, it } from "vitest";
-+import { beginWorkflowRun, finishWorkflowRun } from "./workflow-runs";
++import {
++	beginWorkflowRun,
++	fetchReviewRubric,
++	finishWorkflowRun,
++	submitWorkflowReview,
++} from "./workflow-runs";
 +
 +describe("workflow run lifecycle", () => {
 +	let server: Server | undefined;
@@ -1170,7 +1395,15 @@ index 0000000..1204ab3
 +				lastPath = request.url;
 +				lastBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
 +				response.writeHead(status, { "content-type": "application/json" });
-+				response.end(JSON.stringify(status === 200 ? {} : { error: "boom" }));
++				if (status !== 200) {
++					response.end(JSON.stringify({ error: "boom" }));
++				} else if (lastPath === "/review/rubric") {
++					response.end(JSON.stringify({ rubric: "review axes: test integrity, ..." }));
++				} else if (lastPath === "/run/review") {
++					response.end(JSON.stringify({ recorded: true }));
++				} else {
++					response.end(JSON.stringify({}));
++				}
 +			});
 +		});
 +		await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
@@ -1203,6 +1436,57 @@ index 0000000..1204ab3
 +		expect(lastBody).toEqual({ runId: "cron-1", outcome: "verified" });
 +	});
 +
++	it("threads requiresReview through run begin", async () => {
++		const ok = await beginWorkflowRun({ runId: "cron-2", title: "Authoring run", requiresReview: true });
++		expect(ok).toBe(true);
++		expect(lastPath).toBe("/run/begin");
++		expect(lastBody).toEqual({ runId: "cron-2", title: "Authoring run", requiresReview: true });
++	});
++
++	it("fetches the 5-axis review rubric (advisory)", async () => {
++		const result = await fetchReviewRubric({ diffText: "diff --git a/x b/x", taskPrompt: "ctx" });
++		expect(result).toEqual({ rubric: "review axes: test integrity, ..." });
++		expect(lastPath).toBe("/review/rubric");
++		expect(lastBody).toEqual({ diffText: "diff --git a/x b/x", taskPrompt: "ctx" });
++	});
++
++	it("returns undefined when the rubric fetch fails", async () => {
++		status = 500;
++		expect(await fetchReviewRubric({ diffText: "d" })).toBeUndefined();
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		expect(await fetchReviewRubric({ diffText: "d" })).toBeUndefined();
++	});
++
++	it("submits a cross-run review verdict and returns the recorded result", async () => {
++		const result = await submitWorkflowReview({
++			runId: "schedule:author",
++			reviewerRunId: "schedule:reviewer",
++			verdict: "approved",
++			summary: "test integrity, task completeness, security checked",
++		});
++		expect(result).toEqual({ recorded: true });
++		expect(lastPath).toBe("/run/review");
++		expect(lastBody).toEqual({
++			runId: "schedule:author",
++			reviewerRunId: "schedule:reviewer",
++			verdict: "approved",
++			summary: "test integrity, task completeness, security checked",
++		});
++	});
++
++	it("returns undefined when the review submission fails", async () => {
++		status = 500;
++		expect(
++			await submitWorkflowReview({
++				runId: "schedule:author",
++				reviewerRunId: "schedule:reviewer",
++				verdict: "rejected",
++				summary: "s",
++			}),
++		).toBeUndefined();
++	});
++
 +	it("is advisory when the hub rejects the lifecycle call", async () => {
 +		status = 500;
 +		expect(await beginWorkflowRun({ runId: "cron-1", title: "t" })).toBe(false);
@@ -1217,10 +1501,10 @@ index 0000000..1204ab3
 +});
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-runs.ts b/sdk/packages/core/src/hub/daemon/workflow-runs.ts
 new file mode 100644
-index 0000000..27978ec
+index 0000000..f49678d
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-runs.ts
-@@ -0,0 +1,42 @@
+@@ -0,0 +1,73 @@
 +import { resolveBridgeAuthority } from "./workflow-hooks";
 +
 +/**
@@ -1231,9 +1515,9 @@ index 0000000..27978ec
 + * lifecycle report must not block session management. See
 + * `docs/HUB_PROTOCOL.md` §3 in the Workflow repository.
 + */
-+async function runRequest(path: string, body: unknown): Promise<boolean> {
++async function runRequest(path: string, body: unknown): Promise<unknown | undefined> {
 +	const authority = resolveBridgeAuthority();
-+	if (!authority) return false;
++	if (!authority) return undefined;
 +	try {
 +		const response = await fetch(`${authority.url}${path}`, {
 +			method: "POST",
@@ -1243,9 +1527,10 @@ index 0000000..27978ec
 +			},
 +			body: JSON.stringify(body),
 +		});
-+		return response.ok;
++		if (!response.ok) return undefined;
++		return await response.json();
 +	} catch {
-+		return false;
++		return undefined;
 +	}
 +}
 +
@@ -1253,15 +1538,45 @@ index 0000000..27978ec
 +	runId: string;
 +	title: string;
 +	workspace?: string;
++	requiresReview?: boolean;
 +}): Promise<boolean> {
-+	return await runRequest("/run/begin", input);
++	return (await runRequest("/run/begin", input)) !== undefined;
 +}
 +
 +export async function finishWorkflowRun(input: {
 +	runId: string;
 +	outcome: "verified" | "failed";
 +}): Promise<boolean> {
-+	return await runRequest("/run/finish", input);
++	return (await runRequest("/run/finish", input)) !== undefined;
++}
++
++/**
++ * Fetches the hub's 5-axis review rubric for an orchestrator-spawned
++ * reviewer session. Advisory: returns undefined when the hub is
++ * unreachable or rejects the call.
++ */
++export async function fetchReviewRubric(input: {
++	diffText: string;
++	taskPrompt?: string;
++}): Promise<{ rubric: string } | undefined> {
++	const payload = (await runRequest("/review/rubric", input)) as { rubric?: unknown } | undefined;
++	return typeof payload?.rubric === "string" ? { rubric: payload.rubric } : undefined;
++}
++
++/**
++ * Records an independent reviewer session's verdict against an authoring
++ * run. Authoritative: the hub enforces cross-run and >=3-axis rules and
++ * reports whether reviewer evidence was recorded; the parsed result is
++ * returned to the caller (undefined only on transport failure).
++ */
++export async function submitWorkflowReview(input: {
++	runId: string;
++	reviewerRunId: string;
++	verdict: "approved" | "changes_requested" | "rejected";
++	summary: string;
++}): Promise<{ recorded: boolean } | undefined> {
++	const payload = (await runRequest("/run/review", input)) as { recorded?: unknown } | undefined;
++	return typeof payload?.recorded === "boolean" ? { recorded: payload.recorded } : undefined;
 +}
 diff --git a/sdk/packages/core/src/hub/index.ts b/sdk/packages/core/src/hub/index.ts
 index 4081a4c..1796176 100644
