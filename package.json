@@ -15,7 +15,8 @@
     "dist",
     "README.md",
     "THREAT_MODEL.md",
-    "docs"
+    "docs",
+    "mcp-toolbox"
   ],
   "engines": {
     "node": ">=22"

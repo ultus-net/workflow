@@ -35,3 +35,75 @@ index 596cf93..bf58b65 100644
  			input.resolveToolPolicy,
  		);
  		return buildInteractiveSessionConfig({
+diff --git a/apps/cli/src/utils/workflow-bridge.ts b/apps/cli/src/utils/workflow-bridge.ts
+new file mode 100644
+index 0000000..01b6a05
+--- /dev/null
++++ b/apps/cli/src/utils/workflow-bridge.ts
+@@ -0,0 +1,66 @@
++import type { AgentHooks, ShellExecutor } from "@cline/core";
++
++type BridgeResponse = {
++	stop?: boolean;
++	reason?: string;
++	output?: string;
++	error?: string;
++};
++
++export function createWorkflowBridge() {
++	const url = process.env.WORKFLOW_CLINE_BRIDGE_URL?.trim();
++	const token = process.env.WORKFLOW_CLINE_BRIDGE_TOKEN?.trim();
++	if (!url || !token) {
++		throw new Error("Workflow authorization bridge is required for this Cline build");
++	}
++
++	const request = async (path: string, body: unknown): Promise<BridgeResponse> => {
++		const response = await fetch(`${url}${path}`, {
++			method: "POST",
++			headers: {
++				authorization: `Bearer ${token}`,
++				"content-type": "application/json",
++			},
++			body: JSON.stringify(body),
++		});
++		const payload = (await response.json()) as BridgeResponse;
++		if (!response.ok) {
++			throw new Error(payload.error || `Workflow bridge returned ${response.status}`);
++		}
++		return payload;
++	};
++
++	const authorize = (hooks: AgentHooks | undefined): AgentHooks => ({
++		...hooks,
++		beforeTool: async (ctx) => {
++			try {
++				const decision = await request("/before-tool", {
++					toolCall: ctx.toolCall,
++					input: ctx.input,
++				});
++				if (decision.stop) {
++					return {
++						stop: true,
++						reason: decision.reason || "Workflow denied tool execution",
++					};
++				}
++			} catch (error) {
++				return {
++					stop: true,
++					reason: `Workflow authorization unavailable: ${error instanceof Error ? error.message : String(error)}`,
++				};
++			}
++			return await hooks?.beforeTool?.(ctx);
++		},
++	});
++
++	const bash: ShellExecutor = async (command, cwd) => {
++		const result = await request("/bash", { command, cwd });
++		if (typeof result.output !== "string") {
++			throw new Error(result.error || "Workflow bash executor returned no output");
++		}
++		return result.output;
++	};
++
++	return { authorize, bash };
++}
