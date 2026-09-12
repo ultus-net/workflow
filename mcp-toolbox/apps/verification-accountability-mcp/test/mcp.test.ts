@@ -1,0 +1,32 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+async function fixture() {
+  const workspace = await mkdtemp(join(tmpdir(), "verification-mcp-workspace-")); const dataRoot = await mkdtemp(join(tmpdir(), "verification-mcp-data-"));
+  const client = new Client({ name: "verification-black-box-test", version: "1.0.0" });
+  const authority = join(process.cwd(), "test", "fake-authority.mjs");
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: ["dist/server.js"], cwd: process.cwd(), stderr: "pipe", env: { VERIFICATION_ACCOUNTABILITY_DATA_DIR: dataRoot, VERIFICATION_ACCOUNTABILITY_TEST_COMMAND: process.execPath, VERIFICATION_ACCOUNTABILITY_TEST_ARGS: JSON.stringify([authority]), VERIFICATION_ACCOUNTABILITY_CI_COMMAND: process.execPath, VERIFICATION_ACCOUNTABILITY_CI_ARGS: JSON.stringify([authority]), CI_GITHUB_REPOSITORY: "owner/repo" } }));
+  return { workspace, dataRoot, client };
+}
+
+test("compiled server exposes bounded authority-backed persistence and retrieval", async (t) => {
+  const { workspace, dataRoot, client } = await fixture(); t.after(async () => { await client.close(); await Promise.all([rm(workspace, { recursive: true, force: true }), rm(dataRoot, { recursive: true, force: true })]); });
+  const { tools } = await client.listTools(); assert.deepEqual(tools.map(({ name }) => name), ["record_verification", "list_verifications"]); assert.ok(tools.every((tool) => tool.outputSchema)); assert.deepEqual(tools.map((tool) => tool.annotations?.readOnlyHint), [false, true]); assert.match(tools[0]?.description ?? "", /new verification observation is required/); assert.match(tools[0]?.description ?? "", /Local test content freshness remains unknown/); assert.match(tools[0]?.description ?? "", /caller-supplied result claims are not accepted/); assert.match(tools[1]?.description ?? "", /Proactively call before finalizing or handing off work/);
+  const recorded = await client.callTool({ name: "record_verification", arguments: { workspaceRoot: workspace, request: { kind: "local_test", testIds: ["node:test/a.test.ts"] } } }); assert.equal(recorded.isError, undefined);
+  const listed = await client.callTool({ name: "list_verifications", arguments: { workspaceRoot: workspace, currentSubject: { kind: "fingerprint", algorithm: "sha256", version: "1", scope: "worktree", value: "c".repeat(64) } } });
+  const item = (listed.structuredContent as { observations: Array<{ freshness: string; result: { failed: number; testsTruncated: boolean } }> }).observations[0]!; assert.equal(item.freshness, "unknown"); assert.equal(item.result.failed, 1); assert.equal(item.result.testsTruncated, true);
+});
+
+test("compiled MCP obtains CI evidence by authority-returned run identity", async (t) => {
+  const { workspace, dataRoot, client } = await fixture(); t.after(async () => { await client.close(); await Promise.all([rm(workspace, { recursive: true, force: true }), rm(dataRoot, { recursive: true, force: true })]); });
+  const revision = "d".repeat(40); const recorded = await client.callTool({ name: "record_verification", arguments: { workspaceRoot: workspace, request: { kind: "ci_run", runId: "github:42", revision } } }); assert.equal(recorded.isError, undefined);
+  const item = (recorded.structuredContent as { observation: { source: { runId: string }; result: { revision: string } } }).observation; assert.equal(item.source.runId, "github:42"); assert.equal(item.result.revision, revision);
+  const forged = await client.callTool({ name: "record_verification", arguments: { workspaceRoot: workspace, request: { kind: "ci_run", runId: "github:43" } } }); assert.equal(forged.isError, true);
+  const unknown = await client.callTool({ name: "record_verification", arguments: { workspaceRoot: workspace, request: { kind: "agent_claim", result: "all tests pass" } } }); assert.equal(unknown.isError, true);
+});

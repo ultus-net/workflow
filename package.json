@@ -37,6 +37,9 @@
     "test:cline-resume": "npm run build && node test/integration/cline-resume.mjs",
     "test:containment-runtime": "node --import tsx --test test/containment.test.ts",
     "test:e2e": "npm run build && node test/integration/workflow-e2e.mjs",
+    "toolbox:install": "pnpm --dir mcp-toolbox install",
+    "toolbox:build": "pnpm --dir mcp-toolbox run build",
+    "toolbox:verify": "pnpm --dir mcp-toolbox run verify",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

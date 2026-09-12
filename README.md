@@ -74,10 +74,17 @@ MCP output is external, untrusted input. Shape validation and evidence admission
 
 ## Extension Contracts
 
+The `mcp-toolbox/` directory vendors the MCP toolbox monorepo (workflow-guard
+and companion intelligence servers) as tracked source. Build and verify it with
+`npm run toolbox:install && npm run toolbox:verify` (requires pnpm 11.5.2). See
+`mcp-toolbox/README.md` for the tool catalog and `docs/MCP_INTEGRATION.md` for
+the evidence trust boundary.
+
 Pets: the repo can load Petdex/Codex desktop-pet packages (`pet.json` +
 lossless `spritesheet.webp`) with a pure TypeScript VP8L decoder and render
-them as terminal animations; see `docs/PETS.md`, `npm run pets`, and
-`npm run tui -- --pet <dir>`.
+them as terminal animations; see `docs/PETS.md`, `npm run pets`. The TUI
+integration is currently disabled — see `docs/PETS.md` for findings and
+recommendations.
 
 Keep the kernel/application contract portable, but write a concrete adapter for each SDK/tool family. Do not build a universal adapter that guesses host semantics. `docs/HOST_ADAPTERS.md` documents capabilities, conformance expectations, capability classification, and advisory/enforced semantics.
 

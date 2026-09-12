@@ -1,0 +1,9 @@
+# Git Intelligence MCP
+
+Structured local Git change and history intelligence for coding agents over MCP. Requires Node.js 22 or newer and an installed Git executable.
+
+Run from a published package with `git-intelligence-mcp`. The `working_tree_status` tool returns deterministic, bounded staged, unstaged, untracked, rename, and conflict state for an absolute workspace root that is itself the Git worktree root. The `local_diff` tool accepts an explicit `staged` or `unstaged` scope and returns normalized file metadata plus bounded textual patch evidence; binary changes remain structural. Both tools accept an optional `limit` that defaults to 100 and is capped at 500. Diff patches are capped at 32 KiB per file and 256 KiB per result with explicit truncation flags.
+
+`file_history` returns rename-following local commit provenance for one confined workspace-relative literal path. Its commit limit defaults to 50 and is capped at 200; subject/body evidence is capped at 8 KiB per commit. `file_blame` returns committed `HEAD` line provenance, including historical Git path identity and original/final line numbers, with a default of 200 lines and maximum of 1000. Neither tool accepts revisions or Git format strings, and neither lazy-fetches missing objects. Git children ignore ambient system/global configuration; blame additionally fails closed when repository-local or worktree configuration enables external diff/textconv execution or configured ignore-revision attribution, because Git blame has no reliable command-line disable switch for all of those mechanisms.
+
+The domain is local and read-only. It does not stage, commit, restore, fetch, push, invoke remote forge APIs, or perform cross-domain symbol correlation. The contract and process-safety requirements are documented in `docs/architecture/git-intelligence-contract.md` in the source repository.

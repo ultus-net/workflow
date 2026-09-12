@@ -1,0 +1,27 @@
+{
+  "name": "change-intelligence-mcp",
+  "version": "0.1.0",
+  "description": "Composed local change assessment for coding agents over MCP.",
+  "type": "module",
+  "bin": {
+    "change-intelligence-mcp": "./dist/server.js"
+  },
+  "files": ["dist/", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/server.js', 0o755)\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "pnpm run build && node --test --import tsx test/*.test.ts",
+    "verify": "pnpm run typecheck && pnpm run test"
+  },
+  "engines": { "node": ">=22" },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}
