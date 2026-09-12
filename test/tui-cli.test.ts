@@ -27,6 +27,24 @@ test("TUI launcher registers vendored toolbox MCP servers", () => {
   assert.match(launcher, /cline_mcp_settings\.json/);
 });
 
+test("patched Cline zen and connector sessions attach the Workflow bridge localRuntime", () => {
+  const zen = readFileSync(
+    resolve(process.cwd(), ".workflow-cline", "cline", "apps", "cli", "src", "runtime", "run-zen.ts"),
+    "utf8",
+  );
+  const connector = readFileSync(
+    resolve(process.cwd(), ".workflow-cline", "cline", "apps", "cli", "src", "connectors", "session-runtime.ts"),
+    "utf8",
+  );
+  const helper = readFileSync(
+    resolve(process.cwd(), ".workflow-cline", "cline", "apps", "cli", "src", "utils", "workflow-bridge-local-runtime.ts"),
+    "utf8",
+  );
+  assert.match(zen, /workflowBridgeLocalRuntime/);
+  assert.match(connector, /workflowBridgeLocalRuntime/);
+  assert.match(helper, /createWorkflowBridge\(\)\.authorize\(undefined\)/);
+});
+
 test("patched Cline headless mode is flow through the Workflow authorization bridge", () => {
   const runAgent = readFileSync(
     resolve(process.cwd(), ".workflow-cline", "cline", "apps", "cli", "src", "runtime", "run-agent.ts"),

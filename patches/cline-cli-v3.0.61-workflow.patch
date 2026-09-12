@@ -1,3 +1,23 @@
+diff --git a/apps/cli/src/connectors/session-runtime.ts b/apps/cli/src/connectors/session-runtime.ts
+index b0f5add..a4b482a 100644
+--- a/apps/cli/src/connectors/session-runtime.ts
++++ b/apps/cli/src/connectors/session-runtime.ts
+@@ -16,6 +16,7 @@ import {
+ import type { CliLoggerAdapter } from "../logging/adapter";
+ import { resolveSystemPrompt } from "../runtime/prompt";
+ import { resolveCliSessionMetadata } from "../utils/enterprise";
++import { workflowBridgeLocalRuntime } from "../utils/workflow-bridge-local-runtime";
+ import { resolveWorkspaceRoot } from "../utils/helpers";
+ import {
+ 	parseLocalRowMetadata,
+@@ -117,6 +118,7 @@ export async function buildConnectorStartRequest(input: {
+ 		logger: input.loggerConfig,
+ 		enableTools: input.options.enableTools,
+ 		autoApproveTools: false,
++		...workflowBridgeLocalRuntime(),
+ 	};
+ }
+ 
 diff --git a/apps/cli/src/runtime/interactive/session-runtime.ts b/apps/cli/src/runtime/interactive/session-runtime.ts
 index 596cf93..bf58b65 100644
 --- a/apps/cli/src/runtime/interactive/session-runtime.ts
@@ -64,6 +84,26 @@ index b5c6144..09cae6f 100644
  				onTeamEvent: handleTeamEvent,
  				onConsecutiveMistakeLimitReached: async (
  					context: ConsecutiveMistakeLimitContext,
+diff --git a/apps/cli/src/runtime/run-zen.ts b/apps/cli/src/runtime/run-zen.ts
+index 9b387e0..e017583 100644
+--- a/apps/cli/src/runtime/run-zen.ts
++++ b/apps/cli/src/runtime/run-zen.ts
+@@ -4,6 +4,7 @@ import type { ChatStartSessionRequest } from "@cline/shared";
+ import { resolveCliSessionMetadata } from "../utils/enterprise";
+ import { ensureCliHubServer } from "../utils/hub-runtime";
+ import { c, emitJsonLine, writeErr, writeln } from "../utils/output";
++import { workflowBridgeLocalRuntime } from "../utils/workflow-bridge-local-runtime";
+ import type { Config } from "../utils/types";
+ import { buildUserInputMessage } from "./prompt";
+ 
+@@ -103,6 +104,7 @@ export async function runZen(
+ 			source: "cline-cli-zen",
+ 			interactive: false,
+ 			logger: config.loggerConfig,
++			...workflowBridgeLocalRuntime(),
+ 		};
+ 
+ 		const started = await sessionClient.startRuntimeSession(startRequest);
 diff --git a/apps/cli/src/utils/workflow-bridge.ts b/apps/cli/src/utils/workflow-bridge.ts
 new file mode 100644
 index 0000000..01b6a05
@@ -135,4 +175,20 @@ index 0000000..01b6a05
 +	};
 +
 +	return { authorize, bash };
++}
+diff --git a/apps/cli/src/utils/workflow-bridge-local-runtime.ts b/apps/cli/src/utils/workflow-bridge-local-runtime.ts
+new file mode 100644
+index 0000000..7b847fa
+--- /dev/null
++++ b/apps/cli/src/utils/workflow-bridge-local-runtime.ts
+@@ -0,0 +1,10 @@
++import { createWorkflowBridge } from "./workflow-bridge";
++
++/**
++ * Every hub-side session creator (zen, schedule, connectors) must attach the
++ * Workflow authorization bridge as a localRuntime hook; the hub executes
++ * these client-side hooks through its contribution RPC.
++ */
++export function workflowBridgeLocalRuntime(): { localRuntime: { hooks: import("@cline/core").AgentHooks } } {
++	return { localRuntime: { hooks: createWorkflowBridge().authorize(undefined) } };
 +}
