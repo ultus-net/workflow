@@ -9,7 +9,7 @@ import { WorkflowApplication } from "../application/workflow.js";
 import { createWorkflowClineTuiBridge } from "../integrations/cline-tui-bridge.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
-import { collectToolboxMcpServers } from "./mcp-settings.js";
+import { collectToolboxMcpServers, mergeMcpSettings, readUserMcpSettings } from "./mcp-settings.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 
 const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
@@ -57,9 +57,11 @@ async function writeMcpSettings(servers: Record<string, unknown>): Promise<strin
     console.warn("no built toolbox MCP servers; run: npm run toolbox:build");
     return "";
   }
+  const userSettings = readUserMcpSettings(resolve(process.env.HOME ?? "", ".cline", "data", "settings", "cline_mcp_settings.json"));
+  const merged = mergeMcpSettings(userSettings, servers);
   const dir = await mkdtemp(join(tmpdir(), "workflow-mcp-"));
   const path = join(dir, "cline_mcp_settings.json");
-  await writeFile(path, JSON.stringify({ mcpServers: servers }));
+  await writeFile(path, JSON.stringify(merged));
   return path;
 }
 

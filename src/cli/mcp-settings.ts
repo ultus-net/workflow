@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 export interface ToolboxMcpServerEntry {
@@ -26,4 +26,32 @@ export function collectToolboxMcpServers(toolboxRoot: string): Record<string, To
     };
   }
   return servers;
+}
+
+export interface McpSettingsDocument {
+  mcpServers?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/**
+ * Merges toolbox entries into the user's existing MCP settings document:
+ * user servers survive; toolbox entries win on name conflicts; unrelated
+ * top-level keys are preserved.
+ */
+export function mergeMcpSettings(user: McpSettingsDocument, toolbox: Record<string, unknown>): McpSettingsDocument {
+  return {
+    ...user,
+    mcpServers: { ...(user.mcpServers ?? {}), ...toolbox },
+  };
+}
+
+/** Reads the user's existing MCP settings file if present; returns {} on failure. */
+export function readUserMcpSettings(path: string): McpSettingsDocument {
+  if (!existsSync(path)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return typeof parsed === "object" && parsed !== null ? parsed as McpSettingsDocument : {};
+  } catch {
+    return {};
+  }
 }
