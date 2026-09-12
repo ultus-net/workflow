@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { collectToolboxMcpServers, mergeMcpSettings } from "../src/cli/mcp-settings.js";
+import { collectToolboxMcpServers, mergeMcpSettings, preparePersistentMcpSettings } from "../src/cli/mcp-settings.js";
 
 function fakeToolbox(): string {
   const root = mkdtempSync(join(tmpdir(), "toolbox-fixture-"));
@@ -47,4 +47,58 @@ test("collectToolboxMcpServers returns empty when nothing is built", () => {
   const root = mkdtempSync(join(tmpdir(), "toolbox-empty-"));
   mkdirSync(join(root, "apps", "learning-mcp"), { recursive: true });
   assert.deepEqual(collectToolboxMcpServers(root), {});
+});
+
+test("preparePersistentMcpSettings writes a merged file at a stable path", (t) => {
+  const toolbox = fakeToolbox();
+  const dir = mkdtempSync(join(tmpdir(), "mcp-persist-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(toolbox, { recursive: true, force: true }));
+  const settingsPath = join(dir, "cline_mcp_settings.json");
+
+  const result = preparePersistentMcpSettings({ settingsPath, toolboxRoot: toolbox });
+  assert.equal(result.path, settingsPath);
+  const written = JSON.parse(readFileSync(settingsPath, "utf8"));
+  assert.deepEqual(
+    Object.keys(written.mcpServers).sort(),
+    ["test-intelligence", "workflow-guard"],
+  );
+});
+
+test("preparePersistentMcpSettings keeps self-service additions and prunes stale toolbox entries", (t) => {
+  const toolbox = fakeToolbox();
+  const dir = mkdtempSync(join(tmpdir(), "mcp-persist-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(toolbox, { recursive: true, force: true }));
+  const settingsPath = join(dir, "cline_mcp_settings.json");
+
+  preparePersistentMcpSettings({ settingsPath, toolboxRoot: toolbox });
+
+  // The user adds a server through the surface's self-service MCP manager;
+  // it lands in the same file Cline was pointed at.
+  const between = JSON.parse(readFileSync(settingsPath, "utf8"));
+  between.mcpServers["my-custom-server"] = { type: "streamableHttp", url: "https://mcp.example.test" };
+  writeFileSync(settingsPath, JSON.stringify(between));
+
+  // The test-intelligence toolbox app is uninstalled before the next launch.
+  rmSync(join(toolbox, "apps", "test-intelligence-mcp"), { recursive: true, force: true });
+
+  preparePersistentMcpSettings({ settingsPath, toolboxRoot: toolbox });
+  const written = JSON.parse(readFileSync(settingsPath, "utf8"));
+  assert.deepEqual(
+    Object.keys(written.mcpServers).sort(),
+    ["my-custom-server", "workflow-guard"],
+  );
+});
+
+test("preparePersistentMcpSettings works when no toolbox apps are built", (t) => {
+  const toolbox = mkdtempSync(join(tmpdir(), "toolbox-empty-"));
+  const dir = mkdtempSync(join(tmpdir(), "mcp-persist-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(toolbox, { recursive: true, force: true }));
+  const settingsPath = join(dir, "cline_mcp_settings.json");
+
+  const result = preparePersistentMcpSettings({ settingsPath, toolboxRoot: toolbox });
+  assert.ok(existsSync(result.path));
+  assert.deepEqual(JSON.parse(readFileSync(settingsPath, "utf8")).mcpServers, {});
 });

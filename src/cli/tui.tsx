@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolveWorkflowHub } from "./hub-client.js";
-import { collectToolboxMcpServers, mergeMcpSettings, readUserMcpSettings } from "./mcp-settings.js";
+import { preparePersistentMcpSettings, readUserMcpSettings } from "./mcp-settings.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 
 const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
@@ -18,22 +18,30 @@ const clineRoot = resolve(root, ".workflow-cline", "cline");
 // daemon is not running. See `docs/HUB.md`.
 const hub = await resolveWorkflowHub();
 const toolboxRoot = resolve(root, "mcp-toolbox");
-const mcpServers = collectToolboxMcpServers(toolboxRoot);
-const mcpSettingsPath = await writeMcpSettings(mcpServers);
+const mcpSettingsPath = prepareMcpSettings(toolboxRoot);
 const exitCode = await runClineTui(clineRoot, workspace, hub.url, hub.token, mcpSettingsPath);
 process.exitCode = exitCode;
 
-async function writeMcpSettings(servers: Record<string, unknown>): Promise<string> {
+/**
+ * MCP settings live at a stable Workflow-owned path so servers added through
+ * the surface's self-service MCP manager persist across runs. The file is
+ * seeded from the user's existing Cline settings on first run and re-merged
+ * with the vendored toolbox on every launch.
+ */
+function prepareMcpSettings(toolboxRoot: string): string {
+  const settingsPath = resolve(homedir(), ".workflow", "cline_mcp_settings.json");
+  if (!existsSync(settingsPath)) {
+    const seed = readUserMcpSettings(resolve(homedir(), ".cline", "data", "settings", "cline_mcp_settings.json"));
+    if (Object.keys(seed).length > 0) {
+      mkdirSync(dirname(settingsPath), { recursive: true });
+      writeFileSync(settingsPath, JSON.stringify(seed, null, 2), { mode: 0o600 });
+    }
+  }
+  const { servers } = preparePersistentMcpSettings({ settingsPath, toolboxRoot });
   if (Object.keys(servers).length === 0) {
     console.warn("no built toolbox MCP servers; run: npm run toolbox:build");
-    return "";
   }
-  const userSettings = readUserMcpSettings(resolve(process.env.HOME ?? "", ".cline", "data", "settings", "cline_mcp_settings.json"));
-  const merged = mergeMcpSettings(userSettings, servers);
-  const dir = await mkdtemp(join(tmpdir(), "workflow-mcp-"));
-  const path = join(dir, "cline_mcp_settings.json");
-  await writeFile(path, JSON.stringify(merged));
-  return path;
+  return settingsPath;
 }
 
 function runClineTui(clineRoot: string, cwd: string, bridgeUrl: string, bridgeToken: string, mcpSettingsPath: string): Promise<number> {

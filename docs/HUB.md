@@ -79,7 +79,9 @@ Sandbox/isolation remains the same as the TUI router today.
 
 ## Out of scope (deliberate)
 
-- Self-service MCP manager persistence (still per-run temp)
+- Self-service MCP manager persistence **(done — merged settings live at the
+  stable `~/.workflow/cline_mcp_settings.json`; stale toolbox entries are
+  pruned and self-service additions survive across runs)**
 - Pets UX (documented disabled)
 - Desktop app integration (same hub hook can be used after alpha)
 

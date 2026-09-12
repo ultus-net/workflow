@@ -20,9 +20,9 @@ test("TUI launcher exposes no artwork hooks", () => {
   assert.doesNotMatch(launcher, /raven-small\.ans|homeArt|WORKFLOW_TUI_ANIMATION_PATH|WORKFLOW_TUI_STATUS_ANIMATION_PATH|WORKFLOW_TUI_MARK_B64/);
 });
 
-test("TUI launcher registers vendored toolbox MCP servers", () => {
+test("TUI launcher registers vendored toolbox MCP servers at a persistent path", () => {
   const launcher = readFileSync(resolve(process.cwd(), "src", "cli", "tui.tsx"), "utf8");
-  assert.match(launcher, /collectToolboxMcpServers/);
+  assert.match(launcher, /preparePersistentMcpSettings/);
   assert.match(launcher, /CLINE_MCP_SETTINGS_PATH/);
   assert.match(launcher, /cline_mcp_settings\.json/);
 });
