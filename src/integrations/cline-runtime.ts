@@ -7,8 +7,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { ClineHostAdapter } from "../adapters/cline.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
 import type { WorkflowApplication } from "../application/workflow.js";
-import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import { WorkflowContainedProcess } from "../containment/workflow-process.js";
+import { selectContainment } from "../containment/platform.js";
 import { createDefaultToolboxGuardProvider } from "./mcp-toolbox-guard.js";
 import { createWorkflowClinePlugin } from "./cline-plugin.js";
 import { ClineSessionDriver } from "./cline-session.js";
@@ -54,13 +54,12 @@ export async function createConfiguredClineRuntime(application: WorkflowApplicat
     authoritativePreMutation: true,
   });
   const plugin = createWorkflowClinePlugin(application, adapter, (tool, reason, toolCallId) => driver?.recordToolDenial(tool, reason, toolCallId));
-  const containment = new LinuxBubblewrapContainment();
   const guard = await createDefaultToolboxGuardProvider().catch((error) => {
     console.warn(`Workflow guard unavailable (advisory): ${error instanceof Error ? error.message : error}`);
     return undefined;
   });
   const shellExecutor = createWorkflowClineShellExecutor(
-    new WorkflowContainedProcess(application, containment, guard),
+    new WorkflowContainedProcess(application, selectContainment(), guard),
     adapter,
     (exitCode, output) => new core.CommandExitError(exitCode, output),
   );

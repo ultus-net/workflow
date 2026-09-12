@@ -6,7 +6,7 @@ import { createInterface } from "node:readline/promises";
 
 import { ClineHostAdapter } from "../adapters/cline.js";
 import { WorkflowApplication } from "../application/workflow.js";
-import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
+import { selectContainment } from "../containment/platform.js";
 import { WorkflowContainedProcess } from "../containment/workflow-process.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 import { evidenceId, observationId, taskId } from "../kernel/contracts.js";
@@ -22,7 +22,7 @@ const input = createInterface({ input: process.stdin, output: process.stdout });
 try {
   console.log(`Writable workspace: ${workspace}`);
   console.log("Network: isolated | Credentials: cleared");
-  const containment = new LinuxBubblewrapContainment();
+  const containment = selectContainment();
   let commandNumber = 0;
   input.setPrompt("Workflow> ");
   input.prompt();

@@ -17,6 +17,7 @@ export * from "./integrations/opencode-plugin.js";
 export * from "./integrations/opencode-session.js";
 export * from "./integrations/mcp-toolbox-guard.js";
 export * from "./containment/contracts.js";
+export * from "./containment/platform.js";
 export * from "./containment/linux-bwrap.js";
 export * from "./containment/workflow-process.js";
 export * from "./application/persistence.js";

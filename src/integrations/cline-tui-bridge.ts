@@ -3,8 +3,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 
 import { ClineHostAdapter } from "../adapters/cline.js";
 import type { WorkflowApplication } from "../application/workflow.js";
-import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import { WorkflowContainedProcess } from "../containment/workflow-process.js";
+import { selectContainment } from "../containment/platform.js";
 import { buildReviewRubric } from "../review/rubric.js";
 import { createWorkflowClinePlugin, type ClineBeforeToolHookInput } from "./cline-plugin.js";
 import { createWorkflowClineShellExecutor, type WorkflowClineShellExecutor } from "./cline-shell-executor.js";
@@ -145,7 +145,7 @@ function pluginFor(application: WorkflowApplication) {
 
 function shellExecutorFor(application: WorkflowApplication): WorkflowClineShellExecutor {
   return createWorkflowClineShellExecutor(
-    new WorkflowContainedProcess(application, new LinuxBubblewrapContainment()),
+    new WorkflowContainedProcess(application, selectContainment()),
     adapterFor(application),
     (exitCode, output) => Object.assign(new Error(output), { exitCode }),
   );

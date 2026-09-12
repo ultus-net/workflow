@@ -14,7 +14,8 @@ trip over.
 |---|---|---|
 | Deterministic task graph (states, dependencies, evidence, mutation epochs) | Complete | `src/kernel/`; no LLM/IO/UI deps |
 | Application authorization (capability withholding, workspace binding) | Complete | `src/application/workflow.ts` |
-| Process containment (bubblewrap) | Partial | **Linux only**; `src/containment/`; macOS/Windows run with policy gating but no process isolation |
+| Process containment (bubblewrap on Linux) | Partial | `src/containment/platform.ts` — **policy-only passthrough on non-Linux, with a visible warning**; full isolation remains Linux-only |
+| Cross-platform graceful degradation | Complete | `selectContainment()` — no silent fallback; policy gating works everywhere |
 | Persistence (versioned JSON store, exclusive lock) | Complete | restart recovery marks orphaned IN_PROGRESS as FAILED |
 
 ## The Hub (universal authority)
@@ -63,6 +64,6 @@ trip over.
 | Feature | Status | Notes |
 |---|---|---|
 | **Review-gate polish: P2/P3 findings → follow-ups ledger, monitor shows verdicts** | **Planned** | follow-up storage exists in review-accountability-mcp; verdict surfacing in the Activity panel not wired |
-| Cross-platform containment (macOS Seatbelt, Windows) | Planned | containment is Linux-only; policy gating works everywhere |
+| Cross-platform isolation (macOS Seatbelt, Windows) | Planned | policy-only passthrough ships now; native isolation tiers remain open |
 | Web-UI monitoring panels | Planned | port of the Ink panels |
 | Auto style-savings measurement | Planned | style token savings are model-dependent, currently unmeasured |
