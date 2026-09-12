@@ -13,6 +13,7 @@ import { createDefaultToolboxGuardProvider } from "./mcp-toolbox-guard.js";
 import { createWorkflowClinePlugin } from "./cline-plugin.js";
 import { ClineSessionDriver } from "./cline-session.js";
 import { createWorkflowClineShellExecutor } from "./cline-shell-executor.js";
+import { createProjectMemoryClient, formatMemoryRecall, type ProjectMemory } from "./project-memory.js";
 
 interface ClineRuntimeCore {
   readonly ProviderSettingsManager: new () => { getLastUsedProviderConfig(): Record<string, unknown> };
@@ -61,6 +62,16 @@ export async function createConfiguredClineRuntime(application: WorkflowApplicat
     adapter,
     (exitCode, output) => new core.CommandExitError(exitCode, output),
   );
+  // Compaction bridge: recall durable project memory at session start and
+  // flush a bounded outcome record after each completed run, so context
+  // compaction never loses durable state. Advisory: no memory server, no bridge.
+  const memoryServer = resolve(fileURLToPath(import.meta.url), "../../../mcp-toolbox/apps/project-memory-mcp/dist/server.js");
+  const memory: ProjectMemory | undefined = existsSync(memoryServer)
+    ? await createProjectMemoryClient({ serverScript: memoryServer, workspaceRoot }).catch(() => undefined)
+    : undefined;
+  const memoryRecall = memory === undefined
+    ? ""
+    : formatMemoryRecall(await memory.recall("decisions constraints lessons", 8).catch(() => []), { maxChars: 2_000 });
   const applyPatchTool = core.createDefaultTools({
     executors: { applyPatch: core.createApplyPatchExecutor({ restrictToCwd: true }) },
     cwd: workspaceRoot,
@@ -97,7 +108,8 @@ export async function createConfiguredClineRuntime(application: WorkflowApplicat
         baseUrl: providerConfig.baseUrl,
         cwd: workspaceRoot,
         workspaceRoot,
-        systemPrompt: core.getClineDefaultSystemPrompt({ rootPath: workspaceRoot, cwd: workspaceRoot, ide: "Terminal Shell", platform: platform(), mode: "act", providerId }),
+        systemPrompt: core.getClineDefaultSystemPrompt({ rootPath: workspaceRoot, cwd: workspaceRoot, ide: "Terminal Shell", platform: platform(), mode: "act", providerId })
+          + (memoryRecall.length > 0 ? `\n\n${memoryRecall}` : ""),
         enableTools: true,
         enableSpawnAgent: false,
         enableAgentTeams: false,
@@ -105,7 +117,19 @@ export async function createConfiguredClineRuntime(application: WorkflowApplicat
       localRuntime: { hooks: plugin.hooks, extraTools: [applyPatchTool] },
     }),
   });
-  return { session: new WorkflowCodingSession(driver), dispose: () => Promise.all([cline.dispose(), guard?.close() ?? Promise.resolve()]).then(() => undefined) };
+  const session = new WorkflowCodingSession(driver);
+  if (memory !== undefined) {
+    const flush = memory;
+    session.subscribe((event) => {
+      if (event.type !== "completed" || event.result.trim().length < 100) return;
+      const content = `Session outcome in ${workspaceRoot}: ${event.result.trim().slice(0, 400)}`;
+      void flush.record("lesson", content).catch(() => undefined);
+    });
+  }
+  return {
+    session,
+    dispose: () => Promise.all([cline.dispose(), guard?.close() ?? Promise.resolve(), memory?.close() ?? Promise.resolve()]).then(() => undefined),
+  };
 }
 
 async function loadClineCore(): Promise<ClineRuntimeCore> {
