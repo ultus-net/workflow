@@ -23,5 +23,7 @@ export * from "./application/persistence.js";
 export * from "./pedagogy/contracts.js";
 export * from "./pedagogy/learner-profile.js";
 export * from "./pedagogy/diagnostic-tutor.js";
+export * from "./pedagogy/checkpoints.js";
+export * from "./pedagogy/primm.js";
 export * from "./ui/tui.js";
 export * from "./ui/web.js";

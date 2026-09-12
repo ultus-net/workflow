@@ -1,10 +1,32 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 
 import type { CodingSessionEvent } from "../application/coding-session.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
 import type { WorkflowApplication, WorkflowSnapshot } from "../application/workflow.js";
 import type { TaskState } from "../kernel/contracts.js";
+import {
+  PEDAGOGICAL_MODES,
+  type DecisionBrief,
+  type DiagnosticLesson,
+  type LearnerProfile,
+  type LearningOpportunity,
+  type PedagogicalMode,
+} from "../pedagogy/contracts.js";
+import { loadLearnerProfile } from "../pedagogy/learner-profile.js";
+
+export const MODE_LABELS: Record<PedagogicalMode, string> = {
+  "learn-to-code": "Learn to Code",
+  "socratic-tutor": "Socratic Tutor",
+  "co-architect": "Co-Architect",
+  "walkthrough": "Walkthrough",
+  "autonomous": "Autonomous",
+};
+
+export function nextPedagogicalMode(mode: PedagogicalMode): PedagogicalMode {
+  const index = PEDAGOGICAL_MODES.indexOf(mode);
+  return PEDAGOGICAL_MODES[(index + 1) % PEDAGOGICAL_MODES.length] ?? "autonomous";
+}
 
 export { createWorkflowRibbonFrames, renderWorkflowRibbon, WORKFLOW_RIBBON_FRAMES, WORKFLOW_RIBBON_PROJECT } from "./home-animation.js";
 
@@ -50,20 +72,48 @@ export function nextInteractiveState(state: TaskState): TaskState | undefined {
 export function WorkflowTui({
   application,
   session,
+  profile,
+  profilePath,
+  onInspectSymbol,
 }: {
   readonly application: WorkflowApplication;
   readonly session?: WorkflowCodingSession;
+  readonly profile?: LearnerProfile;
+  readonly profilePath?: string;
+  readonly onInspectSymbol?: (symbol: string) => void;
 }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot>(() => application.snapshot());
   const [prompt, setPrompt] = useState("");
+  // Mirror of the prompt for synchronous reads in the input handler: fast
+  // keypresses can arrive before React flushes a render, and reading state
+  // directly would lose fast submissions (a ref never goes stale in useInput).
+  const promptRef = useRef("");
+  const updatePrompt = (update: string | ((value: string) => string)) => {
+    setPrompt((value) => {
+      const next = typeof update === "function" ? update(value) : update;
+      promptRef.current = next;
+      return next;
+    });
+  };
   const [sessionState, setSessionState] = useState(() => session?.snapshot());
   const [transcript, setTranscript] = useState<readonly TranscriptEntry[]>([]);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [showWorkflow, setShowWorkflow] = useState(false);
+  const [mode, setMode] = useState<PedagogicalMode>("autonomous");
+  const [showProfile, setShowProfile] = useState(false);
+  const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | undefined>(profile);
+  const [showHint, setShowHint] = useState(false);
+  const [inspectQuery, setInspectQuery] = useState("");
+  const [decisionBrief, setDecisionBrief] = useState<DecisionBrief | undefined>();
+  const [checkpoint, setCheckpoint] = useState<LearningOpportunity | undefined>();
+  const [lesson, setLesson] = useState<DiagnosticLesson | undefined>();
 
   useEffect(() => session?.subscribe((event) => {
+    if (event.type === "decision-brief") setDecisionBrief(event.brief);
+    if (event.type === "tutor-checkpoint") setCheckpoint(event.opportunity);
+    if (event.type === "diagnostic-lesson") setLesson(event.lesson);
     setTranscript((current) => [...current, formatSessionEvent(event)]);
     setScrollOffset(0);
     setSessionState(session.snapshot());
@@ -83,6 +133,42 @@ export function WorkflowTui({
       setShowWorkflow((value) => !value);
       return;
     }
+    if (showHint) {
+      if (key.escape || input === "?") {
+        setShowHint(false);
+        setInspectQuery("");
+        return;
+      }
+      if (key.return) {
+        const symbol = inspectQuery.trim();
+        if (symbol.length > 0) onInspectSymbol?.(symbol);
+        setInspectQuery("");
+        return;
+      }
+      if (key.backspace || key.delete) {
+        setInspectQuery((value) => value.slice(0, -1));
+        return;
+      }
+      if (input.length > 0 && !key.ctrl && !key.meta) setInspectQuery((value) => value + input);
+      return;
+    }
+    if (prompt.length === 0 && !key.ctrl && !key.meta) {
+      if (input === "m") {
+        setMode((value) => nextPedagogicalMode(value));
+        return;
+      }
+      if (input === "p") {
+        setShowProfile((value) => {
+          if (!value) setLearnerProfile(profile ?? loadLearnerProfile(profilePath));
+          return !value;
+        });
+        return;
+      }
+      if (input === "?") {
+        setShowHint(true);
+        return;
+      }
+    }
     if (key.pageUp) {
       setScrollOffset((value) => Math.min(transcript.length, value + 5));
       return;
@@ -93,14 +179,14 @@ export function WorkflowTui({
     }
     if (session === undefined || sessionState?.state === "running") return;
     if (key.escape) {
-      setPrompt("");
+      updatePrompt("");
       return;
     }
     if (key.return) {
-      const submitted = prompt.trim();
+      const submitted = promptRef.current.trim();
       if (submitted.length === 0) return;
       setTranscript((current) => [...current, { label: "You", text: submitted }]);
-      setPrompt("");
+      updatePrompt("");
       setScrollOffset(0);
       setSessionState({ state: "running" });
       void session.submit(submitted).finally(() => {
@@ -110,10 +196,10 @@ export function WorkflowTui({
       return;
     }
     if (key.backspace || key.delete) {
-      setPrompt((value) => value.slice(0, -1));
+      updatePrompt((value) => value.slice(0, -1));
       return;
     }
-    if (input.length > 0 && !key.ctrl && !key.meta) setPrompt((value) => value + input);
+    if (input.length > 0 && !key.ctrl && !key.meta) updatePrompt((value) => value + input);
   });
 
   const transcriptRows = Math.max(4, (stdout.rows ?? 24) - (showWorkflow ? 16 : 10));
@@ -124,6 +210,20 @@ export function WorkflowTui({
   return (
     <Box flexDirection="column" alignItems="center">
       <Box flexDirection="column" width="100%" maxWidth={68} paddingX={1}>
+        <Box justifyContent="space-between">
+          <Text dimColor>[Mode: {MODE_LABELS[mode]} (m to switch)]</Text>
+          <Text dimColor>p profile | ? inspect</Text>
+        </Box>
+        {decisionBrief !== undefined ? <DecisionBriefDrawer brief={decisionBrief} /> : null}
+        {checkpoint !== undefined ? <CheckpointDrawer opportunity={checkpoint} /> : null}
+        {lesson !== undefined ? <DiagnosticLessonDrawer lesson={lesson} /> : null}
+        {showProfile && learnerProfile !== undefined ? <ProfilePanel profile={learnerProfile} /> : null}
+        {showHint ? (
+          <Box marginTop={1} flexDirection="column">
+            <Text bold>Symbol Inspect</Text>
+            <Text dimColor>Type a symbol name and press Enter{inspectQuery.length > 0 ? `: ${inspectQuery}` : ""}</Text>
+          </Box>
+        ) : null}
         <Box flexDirection="column" minHeight={4}>
         {transcript.length === 0 ? (
           <Box flexDirection="column" alignItems="center">
@@ -172,6 +272,60 @@ export function WorkflowTui({
   );
 }
 
+function DecisionBriefDrawer({ brief }: { readonly brief: DecisionBrief }) {
+  return (
+    <Box marginTop={1} flexDirection="column">
+      <Text bold>Decision Brief: {brief.title}</Text>
+      <Text dimColor>{brief.context}</Text>
+      <Text>  chosen: {brief.chosenOption.name} ({brief.chosenOption.blastRadius} blast radius)</Text>
+      <Text dimColor>  {brief.chosenOption.rationale}</Text>
+      {brief.rejectedAlternatives.map((alt) => (
+        <Text key={alt.name} dimColor>  rejected: {alt.name} — {alt.drawback}</Text>
+      ))}
+      <Text dimColor>  + {brief.tradeoffs.benefits.join(", ")} | - {brief.tradeoffs.liabilities.join(", ")}</Text>
+    </Box>
+  );
+}
+
+function CheckpointDrawer({ opportunity }: { readonly opportunity: LearningOpportunity }) {
+  return (
+    <Box marginTop={1} flexDirection="column">
+      <Text bold>Socratic Question: {opportunity.concept}</Text>
+      <Text dimColor>{opportunity.teachableInsight}</Text>
+      <Text>{opportunity.socraticQuestion}</Text>
+      {(opportunity.candidateAnswers ?? []).map((answer) => (
+        <Text key={answer.label} dimColor>  {answer.label}: {answer.description}</Text>
+      ))}
+    </Box>
+  );
+}
+
+function DiagnosticLessonDrawer({ lesson }: { readonly lesson: DiagnosticLesson }) {
+  return (
+    <Box marginTop={1} flexDirection="column">
+      <Text bold>Lesson TS{lesson.code}: {lesson.file}:{lesson.line}:{lesson.column}</Text>
+      <Text>{lesson.plainEnglishExplanation}</Text>
+      {lesson.guidingHints.map((hint) => (
+        <Text key={hint} dimColor>  hint: {hint}</Text>
+      ))}
+    </Box>
+  );
+}
+
+function ProfilePanel({ profile }: { readonly profile: LearnerProfile }) {
+  const concepts = Object.entries(profile.concepts);
+  return (
+    <Box marginTop={1} flexDirection="column">
+      <Text bold>Learner Profile</Text>
+      {concepts.length === 0 ? (
+        <Text dimColor>No concepts observed yet.</Text>
+      ) : concepts.map(([name, concept]) => (
+        <Text key={name}>{name.padEnd(20)} {concept.stage}</Text>
+      ))}
+    </Box>
+  );
+}
+
 function WorkflowDetails({ snapshot }: { readonly snapshot: WorkflowSnapshot }) {
   return (
     <Box marginTop={1} flexDirection="column">
@@ -204,6 +358,15 @@ function formatSessionEvent(event: CodingSessionEvent): TranscriptEntry {
   if (event.type === "tool-outcome") {
     const marker = event.outcome === "succeeded" ? "[ok]" : `[${event.outcome}]`;
     return { label: marker, text: `${event.tool}${event.detail === undefined ? "" : `: ${event.detail}`}`, dim: event.outcome === "succeeded" };
+  }
+  if (event.type === "decision-brief") {
+    return { label: "[brief]", text: event.brief.title, dim: true };
+  }
+  if (event.type === "tutor-checkpoint") {
+    return { label: "[tutor]", text: event.opportunity.socraticQuestion };
+  }
+  if (event.type === "diagnostic-lesson") {
+    return { label: "[lesson]", text: `TS${event.lesson.code}: ${event.lesson.plainEnglishExplanation}` };
   }
   if (event.type === "completed") return { label: "completed", text: event.result };
   return { label: "failed", text: event.reason };

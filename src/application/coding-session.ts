@@ -1,8 +1,13 @@
+import type { DecisionBrief, DiagnosticLesson, LearningOpportunity } from "../pedagogy/contracts.js";
+
 export type CodingSessionEvent =
   | { readonly type: "assistant"; readonly text: string }
   | { readonly type: "status"; readonly status: string }
   | { readonly type: "tool-proposal"; readonly tool: string; readonly subjects: readonly string[] }
   | { readonly type: "tool-outcome"; readonly tool: string; readonly outcome: "succeeded" | "denied" | "failed"; readonly detail?: string }
+  | { readonly type: "decision-brief"; readonly brief: DecisionBrief }
+  | { readonly type: "tutor-checkpoint"; readonly opportunity: LearningOpportunity }
+  | { readonly type: "diagnostic-lesson"; readonly lesson: DiagnosticLesson }
   | { readonly type: "completed"; readonly result: string }
   | { readonly type: "failed"; readonly reason: string };
 

@@ -10,6 +10,7 @@ import type {
   WorkflowTask,
 } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
+import { mutationGate, verifyingGate, type CheckpointLedger } from "../pedagogy/checkpoints.js";
 
 export interface WorkflowTaskProjection {
   readonly id: TaskId;
@@ -32,6 +33,7 @@ export class WorkflowApplication {
   readonly #graph: TaskGraph;
   #activeTaskId?: TaskId;
   #codingSessionCorrelation?: string;
+  #pedagogyGate: CheckpointLedger | undefined;
 
   constructor(
     graph: TaskGraph,
@@ -51,6 +53,10 @@ export class WorkflowApplication {
 
   get codingSessionCorrelation(): string | undefined {
     return this.#codingSessionCorrelation;
+  }
+
+  setPedagogyGate(ledger: CheckpointLedger | undefined): void {
+    this.#pedagogyGate = ledger;
   }
 
   setCodingSessionCorrelation(sessionId: string): void {
@@ -95,10 +101,32 @@ export class WorkflowApplication {
         reason: `task ${task.id} is ${task.state}, not IN_PROGRESS`,
       };
     }
+    const pendingCheckpoint = this.#pedagogyGate === undefined ? undefined : mutationGate(this.#pedagogyGate, task.id);
+    if (pendingCheckpoint !== undefined) {
+      return {
+        kind: "deny",
+        code: "CHECKPOINT_PENDING",
+        reason: `task ${task.id} has a pending ${pendingCheckpoint.kind} checkpoint: ${pendingCheckpoint.summary}`,
+      };
+    }
     return { kind: "allow" };
   }
 
   transition(taskId: TaskId, requested: TaskState): TransitionResult {
+    if (requested === "VERIFYING" && this.#pedagogyGate !== undefined) {
+      const pendingInspection = verifyingGate(this.#pedagogyGate, taskId);
+      if (pendingInspection !== undefined) {
+        const task = this.#graph.get(taskId);
+        return {
+          kind: "rejected",
+          code: "CHECKPOINT_PENDING",
+          reason: `task ${taskId} has a pending inspection checkpoint: ${pendingInspection.summary}`,
+          taskId,
+          from: task.state,
+          requested,
+        };
+      }
+    }
     const result = this.#graph.transition(taskId, requested);
     if (result.kind === "accepted") this.#history.push(result.transition);
     return result;
