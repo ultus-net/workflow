@@ -47,7 +47,11 @@ process.env.CLINE_LAZY_MCP_TOOLS ??= "1";
 
 const runtime = await createConfiguredClineRuntime(application, workspace);
 const { waitUntilExit } = render(
-  React.createElement(WorkflowTui, { application, session: runtime.session }),
+  React.createElement(WorkflowTui, {
+    application,
+    session: runtime.session,
+    onStyleChange: (style) => runtime.setSessionStyle(style),
+  }),
 );
 await waitUntilExit();
 await runtime.dispose();

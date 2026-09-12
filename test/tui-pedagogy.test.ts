@@ -28,6 +28,34 @@ async function waitForFrame(view: { lastFrame(): string | undefined }, expected:
   }
 }
 
+test("TUI , and . cycle speech and build styles in the mode bar", async () => {
+  const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
+
+  view.stdin.write(",");
+  await waitForFrame(view, /🪨/);
+  assert.match(view.lastFrame() ?? "", /🪨/);
+
+  view.stdin.write(".");
+  await waitForFrame(view, /pt·lite/);
+  assert.match(view.lastFrame() ?? "", /pt·lite/);
+
+  view.unmount();
+});
+
+test("TUI style changes propagate to onStyleChange for live session restyling", async () => {
+  const styles: unknown[] = [];
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    onStyleChange: (style) => styles.push(style),
+  }));
+
+  view.stdin.write(",");
+  await waitForFrame(view, /caveman/);
+  assert.deepEqual(styles.at(-1), { speech: "caveman", build: "normal" });
+  view.unmount();
+});
+
+
 test("TUI shows the autonomous mode by default and m cycles pedagogical modes", async () => {
   const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
 

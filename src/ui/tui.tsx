@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 
 import type { CodingSessionEvent, CodingSessionState } from "../application/coding-session.js";
+import { formatStyleStatus, nextBuildStyle, nextSpeechStyle, resolveStyleFromEnv, type SessionStyle } from "../integrations/response-style.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
 import type { WorkflowApplication, WorkflowSnapshot } from "../application/workflow.js";
 import type { TaskState } from "../kernel/contracts.js";
@@ -75,12 +76,16 @@ export function WorkflowTui({
   profile,
   profilePath,
   onInspectSymbol,
+  style: initialStyle,
+  onStyleChange,
 }: {
   readonly application: WorkflowApplication;
   readonly session?: WorkflowCodingSession;
   readonly profile?: LearnerProfile;
   readonly profilePath?: string;
   readonly onInspectSymbol?: (symbol: string) => void;
+  readonly style?: SessionStyle;
+  readonly onStyleChange?: (style: SessionStyle) => void;
 }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -102,6 +107,7 @@ export function WorkflowTui({
   const [scrollOffset, setScrollOffset] = useState(0);
   const [showWorkflow, setShowWorkflow] = useState(false);
   const [mode, setMode] = useState<PedagogicalMode>("autonomous");
+  const [style, setStyle] = useState<SessionStyle>(() => initialStyle ?? resolveStyleFromEnv(process.env));
   const [showProfile, setShowProfile] = useState(false);
   const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | undefined>(profile);
   const [showHint, setShowHint] = useState(false);
@@ -179,6 +185,22 @@ export function WorkflowTui({
         setShowHint(true);
         return;
       }
+      if (input === ",") {
+        setStyle((current) => {
+          const next = { ...current, speech: nextSpeechStyle(current.speech) };
+          onStyleChange?.(next);
+          return next;
+        });
+        return;
+      }
+      if (input === ".") {
+        setStyle((current) => {
+          const next = { ...current, build: nextBuildStyle(current.build) };
+          onStyleChange?.(next);
+          return next;
+        });
+        return;
+      }
     }
     if (key.pageUp) {
       setScrollOffset((value) => Math.min(transcript.length, value + 5));
@@ -222,8 +244,8 @@ export function WorkflowTui({
     <Box flexDirection="column" alignItems="center">
       <Box flexDirection="column" width="100%" maxWidth={68} paddingX={1}>
         <Box justifyContent="space-between">
-          <Text dimColor>[Mode: {MODE_LABELS[mode]} (m to switch)]</Text>
-          <Text dimColor>p profile | ? inspect</Text>
+          <Text dimColor>[Mode: {MODE_LABELS[mode]} (m to switch)]{formatStyleStatus(style).length > 0 ? ` [${formatStyleStatus(style)}]` : ""}</Text>
+          <Text dimColor>,/.·p·?</Text>
         </Box>
         {decisionBrief !== undefined ? <DecisionBriefDrawer brief={decisionBrief} /> : null}
         {checkpoint !== undefined ? <CheckpointDrawer opportunity={checkpoint} /> : null}

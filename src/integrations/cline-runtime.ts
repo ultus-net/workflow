@@ -14,6 +14,7 @@ import { createWorkflowClinePlugin } from "./cline-plugin.js";
 import { ClineSessionDriver } from "./cline-session.js";
 import { createWorkflowClineShellExecutor } from "./cline-shell-executor.js";
 import { createProjectMemoryClient, formatMemoryRecall, type ProjectMemory } from "./project-memory.js";
+import { resolveStyleFromEnv, stylePromptAddendum, type SessionStyle } from "./response-style.js";
 
 interface ClineRuntimeCore {
   readonly ProviderSettingsManager: new () => { getLastUsedProviderConfig(): Record<string, unknown> };
@@ -34,6 +35,7 @@ interface ClineCoreInstance {
 
 export interface WorkflowClineRuntime {
   readonly session: WorkflowCodingSession;
+  setSessionStyle(style: SessionStyle): void;
   dispose(): Promise<void>;
 }
 
@@ -72,6 +74,13 @@ export async function createConfiguredClineRuntime(application: WorkflowApplicat
   const memoryRecall = memory === undefined
     ? ""
     : formatMemoryRecall(await memory.recall("decisions constraints lessons", 8).catch(() => []), { maxChars: 2_000 });
+  // Session style (caveman speech / ponytail build) is re-read per submission
+  // so the TUI can switch styles live without restarting the runtime.
+  const styleState: { current: SessionStyle } = { current: resolveStyleFromEnv(process.env) };
+  const promptAddendum = (): string => {
+    const parts = [memoryRecall, stylePromptAddendum(styleState.current)].filter((part) => part.length > 0);
+    return parts.length === 0 ? "" : `\n\n${parts.join("\n\n")}`;
+  };
   const applyPatchTool = core.createDefaultTools({
     executors: { applyPatch: core.createApplyPatchExecutor({ restrictToCwd: true }) },
     cwd: workspaceRoot,
@@ -109,7 +118,7 @@ export async function createConfiguredClineRuntime(application: WorkflowApplicat
         cwd: workspaceRoot,
         workspaceRoot,
         systemPrompt: core.getClineDefaultSystemPrompt({ rootPath: workspaceRoot, cwd: workspaceRoot, ide: "Terminal Shell", platform: platform(), mode: "act", providerId })
-          + (memoryRecall.length > 0 ? `\n\n${memoryRecall}` : ""),
+          + promptAddendum(),
         enableTools: true,
         enableSpawnAgent: false,
         enableAgentTeams: false,
@@ -128,6 +137,9 @@ export async function createConfiguredClineRuntime(application: WorkflowApplicat
   }
   return {
     session,
+    setSessionStyle(style: SessionStyle): void {
+      styleState.current = style;
+    },
     dispose: () => Promise.all([cline.dispose(), guard?.close() ?? Promise.resolve(), memory?.close() ?? Promise.resolve()]).then(() => undefined),
   };
 }
