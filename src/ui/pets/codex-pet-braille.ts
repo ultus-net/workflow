@@ -46,7 +46,11 @@ export function renderCodexPetFrameBraille(frame: CodexPetFrame, cellWidth: numb
         row += " ";
         continue;
       }
-      row += `\x1b[38;2;${Math.round(red / weight)};${Math.round(green / weight)};${Math.round(blue / weight)}m${String.fromCharCode(BRAILLE_BASE | bits)}\x1b[0m`;
+      const color = `${Math.round(red / weight)};${Math.round(green / weight)};${Math.round(blue / weight)}`;
+      // Solid interior cells render as a full block; braille dots only mark edges.
+      row += bits === 0xff
+        ? `\x1b[38;2;${color}m█\x1b[0m`
+        : `\x1b[38;2;${color}m${String.fromCharCode(BRAILLE_BASE | bits)}\x1b[0m`;
     }
     rows.push(row);
   }
