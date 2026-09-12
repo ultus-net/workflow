@@ -104,6 +104,22 @@ index 9b387e0..e017583 100644
  		};
  
  		const started = await sessionClient.startRuntimeSession(startRequest);
+diff --git a/apps/cli/src/utils/workflow-bridge-local-runtime.ts b/apps/cli/src/utils/workflow-bridge-local-runtime.ts
+new file mode 100644
+index 0000000..7b847fa
+--- /dev/null
++++ b/apps/cli/src/utils/workflow-bridge-local-runtime.ts
+@@ -0,0 +1,10 @@
++import { createWorkflowBridge } from "./workflow-bridge";
++
++/**
++ * Every hub-side session creator (zen, schedule, connectors) must attach the
++ * Workflow authorization bridge as a localRuntime hook; the hub executes
++ * these client-side hooks through its contribution RPC.
++ */
++export function workflowBridgeLocalRuntime(): { localRuntime: { hooks: import("@cline/core").AgentHooks } } {
++	return { localRuntime: { hooks: createWorkflowBridge().authorize(undefined) } };
++}
 diff --git a/apps/cli/src/utils/workflow-bridge.test.ts b/apps/cli/src/utils/workflow-bridge.test.ts
 new file mode 100644
 index 0000000..6f72018
@@ -185,6 +201,100 @@ index 0000000..6f72018
 +		expect(() => createWorkflowBridge()).toThrow(/Workflow authorization bridge/);
 +	});
 +});
+diff --git a/apps/cli/src/utils/workflow-bridge.ts b/apps/cli/src/utils/workflow-bridge.ts
+new file mode 100644
+index 0000000..4656b2e
+--- /dev/null
++++ b/apps/cli/src/utils/workflow-bridge.ts
+@@ -0,0 +1,88 @@
++import type { AgentHooks, ShellExecutor } from "@cline/core";
++import { readFileSync } from "node:fs";
++import { homedir } from "node:os";
++import { join } from "node:path";
++
++type BridgeResponse = {
++	stop?: boolean;
++	reason?: string;
++	output?: string;
++	error?: string;
++};
++
++/**
++ * Resolves the Workflow authority: launcher-provided environment first, then
++ * the global Workflow hub's discovery file. See `docs/HUB.md` in the Workflow
++ * repository.
++ */
++function resolveBridgeAuthority(): { url: string; token: string } {
++	const url = process.env.WORKFLOW_CLINE_BRIDGE_URL?.trim();
++	const token = process.env.WORKFLOW_CLINE_BRIDGE_TOKEN?.trim();
++	if (url && token) return { url, token };
++	try {
++		const discovery = JSON.parse(
++			readFileSync(join(homedir(), ".workflow", "hub", "discovery.json"), "utf8"),
++		) as { endpoint?: unknown; token?: unknown };
++		if (typeof discovery.endpoint === "string" && typeof discovery.token === "string") {
++			return { url: discovery.endpoint, token: discovery.token };
++		}
++	} catch {
++		// No discovery file (or unreadable): fall through to fail closed.
++	}
++	throw new Error("Workflow authorization bridge is required for this Cline build");
++}
++
++export function createWorkflowBridge() {
++	const { url, token } = resolveBridgeAuthority();
++
++	const request = async (path: string, body: unknown): Promise<BridgeResponse> => {
++		const response = await fetch(`${url}${path}`, {
++			method: "POST",
++			headers: {
++				authorization: `Bearer ${token}`,
++				"content-type": "application/json",
++			},
++			body: JSON.stringify(body),
++		});
++		const payload = (await response.json()) as BridgeResponse;
++		if (!response.ok) {
++			throw new Error(payload.error || `Workflow bridge returned ${response.status}`);
++		}
++		return payload;
++	};
++
++	const authorize = (hooks: AgentHooks | undefined): AgentHooks => ({
++		...hooks,
++		beforeTool: async (ctx) => {
++			try {
++				const decision = await request("/before-tool", {
++					toolCall: ctx.toolCall,
++					input: ctx.input,
++					workspace: process.cwd(),
++				});
++				if (decision.stop) {
++					return {
++						stop: true,
++						reason: decision.reason || "Workflow denied tool execution",
++					};
++				}
++			} catch (error) {
++				return {
++					stop: true,
++					reason: `Workflow authorization unavailable: ${error instanceof Error ? error.message : String(error)}`,
++				};
++			}
++			return await hooks?.beforeTool?.(ctx);
++		},
++	});
++
++	const bash: ShellExecutor = async (command, cwd) => {
++		const result = await request("/bash", { command, cwd });
++		if (typeof result.output !== "string") {
++			throw new Error(result.error || "Workflow bash executor returned no output");
++		}
++		return result.output;
++	};
++
++	return { authorize, bash };
++}
 diff --git a/apps/cline-hub/src/server/sessions.ts b/apps/cline-hub/src/server/sessions.ts
 index ddbb760..60ad39f 100644
 --- a/apps/cline-hub/src/server/sessions.ts
@@ -206,6 +316,328 @@ index ddbb760..60ad39f 100644
 +		localRuntime: { hooks: createWorkflowHubHooks(undefined, context.workspaceRoot) },
  	};
  }
+ 
+diff --git a/sdk/packages/core/src/extensions/mcp/client-url.test.ts b/sdk/packages/core/src/extensions/mcp/client-url.test.ts
+index 3f01a96..5b345e0 100644
+--- a/sdk/packages/core/src/extensions/mcp/client-url.test.ts
++++ b/sdk/packages/core/src/extensions/mcp/client-url.test.ts
+@@ -99,6 +99,8 @@ describe("SDK URL MCP client timeout", () => {
+ 		expect(clientState.callToolOptions).toEqual({
+ 			timeout: 12_000,
+ 			signal: controller.signal,
++			// MCP progress notifications are forwarded to the tool-call update surface.
++			onprogress: expect.any(Function),
+ 		});
+ 	});
+ 
+diff --git a/sdk/packages/core/src/extensions/mcp/client.test.ts b/sdk/packages/core/src/extensions/mcp/client.test.ts
+index 96e814b..59cb11f 100644
+--- a/sdk/packages/core/src/extensions/mcp/client.test.ts
++++ b/sdk/packages/core/src/extensions/mcp/client.test.ts
+@@ -133,11 +133,50 @@ process.stdin.on("data", (chunk) => {
+ });
+ `;
+ 
++// Answers tools/call after emitting a progress notification (keyed by the
++// request's _meta.progressToken), a logging message notification, and an
++// unknown-method notification, so forwarding can be tested end to end.
++const NOTIFYING_SERVER_SCRIPT = `
++let buffer = "";
++process.stdin.on("data", (chunk) => {
++	buffer += chunk.toString("utf8");
++	let idx;
++	while ((idx = buffer.indexOf("\\n")) >= 0) {
++		const line = buffer.slice(0, idx).trim();
++		buffer = buffer.slice(idx + 1);
++		if (!line) continue;
++		let msg;
++		try {
++			msg = JSON.parse(line);
++		} catch {
++			continue;
++		}
++		if (msg.id === undefined || !msg.method || msg.method.startsWith("notifications/")) continue;
++		if (msg.method === "initialize") {
++			process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: "2024-11-05", capabilities: {}, serverInfo: { name: "notifying", version: "0.0.0" } } }) + "\\n");
++			continue;
++		}
++		if (msg.method === "tools/call") {
++			const progressToken = msg.params?._meta?.progressToken;
++			if (progressToken !== undefined) {
++				process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/progress", params: { progressToken, progress: 1, total: 3, message: "profile-loaded" } }) + "\\n");
++			}
++			process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/message", params: { level: "info", logger: "notifying", data: { tool: "learning_checkpoint", phase: "evidence-persist" } } }) + "\\n");
++			process.stdout.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/custom/unknown", params: { bogus: true } }) + "\\n");
++			process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: "ok" }] } }) + "\\n");
++			continue;
++		}
++		process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, result: {} }) + "\\n");
++	}
++});
++`;
++
+ let tempRoot: string;
+ 
+ beforeAll(() => {
+ 	tempRoot = mkdtempSync(join(tmpdir(), "mcp-client-test-"));
+ 	writeFileSync(join(tempRoot, "fake-server.js"), FAKE_SERVER_SCRIPT, "utf8");
++	writeFileSync(join(tempRoot, "notifying-server.js"), NOTIFYING_SERVER_SCRIPT, "utf8");
+ 	writeFileSync(
+ 		join(tempRoot, "framed-server.js"),
+ 		FRAMED_SERVER_SCRIPT,
+@@ -560,3 +599,58 @@ describe("default connect budget", () => {
+ 		);
+ 	});
+ });
++
++describe("mcp server notification forwarding", () => {
++	it("forwards progress and logging notifications to the tool-call update surface and ignores unknown methods", async () => {
++		const registration: McpServerRegistration = {
++			name: "notifying-server",
++			transport: {
++				type: "stdio",
++				command:
++					process.platform === "win32"
++						? `"${process.execPath}"`
++						: process.execPath,
++				args: [join(tempRoot, "notifying-server.js")],
++			},
++		};
++		const client = await createDefaultMcpServerClientFactory()(registration);
++		await client.connect();
++		try {
++			const updates: unknown[] = [];
++			const result = await client.callTool({
++				name: "learning_checkpoint",
++				arguments: {},
++				context: {
++					agentId: "agent",
++					iteration: 0,
++					emitUpdate: (update) => updates.push(update),
++				},
++			});
++			expect(result).toMatchObject({ content: [{ type: "text", text: "ok" }] });
++			const forwarded = updates as Array<{
++				server?: string;
++				method?: string;
++				params?: Record<string, unknown>;
++			}>;
++			expect(forwarded.length).toBeGreaterThanOrEqual(2);
++			expect(forwarded.every((u) => u.server === "notifying-server")).toBe(true);
++			const progress = forwarded.find(
++				(u) => u.method === "notifications/progress",
++			);
++			expect(progress?.params).toMatchObject({
++				progress: 1,
++				total: 3,
++				message: "profile-loaded",
++			});
++			const log = forwarded.find((u) => u.method === "notifications/message");
++			expect(log?.params).toMatchObject({ level: "info", logger: "notifying" });
++			// The unknown notifications/custom/unknown method must not surface or
++			// break the call.
++			expect(
++				forwarded.some((u) => u.method === "notifications/custom/unknown"),
++			).toBe(false);
++		} finally {
++			await client.disconnect();
++		}
++	});
++});
+diff --git a/sdk/packages/core/src/extensions/mcp/client.ts b/sdk/packages/core/src/extensions/mcp/client.ts
+index 452484a..e9362c0 100644
+--- a/sdk/packages/core/src/extensions/mcp/client.ts
++++ b/sdk/packages/core/src/extensions/mcp/client.ts
+@@ -34,6 +34,7 @@ type JsonRpcMessage = {
+ 	jsonrpc?: "2.0";
+ 	id?: number;
+ 	method?: string;
++	params?: Record<string, unknown>;
+ 	result?: unknown;
+ 	error?: {
+ 		code?: number;
+@@ -42,6 +43,25 @@ type JsonRpcMessage = {
+ 	};
+ };
+ 
++/**
++ * Server notification forwarded to the tool-call update surface
++ * (AgentToolContext.emitUpdate), which is how in-flight tool updates reach
++ * the agent UI. Only notifications/message and notifications/progress are
++ * forwarded; unknown notification methods are ignored.
++ */
++type ForwardedMcpNotification = {
++	server: string;
++	method: "notifications/message" | "notifications/progress";
++	params?: Record<string, unknown>;
++};
++
++function forwardNotificationToContext(
++	context: AgentToolContext | undefined,
++	notification: ForwardedMcpNotification,
++): void {
++	context?.emitUpdate?.(notification);
++}
++
+ const MCP_PROTOCOL_VERSION = "2024-11-05";
+ // Initialize budget when no timeout is configured. This wait sits on the
+ // session-create critical path, which the hub caps at 30s
+@@ -182,6 +202,7 @@ class StdioMcpClient implements McpServerClient {
+ 			timeout: ReturnType<typeof setTimeout>;
+ 			signal?: AbortSignal;
+ 			onAbort?: () => void;
++			context?: AgentToolContext;
+ 		}
+ 	>();
+ 	private framedParser = new FramedMessageParser();
+@@ -297,14 +318,20 @@ class StdioMcpClient implements McpServerClient {
+ 		arguments?: Record<string, unknown>;
+ 		context?: AgentToolContext;
+ 	}): Promise<McpToolCallResult> {
++		// Attach a progressToken so servers can send notifications/progress for
++		// this call; the token is the JSON-RPC request id, used to correlate
++		// progress notifications back to this call's update surface.
++		const progressToken = this.nextRequestId;
+ 		return this.request(
+ 			"tools/call",
+ 			{
+ 				name: request.name,
+ 				arguments: request.arguments ?? {},
++				_meta: { progressToken },
+ 			},
+ 			undefined,
+ 			request.context?.signal,
++			request.context,
+ 		);
+ 	}
+ 
+@@ -384,6 +411,7 @@ class StdioMcpClient implements McpServerClient {
+ 			for (const messageText of messages) {
+ 				const message = JSON.parse(messageText) as JsonRpcMessage;
+ 				if (typeof message.id !== "number") {
++					this.handleServerNotification(message);
+ 					continue;
+ 				}
+ 				const pending = this.takePending(message.id);
+@@ -404,6 +432,36 @@ class StdioMcpClient implements McpServerClient {
+ 		}
+ 	}
+ 
++	/**
++	 * Routes server-initiated notifications to the update surface of the
++	 * in-flight tool call they belong to, so MCP log/progress output becomes
++	 * visible in the agent UI instead of being silently dropped. Progress
++	 * notifications correlate via the progressToken (the request id sent in
++	 * _meta); logging messages go to every in-flight call. Unknown
++	 * notification methods are ignored by design.
++	 */
++	private handleServerNotification(message: JsonRpcMessage): void {
++		if (message.method === "notifications/progress") {
++			const token = message.params?.progressToken;
++			const pending = typeof token === "number" ? this.pending.get(token) : undefined;
++			forwardNotificationToContext(pending?.context, {
++				server: this.registration.name,
++				method: "notifications/progress",
++				params: message.params,
++			});
++			return;
++		}
++		if (message.method === "notifications/message") {
++			for (const pending of this.pending.values()) {
++				forwardNotificationToContext(pending.context, {
++					server: this.registration.name,
++					method: "notifications/message",
++					params: message.params,
++				});
++			}
++		}
++	}
++
+ 	private handleProtocolFailure(error: unknown): void {
+ 		const child = this.process;
+ 		if (!child) {
+@@ -428,6 +486,7 @@ class StdioMcpClient implements McpServerClient {
+ 		params?: Record<string, unknown>,
+ 		timeoutMs = this.requestTimeoutMs,
+ 		signal?: AbortSignal,
++		context?: AgentToolContext,
+ 	): Promise<unknown> {
+ 		const child = this.process;
+ 		if (!child?.stdin.writable) {
+@@ -467,7 +526,7 @@ class StdioMcpClient implements McpServerClient {
+ 						pending.reject(error);
+ 					}
+ 				: undefined;
+-			this.pending.set(id, { resolve, reject, timeout, signal, onAbort });
++			this.pending.set(id, { resolve, reject, timeout, signal, onAbort, context });
+ 			if (signal && onAbort) {
+ 				signal.addEventListener("abort", onAbort, { once: true });
+ 				if (signal.aborted) {
+@@ -577,6 +636,9 @@ class SdkUrlMcpClient implements McpServerClient {
+ 	private authContext?: McpOAuthProviderContext;
+ 	private readonly requestTimeoutMs: number;
+ 	private readonly connectAttemptTimeoutMs: number;
++	/** Contexts of in-flight tool calls, used to forward server notifications
++	 * to their update surface. */
++	private readonly activeToolContexts = new Set<AgentToolContext>();
+ 
+ 	constructor(
+ 		private readonly registration: McpServerRegistration,
+@@ -628,6 +690,22 @@ class SdkUrlMcpClient implements McpServerClient {
+ 				name: this.options.clientName?.trim() || "@cline/core",
+ 				version: this.options.clientVersion?.trim() || "0.0.0",
+ 			});
++			// Forward server logging notifications to the update surface of any
++			// in-flight tool call so they are visible in the agent UI instead of
++			// being silently dropped. Progress notifications are routed per call
++			// via the request onprogress callback; unknown methods are ignored.
++			client.fallbackNotificationHandler = async (notification) => {
++				if (notification.method !== "notifications/message") {
++					return;
++				}
++				for (const context of this.activeToolContexts) {
++					forwardNotificationToContext(context, {
++						server: this.registration.name,
++						method: "notifications/message",
++						params: notification.params as Record<string, unknown>,
++					});
++				}
++			};
+ 			const transport = createMcpSdkTransport({
+ 				registration: this.registration,
+ 				oauthProvider,
+@@ -691,6 +769,10 @@ class SdkUrlMcpClient implements McpServerClient {
+ 		context?: AgentToolContext;
+ 	}): Promise<McpToolCallResult> {
+ 		const client = await this.ensureConnectedClient();
++		const context = request.context;
++		if (context) {
++			this.activeToolContexts.add(context);
++		}
+ 		try {
+ 			return await client.callTool(
+ 				{
+@@ -701,10 +783,21 @@ class SdkUrlMcpClient implements McpServerClient {
+ 				{
+ 					timeout: this.requestTimeoutMs,
+ 					signal: request.context?.signal,
++					onprogress: (progress) => {
++						forwardNotificationToContext(context, {
++							server: this.registration.name,
++							method: "notifications/progress",
++							params: progress as unknown as Record<string, unknown>,
++						});
++					},
+ 				},
+ 			);
+ 		} catch (error) {
+ 			return await this.handleOperationError(error);
++		} finally {
++			if (context) {
++				this.activeToolContexts.delete(context);
++			}
+ 		}
+ 	}
  
 diff --git a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts b/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
 index 7371b78..4a7b0f0 100644
