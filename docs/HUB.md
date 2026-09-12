@@ -32,7 +32,9 @@ hub, consumers connect to the Workflow hub for everything.
 - **Discovery file**: `<data-dir>/hub/discovery.json` created atomically —
   `{ hubId, endpoint, authToken }` so `readHubDiscovery` finds it.
 - **Hook protocol**: same shape as today's workflow bridge — `POST /before-tool`
-  for hook gating, `POST /bash` for executor routing.
+  for hook gating, `POST /bash` for executor routing. Specified as a
+  versioned, SDK-neutral contract in `docs/HUB_PROTOCOL.md` (conformance:
+  `test/hub-protocol.test.ts`).
 - **Authority migration**: today's per-TUI-loopback bridge is promoted into
   the hub daemon; interactive/headless/zen/connectors keep working, cron
   starts covering too.

@@ -39,6 +39,7 @@ export async function createWorkflowHub(
   writeFileSync(
     temporaryPath,
     JSON.stringify({
+      protocol: 1,
       hubId: randomBytes(8).toString("hex"),
       endpoint: bridge.url,
       token: bridge.token,
