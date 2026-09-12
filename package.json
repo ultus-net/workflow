@@ -16,6 +16,7 @@
     "workflow-shell": "dist/cli/contained-shell.js",
     "workflow-pets": "dist/cli/pets.js"
   },
+  "postinstall": "node scripts/prepare-tool.mjs",
   "files": [
     "dist",
     "README.md",

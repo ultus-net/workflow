@@ -50,6 +50,15 @@ If the toolbox isn't built, the TUI and contained-shell degrade to advisory
 (un-guarded) with a visible warning rather than crashing — rebuild with
 `npm run toolbox:build` to restore enforcement.
 
+### Published package
+
+Publishing (`npm publish`) makes `npm i -g workflow` an automatic install in
+the npm sense: the bins link onto PATH automatically, and the `postinstall`
+hook attempts to build the vendored toolbox and pinned Cline CLI. Those steps
+need network access plus `pnpm`, `git`, and `node`; the hook warns and skips
+on failure rather than breaking the install. Restricted environments may still
+need the one-time `npm run toolbox:build && npm run tui:cline:build`.
+
 Run the coding TUI against another workspace with `npm run tui -- --cwd /path/to/project` (or `-c /path/to/project`). The launcher builds the pinned Cline CLI tag `cli-v3.0.61` on first use and then starts Cline's native interactive TUI. Slash commands, `@` mentions, Plan/Act controls, menus, queueing, keyboard behavior, and rendering come from that pinned Cline version rather than a Workflow reimplementation.
 
 The patched Cline build requires an authenticated loopback Workflow bridge before its interactive runtime can start. Workflow supplies the pre-tool authorization hook and contained bash executor; if that bridge is absent or cannot initialize, startup fails closed instead of opening an unenforced Cline session. The only upstream presentation override is Cline's robot artwork, replaced with the Workflow mark.
