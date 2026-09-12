@@ -1,0 +1,29 @@
+name: Scheduled dependency refresh
+on:
+  schedule:
+    - cron: "0 6 * * 1"  # weekly, Mondays 06:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: "11.5.2"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm update
+      - run: pnpm --dir mcp-toolbox install --frozen-lockfile
+      - run: pnpm --dir mcp-toolbox run verify
+      - run: npm test
+      - run: node scripts/bump-cline-tag.mjs
+        continue-on-error: true
+      - name: Report
+        run: |
+          git diff --stat
+          git status --short
