@@ -83,7 +83,9 @@ Sandbox/isolation remains the same as the TUI router today.
   stable `~/.workflow/cline_mcp_settings.json`; stale toolbox entries are
   pruned and self-service additions survive across runs)**
 - Pets UX (documented disabled)
-- Desktop app integration (same hub hook can be used after alpha)
+- Desktop app integration **(done — the `cline-hub` desktop app injects
+  `createWorkflowHubHooks(workspace)` into every session's localRuntime, and
+  its scheduled runs inherit the hub-daemon hooks; both fail closed)**
 
 ## Implementation sequence (suggested)
 

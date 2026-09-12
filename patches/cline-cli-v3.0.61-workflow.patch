@@ -185,8 +185,30 @@ index 0000000..6f72018
 +		expect(() => createWorkflowBridge()).toThrow(/Workflow authorization bridge/);
 +	});
 +});
+diff --git a/apps/cline-hub/src/server/sessions.ts b/apps/cline-hub/src/server/sessions.ts
+index ddbb760..60ad39f 100644
+--- a/apps/cline-hub/src/server/sessions.ts
++++ b/apps/cline-hub/src/server/sessions.ts
+@@ -1,6 +1,7 @@
+ import process from "node:process";
+ import {
+ 	type ClineCoreStartInput,
++	createWorkflowHubHooks,
+ 	type SessionRecord,
+ 	SessionSource,
+ } from "@cline/core";
+@@ -130,6 +131,9 @@ function buildSessionStartInput(
+ 			options?.autoApproveTools === false
+ 				? { "*": { autoApprove: false } }
+ 				: { "*": { autoApprove: true } },
++		// Workflow is the universal authorization authority: desktop sessions
++		// gate tool execution through the Workflow hub and fail closed.
++		localRuntime: { hooks: createWorkflowHubHooks(undefined, context.workspaceRoot) },
+ 	};
+ }
+ 
 diff --git a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts b/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
-index 7371b78..3d01b51 100644
+index 7371b78..4a7b0f0 100644
 --- a/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
 +++ b/sdk/packages/core/src/hub/daemon/runtime-handlers.ts
 @@ -15,6 +15,8 @@ import { SqliteSessionStore } from "../../services/storage/sqlite-session-store"
@@ -224,7 +246,7 @@ index 7371b78..3d01b51 100644
 +					// Workflow is the universal authorization authority: every
 +					// hub-started session (scheduled agents included) gates tool
 +					// execution through the Workflow bridge and fails closed.
-+					hooks: createWorkflowHubHooks(runId),
++					hooks: createWorkflowHubHooks(runId, request.workspaceRoot),
  				},
  			});
 +			sessionRuns.set(started.sessionId, runId);
@@ -259,10 +281,10 @@ index 7371b78..3d01b51 100644
  	};
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
 new file mode 100644
-index 0000000..bb0d5bb
+index 0000000..73a8df0
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
-@@ -0,0 +1,151 @@
+@@ -0,0 +1,162 @@
 +import { createServer, type Server } from "node:http";
 +import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 +import type { AddressInfo } from "node:net";
@@ -332,6 +354,17 @@ index 0000000..bb0d5bb
 +			toolCall,
 +			input: { path: "README.md" },
 +			workspace: process.cwd(),
++		});
++	});
++
++	it("uses the explicit session workspace when provided", async () => {
++		const hooks = createWorkflowHubHooks(undefined, "/repo/desktop-workspace");
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBeFalsy();
++		expect(lastBody).toEqual({
++			toolCall,
++			input: { path: "README.md" },
++			workspace: "/repo/desktop-workspace",
 +		});
 +	});
 +
@@ -416,7 +449,7 @@ index 0000000..bb0d5bb
 +});
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
 new file mode 100644
-index 0000000..6aba2f6
+index 0000000..66bddf0
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
 @@ -0,0 +1,92 @@
@@ -463,7 +496,7 @@ index 0000000..6aba2f6
 + * closed when the authority is unavailable. See `docs/HUB.md` in the Workflow
 + * repository.
 + */
-+export function createWorkflowHubHooks(runId?: string): AgentHooks {
++export function createWorkflowHubHooks(runId?: string, workspace?: string): AgentHooks {
 +	return {
 +		beforeTool: async (ctx) => {
 +			const authority = resolveBridgeAuthority();
@@ -485,7 +518,7 @@ index 0000000..6aba2f6
 +					body: JSON.stringify({
 +					toolCall: ctx.toolCall,
 +					input: ctx.input,
-+					workspace: process.cwd(),
++					workspace: workspace ?? process.cwd(),
 +					...(runId !== undefined ? { runId } : {}),
 +				}),
 +				});
@@ -641,3 +674,15 @@ index 0000000..27978ec
 +}): Promise<boolean> {
 +	return await runRequest("/run/finish", input);
 +}
+diff --git a/sdk/packages/core/src/hub/index.ts b/sdk/packages/core/src/hub/index.ts
+index 4081a4c..1796176 100644
+--- a/sdk/packages/core/src/hub/index.ts
++++ b/sdk/packages/core/src/hub/index.ts
+@@ -46,6 +46,7 @@ export * from "./client/session-client";
+ export * from "./client/ui-client";
+ export * from "./daemon";
+ export * from "./daemon/runtime-handlers";
++export * from "./daemon/workflow-hooks";
+ export * from "./daemon/start-shared-server";
+ export * from "./discovery";
+ export * from "./discovery/defaults";
