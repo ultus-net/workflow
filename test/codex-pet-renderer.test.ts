@@ -40,6 +40,12 @@ function pet() {
   return parseCodexPet(PET_JSON, fixture("grid8x2.webp"));
 }
 
+test("codexPetStateFrames renders all frames with identical dimensions", () => {
+  const frames = codexPetStateFrames(pet(), "idle", 12);
+  const dims = frames.map((frame) => frame.split("\n").length);
+  assert.equal(new Set(dims).size, 1);
+});
+
 test("renderCodexPetFrame produces ANSI half-block art at requested width", () => {
   const frame = pet().states.get("idle")![0]!;
   const art = renderCodexPetFrame(frame, 24);

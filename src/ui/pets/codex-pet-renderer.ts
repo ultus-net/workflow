@@ -32,9 +32,8 @@ export function renderCodexPetFrame(frame: CodexPetFrame, cellWidth: number): st
   if (!Number.isInteger(cellWidth) || cellWidth <= 0 || cellWidth > 120) {
     throw new RangeError("cell width must be an integer from 1 to 120");
   }
-  const cropped = cropCodexPetFrame(frame);
-  const cellHeight = Math.max(1, Math.round((cellWidth * cropped.height) / (cropped.width * CELL_ASPECT)));
-  return rgbaToAnsiHalfBlocks(cropped.rgba, cropped.width, cropped.height, cellWidth, cellHeight);
+  const cellHeight = Math.max(1, Math.round((cellWidth * frame.height) / (frame.width * CELL_ASPECT)));
+  return rgbaToAnsiHalfBlocks(frame.rgba, frame.width, frame.height, cellWidth, cellHeight);
 }
 
 export function codexPetStateFrames(pet: CodexPet, state: string, cellWidth: number): string[] {
