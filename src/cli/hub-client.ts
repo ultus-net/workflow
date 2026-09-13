@@ -1,5 +1,5 @@
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
+import { accessSync, closeSync, constants, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -64,14 +64,24 @@ export interface SpawnCandidate {
  * built `<pkgRoot>/dist/cli/hub.js` under the current Node runtime (source
  * checkout).
  */
+function executable(file: string): boolean {
+  try {
+    accessSync(file, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function resolveHubSpawnCandidates(
   env: { PATH?: string },
   pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
 ): SpawnCandidate[] {
   const candidates: SpawnCandidate[] = [];
   for (const dir of (env.PATH ?? "").split(":")) {
-    if (dir !== "" && existsSync(join(dir, "workflow-hub"))) {
-      candidates.push({ cmd: join(dir, "workflow-hub"), args: [] });
+    const file = join(dir, "workflow-hub");
+    if (dir !== "" && executable(file)) {
+      candidates.push({ cmd: file, args: [] });
       break;
     }
   }
@@ -140,7 +150,6 @@ export async function resolveWorkflowHub(
   const discoveryPath = resolveHubDiscoveryPath(dir);
   const poll = options.pollIntervalMs ?? 250;
   const timeoutMs = resolveTimeout(options.timeoutMs);
-  const deadline = Date.now() + timeoutMs;
   const lockPath = `${discoveryPath}.spawn.lock`;
 
   const discovery = readHubDiscovery(discoveryPath);
@@ -160,26 +169,46 @@ export async function resolveWorkflowHub(
   }
 
   mkdirSync(dirname(lockPath), { recursive: true });
-  const releaseLock = acquireSpawnLock(lockPath);
-  if (releaseLock === undefined) {
-    // Another surface is spawning; wait for its discovery publication.
-    const waited = await waitForHub(discoveryPath, deadline, poll);
-    if (waited !== undefined) return waited;
-    rmSync(discoveryPath, { force: true });
-    throw new Error(NO_HUB_MESSAGE);
-  }
+  let attempts = 0;
+  for (;;) {
+    const deadline = Date.now() + timeoutMs;
+    const releaseLock = acquireSpawnLock(lockPath);
+    if (releaseLock === undefined) {
+      // Another surface is spawning; wait for its discovery publication.
+      const waited = await waitForHub(discoveryPath, deadline, poll);
+      if (waited !== undefined) return waited;
+      // Stale lock (older than the spawn timeout) is treated as abandoned:
+      // remove it and retry the spawn exactly once, then fail closed.
+      if (attempts === 0 && lockStale(lockPath, timeoutMs)) {
+        rmSync(lockPath, { force: true });
+        attempts += 1;
+        continue;
+      }
+      rmSync(discoveryPath, { force: true });
+      throw new Error(NO_HUB_MESSAGE);
+    }
 
+    try {
+      const spawnFn = options.spawnFn ?? nodeSpawn;
+      const candidate = candidates[0]!;
+      const child = spawnFn(candidate.cmd, candidate.args, { detached: true, stdio: ["ignore", "ignore", "ignore"] });
+      child.on?.("error", () => undefined);
+      child.unref?.();
+      const resolved = await waitForHub(discoveryPath, deadline, poll);
+      if (resolved !== undefined) return resolved;
+      rmSync(discoveryPath, { force: true });
+      throw new Error(`${NO_HUB_MESSAGE} (auto-spawn attempted via \`${candidate.cmd}\`)`);
+    } finally {
+      releaseLock();
+    }
+  }
+}
+
+/** A lock older than the spawn timeout is treated as abandoned. */
+function lockStale(lockPath: string, timeoutMs: number): boolean {
   try {
-    const spawnFn = options.spawnFn ?? nodeSpawn;
-    const candidate = candidates[0]!;
-    const child = spawnFn(candidate.cmd, candidate.args, { detached: true, stdio: ["ignore", "ignore", "ignore"] });
-    child.on?.("error", () => undefined);
-    child.unref?.();
-    const resolved = await waitForHub(discoveryPath, deadline, poll);
-    if (resolved !== undefined) return resolved;
-    rmSync(discoveryPath, { force: true });
-    throw new Error(`${NO_HUB_MESSAGE} (auto-spawn attempted via \`${candidate.cmd}\`)`);
-  } finally {
-    releaseLock();
+    return statSync(lockPath).mtimeMs < Date.now() - timeoutMs;
+  } catch {
+    return false;
   }
 }

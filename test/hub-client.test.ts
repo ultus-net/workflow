@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, chmodSync, utimesSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -95,9 +95,11 @@ test("resolveWorkflowHub removes an obsolete discovery file and fails closed", a
 test("resolveHubSpawnCandidates prefers workflow-hub on PATH", () => {
   const dir = mkdtempSync(join(tmpdir(), "wf-hub-client-"));
   try {
-    writeFileSync(join(dir, "workflow-hub"), "#!/bin/sh\nexit 0\n");
+    const file = join(dir, "workflow-hub");
+    writeFileSync(file, "#!/bin/sh\nexit 0\n");
+    chmodSync(file, 0o755);
     const candidates = resolveHubSpawnCandidates({ PATH: dir });
-    assert.equal(candidates[0]!.cmd, join(dir, "workflow-hub"));
+    assert.equal(candidates[0]!.cmd, file);
     assert.deepEqual(candidates[0]!.args, []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -194,9 +196,41 @@ test("resolveWorkflowHub removes its spawn lock after a failed spawn", async (t)
   const lockPath = `${resolveHubDiscoveryPath(dir)}.spawn.lock`;
 
   await assert.rejects(
-    () => resolveWorkflowHub({ discoveryDir: dir, spawnCandidates: [{ cmd: "nonexistent-cmd-xyz", args: [] }] }),
+    () => resolveWorkflowHub({ discoveryDir: dir, spawnCandidates: [{ cmd: "nonexistent-cmd-xyz", args: [] }], timeoutMs: 2_000 }),
   );
   assert.equal(existsSync(lockPath), false);
+});
+
+test("resolveWorkflowHub steals a stale spawn lock and retries once", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-client-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const fixture = join(process.cwd(), "test", "fixtures", "autohub-fake-hub.mjs");
+  const discoveryPath = resolveHubDiscoveryPath(dir);
+  const lockPath = `${discoveryPath}.spawn.lock`;
+  mkdirSync(dirname(discoveryPath), { recursive: true });
+  writeFileSync(lockPath, "stale");
+  const old = new Date(Date.now() - 20_000);
+  utimesSync(lockPath, old, old);
+  const original = process.env.FAKE_HUB_DISCOVERY_PATH;
+  process.env.FAKE_HUB_DISCOVERY_PATH = discoveryPath;
+  const children: ChildProcess[] = [];
+  t.after(() => {
+    for (const child of children) child.kill("SIGTERM");
+    if (original === undefined) delete process.env.FAKE_HUB_DISCOVERY_PATH;
+    else process.env.FAKE_HUB_DISCOVERY_PATH = original;
+  });
+
+  const resolved = await resolveWorkflowHub({
+    discoveryDir: dir,
+    spawnFn: (cmd, args, options) => {
+      const child = spawn(cmd, args, options);
+      children.push(child);
+      return child;
+    },
+    spawnCandidates: [{ cmd: process.execPath, args: [fixture] }],
+    timeoutMs: 10_000,
+  });
+  assert.equal(typeof resolved.url, "string");
 });
 
 test("WORKFLOW_AUTOHUB=0 restores strict fail-fast without spawning", async (t) => {
