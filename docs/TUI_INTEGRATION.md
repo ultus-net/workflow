@@ -10,8 +10,6 @@ attach the Workflow authorization bridge:
 - connectors: `buildConnectorStartRequest` (shared helper) attaches it for
   every adapter
 
-**Gap: scheduled agents.** The hub-side cron runner builds session requests
-inside `@cline/core`; client-side hook attachment cannot reach it. Scheduled
-agents therefore run unguarded. Closing that requires a hub-side authority
-seam (a Workflow-controlled hub), which is deliberately out of the current
-patch scope.
+- scheduled agents: `createWorkflowHubHooks` in the hub daemon attaches
+  authorization hooks to every hub-started session and opens dedicated tasks
+  via `/run/begin` and `/run/finish`
