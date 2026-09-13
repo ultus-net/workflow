@@ -97,8 +97,8 @@ test("resolveHubSpawnCandidates prefers workflow-hub on PATH", () => {
   try {
     writeFileSync(join(dir, "workflow-hub"), "#!/bin/sh\nexit 0\n");
     const candidates = resolveHubSpawnCandidates({ PATH: dir });
-    assert.equal(candidates[0].cmd, join(dir, "workflow-hub"));
-    assert.deepEqual(candidates[0].args, []);
+    assert.equal(candidates[0]!.cmd, join(dir, "workflow-hub"));
+    assert.deepEqual(candidates[0]!.args, []);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
