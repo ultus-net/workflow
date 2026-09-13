@@ -71,7 +71,7 @@ test("Workflow-launched TUI keeps Ctrl+C local to the active turn", { timeout: 9
     env: { ...env, TERM: "xterm" },
   });
   terminal.onData((chunk) => { output += chunk; });
-  t.after(() => { try { terminal.kill(); } catch {} });
+  t.after(() => { try { terminal.kill(); } catch { /* PTY cleanup is best-effort */ } });
 
   const waitForOutput = async (text: string, timeout = 15_000) => {
     const started = Date.now();

@@ -23,14 +23,14 @@ Transform Workflow from a passive safety harness into an **active pedagogical pa
 Workflow supports a dynamic spectrum of collaborative modes, switchable at any time via the TUI (e.g., `Tab` or `m` hotkey) or session configuration.
 
 ```text
-[ Learn to Code ] -> [ Full Tutor ] -> [ Co-Architect ] -> [ Walkthrough ] -> [ Autonomous ]
-  (Foundations)        (Socratic)        (Trade-offs)        (Inspection)       (Fast-track)
+[ Learn to Code ] -> [ Socratic Tutor ] -> [ Co-Architect ] -> [ Walkthrough ] -> [ Autonomous ]
+  (Foundations)        (Questioning)        (Trade-offs)        (Inspection)       (Fast-track)
 ```
 
 | Mode | Target User | Focus | Interaction Style | Mutation Gating |
 | :--- | :--- | :--- | :--- | :--- |
 | **1. Learn to Code** | Beginners / new language learners | Fundamentals: syntax, types, control flow, functions, errors | Scaffolding, PRIMM (Predict-Run-Investigate-Modify-Make), interactive gap-filling | Pauses before and during edits; user writes or verifies critical lines |
-| **2. Full Tutor** | Intermediate devs building systems | Concepts: patterns, concurrency, memory, OS primitives | Socratic questioning at non-trivial design forks and debugging breakthroughs | Gated on answering or discussing candidate learning checkpoints |
+| **2. Socratic Tutor** | Intermediate devs building systems | Concepts: patterns, concurrency, memory, OS primitives | Socratic questioning at non-trivial design forks and debugging breakthroughs | Gated on answering or discussing candidate learning checkpoints |
 | **3. Co-Architect** | Senior engineers / tech leads | Strategy: Architecture Decision Records (ADRs), trade-offs | Structured Decision Briefs (chosen vs. alternatives, blast radius) | Gated on explicit human approval of architectural approach |
 | **4. Code Walkthrough** | Code reviewers / auditors | Transparency: diff invariants, edge cases, and TSDoc | Post-mutation tour explaining *why* invariants hold before verification | Requires human inspection before task moves to `VERIFYING` |
 | **5. Autonomous** | Routine / mechanical tasks | Speed: boilerplate, mechanical refactoring, syntax cleanups | Minimal interruptions; standard Workflow authorization and evidence | Normal Workflow policy authorization |
@@ -68,14 +68,13 @@ When a compiler diagnostic occurs (e.g., TypeScript `TS2345`, Rust `E0382`, Pyth
    - **The Underlying Rationale:** Why the language enforces this rule (e.g., "Runtime null-pointer prevention: JavaScript would throw `TypeError: Cannot read properties of undefined`").
    - **Socratic Guidance (Mode-calibrated):**
      * *In Learn to Code:* "What construct can we use to guarantee `userId` is present before calling the function?"
-     * *In Full Tutor:* "Compare narrowing with a type guard vs. asserting with `!`. Why is narrowing safer in asynchronous callbacks?"
-3. **Deterministic Evidence of Resolution:**
-   - The user/agent applies a fix.
-   - LSP reports `0` diagnostics for the target path.
-   - The engine admits fresh `lsp:diagnostics:clean` evidence for the task.
+     * *In Socratic Tutor:* "Compare narrowing with a type guard vs. asserting with `!`. Why is narrowing safer in asynchronous callbacks?"
+3. **Resolution Observation (pedagogy scope):**
+   - The user/agent applies a fix; LSP reports `0` diagnostics for the target path.
+   - **Current implementation:** the LSP adapter normalizes diagnostics into the pedagogy `DiagnosticInput` shape only (message/code/position), which feeds tutor lessons. Diagnostics are **not** yet admitted as Workflow `Evidence`, and there is no `lsp:diagnostics:clean` evidence flow; binding diagnostics to mutation epochs as task evidence is future work.
 
 ### 3.2 Symbol & Signature Deep-Dives (`textDocument/hover` & `inlayHint`)
-- In **Learn to Code** and **Full Tutor** modes, hovering or asking about a symbol triggers an enriched explanation:
+- In **Learn to Code** and **Socratic Tutor** modes, hovering or asking about a symbol triggers an enriched explanation:
   * Raw evaluated type signature from LSP.
   * Inlay parameter hints and implicit return types.
   * Plain-English mental model breakdown (e.g., why `Promise.all` fails fast while `Promise.allSettled` accumulates results).
@@ -116,12 +115,14 @@ For every concept, the learner profile tracks progression monotonically:
 - `exposed`: Concept has been introduced and explained.
 - `developing`: Learner has answered guided prompts or questions with partial assistance.
 - `demonstrated`: Learner correctly identified trade-offs or answered Socratic checkpoints without hints.
-- `independent`: Learner initiated the design pattern or critically reviewed/rejected a bad proposal.
-- `needs-reinforcement`: Learner struggled with the concept or requested a refresher.
+- `independent`: Learner initiated the design pattern without prompting.
+- `critique`: Learner critically reviewed or rejected a bad proposal (implementation-specific fifth stage).
+
+Struggle is recorded as `needs-reinforcement` **evidence** (not a stage): the concept's stage is preserved while the evidence log marks the gap, which `selectLearningOpportunity` consumes.
 
 ### 4.3 Fatigue Prevention & Intervention Budgeting
-- **Intervention Budget:** Maximum 2-3 Socratic interruptions per coding task in `Full Tutor` mode (unlimited in `Learn to Code` mode, 0 in `Autonomous` mode).
-- **Prerequisite Checking:** Never present an advanced concept if fundamental prerequisites are unobserved or marked `needs-reinforcement`.
+- **Intervention Budget:** Maximum 2-3 Socratic interruptions per coding task in `Socratic Tutor` mode (unlimited in `Learn to Code` mode, 0 in `Autonomous` mode).
+- **Prerequisite Checking:** *Not implemented.* The code has no concept graph; the §4.1 hierarchy is an informal label taxonomy, and concepts are addressed individually. Introducing a structured prerequisite check is deferred until concept data requires it.
 - **Mastery Suppression:** Once a concept is `independent`, the agent will never quiz the user on it again unless the user explicitly asks for a review.
 
 ### 4.4 Local Persistence (`~/.local/share/workflow/learner-profile.json`)
@@ -130,6 +131,16 @@ The profile persists across sessions in a versioned, locked JSON store, complete
 ---
 
 ## 5. Tool & Communication Contracts
+
+Of the three tools below, only `learning_checkpoint` and `decision_checkpoint`
+exist — defined in the vendored `mcp-toolbox/apps/learning-mcp` server and
+gated Workflow-side by `src/pedagogy/checkpoints.ts`. `symbol_explain` is **not
+implemented anywhere**; symbol inspection is served by `code-intelligence-mcp`
+and the LSP adapter's `hover` client. The interfaces below are the target
+shapes; the implemented `LearningOpportunity`/`DecisionBrief` records (see
+`src/pedagogy/contracts.ts`) map the first two, with `chosenOption` in place of
+`proposedChoice` and `new-concept` among the `foundations|design|debugging`
+type values in place of a `systems` category.
 
 ### 5.1 `decision_checkpoint` (Co-Architect Tool)
 Called by the agent before committing to an architectural approach:
@@ -246,7 +257,7 @@ model proposes -> Workflow authorizes -> tool acts -> environment supplies evide
    - `WorkflowCodingSession` emits pedagogical events (`decision-brief`, `tutor-checkpoint`, `diagnostic-lesson`) over the event stream.
 3. **LSP Port (`src/adapters/lsp.ts`):**
    - Implements a host-neutral JSON-RPC client over stdio.
-   - Normalizes diagnostics into Workflow evidence objects with freshness epochs.
+   - Normalizes diagnostics into pedagogy-oriented diagnostic objects (`DiagnosticInput`). **Epoch-bound `Evidence` normalization is not implemented** (see W032).
 4. **TUI Presentation (`src/ui/tui.tsx`):**
    - Status bar shows current mode: `[Mode: Socratic Tutor (m to switch)]`.
    - Dedicated interactive panel displays Decision Briefs, Socratic Questions, and LSP Diagnostic Explanations.
@@ -260,19 +271,20 @@ model proposes -> Workflow authorizes -> tool acts -> environment supplies evide
 ## 8. Implementation Roadmap (Phases & Tasks)
 
 ### W032: LSP Client Adapter & Diagnostic Evidence
-- Implement host-neutral stdio JSON-RPC LSP client in `src/adapters/lsp.ts`.
-- Normalize `publishDiagnostics` into `Evidence` with mutation epoch invalidation.
-- Add unit tests for TypeScript/Rust/Python LSP message parsing.
+- ~~Implement host-neutral stdio JSON-RPC LSP client in `src/adapters/lsp.ts`.~~ **(done)**
+- ~~Normalize `publishDiagnostics` into pedagogy diagnostic inputs with unit tests.~~ **(done — `normalizeDiagnostics` into `DiagnosticInput`; tests cover framing/normalization against one fake server)**
+- **Outstanding:** promote diagnostics to epoch-bound `Evidence` (`lsp:diagnostics:clean` admission) — not implemented; TypeScript/Rust/Python-format parsing tests are not delivered (single fake server fixture).
 
 ### W033: Adaptive Learner Engine & Profile Store
-- Implement `src/pedagogy/learner-profile.ts` with local locked JSON persistence.
-- Implement concept knowledge graph and Bayesian mastery tracker.
-- Implement intervention budgeter and fatigue prevention.
+- ~~Implement `src/pedagogy/learner-profile.ts` with local locked JSON persistence.~~ **(done)**
+- ~~Implement monotonic concept stages (`exposed/developing/demonstrated/independent/critique`), mastery suppression, and intervention budgeting per concept record.~~ **(done)**
+- **Outstanding:** a structured concept *knowledge graph* (prerequisite edges) and a Bayesian mastery tracker are not implemented; concepts are addressed individually (see §4.3).
 
 ### W034: Socratic Tutor & Co-Architect Host Seams
-- Implement `learning_checkpoint`, `decision_checkpoint`, and `symbol_explain` tool definitions.
-- Integrate tool interception in `ClineHostAdapter` and `WorkflowApplication.authorize()`.
-- Add test suites covering gating on pending checkpoints.
+- ~~Implement `learning_checkpoint` and `decision_checkpoint` tool definitions (vendored `learning-mcp`).~~ **(done — Workflow gating runs through `src/pedagogy/checkpoints.ts`)**
+- **Outstanding:** `symbol_explain` has no tool definition anywhere (§5).
+- Integrate tool interception in `ClineHostAdapter` and `WorkflowApplication.authorize()`. **(done via checkpoint gate: `WorkflowApplication.setPedagogyGate`)**
+- Add test suites covering gating on pending checkpoints. **(done)**
 
 ### W035: "Learn to Code" Fundamentals & Diagnostic Translator
 - Build the diagnostic-to-pedagogy translation engine (mapping compiler errors to plain-English mental models).

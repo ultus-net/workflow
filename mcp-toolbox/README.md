@@ -16,6 +16,8 @@ publishable.
 - `project-memory-mcp` - durable typed project knowledge with bounded retrieval.
 - `review-accountability-mcp` - subject-bound review attestations and follow-up debt.
 - `verification-accountability-mcp` - authority-backed verification observations with bounded freshness assessment.
+- `learning-mcp` - adaptive pedagogy engine (learner profile, stage progression, intervention budgeting, Socratic checkpoints).
+- `continuity-checkpoint-mcp` - bounded read-only continuity recovery for coding agents.
 
 Several lifecycle-oriented tools advertise model-visible guidance about when they are
 useful so different MCP clients can use them proactively without a custom harness.

@@ -2,6 +2,8 @@
 
 Workflow's process policy and runtime containment are separate gates. `WorkflowApplication.authorize()` decides whether a task may request process, credential, or host-network authority. `WorkflowContainedProcess` requires that authorization and then delegates execution to a `ProcessContainment` backend. An application `allow` does not mean containment was established.
 
+Every `ContainedProcessResult` carries an `enforcement` marker so the two gates can never be conflated by type: `enforced` means the tested Bubblewrap boundary was established; `policy-only` means execution passed validation and authorization with **no isolation** (the non-Linux passthrough).
+
 ## Linux Bubblewrap Backend
 
 `LinuxBubblewrapContainment` is the W019 enforced backend. It requires Linux and a working `/usr/bin/bwrap` by default. A different Bubblewrap executable path may be supplied explicitly. Before each execution the backend runs a sandbox probe; a missing or non-working backend rejects execution. Bubblewrap boundary-setup errors also reject rather than returning an `enforced` result.
