@@ -422,6 +422,121 @@ index d8590e0..f97b877 100644
 +		await expectVisible(terminal, "Configuration");
 +	});
  });
+diff --git a/apps/cli/src/tui/components/workflow-galaxy.tsx b/apps/cli/src/tui/components/workflow-galaxy.tsx
+new file mode 100644
+index 0000000..a7a6b9e
+--- /dev/null
++++ b/apps/cli/src/tui/components/workflow-galaxy.tsx
+@@ -0,0 +1,109 @@
++import { useEffect, useState } from "react";
++
++/**
++ * Workflow galaxy animation: a procedural ASCII swirl of stars orbiting a
++ * core — guided by the "ASCII Rotating Galaxy" animation concept (spiral
++ * arms, twist, glow falloff, twinkle) but implemented from scratch with an
++ * original, deterministic renderer. No third-party artwork or code is
++ * imported. Characters, not colors, carry the depth cue, and each tick
++ * remaps star glyphs so the field shimmers in pattern, not just position.
++ */
++
++const PALETTE = " !;/\\:+*oO#@c";
++const ARMS = 3;
++const TWIST = 0.45;
++const GLOW = 0.5;
++const HEIGHT = 12;
++const WIDTH = 48;
++const TICK_MS = 200;
++const STAR_COUNT = 600;
++/** Keep the ball inside the grid with margin so nothing clips. */
++const RADIUS_SCALE = 0.82;
++
++interface Star {
++	readonly radius: number;
++	readonly phase: number;
++	readonly wobble: number;
++}
++
++/** Deterministic hash so the field is stable frame-to-frame, no Math.random. */
++function hash(seed: number): number {
++	let h = seed | 0;
++	h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
++	h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
++	return ((h ^ (h >>> 16)) >>> 0) / 0xffffffff;
++}
++
++const STARS: Star[] = (() => {
++	const stars: Star[] = [];
++	for (let i = 0; i < STAR_COUNT; i++) {
++		const arm = i % ARMS;
++		const spread = hash(i * 2 + 1);
++		// Fill: each star owns a radius slot on its arm, so the spiral reads
++		// as structure rather than noise.
++		const radius = (i + 1) / STAR_COUNT;
++		stars.push({
++			radius: radius * (0.92 + spread * 0.08),
++			phase: arm * ((Math.PI * 2) / ARMS) + TWIST * radius * Math.PI * 2 + spread * 0.25,
++			wobble: hash(i * 3 + 7),
++		});
++	}
++	return stars;
++})();
++
++export function renderFrame(tick: number): string[] {
++	const halfW = WIDTH / 2;
++	const halfH = HEIGHT / 2;
++	const cells: string[][] = Array.from({ length: HEIGHT }, () => Array.from({ length: WIDTH }, () => " "));
++	const progress = tick * 0.12;
++
++	STARS.forEach((star, i) => {
++		const angle = star.phase + progress + star.radius * TWIST * Math.PI * 2;
++		const radius = star.radius * halfW * RADIUS_SCALE;
++		const x = Math.round(halfW + Math.cos(angle) * radius);
++		// Aspect correction: terminal cells are taller than wide, squash y.
++		const y = Math.round(halfH + Math.sin(angle) * radius * 0.42);
++		if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return;
++		const depth = 1 - star.radius;
++		const flicker = Math.sin(progress * 4 + star.wobble * Math.PI * 2);
++		const brightness = Math.max(0, Math.min(1, depth * (GLOW + flicker * 0.4)));
++		// Twinkle: remaps each star's glyph within the palette on a patterned
++		// cadence so characters visibly change between frames, not only move.
++		const twinkle = hash(i * 97 + Math.floor(tick / 2) * 31) - 0.5;
++		const index = Math.max(
++			0,
++			Math.min(PALETTE.length - 1, Math.round(brightness * (PALETTE.length - 1) + twinkle * 4)),
++		);
++		const glyph = PALETTE[index];
++		if (glyph !== undefined && glyph !== " ") cells[y]![x] = glyph;
++	});
++
++	// Core: the nearest, brightest point.
++	const coreGlyph = PALETTE[PALETTE.length - 1] ?? "@";
++	cells[Math.round(halfH)]![Math.round(halfW)] = coreGlyph;
++
++	return cells.map((row) => row.join(""));
++}
++
++export function WorkflowGalaxy(props: { defaultColor?: string }) {
++	const [tick, setTick] = useState(0);
++
++	useEffect(() => {
++		const interval = setInterval(() => {
++			setTick((current) => current + 1);
++		}, TICK_MS);
++		return () => clearInterval(interval);
++	}, []);
++
++	const frame = renderFrame(tick);
++	return (
++		<box flexDirection="column" alignItems="center" width="100%" flexShrink={1} overflow="hidden">
++			{frame.map((row, rowIdx) => (
++				// biome-ignore lint/suspicious/noArrayIndexKey: procedural animation frame with fixed row order
++				<text key={`row-${rowIdx}`} fg={props.defaultColor ?? "white"}>
++					{row}
++				</text>
++			))}
++		</box>
++	);
++}
 diff --git a/apps/cli/src/tui/hooks/use-root-keyboard.ts b/apps/cli/src/tui/hooks/use-root-keyboard.ts
 index 52ea615..643874f 100644
 --- a/apps/cli/src/tui/hooks/use-root-keyboard.ts
@@ -522,6 +637,75 @@ index a3f0e76..a85b375 100644
 +		</box>
 +	);
 +}
+diff --git a/apps/cli/src/tui/views/home-view.tsx b/apps/cli/src/tui/views/home-view.tsx
+index 753cf36..a0cb58d 100644
+--- a/apps/cli/src/tui/views/home-view.tsx
++++ b/apps/cli/src/tui/views/home-view.tsx
+@@ -1,5 +1,4 @@
+ import { useTerminalDimensions } from "@opentui/react";
+-import { useState } from "react";
+ import {
+ 	AutocompleteDropdown,
+ 	type AutocompleteDropdownProps,
+@@ -11,7 +10,7 @@ import {
+ 	resolveModelMaxInputTokens,
+ 	StatusBar,
+ } from "../components/status-bar";
+-import { TrackedRobot, useMouseTracker } from "../components/tracked-robot";
++import { WorkflowGalaxy } from "../components/workflow-galaxy";
+ import { useSession } from "../contexts/session-context";
+ import { useTheme } from "../hooks/use-theme";
+ import {
+@@ -54,12 +53,7 @@ export function HomeView(props: {
+ 		repoStatus,
+ 	} = props;
+ 	const session = useSession();
+-	const { width, height } = useTerminalDimensions();
+-	const mouse = useMouseTracker();
+-	const [inputCursor, setInputCursor] = useState<{
+-		visualCol: number;
+-		visualRow: number;
+-	} | null>(null);
++	const { width } = useTerminalDimensions();
+ 
+ 	const theme = useTheme();
+ 	const terminalBg = theme.background;
+@@ -75,16 +69,6 @@ export function HomeView(props: {
+ 	const hasAutocomplete =
+ 		props.autocomplete?.mode && props.autocomplete.options.length > 0;
+ 	const contentWidth = Math.min(width, HOME_VIEW_MAX_WIDTH);
+-	const hasTypedInput = inputValue.trim().length > 0;
+-	const inputStartX = Math.floor((width - contentWidth) / 2) + 2;
+-	const clamp = (value: number, min: number, max: number) =>
+-		Math.max(min, Math.min(max, value));
+-	const trackedCursorX = hasTypedInput
+-		? clamp(inputStartX + (inputCursor?.visualCol ?? 0), 0, width)
+-		: mouse.cursor.x;
+-	const trackedCursorY = hasTypedInput
+-		? clamp(height - 2 + (inputCursor?.visualRow ?? 0), 0, height)
+-		: mouse.cursor.y;
+ 
+ 	return (
+ 		<box
+@@ -93,9 +77,8 @@ export function HomeView(props: {
+ 			height="100%"
+ 			alignItems="center"
+ 			justifyContent="center"
+-			onMouseMove={mouse.onMouseMove}
+ 		>
+-			<TrackedRobot cursorX={trackedCursorX} cursorY={trackedCursorY} />
++			<WorkflowGalaxy defaultColor={defaultFg} />
+ 			<box marginTop={1} marginBottom={1} flexShrink={0}>
+ 				<text fg={defaultFg}>
+ 					<strong>What can I do for you?</strong>
+@@ -120,7 +103,6 @@ export function HomeView(props: {
+ 					inputKey={inputKey}
+ 					onSubmit={onSubmit}
+ 					onContentChange={onContentChange}
+-					onVisualCursorChange={setInputCursor}
+ 					onImagePaste={onImagePaste}
+ 					onLargeTextPaste={onLargeTextPaste}
+ 					onFocusRequest={props.onInputFocusRequest}
 diff --git a/apps/cli/src/utils/workflow-bridge-local-runtime.ts b/apps/cli/src/utils/workflow-bridge-local-runtime.ts
 new file mode 100644
 index 0000000..7b847fa
