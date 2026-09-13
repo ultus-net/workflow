@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { TaskGraph } from "../kernel/task-graph.js";
 import { createWorkflowClineTuiBridge, type WorkflowClineTuiBridge } from "./cline-tui-bridge.js";
+import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { createRunRegistry } from "./run-registry.js";
 
 /**
@@ -37,6 +38,7 @@ export async function createWorkflowHub(
     observeRequest?: (path: string) => void;
     observeBridgeStarted?: (url: string) => void;
     teamTaskVerificationCommand?: string;
+    guard?: WorkflowGuardProvider;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -56,6 +58,7 @@ export async function createWorkflowHub(
       runs?.controller,
       options.observeRequest,
       options.teamTaskVerificationCommand,
+      options.guard,
     );
     options.observeBridgeStarted?.(bridge.url);
 

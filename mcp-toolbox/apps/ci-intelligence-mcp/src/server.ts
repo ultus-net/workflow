@@ -5,13 +5,15 @@ import { z } from "zod";
 
 import { GitHubActionsAdapter } from "./github-actions-adapter.js";
 
-const repository = process.env.CI_GITHUB_REPOSITORY;
-if (!repository) throw new Error("CI_GITHUB_REPOSITORY is required");
-const adapter = new GitHubActionsAdapter({
-  repository,
-  ...(process.env.CI_GITHUB_TOKEN ? { token: process.env.CI_GITHUB_TOKEN } : {}),
-  ...(process.env.CI_GITHUB_API_URL ? { apiUrl: process.env.CI_GITHUB_API_URL } : {}),
-});
+function getAdapter(): GitHubActionsAdapter {
+  const repository = process.env.CI_GITHUB_REPOSITORY;
+  if (!repository) throw new Error("CI_GITHUB_REPOSITORY is required");
+  return new GitHubActionsAdapter({
+    repository,
+    ...(process.env.CI_GITHUB_TOKEN ? { token: process.env.CI_GITHUB_TOKEN } : {}),
+    ...(process.env.CI_GITHUB_API_URL ? { apiUrl: process.env.CI_GITHUB_API_URL } : {}),
+  });
+}
 const server = new McpServer(
   { name: "ci-intelligence-mcp", version: "0.1.0" },
   { capabilities: { logging: {} } },
@@ -66,7 +68,7 @@ server.registerTool(
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   },
   async (input, extra) => {
-    const result = await adapter.listRuns(input, extra.signal);
+    const result = await getAdapter().listRuns(input, extra.signal);
     const structuredContent = { runs: [...result.runs], truncated: result.truncated };
     return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };
   },
@@ -91,7 +93,7 @@ server.registerTool(
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
   },
   async (input, extra) => {
-    const result = await adapter.listJobs(input.runId, input.limit, extra.signal);
+    const result = await getAdapter().listJobs(input.runId, input.limit, extra.signal);
     const structuredContent = { jobs: [...result.jobs], truncated: result.truncated };
     return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };
   },

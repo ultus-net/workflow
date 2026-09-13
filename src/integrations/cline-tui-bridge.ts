@@ -9,6 +9,7 @@ import { buildReviewRubric } from "../review/rubric.js";
 import { evidenceId, observationId, taskId, type Evidence, type EvidenceAuthority, type TaskId } from "../kernel/contracts.js";
 import { createWorkflowClinePlugin, type ClineBeforeToolHookInput } from "./cline-plugin.js";
 import { createWorkflowClineShellExecutor, type WorkflowClineShellExecutor } from "./cline-shell-executor.js";
+import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 
 export interface WorkflowClineTuiBridge {
   readonly url: string;
@@ -39,13 +40,14 @@ export async function createWorkflowClineTuiBridge(
   runController?: WorkflowRunController,
   observeRequest?: (path: string) => void,
   teamTaskVerificationCommand?: string,
+  guard?: WorkflowGuardProvider,
 ): Promise<WorkflowClineTuiBridge> {
   const token = randomBytes(32).toString("hex");
   const verificationToken = randomBytes(32).toString("hex");
 
   const server = createServer((request, response) => {
     if (request.url !== undefined) observeRequest?.(new URL(request.url, "http://127.0.0.1").pathname);
-    void handleRequest(request, response, token, verificationToken, resolveApplication, runController, teamTaskVerificationCommand);
+    void handleRequest(request, response, token, verificationToken, resolveApplication, runController, teamTaskVerificationCommand, guard);
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -75,6 +77,7 @@ async function handleRequest(
   resolveApplication: WorkflowApplicationResolver,
   runController?: WorkflowRunController,
   teamTaskVerificationCommand?: string,
+  guard?: WorkflowGuardProvider,
 ): Promise<void> {
   try {
     if (request.method !== "POST") return send(response, 401, { error: "unauthorized" });
@@ -163,7 +166,7 @@ async function handleRequest(
     }
     if (request.url === "/before-tool") {
       const { input, workspace, runId } = requireBeforeToolInput(body);
-      const plugin = pluginFor(resolveApplication(workspace, runId));
+      const plugin = pluginFor(resolveApplication(workspace, runId), guard);
       return send(response, 200, (await plugin.hooks.beforeTool(input)) ?? {});
     }
     if (request.url === "/bash") {
@@ -190,7 +193,7 @@ async function handleRequest(
           boundTaskId = undefined;
         }
       }
-      const shellExecutor = shellExecutorFor(application, boundTaskId);
+      const shellExecutor = shellExecutorFor(application, boundTaskId, true, guard);
       return send(response, 200, { output: await shellExecutor(body.command as never, body.cwd, undefined) });
     }
     send(response, 404, { error: "not found" });
@@ -250,7 +253,11 @@ async function syncClineTeamTask(
     }
     const transition = application.transition(id, "VERIFYING");
     if (transition.kind !== "accepted") throw new TypeError(`cannot complete Workflow task ${id}: ${transition.reason}`);
-    application.transition(id, "VERIFIED");
+    // Completion only moves the task to VERIFYING. Promotion to VERIFIED is
+    // reserved for Workflow-owned trusted verification: the configured
+    // verification command below, or a verifier-token /team-task/verify call
+    // whose evidence the kernel accepts (authority, subject, freshness, and
+    // mutation epoch are all validated before the state may advance).
     if (verificationCommand !== undefined) await runTeamTaskVerification(application, id, verificationCommand);
     return;
   }
@@ -368,13 +375,18 @@ function adapterFor(application: WorkflowApplication, fixedTaskId?: TaskId): Cli
   });
 }
 
-function pluginFor(application: WorkflowApplication) {
-  return createWorkflowClinePlugin(application, adapterFor(application));
+function pluginFor(application: WorkflowApplication, guard?: WorkflowGuardProvider) {
+  return createWorkflowClinePlugin(application, adapterFor(application), undefined, guard);
 }
 
-function shellExecutorFor(application: WorkflowApplication, fixedTaskId?: TaskId, writableWorkspace = true): WorkflowClineShellExecutor {
+function shellExecutorFor(
+  application: WorkflowApplication,
+  fixedTaskId?: TaskId,
+  writableWorkspace = true,
+  guard?: WorkflowGuardProvider,
+): WorkflowClineShellExecutor {
   return createWorkflowClineShellExecutor(
-    new WorkflowContainedProcess(application, selectContainment()),
+    new WorkflowContainedProcess(application, selectContainment(), guard),
     adapterFor(application, fixedTaskId),
     (exitCode, output) => Object.assign(new Error(output), { exitCode }),
     undefined,

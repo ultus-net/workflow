@@ -131,16 +131,12 @@ export function createRunRegistry(
           } else if (current !== "VERIFYING") {
             throw new Error(`cannot verify run ${runId}: task is ${current}`);
           }
-          application.recordEvidence({
-            id: evidenceId(`run-evidence:${runId}`),
-            observationId: observationId(`run-observation:${runId}`),
-            authority: "environment",
-            subject: runId,
-            result: "passed",
-            freshness: "fresh",
-            mutationEpoch: application.snapshot().mutationEpoch,
-            observedAt: new Date().toISOString(),
-          });
+          // No fabricated evidence here: a finish call only reports that the
+          // session ended. Promotion to VERIFIED is decided by the kernel -
+          // plain runs carry no evidence requirements, while requiresReview
+          // runs can only advance on reviewer evidence recorded through
+          // /run/review. Recording synthetic "passed" environment evidence
+          // here would self-certify the run without any real observation.
           const verified = application.transition(runTaskId, "VERIFIED");
           if (verified.kind !== "accepted") throw new Error(`cannot verify run ${runId}: ${verified.reason}`);
         } else {

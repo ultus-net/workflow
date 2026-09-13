@@ -313,7 +313,7 @@ test("trusted command evidence promotes a verifying Cline team task in process",
   }
 });
 
-test("passing command evidence recorded before Cline completion promotes on completion", async () => {
+test("passing command evidence recorded before Cline completion leaves task verifying until trusted verification", async () => {
   const app = application();
   const bridge = await createWorkflowClineTuiBridge(app);
   try {
@@ -342,6 +342,10 @@ test("passing command evidence recorded before Cline completion promotes on comp
       { action: "complete", taskId: "task_command_then_complete", status: "completed" },
     );
     assert.equal(completed.status, 200);
+    assert.equal(app.snapshot().tasks.find((task) => task.id === id)?.state, "VERIFYING");
+
+    // Trusted transition promotes once completion moves the task to VERIFYING.
+    assert.equal(app.transition(id, "VERIFIED").kind, "accepted");
     assert.equal(app.snapshot().tasks.find((task) => task.id === id)?.state, "VERIFIED");
   } finally {
     await bridge.close();
