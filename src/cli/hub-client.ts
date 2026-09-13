@@ -1,6 +1,7 @@
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { resolveHubDiscoveryPath } from "../integrations/workflow-hub.js";
 
@@ -49,6 +50,51 @@ export async function probeHub(discovery: HubDiscovery): Promise<boolean> {
     return response.status === 200;
   } catch {
     return false;
+  }
+}
+
+export interface SpawnCandidate {
+  readonly cmd: string;
+  readonly args: string[];
+}
+
+/**
+ * Resolve the command used to spawn the detached hub daemon. Prefers a
+ * `workflow-hub` executable on PATH (global install) and falls back to the
+ * built `<pkgRoot>/dist/cli/hub.js` under the current Node runtime (source
+ * checkout).
+ */
+export function resolveHubSpawnCandidates(
+  env: { PATH?: string },
+  pkgRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."),
+): SpawnCandidate[] {
+  const candidates: SpawnCandidate[] = [];
+  for (const dir of (env.PATH ?? "").split(":")) {
+    if (dir !== "" && existsSync(join(dir, "workflow-hub"))) {
+      candidates.push({ cmd: join(dir, "workflow-hub"), args: [] });
+      break;
+    }
+  }
+  const distHub = resolve(pkgRoot, "dist", "cli", "hub.js");
+  if (candidates.length === 0 && existsSync(distHub)) {
+    candidates.push({ cmd: process.execPath, args: [distHub] });
+  }
+  return candidates;
+}
+
+/** Exclusive `wx` acquire; release closes the fd and removes the lock file. */
+export function acquireSpawnLock(lockPath: string): (() => void) | undefined {
+  try {
+    const fd = openSync(lockPath, "wx");
+    return () => {
+      try {
+        closeSync(fd);
+      } finally {
+        rmSync(lockPath, { force: true });
+      }
+    };
+  } catch {
+    return undefined;
   }
 }
 

@@ -9,7 +9,7 @@ import { TaskGraph } from "../src/kernel/task-graph.js";
 import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createWorkflowHub, resolveHubDiscoveryPath } from "../src/integrations/workflow-hub.js";
-import { probeHub, readHubDiscovery, resolveWorkflowHub } from "../src/cli/hub-client.js";
+import { probeHub, readHubDiscovery, resolveWorkflowHub, resolveHubSpawnCandidates } from "../src/cli/hub-client.js";
 import packageJson from "../package.json" with { type: "json" };
 
 const tasks: WorkflowTask[] = [{ id: taskId("W1"), title: "task", state: "READY", dependencies: [], requiredEvidence: [] }];
@@ -89,4 +89,29 @@ test("resolveWorkflowHub removes an obsolete discovery file and fails closed", a
 
   await assert.rejects(() => resolveWorkflowHub({ discoveryDir: dir }), /npm run hub.*workflow-hub/);
   assert.equal(existsSync(discoveryPath), false);
+});
+
+test("resolveHubSpawnCandidates prefers workflow-hub on PATH", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-client-"));
+  try {
+    writeFileSync(join(dir, "workflow-hub"), "#!/bin/sh\nexit 0\n");
+    const candidates = resolveHubSpawnCandidates({ PATH: dir });
+    assert.equal(candidates[0].cmd, join(dir, "workflow-hub"));
+    assert.deepEqual(candidates[0].args, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("resolveHubSpawnCandidates falls back to pkgRoot dist hub", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-client-"));
+  try {
+    mkdirSync(join(dir, "dist", "cli"), { recursive: true });
+    writeFileSync(join(dir, "dist", "cli", "hub.js"), "");
+    const candidates = resolveHubSpawnCandidates({ PATH: "" }, dir);
+    assert.ok(candidates.some((c) => c.cmd === process.execPath && c.args[0] === join(dir, "dist", "cli", "hub.js")));
+    assert.equal(candidates.length, 1);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
