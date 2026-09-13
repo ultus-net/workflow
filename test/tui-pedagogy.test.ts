@@ -56,6 +56,66 @@ test("TUI style changes propagate to onStyleChange for live session restyling", 
 });
 
 
+test("TUI installs the pedagogy gate via onModeChange on mount and on m", async () => {
+  const modes: string[] = [];
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    onModeChange: (mode: string) => modes.push(mode),
+  }));
+
+  view.stdin.write("m");
+  await waitForFrame(view, /\[Mode: Learn to Code/);
+  view.stdin.write("m");
+  await waitForFrame(view, /\[Mode: Socratic Tutor/);
+
+  assert.deepEqual(modes, ["autonomous", "learn-to-code", "socratic-tutor"]);
+  view.unmount();
+});
+
+
+test("TUI / opens the Workflow options menu and 1-6 toggle options", async () => {
+  const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
+
+  // Empty composer shows the labeled keys hint.
+  assert.match(view.lastFrame() ?? "", /keys: \/ menu/);
+
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  const menu = view.lastFrame() ?? "";
+  assert.match(menu, /Mode: Autonomous/);
+  assert.match(menu, /Speech: normal/);
+  assert.match(menu, /Build: normal/);
+  assert.match(menu, /Learner profile/);
+  assert.match(menu, /Inspect symbol/);
+  assert.match(menu, /Workflow details/);
+
+  // Digit 1 cycles the mode and closes the menu.
+  view.stdin.write("1");
+  await waitForFrame(view, /\[Mode: Learn to Code/);
+  assert.doesNotMatch(view.lastFrame() ?? "", /Workflow options/);
+  view.unmount();
+});
+
+test("TUI / menu digit selection runs the option and q closes", async () => {
+  const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
+
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+
+  // Digit 2 is Speech.
+  view.stdin.write("2");
+  await waitForFrame(view, /Speech: caveman|🪨/);
+  assert.doesNotMatch(view.lastFrame() ?? "", /Workflow options/);
+
+  // Reopen, then q closes without changing anything.
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("q");
+  await waitForFrame(view, /keys: \/ menu/);
+  assert.match(view.lastFrame() ?? "", /keys: \/ menu/);
+  view.unmount();
+});
+
 test("TUI shows the autonomous mode by default and m cycles pedagogical modes", async () => {
   const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
 
