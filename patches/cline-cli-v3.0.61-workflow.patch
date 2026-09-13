@@ -1,3 +1,199 @@
+diff --git a/apps/cli/src/cli.tuistory.e2e.test.ts b/apps/cli/src/cli.tuistory.e2e.test.ts
+index e5a3796..cf8e3a7 100644
+--- a/apps/cli/src/cli.tuistory.e2e.test.ts
++++ b/apps/cli/src/cli.tuistory.e2e.test.ts
+@@ -12,13 +12,18 @@
+ // Run with: bun run test:e2e:tuistory
+ // ---------------------------------------------------------------------------
+ 
+-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
++import { chmodSync, copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
++import { spawn, type ChildProcess } from "node:child_process";
++import { createServer } from "node:http";
++import type { AddressInfo } from "node:net";
+ import os from "node:os";
+ import path from "node:path";
++import { ProviderSettingsManager } from "@cline/core";
+ import { launchTerminal, type Session } from "tuistory";
+ import { afterEach, describe, expect, it } from "vitest";
+ 
+ const cliRoot = path.resolve(__dirname, "..");
++const workflowRoot = path.resolve(cliRoot, "../../../..");
+ const cliEntry = path.join(cliRoot, "src", "index.ts");
+ const bunExec = process.env.BUN_EXEC_PATH ?? "bun";
+ 
+@@ -27,6 +32,7 @@ const UI_TIMEOUT_MS = 15_000;
+ 
+ const tempDirs: string[] = [];
+ const sessions: Session[] = [];
++const workflowHubs: ChildProcess[] = [];
+ 
+ function createCliEnv(
+ 	overrides: Record<string, string | undefined> = {},
+@@ -69,20 +75,42 @@ function createCliEnv(
+ async function launchCli(
+ 	extraArgs: string[] = [],
+ 	env: Record<string, string | undefined> = createCliEnv(),
++	cwd = cliRoot,
++	providerArgs = [
++		"--provider",
++		"anthropic",
++		"-m",
++		"claude-sonnet-4-6",
++		"-k",
++		"test-key",
++	],
+ ): Promise<Session> {
++	if (!env.WORKFLOW_CLINE_BRIDGE_URL) {
++		const hubEnv = Object.fromEntries(
++			Object.entries({ ...process.env, ...env }).filter((entry): entry is [string, string] => entry[1] !== undefined),
++		);
++		const hub = spawn(process.execPath, ["--import", "tsx", path.join(workflowRoot, "src", "cli", "hub.ts")], {
++			cwd: workflowRoot,
++			env: hubEnv,
++			stdio: "ignore",
++		});
++		workflowHubs.push(hub);
++		const discoveryPath = path.join(env.HOME!, ".workflow", "hub", "discovery.json");
++		const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
++		while (!existsSync(discoveryPath)) {
++			if (hub.exitCode !== null) throw new Error(`Workflow hub exited with code ${hub.exitCode}`);
++			if (Date.now() >= deadline) throw new Error("Timed out waiting for Workflow hub discovery");
++			await new Promise((resolve) => setTimeout(resolve, 25));
++		}
++	}
+ 	const session = await launchTerminal({
+ 		command: bunExec,
+ 		args: [
+ 			cliEntry,
+-			"--provider",
+-			"anthropic",
+-			"-m",
+-			"claude-sonnet-4-6",
+-			"-k",
+-			"test-key",
++			...providerArgs,
+ 			...extraArgs,
+ 		],
+-		cwd: cliRoot,
++		cwd,
+ 		env,
+ 		cols: 120,
+ 		rows: 36,
+@@ -115,6 +143,13 @@ describe("cli tuistory e2e", () => {
+ 			}
+ 			session.close();
+ 		}
++		for (const hub of workflowHubs.splice(0)) {
++			if (hub.exitCode === null) hub.kill("SIGTERM");
++			await new Promise<void>((resolve) => {
++				if (hub.exitCode !== null) resolve();
++				else hub.once("exit", () => resolve());
++			});
++		}
+ 		for (const dir of tempDirs.splice(0)) {
+ 			rmSync(dir, { recursive: true, force: true });
+ 		}
+@@ -130,6 +165,99 @@ describe("cli tuistory e2e", () => {
+ 		expect(screen).toContain("Auto-approve all enabled (Shift+Tab)");
+ 	});
+ 
++	it("executes a live model tool call through the real Workflow hub", async () => {
++		const provider = new ProviderSettingsManager().getLastUsedProviderConfig();
++		if (!provider?.providerId || !provider.modelId) {
++			throw new Error("live Workflow TUI e2e requires a configured model provider");
++		}
++		const workspace = mkdtempSync(path.join(os.tmpdir(), "cli-tuistory-live-"));
++		tempDirs.push(workspace);
++		const proofPath = path.join(workspace, "workflow-e2e-proof.txt");
++		const sourceProviderSettingsPath = process.env.CLINE_PROVIDER_SETTINGS_PATH
++			?? path.join(os.homedir(), ".cline", "data", "settings", "providers.json");
++		const credentialDir = mkdtempSync(path.join(os.tmpdir(), "cli-tuistory-credentials-"));
++		tempDirs.push(credentialDir);
++		const providerSettingsPath = path.join(credentialDir, "providers.json");
++		copyFileSync(sourceProviderSettingsPath, providerSettingsPath);
++		chmodSync(providerSettingsPath, 0o600);
++		const hubRequestLog = path.join(credentialDir, "hub-requests.log");
++		const providerArgs = [
++			"--provider",
++			provider.providerId,
++			"-m",
++			provider.modelId,
++		];
++		const session = await launchCli(
++			[],
++			createCliEnv({
++				CLINE_PROVIDER_SETTINGS_PATH: providerSettingsPath,
++				WORKFLOW_HUB_REQUEST_LOG: hubRequestLog,
++			}),
++			workspace,
++			providerArgs,
++		);
++		await waitForChatView(session);
++
++		const command = "printf 'workflow-live-e2e\\n' > workflow-e2e-proof.txt";
++		const completionMarker = "WORKFLOW_LIVE_E2E_COMPLETE";
++		await session.type(
++			`Use run_commands to execute exactly: ${command} . Do not use another tool to create the file. After the command succeeds, finish by replying exactly ${completionMarker}.`,
++		);
++		await session.press("enter");
++		const deadline = Date.now() + 90_000;
++		while (!existsSync(proofPath) && Date.now() < deadline) {
++			await new Promise((resolve) => setTimeout(resolve, 100));
++		}
++
++		expect(existsSync(proofPath)).toBe(true);
++		expect(readFileSync(proofPath, "utf8")).toBe("workflow-live-e2e\n");
++		await session.text({
++			waitFor: (text) => text.split(completionMarker).length >= 3,
++			timeout: 30_000,
++		});
++		const hubRequests = readFileSync(hubRequestLog, "utf8").split("\n");
++		expect(hubRequests).toContain("/before-tool");
++		expect(hubRequests).toContain("/bash");
++	}, 120_000);
++
++	it("renders Workflow tasks only after entering ChatView", async () => {
++		const token = "workflow-task-placement-test";
++		const server = createServer((request, response) => {
++			response.writeHead(200, { "content-type": "application/json" });
++			if (request.url === "/snapshot" && request.headers.authorization === `Bearer ${token}`) {
++				response.end(JSON.stringify({ snapshot: { tasks: [{ id: "runtime-task", title: "Runtime placement proof", state: "READY", blockers: [] }] } }));
++				return;
++			}
++			response.end(JSON.stringify({}));
++		});
++		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
++		try {
++			const port = (server.address() as AddressInfo).port;
++			const session = await launchCli([], createCliEnv({ WORKFLOW_CLINE_BRIDGE_URL: `http://127.0.0.1:${port}`, WORKFLOW_CLINE_BRIDGE_TOKEN: token }));
++			await waitForChatView(session);
++			expect(await session.text()).not.toContain("Runtime placement proof");
++
++			await session.type("hello");
++			await session.press("enter");
++			await session.waitForText("Runtime placement proof", { timeout: UI_TIMEOUT_MS });
++			const screen = await session.text();
++			expect(screen).toContain("Workflow tasks 0/1 verified");
++			expect(screen).toContain("Workflow tasks 0/1 verified\n\n  - Runtime placement proof [READY]");
++
++			await session.click("Workflow tasks 0/1 verified");
++			await session.waitIdle();
++			const collapsedScreen = await session.text();
++			expect(collapsedScreen).toContain("> Workflow tasks 0/1 verified");
++			expect(collapsedScreen).not.toContain("Runtime placement proof");
++
++			await session.click("Workflow tasks 0/1 verified");
++			await session.waitForText("Runtime placement proof", { timeout: UI_TIMEOUT_MS });
++			expect(await session.text()).toContain("v Workflow tasks 0/1 verified");
++		} finally {
++			await new Promise<void>((resolve) => server.close(() => resolve()));
++		}
++	});
++
+ 	it("toggles plan/act mode with Tab", async () => {
+ 		const session = await launchCli();
+ 		await waitForChatView(session);
 diff --git a/apps/cli/src/connectors/session-runtime.ts b/apps/cli/src/connectors/session-runtime.ts
 index b0f5add..a4b482a 100644
 --- a/apps/cli/src/connectors/session-runtime.ts
@@ -18,6 +214,65 @@ index b0f5add..a4b482a 100644
  	};
  }
  
+diff --git a/apps/cli/src/main.ts b/apps/cli/src/main.ts
+index 3b0fb5f..44a1d73 100644
+--- a/apps/cli/src/main.ts
++++ b/apps/cli/src/main.ts
+@@ -122,6 +122,25 @@ export function resolveConfigDirArg(argv: string[]): string | undefined {
+ 	return undefined;
+ }
+ 
++export function resolveCwdArg(argv: string[]): string | undefined {
++	for (let i = 0; i < argv.length; i++) {
++		const arg = argv[i];
++		if (arg === "--cwd" || arg === "-c") {
++			const value = argv[i + 1]?.trim();
++			return value ? value : undefined;
++		}
++		if (arg?.startsWith("--cwd=")) {
++			const value = arg.slice("--cwd=".length).trim();
++			return value ? value : undefined;
++		}
++		if (arg?.startsWith("-c=")) {
++			const value = arg.slice("-c=".length).trim();
++			return value ? value : undefined;
++		}
++	}
++	return undefined;
++}
++
+ function collectOption(value: string, previous: string[] = []): string[] {
+ 	return [...previous, value];
+ }
+@@ -150,6 +169,14 @@ export async function runCli(): Promise<void> {
+ 	autoUpdateOnStartup();
+ 
+ 	const cliArgs = process.argv.slice(2);
++	const explicitCwd = resolveCwdArg(cliArgs);
++	if (explicitCwd) {
++		try {
++			process.chdir(explicitCwd);
++		} catch {
++			// ignore unswitchable cwd
++		}
++	}
+ 	const isFullTTY =
+ 		process.stdin.isTTY === true && process.stdout.isTTY === true;
+ 	const configDir = resolveConfigDirArg(cliArgs);
+@@ -860,6 +887,13 @@ export async function runCli(): Promise<void> {
+ 	}
+ 
+ 	const cwd = args.cwd ?? process.cwd();
++	if (args.cwd && args.cwd !== process.cwd()) {
++		try {
++			process.chdir(cwd);
++		} catch {
++			// ignore unswitchable cwd
++		}
++	}
+ 	const workspaceRoot = resolveWorkspaceRoot(cwd);
+ 	// Sandbox mode is enabled implicitly whenever --data-dir is provided, or
+ 	// when CLINE_SANDBOX=1 is set in the environment (in which case the data
 diff --git a/apps/cli/src/runtime/interactive/session-runtime.ts b/apps/cli/src/runtime/interactive/session-runtime.ts
 index 596cf93..bf58b65 100644
 --- a/apps/cli/src/runtime/interactive/session-runtime.ts
@@ -104,6 +359,169 @@ index 9b387e0..e017583 100644
  		};
  
  		const started = await sessionClient.startRuntimeSession(startRequest);
+diff --git a/apps/cli/src/tests/interactive.test.ts b/apps/cli/src/tests/interactive.test.ts
+index d8590e0..f97b877 100644
+--- a/apps/cli/src/tests/interactive.test.ts
++++ b/apps/cli/src/tests/interactive.test.ts
+@@ -1,8 +1,16 @@
+ import { expect, test } from "@microsoft/tui-test";
+ import { CLINE_BIN } from "./helpers/constants.js";
+ import { clineEnv } from "./helpers/env.js";
+-import { waitForChatReady } from "./helpers/page-objects/chat.js";
+-import { expectVisible, waitForTerminalExit } from "./helpers/terminal.js";
++import {
++	waitForActing,
++	waitForChatReady,
++} from "./helpers/page-objects/chat.js";
++import {
++	expectNotVisible,
++	expectVisible,
++	typeAndSubmit,
++	waitForTerminalExit,
++} from "./helpers/terminal.js";
+ 
+ test.describe("cline interactive basics", () => {
+ 	test.use({
+@@ -50,4 +58,39 @@ test.describe("cline interactive provider flag", () => {
+ 		terminal.keyCtrlC();
+ 		await expect(waitForTerminalExit(terminal, 5_000)).resolves.toBe(0);
+ 	});
++
++	test("clears typed input on Ctrl+C without exiting", async ({ terminal }) => {
++		await waitForChatReady(terminal);
++		terminal.write("draft prompt");
++		await expectVisible(terminal, "draft prompt");
++		terminal.keyCtrlC();
++		await expectNotVisible(terminal, "draft prompt");
++
++		await typeAndSubmit(terminal, "/settings");
++		await expectVisible(terminal, "Configuration");
++	});
++});
++
++test.describe("cline interactive active turn cancellation", () => {
++	test.use({
++		program: { file: CLINE_BIN, args: [] },
++		rows: 50,
++		columns: 120,
++		env: clineEnv("default", {
++			CLINE_VCR_CASSETTE: "./fixtures/headless-yolo-basic.json",
++		}),
++	});
++
++	test("one Ctrl+C cancels the current turn without terminating the TUI", async ({
++		terminal,
++	}) => {
++		await waitForChatReady(terminal);
++		await typeAndSubmit(terminal, "tell me a joke");
++		await waitForActing(terminal);
++		terminal.keyCtrlC();
++		await waitForChatReady(terminal);
++
++		await typeAndSubmit(terminal, "/settings");
++		await expectVisible(terminal, "Configuration");
++	});
+ });
+diff --git a/apps/cli/src/tui/hooks/use-root-keyboard.ts b/apps/cli/src/tui/hooks/use-root-keyboard.ts
+index 52ea615..643874f 100644
+--- a/apps/cli/src/tui/hooks/use-root-keyboard.ts
++++ b/apps/cli/src/tui/hooks/use-root-keyboard.ts
+@@ -88,6 +88,13 @@ export function useRootKeyboard(input: {
+ 			if (!input.isDialogOpen && hasInputText) {
+ 				input.setInputKey((k) => k + 1);
+ 				input.setInputValue("");
++			} else if (session.isRunning) {
++				const abortStarted = input.onAbort();
++				if (abortStarted) {
++					session.setAbortRequested(true);
++					session.setIsStreaming(false);
++					session.closeInlineStream();
++				}
+ 			} else {
+ 				input.onExit();
+ 			}
+diff --git a/apps/cli/src/tui/views/chat-view.tsx b/apps/cli/src/tui/views/chat-view.tsx
+index a3f0e76..a85b375 100644
+--- a/apps/cli/src/tui/views/chat-view.tsx
++++ b/apps/cli/src/tui/views/chat-view.tsx
+@@ -28,6 +28,12 @@ import type {
+ 	RuntimeToolInteraction,
+ 	TuiProps,
+ } from "../types";
++import { useEffect, useState } from "react";
++import {
++	createWorkflowBridge,
++	createWorkflowSnapshotPoller,
++	type WorkflowTaskProjection,
++} from "../../utils/workflow-bridge";
+ 
+ export function ChatView(props: {
+ 	config: TuiProps["config"];
+@@ -94,6 +100,7 @@ export function ChatView(props: {
+ 			/>
+ 
+ 			<box flexDirection="column" flexShrink={0}>
++				<WorkflowTaskList workspace={config.workspaceRoot} />
+ 				{runtimeInteraction ? (
+ 					<box marginBottom={1}>
+ 						<InlineToolResponse
+@@ -164,3 +171,56 @@ export function ChatView(props: {
+ 		</box>
+ 	);
+ }
++
++export function WorkflowTaskList({ workspace }: { workspace?: string }) {
++	const [tasks, setTasks] = useState<WorkflowTaskProjection[]>([]);
++	const [available, setAvailable] = useState<boolean | null>(null);
++	const [expanded, setExpanded] = useState(true);
++
++	useEffect(() => {
++		try {
++			const workflow = createWorkflowBridge();
++			const poller = createWorkflowSnapshotPoller(
++				() => workflow.snapshot(workspace),
++				(state) => {
++					setTasks(state.tasks);
++					setAvailable(state.available);
++				},
++			);
++			poller.refresh();
++			const interval = setInterval(poller.refresh, 2_000);
++			return () => {
++				poller.stop();
++				clearInterval(interval);
++			};
++		} catch {
++			setAvailable(false);
++			return undefined;
++		}
++	}, [workspace]);
++	if (available !== true || tasks.length === 0) return null;
++	const activeTask = tasks.find((task) => task.state === "IN_PROGRESS");
++	const visible = activeTask && !tasks.slice(0, 6).includes(activeTask)
++		? [...tasks.slice(0, 5), activeTask]
++		: tasks.slice(0, 6);
++	const verified = tasks.filter((task) => task.state === "VERIFIED").length;
++
++	return (
++		<box flexDirection="column" marginBottom={1}>
++			<box onMouseDown={() => setExpanded(!expanded)}>
++				<text fg="gray">{`${expanded ? "v" : ">"} Workflow tasks ${verified}/${tasks.length} verified`}</text>
++			</box>
++			{expanded ? (
++				<>
++					<text> </text>
++					{visible.map((task) => (
++						<text key={task.id}>
++							{`  ${task.state === "IN_PROGRESS" ? ">" : "-"} ${task.title} [${task.state}]${task.blockers.length > 0 ? ` blocked by ${task.blockers.join(", ")}` : ""}`}
++						</text>
++					))}
++					{tasks.length > visible.length ? <text fg="gray">{`  ... ${tasks.length - visible.length} more`}</text> : null}
++				</>
++			) : null}
++		</box>
++	);
++}
 diff --git a/apps/cli/src/utils/workflow-bridge-local-runtime.ts b/apps/cli/src/utils/workflow-bridge-local-runtime.ts
 new file mode 100644
 index 0000000..7b847fa
@@ -122,17 +540,79 @@ index 0000000..7b847fa
 +}
 diff --git a/apps/cli/src/utils/workflow-bridge.test.ts b/apps/cli/src/utils/workflow-bridge.test.ts
 new file mode 100644
-index 0000000..6f72018
+index 0000000..e36a813
 --- /dev/null
 +++ b/apps/cli/src/utils/workflow-bridge.test.ts
-@@ -0,0 +1,75 @@
+@@ -0,0 +1,156 @@
 +import { createServer, type Server } from "node:http";
 +import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 +import type { AddressInfo } from "node:net";
 +import { tmpdir } from "node:os";
 +import { join } from "node:path";
 +import { afterEach, beforeEach, describe, expect, it } from "vitest";
-+import { createWorkflowBridge } from "./workflow-bridge";
++import {
++	createWorkflowBridge,
++	createWorkflowSnapshotPoller,
++	type WorkflowSnapshot,
++} from "./workflow-bridge";
++
++describe("createWorkflowSnapshotPoller", () => {
++	it("keeps authoritative tasks visible while refreshing and ignores older completions", async () => {
++		const pending: Array<(snapshot: WorkflowSnapshot) => void> = [];
++		const states: Array<{ available: boolean; tasks: WorkflowSnapshot["tasks"] }> = [];
++		const poller = createWorkflowSnapshotPoller(
++			() => new Promise((resolve) => pending.push(resolve)),
++			(state) => states.push(state),
++		);
++
++		poller.refresh();
++		pending[0]?.({ tasks: [{ id: "first", title: "First", state: "READY", blockers: [] }] });
++		await Promise.resolve();
++		expect(states.at(-1)).toMatchObject({ available: true, tasks: [{ id: "first" }] });
++
++		poller.refresh();
++		expect(states.at(-1)).toMatchObject({ available: true, tasks: [{ id: "first" }] });
++		poller.refresh();
++		pending[1]?.({ tasks: [{ id: "stale", title: "Stale", state: "READY", blockers: [] }] });
++		await Promise.resolve();
++		expect(states.at(-1)).toMatchObject({ available: true, tasks: [{ id: "first" }] });
++
++		pending[2]?.({ tasks: [{ id: "latest", title: "Latest", state: "IN_PROGRESS", blockers: [] }] });
++		await Promise.resolve();
++		expect(states.at(-1)).toMatchObject({ available: true, tasks: [{ id: "latest" }] });
++		poller.stop();
++	});
++
++	it("clears tasks when the latest refresh fails", async () => {
++		let rejectLatest: ((error: Error) => void) | undefined;
++		const states: Array<{ available: boolean; tasks: WorkflowSnapshot["tasks"] }> = [];
++		const poller = createWorkflowSnapshotPoller(
++			() => new Promise((_resolve, reject) => { rejectLatest = reject; }),
++			(state) => states.push(state),
++		);
++
++		poller.refresh();
++		rejectLatest?.(new Error("unavailable"));
++		await Promise.resolve();
++		expect(states.at(-1)).toEqual({ available: false, tasks: [] });
++		poller.stop();
++	});
++
++	it("ignores an in-flight refresh after the poller stops", async () => {
++		let resolveSnapshot: ((snapshot: WorkflowSnapshot) => void) | undefined;
++		const states: Array<{ available: boolean; tasks: WorkflowSnapshot["tasks"] }> = [];
++		const poller = createWorkflowSnapshotPoller(
++			() => new Promise((resolve) => { resolveSnapshot = resolve; }),
++			(state) => states.push(state),
++		);
++
++		poller.refresh();
++		poller.stop();
++		resolveSnapshot?.({ tasks: [{ id: "late", title: "Late", state: "READY", blockers: [] }] });
++		await Promise.resolve();
++		expect(states).toEqual([]);
++	});
++});
 +
 +describe("createWorkflowBridge authority resolution", () => {
 +	let server: Server | undefined;
@@ -182,6 +662,25 @@ index 0000000..6f72018
 +		expect(decision?.stop).toBeFalsy();
 +	});
 +
++	it("skips a tool denied by the Workflow authority without stopping the run", async () => {
++		await new Promise<void>((resolve) => server?.close(() => resolve()));
++		server = createServer((_request, response) => {
++			response.writeHead(200, { "content-type": "application/json" });
++			response.end(JSON.stringify({ stop: true, reason: "denied by workflow" }));
++		});
++		await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
++		bridgeUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
++		process.env.WORKFLOW_CLINE_BRIDGE_URL = bridgeUrl;
++		process.env.WORKFLOW_CLINE_BRIDGE_TOKEN = "test-token";
++
++		const decision = await createWorkflowBridge().authorize(undefined).beforeTool?.({
++			toolCall: { toolName: "write_to_file" },
++			input: {},
++		} as never);
++
++		expect(decision).toEqual({ skip: true, reason: "denied by workflow" });
++	});
++
 +	it("falls back to the Workflow hub discovery file", async () => {
 +		const discoveryDir = join(home, ".workflow", "hub");
 +		mkdirSync(discoveryDir, { recursive: true });
@@ -203,10 +702,10 @@ index 0000000..6f72018
 +});
 diff --git a/apps/cli/src/utils/workflow-bridge.ts b/apps/cli/src/utils/workflow-bridge.ts
 new file mode 100644
-index 0000000..4656b2e
+index 0000000..f3f02ed
 --- /dev/null
 +++ b/apps/cli/src/utils/workflow-bridge.ts
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,165 @@
 +import type { AgentHooks, ShellExecutor } from "@cline/core";
 +import { readFileSync } from "node:fs";
 +import { homedir } from "node:os";
@@ -217,7 +716,48 @@ index 0000000..4656b2e
 +	reason?: string;
 +	output?: string;
 +	error?: string;
++	snapshot?: WorkflowSnapshot;
 +};
++
++type BeforeToolContext = Parameters<NonNullable<AgentHooks["beforeTool"]>>[0];
++type AfterToolContext = Parameters<NonNullable<AgentHooks["afterTool"]>>[0];
++type ShellCommand = Parameters<ShellExecutor>[0];
++type ShellCwd = Parameters<ShellExecutor>[1];
++
++export type WorkflowTaskProjection = {
++	id: string;
++	title: string;
++	state: string;
++	blockers: string[];
++};
++
++export type WorkflowSnapshot = {
++	tasks: WorkflowTaskProjection[];
++};
++
++export function createWorkflowSnapshotPoller(
++	snapshot: () => Promise<WorkflowSnapshot>,
++	onState: (state: { available: boolean; tasks: WorkflowTaskProjection[] }) => void,
++) {
++	let active = true;
++	let generation = 0;
++	const refresh = () => {
++		const requestGeneration = ++generation;
++		void snapshot().then(
++			(result) => {
++				if (active && requestGeneration === generation) {
++					onState({ available: true, tasks: result.tasks });
++				}
++			},
++			() => {
++				if (active && requestGeneration === generation) {
++					onState({ available: false, tasks: [] });
++				}
++			},
++		);
++	};
++	return { refresh, stop: () => { active = false; } };
++}
 +
 +/**
 + * Resolves the Workflow authority: launcher-provided environment first, then
@@ -243,6 +783,7 @@ index 0000000..4656b2e
 +
 +export function createWorkflowBridge() {
 +	const { url, token } = resolveBridgeAuthority();
++	let activeTeamTaskId: string | undefined;
 +
 +	const request = async (path: string, body: unknown): Promise<BridgeResponse> => {
 +		const response = await fetch(`${url}${path}`, {
@@ -262,7 +803,7 @@ index 0000000..4656b2e
 +
 +	const authorize = (hooks: AgentHooks | undefined): AgentHooks => ({
 +		...hooks,
-+		beforeTool: async (ctx) => {
++		beforeTool: async (ctx: BeforeToolContext) => {
 +			try {
 +				const decision = await request("/before-tool", {
 +					toolCall: ctx.toolCall,
@@ -271,7 +812,7 @@ index 0000000..4656b2e
 +				});
 +				if (decision.stop) {
 +					return {
-+						stop: true,
++						skip: true,
 +						reason: decision.reason || "Workflow denied tool execution",
 +					};
 +				}
@@ -283,17 +824,52 @@ index 0000000..4656b2e
 +			}
 +			return await hooks?.beforeTool?.(ctx);
 +		},
++		afterTool: async (ctx: AfterToolContext) => {
++			if (ctx.toolCall.toolName === "team_task" && !ctx.result.isError) {
++				try {
++					for (let attempt = 0; ; attempt += 1) {
++						try {
++							await request("/team-task", {
++								input: ctx.input,
++								result: ctx.result.output,
++								workspace: process.cwd(),
++							});
++							const output = ctx.result.output as { action?: unknown; taskId?: unknown; status?: unknown };
++							if (
++								typeof output.taskId === "string" &&
++								(output.status === "in_progress" || output.action === "complete")
++							) activeTeamTaskId = output.taskId;
++							break;
++						} catch (error) {
++							if (attempt === 2) throw error;
++						}
++					}
++				} catch (error) {
++					return {
++						stop: true,
++						reason: `Workflow task synchronization failed: ${error instanceof Error ? error.message : String(error)}`,
++					};
++				}
++			}
++			return await hooks?.afterTool?.(ctx);
++		},
 +	});
 +
-+	const bash: ShellExecutor = async (command, cwd) => {
-+		const result = await request("/bash", { command, cwd });
++	const bash: ShellExecutor = async (command: ShellCommand, cwd: ShellCwd) => {
++		const result = await request("/bash", { command, cwd, teamTaskId: activeTeamTaskId });
 +		if (typeof result.output !== "string") {
 +			throw new Error(result.error || "Workflow bash executor returned no output");
 +		}
 +		return result.output;
 +	};
 +
-+	return { authorize, bash };
++	const snapshot = async (workspace?: string): Promise<WorkflowSnapshot> => {
++		const result = await request("/snapshot", { workspace });
++		if (!result.snapshot) throw new Error("Workflow bridge returned no snapshot");
++		return result.snapshot;
++	};
++
++	return { authorize, bash, snapshot };
 +}
 diff --git a/apps/cline-hub/src/server/sessions.ts b/apps/cline-hub/src/server/sessions.ts
 index ddbb760..60ad39f 100644
@@ -1084,7 +1660,7 @@ index 7371b78..2e8a4e1 100644
  	};
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
 new file mode 100644
-index 0000000..73a8df0
+index 0000000..1644171
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
 @@ -0,0 +1,162 @@
@@ -1183,11 +1759,11 @@ index 0000000..73a8df0
 +		});
 +	});
 +
-+	it("propagates a stop decision from the Workflow authority", async () => {
++	it("skips a tool denied by the Workflow authority without stopping the run", async () => {
 +		respondWith = { body: { stop: true, reason: "denied by workflow" } };
 +		const hooks = createWorkflowHubHooks();
 +		const result = await hooks.beforeTool?.(beforeToolContext());
-+		expect(result).toEqual({ stop: true, reason: "denied by workflow" });
++		expect(result).toEqual({ skip: true, reason: "denied by workflow" });
 +	});
 +
 +	it("fails closed when the authority rejects the request", async () => {
@@ -1252,7 +1828,7 @@ index 0000000..73a8df0
 +});
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
 new file mode 100644
-index 0000000..078630f
+index 0000000..341d56c
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
 @@ -0,0 +1,98 @@
@@ -1340,7 +1916,7 @@ index 0000000..078630f
 +				}
 +				if (payload.stop) {
 +					return {
-+						stop: true,
++						skip: true,
 +						reason: payload.reason || "Workflow denied tool execution",
 +					};
 +				}
@@ -1356,12 +1932,12 @@ index 0000000..078630f
 +}
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-runs.test.ts b/sdk/packages/core/src/hub/daemon/workflow-runs.test.ts
 new file mode 100644
-index 0000000..dab123b
+index 0000000..3358e47
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-runs.test.ts
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,210 @@
 +import { createServer, type Server } from "node:http";
-+import { mkdtempSync, rmSync } from "node:fs";
++import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 +import type { AddressInfo } from "node:net";
 +import { tmpdir } from "node:os";
 +import { join } from "node:path";
@@ -1377,6 +1953,7 @@ index 0000000..dab123b
 +	let server: Server | undefined;
 +	let lastPath: string | undefined;
 +	let lastBody: unknown;
++	let lastAuthorization: string | undefined;
 +	let home: string;
 +	let originalHome: string | undefined;
 +	let status = 200;
@@ -1384,6 +1961,7 @@ index 0000000..dab123b
 +	beforeEach(async () => {
 +		lastPath = undefined;
 +		lastBody = undefined;
++		lastAuthorization = undefined;
 +		status = 200;
 +		originalHome = process.env.HOME;
 +		home = mkdtempSync(join(tmpdir(), "workflow-runs-home-"));
@@ -1393,6 +1971,7 @@ index 0000000..dab123b
 +			request.on("data", (chunk) => chunks.push(chunk));
 +			request.on("end", () => {
 +				lastPath = request.url;
++				lastAuthorization = request.headers.authorization;
 +				lastBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
 +				response.writeHead(status, { "content-type": "application/json" });
 +				if (status !== 200) {
@@ -1415,6 +1994,8 @@ index 0000000..dab123b
 +	afterEach(async () => {
 +		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
 +		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		delete process.env.WORKFLOW_CLINE_VERIFIER_URL;
++		delete process.env.WORKFLOW_CLINE_VERIFIER_TOKEN;
 +		if (originalHome === undefined) delete process.env.HOME;
 +		else process.env.HOME = originalHome;
 +		rmSync(home, { recursive: true, force: true });
@@ -1498,14 +2079,108 @@ index 0000000..dab123b
 +		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
 +		expect(await beginWorkflowRun({ runId: "cron-1", title: "t" })).toBe(false);
 +	});
++
++	it("sends the verifier token when verifier.json exists with a distinct token", async () => {
++		const hubDir = join(home, ".workflow", "hub");
++		mkdirSync(hubDir, { recursive: true });
++		writeFileSync(
++			join(hubDir, "verifier.json"),
++			JSON.stringify({ endpoint: process.env.WORKFLOW_CLINE_BRIDGE_URL, token: "verifier-secret-token" }),
++			"utf8",
++		);
++
++		const finishOk = await finishWorkflowRun({ runId: "cron-1", outcome: "verified" });
++		expect(finishOk).toBe(true);
++		expect(lastPath).toBe("/run/finish");
++		expect(lastAuthorization).toBe("Bearer verifier-secret-token");
++
++		const reviewResult = await submitWorkflowReview({
++			runId: "schedule:author",
++			reviewerRunId: "schedule:reviewer",
++			verdict: "approved",
++			summary: "test integrity, task completeness, security checked",
++		});
++		expect(reviewResult).toEqual({ recorded: true });
++		expect(lastPath).toBe("/run/review");
++		expect(lastAuthorization).toBe("Bearer verifier-secret-token");
++
++		const beginOk = await beginWorkflowRun({ runId: "cron-1", title: "t" });
++		expect(beginOk).toBe(true);
++		expect(lastPath).toBe("/run/begin");
++		expect(lastAuthorization).toBe("Bearer test-token");
++	});
++
++	it("falls back to ordinary bridge authority when verifier authority is absent and handles 401 without throwing", async () => {
++		status = 401;
++		const finishOk = await finishWorkflowRun({ runId: "cron-1", outcome: "verified" });
++		expect(finishOk).toBe(false);
++		expect(lastPath).toBe("/run/finish");
++		expect(lastAuthorization).toBe("Bearer test-token");
++
++		const reviewResult = await submitWorkflowReview({
++			runId: "schedule:author",
++			reviewerRunId: "schedule:reviewer",
++			verdict: "approved",
++			summary: "s",
++		});
++		expect(reviewResult).toBeUndefined();
++		expect(lastPath).toBe("/run/review");
++		expect(lastAuthorization).toBe("Bearer test-token");
++	});
++
++	it("prefers WORKFLOW_CLINE_VERIFIER_URL and WORKFLOW_CLINE_VERIFIER_TOKEN over verifier.json", async () => {
++		const hubDir = join(home, ".workflow", "hub");
++		mkdirSync(hubDir, { recursive: true });
++		writeFileSync(
++			join(hubDir, "verifier.json"),
++			JSON.stringify({ endpoint: process.env.WORKFLOW_CLINE_BRIDGE_URL, token: "file-verifier-token" }),
++			"utf8",
++		);
++
++		process.env.WORKFLOW_CLINE_VERIFIER_URL = process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		process.env.WORKFLOW_CLINE_VERIFIER_TOKEN = "env-verifier-token";
++
++		const finishOk = await finishWorkflowRun({ runId: "cron-1", outcome: "verified" });
++		expect(finishOk).toBe(true);
++		expect(lastPath).toBe("/run/finish");
++		expect(lastAuthorization).toBe("Bearer env-verifier-token");
++	});
 +});
 diff --git a/sdk/packages/core/src/hub/daemon/workflow-runs.ts b/sdk/packages/core/src/hub/daemon/workflow-runs.ts
 new file mode 100644
-index 0000000..f49678d
+index 0000000..0f3a841
 --- /dev/null
 +++ b/sdk/packages/core/src/hub/daemon/workflow-runs.ts
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,107 @@
++import { readFileSync } from "node:fs";
++import { homedir } from "node:os";
++import { join } from "node:path";
 +import { resolveBridgeAuthority } from "./workflow-hooks";
++
++type BridgeAuthority = { url: string; token: string };
++
++/**
++ * Resolves the Workflow verifier authority per call: launcher-provided
++ * verifier environment first, then the global hub's verifier.json file.
++ * Returns undefined when neither is available, allowing callers to fall
++ * back to the ordinary bridge authority.
++ */
++export function resolveVerifierAuthority(): BridgeAuthority | undefined {
++	const url = process.env.WORKFLOW_CLINE_VERIFIER_URL?.trim();
++	const token = process.env.WORKFLOW_CLINE_VERIFIER_TOKEN?.trim();
++	if (url && token) return { url, token };
++	try {
++		const verifier = JSON.parse(
++			readFileSync(join(homedir(), ".workflow", "hub", "verifier.json"), "utf8"),
++		) as { endpoint?: unknown; token?: unknown };
++		if (typeof verifier.endpoint === "string" && typeof verifier.token === "string") {
++			return { url: verifier.endpoint, token: verifier.token };
++		}
++	} catch {
++		// No verifier file (or unreadable): fall through to fallback.
++	}
++	return undefined;
++}
 +
 +/**
 + * Run lifecycle reporting to the Workflow hub: each hub-started scheduled
@@ -1515,8 +2190,14 @@ index 0000000..f49678d
 + * lifecycle report must not block session management. See
 + * `docs/HUB_PROTOCOL.md` §3 in the Workflow repository.
 + */
-+async function runRequest(path: string, body: unknown): Promise<unknown | undefined> {
-+	const authority = resolveBridgeAuthority();
++async function runRequest(
++	path: string,
++	body: unknown,
++	options: { verifier?: boolean } = {},
++): Promise<unknown | undefined> {
++	const authority = options.verifier
++		? (resolveVerifierAuthority() ?? resolveBridgeAuthority())
++		: resolveBridgeAuthority();
 +	if (!authority) return undefined;
 +	try {
 +		const response = await fetch(`${authority.url}${path}`, {
@@ -1547,7 +2228,7 @@ index 0000000..f49678d
 +	runId: string;
 +	outcome: "verified" | "failed";
 +}): Promise<boolean> {
-+	return (await runRequest("/run/finish", input)) !== undefined;
++	return (await runRequest("/run/finish", input, { verifier: true })) !== undefined;
 +}
 +
 +/**
@@ -1575,7 +2256,7 @@ index 0000000..f49678d
 +	verdict: "approved" | "changes_requested" | "rejected";
 +	summary: string;
 +}): Promise<{ recorded: boolean } | undefined> {
-+	const payload = (await runRequest("/run/review", input)) as { recorded?: unknown } | undefined;
++	const payload = (await runRequest("/run/review", input, { verifier: true })) as { recorded?: unknown } | undefined;
 +	return typeof payload?.recorded === "boolean" ? { recorded: payload.recorded } : undefined;
 +}
 diff --git a/sdk/packages/core/src/hub/index.ts b/sdk/packages/core/src/hub/index.ts

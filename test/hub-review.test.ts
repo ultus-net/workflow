@@ -57,7 +57,7 @@ test("a review-gated run cannot finish verified without reviewer evidence", asyn
   const { hub, token, application, workspace } = await hubWith(t);
   await post(hub.url, token, "/run/begin", { runId: "author-1", title: "Author run", workspace, requiresReview: true });
 
-  const finish = await post(hub.url, token, "/run/finish", { runId: "author-1", outcome: "verified" });
+  const finish = await post(hub.url, hub.verificationToken, "/run/finish", { runId: "author-1", outcome: "verified" });
   assert.notEqual(finish.status, 200);
   const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
   assert.notEqual(runTask?.state, "VERIFIED");
@@ -67,7 +67,7 @@ test("a review from the same run is rejected (anti-rubber-stamp)", async (t) => 
   const { hub, token, workspace } = await hubWith(t);
   await post(hub.url, token, "/run/begin", { runId: "author-2", title: "Author run", workspace, requiresReview: true });
 
-  const review = await post(hub.url, token, "/run/review", {
+  const review = await post(hub.url, hub.verificationToken, "/run/review", {
     runId: "author-2", reviewerRunId: "author-2", verdict: "approved", summary: AXES_SUMMARY,
   });
   assert.notEqual(review.status, 200);
@@ -78,7 +78,13 @@ test("a review referencing fewer than three axes is rejected", async (t) => {
   await post(hub.url, token, "/run/begin", { runId: "author-3", title: "Author run", workspace, requiresReview: true });
   await post(hub.url, token, "/run/begin", { runId: "reviewer-3", title: "Reviewer run", workspace });
 
-  const review = await post(hub.url, token, "/run/review", {
+  const ordinaryReview = await post(hub.url, token, "/run/review", {
+    runId: "author-3", reviewerRunId: "reviewer-3", verdict: "approved",
+    summary: "test integrity, task completeness, security",
+  });
+  assert.equal(ordinaryReview.status, 401);
+
+  const review = await post(hub.url, hub.verificationToken, "/run/review", {
     runId: "author-3", reviewerRunId: "reviewer-3", verdict: "approved", summary: "looks good to me",
   });
   assert.notEqual(review.status, 200);
@@ -89,21 +95,21 @@ test("an approved cross-run review lets the gated run verify; changes_requested 
   await post(hub.url, token, "/run/begin", { runId: "author-4", title: "Author run", workspace, requiresReview: true });
   await post(hub.url, token, "/run/begin", { runId: "reviewer-4", title: "Reviewer run", workspace });
 
-  const changes = await post(hub.url, token, "/run/review", {
+  const changes = await post(hub.url, hub.verificationToken, "/run/review", {
     runId: "author-4", reviewerRunId: "reviewer-4", verdict: "changes_requested", summary: AXES_SUMMARY,
   });
   assert.equal(changes.status, 200);
   assert.equal(changes.body.recorded, false);
-  const blocked = await post(hub.url, token, "/run/finish", { runId: "author-4", outcome: "verified" });
+  const blocked = await post(hub.url, hub.verificationToken, "/run/finish", { runId: "author-4", outcome: "verified" });
   assert.notEqual(blocked.status, 200);
 
-  const approved = await post(hub.url, token, "/run/review", {
+  const approved = await post(hub.url, hub.verificationToken, "/run/review", {
     runId: "author-4", reviewerRunId: "reviewer-4", verdict: "approved", summary: AXES_SUMMARY,
   });
   assert.equal(approved.status, 200);
   assert.equal(approved.body.recorded, true);
 
-  const finish = await post(hub.url, token, "/run/finish", { runId: "author-4", outcome: "verified" });
+  const finish = await post(hub.url, hub.verificationToken, "/run/finish", { runId: "author-4", outcome: "verified" });
   assert.equal(finish.status, 200);
   const snapshot = application.snapshot();
   assert.equal(snapshot.tasks.find((task) => task.title === "Author run")?.state, "VERIFIED");

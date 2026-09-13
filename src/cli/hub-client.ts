@@ -64,6 +64,6 @@ export async function resolveWorkflowHub(
   // Obsolete or missing discovery: remove the stale file and fail closed.
   rmSync(discoveryPath, { force: true });
   throw new Error(
-    "Workflow hub is not running; start the authority daemon with `workflow-hub` before launching a Cline surface",
+    "Workflow hub is not running; start the authority daemon with `npm run hub` (source checkout) or `workflow-hub` (installed) before launching a Cline surface",
   );
 }

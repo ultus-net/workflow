@@ -20,19 +20,50 @@ import { resolveTuiWorkspace } from "./tui-args.js";
  *   npm run tui:workflow
  */
 const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
+// Demo seed covering every task state so the TUI panels (state counts,
+// blocker annotations, interactive transitions) are all exercised. The graph
+// recomputes READY/BLOCKED from dependencies, so W002 flips to READY at boot.
 const tasks: WorkflowTask[] = [
   {
     id: taskId("W001"),
     title: "Inspect the runnable Workflow TUI",
-    state: "BLOCKED",
+    state: "VERIFIED",
     dependencies: [],
-    requiredEvidence: [],
+    requiredEvidence: [{ authority: "environment", subject: "typecheck" }],
   },
   {
     id: taskId("W002"),
     title: "Observe dependency-derived readiness",
     state: "BLOCKED",
     dependencies: [taskId("W001")],
+    requiredEvidence: [],
+  },
+  {
+    id: taskId("W003"),
+    title: "Drive a task through the interactive transitions",
+    state: "IN_PROGRESS",
+    dependencies: [taskId("W001")],
+    requiredEvidence: [{ authority: "host", subject: "session transcript" }],
+  },
+  {
+    id: taskId("W004"),
+    title: "Watch verification evidence land",
+    state: "VERIFYING",
+    dependencies: [taskId("W003")],
+    requiredEvidence: [{ authority: "mcp", subject: "test run" }],
+  },
+  {
+    id: taskId("W005"),
+    title: "Recover from a failed transition",
+    state: "FAILED",
+    dependencies: [taskId("W002")],
+    requiredEvidence: [],
+  },
+  {
+    id: taskId("W006"),
+    title: "Stay blocked behind the failed task",
+    state: "BLOCKED",
+    dependencies: [taskId("W005")],
     requiredEvidence: [],
   },
 ];

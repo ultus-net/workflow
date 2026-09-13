@@ -41,9 +41,17 @@ Cline builds, warning and skipping on failure rather than breaking install.
 | `workflow` | patched Cline TUI launcher; fails closed without the hub |
 | `workflow-monitor` | Ink monitoring TUI: task panel, live activity, log stream |
 | `workflow-shell` | interactive contained shell |
-| `workflow-pets` | terminal pet animations (disabled from the TUI; see `docs/PETS.md`) |
 
 ## Quickstart
+
+From a source checkout, start the authority in one terminal and the TUI in another:
+
+```sh
+npm run hub
+npm run tui -- --cwd /path/to/project
+```
+
+For a global install, the equivalent commands are:
 
 ```sh
 systemctl --user enable --now workflow-hub   # or: workflow-hub &
@@ -86,4 +94,4 @@ untrusted input; evidence admission validates shape, not truth. See
 pedagogy spec · `docs/HOST_ADAPTERS.md` adapter conformance ·
 `docs/MCP_INTEGRATION.md` / `docs/MCP_TOOLBOX.md` MCP boundaries ·
 `docs/TUI_INTEGRATION.md` / `docs/UI_INTEGRATION.md` frontend rules ·
-`docs/OPERATOR_GUIDE.md` operations · `docs/PETS.md` pets findings
+`docs/OPERATOR_GUIDE.md` operations

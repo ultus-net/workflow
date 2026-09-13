@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { TaskGraph } from "../kernel/task-graph.js";
 import { createWorkflowClineTuiBridge, type WorkflowClineTuiBridge } from "./cline-tui-bridge.js";
+import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { createRunRegistry } from "./run-registry.js";
 
 /**
@@ -16,6 +17,8 @@ import { createRunRegistry } from "./run-registry.js";
 export interface WorkflowHub {
   readonly url: string;
   readonly discoveryPath: string;
+  readonly verifierDiscoveryPath: string;
+  readonly verificationToken: string;
   close(): Promise<void>;
 }
 
@@ -29,23 +32,37 @@ export function resolveHubDiscoveryPath(dir: string): string {
 
 export async function createWorkflowHub(
   application: WorkflowApplication,
-  options: { discoveryDir?: string; graph?: TaskGraph } = {},
+  options: {
+    discoveryDir?: string;
+    graph?: TaskGraph;
+    observeRequest?: (path: string) => void;
+    observeBridgeStarted?: (url: string) => void;
+    teamTaskVerificationCommand?: string;
+    guard?: WorkflowGuardProvider;
+  } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
   const discoveryPath = resolveHubDiscoveryPath(dir);
+  const verifierDiscoveryPath = join(dirname(discoveryPath), "verifier.json");
   const lockDir = join(dir, "hub", "lock");
+  const temporaryPath = `${discoveryPath}.${process.pid}.tmp`;
+  const verifierTemporaryPath = `${verifierDiscoveryPath}.${process.pid}.tmp`;
+  let bridge: WorkflowClineTuiBridge | undefined;
+  let discoveryPublished = false;
   acquireInstanceLock(lockDir);
   try {
-    application.startInteractiveTask();
     const runs = options.graph === undefined ? undefined : createRunRegistry(application, options.graph);
-    const bridge: WorkflowClineTuiBridge = await createWorkflowClineTuiBridge(
+    bridge = await createWorkflowClineTuiBridge(
       application,
       runs?.resolve,
       runs?.controller,
+      options.observeRequest,
+      options.teamTaskVerificationCommand,
+      options.guard,
     );
+    options.observeBridgeStarted?.(bridge.url);
 
     mkdirSync(dirname(discoveryPath), { recursive: true });
-    const temporaryPath = `${discoveryPath}.${process.pid}.tmp`;
     writeFileSync(
       temporaryPath,
       JSON.stringify({
@@ -57,17 +74,32 @@ export async function createWorkflowHub(
       { encoding: "utf8", mode: 0o600 },
     );
     renameSync(temporaryPath, discoveryPath);
+    discoveryPublished = true;
+    writeFileSync(
+      verifierTemporaryPath,
+      JSON.stringify({ protocol: 1, endpoint: bridge.url, token: bridge.verificationToken }),
+      { encoding: "utf8", mode: 0o600 },
+    );
+    renameSync(verifierTemporaryPath, verifierDiscoveryPath);
+    const activeBridge = bridge;
 
     return {
-      url: bridge.url,
+      url: activeBridge.url,
       discoveryPath,
+      verifierDiscoveryPath,
+      verificationToken: activeBridge.verificationToken,
       close: async () => {
-        await bridge.close();
+        await activeBridge.close();
         rmSync(discoveryPath, { force: true });
+        rmSync(verifierDiscoveryPath, { force: true });
         rmSync(lockDir, { recursive: true, force: true });
       },
     };
   } catch (error) {
+    await bridge?.close();
+    rmSync(temporaryPath, { force: true });
+    rmSync(verifierTemporaryPath, { force: true });
+    if (discoveryPublished) rmSync(discoveryPath, { force: true });
     rmSync(lockDir, { recursive: true, force: true });
     throw error;
   }

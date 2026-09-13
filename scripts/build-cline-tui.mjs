@@ -17,11 +17,11 @@ if (!existsSync(resolve(checkout, ".git"))) {
 
 const revision = output("git", ["describe", "--tags", "--exact-match", "HEAD"], checkout);
 if (revision !== "cli-v3.0.61") throw new Error(`expected Cline cli-v3.0.61, found ${revision}`);
-const alreadyPatched = spawnSync("git", ["apply", "--reverse", "--check", patch], { cwd: checkout, stdio: "ignore" }).status === 0;
+const alreadyPatched = spawnSync("git", ["apply", "--unidiff-zero", "--reverse", "--check", patch], { cwd: checkout, stdio: "ignore" }).status === 0;
 if (!alreadyPatched) {
   if (output("git", ["status", "--porcelain"], checkout) !== "") throw new Error("Cline checkout has unexpected local changes");
-  run("git", ["apply", "--check", patch], checkout);
-  run("git", ["apply", patch], checkout);
+  run("git", ["apply", "--unidiff-zero", "--check", patch], checkout);
+  run("git", ["apply", "--unidiff-zero", patch], checkout);
   needsBuild = true;
 }
 if (needsBuild || !existsSync(sdkBuild)) {

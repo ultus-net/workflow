@@ -40,7 +40,7 @@ async function post(url: string, token: string, path: string, body: unknown) {
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 
-test("a scheduled run gets its own task, authorization scope, and evidence", async (t) => {
+test("a scheduled run needs verifier authority to finish successfully", async (t) => {
   const { graph, application, workspace } = setup();
   const dir = mkdtempSync(join(tmpdir(), "wf-hub-runs-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -66,7 +66,13 @@ test("a scheduled run gets its own task, authorization scope, and evidence", asy
   assert.equal(authorized.status, 200);
   assert.deepEqual(authorized.body, {});
 
-  const finish = await post(hub.url, token, "/run/finish", {
+  const ordinaryFinish = await post(hub.url, token, "/run/finish", {
+    runId: "cron-2026-09-12-nightly",
+    outcome: "verified",
+  });
+  assert.equal(ordinaryFinish.status, 401);
+
+  const finish = await post(hub.url, hub.verificationToken, "/run/finish", {
     runId: "cron-2026-09-12-nightly",
     outcome: "verified",
   });
@@ -76,9 +82,66 @@ test("a scheduled run gets its own task, authorization scope, and evidence", asy
   const runTask = snapshot.tasks.find((task) => task.title === "Nightly dependency audit");
   assert.ok(runTask);
   assert.equal(runTask.state, "VERIFIED");
-  const evidence = snapshot.evidence.find((entry) => entry.subject === "cron-2026-09-12-nightly");
-  assert.ok(evidence);
-  assert.equal(evidence.result, "passed");
+  // Finish must not fabricate evidence: a plain run has no evidence
+  // requirements, so the kernel promotes it on transition alone.
+  assert.equal(snapshot.evidence.some((entry) => entry.subject === "cron-2026-09-12-nightly"), false);
+});
+
+test("a review-gated run cannot finish until an independent review is recorded", async (t) => {
+  const { graph, application, workspace } = setup();
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-runs-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const hub = await createWorkflowHub(application, { discoveryDir: dir, graph });
+  t.after(() => hub.close());
+  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
+
+  await post(hub.url, token, "/run/begin", {
+    runId: "schedule:author",
+    title: "Authoring run",
+    workspace,
+    requiresReview: true,
+  });
+  await post(hub.url, token, "/run/begin", { runId: "schedule:reviewer", title: "Reviewer run", workspace });
+
+  // Finishing before any review must fail closed: the kernel rejects VERIFIED
+  // while the reviewer-evidence requirement is unmet.
+  const premature = await post(hub.url, hub.verificationToken, "/run/finish", {
+    runId: "schedule:author",
+    outcome: "verified",
+  });
+  assert.notEqual(premature.status, 200);
+  assert.equal(
+    application.snapshot().tasks.find((task) => task.title === "Authoring run")?.state,
+    "VERIFYING",
+  );
+
+  // A self-review is rejected by the cross-run anti-rubber-stamp rule.
+  const selfReview = await post(hub.url, hub.verificationToken, "/run/review", {
+    runId: "schedule:author",
+    reviewerRunId: "schedule:author",
+    verdict: "approved",
+    summary: "test integrity, task completeness, security",
+  });
+  assert.notEqual(selfReview.status, 200);
+
+  const review = await post(hub.url, hub.verificationToken, "/run/review", {
+    runId: "schedule:author",
+    reviewerRunId: "schedule:reviewer",
+    verdict: "approved",
+    summary: "test integrity, task completeness, security",
+  });
+  assert.equal(review.status, 200);
+
+  const finish = await post(hub.url, hub.verificationToken, "/run/finish", {
+    runId: "schedule:author",
+    outcome: "verified",
+  });
+  assert.equal(finish.status, 200);
+  assert.equal(
+    application.snapshot().tasks.find((task) => task.title === "Authoring run")?.state,
+    "VERIFIED",
+  );
 });
 
 test("a failed run is recorded as FAILED with failed evidence", async (t) => {
@@ -91,7 +154,7 @@ test("a failed run is recorded as FAILED with failed evidence", async (t) => {
   const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
 
   await post(hub.url, token, "/run/begin", { runId: "cron-broken", title: "Broken run", workspace });
-  const finish = await post(hub.url, token, "/run/finish", { runId: "cron-broken", outcome: "failed" });
+  const finish = await post(hub.url, hub.verificationToken, "/run/finish", { runId: "cron-broken", outcome: "failed" });
   assert.equal(finish.status, 200);
 
   const snapshot = application.snapshot();
@@ -126,6 +189,22 @@ test("finishing an unknown run fails closed", async (t) => {
   t.after(() => hub.close());
   const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
 
-  const finish = await post(hub.url, token, "/run/finish", { runId: "cron-ghost", outcome: "verified" });
+  const finish = await post(hub.url, hub.verificationToken, "/run/finish", { runId: "cron-ghost", outcome: "verified" });
   assert.notEqual(finish.status, 200);
+});
+
+test("hub snapshot hides the redundant interactive seed task", async (t) => {
+  const { graph, application, workspace } = setup();
+  application.addTask({ id: taskId("interactive"), title: "Interactive coding session", dependencies: [], requiredEvidence: [] });
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-runs-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const hub = await createWorkflowHub(application, { discoveryDir: dir, graph });
+  t.after(() => hub.close());
+  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
+
+  const snapshot = await post(hub.url, token, "/snapshot", { workspace });
+  assert.equal(snapshot.status, 200);
+  const projected = snapshot.body.snapshot as { tasks: Array<{ id: string }> };
+  assert.equal(projected.tasks.some(({ id }) => id === "interactive"), false);
 });
