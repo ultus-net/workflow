@@ -65,6 +65,9 @@ can't be authorized fail **closed** (hub denies rather than guessing).
 
 - `workflow-hub` — start the detached authority daemon (discovery + token).
 - `workflow` — still the TUI launcher; resolves against the global Workflow hub.
+- Launchers auto-spawn `workflow-hub` detached when the discovery file is
+  missing or stale, guarded by `~/.workflow/hub/discovery.json.spawn.lock`.
+  `WORKFLOW_AUTOHUB=0` restores strict fail-fast resolution.
 
 For Cline team tasks, `WORKFLOW_TEAM_TASK_VERIFY_COMMAND` defaults to `"true"`
 on the Workflow hub daemon, so completed team tasks automatically promote to
