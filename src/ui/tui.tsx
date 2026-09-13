@@ -51,6 +51,7 @@ export function WorkflowTui({
   onInspectSymbol,
   style: initialStyle,
   onStyleChange,
+  onModeChange,
   reviewFollowUps,
 }: {
   readonly application: WorkflowApplication;
@@ -60,12 +61,15 @@ export function WorkflowTui({
   readonly onInspectSymbol?: (symbol: string) => void;
   readonly style?: SessionStyle;
   readonly onStyleChange?: (style: SessionStyle) => void;
+  readonly onModeChange?: (mode: PedagogicalMode) => void;
   readonly reviewFollowUps?: readonly ReviewFollowUp[];
 }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot>(() => application.snapshot());
   const [prompt, setPrompt] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuIndex, setMenuIndex] = useState(0);
   // Mirror of the prompt for synchronous reads in the input handler: fast
   // keypresses can arrive before React flushes a render, and reading state
   // directly would lose fast submissions (a ref never goes stale in useInput).
@@ -93,6 +97,13 @@ export function WorkflowTui({
   const [pendingTools, setPendingTools] = useState<readonly string[]>([]);
   const [recentLogs, setRecentLogs] = useState<readonly SessionLog[]>([]);
 
+  // Install the initial mode's gate on mount so the mode bar never shows a
+  // label with no corresponding application behavior.
+  useEffect(() => {
+    onModeChange?.(mode);
+    // Mount-only: subsequent changes are notified from the `m` handler below.
+  }, []);
+
   useEffect(() => session?.subscribe((event) => {
     if (event.type === "decision-brief") setDecisionBrief(event.brief);
     if (event.type === "tutor-checkpoint") setCheckpoint(event.opportunity);
@@ -112,6 +123,46 @@ export function WorkflowTui({
     setSnapshot(application.snapshot());
   }), [application, session]);
 
+  // Option toggles shared by the accelerator keys and the `/workflow` menu.
+  const cycleMode = (): void => {
+    setMode((value) => {
+      const next = nextPedagogicalMode(value);
+      onModeChange?.(next);
+      return next;
+    });
+  };
+  const toggleProfile = (): void => {
+    setShowProfile((value) => {
+      if (!value) setLearnerProfile(profile ?? loadLearnerProfile(profilePath));
+      return !value;
+    });
+  };
+  const cycleSpeech = (): void => {
+    setStyle((current) => {
+      const next = { ...current, speech: nextSpeechStyle(current.speech) };
+      onStyleChange?.(next);
+      return next;
+    });
+  };
+  const cycleBuild = (): void => {
+    setStyle((current) => {
+      const next = { ...current, build: nextBuildStyle(current.build) };
+      onStyleChange?.(next);
+      return next;
+    });
+  };
+  const openInspect = (): void => setShowHint(true);
+  const toggleWorkflow = (): void => setShowWorkflow((value) => !value);
+
+  const menuItems = [
+    { label: `Mode: ${MODE_LABELS[mode]}`, run: cycleMode },
+    { label: `Speech: ${style.speech}`, run: cycleSpeech },
+    { label: `Build: ${style.build}`, run: cycleBuild },
+    { label: "Learner profile", run: toggleProfile },
+    { label: "Inspect symbol", run: openInspect },
+    { label: "Workflow details", run: toggleWorkflow },
+  ] as const;
+
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
       if (sessionState?.state === "running" && session !== undefined) {
@@ -122,7 +173,33 @@ export function WorkflowTui({
       return;
     }
     if (key.ctrl && input === "w") {
-      setShowWorkflow((value) => !value);
+      toggleWorkflow();
+      return;
+    }
+    if (menuOpen) {
+      if (key.escape || (input === "" && !key.ctrl && !key.meta) || input === "q") {
+        setMenuOpen(false);
+        return;
+      }
+      if (key.upArrow) {
+        setMenuIndex((value) => Math.max(0, value - 1));
+        return;
+      }
+      if (key.downArrow) {
+        setMenuIndex((value) => Math.min(menuItems.length - 1, value + 1));
+        return;
+      }
+      const digit = Number.parseInt(input, 10);
+      if (digit >= 1 && digit <= menuItems.length) {
+        menuItems[digit - 1]!.run();
+        setMenuOpen(false);
+        return;
+      }
+      if (key.return) {
+        menuItems[menuIndex]!.run();
+        setMenuOpen(false);
+        return;
+      }
       return;
     }
     if (showHint) {
@@ -145,35 +222,31 @@ export function WorkflowTui({
       return;
     }
     if (prompt.length === 0 && !key.ctrl && !key.meta) {
+      // `/` (or `/workflow`) opens the option menu; plain keys remain
+      // accelerators.
+      if (input === "/") {
+        setMenuOpen(true);
+        setMenuIndex(0);
+        return;
+      }
       if (input === "m") {
-        setMode((value) => nextPedagogicalMode(value));
+        cycleMode();
         return;
       }
       if (input === "p") {
-        setShowProfile((value) => {
-          if (!value) setLearnerProfile(profile ?? loadLearnerProfile(profilePath));
-          return !value;
-        });
+        toggleProfile();
         return;
       }
       if (input === "?") {
-        setShowHint(true);
+        openInspect();
         return;
       }
       if (input === ",") {
-        setStyle((current) => {
-          const next = { ...current, speech: nextSpeechStyle(current.speech) };
-          onStyleChange?.(next);
-          return next;
-        });
+        cycleSpeech();
         return;
       }
       if (input === ".") {
-        setStyle((current) => {
-          const next = { ...current, build: nextBuildStyle(current.build) };
-          onStyleChange?.(next);
-          return next;
-        });
+        cycleBuild();
         return;
       }
     }
@@ -221,8 +294,25 @@ export function WorkflowTui({
       <Box flexDirection="column" width="100%" maxWidth={68} paddingX={1}>
         <Box justifyContent="space-between">
           <Text dimColor>[Mode: {MODE_LABELS[mode]} (m to switch)]{formatStyleStatus(style).length > 0 ? ` [${formatStyleStatus(style)}]` : ""}</Text>
-          <Text dimColor>,/.·p·?</Text>
+          <Text dimColor>? inspect</Text>
         </Box>
+        {prompt.length === 0 && !menuOpen ? (
+          <Text dimColor>keys: / menu · ^W state</Text>
+        ) : null}
+        {menuOpen ? (
+          <Box marginTop={0} flexDirection="column">
+            <Text bold>Workflow options</Text>
+            {menuItems.map((item, index) => {
+              const active = index === menuIndex;
+              return (
+                <Text key={item.label} dimColor={!active}>
+                  {active ? ">" : " "}{index + 1} {item.label}
+                </Text>
+              );
+            })}
+            <Text dimColor>1-6 or ↑↓ Enter · q/Esc closes · ^W state</Text>
+          </Box>
+        ) : null}
         {decisionBrief !== undefined ? <DecisionBriefDrawer brief={decisionBrief} /> : null}
         {checkpoint !== undefined ? <CheckpointDrawer opportunity={checkpoint} /> : null}
         {lesson !== undefined ? <DiagnosticLessonDrawer lesson={lesson} /> : null}

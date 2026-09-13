@@ -9,6 +9,7 @@ export * from "./integrations/cline-shell-executor.js";
 export * from "./adapters/cline.js";
 export * from "./adapters/acp.js";
 export * from "./adapters/opencode.js";
+export * from "./adapters/lsp.js";
 export * from "./application/workflow.js";
 export * from "./application/coding-session.js";
 export * from "./integrations/cline-session.js";

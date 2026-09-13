@@ -14,8 +14,8 @@ trip over.
 |---|---|---|
 | Deterministic task graph (states, dependencies, evidence, mutation epochs) | Complete | `src/kernel/`; no LLM/IO/UI deps |
 | Application authorization (capability withholding, workspace binding) | Complete | `src/application/workflow.ts` |
-| Process containment (bubblewrap on Linux) | Partial | `src/containment/platform.ts` — **policy-only passthrough on non-Linux, with a visible warning**; full isolation remains Linux-only |
-| Cross-platform graceful degradation | Complete | `selectContainment()` — no silent fallback; policy gating works everywhere |
+| Process containment (bubblewrap on Linux) | Partial | `src/containment/platform.ts` — **policy-only passthrough on non-Linux, with a visible warning and an explicit `policy-only` result marker**; full isolation remains Linux-only |
+| Cross-platform graceful degradation | Complete | `selectContainment()` — no silent fallback; `ContainedProcessResult.enforcement` distinguishes `enforced` from `policy-only` at the type level |
 | Persistence (versioned JSON store, exclusive lock) | Complete | restart recovery marks orphaned IN_PROGRESS as FAILED |
 
 ## The Hub (universal authority)

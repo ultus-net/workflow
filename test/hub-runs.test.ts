@@ -187,7 +187,6 @@ test("finishing an unknown run fails closed", async (t) => {
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
   const hub = await createWorkflowHub(application, { discoveryDir: dir, graph });
   t.after(() => hub.close());
-  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
 
   const finish = await post(hub.url, hub.verificationToken, "/run/finish", { runId: "cron-ghost", outcome: "verified" });
   assert.notEqual(finish.status, 200);

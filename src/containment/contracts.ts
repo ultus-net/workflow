@@ -12,7 +12,13 @@ export interface ContainedProcessResult {
   readonly exitCode: number | null;
   readonly stdout: string;
   readonly stderr: string;
-  readonly enforcement: "enforced";
+  /**
+   * `enforced` means the tested containment boundary was established (Linux
+   * bubblewrap). `policy-only` means execution passed validation and Workflow
+   * authorization but had NO isolation (non-Linux passthrough). A passthrough
+   * can never claim bwrap-level enforcement.
+   */
+  readonly enforcement: "enforced" | "policy-only";
   readonly network: "isolated" | "host";
   readonly credentials: "cleared" | "explicit";
 }

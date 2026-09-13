@@ -15,11 +15,11 @@ test("selectContainment degrades to a passthrough on non-Linux with a warning", 
   assert.deepEqual(warnings, ["no process isolation: policy gating only (platform darwin)"]);
 });
 
-test("passthrough containment executes with validation but no isolation", async () => {
+test("passthrough containment executes with validation but reports policy-only, never enforced", async () => {
   const containment = new PassthroughContainment();
   const result = await containment.execute({ executable: "/usr/bin/true", args: [] });
   assert.equal(result.exitCode, 0);
-  assert.equal(result.enforcement, "enforced");
+  assert.equal(result.enforcement, "policy-only");
 });
 
 test("passthrough containment still validates request shape", async () => {

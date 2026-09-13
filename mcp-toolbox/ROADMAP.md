@@ -143,6 +143,10 @@ P705 vertical slice: `apps/verification-accountability-mcp` persists bounded ver
 
 P706 vertical slice: `apps/project-context-mcp` provides one read-only bounded discovery tool over explicit repository-owned task/planning sources. Conventional files have fixed precedence, `docs/plans/*.md` uses deterministic bytewise ordering and bounded enumeration, snippets/results are capped, opened-file identity is checked against its canonical confined source before reading, and returned repository text remains untrusted context rather than orchestration authority.
 
+P707 vertical slice: `apps/learning-mcp` exposes the adaptive pedagogy engine (learner profile, stage progression, intervention budgeting, Socratic checkpoints) behind the standard MCP boundary; the `workflow://learner-profile` resource is subscribable so hosts render mastery without owning learner state.
+
+P708 vertical slice: `apps/continuity-checkpoint-mcp` performs bounded read-only continuity recovery for cross-agent handoffs; it observes checkpoint state rather than owning session lifecycle, matching the Stage 7 read-mostly accountability model.
+
 ## Stage 8: Expanded Change Intelligence
 
 Goal: enrich change risk assessment with evidence from external systems.

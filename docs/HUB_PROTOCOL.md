@@ -137,6 +137,25 @@ kernel's normal passing/freshness/mutation-epoch checks. Only an already
 `VERIFYING` task can advance to `VERIFIED`. Unknown tasks, mismatched evidence,
 and failed or stale evidence fail closed.
 
+### Workflow-internal endpoints (not part of the SDK contract)
+
+The hub also serves two Workflow-internal endpoints used by its own UI/bridge
+machinery. SDK clients integrating per §5 must not depend on them; they are
+listed here so the running surface is fully observable:
+
+- `POST /snapshot` — returns the projected task snapshot of the resolved
+  application for a surface-declared `workspace`. Finished scheduled-run tasks
+  and the hub's hidden interactive seed task are excluded from the projection.
+  Used by the Workflow monitoring surfaces.
+- `POST /team-task` — projects a Cline `team_task` create/claim/complete/block
+  update into Workflow's canonical task namespace (before any verifier
+  advances it). Completion only moves the task to `VERIFYING`; promotion to
+  `VERIFIED` requires Workflow-owned verification. This endpoint answers
+  Cline's all-in-one team-task sync, not SDK integration.
+
+Both are ordinary-token endpoints and are versioned informally alongside the
+Workflow bridge implementation, not as part of the v1 contract.
+
 ### `POST /before-tool` — authorization gate
 
 Called before **every** tool execution.

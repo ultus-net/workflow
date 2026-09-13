@@ -8,8 +8,10 @@ import { LinuxBubblewrapContainment } from "./linux-bwrap.js";
  * Cross-platform containment selection. Process isolation exists only on
  * Linux (bubblewrap). On every other platform Workflow degrades to
  * POLICY-ONLY mode: requests are still validated and authorized through the
- * same pipeline, but there is NO process isolation. A warning is emitted at
- * selection time so the degradation is visible, never silent.
+ * same pipeline, but there is NO process isolation. Degradation is visible in
+ * two places: a warning at selection time, and the result's
+ * `enforcement: "policy-only"` marker, so a passthrough can never claim the
+ * bwrap `enforced` boundary.
  */
 
 export class PassthroughContainment implements ProcessContainment {
@@ -36,7 +38,7 @@ export class PassthroughContainment implements ProcessContainment {
           exitCode,
           stdout,
           stderr,
-          enforcement: "enforced",
+          enforcement: "policy-only",
           network,
           credentials: Object.keys(environment).length === 0 ? "cleared" : "explicit",
         });

@@ -12,6 +12,7 @@ import { resolve } from "node:path";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui } from "../ui/tui.js";
+import { createCheckpointLedger } from "../pedagogy/checkpoints.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 
 /**
@@ -96,6 +97,10 @@ const { waitUntilExit } = render(
     session: runtime.session,
     reviewFollowUps,
     onStyleChange: (style) => runtime.setSessionStyle(style),
+    // The mode bar installs the pedagogy gate on the application; cycling `m`
+    // re-creates the checkpoint ledger for the new mode. Leaves no gate when
+    // the mode itself gates nothing (autonomous).
+    onModeChange: (mode) => application.setPedagogyGate(createCheckpointLedger(mode)),
   }),
 );
 await waitUntilExit();

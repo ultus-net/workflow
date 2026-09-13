@@ -59,9 +59,12 @@ workflow-monitor                             # monitoring TUI over a live sessio
 workflow --cwd /path/to/project              # patched Cline TUI via the hub
 ```
 
-In the monitor TUI: `m` cycles pedagogical modes, `,` and `.` switch speech
-(caveman) and build (ponytail/YAGNI) styles, `p` opens the learner profile,
-`?` inspects a symbol, Ctrl+W opens workflow details.
+In the monitor TUI: `/` (or `/workflow`) opens the Workflow options menu —
+digits 1-6 toggle **mode** (pedagogical gating), **speech** (caveman), **build**
+(ponytail/YAGNI), **learner profile**, **symbol inspect**, and **workflow
+details**; `q`/Esc closes. The same options are plain-key accelerators when the
+composer is empty: `m` cycles modes, `,` and `.` cycle speech/build, `p` opens
+the profile, `?` inspects a symbol, Ctrl+W toggles workflow details.
 
 ## What you get
 

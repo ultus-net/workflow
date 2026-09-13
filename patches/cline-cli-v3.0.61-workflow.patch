@@ -422,6 +422,175 @@ index d8590e0..f97b877 100644
 +		await expectVisible(terminal, "Configuration");
 +	});
  });
+diff --git a/apps/cli/src/tui/components/workflow-galaxy.tsx b/apps/cli/src/tui/components/workflow-galaxy.tsx
+new file mode 100644
+index 0000000..cb7cbb2
+--- /dev/null
++++ b/apps/cli/src/tui/components/workflow-galaxy.tsx
+@@ -0,0 +1,163 @@
++import { useTerminalDimensions } from "@opentui/react";
++import { useEffect, useState } from "react";
++
++/**
++ * Workflow galaxy animation: a procedural ASCII swirl of stars orbiting a
++ * core — guided by the "ASCII Rotating Galaxy" animation concept (spiral
++ * arms, twist, glow falloff, twinkle) but implemented from scratch with an
++ * original, deterministic renderer. No third-party artwork or code is
++ * imported. Characters, not colors, carry the depth cue, and each tick
++ * remaps star glyphs so the field shimmers in pattern, not just position.
++ * The grid adapts to the terminal so the ball always fits with margin —
++ * nothing clips against the header, footer, or input chrome.
++ */
++
++/** "Smooth" gradient from the reference: a luminance ramp (no jagged
++ * separator glyphs — the ball reads as continuous shading). */
++const PALETTE = " .:-=+*#%@";
++const ARMS = 3;
++const TWIST = 0.45;
++const GLOW = 0.45;
++const NOISE = 0.15;
++const TWINKLE = 0.35;
++/** Reference settings from the asciiart.eu "ASCII Rotating Galaxy" generator:
++ * Stars 600, Speed 20°/s, Twist 0.45, Noise 0.15, Glow 0.45, Twinkle 0.35,
++ * gradient "Smooth". Reproduced here, not copied. */
++const STAR_COUNT = 4000;
++const SPEED_RAD_PER_SEC = (20 * Math.PI) / 180;
++const TICK_MS = 60;
++/** Cell-aspect roundness — proportions fixed; clipping is solved by uniform
++ * scale, never by flattening. */
++const SQUASH = 0.42;
++
++interface Star {
++	readonly radius: number;
++	readonly phase: number;
++	readonly wobble: number;
++}
++
++/** Deterministic hash so the field is stable frame-to-frame, no Math.random. */
++function hash(seed: number): number {
++	let h = seed | 0;
++	h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
++	h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
++	return ((h ^ (h >>> 16)) >>> 0) / 0xffffffff;
++}
++
++const STARS: Star[] = (() => {
++	const stars: Star[] = [];
++	for (let i = 0; i < STAR_COUNT; i++) {
++		const arm = i % ARMS;
++		// Noise jitter sprays stars near their spiral slots so the arms show
++		// structure while the field looks organic.
++		const jitter = hash(i * 2 + 1) * NOISE;
++		// Full-radius fill: every star owns a radius slot so the spiral arms
++		// sweep from core to rim — glow accumulation alone makes the core
++		// dense; tails stay long (reference behavior).
++		const radius = (i + 1) / STAR_COUNT;
++		stars.push({
++			radius,
++			phase: arm * ((Math.PI * 2) / ARMS) + TWIST * radius * Math.PI * 2 + jitter,
++			wobble: hash(i * 3 + 7),
++		});
++	}
++	return stars;
++})();
++
++export function renderFrame(tick: number, width: number, height: number): string[] {
++	const halfW = width / 2;
++	const halfH = height / 2;
++	// Glow-accumulation buffer: cells sum the brightness of every star that
++	// lands on them, so overlap coheres into a solid glowing body — this is
++	// the difference from per-star writer-wins rendering.
++	const w: number[] = new Array<number>(width * height).fill(0);
++	// Speed is true 20°/s: tick cadence maps to radians per second, not a fixed
++	// per-tick step.
++	const progress = ((tick * TICK_MS) / 1000) * SPEED_RAD_PER_SEC;
++	// Proportions are preserved; the uniform scale fills the grid with a
++	// compact inset so the ball reads tidy — never flattened. Uniform scale,
++	// no shrink-by-squash. No noise halo: stray characters are unwanted.
++	const scale = 0.85 * Math.min(1, (halfW - 2.6) / (halfW * 1.04), (halfH - 2.2) / (halfW * SQUASH * 1.04));
++
++	STARS.forEach((star) => {
++		const angle = star.phase + progress + star.radius * TWIST * Math.PI * 2;
++		const radius = star.radius * halfW * scale;
++		const x = Math.round(halfW + Math.cos(angle) * radius);
++		// Aspect correction: terminal cells are taller than wide, squash y.
++		const y = Math.round(halfH + Math.sin(angle) * radius * SQUASH);
++		if (x < 0 || x >= width || y < 0 || y >= height) return;
++		const depth = 1 - star.radius;
++		const flicker = Math.sin(progress * 4 + star.wobble * Math.PI * 2);
++		const brightness = Math.max(0, Math.min(1, depth * (GLOW + flicker * 0.4) + GLOW * 0.4));
++		w[y * width + x] = (w[y * width + x] ?? 0) + brightness;
++	});
++
++	const cells: string[][] = Array.from({ length: height }, () => Array.from({ length: width }, () => " "));
++	for (let y = 0; y < height; y++) {
++		for (let x = 0; x < width; x++) {
++			const intensity = w[y * width + x] ?? 0;
++			if (intensity <= 0.01) continue;
++			// Twinkle: nudges the whole cell's glyph within the palette with
++			// amplitude set by the TWINKLE constant (reference value: 0.35).
++			const shimmer = (hash(y * 131 + x * 17 + tick * 13) - 0.5) * TWINKLE;
++			const value = intensity * (1 + shimmer);
++			// Thresholds map accumulated glow onto the palette; overlapping
++			// stars climb the gradient so the core is dense, the halo sparse.
++			// (10 bins, one per palette glyph.)
++			let index = 0;
++			if (value > 8) index = 9;
++			else if (value > 5.5) index = 8;
++			else if (value > 4) index = 7;
++			else if (value > 3) index = 6;
++			else if (value > 2.1) index = 5;
++			else if (value > 1.4) index = 4;
++			else if (value > 1) index = 3;
++			else if (value > 0.7) index = 2;
++			else if (value > 0.45) index = 1;
++			const glyph = PALETTE[index];
++			if (glyph !== undefined && glyph !== " ") cells[y]![x] = glyph;
++		}
++	}
++
++	// Core: the nearest, brightest point (guarded — a 1-row terminal can't
++	// hold a core).
++	if (height >= 2 && width >= 2) {
++		const coreGlyph = PALETTE[PALETTE.length - 1] ?? "@";
++		cells[Math.round(halfH)]![Math.round(halfW)] = coreGlyph;
++	}
++
++	return cells.map((row) => row.join(""));
++}
++
++export function WorkflowGalaxy(props: { defaultColor?: string }) {
++	const [tick, setTick] = useState(0);
++	const { width: terminalWidth, height: terminalHeight } = useTerminalDimensions();
++
++	useEffect(() => {
++		const interval = setInterval(() => {
++			setTick((current) => current + 1);
++		}, TICK_MS);
++		return () => clearInterval(interval);
++	}, []);
++
++	// Adaptive grid, no min/max clamps: the galaxy gets the terminal minus a
++	// stable reservation for home chrome (welcome/hint/input/status ~20
++	// rows), so it grows with the screen instead of shrinking to a nub. On
++	// ultra-wide terminals the width locks to the ball's aspect ratio so the
++	// uniform scale can't degenerate into a sparse dot.
++	const CHROME_ROWS = 20;
++	const gridHeight = Math.max(1, terminalHeight - CHROME_ROWS);
++	const aspectWidth = Math.floor(gridHeight / SQUASH);
++	const gridWidth = Math.max(1, Math.min(terminalWidth - 4, aspectWidth));
++	const frame = renderFrame(tick, gridWidth, gridHeight);
++	return (
++		<box flexDirection="column" alignItems="center" width="100%" flexShrink={1} overflow="hidden">
++			{frame.map((row, rowIdx) => (
++				// biome-ignore lint/suspicious/noArrayIndexKey: procedural animation frame with fixed row order
++				<text key={`row-${rowIdx}`} fg={props.defaultColor ?? "white"}>
++					{row}
++				</text>
++			))}
++		</box>
++	);
++}
 diff --git a/apps/cli/src/tui/hooks/use-root-keyboard.ts b/apps/cli/src/tui/hooks/use-root-keyboard.ts
 index 52ea615..643874f 100644
 --- a/apps/cli/src/tui/hooks/use-root-keyboard.ts
@@ -522,6 +691,75 @@ index a3f0e76..a85b375 100644
 +		</box>
 +	);
 +}
+diff --git a/apps/cli/src/tui/views/home-view.tsx b/apps/cli/src/tui/views/home-view.tsx
+index 753cf36..a0cb58d 100644
+--- a/apps/cli/src/tui/views/home-view.tsx
++++ b/apps/cli/src/tui/views/home-view.tsx
+@@ -1,5 +1,4 @@
+ import { useTerminalDimensions } from "@opentui/react";
+-import { useState } from "react";
+ import {
+ 	AutocompleteDropdown,
+ 	type AutocompleteDropdownProps,
+@@ -11,7 +10,7 @@ import {
+ 	resolveModelMaxInputTokens,
+ 	StatusBar,
+ } from "../components/status-bar";
+-import { TrackedRobot, useMouseTracker } from "../components/tracked-robot";
++import { WorkflowGalaxy } from "../components/workflow-galaxy";
+ import { useSession } from "../contexts/session-context";
+ import { useTheme } from "../hooks/use-theme";
+ import {
+@@ -54,12 +53,7 @@ export function HomeView(props: {
+ 		repoStatus,
+ 	} = props;
+ 	const session = useSession();
+-	const { width, height } = useTerminalDimensions();
+-	const mouse = useMouseTracker();
+-	const [inputCursor, setInputCursor] = useState<{
+-		visualCol: number;
+-		visualRow: number;
+-	} | null>(null);
++	const { width } = useTerminalDimensions();
+ 
+ 	const theme = useTheme();
+ 	const terminalBg = theme.background;
+@@ -75,16 +69,6 @@ export function HomeView(props: {
+ 	const hasAutocomplete =
+ 		props.autocomplete?.mode && props.autocomplete.options.length > 0;
+ 	const contentWidth = Math.min(width, HOME_VIEW_MAX_WIDTH);
+-	const hasTypedInput = inputValue.trim().length > 0;
+-	const inputStartX = Math.floor((width - contentWidth) / 2) + 2;
+-	const clamp = (value: number, min: number, max: number) =>
+-		Math.max(min, Math.min(max, value));
+-	const trackedCursorX = hasTypedInput
+-		? clamp(inputStartX + (inputCursor?.visualCol ?? 0), 0, width)
+-		: mouse.cursor.x;
+-	const trackedCursorY = hasTypedInput
+-		? clamp(height - 2 + (inputCursor?.visualRow ?? 0), 0, height)
+-		: mouse.cursor.y;
+ 
+ 	return (
+ 		<box
+@@ -93,9 +77,8 @@ export function HomeView(props: {
+ 			height="100%"
+ 			alignItems="center"
+ 			justifyContent="center"
+-			onMouseMove={mouse.onMouseMove}
+ 		>
+-			<TrackedRobot cursorX={trackedCursorX} cursorY={trackedCursorY} />
++			<WorkflowGalaxy defaultColor={defaultFg} />
+ 			<box marginTop={1} marginBottom={1} flexShrink={0}>
+ 				<text fg={defaultFg}>
+ 					<strong>What can I do for you?</strong>
+@@ -120,7 +103,6 @@ export function HomeView(props: {
+ 					inputKey={inputKey}
+ 					onSubmit={onSubmit}
+ 					onContentChange={onContentChange}
+-					onVisualCursorChange={setInputCursor}
+ 					onImagePaste={onImagePaste}
+ 					onLargeTextPaste={onLargeTextPaste}
+ 					onFocusRequest={props.onInputFocusRequest}
 diff --git a/apps/cli/src/utils/workflow-bridge-local-runtime.ts b/apps/cli/src/utils/workflow-bridge-local-runtime.ts
 new file mode 100644
 index 0000000..7b847fa
