@@ -424,10 +424,11 @@ index d8590e0..f97b877 100644
  });
 diff --git a/apps/cli/src/tui/components/workflow-galaxy.tsx b/apps/cli/src/tui/components/workflow-galaxy.tsx
 new file mode 100644
-index 0000000..a7a6b9e
+index 0000000..6e92dd4
 --- /dev/null
 +++ b/apps/cli/src/tui/components/workflow-galaxy.tsx
-@@ -0,0 +1,109 @@
+@@ -0,0 +1,120 @@
++import { useTerminalDimensions } from "@opentui/react";
 +import { useEffect, useState } from "react";
 +
 +/**
@@ -437,18 +438,19 @@ index 0000000..a7a6b9e
 + * original, deterministic renderer. No third-party artwork or code is
 + * imported. Characters, not colors, carry the depth cue, and each tick
 + * remaps star glyphs so the field shimmers in pattern, not just position.
++ * The grid adapts to the terminal so the ball always fits with margin —
++ * nothing clips against the header, footer, or input chrome.
 + */
 +
 +const PALETTE = " !;/\\:+*oO#@c";
 +const ARMS = 3;
 +const TWIST = 0.45;
 +const GLOW = 0.5;
-+const HEIGHT = 12;
-+const WIDTH = 48;
 +const TICK_MS = 200;
 +const STAR_COUNT = 600;
-+/** Keep the ball inside the grid with margin so nothing clips. */
-+const RADIUS_SCALE = 0.82;
++/** Cell-aspect roundness — proportions fixed; clipping is solved by uniform
++ * scale, never by flattening. */
++const SQUASH = 0.42;
 +
 +interface Star {
 +	readonly radius: number;
@@ -481,19 +483,23 @@ index 0000000..a7a6b9e
 +	return stars;
 +})();
 +
-+export function renderFrame(tick: number): string[] {
-+	const halfW = WIDTH / 2;
-+	const halfH = HEIGHT / 2;
-+	const cells: string[][] = Array.from({ length: HEIGHT }, () => Array.from({ length: WIDTH }, () => " "));
++export function renderFrame(tick: number, width: number, height: number): string[] {
++	const halfW = width / 2;
++	const halfH = height / 2;
++	const cells: string[][] = Array.from({ length: height }, () => Array.from({ length: width }, () => " "));
 +	const progress = tick * 0.12;
++	// Proportions are preserved: the uniform scale shrinks the whole ball to
++	// fit the grid with margin — no squash-derived flattening. The 1.6 buffer
++	// absorbs rounding so outer stars still land inside the header/footer rows.
++	const scale = (halfH - 1.6) / (halfW * SQUASH * 1.04);
 +
 +	STARS.forEach((star, i) => {
 +		const angle = star.phase + progress + star.radius * TWIST * Math.PI * 2;
-+		const radius = star.radius * halfW * RADIUS_SCALE;
++		const radius = star.radius * halfW * scale;
 +		const x = Math.round(halfW + Math.cos(angle) * radius);
 +		// Aspect correction: terminal cells are taller than wide, squash y.
-+		const y = Math.round(halfH + Math.sin(angle) * radius * 0.42);
-+		if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return;
++		const y = Math.round(halfH + Math.sin(angle) * radius * SQUASH);
++		if (x < 0 || x >= width || y < 0 || y >= height) return;
 +		const depth = 1 - star.radius;
 +		const flicker = Math.sin(progress * 4 + star.wobble * Math.PI * 2);
 +		const brightness = Math.max(0, Math.min(1, depth * (GLOW + flicker * 0.4)));
@@ -517,6 +523,7 @@ index 0000000..a7a6b9e
 +
 +export function WorkflowGalaxy(props: { defaultColor?: string }) {
 +	const [tick, setTick] = useState(0);
++	const { width: terminalWidth, height: terminalHeight } = useTerminalDimensions();
 +
 +	useEffect(() => {
 +		const interval = setInterval(() => {
@@ -525,7 +532,11 @@ index 0000000..a7a6b9e
 +		return () => clearInterval(interval);
 +	}, []);
 +
-+	const frame = renderFrame(tick);
++	// Adaptive grid with no min/max clamps: the ball tracks the terminal and
++	// the layout box shrinks, so the header/footer never clip.
++	const gridWidth = Math.max(1, terminalWidth - 4);
++	const gridHeight = Math.max(1, Math.floor(terminalHeight * 0.4));
++	const frame = renderFrame(tick, gridWidth, gridHeight);
 +	return (
 +		<box flexDirection="column" alignItems="center" width="100%" flexShrink={1} overflow="hidden">
 +			{frame.map((row, rowIdx) => (
