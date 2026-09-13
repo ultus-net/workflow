@@ -1,4 +1,5 @@
-import { closeSync, existsSync, openSync, readFileSync, rmSync } from "node:fs";
+import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -52,7 +53,6 @@ export async function probeHub(discovery: HubDiscovery): Promise<boolean> {
     return false;
   }
 }
-
 export interface SpawnCandidate {
   readonly cmd: string;
   readonly args: string[];
@@ -98,18 +98,88 @@ export function acquireSpawnLock(lockPath: string): (() => void) | undefined {
   }
 }
 
+export interface WorkflowHubResolveOptions {
+  readonly discoveryDir?: string;
+  readonly autohub?: boolean;
+  readonly spawnFn?: (cmd: string, args: string[], options: { detached: boolean; stdio: ("ignore" | "inherit" | "pipe")[] }) => ChildProcess;
+  readonly spawnCandidates?: SpawnCandidate[];
+  readonly timeoutMs?: number;
+  readonly pollIntervalMs?: number;
+}
+
+const NO_HUB_MESSAGE =
+  "Workflow hub is not running; start the authority daemon with `npm run hub` (source checkout) or `workflow-hub` (installed) before launching a Cline surface";
+
+function autohubEnabled(option: boolean | undefined): boolean {
+  if (option !== undefined) return option;
+  const env = process.env.WORKFLOW_AUTOHUB;
+  return !(env === "0" || env === "false");
+}
+
+function resolveTimeout(option: number | undefined): number {
+  if (option !== undefined) return option;
+  const env = Number(process.env.WORKFLOW_AUTOHUB_TIMEOUT_MS);
+  return Number.isFinite(env) && env > 0 ? env : 15_000;
+}
+
+async function waitForHub(discoveryPath: string, deadline: number, poll: number): Promise<ResolvedHub | undefined> {
+  while (Date.now() < deadline) {
+    const discovery = readHubDiscovery(discoveryPath);
+    if (discovery !== undefined && (await probeHub(discovery))) {
+      return { url: discovery.endpoint, token: discovery.token };
+    }
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, poll));
+  }
+  return undefined;
+}
+
 export async function resolveWorkflowHub(
-  options: { discoveryDir?: string } = {},
+  options: WorkflowHubResolveOptions = {},
 ): Promise<ResolvedHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
   const discoveryPath = resolveHubDiscoveryPath(dir);
+  const poll = options.pollIntervalMs ?? 250;
+  const timeoutMs = resolveTimeout(options.timeoutMs);
+  const deadline = Date.now() + timeoutMs;
+  const lockPath = `${discoveryPath}.spawn.lock`;
+
   const discovery = readHubDiscovery(discoveryPath);
   if (discovery !== undefined && (await probeHub(discovery))) {
     return { url: discovery.endpoint, token: discovery.token };
   }
-  // Obsolete or missing discovery: remove the stale file and fail closed.
-  rmSync(discoveryPath, { force: true });
-  throw new Error(
-    "Workflow hub is not running; start the authority daemon with `npm run hub` (source checkout) or `workflow-hub` (installed) before launching a Cline surface",
-  );
+
+  if (!autohubEnabled(options.autohub)) {
+    rmSync(discoveryPath, { force: true });
+    throw new Error(NO_HUB_MESSAGE);
+  }
+
+  const candidates = options.spawnCandidates ?? resolveHubSpawnCandidates(process.env);
+  if (candidates.length === 0) {
+    rmSync(discoveryPath, { force: true });
+    throw new Error(NO_HUB_MESSAGE);
+  }
+
+  mkdirSync(dirname(lockPath), { recursive: true });
+  const releaseLock = acquireSpawnLock(lockPath);
+  if (releaseLock === undefined) {
+    // Another surface is spawning; wait for its discovery publication.
+    const waited = await waitForHub(discoveryPath, deadline, poll);
+    if (waited !== undefined) return waited;
+    rmSync(discoveryPath, { force: true });
+    throw new Error(NO_HUB_MESSAGE);
+  }
+
+  try {
+    const spawnFn = options.spawnFn ?? nodeSpawn;
+    const [candidate] = candidates;
+    const child = spawnFn(candidate.cmd, candidate.args, { detached: true, stdio: ["ignore", "ignore", "ignore"] });
+    child.on?.("error", () => undefined);
+    child.unref?.();
+    const resolved = await waitForHub(discoveryPath, deadline, poll);
+    if (resolved !== undefined) return resolved;
+    rmSync(discoveryPath, { force: true });
+    throw new Error(`${NO_HUB_MESSAGE} (auto-spawn attempted via \`${candidate.cmd}\`)`);
+  } finally {
+    releaseLock();
+  }
 }

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -74,7 +75,7 @@ test("resolveWorkflowHub returns the live hub authority", async (t) => {
 test("resolveWorkflowHub fails closed when the hub is not running", async () => {
   const dir = mkdtempSync(join(tmpdir(), "wf-hub-client-"));
   try {
-    await assert.rejects(() => resolveWorkflowHub({ discoveryDir: dir }), /npm run hub.*workflow-hub/);
+    await assert.rejects(() => resolveWorkflowHub({ discoveryDir: dir, autohub: false }), /npm run hub.*workflow-hub/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -87,7 +88,7 @@ test("resolveWorkflowHub removes an obsolete discovery file and fails closed", a
   mkdirSync(dirname(discoveryPath), { recursive: true });
   writeFileSync(discoveryPath, JSON.stringify({ hubId: "stale", endpoint: "http://127.0.0.1:1", token: "0".repeat(64) }));
 
-  await assert.rejects(() => resolveWorkflowHub({ discoveryDir: dir }), /npm run hub.*workflow-hub/);
+  await assert.rejects(() => resolveWorkflowHub({ discoveryDir: dir, autohub: false }), /npm run hub.*workflow-hub/);
   assert.equal(existsSync(discoveryPath), false);
 });
 
@@ -114,4 +115,103 @@ test("resolveHubSpawnCandidates falls back to pkgRoot dist hub", () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+function restoreEnv(t: import("node:test").TestContext, key: string, original: string | undefined) {
+  t.after(() => {
+    if (original === undefined) delete process.env[key];
+    else process.env[key] = original;
+  });
+}
+
+test("resolveWorkflowHub auto-spawns a detached hub and returns it", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-client-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const fixture = join(process.cwd(), "test", "fixtures", "autohub-fake-hub.mjs");
+  const children: ChildProcess[] = [];
+  const original = process.env.FAKE_HUB_DISCOVERY_PATH;
+  process.env.FAKE_HUB_DISCOVERY_PATH = resolveHubDiscoveryPath(dir);
+  t.after(() => {
+    for (const child of children) child.kill("SIGTERM");
+  });
+  restoreEnv(t, "FAKE_HUB_DISCOVERY_PATH", original);
+
+  const resolved = await resolveWorkflowHub({
+    discoveryDir: dir,
+    spawnFn: (cmd, args, options) => {
+      const child = spawn(cmd, args, options);
+      children.push(child);
+      return child;
+    },
+    spawnCandidates: [{ cmd: process.execPath, args: [fixture] }],
+  });
+  assert.equal(typeof resolved.url, "string");
+  const discovery = readHubDiscovery(resolveHubDiscoveryPath(dir));
+  assert.equal(discovery?.hubId, "fake-hub");
+});
+
+test("resolveWorkflowHub waits for another surface's spawn instead of double-spawning", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-client-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const fixture = join(process.cwd(), "test", "fixtures", "autohub-fake-hub.mjs");
+  const discoveryPath = resolveHubDiscoveryPath(dir);
+  mkdirSync(dirname(discoveryPath), { recursive: true });
+  writeFileSync(`${discoveryPath}.spawn.lock`, "locked");
+  const originalDiscovery = process.env.FAKE_HUB_DISCOVERY_PATH;
+  const originalDelay = process.env.FAKE_HUB_DELAY_MS;
+  process.env.FAKE_HUB_DISCOVERY_PATH = discoveryPath;
+  process.env.FAKE_HUB_DELAY_MS = "800";
+  const otherSurface = spawn(process.execPath, [fixture], { detached: true, stdio: "ignore" });
+  t.after(() => {
+    otherSurface.kill("SIGTERM");
+    rmSync(`${discoveryPath}.spawn.lock`, { force: true });
+  });
+  restoreEnv(t, "FAKE_HUB_DISCOVERY_PATH", originalDiscovery);
+  restoreEnv(t, "FAKE_HUB_DELAY_MS", originalDelay);
+
+  const resolved = await resolveWorkflowHub({
+    discoveryDir: dir,
+    spawnFn: () => { throw new Error("must not spawn"); },
+    spawnCandidates: [{ cmd: "x", args: [] }],
+    timeoutMs: 10_000,
+  });
+  assert.equal(typeof resolved.url, "string");
+});
+
+test("resolveWorkflowHub fails closed when spawn candidates are empty", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-client-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  await assert.rejects(
+    () => resolveWorkflowHub({ discoveryDir: dir, spawnCandidates: [] }),
+    /npm run hub.*workflow-hub/,
+  );
+});
+
+test("resolveWorkflowHub removes its spawn lock after a failed spawn", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-client-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const lockPath = `${resolveHubDiscoveryPath(dir)}.spawn.lock`;
+
+  await assert.rejects(
+    () => resolveWorkflowHub({ discoveryDir: dir, spawnCandidates: [{ cmd: "nonexistent-cmd-xyz", args: [] }] }),
+  );
+  assert.equal(existsSync(lockPath), false);
+});
+
+test("WORKFLOW_AUTOHUB=0 restores strict fail-fast without spawning", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-client-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const original = process.env.WORKFLOW_AUTOHUB;
+  process.env.WORKFLOW_AUTOHUB = "0";
+  restoreEnv(t, "WORKFLOW_AUTOHUB", original);
+
+  await assert.rejects(
+    () => resolveWorkflowHub({
+      discoveryDir: dir,
+      spawnFn: () => { throw new Error("must not spawn"); },
+      spawnCandidates: [{ cmd: "x", args: [] }],
+    }),
+    /npm run hub.*workflow-hub/,
+  );
 });
