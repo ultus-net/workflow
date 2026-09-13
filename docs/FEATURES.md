@@ -40,7 +40,6 @@ trip over.
 | Response/build styles (caveman speech, ponytail YAGNI build) | Complete | **model-advisory** — the model can ignore them; live switch with `,` and `.`; summaries kept by design |
 | Style-savings measurement (`npm run style:eval`) | Complete | `src/cli/style-eval.ts` — per-style output deltas from cumulative driver usage |
 | Browser projection | Partial | `src/ui/web.ts` demo; does not have the monitoring panels |
-| Pets | Disabled | `docs/PETS.md` |
 
 ## MCP Toolbox (12 servers)
 

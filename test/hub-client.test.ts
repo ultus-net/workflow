@@ -10,6 +10,7 @@ import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createWorkflowHub, resolveHubDiscoveryPath } from "../src/integrations/workflow-hub.js";
 import { probeHub, readHubDiscovery, resolveWorkflowHub } from "../src/cli/hub-client.js";
+import packageJson from "../package.json" with { type: "json" };
 
 const tasks: WorkflowTask[] = [{ id: taskId("W1"), title: "task", state: "READY", dependencies: [], requiredEvidence: [] }];
 function application() {
@@ -21,6 +22,10 @@ function application() {
     process.cwd(),
   );
 }
+
+test("source checkout exposes the Workflow hub daemon", () => {
+  assert.equal(packageJson.scripts.hub, "tsx src/cli/hub.ts");
+});
 
 test("readHubDiscovery returns undefined when the file is missing", () => {
   const dir = mkdtempSync(join(tmpdir(), "wf-hub-client-"));
@@ -69,7 +74,7 @@ test("resolveWorkflowHub returns the live hub authority", async (t) => {
 test("resolveWorkflowHub fails closed when the hub is not running", async () => {
   const dir = mkdtempSync(join(tmpdir(), "wf-hub-client-"));
   try {
-    await assert.rejects(() => resolveWorkflowHub({ discoveryDir: dir }), /workflow-hub/);
+    await assert.rejects(() => resolveWorkflowHub({ discoveryDir: dir }), /npm run hub.*workflow-hub/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -82,6 +87,6 @@ test("resolveWorkflowHub removes an obsolete discovery file and fails closed", a
   mkdirSync(dirname(discoveryPath), { recursive: true });
   writeFileSync(discoveryPath, JSON.stringify({ hubId: "stale", endpoint: "http://127.0.0.1:1", token: "0".repeat(64) }));
 
-  await assert.rejects(() => resolveWorkflowHub({ discoveryDir: dir }), /workflow-hub/);
+  await assert.rejects(() => resolveWorkflowHub({ discoveryDir: dir }), /npm run hub.*workflow-hub/);
   assert.equal(existsSync(discoveryPath), false);
 });

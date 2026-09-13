@@ -30,39 +30,11 @@ export function nextPedagogicalMode(mode: PedagogicalMode): PedagogicalMode {
   return PEDAGOGICAL_MODES[(index + 1) % PEDAGOGICAL_MODES.length] ?? "autonomous";
 }
 
-export { createWorkflowRibbonFrames, renderWorkflowRibbon, WORKFLOW_RIBBON_FRAMES, WORKFLOW_RIBBON_PROJECT } from "./home-animation.js";
-
 interface TranscriptEntry {
   readonly label: string;
   readonly text: string;
   readonly dim?: boolean;
 }
-
-export const WORKFLOW_MARK = `⠀⠀⠀⠀⠀⠀⠀⢀⣠⣴⣶⣾⣷⣶⣶⣤⣀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⢀⣤⣶⣾⣿⣿⣿⣿⣿⣿⠋⢻⣿⣿⣿⣿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠉⠉⠓⠲⠤⣤⣤⣬⣿⣿⣷⣿⣿⣿⣿⣿⣿⣿⣯⡁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠈⢻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣿⡷⢤⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⢰⣿⣿⣿⣿⣿⣿⣿⣿⣿⠿⠿⠷⠦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⢀⣾⣿⣿⣿⣿⣿⣿⡟⠋⣠⣤⣶⣶⣦⣤⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⢀⣾⣿⣿⣿⣿⣿⣿⡟⠀⣼⣿⣿⣿⣿⣿⣿⣿⣿⣷⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⢀⠾⠋⣾⣿⣿⣿⣿⣿⡇⠀⣿⣿⣿⣿⣿⣿⣿⣿⡿⣿⣿⣷⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⢠⣿⣿⣿⣿⣿⣿⣿⡀⠻⣿⣿⣿⣿⡟⢿⣿⣿⣤⡙⠻⣿⣿⣦⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⢸⣿⠋⣿⣿⣿⣿⣿⣷⣄⠙⠿⣿⣿⣿⣦⡉⠛⢿⣿⣦⣌⠙⠿⣿⣶⣄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⡟⠀⢿⣿⣿⣿⣿⣿⣿⣷⣦⡘⠻⢿⣿⣿⣷⣦⣘⠻⣿⣿⣶⣜⡻⣿⣷⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠁⠀⠈⢻⣿⣿⣿⣿⣿⣿⣿⣿⣷⣦⣌⡙⠻⢿⣿⣿⣶⣭⣻⢿⣿⣶⣝⡻⢿⣦⡀⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠻⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣦⣄⡈⠙⠻⠿⣿⣶⣮⣝⣻⣷⣤⣈⠁⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠻⢿⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⣦⣤⣀⠉⠛⠻⢿⣿⣿⣿⣿⣷⣄⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⣿⡌⢻⣿⣿⣿⣿⠉⣿⣿⣿⣿⣿⣶⣦⣄⡈⠉⠛⠿⢿⣿⣿⣦⡀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣠⣿⠿⠓⠀⢿⣿⣿⣿⠀⣿⣿⣿⣿⣿⣿⣿⣿⣿⣷⡄⠀⠀⠀⠀⠉⠛⠢⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣀⣀⣀⣠⣾⡟⠁⠀⠀⠀⢸⣿⣿⠏⠀⢹⣿⢿⣿⣿⣿⣿⣿⡿⣿⣿⣄⠀⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⢠⡾⠟⢛⣿⡿⠿⠿⠟⠛⠷⠀⣠⣿⠟⠁⠀⠀⠈⢿⣇⢻⣿⡟⢿⣿⣿⡌⢻⣿⣦⠀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠈⠁⣰⠟⠁⠀⣀⣀⣀⣀⣀⣾⡟⠁⠀⠀⠀⠀⠀⠈⠻⡄⢻⣿⡌⢿⣿⣿⣆⠹⣿⣷⡀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠁⠀⢰⠿⠛⢋⣿⠿⠿⠿⠛⠛⠻⢦⠀⠀⠀⠀⠀⠀⠈⢿⣿⡄⢻⣿⣿⣦⠈⠛⠿⣄⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⠟⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠻⣿⡄⢻⣿⣿⣧⡀⠀⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠀⢻⣿⣿⣷⡄⠀⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠹⣿⣿⣿⣄⠀⠀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠻⣿⣦⡀⠀
-⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠙⠳⠄`;
 
 export function nextInteractiveState(state: TaskState): TaskState | undefined {
   if (state === "READY") return "IN_PROGRESS";
@@ -268,8 +240,7 @@ export function WorkflowTui({
         <Box flexDirection="column" minHeight={4}>
         {transcript.length === 0 ? (
           <Box flexDirection="column" alignItems="center">
-            <Text>{WORKFLOW_MARK}</Text>
-            <Box marginTop={1}>
+            <Box>
               <Text bold>What can I do for you?</Text>
             </Box>
             <Box marginTop={1} marginBottom={1}>

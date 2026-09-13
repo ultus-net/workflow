@@ -14,7 +14,6 @@ import {
   type WorkflowTask,
   type CodingSessionDriver,
 } from "../src/index.js";
-import { createWorkflowRibbonFrames, renderWorkflowRibbon, WORKFLOW_MARK, WORKFLOW_RIBBON_FRAMES } from "../src/ui/tui.js";
 
 test("legacy Ink projection keeps Workflow status compact and diagnostics secondary", async () => {
   const tasks: WorkflowTask[] = [{
@@ -51,35 +50,6 @@ test("legacy Ink projection keeps its composition bounded", () => {
   const contentWidths = lines.map((line) => line.trimEnd().length - line.search(/\S|$/));
   assert.ok(contentWidths.every((width) => width <= 68), `expected a 68-column composition:\n${lines.join("\n")}`);
   view.unmount();
-});
-
-test("legacy Ink projection can render the Workflow dot-matrix mark", () => {
-  const markLines = WORKFLOW_MARK.split("\n");
-  assert.equal(markLines.length, 25);
-  assert.deepEqual([...new Set(markLines.map((line) => line.length))], [45]);
-
-  const application = new WorkflowApplication(
-    new TaskGraph([]),
-    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
-  );
-  const view = render(React.createElement(WorkflowTui, { application }));
-  const frame = view.lastFrame() ?? "";
-
-  assert.match(frame, /⢀⣤⣶⣾⣿⣿⣿⣿⣿⣿⠋⢻⣿⣿⣿⣿⣿⣷⣄/);
-  view.unmount();
-});
-
-test("Workflow ribbon is a deterministic seamless Braille loop in its Cline presentation box", () => {
-  assert.equal(WORKFLOW_RIBBON_FRAMES.length, 48);
-  assert.ok(new Set(WORKFLOW_RIBBON_FRAMES).size > 40);
-  for (const frame of WORKFLOW_RIBBON_FRAMES) {
-    const lines = frame.split("\n");
-    assert.equal(lines.length, 5);
-    assert.ok(lines.every((line) => line.length === 29));
-    assert.match(frame.replaceAll("\n", ""), /^[\u2800-\u28ff]+$/u);
-  }
-  assert.equal(renderWorkflowRibbon(0), renderWorkflowRibbon(Math.PI * 2));
-  assert.deepEqual(createWorkflowRibbonFrames(), WORKFLOW_RIBBON_FRAMES);
 });
 
 test("legacy Ink projection inherits terminal colors instead of assigning semantic colors", () => {

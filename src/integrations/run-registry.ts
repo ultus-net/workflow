@@ -1,4 +1,4 @@
-import { statSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import { WorkflowApplication } from "../application/workflow.js";
@@ -23,32 +23,47 @@ export function createRunRegistry(
 ): { resolve: WorkflowApplicationResolver; controller: WorkflowRunController } {
   const workspaceApplications = new Map<string, WorkflowApplication>();
   const runs = new Map<string, WorkflowApplication>();
+  const finishedRunTaskIds = new Set<string>();
 
-  const workspaceApplication = (workspace: string | undefined): WorkflowApplication => {
-    if (workspace === undefined) return fallback;
+  const workspaceApplication = (
+    workspace: string | undefined,
+    activateInteractiveTask = true,
+  ): WorkflowApplication => {
+    if (workspace === undefined) {
+      if (activateInteractiveTask) fallback.startInteractiveTask();
+      return fallback;
+    }
     if (!isAbsolute(workspace)) throw new TypeError(`declared workspace must be absolute: ${workspace}`);
     if (!statSync(workspace, { throwIfNoEntry: false })?.isDirectory()) {
       throw new TypeError(`declared workspace is not an existing directory: ${workspace}`);
     }
-    let application = workspaceApplications.get(workspace);
+    const canonicalWorkspace = realpathSync(workspace);
+    let application = workspaceApplications.get(canonicalWorkspace);
     if (application === undefined) {
-      application = new WorkflowApplication(graph, fallback.host, [], fallback.allowedCapabilities, workspace);
-      application.startInteractiveTask();
-      workspaceApplications.set(workspace, application);
+      application = new WorkflowApplication(graph, fallback.host, [], fallback.allowedCapabilities, canonicalWorkspace);
+      workspaceApplications.set(canonicalWorkspace, application);
     }
+    if (activateInteractiveTask) application.startInteractiveTask();
     return application;
   };
 
   return {
-    resolve(workspace?: string, runId?: string): WorkflowApplication {
+    resolve(workspace?: string, runId?: string, options?: { activateInteractiveTask?: boolean }): WorkflowApplication {
       if (runId !== undefined) {
         const application = runs.get(runId);
         if (application === undefined) throw new TypeError(`unknown run: ${runId}`);
         return application;
       }
-      return workspaceApplication(workspace);
+      return workspaceApplication(workspace, options?.activateInteractiveTask ?? true);
     },
     controller: {
+      hiddenSnapshotTaskIds() {
+        const interactive = graph.tasks().find(({ id }) => id === taskId("interactive"));
+        return [
+          ...(interactive?.title === "Interactive coding session" ? [interactive.id] : []),
+          ...finishedRunTaskIds,
+        ];
+      },
       async begin({ runId, title, workspace, requiresReview }) {
         if (runId.trim().length === 0 || title.trim().length === 0) {
           throw new TypeError("run begin requires a non-empty runId and title");
@@ -142,6 +157,7 @@ export function createRunRegistry(
           });
           application.transition(runTaskId, "FAILED");
         }
+        finishedRunTaskIds.add(runTaskId);
         runs.delete(runId);
       },
     },

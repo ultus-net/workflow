@@ -66,6 +66,13 @@ can't be authorized fail **closed** (hub denies rather than guessing).
 - `workflow-hub` — start the detached authority daemon (discovery + token).
 - `workflow` — still the TUI launcher; resolves against the global Workflow hub.
 
+For Cline team tasks, set `WORKFLOW_TEAM_TASK_VERIFY_COMMAND` on the Workflow
+hub process to the project verification command (for example, `npm test`).
+After Cline reports completion, Workflow runs that command itself in the task
+workspace with a read-only workspace mount. A passing observation becomes
+fresh environment evidence for that canonical task; a failure leaves the task
+`VERIFYING`. Ordinary Cline `/bash` requests cannot produce this evidence.
+
 ## Operational semantics (fail-closed)
 
 | Condition | Behavior |

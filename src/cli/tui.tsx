@@ -19,6 +19,7 @@ const clineRoot = resolve(root, ".workflow-cline", "cline");
 const hub = await resolveWorkflowHub();
 const toolboxRoot = resolve(root, "mcp-toolbox");
 const mcpSettingsPath = prepareMcpSettings(toolboxRoot);
+process.on("SIGINT", () => {});
 const exitCode = await runClineTui(clineRoot, workspace, hub.url, hub.token, mcpSettingsPath);
 process.exitCode = exitCode;
 

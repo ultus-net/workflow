@@ -15,8 +15,7 @@
     "workflow": "dist/cli/tui.js",
     "workflow-hub": "dist/cli/hub.js",
     "workflow-monitor": "dist/cli/ink-tui.js",
-    "workflow-shell": "dist/cli/contained-shell.js",
-    "workflow-pets": "dist/cli/pets.js"
+    "workflow-shell": "dist/cli/contained-shell.js"
   },
   "postinstall": "node scripts/prepare-tool.mjs",
   "files": [
@@ -33,12 +32,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint src test",
+    "hub": "tsx src/cli/hub.ts",
     "tui": "node scripts/build-cline-tui.mjs && tsx src/cli/tui.tsx",
     "tui:workflow": "tsx src/cli/ink-tui.tsx",
     "style:eval": "tsx src/cli/style-eval.ts",
-    "motion:examples": "tsx src/cli/motion-examples.ts",
-    "motion:import": "tsx src/cli/motion-import.ts",
-    "pets": "tsx src/cli/pets.ts",
     "tui:cline:build": "node scripts/build-cline-tui.mjs",
     "cline:bump": "node scripts/bump-cline-tag.mjs",
     "contained-shell": "tsx src/cli/contained-shell.ts",
@@ -68,7 +65,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
-    "gifuct-js": "^2.1.2",
     "ink": "^7.1.1",
     "react": "^19.2.0"
   }
