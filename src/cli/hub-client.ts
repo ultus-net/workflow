@@ -171,7 +171,7 @@ export async function resolveWorkflowHub(
 
   try {
     const spawnFn = options.spawnFn ?? nodeSpawn;
-    const [candidate] = candidates;
+    const candidate = candidates[0]!;
     const child = spawnFn(candidate.cmd, candidate.args, { detached: true, stdio: ["ignore", "ignore", "ignore"] });
     child.on?.("error", () => undefined);
     child.unref?.();
