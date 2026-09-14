@@ -41,7 +41,7 @@ Parity gaps:
 
 | # | Gap | Materiality |
 |---|---|---|
-| G1 | No token/cost visibility (`usage` dropped) | Directly conflicts with Workflow's token-economy goal |
+| G1 | ~~No token/cost visibility~~ **MITIGATED 2026-09-14** — hub metering proxy (`createModelUsageProxy` + `meteredProviderSettings`) holds the key proxy-side, forces `usage.include`, records tokens/cost; gated probe: 2 requests / 8,790 tokens / $0.0140 with placeholder-only sandbox env | Remaining: surface metrics in the hub UI + budget enforcement |
 | G2 | No slash-command/mention parity (commands not emitted; `@`-mentions are CLI-side, not ACP) | Daily-driver ergonomics |
 | G3 | Input/editor UX (mid-turn queueing, attachments) must be built client-side | Build cost, not a protocol blocker (image prompt content exists) |
 | G4 | ~~Session resume fidelity~~ **RESOLVED 2026-09-14** — gated probe: full replay after agent restart (user/agent chunks + session info), keyword turn intact, continuation completes | None |
