@@ -41,6 +41,7 @@
     "contained-shell": "tsx src/cli/contained-shell.ts",
     "web": "tsx src/cli/web.ts",
     "pretest": "node scripts/build-cline-tui.mjs",
+    "setup": "node scripts/install.mjs",
     "test": "node --import tsx --test test/**/*.test.ts",
     "test:cline-runtime": "npm run build && node test/integration/cline-runtime.mjs",
     "test:cline-coding-session": "npm run build && node test/integration/cline-coding-session.mjs",

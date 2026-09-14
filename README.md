@@ -19,45 +19,39 @@ what is *not* built yet), `docs/HUB.md` for the hub design, and
 
 ## Install
 
-Requires Node 22+ and (for containment) Linux with bubblewrap.
+Requires Node 22+, pnpm (for mcp-toolbox), and (for containment) Linux with
+bubblewrap.
 
 ```sh
-npm install
-npm run build            # library + CLI bins
-npm run toolbox:install && npm run toolbox:build
-npm run tui:cline:build  # vendored, patched Cline
-npm i -g .
+npm run setup   # npm install -> build -> toolbox -> vendored cline -> npm i -g .
 ```
 
-Publishing (`npm publish`) makes `npm i -g workflow` an automatic install in
-the npm sense: bins link onto PATH and `postinstall` attempts the toolbox and
-Cline builds, warning and skipping on failure rather than breaking install.
+This installs the four bins (`workflow`, `workflow-hub`, `workflow-monitor`,
+`workflow-shell`) onto PATH and is safe to re-run.
 
 ## Commands
 
 | Command | What it is |
 |---|---|
 | `workflow-hub` | the authority daemon every surface needs (discovery + token) |
-| `workflow` | patched Cline TUI launcher; fails closed without the hub |
+| `workflow` | patched Cline TUI launcher; auto-spawns the hub when absent |
 | `workflow-monitor` | Ink monitoring TUI: task panel, live activity, log stream |
 | `workflow-shell` | interactive contained shell |
 
 ## Quickstart
 
-From a source checkout, start the authority in one terminal and the TUI in another:
-
 ```sh
-npm run hub
-npm run tui -- --cwd /path/to/project
+workflow --cwd /path/to/project   # self-starts the authority hub
+workflow-monitor                  # monitoring TUI over the live hub
+workflow-shell                    # contained shell
 ```
 
-For a global install, the equivalent commands are:
-
-```sh
-systemctl --user enable --now workflow-hub   # or: workflow-hub &
-workflow-monitor                             # monitoring TUI over a live session
-workflow --cwd /path/to/project              # patched Cline TUI via the hub
-```
+The hub auto-starts the first time a surface resolves it (spawn candidates:
+`workflow-hub` on PATH, else `<repo>/dist/cli/hub.js`) and stays detached for
+reuse. Set `WORKFLOW_AUTOHUB=0` to restore strict fail-fast resolution, or run
+the daemon manually with `workflow-hub` (source checkout: `npm run hub`). An
+optional systemd user unit lives at `packaging/workflow-hub.service` for
+fully-managed startup.
 
 In the monitor TUI: `/` (or `/workflow`) opens the Workflow options menu —
 digits 1-6 toggle **mode** (pedagogical gating), **speech** (caveman), **build**
