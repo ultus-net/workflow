@@ -71,6 +71,7 @@ test("Cline shell executor binds the authorized structured command to containmen
   assert.equal(application.transition(task.id, "IN_PROGRESS").kind, "accepted");
   let executed: ContainedProcessRequest | undefined;
   const containment: ProcessContainment = {
+    isolation: "enforced" as const,
     async execute(request) {
       executed = request;
       return {
@@ -115,6 +116,7 @@ test("Cline shell executor denies a working directory outside the authorized wor
   assert.equal(application.transition(task.id, "IN_PROGRESS").kind, "accepted");
   let executions = 0;
   const process = new WorkflowContainedProcess(application, {
+    isolation: "enforced" as const,
     async execute() {
       executions += 1;
       throw new Error("must not execute");

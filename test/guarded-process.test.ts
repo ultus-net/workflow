@@ -44,7 +44,7 @@ function application() {
 
 test("WorkflowContainedProcess consults the guard before executing", async () => {
   const guard = new FakeGuard({ decision: "deny", policy: "shell.destructive.pattern", reason: "blocked" });
-  const contained = new WorkflowContainedProcess(application(), { execute: async () => fakeResult() }, guard as unknown as WorkflowGuardProvider);
+  const contained = new WorkflowContainedProcess(application(), { isolation: "enforced" as const, execute: async () => fakeResult() }, guard as unknown as WorkflowGuardProvider);
   await assert.rejects(
     () => contained.execute(fullAction(), request),
     /guard denied.*shell\.destructive\.pattern/,
@@ -53,7 +53,7 @@ test("WorkflowContainedProcess consults the guard before executing", async () =>
 
 test("WorkflowContainedProcess proceeds on guard allow", async () => {
   const guard = new FakeGuard({ decision: "allow", policy: "shell.safe", reason: "ok" });
-  const contained = new WorkflowContainedProcess(application(), { execute: async () => fakeResult() }, guard as unknown as WorkflowGuardProvider);
+  const contained = new WorkflowContainedProcess(application(), { isolation: "enforced" as const, execute: async () => fakeResult() }, guard as unknown as WorkflowGuardProvider);
   const result = await contained.execute(fullAction(), request);
   assert.equal(result.exitCode, 0);
   assert.equal((guard.inputs.at(-1) as GuardCheckInput).command, "ls");
@@ -62,7 +62,7 @@ test("WorkflowContainedProcess proceeds on guard allow", async () => {
 test("WorkflowContainedProcess fails closed when the guard throws", async () => {
   const guard = new FakeGuard({ decision: "allow", policy: "x", reason: "" });
   guard.guardCheck = () => { throw new Error("guard unavailable"); };
-  const contained = new WorkflowContainedProcess(application(), { execute: async () => fakeResult() }, guard as unknown as WorkflowGuardProvider);
+  const contained = new WorkflowContainedProcess(application(), { isolation: "enforced" as const, execute: async () => fakeResult() }, guard as unknown as WorkflowGuardProvider);
   await assert.rejects(() => contained.execute(fullAction(), request), /guard unavailable/);
 });
 

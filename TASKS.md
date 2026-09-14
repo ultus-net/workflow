@@ -535,19 +535,94 @@ W030 is complete as an observed parity assessment. Built-in mutation/process cla
 
 W031's current matrix has no observed P2 daily-driver parity gap: real Cline coding, clean-to-dirty continuation, restart recovery, containment, policy denial, Git verification, editor/direct-patch mutation, image prompt input, and MCP participation are covered. OpenCode interoperability now has a separate authoritative `tool.execute.before` adapter/plugin and a host-neutral SDK session driver; SDK lifecycle events remain non-authoritative telemetry. A real OpenCode runtime E2E is not claimed by that contract coverage. Fresh full verification and independent review remain required before changing the default harness.
 
-## Phase 8: Universal Surfaces
+## Phase 8: Hub-Side ACP Spike
 
-### W032 - ACP universal session driver
+The ACP direction is evidence-first: prove a hub-side ACP client and per-agent interception/containment conformance before choosing the long-term operator surface. ACP is transport/interoperability, not authority. The patched Cline Ink terminal remains an operational fallback, not the presumed long-term base.
+
+### W032 - ACP v1 wire contracts and NDJSON framing
+
+**Objective:** Introduce a minimal, protocol-faithful ACP v1 wire boundary without changing `AcpHostAdapter`'s existing internal correlated contract.
+
+**Depends on:** W031
+
+**Acceptance criteria:**
+- [x] Type contracts cover the minimal v1 messages needed for the spike: `initialize`, `authenticate`, `session/new`, `session/prompt`, `session/cancel`, `session/update`, and `session/request_permission`.
+- [x] NDJSON stdio framing encodes one JSON-RPC message per line, handles multi-byte UTF-8, splits across arbitrary chunk boundaries, and rejects malformed lines fail-closed.
+- [x] Existing `AcpHostAdapter` behavior remains unchanged and is not presented as an ACP v1 wire adapter.
+
+**Verification:** focused unit tests for wire validation and framing plus existing adapter tests.
+
+### W033 - ACP permission normalization and fail-closed denial
+
+**Objective:** Normalize real ACP permission requests into the existing adapter/kernel path and encode denial using only valid ACP v1 outcomes.
+
+**Depends on:** W032
+
+**Acceptance criteria:**
+- [x] A wire permission request is correlated with Workflow session/task context before reaching `AcpHostAdapter`.
+- [x] A Workflow denial selects an agent-provided rejecting `optionId` when one exists.
+- [x] When no rejecting option exists, the result explicitly requires fail-closed turn/session handling; the implementation never fabricates an option and never uses ACP `cancelled` as an ordinary denial.
+- [x] Permission option `kind` is treated as a UI hint, not semantic proof.
+
+**Verification:** focused unit tests for allow, deny-with-reject-option, deny-without-reject-option, malformed request, and UI-hint-only metadata cases.
+
+### W034 - Hub-side ACP subprocess session spike
+
+**Objective:** Prove the hub can own ACP subprocess lifecycle and translate a bounded prompt/session flow through the wire layer without any TUI commitment.
+
+**Depends on:** W033
+
+**Acceptance criteria:**
+- [x] A controlled fake ACP agent subprocess performs `initialize` and `session/new` over NDJSON stdio.
+- [x] A prompt turn forwards `session/update` notifications as live projection events only.
+- [x] Cancellation and process failure produce explicit terminal states without corrupting Workflow authority.
+- [x] The spike is headless and does not bind the session stream to a terminal UI.
+
+**Verification:** fake-agent subprocess integration tests covering initialize, session creation, prompt/update, cancellation, malformed output, and process exit.
+
+### W035 - Real ACP agent conformance evidence
+
+**Objective:** Run the spike against `opencode acp` and `cline --acp` and record whether either integration can claim enforced interception.
+
+**Depends on:** W034
+
+**Acceptance criteria:**
+- [ ] Runtime evidence records each candidate agent's negotiated capabilities, permission coverage, rejecting-option behavior, fs/terminal delegation, auto-approve exposure, and direct filesystem/process bypass behavior under containment. (Cline: complete, 2026-09-14. OpenCode: capabilities/permission coverage/one edit probe recorded; fs/terminal delegation, auto-approve exposure, and contained bypass remain unrecorded because OpenCode is eliminated as an enforcement candidate — record them only if it is reconsidered.)
+- [x] `enforced` is reported only for an agent/launch mode whose relevant mutations are proven intercepted; otherwise the integration remains advisory or retains its SDK seam. (OpenCode default ACP is classified advisory; Cline's claim is scoped to its proven launch mode.)
+- [x] Cline patched-SDK versus stock-ACP behavior is compared on the same pinned agent line where available. (See `docs/ACP_RESEARCH.md` §11 "Patched-SDK versus stock-ACP on the pinned 3.0.61 line".)
+
+**Verification:** controlled runtime conformance output reviewed against `docs/HOST_ADAPTERS.md` enforcement semantics and full repository gates.
+
+Current 2026-09-14 status: W032–W034 are implemented and verified. OpenCode 1.18.30 completed `initialize`, `session/new`, a read-only prompt, and one bounded edit probe over ACP. The edit changed a disposable file and emitted tool status updates, but OpenCode sent no `session/request_permission` before mutation; default ACP mode is therefore advisory transport, not enforced interception. Cline 3.0.61 with `CLINE_API_KEY`/`CLINE_PROVIDER=openrouter` and `--auto-approve false` completed env-auth handshake, sent `session/request_permission` before reads, edits, and `run_commands`, supplied usable `reject_once` options, honored allow-mode file and shell mutations, and preserved files unchanged in deny mode. The resolver now recognizes the complete Cline approval-gated tool surface (read/edit/process/fetch, mirrored from `sdk-tool-policies.ts`): path tools map path subjects and fail closed without one, process tools validate command metadata and expose only `cwd` as a subject (command text never becomes a subject because kernel subjects are workspace-relative paths), and unknown dangerous-capability tools fail closed. Cline is the leading ACP enforcement candidate. Containment is now proven: Cline 3.0.61 never delegates execution to client `terminal/*`/`fs/*` capabilities (verified in `apps/cli/src/acp/acpAgent.ts`; the ACP spec makes delegation client-capability-gated and optional), so the agent process itself is launched under Bubblewrap via `launchContainedAcpAgent` + `LinuxBubblewrapContainment.spawn` (streaming stdio; `ProcessContainment.isolation` fails closed on policy-only backends; `/etc/resolv.conf` symlink target is ro-bound so host-network DNS works). The gated contained probe (`WORKFLOW_ACP_CLINE_CONTAINED=1`) shows a full contained session with permission interception intact (6 requests), the allowed workspace write applied, a random-secret host-home canary invisible despite read attempts and an active `find /` search, and a `/tmp` escape write never reaching the host; network remains `host` by design (model API egress). The patched-SDK versus stock-ACP comparison on the pinned 3.0.61 line is recorded in `docs/ACP_RESEARCH.md` §11: the patch leaves `apps/cli/src/acp/` untouched (its ACP mode equals stock), patched-SDK can contain per-command with isolated network and intercepts tools ACP never gates, while stock-ACP needs no patch and contains the entire agent filesystem. OpenCode containment evidence is intentionally unrecorded (eliminated candidate); W035 stays open only on that explicit gap.
+
+### W036 - ACP surface decision inputs
+
+**Objective:** Convert spike evidence into a clean Workflow terminal surface decision without prematurely committing to patched Cline.
+
+**Depends on:** W035
+
+**Acceptance criteria:**
+- [x] Research documents what the hub session stream can and cannot project reliably. (`docs/ACP_SURFACE.md` §1–2, grounded in Cline 3.0.61 `session-updates.ts`: projections incl. message/reasoning/tool/mode/config; explicit non-projections incl. usage, error, iteration, plan content, commands.)
+- [x] A clean Workflow terminal surface evaluation identifies daily-driver parity requirements and gaps. (`docs/ACP_SURFACE.md` §3, gaps G1–G6.)
+- [x] Patched Cline Ink remains explicitly classified as fallback/migration surface unless spike evidence shows the clean surface cannot yet satisfy a material requirement. (`docs/ACP_SURFACE.md` §4: fallback unless G1 token economy or G2 commands/mentions are judged material.)
+
+**Verification:** updated research/decision documentation plus independent five-axis review.
+
+Current 2026-09-14 status: **decision recorded — GO** (`docs/ACP_DECISION.md`). The operator judged G1 (token/cost visibility) deferrable and G2 (commands/mentions) satisfied by ACP `configOptions` model/settings switching. The clean Workflow surface over stock-ACP Cline with whole-agent Bubblewrap containment is the lead path; patched Cline Ink is the fallback/migration surface. **G4 resolved:** the gated resume probe proves `session/load` replays faithfully after a full agent restart and continuation works. **G1 mitigated:** the hub metering proxy (`src/integrations/model-usage-proxy.ts`, `meteredProviderSettings`) holds the provider key proxy-side, forces usage accounting, and recorded real turn metrics (2 requests / 8,668 tokens / $0.0132 on the post-P1-fix re-run; originally 8,790 tokens / $0.0140) with a placeholder-only sandbox env; remaining G1 work is UI surfacing and budget enforcement. **Post-decision phase in progress 2026-09-14:** session lifecycle is wired into hub `authorize` by `AcpSessionDriver` (`src/integrations/acp-session.ts` — per-request permission resolution through `createWorkflowAcpPermissionResolver` → `WorkflowApplication.authorize` with fail-closed title classification), the default spawn path is whole-agent containment via `AcpSessionDriver.contained` → `launchContainedAcpAgent`, and the clean surface UI composes the host-neutral `WorkflowCodingSession` over the ACP projection (`src/cli/acp-tui.tsx`, `npm run tui:acp`; `WORKFLOW_ACP_RESUME=<sessionId>` resumes). Remaining follow-ups tracked in the decision record (G5 error surfacing, G7 context/compaction, per-prompt task decomposition).
+
+## Phase 9: Universal Surfaces
+
+### W037 - ACP universal session driver
 
 **Objective:** Give the universal TUI a protocol-native path to any ACP-speaking agent (the established cross-editor agent protocol), so the driver registry's `--driver acp` generalizes beyond bespoke Cline/OpenCode drivers.
 
 **Depends on:** W027, W030, universal-TUI plan (docs/superpowers/plans/2026-09-14-universal-tui.md)
 
 **Acceptance criteria:**
-- [ ] An `AcpSessionDriver` implements `CodingSessionDriver` over a stdio JSON-RPC ACP client: `session/new`, `session/prompt`, `session/cancel`, and `session/update` notifications translate to the host-neutral `CodingSessionEvent` stream; kernel/application contracts unchanged.
-- [ ] ACP `session/request_permission` flows through `AcpHostAdapter` + `WorkflowApplication.authorize` (the hardened trust boundary), so Workflow is the permission authority at exactly the protocol seam designed for it.
-- [ ] ACP filesystem/terminal capability services are routed through `WorkflowContainedProcess`, so an ACP agent's shell runs inside containment by protocol construction rather than by host patch.
+- [x] An `AcpSessionDriver` implements `CodingSessionDriver` over a stdio JSON-RPC ACP client: `session/new`, `session/prompt`, `session/cancel`, and `session/update` notifications translate to the host-neutral `CodingSessionEvent` stream; kernel/application contracts unchanged. (`src/integrations/acp-session.ts`, `test/acp-session.test.ts`, 2026-09-14.)
+- [x] ACP `session/request_permission` flows through `AcpHostAdapter` + `WorkflowApplication.authorize` (the hardened trust boundary), so Workflow is the permission authority at exactly the protocol seam designed for it. (`AcpSessionDriver` wires per-request resolution through `createWorkflowAcpPermissionResolver`; recognized-title map is fail-closed.)
+- [x] ACP filesystem/terminal capability services are routed through `WorkflowContainedProcess`, so an ACP agent's shell runs inside containment by protocol construction rather than by host patch. (Not applicable to Cline 3.0.61: it never delegates `fs/*`/`terminal/*` capability services to the client — W035 evidence — so its shell is contained by whole-agent Bubblewrap launch instead, which is the equal-strength enforcement path for this client shape. Applies when a future ACP agent does delegate.)
 - [ ] The driver registry gains `acp` (`--driver acp`); unavailable agents fail closed with the exact spawn/connect error — no silent fallback to another driver.
-- [ ] Adapter conformance covers the ACP driver lifecycle (fake ACP server fixture), including denial, cancellation, and malformed-notification fail-closed paths.
+- [ ] Adapter conformance covers the ACP driver lifecycle (fake ACP server fixture), including denial, cancellation, and malformed-notification fail-closed paths. (Denial flow proven this slice; registry-level conformance fixture pending.)
 
 **Verification:** ACP conformance fixture tests plus one real ACP-speaking agent smoke session; existing gates unchanged.

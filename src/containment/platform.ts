@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { isAbsolute } from "node:path";
 
 import type { ContainedProcessRequest, ContainedProcessResult, ProcessContainment } from "./contracts.js";
@@ -15,6 +15,8 @@ import { LinuxBubblewrapContainment } from "./linux-bwrap.js";
  */
 
 export class PassthroughContainment implements ProcessContainment {
+  readonly isolation = "policy-only" as const;
+
   async execute(request: ContainedProcessRequest): Promise<ContainedProcessResult> {
     if (!isAbsolute(request.executable)) throw new TypeError("executable must be an absolute path");
     if (request.cwd !== undefined && !isAbsolute(request.cwd)) throw new TypeError("cwd must be an absolute path");
@@ -43,6 +45,22 @@ export class PassthroughContainment implements ProcessContainment {
           credentials: Object.keys(environment).length === 0 ? "cleared" : "explicit",
         });
       });
+    });
+  }
+
+  /**
+   * Streaming stdio launch with NO isolation (policy-only marker on the
+   * class). Callers that require an enforced boundary must refuse this
+   * backend via the `isolation` marker instead of spawning anyway.
+   */
+  spawn(request: ContainedProcessRequest): ChildProcessWithoutNullStreams {
+    if (!isAbsolute(request.executable)) throw new TypeError("executable must be an absolute path");
+    if (request.cwd !== undefined && !isAbsolute(request.cwd)) throw new TypeError("cwd must be an absolute path");
+    const environment = request.environment ?? {};
+    return spawn(request.executable, [...request.args], {
+      cwd: request.cwd,
+      env: Object.keys(environment).length === 0 ? process.env : environment,
+      stdio: ["pipe", "pipe", "pipe"],
     });
   }
 }
