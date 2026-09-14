@@ -60,12 +60,92 @@ test("ACP session driver projects a turn through the CodingSessionDriver contrac
   assert.deepEqual(driver.config(), {
     availableModes: ["plan", "act"],
     availableModels: ["kimi-k2", "moonshot-v1"],
-    configOptions: [{ id: "auto_approve", name: "Auto-approve", options: [{ id: "true" }, { id: "false" }] }],
+    configOptions: [{
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: "kimi-k2",
+      options: [{ value: "kimi-k2", name: "Kimi K2" }, { value: "moonshot-v1", name: "Moonshot v1" }],
+    }],
   });
   assert.ok(
     events.some((event) => event.type === "status" && event.status === AcpSessionDriver.configSummary(driver.config()!)),
     "the session config summary must surface as a status event",
   );
+});
+
+test("ACP session driver mutates config on the active agent session", async () => {
+  const { driver, child } = driverFor("done");
+  const session = new WorkflowCodingSession(driver);
+  try {
+    await session.submit("start session");
+    const config = await driver.setConfigOption("model", "moonshot-v1");
+    assert.equal((config.configOptions as { currentValue?: string }[])[0]?.currentValue, "moonshot-v1");
+    assert.deepEqual(driver.config(), config);
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+});
+
+test("ACP session driver accepts agent-originated complete config updates", async () => {
+  const { driver, child } = driverFor("config-update");
+  const session = new WorkflowCodingSession(driver);
+  const events: CodingSessionEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.submit("start session");
+    assert.equal((driver.config()?.configOptions as { currentValue?: string }[])[0]?.currentValue, "moonshot-v1");
+    assert.ok(events.some((event) => event.type === "status" && event.status === "session config: options(1)"));
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+});
+
+test("ACP session driver cancellation terminates the active turn", async () => {
+  const { driver, child } = driverFor("done");
+  const session = new WorkflowCodingSession(driver);
+  let observedActivity!: () => void;
+  const activity = new Promise<void>((resolve) => { observedActivity = resolve; });
+  session.subscribe((event) => {
+    if (event.type === "assistant") observedActivity();
+  });
+  try {
+    const submit = session.submit("long work");
+    await activity;
+    await session.cancel();
+    await submit;
+    assert.deepEqual(session.snapshot(), { state: "cancelled" });
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+});
+
+test("ACP session driver fails closed on malformed session notifications", async () => {
+  const { driver, child } = driverFor("invalid-update");
+  const session = new WorkflowCodingSession(driver);
+  try {
+    await session.submit("inspect repo");
+    assert.deepEqual(session.snapshot(), { state: "failed", reason: "invalid ACP session update" });
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+});
+
+test("ACP session driver fails closed on malformed config option notifications", async () => {
+  const { driver, child } = driverFor("invalid-config-update");
+  const session = new WorkflowCodingSession(driver);
+  try {
+    await session.submit("inspect config");
+    assert.deepEqual(session.snapshot(), { state: "failed", reason: "invalid ACP config option update" });
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
 });
 
 test("ACP permission requests are wired into the Workflow authorize path", async () => {
@@ -128,6 +208,30 @@ test("ACP session driver resumes via session/load instead of creating a new sess
     "resume must project the replayed history before the turn runs",
   );
   assert.equal(session.snapshot().state, "completed");
+});
+
+test("ACP session driver retains optional config returned while loading a session", async () => {
+  const { driver, child } = driverFor("load-config", () => ({ kind: "allow" }), "fake-session-1");
+  const session = new WorkflowCodingSession(driver);
+  try {
+    await session.submit("continue");
+    assert.equal((driver.config()?.configOptions as { currentValue?: string }[])[0]?.currentValue, "kimi-k2");
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+});
+
+test("ACP session driver refuses session/load when the agent does not advertise it", async () => {
+  const { driver, child } = driverFor("no-load", () => ({ kind: "allow" }), "fake-session-1");
+  const session = new WorkflowCodingSession(driver);
+  try {
+    await session.submit("continue");
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+  assert.deepEqual(session.snapshot(), { state: "failed", reason: "ACP agent does not advertise session/load support" });
 });
 
 test("unknown tool titles fail closed to the mutation capability", async () => {

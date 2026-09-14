@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { AcpSubprocessClient, type AcpSessionUpdate } from "../src/adapters/acp-subprocess.js";
 
-function fakeAgent(mode: "happy" | "malformed" | "exit" = "happy") {
+function fakeAgent(mode: "happy" | "malformed" | "exit" | "invalid-update" | "invalid-jsonrpc" | "no-agent-info" | "require-boolean-capability" = "happy") {
   return spawn(process.execPath, ["test/fixtures/fake-acp-agent.mjs", mode], {
     cwd: process.cwd(),
     stdio: ["pipe", "pipe", "pipe"],
@@ -18,7 +18,7 @@ test("hub-side ACP subprocess spike initializes, creates a session, prompts, and
 
   const initialized = await client.initialize();
   assert.equal(initialized.protocolVersion, 1);
-  assert.equal(initialized.agentInfo.name, "fake-acp-agent");
+  assert.equal(initialized.agentInfo?.name, "fake-acp-agent");
 
   const session = await client.newSession({ cwd: "/repo" });
   assert.equal(session.sessionId, "fake-session-1");
@@ -45,6 +45,21 @@ test("hub-side ACP subprocess spike loads a session and observes the replayed hi
   await client.close();
 });
 
+test("hub-side ACP subprocess spike updates a session config option and returns complete config state", async () => {
+  const client = new AcpSubprocessClient({ child: fakeAgent() });
+  await client.initialize();
+  const session = await client.newSession({ cwd: "/repo" });
+
+  const config = await client.setConfigOption({
+    sessionId: session.sessionId,
+    configId: "model",
+    value: "moonshot-v1",
+  });
+
+  assert.equal((config.configOptions as { currentValue?: string }[])[0]?.currentValue, "moonshot-v1");
+  await client.close();
+});
+
 test("hub-side ACP subprocess spike cancels an active prompt explicitly", async () => {
   const client = new AcpSubprocessClient({ child: fakeAgent() });
   await client.initialize();
@@ -63,6 +78,40 @@ test("hub-side ACP subprocess spike rejects malformed agent output fail-closed",
   const client = new AcpSubprocessClient({ child: fakeAgent("malformed") });
 
   await assert.rejects(() => client.initialize(), /invalid ACP NDJSON/);
+  await assert.rejects(() => client.initialize(), /ACP client is closed/);
+  await client.close();
+});
+
+test("hub-side ACP subprocess spike accepts initialize without optional agentInfo", async () => {
+  const client = new AcpSubprocessClient({ child: fakeAgent("no-agent-info") });
+  const initialized = await client.initialize();
+  assert.equal(initialized.agentInfo, undefined);
+  await client.close();
+});
+
+test("hub-side ACP subprocess spike advertises boolean config option support", async () => {
+  const client = new AcpSubprocessClient({ child: fakeAgent("require-boolean-capability") });
+  const initialized = await client.initialize();
+  assert.equal(initialized.protocolVersion, 1);
+  await client.close();
+});
+
+test("hub-side ACP subprocess spike closes on an invalid JSON-RPC envelope", async () => {
+  const client = new AcpSubprocessClient({ child: fakeAgent("invalid-jsonrpc") });
+  await assert.rejects(() => client.initialize(), /invalid ACP JSON-RPC version/);
+  await assert.rejects(() => client.initialize(), /ACP client is closed/);
+  await client.close();
+});
+
+test("hub-side ACP subprocess spike closes on a structurally invalid session update", async () => {
+  const client = new AcpSubprocessClient({ child: fakeAgent("invalid-update") });
+  await client.initialize();
+  const session = await client.newSession({ cwd: "/repo" });
+  await assert.rejects(
+    client.prompt({ sessionId: session.sessionId, prompt: [{ type: "text", text: "inspect repo" }] }),
+    /invalid ACP session update/,
+  );
+  await assert.rejects(() => client.initialize(), /ACP client is closed/);
   await client.close();
 });
 

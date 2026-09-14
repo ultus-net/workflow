@@ -16,7 +16,7 @@ import { AcpSessionDriver } from "../integrations/acp-session.js";
 import { METERED_PLACEHOLDER_KEY, createModelUsageProxy, meteredProviderSettings } from "../integrations/model-usage-proxy.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
-import { WorkflowTui } from "../ui/tui.js";
+import { WorkflowTui, type SessionConfigOption } from "../ui/tui.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 
 /**
@@ -28,9 +28,9 @@ import { resolveTuiWorkspace } from "./tui-args.js";
  * printed at exit. Run with:
  *   npm run tui:acp [--workspace <path>]
  *
- * Model selection: WORKFLOW_ACP_MODELS="model-a,model-b" adds a `/` menu
- * Model entry; cycling rebuilds the contained driver at that model. Set
- * WORKFLOW_ACP_RESUME=<sessionId> to resume a persisted session.
+ * Agent-advertised ACP config options appear in the `/` menu after session
+ * creation and mutate that active session. Set WORKFLOW_ACP_RESUME=<sessionId>
+ * to resume a persisted session.
  */
 const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
 
@@ -77,21 +77,16 @@ const providerSettings = meteredProviderSettings(proxy.url, provider);
 const settingsPath = join(scratchHome, "providers.json");
 writeFileSync(settingsPath, JSON.stringify(providerSettings), { encoding: "utf8", mode: 0o600 });
 
-// WORKFLOW_ACP_MODELS="model-a,model-b" adds a `/` menu Model entry; cycling
-// rebuilds the driver at that model. Empty → no menu item, behavior unchanged.
-const modelChoices = (process.env.WORKFLOW_ACP_MODELS ?? "").split(",").map((c) => c.trim()).filter((c) => c.length > 0);
-let holder: { driver: AcpSessionDriver; session: WorkflowCodingSession } | undefined;
-const buildLaunchArgs = (selection?: string): string[] => {
-  const model = selection ?? process.env.CLINE_MODEL;
+const buildLaunchArgs = (): string[] => {
+  const model = process.env.CLINE_MODEL;
   return ["--acp", "--auto-approve", "false", ...(model ? ["--model", model] : [])];
 };
-const makeSession = (model?: string): WorkflowCodingSession => {
-  const driver = AcpSessionDriver.contained({
+const driver = AcpSessionDriver.contained({
     containment: new LinuxBubblewrapContainment(),
     launch: {
       executable: process.execPath,
       script: clineBin,
-      args: buildLaunchArgs(model),
+      args: buildLaunchArgs(),
       workspace,
       home: scratchHome,
       environment: {
@@ -105,22 +100,18 @@ const makeSession = (model?: string): WorkflowCodingSession => {
     workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
     taskId: sessionTask.id,
     ...(process.env.WORKFLOW_ACP_RESUME ? { resumeFrom: process.env.WORKFLOW_ACP_RESUME } : {}),
-  });
-  const session = new WorkflowCodingSession(driver);
-  const previous = holder;
-  holder = { driver, session };
-  // Dispose the prior agent only after the replacement driver starts cleanly.
-  if (previous !== undefined) void previous.driver.dispose().catch(() => undefined);
-  return session;
-};
-const session = makeSession();
+});
+const session = new WorkflowCodingSession(driver);
+const holder = { driver, session };
 
 const { waitUntilExit } = render(
   React.createElement(WorkflowTui, {
     application,
     session,
-    sessionFactory: makeSession,
-    ...(modelChoices.length > 0 ? { modelChoices } : {}),
+    sessionConfigOptions: () => (driver.config()?.configOptions ?? []) as readonly SessionConfigOption[],
+    onSetSessionConfig: async (id: string, value: string | boolean) => {
+      await driver.setConfigOption(id, value);
+    },
   }),
 );
 let renderError: unknown;

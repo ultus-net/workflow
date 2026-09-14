@@ -560,7 +560,7 @@ test("ordinary bash cannot certify a named completed team task or start the inte
       headers: { authorization: `Bearer ${bridge.token}`, "content-type": "application/json" },
       body: JSON.stringify({ workspace: process.cwd(), cwd: process.cwd(), command: "true", teamTaskId: "task_bound" }),
     });
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 200, await response.text());
     const workspaceApp = runs.resolve(process.cwd(), undefined, { activateInteractiveTask: false });
     const boundId = taskId(`cline-team:${encodeURIComponent(workspaceApp.workspaceRoot!)}:task_bound`);
     assert.equal(workspaceApp.snapshot().evidence.some((entry) => entry.subject === boundId && entry.authority === "environment"), false);
@@ -616,7 +616,7 @@ test("contained bash cannot self-certify a team task even with a matching lifecy
       headers: { authorization: `Bearer ${bridge.token}`, "content-type": "application/json" },
       body: JSON.stringify({ workspace, cwd: workspace, command: "true", teamTaskId: "task_command" }),
     });
-    assert.equal(command.status, 200);
+    assert.equal(command.status, 200, await command.text());
 
     const completed = await teamTask(
       { action: "complete", taskId: "task_command" },

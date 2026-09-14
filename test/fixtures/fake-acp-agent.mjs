@@ -4,6 +4,19 @@ const mode = process.argv[2] ?? "happy";
 let cancelled = false;
 let activePromptId;
 let permissionRequestId = 9001;
+let configOptions = [
+  {
+    id: "model",
+    name: "Model",
+    category: "model",
+    type: "select",
+    currentValue: "kimi-k2",
+    options: [
+      { value: "kimi-k2", name: "Kimi K2" },
+      { value: "moonshot-v1", name: "Moonshot v1" },
+    ],
+  },
+];
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -28,13 +41,14 @@ function handleMessage(message) {
     return;
   }
   if (message.method === "initialize") {
+    const supportsBooleanConfig = message.params?.clientCapabilities?.session?.configOptions?.boolean !== undefined;
     send({
-      jsonrpc: "2.0",
+      jsonrpc: mode === "invalid-jsonrpc" ? "1.0" : "2.0",
       id: message.id,
       result: {
-        protocolVersion: 1,
-        agentCapabilities: {},
-        agentInfo: { name: "fake-acp-agent", version: "0.0.0" },
+        protocolVersion: mode === "require-boolean-capability" && !supportsBooleanConfig ? 0 : 1,
+        agentCapabilities: { loadSession: mode !== "no-load" },
+        ...(mode === "no-agent-info" ? {} : { agentInfo: { name: "fake-acp-agent", version: "0.0.0" } }),
       },
     });
   } else if (message.method === "session/new") {
@@ -47,9 +61,14 @@ function handleMessage(message) {
         sessionId: "fake-session-1",
         availableModes: ["plan", "act"],
         availableModels: ["kimi-k2", "moonshot-v1"],
-        configOptions: [{ id: "auto_approve", name: "Auto-approve", options: [{ id: "true" }, { id: "false" }] }],
+        configOptions,
       },
     });
+  } else if (message.method === "session/set_config_option") {
+    configOptions = configOptions.map((option) => option.id === message.params.configId
+      ? { ...option, currentValue: message.params.value }
+      : option);
+    send({ jsonrpc: "2.0", id: message.id, result: { configOptions } });
   } else if (message.method === "session/load") {
     // Replay history before resolving, mirroring the spec's load contract.
     send({
@@ -68,10 +87,33 @@ function handleMessage(message) {
         update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "earlier agent turn" } },
       },
     });
-    send({ jsonrpc: "2.0", id: message.id, result: {} });
+    send({ jsonrpc: "2.0", id: message.id, result: mode === "load-config" ? { configOptions } : null });
   } else if (message.method === "session/prompt") {
     cancelled = false;
     activePromptId = message.id;
+    if (mode === "config-update") {
+      configOptions = configOptions.map((option) => option.id === "model" ? { ...option, currentValue: "moonshot-v1" } : option);
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: { sessionUpdate: "config_option_update", configOptions },
+        },
+      });
+    }
+    if (mode === "invalid-update") {
+      send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: message.params.sessionId, update: null } });
+      return;
+    }
+    if (mode === "invalid-config-update") {
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: message.params.sessionId, update: { sessionUpdate: "config_option_update" } },
+      });
+      return;
+    }
     if (mode === "permission" || mode === "permission-no-reject" || mode === "permission-string-id") {
       const options = mode === "permission-no-reject"
         ? [{ optionId: "allow-1", name: "Allow once", kind: "allow_once" }]

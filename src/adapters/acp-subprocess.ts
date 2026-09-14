@@ -7,7 +7,7 @@ import type { AcpPermissionRequestParams } from "./acp-permission.js";
 export interface AcpInitializeResult {
   readonly protocolVersion: number;
   readonly agentCapabilities: Record<string, unknown>;
-  readonly agentInfo: { readonly name: string; readonly version?: string };
+  readonly agentInfo?: { readonly name: string; readonly version?: string };
 }
 
 export interface AcpSessionUpdate {
@@ -26,6 +26,8 @@ export interface AcpNewSessionResult {
   readonly sessionId: string;
   readonly config: AcpSessionConfig;
 }
+
+export type AcpConfigOptionValue = string | boolean;
 
 interface PendingRequest {
   resolve(value: unknown): void;
@@ -65,17 +67,22 @@ export class AcpSubprocessClient {
   async initialize(): Promise<AcpInitializeResult> {
     const result = await this.#request("initialize", {
       protocolVersion: 1,
-      clientCapabilities: {},
+      clientCapabilities: { session: { configOptions: { boolean: {} } } },
       clientInfo: { name: "workflow-hub-acp-spike", version: "0.0.0" },
     });
     const record = requireRecord(result, "invalid ACP initialize result");
-    const agentInfo = requireRecord(record.agentInfo, "invalid ACP agent info");
-    if (record.protocolVersion !== 1 || typeof agentInfo.name !== "string") {
+    if (record.protocolVersion !== 1) {
       throw new TypeError("invalid ACP initialize result");
     }
-    return {
+    const initialized: AcpInitializeResult = {
       protocolVersion: 1,
       agentCapabilities: isRecord(record.agentCapabilities) ? record.agentCapabilities : {},
+    };
+    if (record.agentInfo === undefined) return initialized;
+    const agentInfo = requireRecord(record.agentInfo, "invalid ACP agent info");
+    if (typeof agentInfo.name !== "string") throw new TypeError("invalid ACP agent info");
+    return {
+      ...initialized,
       agentInfo: typeof agentInfo.version === "string" ? { name: agentInfo.name, version: agentInfo.version } : { name: agentInfo.name },
     };
   }
@@ -105,8 +112,25 @@ export class AcpSubprocessClient {
    * conversation as session/update notifications before resolving, so
    * listeners registered via onSessionUpdate observe the replayed history.
    */
-  async loadSession(options: { readonly sessionId: string; readonly cwd: string }): Promise<void> {
-    await this.#request("session/load", { sessionId: options.sessionId, cwd: options.cwd, mcpServers: [] });
+  async loadSession(options: { readonly sessionId: string; readonly cwd: string }): Promise<AcpSessionConfig> {
+    const result = await this.#request("session/load", { sessionId: options.sessionId, cwd: options.cwd, mcpServers: [] });
+    if (result === null || result === undefined) return {};
+    const record = requireRecord(result, "invalid ACP session/load result");
+    return {
+      ...(record.availableModes !== undefined ? { availableModes: record.availableModes } : {}),
+      ...(record.availableModels !== undefined ? { availableModels: record.availableModels } : {}),
+      ...(record.configOptions !== undefined ? { configOptions: record.configOptions } : {}),
+    };
+  }
+
+  async setConfigOption(options: {
+    readonly sessionId: string;
+    readonly configId: string;
+    readonly value: AcpConfigOptionValue;
+  }): Promise<AcpSessionConfig> {
+    const result = requireRecord(await this.#request("session/set_config_option", options), "invalid ACP config result");
+    if (!Array.isArray(result.configOptions)) throw new TypeError("invalid ACP config result");
+    return { configOptions: result.configOptions };
   }
 
   prompt(options: {
@@ -136,6 +160,7 @@ export class AcpSubprocessClient {
   }
 
   #request(method: string, params: unknown): Promise<unknown> {
+    if (this.#closed) throw new Error("ACP client is closed");
     const id = this.#nextId++;
     const promise = new Promise<unknown>((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });
@@ -158,32 +183,41 @@ export class AcpSubprocessClient {
       return;
     }
     for (const message of messages) {
-      if (message.method === "session/update") {
-        const params = requireRecord(message.params, "invalid ACP session update");
-        const update = requireRecord(params.update, "invalid ACP session update");
-        if (typeof params.sessionId !== "string" || typeof update.sessionUpdate !== "string") {
-          this.#failAll(new TypeError("invalid ACP session update"));
+      try {
+        validateInboundEnvelope(message);
+        if (message.method === "session/update") {
+          const params = requireRecord(message.params, "invalid ACP session update");
+          const update = requireRecord(params.update, "invalid ACP session update");
+          if (typeof params.sessionId !== "string" || typeof update.sessionUpdate !== "string") {
+            throw new TypeError("invalid ACP session update");
+          }
+          if (update.sessionUpdate === "config_option_update" && !Array.isArray(update.configOptions)) {
+            throw new TypeError("invalid ACP config option update");
+          }
+          const projected = { sessionId: params.sessionId, update } as AcpSessionUpdate;
+          this.#updates.push(projected);
+          for (const listener of this.#updateListeners) listener(projected);
           continue;
         }
-        const projected = { sessionId: params.sessionId, update } as AcpSessionUpdate;
-        this.#updates.push(projected);
-        for (const listener of this.#updateListeners) listener(projected);
-        continue;
-      }
-      const id = message.id;
-      if (message.method === "session/request_permission" && (typeof id === "number" || typeof id === "string")) {
-        void this.#answerPermission(id, message);
-        continue;
-      }
-      if (typeof message.id === "number") {
-        const pending = this.#pending.get(message.id);
-        if (!pending) continue;
-        this.#pending.delete(message.id);
-        if ("error" in message) {
-          pending.reject(new Error(`ACP request failed: ${JSON.stringify(message.error)}`));
-        } else {
-          pending.resolve(message.result);
+        const id = message.id;
+        if (message.method === "session/request_permission") {
+          if (typeof id !== "number" && typeof id !== "string") throw new TypeError("invalid ACP permission request id");
+          void this.#answerPermission(id, message);
+          continue;
         }
+        if (typeof message.id === "number") {
+          const pending = this.#pending.get(message.id);
+          if (!pending) continue;
+          this.#pending.delete(message.id);
+          if ("error" in message) {
+            pending.reject(new Error(`ACP request failed: ${JSON.stringify(message.error)}`));
+          } else {
+            pending.resolve(message.result);
+          }
+        }
+      } catch (error) {
+        this.#failAll(error instanceof Error ? error : new Error(String(error)));
+        return;
       }
     }
   }
@@ -209,6 +243,10 @@ export class AcpSubprocessClient {
   #failAll(error: Error): void {
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
+    if (this.#closed) return;
+    this.#closed = true;
+    this.#child.stdin.destroy();
+    this.#child.kill();
   }
 }
 
@@ -226,6 +264,23 @@ function selectPermissionOption(options: unknown[], kind: "allow" | "deny"): str
 function requireRecord(value: unknown, message: string): Record<string, unknown> {
   if (!isRecord(value)) throw new TypeError(message);
   return value;
+}
+
+function validateInboundEnvelope(message: Record<string, unknown>): void {
+  if (message.jsonrpc !== "2.0") throw new TypeError("invalid ACP JSON-RPC version");
+  if ("method" in message) {
+    if (typeof message.method !== "string") throw new TypeError("invalid ACP method");
+    if (message.method !== "session/update" && message.method !== "session/request_permission") {
+      throw new TypeError(`unsupported ACP method: ${message.method}`);
+    }
+    if (message.method === "session/update" && "id" in message) throw new TypeError("invalid ACP notification");
+    if (message.method === "session/request_permission" && typeof message.id !== "number" && typeof message.id !== "string") {
+      throw new TypeError("invalid ACP permission request id");
+    }
+    return;
+  }
+  if (typeof message.id !== "number") throw new TypeError("invalid ACP response id");
+  if (("result" in message) === ("error" in message)) throw new TypeError("invalid ACP response");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

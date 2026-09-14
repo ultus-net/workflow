@@ -12,6 +12,7 @@ import {
 } from "../adapters/acp-contained-agent.js";
 import {
   AcpSubprocessClient,
+  type AcpConfigOptionValue,
   type AcpPermissionDecision,
   type AcpSessionConfig,
   type AcpSessionUpdate,
@@ -36,6 +37,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #taskId: TaskId;
   #resumeFrom: string | undefined;
   #initialized = false;
+  #canLoadSession = false;
   #agentSessionId?: string;
   #sessionConfig?: AcpSessionConfig;
   #toolTitles = new Map<string, string>();
@@ -67,6 +69,9 @@ export class AcpSessionDriver implements CodingSessionDriver {
     // Projection is registered once: replays from session/load and any
     // notification before the first prompt still reach the surface.
     this.#client.onSessionUpdate((update) => {
+      if (update.update.sessionUpdate === "config_option_update" && Array.isArray(update.update.configOptions)) {
+        this.#sessionConfig = { ...this.#sessionConfig, configOptions: update.update.configOptions };
+      }
       const event = this.#project(update, this.#assistant);
       if (event !== undefined) this.#emit(event);
     });
@@ -98,12 +103,15 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#emit = emit;
     this.#toolTitles.clear();
     if (!this.#initialized) {
-      await this.#client.initialize();
+      const initialized = await this.#client.initialize();
+      this.#canLoadSession = initialized.agentCapabilities.loadSession === true;
       this.#initialized = true;
     }
     if (this.#agentSessionId === undefined) {
       if (this.#resumeFrom !== undefined) {
-        await this.#client.loadSession({ sessionId: this.#resumeFrom, cwd: this.#workspace });
+        if (!this.#canLoadSession) throw new Error("ACP agent does not advertise session/load support");
+        const loadedConfig = await this.#client.loadSession({ sessionId: this.#resumeFrom, cwd: this.#workspace });
+        if (Object.keys(loadedConfig).length > 0) this.#sessionConfig = { ...this.#sessionConfig, ...loadedConfig };
         this.#agentSessionId = this.#resumeFrom;
       } else {
         const session = await this.#client.newSession({ cwd: this.#workspace });
@@ -150,6 +158,14 @@ export class AcpSessionDriver implements CodingSessionDriver {
     return this.#sessionConfig;
   }
 
+  /** Mutate configuration on the existing ACP session and retain the agent's complete returned state. */
+  async setConfigOption(configId: string, value: AcpConfigOptionValue): Promise<AcpSessionConfig> {
+    if (this.#agentSessionId === undefined) throw new Error("ACP session has not been created");
+    const updated = await this.#client.setConfigOption({ sessionId: this.#agentSessionId, configId, value });
+    this.#sessionConfig = { ...this.#sessionConfig, ...updated };
+    return this.#sessionConfig;
+  }
+
   /** Readable one-line summary of a captured session/new config. */
   static configSummary(config: AcpSessionConfig): string {
     const parts: string[] = [];
@@ -161,6 +177,9 @@ export class AcpSessionDriver implements CodingSessionDriver {
 
   #project(update: AcpSessionUpdate, assistant: string[]): CodingSessionEvent | undefined {
     const kind = update.update.sessionUpdate;
+    if (kind === "config_option_update" && Array.isArray(update.update.configOptions)) {
+      return { type: "status", status: AcpSessionDriver.configSummary({ configOptions: update.update.configOptions }) };
+    }
     if (kind === "agent_message_chunk") {
       const content = update.update.content as { type?: string; text?: string; data?: string } | undefined;
       const text = typeof content?.text === "string" ? content.text : content?.data ?? "";

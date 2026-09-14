@@ -48,11 +48,19 @@ export interface WorkflowSnapshotSource {
   snapshot(): WorkflowSnapshot;
 }
 
+export interface SessionConfigOption {
+  readonly id: string;
+  readonly name: string;
+  readonly type: "select" | "boolean";
+  readonly currentValue: string | boolean;
+  readonly options?: readonly { readonly value: string; readonly name: string }[];
+}
+
 export function WorkflowTui({
   application,
   session,
-  sessionFactory,
-  modelChoices,
+  sessionConfigOptions,
+  onSetSessionConfig,
   profile,
   profilePath,
   onInspectSymbol,
@@ -64,8 +72,8 @@ export function WorkflowTui({
 }: {
   readonly application: WorkflowSnapshotSource;
   readonly session?: WorkflowCodingSession;
-  readonly sessionFactory?: (selection?: string) => WorkflowCodingSession;
-  readonly modelChoices?: readonly string[];
+  readonly sessionConfigOptions?: () => readonly SessionConfigOption[];
+  readonly onSetSessionConfig?: (id: string, value: string | boolean) => Promise<void> | void;
   readonly profile?: LearnerProfile;
   readonly profilePath?: string;
   readonly onInspectSymbol?: (symbol: string) => void;
@@ -93,12 +101,8 @@ export function WorkflowTui({
     });
   };
   const [sessionState, setSessionState] = useState(() => session?.snapshot());
-  // Optional agent model cycle: sessionFactory rebuilds the session for the
-  // chosen model (the factory disposes the prior driver); CLI surfaces that
-  // pass neither prop see unchanged behavior.
-  const [modelIndex, setModelIndex] = useState(0);
-  const [sessionOverride, setSessionOverride] = useState<WorkflowCodingSession | undefined>(undefined);
-  const activeSession = sessionOverride ?? session;
+  const [, setConfigRevision] = useState(0);
+  const activeSession = session;
   const [transcript, setTranscript] = useState<readonly TranscriptEntry[]>([]);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [showWorkflow, setShowWorkflow] = useState(false);
@@ -121,8 +125,6 @@ export function WorkflowTui({
     // Mount-only: subsequent changes are notified from the `m` handler below.
   }, []);
 
-  // The subscription must re-subscribe on model-session overrides, not just
-  // prop changes; otherwise the rebuilt session's events would be dropped.
   useEffect(() => {
     if (activeSession !== undefined) return;
     const timer = setInterval(() => setSnapshot(application.snapshot()), 1_000);
@@ -178,11 +180,16 @@ export function WorkflowTui({
   };
   const openInspect = (): void => setShowHint(true);
   const toggleWorkflow = (): void => setShowWorkflow((value) => !value);
-  const cycleModel = (): void => {
-    if (sessionFactory === undefined || modelChoices === undefined || modelChoices.length === 0) return;
-    const next = (modelIndex + 1) % modelChoices.length;
-    setModelIndex(next);
-    setSessionOverride(sessionFactory(modelChoices[next]));
+  const agentConfigOptions = (sessionConfigOptions?.() ?? []).filter(isInteractiveConfigOption);
+  const cycleSessionConfig = (option: SessionConfigOption): void => {
+    if (onSetSessionConfig === undefined) return;
+    const next = nextConfigValue(option);
+    if (next === undefined) return;
+    void Promise.resolve(onSetSessionConfig(option.id, next))
+      .then(() => setConfigRevision((value) => value + 1))
+      .catch((error: unknown) => {
+        setTranscript((current) => [...current, { label: "[failed]", text: error instanceof Error ? error.message : String(error) }]);
+      });
   };
 
   const menuItems = [
@@ -192,9 +199,10 @@ export function WorkflowTui({
     { label: "Learner profile", run: toggleProfile },
     { label: "Inspect symbol", run: openInspect },
     { label: "Workflow details", run: toggleWorkflow },
-    ...(modelChoices !== undefined && modelChoices.length > 0
-      ? [{ label: `Model: ${modelChoices[modelIndex]}`, run: cycleModel }]
-      : []),
+    ...agentConfigOptions.map((option) => ({
+      label: `${option.name}: ${configValueLabel(option)}`,
+      run: () => cycleSessionConfig(option),
+    })),
   ] as const;
 
   useInput((input, key) => {
@@ -545,6 +553,31 @@ function summarizeTasks(snapshot: WorkflowSnapshot): string {
   const counts = new Map<TaskState, number>();
   for (const task of snapshot.tasks) counts.set(task.state, (counts.get(task.state) ?? 0) + 1);
   return [...counts.entries()].map(([state, count]) => `${count} ${state.toLowerCase()}`).join(" | ");
+}
+
+function isInteractiveConfigOption(value: unknown): value is SessionConfigOption {
+  if (typeof value !== "object" || value === null) return false;
+  const option = value as Partial<SessionConfigOption>;
+  if (typeof option.id !== "string" || typeof option.name !== "string") return false;
+  if (option.type === "boolean") return typeof option.currentValue === "boolean";
+  return option.type === "select"
+    && typeof option.currentValue === "string"
+    && Array.isArray(option.options)
+    && option.options.every((entry) => typeof entry === "object" && entry !== null
+      && typeof entry.value === "string" && typeof entry.name === "string");
+}
+
+function nextConfigValue(option: SessionConfigOption): string | boolean | undefined {
+  if (option.type === "boolean") return !option.currentValue;
+  const values = option.options ?? [];
+  if (values.length === 0) return undefined;
+  const current = values.findIndex((entry) => entry.value === option.currentValue);
+  return values[(current + 1) % values.length]?.value;
+}
+
+function configValueLabel(option: SessionConfigOption): string {
+  if (option.type === "boolean") return option.currentValue ? "On" : "Off";
+  return option.options?.find((entry) => entry.value === option.currentValue)?.name ?? String(option.currentValue);
 }
 
 function formatSessionEvent(event: CodingSessionEvent): TranscriptEntry {

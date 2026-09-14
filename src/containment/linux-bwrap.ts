@@ -1,12 +1,42 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import type { ContainedProcessRequest, ContainedProcessResult, ProcessContainment } from "./contracts.js";
 
 function requireAbsolutePath(value: string, label: string): void {
   if (!isAbsolute(value)) throw new TypeError(`${label} must be an absolute path`);
+}
+
+function externalHardlinks(path: string): string[] {
+  const inodes = new Map<string, { nlink: number; paths: string[] }>();
+  const visit = (candidate: string): void => {
+    const stat = lstatSync(candidate);
+    if (stat.isSymbolicLink()) return;
+    if (stat.isFile()) {
+      if (stat.nlink <= 1) return;
+      const key = `${stat.dev}:${stat.ino}`;
+      const seen = inodes.get(key);
+      if (seen) seen.paths.push(candidate);
+      else inodes.set(key, { nlink: stat.nlink, paths: [candidate] });
+      return;
+    }
+    if (!stat.isDirectory()) return;
+    for (const entry of readdirSync(candidate)) visit(resolve(candidate, entry));
+  };
+  visit(path);
+  const overlays = new Set<string>();
+  for (const inode of inodes.values()) {
+    if (inode.paths.length >= inode.nlink) continue;
+    for (const alias of inode.paths) {
+      const segments = relative(path, alias).split("/");
+      // One overlay per affected top-level subtree keeps argv bounded for
+      // package managers that hardlink thousands of files to an outer cache.
+      overlays.add(segments.length > 1 ? resolve(path, segments[0]!) : alias);
+    }
+  }
+  return [...overlays];
 }
 
 export class LinuxBubblewrapContainment implements ProcessContainment {
@@ -62,7 +92,14 @@ export class LinuxBubblewrapContainment implements ProcessContainment {
       if (name !== "PATH") args.push("--setenv", name, value);
     }
     for (const path of request.readablePaths ?? []) args.push("--ro-bind", path, path);
-    for (const path of request.writablePaths ?? []) args.push("--bind", path, path);
+    const hardlinkOverlays = new Set<string>();
+    for (const path of request.writablePaths ?? []) {
+      args.push("--bind", path, path);
+      for (const alias of externalHardlinks(path)) hardlinkOverlays.add(alias);
+    }
+    // Apply protections last so an overlapping writable grant cannot remount
+    // an externally linked inode writable after its read-only overlay.
+    for (const alias of hardlinkOverlays) args.push("--ro-bind", alias, alias);
     args.push("--", request.executable, ...request.args);
     return { args, network, environment };
   }
@@ -84,6 +121,7 @@ export class LinuxBubblewrapContainment implements ProcessContainment {
       "--symlink", "usr/lib64", "/lib64",
       "--proc", "/proc",
       "--dev", "/dev",
+      "--unshare-pid",
       "--chdir", cwd,
       "--clearenv",
       "--die-with-parent",
