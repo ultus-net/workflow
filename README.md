@@ -35,7 +35,7 @@ This installs the four bins (`workflow`, `workflow-hub`, `workflow-monitor`,
 |---|---|
 | `workflow-hub` | the authority daemon every surface needs (discovery + token) |
 | `workflow` | patched Cline TUI launcher; auto-spawns the hub when absent |
-| `workflow-monitor` | Ink monitoring TUI: task panel, live activity, log stream |
+| `workflow-monitor` | Ink monitoring TUI over the hub's canonical snapshot; standalone local authority when the hub is unreachable |
 | `workflow-shell` | interactive contained shell |
 
 ## Quickstart
