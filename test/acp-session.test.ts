@@ -121,3 +121,10 @@ test("unknown tool titles fail closed to the mutation capability", async () => {
   assert.equal(AcpSessionDriver.classify("web_fetch"), "network");
   assert.equal(AcpSessionDriver.classify("brand-new-dangerous-tool"), "mutation");
 });
+
+test("title detail is stripped to the tool name before classification", () => {
+  assert.equal(AcpSessionDriver.toolNameFromTitle("run_commands: ls -la /tmp/x"), "run_commands");
+  assert.equal(AcpSessionDriver.toolNameFromTitle("replace_in_file"), "replace_in_file");
+  assert.equal(AcpSessionDriver.toolNameFromTitle(undefined), "unknown");
+  assert.equal(AcpSessionDriver.toolNameFromTitle("   "), "unknown");
+});

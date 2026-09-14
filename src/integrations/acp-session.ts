@@ -180,7 +180,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     if (this.#agentSessionId === undefined) {
       throw new TypeError("ACP permission request before session creation");
     }
-    const toolName = request.toolCall?.title ?? "unknown";
+    const toolName = AcpSessionDriver.toolNameFromTitle(request.toolCall?.title);
     const resolver = createWorkflowAcpPermissionResolver({
       adapter: this.#adapter,
       correlation: {
@@ -193,6 +193,17 @@ export class AcpSessionDriver implements CodingSessionDriver {
       authorize: (action) => this.#authorize(action),
     });
     return resolver(request);
+  }
+
+  /**
+   * Cline titles carry details (`run_commands: ls -la …`); the tool name is
+   * the first token. An unrecognized remainder still resolves, and the
+   * resolver fails closed on unknown names.
+   */
+  static toolNameFromTitle(title: string | undefined): string {
+    if (title === undefined) return "unknown";
+    const name = /^[^\s:]+/.exec(title)?.[0];
+    return name !== undefined && name.length > 0 ? name : "unknown";
   }
 
   /** Title classification is fail-closed: unknown tools map to the mutation capability. */
