@@ -1,17 +1,21 @@
 # Workflow
 
-Workflow is the universal authority for agent surfaces. A deterministic kernel
-owns task state, evidence, and mutation authorization; a long-running
-loopback hub (`workflow-hub`) serves every Cline surface — interactive TUI,
-headless CLI, zen, chat connectors, scheduled agents, teams, and desktop —
-through one versioned protocol. The core invariant is:
+Workflow is a **control plane for coding-agent hosts**. Models and host SDKs
+are replaceable surfaces that propose work and observe results; Workflow is
+the deterministic authority that owns task state, legal transitions, mutation
+authorization, evidence requirements, and verification. A long-running
+loopback hub (`workflow-hub`) serves every surface — interactive TUI, headless
+CLI, zen, chat connectors, scheduled agents, teams, and desktop — through one
+versioned, SDK-neutral protocol. The core invariant is:
 
 ```text
 model proposes -> Workflow authorizes -> tool acts -> environment supplies evidence -> Workflow validates -> state may advance
 ```
 
 Nothing mutates without Workflow authorization; nothing advances without
-fresh evidence. Authorization fails **closed**: no hub, no mutations.
+fresh evidence. Authorization fails **closed**: no hub, no mutations. Swapping
+the host SDK means adding an adapter and a session driver — the kernel,
+process, and tooling stay put.
 
 See `docs/FEATURES.md` for the honest, per-feature status matrix (including
 what is *not* built yet), `docs/HUB.md` for the hub design, and

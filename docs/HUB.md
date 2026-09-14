@@ -2,10 +2,11 @@
 
 ## Goal
 
-Workflow is the universal authority for every Cline surface. Interactive TUI,
-headless CLI, zen, chat connectors, scheduled agents, teams, and desktop all
-go through a single loopback hub that Workflow owns. `workflow` stops being a
-launcher-side helper and becomes the actual system authority.
+Workflow is a control plane for coding-agent hosts, and the hub is its single
+authority endpoint. Interactive TUI, headless CLI, zen, chat connectors,
+scheduled agents, teams, and desktop all go through a single loopback hub that
+Workflow owns. `workflow` stops being a launcher-side helper and becomes the
+actual system authority; host SDKs remain replaceable adapters onto it.
 
 ## Architecture
 
