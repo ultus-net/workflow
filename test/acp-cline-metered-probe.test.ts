@@ -1,15 +1,14 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { launchContainedAcpAgent } from "../src/adapters/acp-contained-agent.js";
 import { AcpSubprocessClient, type AcpPermissionDecision } from "../src/adapters/acp-subprocess.js";
 import { LinuxBubblewrapContainment } from "../src/containment/linux-bwrap.js";
-import { createModelUsageProxy, meteredProviderSettings } from "../src/integrations/model-usage-proxy.js";
+import { createModelUsageProxy, METERED_PLACEHOLDER_KEY, meteredProviderSettings } from "../src/integrations/model-usage-proxy.js";
+import { clineEntrypoint, loadClineApiKey } from "./cline-probe-helpers.js";
 
 // G1 token/cost metering proof: the agent's environment contains only a
 // placeholder credential while the hub-held proxy injects the real OpenRouter
@@ -18,19 +17,6 @@ import { createModelUsageProxy, meteredProviderSettings } from "../src/integrati
 // so every model call crosses the proxy even though the contained env has no
 // real credential.
 const runMeteredProbe = process.env.WORKFLOW_ACP_CLINE_METERED === "1";
-const keyFile = process.env.CLINE_API_KEY_FILE ?? path.join(homedir(), ".config", "workflow", "cline-api-key");
-
-async function loadClineApiKey(): Promise<string> {
-  if (process.env.CLINE_API_KEY) return process.env.CLINE_API_KEY;
-  const key = (await readFile(keyFile, "utf8")).trim();
-  if (!key) throw new Error("Cline metered probe requires CLINE_API_KEY or CLINE_API_KEY_FILE");
-  return key;
-}
-
-function clineEntrypoint(): string {
-  const bin = execFileSync("/usr/bin/which", ["cline"], { encoding: "utf8" }).trim();
-  return realpathSync(bin);
-}
 
 test(
   "Cline ACP metered proxy proves key-free agent env, working turns, and per-session usage metrics",
@@ -41,7 +27,7 @@ test(
     const target = path.join(workspace, "metered-target.txt");
     await writeFile(target, "before\n", "utf8");
 
-    const clineApiKey = await loadClineApiKey();
+    const clineApiKey = await loadClineApiKey("Cline metered probe");
     const proxy = await createModelUsageProxy({ upstream: "https://openrouter.ai", apiKey: clineApiKey });
     const settingsPath = path.join(scratchHome, "providers.json");
     await writeFile(settingsPath, JSON.stringify(meteredProviderSettings(proxy.url)), "utf8");
@@ -55,7 +41,7 @@ test(
       environment: {
         // Placeholder only: satisfies Cline's isSessionReady while the real
         // key stays exclusively in the hub-side proxy.
-        CLINE_API_KEY: "workflow-metered",
+        CLINE_API_KEY: METERED_PLACEHOLDER_KEY,
         CLINE_PROVIDER: process.env.CLINE_PROVIDER ?? "openrouter",
         CLINE_PROVIDER_SETTINGS_PATH: settingsPath,
       },

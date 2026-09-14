@@ -3,6 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import test from "node:test";
 
 import { AcpSubprocessClient } from "../src/adapters/acp-subprocess.js";
+import type { AcpPermissionRequestParams } from "../src/adapters/acp-permission.js";
 
 function fakePermissionAgent(mode: "permission" | "permission-no-reject" | "permission-string-id"): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, ["test/fixtures/fake-acp-agent.mjs", mode], {
@@ -41,7 +42,7 @@ test("ACP subprocess client routes inbound permission requests to the configured
 
 test("ACP subprocess client hands the resolver the permission request params, not the JSON-RPC envelope", async () => {
   const child = fakePermissionAgent("permission");
-  const seen: Record<string, unknown>[] = [];
+  const seen: AcpPermissionRequestParams[] = [];
   const client = new AcpSubprocessClient({
     child,
     resolvePermission(request) {

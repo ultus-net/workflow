@@ -130,7 +130,7 @@ export async function createModelUsageProxy(options: {
     });
 
     const contentType = response.headers.get("content-type") ?? "";
-    res.writeHead(response.status, { "content-type": contentType || "application/octet-stream" });
+    res.writeHead(response.status, forwardedResponseHeaders(response, contentType));
     if (contentType.includes("text/event-stream") && response.body !== null) {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -211,18 +211,65 @@ export async function createModelUsageProxy(options: {
   };
 }
 
+// RFC 7230 §6.1 hop-by-hop headers are connection-scoped and must never be
+// forwarded; `authorization` is replaced with the real key, `content-length`
+// is recomputed for the rewritten body, and `accept-encoding` is forced to
+// identity so SSE/JSON bodies stay parseable for metering.
+const HOP_BY_HOP_HEADERS = new Set([
+  "authorization",
+  "host",
+  "content-length",
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+  "accept-encoding",
+]);
+
 function scrubRequestHeaders(headers: http.IncomingHttpHeaders, apiKey: string, contentLength: number): Record<string, string> {
+  // The Connection header may additionally name sender-specific hop-by-hop
+  // headers; those must be stripped too.
+  const connectionTokens = new Set<string>();
+  const connectionValue = headers.connection;
+  for (const entry of Array.isArray(connectionValue) ? connectionValue : [connectionValue]) {
+    if (typeof entry !== "string") continue;
+    for (const token of entry.split(",")) {
+      const trimmed = token.trim().toLowerCase();
+      if (trimmed.length > 0) connectionTokens.add(trimmed);
+    }
+  }
   const result: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) {
     if (value === undefined) continue;
     const lower = name.toLowerCase();
-    if (lower === "authorization" || lower === "host" || lower === "content-length" || lower === "connection" || lower === "accept-encoding") continue;
+    if (HOP_BY_HOP_HEADERS.has(lower) || connectionTokens.has(lower)) continue;
     result[lower] = Array.isArray(value) ? value.join(", ") : String(value);
   }
   result.authorization = `Bearer ${apiKey}`;
   result["content-length"] = String(contentLength);
   // Identity keeps SSE/JSON bodies parseable for metering.
   result["accept-encoding"] = "identity";
+  return result;
+}
+
+// End-to-end upstream headers worth surfacing to the agent so provider
+// signaling (retries, rate limits, redirects) survives the passthrough.
+const FORWARDED_RESPONSE_HEADERS = ["content-type", "retry-after", "location"];
+
+function forwardedResponseHeaders(response: Response, contentType: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const name of FORWARDED_RESPONSE_HEADERS) {
+    const value = response.headers.get(name);
+    if (value !== null && value.length > 0) result[name] = value;
+  }
+  for (const [name, value] of response.headers.entries()) {
+    if (name.startsWith("x-ratelimit-")) result[name] = value;
+  }
+  result["content-type"] = contentType || "application/octet-stream";
   return result;
 }
 

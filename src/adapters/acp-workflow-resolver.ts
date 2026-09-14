@@ -69,6 +69,10 @@ const PATH_SUBJECT_TOOLS = new Set([
   "write_to_file",
   "delete_file",
 ]);
+// `shell`/`bash` are defensive aliases: Cline gates `run_commands`, but a
+// host may name its shell tool differently — recognizing them keeps such
+// requests on the process-tool path (command required, cwd-only subject)
+// instead of failing closed as unknown mutation tools.
 const PROCESS_TOOLS = new Set(["run_commands", "execute_command", "shell", "bash"]);
 const NON_SUBJECT_TOOLS = new Set(["search_codebase", "fetch_web_content", "web_fetch", "web_search"]);
 

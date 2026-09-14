@@ -13,8 +13,8 @@ From Cline 3.0.61's ACP emitter and probe evidence:
 | Tool lifecycle | `tool_call` (pending, title/kind/rawInput) + `tool_call_update` (status transitions incl. permission-driven `in_progress`/`failed`) | Reliable for Cline; other agents vary |
 | Mode / model / config | `session/new` result (`availableModes`, `availableModels`, `configOptions` incl. `auto_approve`), `current_mode_update`, `config_option_update`, `session_info_update` | Reliable for Cline 3.0.61 |
 | Permission authority | `session/request_permission` with usable allow/reject options; denial honored | Proven (W035) |
-| Cancellation | `session/cancel`; fail-closed turn/session cancel on no-reject denial | Proven (W035) |
-| Session resume | `session/load` replays full history (user/agent message chunks, tool calls, session info) before resolving | **Proven** 2026-09-14 (gated resume probe): faithful replay after a full agent-process restart; continuation turn completes |
+| Cancellation | `session/cancel` honored at runtime (W035); fail-closed turn/session cancel on no-reject denial (unit-tested) | Proven |
+| Session resume | `session/load` replays user/agent message chunks + session info before resolving (tool-call replay code-inspected in `session-load.ts`, not probe-exercised) | **Proven** 2026-09-14 (gated resume probe): faithful message replay after a full agent restart; continuation turn recalls the original keyword (restored context) |
 
 Authority rule: the stream is agent-cooperative UX projection only. Enforcement never derives from it — subjects come from permission requests, filesystem effects from OS containment.
 
@@ -41,7 +41,7 @@ Parity gaps:
 
 | # | Gap | Materiality |
 |---|---|---|
-| G1 | ~~No token/cost visibility~~ **MITIGATED 2026-09-14** — hub metering proxy (`createModelUsageProxy` + `meteredProviderSettings`) holds the key proxy-side, forces `usage.include`, records tokens/cost; gated probe: 2 requests / 8,790 tokens / $0.0140 with placeholder-only sandbox env | Remaining: surface metrics in the hub UI + budget enforcement |
+| G1 | ~~No token/cost visibility~~ **MITIGATED 2026-09-14** — hub metering proxy (`createModelUsageProxy` + `meteredProviderSettings`) holds the key proxy-side, forces `usage.include`, records tokens/cost; gated probe: 2 requests / 8,668 tokens / $0.0132 with placeholder-only sandbox env (post-P1-fix re-run; original 8,790 / $0.0140) | Remaining: surface metrics in the hub UI + budget enforcement |
 | G2 | No slash-command/mention parity (commands not emitted; `@`-mentions are CLI-side, not ACP) | Daily-driver ergonomics |
 | G3 | Input/editor UX (mid-turn queueing, attachments) must be built client-side | Build cost, not a protocol blocker (image prompt content exists) |
 | G4 | ~~Session resume fidelity~~ **RESOLVED 2026-09-14** — gated probe: full replay after agent restart (user/agent chunks + session info), keyword turn intact, continuation completes | None |

@@ -2,6 +2,7 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
 import { AcpNdjsonDecoder, encodeAcpMessage } from "./acp-wire.js";
+import type { AcpPermissionRequestParams } from "./acp-permission.js";
 
 export interface AcpInitializeResult {
   readonly protocolVersion: number;
@@ -23,7 +24,7 @@ export type AcpPermissionDecision = { readonly kind: "allow" } | { readonly kind
 
 interface AcpSubprocessClientOptions {
   readonly child: ChildProcessWithoutNullStreams;
-  readonly resolvePermission?: (request: Record<string, unknown>) => Promise<AcpPermissionDecision> | AcpPermissionDecision;
+  readonly resolvePermission?: (request: AcpPermissionRequestParams) => Promise<AcpPermissionDecision> | AcpPermissionDecision;
 }
 
 export class AcpSubprocessClient {
@@ -171,9 +172,11 @@ export class AcpSubprocessClient {
   async #answerPermission(id: number | string, message: Record<string, unknown>): Promise<void> {
     try {
       // Resolvers receive the ACP RequestPermissionRequest params (sessionId,
-      // toolCall, options), not the JSON-RPC envelope.
+      // toolCall, options), not the JSON-RPC envelope. The resolver's own
+      // correlation layer validates the shape; the envelope-vs-params
+      // distinction is what this type boundary enforces.
       const params = requireRecord(message.params, "invalid ACP permission request");
-      const decision = await this.#resolvePermission(params);
+      const decision = await this.#resolvePermission(params as unknown as AcpPermissionRequestParams);
       const options = Array.isArray(params.options) ? params.options : [];
       const selected = selectPermissionOption(options, decision.kind);
       const outcome = selected ? { outcome: "selected", optionId: selected } : { outcome: "cancelled" };

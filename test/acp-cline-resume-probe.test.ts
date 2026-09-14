@@ -1,36 +1,24 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { launchContainedAcpAgent } from "../src/adapters/acp-contained-agent.js";
 import { AcpSubprocessClient, type AcpPermissionDecision, type AcpSessionUpdate } from "../src/adapters/acp-subprocess.js";
 import { LinuxBubblewrapContainment } from "../src/containment/linux-bwrap.js";
+import { clineEntrypoint, loadClineApiKey } from "./cline-probe-helpers.js";
 
 // G4 resume fidelity: does Cline's advertised loadSession actually replay a
 // persisted session faithfully after the agent process restarts? Phase 1
 // creates a session with a unique keyword turn inside a contained, persistent
 // scratch HOME; phase 2 relaunches a fresh contained agent against the same
-// HOME and loads the session, asserting the replay carries both the user
-// prompt and the keyword answer, and that a continuation turn still works.
+// HOME and loads the session, asserting the replay carries the original
+// prompt (in user chunks) and the keyword answer (in agent chunks), then a
+// continuation turn recalls the keyword — proving restored model context,
+// not just turn completion.
 const runResumeProbe = process.env.WORKFLOW_ACP_CLINE_RESUME === "1";
-const keyFile = process.env.CLINE_API_KEY_FILE ?? path.join(homedir(), ".config", "workflow", "cline-api-key");
-
-async function loadClineApiKey(): Promise<string> {
-  if (process.env.CLINE_API_KEY) return process.env.CLINE_API_KEY;
-  const key = (await readFile(keyFile, "utf8")).trim();
-  if (!key) throw new Error("Cline resume probe requires CLINE_API_KEY or CLINE_API_KEY_FILE");
-  return key;
-}
-
-function clineEntrypoint(): string {
-  const bin = execFileSync("/usr/bin/which", ["cline"], { encoding: "utf8" }).trim();
-  return realpathSync(bin);
-}
 
 test(
   "Cline ACP resume probe replays a persisted session faithfully after an agent restart",
@@ -39,7 +27,7 @@ test(
     const workspace = await mkdtemp(path.join(tmpdir(), "workflow-acp-resume-ws-"));
     const scratchHome = await mkdtemp(path.join(tmpdir(), "workflow-acp-resume-home-"));
     const keyword = `resume-${randomUUID().slice(0, 8)}`;
-    const clineApiKey = await loadClineApiKey();
+    const clineApiKey = await loadClineApiKey("Cline resume probe");
     const script = clineEntrypoint();
 
     const launch = () => launchContainedAcpAgent(new LinuxBubblewrapContainment(), {
@@ -74,6 +62,8 @@ test(
     assert.ok(sessionId, "phase 1 must produce a session id");
 
     const replayed: AcpSessionUpdate[] = [];
+    const continuationUpdates: AcpSessionUpdate[] = [];
+    let loading = true;
     const phaseTwoChild = launch();
     const phaseTwo = new AcpSubprocessClient({
       child: phaseTwoChild,
@@ -82,8 +72,9 @@ test(
     let continuation: unknown;
     try {
       await phaseTwo.initialize();
-      phaseTwo.onSessionUpdate((update) => replayed.push(update));
+      phaseTwo.onSessionUpdate((update) => (loading ? replayed : continuationUpdates).push(update));
       await phaseTwo.loadSession({ sessionId, cwd: workspace });
+      loading = false;
       continuation = await promptWithTimeout(
         phaseTwo,
         sessionId,
@@ -97,22 +88,29 @@ test(
       await rm(scratchHome, { recursive: true, force: true });
     }
 
+    // Scope assertions to specific chunk kinds so the keyword embedded in the
+    // user prompt cannot satisfy the agent-answer check, and continuation
+    // recall proves restored context rather than mere turn completion.
+    const chunkText = (updates: AcpSessionUpdate[], kind: string) =>
+      JSON.stringify(updates.filter((update) => update.update.sessionUpdate === kind));
+    const userPromptReplayed = chunkText(replayed, "user_message_chunk").includes("Reply with exactly this token");
+    const keywordReplayed = chunkText(replayed, "agent_message_chunk").includes(keyword);
+    const keywordRecalled = chunkText(continuationUpdates, "agent_message_chunk").includes(keyword);
     const replayKinds = replayed.map((update) => update.update.sessionUpdate);
-    const replayText = JSON.stringify(replayed);
-    const userPromptReplayed = replayText.includes("Reply with exactly this token");
-    const keywordReplayed = replayText.includes(keyword);
     console.log(JSON.stringify({
       sessionId,
       replayKinds,
       userPromptReplayed,
       keywordReplayed,
+      keywordRecalled,
       continuation,
     }, null, 2));
 
     assert.ok(replayKinds.includes("user_message_chunk"), "replay must include the user turn");
     assert.ok(replayKinds.includes("agent_message_chunk"), "replay must include the agent turn");
-    assert.ok(userPromptReplayed, "replay must carry the original user prompt");
-    assert.ok(keywordReplayed, "replay must carry the keyword answer");
+    assert.ok(userPromptReplayed, "user chunks must carry the original prompt");
+    assert.ok(keywordReplayed, "agent replay chunks must carry the keyword answer");
+    assert.ok(keywordRecalled, "continuation agent chunks must recall the keyword (restored context)");
     assert.deepEqual(continuation, { stopReason: "end_turn" }, "continuation turn must complete after reload");
   },
 );

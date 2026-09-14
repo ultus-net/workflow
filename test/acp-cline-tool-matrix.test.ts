@@ -159,3 +159,18 @@ test("process tools never place command text into subjects", async () => {
   // pathWithinWorkspace, so command text would wrongly deny as outside the workspace.
   assert.deepEqual(seen[0]?.subjects, ["/repo"]);
 });
+
+test("shell and bash behave as process-tool aliases (command required, cwd-only subject)", async () => {
+  // Cline gates run_commands, but a host may name its shell tool differently;
+  // the aliases keep such requests recognized as process tools (rather than
+  // failing closed as unknown mutation tools) under identical validation.
+  for (const tool of ["shell", "bash"]) {
+    const seen: ProposedToolAction[] = [];
+    const resolve = resolver(tool, "process", seen);
+    await resolve(request(tool, "execute", { command: "npm test", cwd: "/repo" }));
+    assert.deepEqual(seen[0]?.subjects, ["/repo"], tool);
+    await assert.rejects(() => resolve(request(tool, "execute", {})), /no command/, tool);
+    await assert.rejects(() => resolve(request(tool, "execute", " ")), /no command/, tool);
+    assert.equal(seen.length, 1, tool);
+  }
+});

@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { AcpSubprocessClient, type AcpPermissionDecision } from "../src/adapters/acp-subprocess.js";
+import type { AcpPermissionRequestParams } from "../src/adapters/acp-permission.js";
 
 const runClineMutation = process.env.WORKFLOW_ACP_CLINE_MUTATION === "1";
 const denyPermission = process.env.WORKFLOW_ACP_CLINE_DENY === "1";
@@ -45,7 +46,7 @@ test(
         CLINE_PROVIDER: process.env.CLINE_PROVIDER ?? "openrouter",
       },
     });
-    const permissionRequests: Record<string, unknown>[] = [];
+    const permissionRequests: AcpPermissionRequestParams[] = [];
     const client = new AcpSubprocessClient({
       child,
       async resolvePermission(request): Promise<AcpPermissionDecision> {
