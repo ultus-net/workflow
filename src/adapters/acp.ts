@@ -37,9 +37,10 @@ export class AcpHostAdapter implements TranslatingHostAdapter<AcpCorrelatedPermi
     const subjects = subjectsFrom(input.toolCall, locations);
     const builtInCapability = acpCapability(input.toolCall.kind);
     const capability = stricterCapability(builtInCapability, input.toolCall.capability);
-    // Mutation subjects gate workspace confinement; process proposals are
-    // governed by the process capability gate instead and need no subjects.
-    if (mutating && capability !== "process" && subjects.length === 0) {
+    // Mutation subjects gate workspace confinement: a mutating proposal we
+    // cannot path-check fails closed. Process and credential proposals are
+    // governed by their capability gates instead and need no subjects.
+    if (mutating && capability === "mutation" && subjects.length === 0) {
       throw new TypeError("invalid ACP tool subject");
     }
     return {
@@ -82,8 +83,10 @@ function subjectsFrom(
   if (located.length > 0) return located;
   const input = toolCall.rawInput;
   if (typeof input !== "object" || input === null) return [];
+  const record = input as Record<string, unknown>;
   for (const key of ["path", "filePath", "file_path"]) {
-    const candidate = (input as Record<string, unknown>)[key];
+    if (!(key in record)) continue;
+    const candidate = record[key];
     if (typeof candidate !== "string" || candidate.length === 0) {
       throw new TypeError("invalid ACP tool subject");
     }
@@ -98,9 +101,13 @@ function acpCapability(kind: string | undefined): ToolCapability {
   return "mutation";
 }
 
+const CAPABILITY_SEVERITY: Record<ToolCapability, number> = { process: 4, credentials: 3, network: 2, mutation: 1, read: 0 };
+
+// Event-supplied capability may escalate (make stricter) but never relax the
+// built-in classification.
 function stricterCapability(builtIn: ToolCapability, explicit: ToolCapability | undefined): ToolCapability {
-  if (builtIn === "process" || builtIn === "mutation" || builtIn === "network") return builtIn;
-  return explicit ?? builtIn;
+  if (explicit === undefined) return builtIn;
+  return CAPABILITY_SEVERITY[explicit] > CAPABILITY_SEVERITY[builtIn] ? explicit : builtIn;
 }
 
 function distinctCapabilities(first: ToolCapability, second: ToolCapability | undefined): readonly ToolCapability[] {
