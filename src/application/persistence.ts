@@ -1,6 +1,6 @@
 import { open, readFile, rename, unlink } from "node:fs/promises";
 
-import type { HostCapabilities } from "../adapters/host.js";
+import type { HostCapabilities } from "./host.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowApplication } from "./workflow.js";
 
@@ -133,7 +133,7 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-function isToolCapability(value: unknown): value is import("../adapters/host.js").ToolCapability {
+function isToolCapability(value: unknown): value is import("./host.js").ToolCapability {
   return typeof value === "string" && TOOL_CAPABILITIES.has(value);
 }
 

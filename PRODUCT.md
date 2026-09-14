@@ -12,11 +12,11 @@ The primary operator is a developer running an AI coding session locally. They n
 
 ## Product Purpose
 
-Workflow is an in-process deterministic authority for coding-agent hosts. It lets a model propose work while Workflow remains responsible for task state, legal transitions, authorization, evidence requirements, and verification before canonical state advances.
+Workflow is a control plane for coding-agent hosts: an in-process deterministic authority that lets a model propose work while Workflow remains responsible for task state, legal transitions, authorization, evidence requirements, and verification before canonical state advances. The host SDK is replaceable; the authority is not.
 
 ## Positioning
 
-Workflow separates the coding host from workflow authority: model and host activity are proposals and observations, while Workflow independently authorizes mutations and validates evidence before state advances.
+Workflow separates the coding host from workflow authority, the way infrastructure separates control plane from data plane: model and host activity are proposals and observations, while Workflow independently authorizes mutations and validates evidence before state advances. The tooling built on top — monitoring, pedagogy, containment, token economy, review gates — survives swapping the host underneath.
 
 ## Operating Context
 

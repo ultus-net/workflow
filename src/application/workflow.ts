@@ -1,4 +1,4 @@
-import type { HostCapabilities, ProposedToolAction, ToolCapability } from "../adapters/host.js";
+import type { HostCapabilities, ProposedToolAction, ToolCapability } from "./host.js";
 import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type {

@@ -2,10 +2,11 @@
 
 ## Goal
 
-Workflow is the universal authority for every Cline surface. Interactive TUI,
-headless CLI, zen, chat connectors, scheduled agents, teams, and desktop all
-go through a single loopback hub that Workflow owns. `workflow` stops being a
-launcher-side helper and becomes the actual system authority.
+Workflow is a control plane for coding-agent hosts, and the hub is its single
+authority endpoint. Interactive TUI, headless CLI, zen, chat connectors,
+scheduled agents, teams, and desktop all go through a single loopback hub that
+Workflow owns. `workflow` stops being a launcher-side helper and becomes the
+actual system authority; host SDKs remain replaceable adapters onto it.
 
 ## Architecture
 
@@ -65,6 +66,9 @@ can't be authorized fail **closed** (hub denies rather than guessing).
 
 - `workflow-hub` — start the detached authority daemon (discovery + token).
 - `workflow` — still the TUI launcher; resolves against the global Workflow hub.
+- Launchers auto-spawn `workflow-hub` detached when the discovery file is
+  missing or stale, guarded by `~/.workflow/hub/discovery.json.spawn.lock`.
+  `WORKFLOW_AUTOHUB=0` restores strict fail-fast resolution.
 
 For Cline team tasks, `WORKFLOW_TEAM_TASK_VERIFY_COMMAND` defaults to `"true"`
 on the Workflow hub daemon, so completed team tasks automatically promote to
