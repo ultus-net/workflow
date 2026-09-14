@@ -13,7 +13,8 @@ export function createWorkflowOpenCodePlugin(application: WorkflowApplication, a
     async "tool.execute.before"(input, output) {
       const proposal = adapter.proposalFromBeforeTool({ input, output });
       const decision = application.authorize(proposal);
-      if (decision.kind === "deny") throw new Error(`Workflow denied ${proposal.tool}: ${decision.reason}`);
+      const control = adapter.beforeToolControl(decision);
+      if (control !== undefined) throw new Error(`Workflow denied ${proposal.tool}: ${control.reason}`);
     },
   };
 }

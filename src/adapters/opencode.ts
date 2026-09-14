@@ -16,7 +16,12 @@ export interface OpenCodeBeforeToolOutput {
   readonly args: unknown;
 }
 
-export class OpenCodeHostAdapter implements TranslatingHostAdapter<unknown, never> {
+export interface OpenCodeDenyControl {
+  readonly kind: "deny";
+  readonly reason: string;
+}
+
+export class OpenCodeHostAdapter implements TranslatingHostAdapter<unknown, OpenCodeDenyControl> {
   readonly capabilities = hostCapabilities({ transport: "native", authoritativePreMutation: true });
 
   constructor(readonly options: OpenCodeHostAdapterOptions) {}
@@ -38,9 +43,8 @@ export class OpenCodeHostAdapter implements TranslatingHostAdapter<unknown, neve
     };
   }
 
-  beforeToolControl(decision: PolicyDecision): undefined {
-    void decision;
-    return undefined;
+  beforeToolControl(decision: PolicyDecision): OpenCodeDenyControl | undefined {
+    return decision.kind === "deny" ? { kind: "deny", reason: decision.reason } : undefined;
   }
 }
 
