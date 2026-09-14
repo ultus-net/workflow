@@ -4,15 +4,16 @@ import { render } from "ink";
 
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, realpathSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import { AcpSessionDriver } from "../integrations/acp-session.js";
+import { METERED_PLACEHOLDER_KEY, createModelUsageProxy, meteredProviderSettings } from "../integrations/model-usage-proxy.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui } from "../ui/tui.js";
@@ -22,7 +23,9 @@ import { resolveTuiWorkspace } from "./tui-args.js";
  * The clean Workflow terminal surface over stock ACP: a contained agent (the
  * default spawn path; whole-agent Bubblewrap, fail-closed on policy-only
  * backends) with permission interception wired into Workflow authorize and the
- * session/update stream projected as events. Run with:
+ * session/update stream projected as events. Model traffic crosses the hub
+ * metering proxy, so the agent env holds only a placeholder key and usage is
+ * printed at exit. Run with:
  *   npm run tui:acp [--workspace <path>]
  * Set WORKFLOW_ACP_RESUME=<sessionId> to resume a persisted session.
  */
@@ -62,6 +65,15 @@ if (apiKey === undefined) {
 }
 if (!apiKey) throw new Error("acp surface requires CLINE_API_KEY or ~/.config/workflow/cline-api-key");
 
+// G1: all model traffic crosses the hub metering proxy; the contained env
+// holds only a placeholder key, and the proxy records tokens/cost.
+const provider = process.env.CLINE_PROVIDER ?? "openrouter";
+const upstream = process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai";
+const proxy = await createModelUsageProxy({ upstream, apiKey });
+const providerSettings = meteredProviderSettings(proxy.url, provider);
+const settingsPath = join(scratchHome, "providers.json");
+writeFileSync(settingsPath, JSON.stringify(providerSettings), { encoding: "utf8", mode: 0o600 });
+
 const driver = AcpSessionDriver.contained({
   containment: new LinuxBubblewrapContainment(),
   launch: {
@@ -71,8 +83,9 @@ const driver = AcpSessionDriver.contained({
     workspace,
     home: scratchHome,
     environment: {
-      CLINE_API_KEY: apiKey,
-      CLINE_PROVIDER: process.env.CLINE_PROVIDER ?? "openrouter",
+      CLINE_API_KEY: METERED_PLACEHOLDER_KEY,
+      CLINE_PROVIDER: provider,
+      CLINE_PROVIDER_SETTINGS_PATH: settingsPath,
     },
   },
   authorize: application,
@@ -92,6 +105,11 @@ try {
 } catch (error) {
   renderError = error;
 } finally {
-  await driver.dispose();
+  try {
+    await driver.dispose();
+  } finally {
+    await proxy.close();
+    console.log("metering proxy metrics:", JSON.stringify(proxy.metrics(), null, 2));
+  }
 }
 if (renderError !== undefined) throw renderError;

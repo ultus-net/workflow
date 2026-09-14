@@ -47,6 +47,10 @@ test("ACP session driver projects a turn through the CodingSessionDriver contrac
     await cleanup(child);
   }
   assert.deepEqual(session.snapshot(), { state: "completed", result: "working" });
+  assert.ok(
+    events.some((event) => event.type === "status" && event.status === "agent session id: fake-session-1"),
+    "the agent session id must surface as a status event so the operator can resume it later",
+  );
   assert.ok(events.some((event) => event.type === "assistant" && event.text === "working"));
   assert.ok(events.some((event) => event.type === "tool-proposal" && event.tool === "Read repo"));
   const completed = events.find((event) => event.type === "completed");

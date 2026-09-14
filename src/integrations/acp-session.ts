@@ -103,6 +103,8 @@ export class AcpSessionDriver implements CodingSessionDriver {
         const session = await this.#client.newSession({ cwd: this.#workspace });
         this.#agentSessionId = session.sessionId;
       }
+      // Project the agent session id so the operator can resume it later.
+      this.#emit({ type: "status", status: `agent session id: ${this.#agentSessionId}` });
     }
     // Replay chunks were already projected as events; the completion result
     // is scoped to this prompt's assistant text.
