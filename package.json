@@ -35,6 +35,7 @@
     "hub": "tsx src/cli/hub.ts",
     "tui": "node scripts/build-cline-tui.mjs && tsx src/cli/tui.tsx",
     "tui:workflow": "tsx src/cli/ink-tui.tsx",
+    "tui:acp": "tsx src/cli/acp-tui.tsx",
     "style:eval": "tsx src/cli/style-eval.ts",
     "tui:cline:build": "node scripts/build-cline-tui.mjs",
     "cline:bump": "node scripts/bump-cline-tag.mjs",

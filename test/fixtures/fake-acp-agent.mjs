@@ -77,7 +77,9 @@ function handleMessage(message) {
           sessionId: message.params.sessionId,
           toolCall: {
             toolCallId: "tool-permission-1",
-            title: "Edit file",
+            // Real Cline permission requests carry the tool name as the title
+            // (e.g. replace_in_file), so exercise that shape here.
+            title: "replace_in_file",
             kind: "edit",
             rawInput: { path: "target.txt" },
             locations: [{ path: "target.txt" }],

@@ -92,7 +92,7 @@ export class AcpSubprocessClient {
 
   prompt(options: {
     readonly sessionId: string;
-    readonly prompt: readonly { readonly type: string; readonly text: string }[];
+    readonly prompt: readonly { readonly type: string; readonly text?: string; readonly data?: string; readonly mimeType?: string }[];
   }): Promise<unknown> {
     return this.#request("session/prompt", options);
   }

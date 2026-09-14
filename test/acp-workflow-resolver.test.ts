@@ -129,7 +129,7 @@ test("Workflow ACP resolver omits absent optional fields instead of passing unde
   });
   const minimal: AcpPermissionRequestParams = {
     ...request,
-    toolCall: { toolCallId: "tool-min", title: "Unknown", locations: [] },
+    toolCall: { toolCallId: "tool-min", title: "Unknown", kind: "read", locations: [] },
   };
 
   assert.deepEqual(await resolver(minimal), { kind: "allow" });
@@ -137,12 +137,31 @@ test("Workflow ACP resolver omits absent optional fields instead of passing unde
     sessionId: "workflow-session-1",
     taskId: "TASK-1",
     tool: "unknown_tool",
-    capability: "mutation",
-    requiredCapabilities: ["mutation"],
+    capability: "read",
+    requiredCapabilities: ["read"],
     mutating: true,
     subjects: [],
     input: undefined,
   });
+});
+
+test("Workflow ACP resolver fails closed when a mutation-capability proposal has no usable subject", async () => {
+  const resolver = createWorkflowAcpPermissionResolver({
+    adapter: new AcpHostAdapter({ authoritativePermissions: true }),
+    correlation: {
+      sessionId: "workflow-session-1",
+      agentSessionId: "agent-session-1",
+      taskId: taskId("TASK-1"),
+      toolName: "unknown_tool",
+    },
+    authorize: () => ({ kind: "allow" }),
+  });
+  const minimal: AcpPermissionRequestParams = {
+    ...request,
+    toolCall: { toolCallId: "tool-min", title: "Unknown", locations: [] },
+  };
+
+  await assert.rejects(() => resolver(minimal), /invalid ACP tool subject/);
 });
 
 test("Workflow ACP resolver preserves adapter denial as a permission denial", async () => {

@@ -385,7 +385,7 @@ optional surfaces.
 - Spec coverage: registry=T1, client=T2, entry=T3, checklist/docs=T4, gates=T5.
 - The entry's session driving is standalone-local per spec decision (hub-mediated driving is a parity item, not this branch).
 
-## Roadmap extension: ACP universal driver (TASKS.md W032)
+## Roadmap extension: ACP universal driver (TASKS.md W037)
 
 The registry absorbs a third composer, `--driver acp`, as the protocol-native
 universal target: `AcpSessionDriver` over stdio JSON-RPC (`session/new`,
@@ -393,4 +393,4 @@ universal target: `AcpSessionDriver` over stdio JSON-RPC (`session/new`,
 through `AcpHostAdapter` + `WorkflowApplication.authorize`, and ACP
 filesystem/terminal capabilities routed through `WorkflowContainedProcess`.
 Cline stays the primary host via its bespoke driver; ACP is the
-generalization path. See TASKS.md W032 for acceptance criteria.
+generalization path. See TASKS.md W037 for acceptance criteria.
