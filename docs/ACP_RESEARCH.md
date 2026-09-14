@@ -202,6 +202,21 @@ Containment integration (2026-09-14): hub-backed ACP `terminal/*` routing is **u
 
 The gated contained probe (`test/acp-cline-contained-probe.test.ts`) asserts host-filesystem invariants rather than model behavior: the allowed workspace command executed, the random-secret canary in the real home never appeared in session updates (even after the agent ran `find / -iname 'workflow-acp-canary*'`), and the `/tmp` escape file never existed on the host.
 
+### Patched-SDK versus stock-ACP on the pinned 3.0.61 line (2026-09-14)
+
+The patched build (`patches/cline-cli-v3.0.61-workflow.patch`) does not touch `apps/cli/src/acp/`, so its ACP mode behaves exactly like stock; the stock-ACP evidence above applies to both builds. The comparison is therefore between the patch's `workflow-bridge` integration and stock ACP on the same pinned agent line:
+
+| Axis | Patched-SDK (workflow-bridge on 3.0.61) | Stock ACP (`cline --acp` 3.0.61) |
+|---|---|---|
+| Interception point | SDK `AgentHooks.beforeTool` → hub `POST /before-tool`; every tool call, in-process; bridge unavailable fails closed (`stop`) | ACP `session/request_permission` over stdio; only tools Cline routes through approval; coverage depends on the `--auto-approve false` launch flag |
+| Process execution | hub `POST /bash` → `WorkflowContainedProcess` → per-command Bubblewrap (network `isolated` eligible) | inside the agent process; containment only via whole-agent Bubblewrap launch, which requires network `host` for the model API |
+| Filesystem scoping | kernel workspace policy on every `beforeTool`; ambient filesystem stays visible to the agent process itself | resolver path subjects → kernel workspace policy, **plus** whole-agent Bubblewrap filesystem isolation (ambient home hidden, proven by canary evidence) |
+| Session/streaming | Cline native loop owns conversation; hub receives task sync via `afterTool` `team_task` | hub projects `session/update` live |
+| Patch burden | pinned patch (`workflow-bridge.ts`, TUI integration) must be re-applied and re-verified per Cline release | stock binary, no patch |
+| Runtime evidence | W023/W024: real `@cline/core` session on the same `AgentHooks`/`ShellExecutor` seam family (0.0.82) with commands routed through Bubblewrap and `git diff --check` independently verified; bridge endpoints runtime-tested server-side (`test/hub-guard-interception.test.ts`); patch units in the 3.0.61 checkout | W035: env-auth handshake, permission interception with allow/deny honored, complete gated-tool matrix, whole-agent contained launch with direct bypass attempts failing |
+
+Decision-relevant asymmetries: patched-SDK can run per-command network-isolated containment and intercepts tools Cline never gates over ACP, at the cost of maintaining a pinned patch; stock-ACP needs no patch and gains filesystem isolation for the *entire* agent process, but its contained launch must allow network egress and its interception covers only Cline's approval-gated tools. Both require the same env-auth (`CLINE_API_KEY`/`CLINE_PROVIDER=openrouter`).
+
 ## 12. What was deliberately NOT recommended
 
 - Building another ACP *agent* (Workflow is an authority, not an agent).
