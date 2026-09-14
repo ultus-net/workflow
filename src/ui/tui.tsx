@@ -51,6 +51,8 @@ export interface WorkflowSnapshotSource {
 export function WorkflowTui({
   application,
   session,
+  sessionFactory,
+  modelChoices,
   profile,
   profilePath,
   onInspectSymbol,
@@ -62,6 +64,8 @@ export function WorkflowTui({
 }: {
   readonly application: WorkflowSnapshotSource;
   readonly session?: WorkflowCodingSession;
+  readonly sessionFactory?: (selection?: string) => WorkflowCodingSession;
+  readonly modelChoices?: readonly string[];
   readonly profile?: LearnerProfile;
   readonly profilePath?: string;
   readonly onInspectSymbol?: (symbol: string) => void;
@@ -89,6 +93,12 @@ export function WorkflowTui({
     });
   };
   const [sessionState, setSessionState] = useState(() => session?.snapshot());
+  // Optional agent model cycle: sessionFactory rebuilds the session for the
+  // chosen model (the factory disposes the prior driver); CLI surfaces that
+  // pass neither prop see unchanged behavior.
+  const [modelIndex, setModelIndex] = useState(0);
+  const [sessionOverride, setSessionOverride] = useState<WorkflowCodingSession | undefined>(undefined);
+  const activeSession = sessionOverride ?? session;
   const [transcript, setTranscript] = useState<readonly TranscriptEntry[]>([]);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [showWorkflow, setShowWorkflow] = useState(false);
@@ -111,15 +121,15 @@ export function WorkflowTui({
     // Mount-only: subsequent changes are notified from the `m` handler below.
   }, []);
 
-  // With no live session to subscribe to, refresh the projection on a timer
-  // (hub-attached monitoring path).
+  // The subscription must re-subscribe on model-session overrides, not just
+  // prop changes; otherwise the rebuilt session's events would be dropped.
   useEffect(() => {
-    if (session !== undefined) return;
+    if (activeSession !== undefined) return;
     const timer = setInterval(() => setSnapshot(application.snapshot()), 1_000);
     return () => clearInterval(timer);
-  }, [application, session]);
+  }, [application, activeSession]);
 
-  useEffect(() => session?.subscribe((event) => {
+  useEffect(() => activeSession?.subscribe((event) => {
     if (event.type === "decision-brief") setDecisionBrief(event.brief);
     if (event.type === "tutor-checkpoint") setCheckpoint(event.opportunity);
     if (event.type === "diagnostic-lesson") setLesson(event.lesson);
@@ -134,9 +144,9 @@ export function WorkflowTui({
     }
     setTranscript((current) => [...current, formatSessionEvent(event)]);
     setScrollOffset(0);
-    setSessionState(session.snapshot());
+    setSessionState(activeSession.snapshot());
     setSnapshot(application.snapshot());
-  }), [application, session]);
+  }), [application, activeSession]);
 
   // Option toggles shared by the accelerator keys and the `/workflow` menu.
   const cycleMode = (): void => {
@@ -168,6 +178,12 @@ export function WorkflowTui({
   };
   const openInspect = (): void => setShowHint(true);
   const toggleWorkflow = (): void => setShowWorkflow((value) => !value);
+  const cycleModel = (): void => {
+    if (sessionFactory === undefined || modelChoices === undefined || modelChoices.length === 0) return;
+    const next = (modelIndex + 1) % modelChoices.length;
+    setModelIndex(next);
+    setSessionOverride(sessionFactory(modelChoices[next]));
+  };
 
   const menuItems = [
     { label: `Mode: ${MODE_LABELS[mode]}`, run: cycleMode },
@@ -176,12 +192,15 @@ export function WorkflowTui({
     { label: "Learner profile", run: toggleProfile },
     { label: "Inspect symbol", run: openInspect },
     { label: "Workflow details", run: toggleWorkflow },
+    ...(modelChoices !== undefined && modelChoices.length > 0
+      ? [{ label: `Model: ${modelChoices[modelIndex]}`, run: cycleModel }]
+      : []),
   ] as const;
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
-      if (sessionState?.state === "running" && session !== undefined) {
-        void session.cancel().finally(() => setSessionState(session.snapshot()));
+      if (sessionState?.state === "running" && activeSession !== undefined) {
+        void activeSession.cancel().finally(() => setSessionState(activeSession.snapshot()));
       } else {
         exit();
       }
@@ -273,7 +292,7 @@ export function WorkflowTui({
       setScrollOffset((value) => Math.max(0, value - 5));
       return;
     }
-    if (session === undefined || sessionState?.state === "running") return;
+    if (activeSession === undefined || sessionState?.state === "running") return;
     if (key.escape) {
       updatePrompt("");
       return;
@@ -285,8 +304,8 @@ export function WorkflowTui({
       updatePrompt("");
       setScrollOffset(0);
       setSessionState({ state: "running" });
-      void session.submit(submitted).finally(() => {
-        setSessionState(session.snapshot());
+      void activeSession.submit(submitted).finally(() => {
+        setSessionState(activeSession.snapshot());
         setSnapshot(application.snapshot());
       });
       return;
@@ -299,7 +318,7 @@ export function WorkflowTui({
   });
 
   const openReviewFollowUps = (reviewFollowUps ?? []).some((item) => item.status === "open");
-  const transcriptRows = Math.max(4, (stdout.rows ?? 24) - (showWorkflow ? 16 : 10) - panelRows(snapshot, session));
+  const transcriptRows = Math.max(4, (stdout.rows ?? 24) - (showWorkflow ? 16 : 10) - panelRows(snapshot, activeSession));
   const end = Math.max(0, transcript.length - scrollOffset);
   const visibleTranscript = transcript.slice(Math.max(0, end - transcriptRows), end);
   const taskSummary = summarizeTasks(snapshot);
@@ -325,7 +344,7 @@ export function WorkflowTui({
                 </Text>
               );
             })}
-            <Text dimColor>1-6 or ↑↓ Enter · q/Esc closes · ^W state</Text>
+            <Text dimColor>1-{menuItems.length} or ↑↓ Enter · q/Esc closes · ^W state</Text>
           </Box>
         ) : null}
         {decisionBrief !== undefined ? <DecisionBriefDrawer brief={decisionBrief} /> : null}
@@ -339,7 +358,7 @@ export function WorkflowTui({
           </Box>
         ) : null}
         <TaskListPanel snapshot={snapshot} />
-        {(session !== undefined || openReviewFollowUps) ? (
+        {(activeSession !== undefined || openReviewFollowUps) ? (
           <SessionActivityPanel state={sessionState} pendingTools={pendingTools} recentLogs={recentLogs} {...(reviewFollowUps === undefined ? {} : { reviewFollowUps })} />
         ) : null}
         <Box flexDirection="column" minHeight={4}>
@@ -361,7 +380,7 @@ export function WorkflowTui({
         ))}
         </Box>
 
-        {session !== undefined ? (
+        {activeSession !== undefined ? (
           <Box marginTop={1} flexDirection="column">
           <Text dimColor>----------------------------------------------------------------</Text>
           {sessionState?.state === "running" ? (

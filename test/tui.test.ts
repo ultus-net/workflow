@@ -127,3 +127,51 @@ test("legacy Ink projection cancels a coding session without changing canonical 
   assert.equal(application.snapshot().tasks[0]?.state, "READY");
   view.unmount();
 });
+
+test("the `/` menu gains a Model entry that rebuilds the session via sessionFactory", async () => {
+  const built: (string | undefined)[] = [];
+  const initialDriver: CodingSessionDriver = {
+    start: async () => undefined,
+    cancel: async () => undefined,
+  };
+  const sessionFactory = (selection?: string) => {
+    built.push(selection);
+    const driver: CodingSessionDriver = {
+      start: async (_prompt, emit) => {
+        emit({ type: "assistant", text: "second-session-event" });
+      },
+      cancel: async () => undefined,
+    };
+    return new WorkflowCodingSession(driver);
+  };
+  const task: WorkflowTask = { id: taskId("A"), title: "Model cycle", state: "BLOCKED", dependencies: [], requiredEvidence: [] };
+  const application = new WorkflowApplication(new TaskGraph([task]), hostCapabilities({ transport: "native", authoritativePreMutation: true }));
+  const view = render(React.createElement(WorkflowTui, {
+    application,
+    session: new WorkflowCodingSession(initialDriver),
+    sessionFactory,
+    modelChoices: ["m1", "m2"],
+  }));
+
+  const hintRegex = /1-7 or/;
+  view.stdin.write("/");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(view.lastFrame() ?? "", hintRegex, "model item must tell the menu has seven entries");
+  assert.match(view.lastFrame() ?? "", /Model: m1/);
+  view.stdin.write("7"); // 7th menu item -> Model
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  view.stdin.write("/");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(view.lastFrame() ?? "", /Model: m2/);
+  assert.deepEqual(built, ["m2"], "the factory must rebuild the session at the chosen model");
+
+  // The P1 regression guard: the TUI must re-subscribe to the rebuilt session.
+  view.stdin.write("q"); // close the menu so prompt entry is live
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  view.stdin.write("hi");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  view.stdin.write("\r");
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.match(view.lastFrame() ?? "", /second-session-event/, "post-cycle subscriptions must deliver driver events");
+  view.unmount();
+});
