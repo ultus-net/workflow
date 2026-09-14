@@ -27,7 +27,10 @@ import { resolveTuiWorkspace } from "./tui-args.js";
  * metering proxy, so the agent env holds only a placeholder key and usage is
  * printed at exit. Run with:
  *   npm run tui:acp [--workspace <path>]
- * Set WORKFLOW_ACP_RESUME=<sessionId> to resume a persisted session.
+ *
+ * Model selection: WORKFLOW_ACP_MODELS="model-a,model-b" adds a `/` menu
+ * Model entry; cycling rebuilds the contained driver at that model. Set
+ * WORKFLOW_ACP_RESUME=<sessionId> to resume a persisted session.
  */
 const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
 
@@ -74,30 +77,51 @@ const providerSettings = meteredProviderSettings(proxy.url, provider);
 const settingsPath = join(scratchHome, "providers.json");
 writeFileSync(settingsPath, JSON.stringify(providerSettings), { encoding: "utf8", mode: 0o600 });
 
-const driver = AcpSessionDriver.contained({
-  containment: new LinuxBubblewrapContainment(),
-  launch: {
-    executable: process.execPath,
-    script: clineBin,
-    args: ["--acp", "--auto-approve", "false", ...(process.env.CLINE_MODEL ? ["--model", process.env.CLINE_MODEL] : [])],
-    workspace,
-    home: scratchHome,
-    environment: {
-      CLINE_API_KEY: METERED_PLACEHOLDER_KEY,
-      CLINE_PROVIDER: provider,
-      CLINE_PROVIDER_SETTINGS_PATH: settingsPath,
+// WORKFLOW_ACP_MODELS="model-a,model-b" adds a `/` menu Model entry; cycling
+// rebuilds the driver at that model. Empty → no menu item, behavior unchanged.
+const modelChoices = (process.env.WORKFLOW_ACP_MODELS ?? "").split(",").map((c) => c.trim()).filter((c) => c.length > 0);
+let holder: { driver: AcpSessionDriver; session: WorkflowCodingSession } | undefined;
+const buildLaunchArgs = (selection?: string): string[] => {
+  const model = selection ?? process.env.CLINE_MODEL;
+  return ["--acp", "--auto-approve", "false", ...(model ? ["--model", model] : [])];
+};
+const makeSession = (model?: string): WorkflowCodingSession => {
+  const driver = AcpSessionDriver.contained({
+    containment: new LinuxBubblewrapContainment(),
+    launch: {
+      executable: process.execPath,
+      script: clineBin,
+      args: buildLaunchArgs(model),
+      workspace,
+      home: scratchHome,
+      environment: {
+        CLINE_API_KEY: METERED_PLACEHOLDER_KEY,
+        CLINE_PROVIDER: provider,
+        CLINE_PROVIDER_SETTINGS_PATH: settingsPath,
+      },
     },
-  },
-  authorize: application,
-  workspace,
-  workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
-  taskId: sessionTask.id,
-  ...(process.env.WORKFLOW_ACP_RESUME ? { resumeFrom: process.env.WORKFLOW_ACP_RESUME } : {}),
-});
-const session = new WorkflowCodingSession(driver);
+    authorize: application,
+    workspace,
+    workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
+    taskId: sessionTask.id,
+    ...(process.env.WORKFLOW_ACP_RESUME ? { resumeFrom: process.env.WORKFLOW_ACP_RESUME } : {}),
+  });
+  const session = new WorkflowCodingSession(driver);
+  const previous = holder;
+  holder = { driver, session };
+  // Dispose the prior agent only after the replacement driver starts cleanly.
+  if (previous !== undefined) void previous.driver.dispose().catch(() => undefined);
+  return session;
+};
+const session = makeSession();
 
 const { waitUntilExit } = render(
-  React.createElement(WorkflowTui, { application, session }),
+  React.createElement(WorkflowTui, {
+    application,
+    session,
+    sessionFactory: makeSession,
+    ...(modelChoices.length > 0 ? { modelChoices } : {}),
+  }),
 );
 let renderError: unknown;
 try {
@@ -106,7 +130,7 @@ try {
   renderError = error;
 } finally {
   try {
-    await driver.dispose();
+    await holder?.driver.dispose();
   } finally {
     await proxy.close();
     console.log("metering proxy metrics:", JSON.stringify(proxy.metrics(), null, 2));
