@@ -55,6 +55,17 @@ test("ACP session driver projects a turn through the CodingSessionDriver contrac
   assert.ok(events.some((event) => event.type === "tool-proposal" && event.tool === "Read repo"));
   const completed = events.find((event) => event.type === "completed");
   assert.deepEqual(completed, { type: "completed", result: "working" });
+  // G2's slash-command replacement: session/new config must be captured and
+  // readable through the driver (not just discarded with the session id).
+  assert.deepEqual(driver.config(), {
+    availableModes: ["plan", "act"],
+    availableModels: ["kimi-k2", "moonshot-v1"],
+    configOptions: [{ id: "auto_approve", name: "Auto-approve", options: [{ id: "true" }, { id: "false" }] }],
+  });
+  assert.ok(
+    events.some((event) => event.type === "status" && event.status === AcpSessionDriver.configSummary(driver.config()!)),
+    "the session config summary must surface as a status event",
+  );
 });
 
 test("ACP permission requests are wired into the Workflow authorize path", async () => {

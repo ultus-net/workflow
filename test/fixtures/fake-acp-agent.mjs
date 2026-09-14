@@ -38,7 +38,18 @@ function handleMessage(message) {
       },
     });
   } else if (message.method === "session/new") {
-    send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "fake-session-1" } });
+    // Advertise G2's configOptions surface the way Cline does (modes/models/
+    // option lists), exercising the client capture path.
+    send({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: {
+        sessionId: "fake-session-1",
+        availableModes: ["plan", "act"],
+        availableModels: ["kimi-k2", "moonshot-v1"],
+        configOptions: [{ id: "auto_approve", name: "Auto-approve", options: [{ id: "true" }, { id: "false" }] }],
+      },
+    });
   } else if (message.method === "session/load") {
     // Replay history before resolving, mirroring the spec's load contract.
     send({

@@ -10,7 +10,12 @@ import {
   launchContainedAcpAgent,
   type ContainedAcpAgentLaunchOptions,
 } from "../adapters/acp-contained-agent.js";
-import { AcpSubprocessClient, type AcpPermissionDecision, type AcpSessionUpdate } from "../adapters/acp-subprocess.js";
+import {
+  AcpSubprocessClient,
+  type AcpPermissionDecision,
+  type AcpSessionConfig,
+  type AcpSessionUpdate,
+} from "../adapters/acp-subprocess.js";
 import type { AcpPermissionRequestParams } from "../adapters/acp-permission.js";
 import { createWorkflowAcpPermissionResolver } from "../adapters/acp-workflow-resolver.js";
 
@@ -32,6 +37,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #resumeFrom: string | undefined;
   #initialized = false;
   #agentSessionId?: string;
+  #sessionConfig?: AcpSessionConfig;
   #toolTitles = new Map<string, string>();
   #assistant: string[] = [];
   #emit: (event: CodingSessionEvent) => void = () => {};
@@ -102,9 +108,13 @@ export class AcpSessionDriver implements CodingSessionDriver {
       } else {
         const session = await this.#client.newSession({ cwd: this.#workspace });
         this.#agentSessionId = session.sessionId;
+        this.#sessionConfig = session.config;
       }
       // Project the agent session id so the operator can resume it later.
       this.#emit({ type: "status", status: `agent session id: ${this.#agentSessionId}` });
+      if (this.#sessionConfig !== undefined) {
+        this.#emit({ type: "status", status: AcpSessionDriver.configSummary(this.#sessionConfig) });
+      }
     }
     // Replay chunks were already projected as events; the completion result
     // is scoped to this prompt's assistant text.
@@ -133,6 +143,20 @@ export class AcpSessionDriver implements CodingSessionDriver {
   /** Terminate the agent process; surfaces must call this on exit. */
   async dispose(): Promise<void> {
     await this.#client.close();
+  }
+
+  /** Config captured from session/new (undefined until the first session is created). */
+  config(): AcpSessionConfig | undefined {
+    return this.#sessionConfig;
+  }
+
+  /** Readable one-line summary of a captured session/new config. */
+  static configSummary(config: AcpSessionConfig): string {
+    const parts: string[] = [];
+    if (Array.isArray(config.availableModes)) parts.push(`modes=${JSON.stringify(config.availableModes)}`);
+    if (Array.isArray(config.availableModels)) parts.push(`models=${JSON.stringify(config.availableModels)}`);
+    if (Array.isArray(config.configOptions)) parts.push(`options(${config.configOptions.length})`);
+    return parts.length > 0 ? `session config: ${parts.join(" ")}` : "session config: none advertised";
   }
 
   #project(update: AcpSessionUpdate, assistant: string[]): CodingSessionEvent | undefined {

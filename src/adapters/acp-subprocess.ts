@@ -15,6 +15,18 @@ export interface AcpSessionUpdate {
   readonly update: { readonly sessionUpdate: string; readonly [key: string]: unknown };
 }
 
+/** Agent-supplied option lists from `session/new`; unknown shapes pass through untouched. */
+export interface AcpSessionConfig {
+  readonly availableModes?: unknown;
+  readonly availableModels?: unknown;
+  readonly configOptions?: unknown;
+}
+
+export interface AcpNewSessionResult {
+  readonly sessionId: string;
+  readonly config: AcpSessionConfig;
+}
+
 interface PendingRequest {
   resolve(value: unknown): void;
   reject(error: Error): void;
@@ -72,13 +84,20 @@ export class AcpSubprocessClient {
     await this.#request("authenticate", options);
   }
 
-  async newSession(options: { readonly cwd: string }): Promise<{ readonly sessionId: string }> {
+  async newSession(options: { readonly cwd: string }): Promise<AcpNewSessionResult> {
     const result = await this.#request("session/new", { cwd: options.cwd, mcpServers: [] });
     const record = requireRecord(result, "invalid ACP session result");
     if (typeof record.sessionId !== "string" || record.sessionId.length === 0) {
       throw new TypeError("invalid ACP session result");
     }
-    return { sessionId: record.sessionId };
+    // G2's slash-command replacement: agent-supplied mode/model/config
+    // selections pass through untouched so surfaces can enumerate them.
+    const config: AcpSessionConfig = {
+      ...(record.availableModes !== undefined ? { availableModes: record.availableModes } : {}),
+      ...(record.availableModels !== undefined ? { availableModels: record.availableModels } : {}),
+      ...(record.configOptions !== undefined ? { configOptions: record.configOptions } : {}),
+    };
+    return { sessionId: record.sessionId, config };
   }
 
   /**
