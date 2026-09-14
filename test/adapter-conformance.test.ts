@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   AcpHostAdapter,
   ClineHostAdapter,
+  OpenCodeHostAdapter,
   TaskGraph,
   WorkflowApplication,
   hostCapabilities,
@@ -55,6 +56,19 @@ const harnesses: readonly ConformanceHarness[] = [
     },
     control(decision) {
       return new AcpHostAdapter({ authoritativePermissions: true }).beforeToolControl(decision);
+    },
+  },
+  {
+    name: "OpenCode",
+    proposal(kind) {
+      const adapter = new OpenCodeHostAdapter({ taskId: taskId("A") });
+      const event = kind === "process"
+        ? { input: { tool: "bash", sessionID: "conformance-session", callID: "call-1" }, output: { args: { command: "npm test" } } }
+        : { input: { tool: "edit", sessionID: "conformance-session", callID: "call-1" }, output: { args: { filePath: "src/example.ts", oldString: "a", newString: "b" } } };
+      return adapter.proposalFromBeforeTool(event);
+    },
+    control(decision) {
+      return new OpenCodeHostAdapter({ taskId: taskId("A") }).beforeToolControl(decision);
     },
   },
 ];

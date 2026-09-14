@@ -58,10 +58,26 @@ class ExampleSdkAdapter implements TranslatingHostAdapter<ExampleBeforeTool, Exa
 
 For Cline SDK hosts, `createWorkflowClinePlugin(application, adapter)` returns the plugin object to pass in `ClineCore` session `config.extensions`. Configure that adapter with `authoritativePreMutation: true` only at this concrete hook boundary. The integration uses Cline's `hooks` capability and documented `beforeTool({ toolCall, input })` callback; a Workflow denial returns Cline's native `{ stop: true, reason }` control before tool execution. The factory rejects advisory adapters so merely constructing `ClineHostAdapter` cannot promote a session to enforced mode. This is an explicit SDK-extension integration, not a `cline.plugins` auto-discovery package.
 
-Classify capabilities at normalization. Known command/process tools require `process`; credential-bearing operations require `credentials`. If one action requires both, include both in `requiredCapabilities`. `WorkflowApplication` unions those requirements with the primary `capability`, so metadata cannot remove a restriction. New high-blast-radius SDK tools require adapter classification before that integration can claim complete enforcement coverage.
+For OpenCode hosts, `createWorkflowOpenCodePlugin(application, adapter)` registers a `tool.execute.before` hook: the adapter returns its typed `{ kind: "deny", reason }` control for a Workflow denial and the plugin throws it, so the host aborts the tool before execution. The factory likewise rejects advisory adapters.
 
-Fail closed on malformed recognized safety metadata. A malformed `path`, location, command classification, or credential classification must not silently become an ordinary subjectless/read action. A genuinely subjectless SDK action may use `subjects: []` when no recognized location field exists.
+## Current adapter files
 
-Adapter conformance should prove at least: truthful enforced/advisory reporting, valid event normalization, malformed safety metadata rejection, denial-to-native-control translation, known process classification, credential classification when the SDK exposes it, combined capability requirements, and application authorization using the normalized proposal. `test/cline-adapter.test.ts`, `test/acp-adapter.test.ts`, and `test/application.test.ts` are the current executable examples.
+| File | Role |
+|---|---|
+| `src/application/host.ts` | the contract vocabulary (`TranslatingHostAdapter`, `ProposedToolAction`, `HostCapabilities`, `ToolCapability`); the application layer owns its port |
+| `src/adapters/host.ts` | deprecated re-export shim of the above for existing adapter/CLI import paths |
+| `src/adapters/cline.ts` | Cline SDK adapter (production: TUI + hub) |
+| `src/adapters/opencode.ts` | OpenCode adapter (production: plugin hook) |
+| `src/adapters/acp.ts` | ACP adapter (conformance-covered; no production integration yet) |
+| `src/adapters/lsp.ts` | LSP diagnostics helper — not a `TranslatingHostAdapter` |
+| `src/adapters/mcp.ts` | MCP capability/evidence normalization — not a `TranslatingHostAdapter` |
+
+Classify capabilities at normalization. Known command/process tools require `process`; credential-bearing operations require `credentials`. If one action requires both, include both in `requiredCapabilities`. `WorkflowApplication` unions those requirements with the primary `capability`, so metadata cannot remove a restriction. Event-supplied capability metadata may escalate (make stricter) but never relax the adapter's built-in classification. New high-blast-radius SDK tools require adapter classification before that integration can claim complete enforcement coverage.
+
+`credentials` classification today: no adapter has a built-in credential tool table; it is assigned via extension metadata — OpenCode's `capabilityForTool` option, or an explicit event capability in ACP (escalation-only) — and always lands in `requiredCapabilities` so the application can withhold it.
+
+Fail closed on malformed recognized safety metadata. A malformed `path`, location, command classification, or credential classification must not silently become an ordinary subjectless/read action. A mutating proposal whose subjects cannot be established at all fails closed too; only genuinely subjectless SDK actions (e.g. process-classified shell calls) may use `subjects: []`, and they are governed by the process capability gate rather than the workspace path gate.
+
+Adapter conformance should prove at least: truthful enforced/advisory reporting, valid event normalization, malformed safety metadata rejection, denial-to-native-control translation, known process classification, credential classification when the SDK exposes it, combined capability requirements, and application authorization using the normalized proposal. `test/adapter-conformance.test.ts` runs the shared trace for Cline, OpenCode, and ACP; `test/cline-adapter.test.ts`, `test/acp-adapter.test.ts`, `test/opencode-plugin.test.ts`, and `test/application.test.ts` are the per-adapter executable examples.
 
 Run `npm test`, `npm run typecheck`, and `npm run build` after adding an adapter. `npm run test:cline-runtime` is the bounded Cline smoke flow: it loads the built Workflow fixture through the real `@cline/core` plugin loader supplied by an installed Cline CLI, then exercises the loaded `beforeTool` hook without starting a model session. It intentionally fails when that host runtime is unavailable rather than silently downgrading runtime evidence. This host check does not replace conformance tests.

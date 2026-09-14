@@ -137,7 +137,9 @@ async function handleRequest(
       const workspace = typeof body.workspace === "string" ? body.workspace : undefined;
       const snapshot = resolveApplication(workspace, undefined, { activateInteractiveTask: false }).snapshot();
       const hiddenTaskIds = new Set(runController?.hiddenSnapshotTaskIds() ?? []);
-      return send(response, 200, { snapshot: { tasks: snapshot.tasks.filter((task) => !hiddenTaskIds.has(task.id)) } });
+      // Full WorkflowSnapshot shape so hub-attached monitors render the same
+      // canonical projection as in-process surfaces.
+      return send(response, 200, { snapshot: { ...snapshot, tasks: snapshot.tasks.filter((task) => !hiddenTaskIds.has(task.id)) } });
     }
     if (request.url === "/team-task") {
       if (!isRecord(body) || !isRecord(body.input) || !isRecord(body.result)) {

@@ -5,7 +5,7 @@ import type { CodingSessionEvent, CodingSessionState } from "../application/codi
 import { formatStyleStatus, nextBuildStyle, nextSpeechStyle, resolveStyleFromEnv, type SessionStyle } from "../integrations/response-style.js";
 import type { ReviewFollowUp } from "../integrations/review-followups.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
-import type { WorkflowApplication, WorkflowSnapshot } from "../application/workflow.js";
+import type { WorkflowSnapshot } from "../application/workflow.js";
 import type { TaskState } from "../kernel/contracts.js";
 import {
   PEDAGOGICAL_MODES,
@@ -43,6 +43,11 @@ export function nextInteractiveState(state: TaskState): TaskState | undefined {
   return undefined;
 }
 
+/** Narrow seam: the TUI only projects snapshots; it never owns canonical state. */
+export interface WorkflowSnapshotSource {
+  snapshot(): WorkflowSnapshot;
+}
+
 export function WorkflowTui({
   application,
   session,
@@ -53,8 +58,9 @@ export function WorkflowTui({
   onStyleChange,
   onModeChange,
   reviewFollowUps,
+  connectionLabel,
 }: {
-  readonly application: WorkflowApplication;
+  readonly application: WorkflowSnapshotSource;
   readonly session?: WorkflowCodingSession;
   readonly profile?: LearnerProfile;
   readonly profilePath?: string;
@@ -63,6 +69,7 @@ export function WorkflowTui({
   readonly onStyleChange?: (style: SessionStyle) => void;
   readonly onModeChange?: (mode: PedagogicalMode) => void;
   readonly reviewFollowUps?: readonly ReviewFollowUp[];
+  readonly connectionLabel?: string;
 }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -103,6 +110,14 @@ export function WorkflowTui({
     onModeChange?.(mode);
     // Mount-only: subsequent changes are notified from the `m` handler below.
   }, []);
+
+  // With no live session to subscribe to, refresh the projection on a timer
+  // (hub-attached monitoring path).
+  useEffect(() => {
+    if (session !== undefined) return;
+    const timer = setInterval(() => setSnapshot(application.snapshot()), 1_000);
+    return () => clearInterval(timer);
+  }, [application, session]);
 
   useEffect(() => session?.subscribe((event) => {
     if (event.type === "decision-brief") setDecisionBrief(event.brief);
@@ -293,7 +308,7 @@ export function WorkflowTui({
     <Box flexDirection="column" alignItems="center">
       <Box flexDirection="column" width="100%" maxWidth={68} paddingX={1}>
         <Box justifyContent="space-between">
-          <Text dimColor>[Mode: {MODE_LABELS[mode]} (m to switch)]{formatStyleStatus(style).length > 0 ? ` [${formatStyleStatus(style)}]` : ""}</Text>
+          <Text dimColor>[Mode: {MODE_LABELS[mode]} (m to switch)]{formatStyleStatus(style).length > 0 ? ` [${formatStyleStatus(style)}]` : ""}{connectionLabel !== undefined ? ` [${connectionLabel}]` : ""}</Text>
           <Text dimColor>? inspect</Text>
         </Box>
         {prompt.length === 0 && !menuOpen ? (

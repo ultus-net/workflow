@@ -106,12 +106,15 @@ An approved verdict records fresh `reviewer` evidence for the run (enabling
 Request: `{ "runId": "schedule:<uuid>", "outcome": "verified" | "failed" }`
 
 Requires the verifier capability. The ordinary discovery token cannot submit
-environment evidence or finish a run. For `verified`, the hub records fresh
-passing environment evidence without introducing a new mutation, then
-transitions the run task to `VERIFIED`; this preserves the mutation epoch of
-the world being verified. For `failed`, it records a mutation and fresh failed
-environment evidence before transitioning the run task to `FAILED`. Unknown
-`runId` → authority error (fail closed).
+environment evidence or finish a run. For `verified`, the hub records **no**
+mutation and **no** fabricated evidence — a finish call only reports that the
+session ended. Promotion to `VERIFIED` is decided by the kernel on the run
+task's declared `requiredEvidence`: plain runs (empty requirements, the
+default) advance on that explicit policy alone, while `requiresReview` runs
+advance only on fresh reviewer evidence recorded through `/run/review`. For
+`failed`, it records a mutation and fresh failed environment evidence before
+transitioning the run task to `FAILED`. Unknown `runId` → authority error
+(fail closed).
 
 ### `POST /team-task/verify` — verify a Cline team task from external evidence
 
