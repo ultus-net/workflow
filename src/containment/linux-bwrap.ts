@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
@@ -10,9 +10,33 @@ function requireAbsolutePath(value: string, label: string): void {
 }
 
 export class LinuxBubblewrapContainment implements ProcessContainment {
+  readonly isolation = "enforced" as const;
+
   constructor(readonly bwrapPath = "/usr/bin/bwrap") {}
 
   async execute(request: ContainedProcessRequest): Promise<ContainedProcessResult> {
+    const { args, network, environment } = this.#buildArgs(request);
+    await this.#probe(network);
+    return await this.#spawn(args, network, Object.keys(environment).length === 0 ? "cleared" : "explicit");
+  }
+
+  /**
+   * Launches a long-lived contained process with streaming stdio for
+   * interactive protocols. Unlike `execute`, no runtime probe runs first:
+   * boundary failures surface through the child (spawn `error` event or a
+   * `bwrap:` stderr prefix followed by a non-zero exit), and callers must
+   * treat either as fail-closed transport errors.
+   */
+  spawn(request: ContainedProcessRequest): ChildProcessWithoutNullStreams {
+    const { args } = this.#buildArgs(request);
+    return spawn(this.bwrapPath, args, { stdio: ["pipe", "pipe", "pipe"] });
+  }
+
+  #buildArgs(request: ContainedProcessRequest): {
+    args: string[];
+    network: "isolated" | "host";
+    environment: Readonly<Record<string, string>>;
+  } {
     requireAbsolutePath(request.executable, "executable");
     if (request.cwd !== undefined) requireAbsolutePath(request.cwd, "cwd");
     for (const path of request.readablePaths ?? []) requireAbsolutePath(path, "readable path");
@@ -40,9 +64,7 @@ export class LinuxBubblewrapContainment implements ProcessContainment {
     for (const path of request.readablePaths ?? []) args.push("--ro-bind", path, path);
     for (const path of request.writablePaths ?? []) args.push("--bind", path, path);
     args.push("--", request.executable, ...request.args);
-
-    await this.#probe(network);
-    return await this.#spawn(args, network, Object.keys(environment).length === 0 ? "cleared" : "explicit");
+    return { args, network, environment };
   }
 
   async #probe(network: "isolated" | "host"): Promise<void> {
@@ -67,6 +89,17 @@ export class LinuxBubblewrapContainment implements ProcessContainment {
       "--die-with-parent",
     ];
     if (existsSync("/etc")) args.unshift("--ro-bind", "/etc", "/etc");
+    // systemd-resolved symlinks /etc/resolv.conf into /run, which is not
+    // bound; without the resolved target the boundary breaks DNS (EAI_AGAIN)
+    // for host-network processes.
+    try {
+      const resolvTarget = realpathSync("/etc/resolv.conf");
+      if (resolvTarget !== "/etc/resolv.conf" && existsSync(resolvTarget)) {
+        args.unshift("--ro-bind", resolvTarget, resolvTarget);
+      }
+    } catch {
+      // No resolv.conf symlink target to repair
+    }
     if (!process.execPath.startsWith("/usr/")) {
       const nodePrefix = resolve(dirname(process.execPath), "..");
       if (existsSync(nodePrefix)) args.unshift("--ro-bind", nodePrefix, nodePrefix);

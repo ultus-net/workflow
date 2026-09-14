@@ -1,0 +1,59 @@
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { isAbsolute } from "node:path";
+
+import type { ProcessContainment } from "../containment/contracts.js";
+
+export interface ContainedAcpAgentLaunchOptions {
+  /** Absolute path to the runtime executable (e.g. the Node binary). */
+  readonly executable: string;
+  /** Absolute path to the agent entry script (e.g. the resolved `cline` bin). */
+  readonly script: string;
+  readonly args?: readonly string[];
+  /** Absolute workspace path; the only project tree the agent can write. */
+  readonly workspace: string;
+  /** Absolute scratch directory bound as the agent's HOME (state/logs). */
+  readonly home: string;
+  /** Extra environment entries (e.g. CLINE_API_KEY, CLINE_PROVIDER). HOME always wins. */
+  readonly environment?: Readonly<Record<string, string>>;
+  /** Additional read-only paths the agent needs (e.g. a fixture script directory). */
+  readonly readablePaths?: readonly string[];
+}
+
+/**
+ * Launches an ACP agent process inside the OS containment boundary. This is
+ * the enforcement path for agents that never delegate execution to client
+ * `terminal/*`/`fs/*` capabilities (verified for Cline 3.0.61: its ACP
+ * `initialize` ignores client capabilities and all tool execution stays in
+ * the agent process), so the agent process itself must be contained.
+ *
+ * Fails closed unless the backend reports an enforced boundary with streaming
+ * spawn support — a policy-only passthrough must never masquerade as a
+ * contained agent launch.
+ */
+export function launchContainedAcpAgent(
+  containment: ProcessContainment,
+  options: ContainedAcpAgentLaunchOptions,
+): ChildProcessWithoutNullStreams {
+  if (containment.isolation !== "enforced" || typeof containment.spawn !== "function") {
+    throw new TypeError("contained ACP agent launch requires an enforced containment boundary");
+  }
+  for (const [label, value] of [
+    ["executable", options.executable],
+    ["script", options.script],
+    ["workspace", options.workspace],
+    ["home", options.home],
+  ] as const) {
+    if (!isAbsolute(value)) throw new TypeError(`${label} must be an absolute path`);
+  }
+  return containment.spawn({
+    executable: options.executable,
+    args: [options.script, ...(options.args ?? [])],
+    cwd: options.workspace,
+    ...(options.readablePaths ? { readablePaths: options.readablePaths } : {}),
+    writablePaths: [options.workspace, options.home],
+    // Agents need network egress for their model API; the containment
+    // property enforced here is filesystem/credential isolation.
+    network: "host",
+    environment: { ...options.environment, HOME: options.home },
+  });
+}
