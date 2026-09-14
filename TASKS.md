@@ -602,8 +602,10 @@ Current 2026-09-14 status: W032–W034 are implemented and verified. OpenCode 1.
 **Depends on:** W035
 
 **Acceptance criteria:**
-- [ ] Research documents what the hub session stream can and cannot project reliably.
-- [ ] A clean Workflow terminal surface evaluation identifies daily-driver parity requirements and gaps.
-- [ ] Patched Cline Ink remains explicitly classified as fallback/migration surface unless spike evidence shows the clean surface cannot yet satisfy a material requirement.
+- [x] Research documents what the hub session stream can and cannot project reliably. (`docs/ACP_SURFACE.md` §1–2, grounded in Cline 3.0.61 `session-updates.ts`: projections incl. message/reasoning/tool/mode/config; explicit non-projections incl. usage, error, iteration, plan content, commands.)
+- [x] A clean Workflow terminal surface evaluation identifies daily-driver parity requirements and gaps. (`docs/ACP_SURFACE.md` §3, gaps G1–G6.)
+- [x] Patched Cline Ink remains explicitly classified as fallback/migration surface unless spike evidence shows the clean surface cannot yet satisfy a material requirement. (`docs/ACP_SURFACE.md` §4: fallback unless G1 token economy or G2 commands/mentions are judged material.)
 
 **Verification:** updated research/decision documentation plus independent five-axis review.
+
+Current 2026-09-14 status: **decision recorded — GO** (`docs/ACP_DECISION.md`). The operator judged G1 (token/cost visibility) deferrable and G2 (commands/mentions) satisfied by ACP `configOptions` model/settings switching. The clean Workflow surface over stock-ACP Cline with whole-agent Bubblewrap containment is the lead path; patched Cline Ink is the fallback/migration surface. Next phase (post-decision implementation): session lifecycle wiring into hub `authorize`, contained launch as the default spawn path, clean surface UI over the ACP projection; follow-ups tracked in the decision record (G1 metering proxy, G4 resume probe, G5 error surfacing).
