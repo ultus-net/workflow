@@ -22,5 +22,5 @@ step("toolbox build", "pnpm", ["--dir", "mcp-toolbox", "run", "build"]);
 step("cline tui build", "node", ["scripts/build-cline-tui.mjs"]);
 step("global install", "npm", ["install", "-g", "."]);
 
-console.log("\nInstalled bins: workflow, workflow-hub, workflow-monitor, workflow-shell");
+console.log("\nInstalled bins: workflow, workflow-tui, workflow-hub, workflow-monitor, workflow-shell");
 console.log("Run: workflow --cwd <path>  (the hub auto-starts; WORKFLOW_AUTOHUB=0 disables auto-start)");

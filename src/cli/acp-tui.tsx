@@ -2,18 +2,9 @@
 import React from "react";
 import { render } from "ink";
 
-import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
-import { WorkflowCodingSession } from "../application/coding-session.js";
-import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
-import { AcpSessionDriver } from "../integrations/acp-session.js";
-import { METERED_PLACEHOLDER_KEY, createModelUsageProxy, meteredProviderSettings } from "../integrations/model-usage-proxy.js";
+import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui, type SessionConfigOption } from "../ui/tui.js";
@@ -52,65 +43,15 @@ const application = new WorkflowApplication(
   workspace,
 );
 
-// Persistent scratch HOME (0700 since session transcripts live here) makes
-// session/load resume work across launches.
-const scratchHome = resolve(homedir(), ".workflow", "acp-home");
-mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
-
-const clineBin = realpathSync(execFileSync("/usr/bin/which", ["cline"], { encoding: "utf8" }).trim());
-let apiKey = process.env.CLINE_API_KEY;
-if (apiKey === undefined) {
-  try {
-    apiKey = readFileSync(resolve(homedir(), ".config", "workflow", "cline-api-key"), "utf8").trim();
-  } catch {
-    // Friendly failure rather than a raw ENOENT when the fallback file is absent.
-  }
-}
-if (!apiKey) throw new Error("acp surface requires CLINE_API_KEY or ~/.config/workflow/cline-api-key");
-
-// G1: all model traffic crosses the hub metering proxy; the contained env
-// holds only a placeholder key, and the proxy records tokens/cost.
-const provider = process.env.CLINE_PROVIDER ?? "openrouter";
-const upstream = process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai";
-const proxy = await createModelUsageProxy({ upstream, apiKey });
-const providerSettings = meteredProviderSettings(proxy.url, provider);
-const settingsPath = join(scratchHome, "providers.json");
-writeFileSync(settingsPath, JSON.stringify(providerSettings), { encoding: "utf8", mode: 0o600 });
-
-const buildLaunchArgs = (): string[] => {
-  const model = process.env.CLINE_MODEL;
-  return ["--acp", "--auto-approve", "false", ...(model ? ["--model", model] : [])];
-};
-const driver = AcpSessionDriver.contained({
-    containment: new LinuxBubblewrapContainment(),
-    launch: {
-      executable: process.execPath,
-      script: clineBin,
-      args: buildLaunchArgs(),
-      workspace,
-      home: scratchHome,
-      environment: {
-        CLINE_API_KEY: METERED_PLACEHOLDER_KEY,
-        CLINE_PROVIDER: provider,
-        CLINE_PROVIDER_SETTINGS_PATH: settingsPath,
-      },
-    },
-    authorize: application,
-    workspace,
-    workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
-    taskId: sessionTask.id,
-    ...(process.env.WORKFLOW_ACP_RESUME ? { resumeFrom: process.env.WORKFLOW_ACP_RESUME } : {}),
-});
-const session = new WorkflowCodingSession(driver);
-const holder = { driver, session };
+const runtime = await createConfiguredAcpRuntime(application, workspace, sessionTask.id);
 
 const { waitUntilExit } = render(
   React.createElement(WorkflowTui, {
     application,
-    session,
-    sessionConfigOptions: () => (driver.config()?.configOptions ?? []) as readonly SessionConfigOption[],
+    session: runtime.session,
+    sessionConfigOptions: () => (runtime.driver.config()?.configOptions ?? []) as readonly SessionConfigOption[],
     onSetSessionConfig: async (id: string, value: string | boolean) => {
-      await driver.setConfigOption(id, value);
+      await runtime.driver.setConfigOption(id, value);
     },
   }),
 );
@@ -120,11 +61,6 @@ try {
 } catch (error) {
   renderError = error;
 } finally {
-  try {
-    await holder?.driver.dispose();
-  } finally {
-    await proxy.close();
-    console.log("metering proxy metrics:", JSON.stringify(proxy.metrics(), null, 2));
-  }
+  await runtime.dispose();
 }
 if (renderError !== undefined) throw renderError;

@@ -30,8 +30,8 @@ bubblewrap.
 npm run setup   # npm install -> build -> toolbox -> vendored cline -> npm i -g .
 ```
 
-This installs the four bins (`workflow`, `workflow-hub`, `workflow-monitor`,
-`workflow-shell`) onto PATH and is safe to re-run.
+This installs the five bins (`workflow`, `workflow-tui`, `workflow-hub`,
+`workflow-monitor`, `workflow-shell`) onto PATH and is safe to re-run.
 
 ## Commands
 
@@ -39,6 +39,7 @@ This installs the four bins (`workflow`, `workflow-hub`, `workflow-monitor`,
 |---|---|
 | `workflow-hub` | the authority daemon every surface needs (discovery + token) |
 | `workflow` | patched Cline TUI launcher; auto-spawns the hub when absent |
+| `workflow-tui` | universal interactive TUI with explicit `cline`, `opencode`, or `acp` driver selection; fallback surface |
 | `workflow-monitor` | Ink monitoring TUI over the hub's canonical snapshot; standalone local authority when the hub is unreachable |
 | `workflow-shell` | interactive contained shell |
 
@@ -46,6 +47,7 @@ This installs the four bins (`workflow`, `workflow-hub`, `workflow-monitor`,
 
 ```sh
 workflow --cwd /path/to/project   # self-starts the authority hub
+workflow-tui --driver acp --cwd /path/to/project  # universal fallback; standalone local authority
 workflow-monitor                  # monitoring TUI over the live hub
 workflow-shell                    # contained shell
 ```

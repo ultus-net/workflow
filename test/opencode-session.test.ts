@@ -81,3 +81,23 @@ test("OpenCode session cancellation propagates an SDK abort error", async () => 
   assert.equal(session.snapshot().state, "failed");
   assert.match((session.snapshot() as { reason: string }).reason, /OpenCode abort failed: abort rejected/);
 });
+
+test("OpenCode session surfaces event-stream failures while a prompt is active", async () => {
+  const driver = new OpenCodeSessionDriver({
+    async create() { return { data: { id: "session-stream-error" } }; },
+    async prompt() { await new Promise((resolve) => setTimeout(resolve, 20)); return { data: { parts: [] } }; },
+    async abort() { return { data: true }; },
+    event: {
+      async subscribe() {
+        return { stream: (async function* () {
+          yield await Promise.reject(new SyntaxError("malformed SSE event"));
+        })() };
+      },
+    },
+  });
+  const session = new WorkflowCodingSession(driver);
+
+  await session.submit("Do work");
+
+  assert.deepEqual(session.snapshot(), { state: "failed", reason: "malformed SSE event" });
+});

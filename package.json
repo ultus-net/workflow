@@ -13,6 +13,7 @@
   },
   "bin": {
     "workflow": "dist/cli/tui.js",
+    "workflow-tui": "dist/cli/universal-tui.js",
     "workflow-hub": "dist/cli/hub.js",
     "workflow-monitor": "dist/cli/ink-tui.js",
     "workflow-shell": "dist/cli/contained-shell.js"
@@ -36,6 +37,7 @@
     "tui": "node scripts/build-cline-tui.mjs && tsx src/cli/tui.tsx",
     "tui:workflow": "tsx src/cli/ink-tui.tsx",
     "tui:acp": "tsx src/cli/acp-tui.tsx",
+    "tui:universal": "tsx src/cli/universal-tui.tsx",
     "style:eval": "tsx src/cli/style-eval.ts",
     "tui:cline:build": "node scripts/build-cline-tui.mjs",
     "cline:bump": "node scripts/bump-cline-tag.mjs",
