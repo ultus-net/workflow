@@ -39,6 +39,25 @@ function handleMessage(message) {
     });
   } else if (message.method === "session/new") {
     send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "fake-session-1" } });
+  } else if (message.method === "session/load") {
+    // Replay history before resolving, mirroring the spec's load contract.
+    send({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: message.params.sessionId,
+        update: { sessionUpdate: "user_message_chunk", content: { type: "text", text: "earlier user turn" } },
+      },
+    });
+    send({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: message.params.sessionId,
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "earlier agent turn" } },
+      },
+    });
+    send({ jsonrpc: "2.0", id: message.id, result: {} });
   } else if (message.method === "session/prompt") {
     cancelled = false;
     activePromptId = message.id;

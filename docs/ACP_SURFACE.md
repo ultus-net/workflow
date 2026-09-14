@@ -14,7 +14,7 @@ From Cline 3.0.61's ACP emitter and probe evidence:
 | Mode / model / config | `session/new` result (`availableModes`, `availableModels`, `configOptions` incl. `auto_approve`), `current_mode_update`, `config_option_update`, `session_info_update` | Reliable for Cline 3.0.61 |
 | Permission authority | `session/request_permission` with usable allow/reject options; denial honored | Proven (W035) |
 | Cancellation | `session/cancel`; fail-closed turn/session cancel on no-reject denial | Proven (W035) |
-| Session resume | `loadSession` advertised by Cline and OpenCode | Advertised; replay fidelity **unproven** |
+| Session resume | `session/load` replays full history (user/agent message chunks, tool calls, session info) before resolving | **Proven** 2026-09-14 (gated resume probe): faithful replay after a full agent-process restart; continuation turn completes |
 
 Authority rule: the stream is agent-cooperative UX projection only. Enforcement never derives from it — subjects come from permission requests, filesystem effects from OS containment.
 
@@ -29,7 +29,7 @@ Authority rule: the stream is agent-cooperative UX projection only. Enforcement 
 - **Plan content** — plan/act exposed only as mode ids; no `plan` updates emitted.
 - **Available slash commands** — not emitted.
 - **Terminal output embedding** — `ToolCallContent` type `terminal` is agent-optional; Cline does not use it (and never calls `terminal/*`, W035).
-- **Exact conversation history** — agent-owned; `session/load` replay correctness is per-agent and unverified.
+- **Exact conversation history** — agent-owned; `session/load` replay correctness was per-agent and unverified **until proven** (see §1 resume row — verified for Cline 3.0.61 on 2026-09-14).
 
 ## 3. Clean-surface daily-driver parity evaluation
 
@@ -44,7 +44,7 @@ Parity gaps:
 | G1 | No token/cost visibility (`usage` dropped) | Directly conflicts with Workflow's token-economy goal |
 | G2 | No slash-command/mention parity (commands not emitted; `@`-mentions are CLI-side, not ACP) | Daily-driver ergonomics |
 | G3 | Input/editor UX (mid-turn queueing, attachments) must be built client-side | Build cost, not a protocol blocker (image prompt content exists) |
-| G4 | Session resume fidelity depends on agent replay correctness | Unproven; needs a resume probe before relying on it |
+| G4 | ~~Session resume fidelity~~ **RESOLVED 2026-09-14** — gated probe: full replay after agent restart (user/agent chunks + session info), keyword turn intact, continuation completes | None |
 | G5 | Error surfacing is thin (error events dropped) | Debuggability cost |
 | G6 | Subagent/task spawning (`spawn_agent`) not distinctly gated or projected | Acceptable short-term |
 | G7 | Context/compaction not observable at runtime and not configurable on the ACP path (`--compaction` dropped before `runAcpMode` in 3.0.61; `usage_update` stabilized in spec but unimplemented by pinned SDK; compaction signaling still an RFD draft) | Same family as G1 — both control and visibility deferred on the ACP path |

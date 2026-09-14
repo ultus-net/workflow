@@ -80,6 +80,15 @@ export class AcpSubprocessClient {
     return { sessionId: record.sessionId };
   }
 
+  /**
+   * Loads a persisted session; per spec the agent replays the full
+   * conversation as session/update notifications before resolving, so
+   * listeners registered via onSessionUpdate observe the replayed history.
+   */
+  async loadSession(options: { readonly sessionId: string; readonly cwd: string }): Promise<void> {
+    await this.#request("session/load", { sessionId: options.sessionId, cwd: options.cwd, mcpServers: [] });
+  }
+
   prompt(options: {
     readonly sessionId: string;
     readonly prompt: readonly { readonly type: string; readonly text: string }[];

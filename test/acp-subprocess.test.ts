@@ -32,6 +32,19 @@ test("hub-side ACP subprocess spike initializes, creates a session, prompts, and
   await client.close();
 });
 
+test("hub-side ACP subprocess spike loads a session and observes the replayed history", async () => {
+  const client = new AcpSubprocessClient({ child: fakeAgent() });
+  const updates: AcpSessionUpdate[] = [];
+  client.onSessionUpdate((update) => updates.push(update));
+
+  await client.initialize();
+  await client.loadSession({ sessionId: "fake-session-1", cwd: "/repo" });
+
+  assert.deepEqual(updates.map((update) => update.update.sessionUpdate), ["user_message_chunk", "agent_message_chunk"]);
+  assert.deepEqual(updates.map((update) => update.sessionId), ["fake-session-1", "fake-session-1"]);
+  await client.close();
+});
+
 test("hub-side ACP subprocess spike cancels an active prompt explicitly", async () => {
   const client = new AcpSubprocessClient({ child: fakeAgent() });
   await client.initialize();
