@@ -11,7 +11,23 @@ export function convertOperatorItem(item: OperatorSessionItem, index: number): T
   const id = `item-${index}`;
   switch (item.kind) {
     case "user":
-      return { id, role: "user", content: [{ type: "text", text: item.text }] };
+      return {
+        id,
+        role: "user",
+        content: [{ type: "text", text: item.text }],
+        ...(item.images !== undefined && item.images.length > 0
+          ? {
+              attachments: item.images.map((image) => ({
+                id: image.id,
+                type: "image" as const,
+                name: "screenshot",
+                contentType: image.mediaType,
+                status: { type: "complete" as const },
+                content: [{ type: "image" as const, image: `/api/image/${image.id}` }],
+              })),
+            }
+          : {}),
+      };
     case "assistant":
       return { id, role: "assistant", content: [{ type: "text", text: item.text }] };
     case "action":

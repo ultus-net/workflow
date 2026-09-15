@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  AttachmentPrimitive,
   AuiIf,
   ComposerPrimitive,
   MessagePrimitive,
@@ -68,6 +69,14 @@ function advance(taskId: string, requested: string, refresh: () => Promise<void>
 function UserMessage() {
   return (
     <MessagePrimitive.Root className="msg msg-user">
+      <MessagePrimitive.Attachments>
+        {({ attachment }) => {
+          const imagePart = attachment.content.find((part) => part.type === "image");
+          return imagePart !== undefined && imagePart.type === "image"
+            ? <img className="msg-attachment" src={imagePart.image} alt={attachment.name} />
+            : null;
+        }}
+      </MessagePrimitive.Attachments>
       <MessagePrimitive.Parts components={{ Text: (part) => <p className="msg-text">{part.text}</p> }} />
     </MessagePrimitive.Root>
   );
@@ -96,19 +105,35 @@ function AssistantMessage() {
 function Composer() {
   return (
     <ComposerPrimitive.Root className="composer">
-      <ComposerPrimitive.Input
-        className="composer-input"
-        placeholder="Describe the work to perform"
-        submitMode="enter"
-        aria-label="Prompt"
-      />
-      <div className="composer-actions">
-        <AuiIf condition={(state) => state.thread.isRunning}>
-          <ComposerPrimitive.Cancel className="btn btn-cancel">Cancel</ComposerPrimitive.Cancel>
-        </AuiIf>
-        <AuiIf condition={(state) => !state.thread.isRunning}>
-          <ComposerPrimitive.Send className="btn btn-send">Send</ComposerPrimitive.Send>
-        </AuiIf>
+      <div className="composer-attachments">
+        <ComposerPrimitive.Attachments>
+          {() => (
+            <AttachmentPrimitive.Root className="composer-attachment">
+              <AttachmentPrimitive.unstable_Thumb className="composer-attachment-thumb" />
+              <span className="composer-attachment-name"><AttachmentPrimitive.Name /></span>
+              <AttachmentPrimitive.Remove className="attachment-remove" aria-label="Remove attachment">×</AttachmentPrimitive.Remove>
+            </AttachmentPrimitive.Root>
+          )}
+        </ComposerPrimitive.Attachments>
+      </div>
+      <div className="composer-row">
+        <ComposerPrimitive.AddAttachment className="btn btn-ghost btn-attach" aria-label="Attach image" multiple>
+          +
+        </ComposerPrimitive.AddAttachment>
+        <ComposerPrimitive.Input
+          className="composer-input"
+          placeholder="Describe the work to perform"
+          submitMode="enter"
+          aria-label="Prompt"
+        />
+        <div className="composer-actions">
+          <AuiIf condition={(state) => state.thread.isRunning}>
+            <ComposerPrimitive.Cancel className="btn btn-cancel">Cancel</ComposerPrimitive.Cancel>
+          </AuiIf>
+          <AuiIf condition={(state) => !state.thread.isRunning}>
+            <ComposerPrimitive.Send className="btn btn-send">Send</ComposerPrimitive.Send>
+          </AuiIf>
+        </div>
       </div>
     </ComposerPrimitive.Root>
   );

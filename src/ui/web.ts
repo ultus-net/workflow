@@ -21,6 +21,7 @@ export function createWorkflowWebServer(
 ) {
   let sessionItems: OperatorSessionItem[] = [];
   let turnInFlight = false;
+  const images = new ImageStore();
   session?.subscribe((event) => {
     const item = projectOperatorSessionEvent(event);
     if (item) sessionItems = appendOperatorItem(sessionItems, item);
@@ -54,6 +55,12 @@ export function createWorkflowWebServer(
     if (request.method === "GET" && request.url === "/api/session") {
       return json(response, 200, { available: Boolean(session), state: session?.snapshot() ?? { state: "unavailable" }, items: sessionItems });
     }
+    if (request.method === "GET" && request.url?.startsWith("/api/image/")) {
+      const stored = images.get(decodeURIComponent(request.url.slice("/api/image/".length)));
+      if (stored === undefined) return json(response, 404, { error: "not found" });
+      response.writeHead(200, { "content-type": stored.mediaType, "cache-control": "private, immutable" });
+      return response.end(Buffer.from(stored.data, "base64"));
+    }
     if (request.method === "POST" && request.url === "/api/prompt") {
       if (!session) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
@@ -61,12 +68,13 @@ export function createWorkflowWebServer(
         return json(response, 415, { error: "content-type must be application/json" });
       }
       try {
-        const body = await readJson(request);
+        const body = await readJson(request, PROMPT_BODY_LIMIT);
         if (!isPromptRequest(body)) return json(response, 400, { error: "invalid prompt request" });
         if (turnInFlight) return json(response, 409, { error: "coding session is already running" });
         turnInFlight = true;
-        sessionItems = appendOperatorItem(sessionItems, { kind: "user", text: body.prompt });
-        void session.submit(body.prompt).finally(() => { turnInFlight = false; });
+        const userImages = (body.images ?? []).map((image) => ({ id: images.store(image), mediaType: image.mediaType }));
+        sessionItems = appendOperatorItem(sessionItems, { kind: "user", text: body.prompt, ...(userImages.length > 0 ? { images: userImages } : {}) });
+        void session.submit(body.prompt, body.images ?? []).finally(() => { turnInFlight = false; });
         return json(response, 202, { accepted: true });
       } catch {
         return json(response, 400, { error: "invalid request body" });
@@ -104,10 +112,55 @@ function isTrustedMutation(request: IncomingMessage): boolean {
   return origin === `http://${host}` || origin === `https://${host}`;
 }
 
-function isPromptRequest(value: unknown): value is { prompt: string } {
+/** Four images at ≤ 5 MB base64 payload each, plus the prompt body margin. */
+const PROMPT_BODY_LIMIT = 24 * 1024 * 1024;
+const MAX_PROMPT_IMAGES = 4;
+const MAX_IMAGE_DATA_CHARS = 7_000_000;
+const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
+
+interface PromptImage {
+  readonly mediaType: string;
+  readonly data: string;
+}
+
+/** Bounded FIFO store so images stay fetchable without bloating the polled transcript. */
+class ImageStore {
+  #entries = new Map<string, { readonly mediaType: string; readonly data: string }>();
+  #nextId = 0;
+
+  get(id: string): { readonly mediaType: string; readonly data: string } | undefined {
+    return this.#entries.get(id);
+  }
+
+  store(image: PromptImage): string {
+    this.#nextId += 1;
+    const id = String(this.#nextId);
+    this.#entries.set(id, image);
+    while (this.#entries.size > 24) {
+      const oldest = this.#entries.keys().next().value;
+      if (oldest === undefined) break;
+      this.#entries.delete(oldest);
+    }
+    return id;
+  }
+}
+
+function isPromptRequest(value: unknown): value is { prompt: string; images?: PromptImage[] } {
   if (typeof value !== "object" || value === null) return false;
   const prompt = (value as Record<string, unknown>).prompt;
-  return typeof prompt === "string" && prompt.trim().length > 0 && prompt.length <= 100_000;
+  if (typeof prompt !== "string" || prompt.trim().length === 0 || prompt.length > 100_000) return false;
+  const images = (value as Record<string, unknown>).images;
+  if (images === undefined) return true;
+  if (!Array.isArray(images) || images.length > MAX_PROMPT_IMAGES) return false;
+  return images.every((image) =>
+    typeof image === "object" && image !== null &&
+    ALLOWED_IMAGE_TYPES.has((image as PromptImage).mediaType) &&
+    typeof (image as PromptImage).data === "string" &&
+    (image as PromptImage).data.length > 0 &&
+    (image as PromptImage).data.length <= MAX_IMAGE_DATA_CHARS &&
+    BASE64_PATTERN.test((image as PromptImage).data),
+  );
 }
 
 function isTransitionRequest(value: unknown): value is { taskId: string; requested: TaskState } {
@@ -116,13 +169,13 @@ function isTransitionRequest(value: unknown): value is { taskId: string; request
   return typeof input.taskId === "string" && STATES.includes(input.requested as TaskState);
 }
 
-async function readJson(request: IncomingMessage): Promise<unknown> {
+async function readJson(request: IncomingMessage, limit = 16_384): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     size += buffer.length;
-    if (size > 16_384) throw new TypeError("request too large");
+    if (size > limit) throw new TypeError("request too large");
     chunks.push(buffer);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));

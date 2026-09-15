@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   AssistantRuntimeProvider,
+  SimpleImageAttachmentAdapter,
   useExternalStoreRuntime,
   type AppendMessage,
 } from "@assistant-ui/react";
@@ -36,17 +37,26 @@ function useWorkflowSession() {
   return { envelope, refresh: load };
 }
 
+const attachments = new SimpleImageAttachmentAdapter();
+
 export function WorkflowRuntimeProvider({ children }: { readonly children: ReactNode }) {
   const { envelope, refresh } = useWorkflowSession();
   const isRunning = envelope.state.state === "running";
 
   const onNew = useCallback(async (message: AppendMessage): Promise<void> => {
-    const part = message.content[0];
-    if (part?.type !== "text") throw new Error("Only text prompts are supported");
+    const text = message.content.filter((part) => part.type === "text").map((part) => part.text).join("\n").trim();
+    const images = (message.attachments ?? []).flatMap((attachment) =>
+      attachment.content.flatMap((part) => {
+        if (part.type !== "image") return [];
+        const parsed = parseDataUrl(part.image);
+        return parsed === undefined ? [] : [parsed];
+      }),
+    );
+    if (text.length === 0 && images.length === 0) throw new Error("A prompt needs text or an image");
     const response = await fetch("/api/prompt", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ prompt: part.text }),
+      body: JSON.stringify({ prompt: text.length > 0 ? text : "Describe the attached image(s)", ...(images.length > 0 ? { images } : {}) }),
     });
     if (!response.ok) throw new Error(`prompt rejected: ${response.status}`);
     // The server records the user turn before accepting, so an immediate
@@ -66,7 +76,15 @@ export function WorkflowRuntimeProvider({ children }: { readonly children: React
     isSendDisabled: !envelope.available || isRunning,
     onNew,
     onCancel,
+    adapters: { attachments },
   });
 
   return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>;
+}
+
+/** Splits a data URL (data:<mediaType>;base64,<data>) into its wire parts. */
+function parseDataUrl(url: string): { mediaType: string; data: string } | undefined {
+  const match = /^data:([^;,]+);base64,(.+)$/s.exec(url);
+  if (match === null) return undefined;
+  return { mediaType: match[1]!, data: match[2]! };
 }

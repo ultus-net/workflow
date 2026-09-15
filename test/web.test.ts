@@ -141,6 +141,71 @@ test("web UI submits prompts through the authoritative coding session and expose
   ]);
 });
 
+test("web UI forwards prompt images to the session and serves them back", async (context) => {
+  let received: readonly { mediaType: string; data: string }[] | undefined;
+  const driver: CodingSessionDriver = {
+    async start(_prompt, emit, images) {
+      received = images as { mediaType: string; data: string }[] | undefined;
+      emit({ type: "completed", result: "seen" });
+    },
+    async cancel() {},
+  };
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, new WorkflowCodingSession(driver));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
+  const prompt = await fetch(`http://127.0.0.1:${port}/api/prompt`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "What is in this image?", images: [{ mediaType: "image/png", data: png }] }),
+  });
+  assert.equal(prompt.status, 202);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(received, [{ mediaType: "image/png", data: png }]);
+
+  const session = await fetch(`http://127.0.0.1:${port}/api/session`).then((response) => response.json()) as {
+    items: { kind: string; images?: { id: string; mediaType: string }[] }[];
+  };
+  assert.deepEqual(session.items[0]?.images, [{ id: "1", mediaType: "image/png" }]);
+
+  const image = await fetch(`http://127.0.0.1:${port}/api/image/1`);
+  assert.equal(image.status, 200);
+  assert.equal(image.headers.get("content-type"), "image/png");
+  assert.deepEqual(Buffer.from(await image.arrayBuffer()), Buffer.from(png, "base64"));
+
+  const missing = await fetch(`http://127.0.0.1:${port}/api/image/999`);
+  assert.equal(missing.status, 404);
+});
+
+test("web UI rejects invalid prompt images before touching the session", async (context) => {
+  let submitted = false;
+  const driver: CodingSessionDriver = { async start() { submitted = true; }, async cancel() {} };
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, new WorkflowCodingSession(driver));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+  const post = (images: unknown) => fetch(`http://127.0.0.1:${port}/api/prompt`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "look", images }),
+  });
+
+  assert.equal((await post([{ mediaType: "text/html", data: "aGVsbG8=" }])).status, 400);
+  assert.equal((await post([{ mediaType: "image/png", data: "not base64!" }])).status, 400);
+  assert.equal((await post([1, 2, 3, 4, 5].map(() => ({ mediaType: "image/png", data: "aGVsbG8=" })))).status, 400);
+  assert.equal(submitted, false);
+});
+
 test("web UI denies cross-origin browser mutations", async (context) => {
   const driver: CodingSessionDriver = { async start() {}, async cancel() {} };
   const application = new WorkflowApplication(
