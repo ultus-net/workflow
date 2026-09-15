@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { promisify } from "node:util";
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
@@ -10,6 +12,15 @@ import type { WebappBundle } from "./webapp/bundle.js";
 import { PWA_MANIFEST, renderIconPng, serviceWorkerSource } from "./webapp/pwa.js";
 
 const STATES: readonly TaskState[] = ["BLOCKED", "READY", "IN_PROGRESS", "VERIFYING", "VERIFIED", "FAILED"];
+const execGit = promisify(execFile);
+
+type GitChangeStatus = "added" | "deleted" | "modified" | "renamed" | "untracked";
+
+interface GitChange {
+  readonly path: string;
+  readonly status: GitChangeStatus;
+  readonly sourcePath?: string;
+}
 
 /**
  * Serves the React operator surface (PWA) plus the Workflow-owned session API.
@@ -62,6 +73,32 @@ export function createWorkflowWebServer(
       return asset(response, "image/png", renderIconPng(512));
     }
     if (request.method === "GET" && request.url === "/api/snapshot") return json(response, 200, application.snapshot());
+    if (request.method === "GET" && request.url === "/api/git") {
+      const workspace = application.workspaceRoot;
+      if (workspace === undefined) return json(response, 503, { error: "workspace unavailable" });
+      try {
+        const status = await gitStatus(workspace);
+        return json(response, 200, {
+          branch: status.branch,
+          changes: status.changes.map(({ path, status: changeStatus }) => ({ path, status: changeStatus })),
+        });
+      } catch {
+        return json(response, 503, { error: "git repository unavailable" });
+      }
+    }
+    if (request.method === "GET" && request.url?.startsWith("/api/git/diff?")) {
+      const workspace = application.workspaceRoot;
+      if (workspace === undefined) return json(response, 503, { error: "workspace unavailable" });
+      try {
+        const path = new URL(request.url, "http://workflow.local").searchParams.get("path");
+        const status = await gitStatus(workspace);
+        const change = status.changes.find((entry) => entry.path === path);
+        if (change === undefined) return json(response, 404, { error: "changed path not found" });
+        return json(response, 200, { path: change.path, diff: await gitDiff(workspace, change) });
+      } catch {
+        return json(response, 503, { error: "git diff unavailable" });
+      }
+    }
     if (request.method === "GET" && request.url === "/api/sessions") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       return json(response, 200, { sessions: manager.list() });
@@ -391,6 +428,68 @@ export function createWorkflowWebServer(
     }
     return json(response, 404, { error: "not found" });
   });
+}
+
+async function gitStatus(workspace: string): Promise<{ branch: string; changes: GitChange[] }> {
+  const { stdout } = await execGit("git", ["status", "--porcelain=v1", "--branch", "-z", "--untracked-files=all"], {
+    cwd: workspace,
+    maxBuffer: 1024 * 1024,
+  });
+  const records = stdout.split("\0");
+  const header = records.shift() ?? "";
+  const branch = header.startsWith("## ") ? header.slice(3).split("...")[0] ?? "HEAD" : "HEAD";
+  const changes: GitChange[] = [];
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (!record) continue;
+    const code = record.slice(0, 2);
+    const path = record.slice(3);
+    let sourcePath: string | undefined;
+    if (code.includes("R") || code.includes("C")) {
+      // Porcelain -z reports the destination in this record, then the source.
+      sourcePath = records[index + 1] || undefined;
+      index += 1;
+    }
+    changes.push({ path, status: gitChangeStatus(code), ...(sourcePath === undefined ? {} : { sourcePath }) });
+  }
+  changes.sort((left, right) => left.path.localeCompare(right.path));
+  return { branch, changes };
+}
+
+function gitChangeStatus(code: string): GitChangeStatus {
+  if (code === "??") return "untracked";
+  if (code.includes("R") || code.includes("C")) return "renamed";
+  if (code.includes("D")) return "deleted";
+  if (code.includes("A")) return "added";
+  return "modified";
+}
+
+async function gitDiff(workspace: string, change: GitChange): Promise<string> {
+  if (change.status === "untracked") {
+    try {
+      const { stdout } = await execGit("git", ["diff", "--no-index", "--", "/dev/null", change.path], {
+        cwd: workspace,
+        maxBuffer: 1024 * 1024,
+      });
+      return stdout;
+    } catch (error) {
+      const stdout = (error as { stdout?: string }).stdout;
+      if (typeof stdout === "string") return stdout;
+      throw error;
+    }
+  }
+  try {
+    await execGit("git", ["rev-parse", "--verify", "HEAD"], { cwd: workspace });
+    const paths = change.sourcePath === undefined ? [change.path] : [change.sourcePath, change.path];
+    const { stdout } = await execGit("git", ["diff", "HEAD", "--", ...paths], { cwd: workspace, maxBuffer: 1024 * 1024 });
+    return stdout;
+  } catch {
+    const [staged, unstaged] = await Promise.all([
+      execGit("git", ["diff", "--cached", "--", change.path], { cwd: workspace, maxBuffer: 1024 * 1024 }),
+      execGit("git", ["diff", "--", change.path], { cwd: workspace, maxBuffer: 1024 * 1024 }),
+    ]);
+    return `${staged.stdout}${unstaged.stdout}`;
+  }
 }
 
 function switchResult(response: ServerResponse, result: SessionSwitchResult, okStatus: number) {

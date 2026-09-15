@@ -13,6 +13,7 @@ An `advisory` host may display the same policy decisions but cannot guarantee th
 - MCP output is untrusted observation data. It must pass `normalizeMcpEvidence`, and evidence still has to satisfy the task's authority, subject, and freshness requirements. Evidence is admitted only at the current mutation epoch; later mutations stale it only when they affect its subject.
 - Browser requests are untrusted commands. The current server bounds JSON bodies and accepts only explicit transition intents; it is a loopback development surface, not an authenticated remote control plane.
 - Persistence is local authoritative state after validation. The JSON store uses version checks and writer exclusion, but assumes a private/trusted store directory and does not provide protection against a hostile local OS user, filesystem, or administrator.
+- Credential values are a separate custody boundary from Workflow's persisted control-plane state. Persisted configuration may contain opaque `secret://<id>` references and non-secret policy metadata, but never credential values. Production secret stores must fail closed when their backing credential service is unavailable; they must not fall back to plaintext files.
 
 ## Capability Withholding
 
@@ -30,6 +31,8 @@ Capability withholding is useful only when the host's execution environment actu
 | Malformed host subject metadata hides a mutation | Recognized safety-relevant metadata fails closed in enforced adapters | Unknown host/tool schemas require adapter support before they can be claimed enforced |
 | MCP response self-certifies success | MCP data is normalized as evidence and cannot mutate task state directly | Compromised evidence authority can lie about the environment; choose authorities accordingly |
 | Prompt requests shell/process or credentials | `process` and `credentials` capability classes are default-deny | OS-level access outside the intercepted host is outside Workflow's boundary |
+| Agent or MCP requests an unrelated stored credential | Credential brokering checks the declared consumer and workspace before materialization and exposes no general-purpose secret-read tool | A consumer can inspect a credential intentionally materialized into its own process; use narrowly scoped credentials per consumer |
+| Browser/API lists credential configuration | Control-plane responses expose credential metadata/configured state only; there is no reveal operation | A privileged same-user process or compromised unlocked OS keyring remains outside Workflow's confidentiality boundary |
 | Allowed process inherits ambient host authority | Linux Bubblewrap backend uses an empty environment, explicit filesystem binds, and isolated network by default | Direct/uncontained process execution remains outside this guarantee; Bubblewrap is not VM/kernel isolation |
 | Stale actor overwrites workflow state | Version conflict plus exclusive local writer lock | Store is not a distributed/HA consensus system |
 | Malformed/tampered persisted state | Persisted domain fields, graph invariants, verification evidence, and transition records are validated on restore | Private store-directory assumption remains; history is validated for legal transitions but is not a cryptographically authenticated audit log |

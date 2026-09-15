@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
+import { createCredentialBroker, InMemorySecretStore } from "../src/integrations/credentials.js";
 import { guardPolicyEvidence } from "../src/integrations/mcp-toolbox-guard.js";
 import { createWorkflowGuardMcpProvider } from "../src/integrations/mcp-toolbox-guard.js";
 
@@ -41,4 +44,47 @@ test("workflow-guard-mcp provider discovers and invokes guard_check over stdio",
 
   const status = await provider.guardStatus();
   assert.equal(status.mode, "policy-advisor");
+});
+
+test("workflow-guard-mcp child receives only explicitly brokered credential environment", async (t) => {
+  ensureBuilt();
+  const directory = mkdtempSync(resolve(tmpdir(), "workflow-mcp-env-"));
+  const probePath = resolve(directory, "env.json");
+  const wrapperPath = resolve(directory, "server.mjs");
+  writeFileSync(wrapperPath, [
+    'import { writeFileSync } from "node:fs";',
+    `writeFileSync(${JSON.stringify(probePath)}, JSON.stringify(process.env));`,
+    `await import(${JSON.stringify(pathToFileURL(serverPath).href)});`,
+  ].join("\n"));
+
+  const store = new InMemorySecretStore();
+  await store.put("guard-token", "brokered-value");
+  const broker = createCredentialBroker(store, [{
+    id: "guard-token",
+    label: "Guard token",
+    kind: "token",
+    allowedConsumers: ["mcp:workflow-guard"],
+    allowedPurposes: ["stdio-env:WORKFLOW_GUARD_TOKEN"],
+    workspace: process.cwd(),
+  }]);
+  const ambientName = "WORKFLOW_AMBIENT_SENTINEL";
+  const previousAmbient = process.env[ambientName];
+  process.env[ambientName] = "must-not-reach-child";
+  t.after(() => {
+    if (previousAmbient === undefined) delete process.env[ambientName];
+    else process.env[ambientName] = previousAmbient;
+  });
+
+  const provider = await createWorkflowGuardMcpProvider({
+    serverPath: wrapperPath,
+    credentialBroker: broker,
+    credentialBindings: [{ variable: "WORKFLOW_GUARD_TOKEN", reference: "secret://guard-token" }],
+    workspace: process.cwd(),
+  });
+  t.after(() => provider.close());
+  assert.equal((await provider.guardStatus()).mode, "policy-advisor");
+
+  const childEnv = JSON.parse(readFileSync(probePath, "utf8")) as Record<string, string>;
+  assert.equal(childEnv.WORKFLOW_GUARD_TOKEN, "brokered-value");
+  assert.equal(childEnv[ambientName], undefined);
 });

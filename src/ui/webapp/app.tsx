@@ -40,7 +40,18 @@ interface Snapshot {
 }
 
 const NEXT_STATE: Record<string, string> = { READY: "IN_PROGRESS", IN_PROGRESS: "VERIFYING", VERIFYING: "VERIFIED" };
+const NEXT_STATE_ACTION: Record<string, string> = { READY: "Start", IN_PROGRESS: "Verify", VERIFYING: "Complete" };
 const PANEL_POLL_MS = 1500;
+
+interface GitChange {
+  readonly path: string;
+  readonly status: "added" | "deleted" | "modified" | "renamed" | "untracked";
+}
+
+interface GitStatus {
+  readonly branch: string;
+  readonly changes: readonly GitChange[];
+}
 
 function useSnapshot() {
   const [snapshot, setSnapshot] = useState<Snapshot | undefined>(undefined);
@@ -58,6 +69,24 @@ function useSnapshot() {
     return () => clearInterval(timer);
   }, [load]);
   return { snapshot, refresh: load };
+}
+
+function useGitStatus() {
+  const [status, setStatus] = useState<GitStatus | undefined>(undefined);
+  useEffect(() => {
+    const load = async (): Promise<void> => {
+      try {
+        const response = await fetch("/api/git");
+        if (response.ok) setStatus(await response.json() as GitStatus);
+      } catch {
+        // Keep the last good repository state; the next poll retries.
+      }
+    };
+    void load();
+    const timer = setInterval(() => void load(), PANEL_POLL_MS);
+    return () => clearInterval(timer);
+  }, []);
+  return status;
 }
 
 function advance(taskId: string, requested: string, refresh: () => Promise<void>): void {
@@ -755,11 +784,17 @@ function PermissionPrompt({ pending, answer, remembered }: {
   );
 }
 
-function UsageMeter() {
+function UsageMeter({ placement = "composer" }: { readonly placement?: "composer" | "inspector" }) {
   const usage = useSessionUsage();
-  if (usage === undefined || usage.usageEvents === 0) return null;
+  if (usage === undefined) return null;
   return (
-    <div className="usage-meter" title={`${usage.requests} metered model request(s)`}>
+    <div className={`usage-meter usage-meter-${placement}`} title={`${usage.requests} metered model request(s)`}>
+      {placement === "inspector" && <span className="usage-label">Session spend</span>}
+      {placement === "inspector" && (
+        <span className="usage-context" aria-label={usage.latestPromptTokens === undefined ? "Latest model context input unavailable" : `${usage.latestPromptTokens} tokens in the latest model context input`}>
+          Context now {usage.latestPromptTokens === undefined ? <strong>unavailable</strong> : <><strong>{formatTokens(usage.latestPromptTokens)}</strong> tokens</>}
+        </span>
+      )}
       <span className="usage-tokens" aria-label={`${usage.promptTokens} prompt tokens, ${usage.completionTokens} completion tokens`}>
         ↑{formatTokens(usage.promptTokens)} ↓{formatTokens(usage.completionTokens)} tokens
       </span>
@@ -1142,7 +1177,13 @@ function Panels({ snapshot, sessions, refresh, refreshSessions }: {
 }) {
   return (
     <aside className="panels">
-      {sessions !== undefined && <SessionsPanel sessions={sessions} refresh={refreshSessions} />}
+      <UsageMeter placement="inspector" />
+      {sessions !== undefined && (
+        <details className="panel-disclosure">
+          <summary><span>Sessions</span><span className="panel-summary-meta">{sessions.length}</span></summary>
+          <div className="panel-disclosure-body"><SessionsPanel sessions={sessions} refresh={refreshSessions} /></div>
+        </details>
+      )}
       <section>
         <h2>Tasks</h2>
         {(snapshot?.tasks ?? []).map((task) => (
@@ -1154,19 +1195,20 @@ function Panels({ snapshot, sessions, refresh, refreshSessions }: {
               {task.blockers.length > 0 && <span className="task-blockers">blocked by {task.blockers.join(", ")}</span>}
             </span>
             {NEXT_STATE[task.state] !== undefined && (
-              <button className="btn btn-ghost" onClick={() => advance(task.id, NEXT_STATE[task.state]!, refresh)}>
-                Advance
+              <button className="task-action" onClick={() => advance(task.id, NEXT_STATE[task.state]!, refresh)}>
+                {NEXT_STATE_ACTION[task.state]}
               </button>
             )}
             {task.state === "FAILED" && (
-              <button className="btn btn-ghost" onClick={() => retryTask(task.id, refresh)}>Retry</button>
+              <button className="task-action" onClick={() => retryTask(task.id, refresh)}>Retry</button>
             )}
           </div>
         ))}
         <AddTaskForm refresh={refresh} />
       </section>
-      <section>
-        <h2>Evidence</h2>
+      <details className="panel-disclosure">
+        <summary><span>Evidence</span><span className="panel-summary-meta">{snapshot?.evidence.length ?? 0}</span></summary>
+        <section className="panel-disclosure-body">
         {snapshot === undefined || snapshot.evidence.length === 0
           ? <p className="muted">none observed</p>
           : snapshot.evidence.map((entry, index) => (
@@ -1175,15 +1217,67 @@ function Panels({ snapshot, sessions, refresh, refreshSessions }: {
             </p>
           ))}
         <RecordEvidenceForm refresh={refresh} />
-      </section>
-      <section>
-        <h2>History</h2>
+        </section>
+      </details>
+      <details className="panel-disclosure">
+        <summary><span>History</span><span className="panel-summary-meta">{snapshot?.history.length ?? 0}</span></summary>
+        <section className="panel-disclosure-body">
         {snapshot === undefined || snapshot.history.length === 0
           ? <p className="muted">no transitions</p>
           : snapshot.history.slice(-8).map((entry, index) => (
             <p key={index}>{entry.taskId}: {entry.from} → {entry.to}</p>
           ))}
-      </section>
+        </section>
+      </details>
+    </aside>
+  );
+}
+
+const GIT_STATUS_MARK: Record<GitChange["status"], string> = {
+  added: "A",
+  deleted: "D",
+  modified: "M",
+  renamed: "R",
+  untracked: "?",
+};
+
+function GitRail({ status }: { readonly status: GitStatus | undefined }) {
+  const [selected, setSelected] = useState<string | undefined>(undefined);
+  const [diff, setDiff] = useState<string | undefined>(undefined);
+  const diffRequestRef = useRef(0);
+  const select = async (path: string): Promise<void> => {
+    const request = ++diffRequestRef.current;
+    if (selected === path) {
+      setSelected(undefined);
+      setDiff(undefined);
+      return;
+    }
+    setSelected(path);
+    setDiff(undefined);
+    const response = await fetch(`/api/git/diff?path=${encodeURIComponent(path)}`);
+    if (response.ok) {
+      const nextDiff = (await response.json() as { diff: string }).diff;
+      if (request === diffRequestRef.current) setDiff(nextDiff);
+    }
+  };
+  return (
+    <aside className="git-rail" aria-label="Repository changes">
+      <div className="git-rail-head">
+        <span className="git-branch" title={status?.branch}>⌘ {status?.branch ?? "repository"}</span>
+        <span className="git-count">{status?.changes.length ?? 0}</span>
+      </div>
+      <div className="git-changes">
+        {status !== undefined && status.changes.length === 0 && <p className="muted">working tree clean</p>}
+        {(status?.changes ?? []).map((change) => (
+          <div key={change.path} className={`git-change-wrap${selected === change.path ? " git-change-open" : ""}`}>
+            <button className="git-change" onClick={() => void select(change.path)} aria-expanded={selected === change.path}>
+              <span className={`git-status git-status-${change.status}`}>{GIT_STATUS_MARK[change.status]}</span>
+              <span className="git-path" title={change.path}>{change.path}</span>
+            </button>
+            {selected === change.path && <pre className="git-diff">{diff ?? "loading diff…"}</pre>}
+          </div>
+        ))}
+      </div>
     </aside>
   );
 }
@@ -1268,8 +1362,7 @@ const ENFORCEMENT_COPY: Record<string, string> = {
 /**
  * Safety-relevant fact, styled as one: advisory can never render equivalent
  * to enforced (PRODUCT.md invariant), so advisory is a persistent amber
- * outline badge and enforced a neutral filled one — in the header and again
- * beside the composer where prompts are sent.
+ * outline badge and enforced a neutral filled one in the header.
  */
 function EnforcementBadge({ level, transport, copy }: {
   readonly level: string | undefined;
@@ -1289,14 +1382,9 @@ function EnforcementBadge({ level, transport, copy }: {
   );
 }
 
-/** Composer echo of the enforcement badge: visible where prompts are sent. */
-function EnforcementEcho({ level }: { readonly level: string | undefined }) {
-  if (level !== "advisory") return null;
-  return <span className="enforcement-echo" title={ENFORCEMENT_COPY.advisory}>ADVISORY — actions not pre-authorized</span>;
-}
-
 export function App() {
   const { snapshot, refresh } = useSnapshot();
+  const gitStatus = useGitStatus();
   const { sessions, refresh: refreshSessions } = useSessions();
   const { options, setOption } = useConfigOptions();
   const permissions = usePermissions();
@@ -1337,6 +1425,7 @@ export function App() {
         <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
       </header>
       <main className="shell-main">
+        <div className="git-column"><GitRail status={gitStatus} /></div>
         <section className="chat-column">
           <ThreadPrimitive.Root className="thread-root">
             <ThreadPrimitive.Viewport className="thread-viewport">
@@ -1366,16 +1455,18 @@ export function App() {
             <div className="composer-dock">
               <Composer />
               <QueueIndicator />
-              <ConfigControls options={options} setOption={setOption} permissions={permissions} capabilities={capabilities} />
-              <div className="composer-utilities">
-                <EnforcementEcho level={snapshot?.enforcementLevel} />
-                <ExportSessionButton />
-                <UsageMeter />
+              <div className="composer-toolbar">
+                <ConfigControls options={options} setOption={setOption} permissions={permissions} capabilities={capabilities} />
+                <div className="composer-utilities">
+                  <ExportSessionButton />
+                </div>
               </div>
             </div>
           </ThreadPrimitive.Root>
         </section>
-        <Panels snapshot={snapshot} sessions={sessions} refresh={refresh} refreshSessions={refreshSessions} />
+        <div className="inspector-column">
+          <Panels snapshot={snapshot} sessions={sessions} refresh={refresh} refreshSessions={refreshSessions} />
+        </div>
       </main>
     </div>
   );

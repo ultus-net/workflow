@@ -7,6 +7,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 import { normalizeMcpEvidence, type McpCapability, type McpProvider } from "../adapters/mcp.js";
 import type { Evidence } from "../kernel/contracts.js";
+import { materializeMcpEnvironment, type McpCredentialBinding } from "./credential-mcp.js";
+import type { CredentialBroker } from "./credentials.js";
 
 /**
  * First-class integration with the vendored workflow-guard-mcp server
@@ -46,10 +48,23 @@ export interface WorkflowGuardProvider extends McpProvider {
   close(): Promise<void>;
 }
 
-export async function createWorkflowGuardMcpProvider(options: { serverPath: string }): Promise<WorkflowGuardProvider> {
+export async function createWorkflowGuardMcpProvider(options: {
+  serverPath: string;
+  credentialBroker?: CredentialBroker;
+  credentialBindings?: readonly McpCredentialBinding[];
+  workspace?: string;
+}): Promise<WorkflowGuardProvider> {
+  const env = options.credentialBindings === undefined || options.credentialBindings.length === 0
+    ? undefined
+    : await materializeMcpEnvironment(requiredBroker(options.credentialBroker), {
+      consumer: "mcp:workflow-guard",
+      workspace: options.workspace ?? process.cwd(),
+      bindings: options.credentialBindings,
+    });
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [options.serverPath],
+    ...(env === undefined ? {} : { env }),
     stderr: "pipe",
   });
   const client = new Client({ name: "workflow", version: "0.0.0" });
@@ -97,6 +112,11 @@ export async function createWorkflowGuardMcpProvider(options: { serverPath: stri
   };
 }
 
+function requiredBroker(broker: CredentialBroker | undefined): CredentialBroker {
+  if (broker === undefined) throw new Error("credential broker required for MCP credential bindings");
+  return broker;
+}
+
 /** Maps a guard decision to normalized MCP evidence for the policy subject. */
 /** Resolves the vendored workflow-guard-mcp server entrypoint, building first if needed. */
 export function defaultToolboxGuardServerPath(): string {
@@ -108,8 +128,12 @@ export function defaultToolboxGuardServerPath(): string {
   return serverPath;
 }
 
-export function createDefaultToolboxGuardProvider(): Promise<WorkflowGuardProvider> {
-  return createWorkflowGuardMcpProvider({ serverPath: defaultToolboxGuardServerPath() });
+export function createDefaultToolboxGuardProvider(options: {
+  credentialBroker?: CredentialBroker;
+  credentialBindings?: readonly McpCredentialBinding[];
+  workspace?: string;
+} = {}): Promise<WorkflowGuardProvider> {
+  return createWorkflowGuardMcpProvider({ serverPath: defaultToolboxGuardServerPath(), ...options });
 }
 
 export function guardPolicyEvidence(decision: GuardDecision, mutationEpoch: number): Evidence {

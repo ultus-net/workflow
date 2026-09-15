@@ -15,6 +15,7 @@
     "workflow": "dist/cli/tui.js",
     "workflow-tui": "dist/cli/universal-tui.js",
     "workflow-hub": "dist/cli/hub.js",
+    "workflow-admin": "dist/cli/admin.js",
     "workflow-monitor": "dist/cli/ink-tui.js",
     "workflow-shell": "dist/cli/contained-shell.js"
   },
@@ -34,6 +35,7 @@
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint src test",
     "hub": "tsx src/cli/hub.ts",
+    "admin": "tsx src/cli/admin.ts",
     "tui": "node scripts/build-cline-tui.mjs && tsx src/cli/tui.tsx",
     "tui:workflow": "tsx src/cli/ink-tui.tsx",
     "tui:acp": "tsx src/cli/acp-tui.tsx",

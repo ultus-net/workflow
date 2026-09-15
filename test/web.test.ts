@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import test from "node:test";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -48,6 +49,74 @@ test("web UI reads snapshots and submits commands through the application API", 
   assert.equal(transition.status, 200);
   const after = await fetch(`http://127.0.0.1:${port}/api/snapshot`).then((response) => response.json()) as { tasks: { state: string }[] };
   assert.equal(after.tasks[0]?.state, "IN_PROGRESS");
+});
+
+test("web UI exposes repository branch, changed paths, and constrained diffs", async (context) => {
+  const workspace = mkdtempSync(join(tmpdir(), "workflow-web-git-"));
+  context.after(() => rmSync(workspace, { recursive: true, force: true }));
+  execFileSync("git", ["init", "-b", "feature/ui"], { cwd: workspace });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: workspace });
+  execFileSync("git", ["config", "user.name", "Workflow Test"], { cwd: workspace });
+  writeFileSync(join(workspace, "tracked.txt"), "before\n");
+  execFileSync("git", ["add", "tracked.txt"], { cwd: workspace });
+  execFileSync("git", ["commit", "-m", "initial"], { cwd: workspace });
+  writeFileSync(join(workspace, "tracked.txt"), "after\n");
+  writeFileSync(join(workspace, "new.txt"), "new file\n");
+  execFileSync("git", ["mv", "tracked.txt", "renamed.txt"], { cwd: workspace });
+  writeFileSync(join(workspace, "renamed.txt"), "after\n");
+
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+    [],
+    new Set(["read"]),
+    workspace,
+  );
+  const server = createWorkflowWebServer(application);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+
+  const status = await fetch(`http://127.0.0.1:${port}/api/git`);
+  assert.equal(status.status, 200);
+  assert.deepEqual(await status.json(), {
+    branch: "feature/ui",
+    changes: [
+      { path: "new.txt", status: "untracked" },
+      { path: "renamed.txt", status: "renamed" },
+    ],
+  });
+
+  const diff = await fetch(`http://127.0.0.1:${port}/api/git/diff?path=renamed.txt`);
+  assert.equal(diff.status, 200);
+  const renamedDiff = (await diff.json() as { diff: string }).diff;
+  assert.match(renamedDiff, /-before/);
+  assert.match(renamedDiff, /\+after/);
+
+  const untracked = await fetch(`http://127.0.0.1:${port}/api/git/diff?path=new.txt`);
+  assert.equal(untracked.status, 200);
+  assert.match((await untracked.json() as { diff: string }).diff, /\+new file/);
+
+  const outside = await fetch(`http://127.0.0.1:${port}/api/git/diff?path=..%2Fsecret.txt`);
+  assert.equal(outside.status, 404);
+});
+
+test("web UI diffs staged changes before a repository has HEAD", async (context) => {
+  const workspace = mkdtempSync(join(tmpdir(), "workflow-web-git-unborn-"));
+  context.after(() => rmSync(workspace, { recursive: true, force: true }));
+  execFileSync("git", ["init", "-b", "feature/new"], { cwd: workspace });
+  writeFileSync(join(workspace, "first.txt"), "first\n");
+  execFileSync("git", ["add", "first.txt"], { cwd: workspace });
+
+  const application = new WorkflowApplication(new TaskGraph([]), hostCapabilities({ transport: "acp", authoritativePreMutation: false }), [], new Set(["read"]), workspace);
+  const server = createWorkflowWebServer(application);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+
+  const diff = await fetch(`http://127.0.0.1:${port}/api/git/diff?path=first.txt`);
+  assert.equal(diff.status, 200);
+  assert.match((await diff.json() as { diff: string }).diff, /\+first/);
 });
 
 test("web UI serves the built /app.js bundle as syntactically valid JavaScript", async (context) => {
@@ -499,7 +568,7 @@ test("web UI returns 503 instead of crashing when the runtime factory fails", as
 test("web UI serves cumulative usage metrics for metered runtimes only", async (context) => {
   const dir = mkdtempSync(join(tmpdir(), "web-usage-test-"));
   context.after(() => rmSync(dir, { recursive: true, force: true }));
-  const metrics = { requests: 1, usageEvents: 1, promptTokens: 10, completionTokens: 5, totalTokens: 15, costUsd: 0.001 };
+  const metrics = { requests: 1, usageEvents: 1, promptTokens: 10, completionTokens: 5, totalTokens: 15, costUsd: 0.001, latestPromptTokens: 10 };
   const manager = new WebSessionManager({
     registryPath: join(dir, "registry.json"),
     factory: async () => {

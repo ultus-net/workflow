@@ -17,6 +17,7 @@ export interface SessionUsage {
   readonly usageEvents: number;
   readonly promptTokens: number;
   readonly completionTokens: number;
+  readonly latestPromptTokens?: number;
   readonly totalTokens: number;
   readonly costUsd: number;
 }

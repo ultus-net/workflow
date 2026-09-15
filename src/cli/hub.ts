@@ -4,6 +4,9 @@ import { appendFileSync } from "node:fs";
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
+import { loadCredentialDefinitions } from "../integrations/credential-config.js";
+import { createCredentialBroker } from "../integrations/credentials.js";
+import { createSecretServiceStore } from "../integrations/secret-service.js";
 import { createWorkflowHub } from "../integrations/workflow-hub.js";
 import { taskId } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
@@ -37,7 +40,20 @@ const teamTaskVerificationCommand = process.env.WORKFLOW_TEAM_TASK_VERIFY_COMMAN
   ? "true"
   : (teamTaskVerifyEnv && teamTaskVerifyEnv.length > 0 ? teamTaskVerifyEnv : undefined);
 
-const guard = await createDefaultToolboxGuardProvider().catch((error) => {
+const credentialDefinitions = loadCredentialDefinitions();
+const credentialBroker = createCredentialBroker(createSecretServiceStore(), credentialDefinitions);
+const guardBindings = credentialDefinitions.flatMap((definition) =>
+  definition.allowedConsumers.includes("mcp:workflow-guard")
+    ? definition.allowedPurposes.flatMap((purpose) => purpose.startsWith("stdio-env:")
+      ? [{ variable: purpose.slice("stdio-env:".length), reference: `secret://${definition.id}` }]
+      : [])
+    : [],
+);
+const guard = await createDefaultToolboxGuardProvider({
+  credentialBroker,
+  credentialBindings: guardBindings,
+  workspace,
+}).catch((error) => {
   console.warn(`Workflow guard unavailable (advisory): ${error instanceof Error ? error.message : error}`);
   return undefined;
 });
