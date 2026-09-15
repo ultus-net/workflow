@@ -30,3 +30,30 @@ export function projectOperatorSessionEvent(event: CodingSessionEvent): Operator
   // projections but do not belong in the default intent + actions transcript.
   return undefined;
 }
+
+/**
+ * Appends an item to the operator transcript, coalescing streamed assistant
+ * chunks into one message and suppressing a completion body that merely
+ * repeats the assistant text already shown (whitespace-insensitive: chunk
+ * boundaries differ from the final result string).
+ */
+export function appendOperatorItem(
+  items: readonly OperatorSessionItem[],
+  item: OperatorSessionItem,
+): OperatorSessionItem[] {
+  const last = items.at(-1);
+  if (item.kind === "assistant" && last?.kind === "assistant") {
+    return [...items.slice(0, -1), { kind: "assistant", text: last.text + item.text }];
+  }
+  if (
+    item.kind === "completion" && item.outcome === "completed" &&
+    last?.kind === "assistant" && normalizeText(last.text) === normalizeText(item.text)
+  ) {
+    return [...items, { kind: "completion", outcome: "completed", text: "" }];
+  }
+  return [...items, item];
+}
+
+function normalizeText(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}

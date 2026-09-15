@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { projectOperatorSessionEvent } from "../src/ui/operator-session.js";
+import { appendOperatorItem, projectOperatorSessionEvent, type OperatorSessionItem } from "../src/ui/operator-session.js";
 
 test("operator session projection keeps meaningful actions and outcomes", () => {
   assert.deepEqual(
@@ -44,4 +44,41 @@ test("operator session projection preserves assistant, attention, and completion
     outcome: "failed",
     text: "authority unavailable",
   });
+});
+
+test("operator transcript coalesces streamed assistant chunks into one message", () => {
+  let items: OperatorSessionItem[] = [];
+  for (const text of ["I", "\nnotice your message", " just says \"testing\""]) {
+    items = appendOperatorItem(items, { kind: "assistant", text });
+  }
+  assert.deepEqual(items, [{ kind: "assistant", text: "I\nnotice your message just says \"testing\"" }]);
+
+  // A non-assistant item breaks the run: later chunks start a fresh message.
+  items = appendOperatorItem(items, { kind: "action", action: "read_file", subjects: ["a.ts"] });
+  items = appendOperatorItem(items, { kind: "assistant", text: "Reading it now" });
+  assert.equal(items.length, 3);
+  assert.deepEqual(items[2], { kind: "assistant", text: "Reading it now" });
+});
+
+test("operator transcript suppresses completion text that duplicates the assistant stream", () => {
+  let items: OperatorSessionItem[] = [];
+  items = appendOperatorItem(items, { kind: "assistant", text: "All" });
+  items = appendOperatorItem(items, { kind: "assistant", text: " done\n" });
+  // Final result string differs only by chunk-boundary whitespace.
+  items = appendOperatorItem(items, { kind: "completion", outcome: "completed", text: "All  done" });
+  assert.deepEqual(items, [
+    { kind: "assistant", text: "All done\n" },
+    { kind: "completion", outcome: "completed", text: "" },
+  ]);
+});
+
+test("operator transcript keeps distinct completion results and failure reasons", () => {
+  let items: OperatorSessionItem[] = [];
+  items = appendOperatorItem(items, { kind: "assistant", text: "Working" });
+  items = appendOperatorItem(items, { kind: "completion", outcome: "completed", text: "Wrote 3 files" });
+  assert.deepEqual(items[1], { kind: "completion", outcome: "completed", text: "Wrote 3 files" });
+
+  items = appendOperatorItem(items, { kind: "assistant", text: "Retrying" });
+  items = appendOperatorItem(items, { kind: "completion", outcome: "failed", text: "Retrying" });
+  assert.deepEqual(items[3], { kind: "completion", outcome: "failed", text: "Retrying" });
 });

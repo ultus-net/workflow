@@ -3,16 +3,16 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { taskId, type TaskState } from "../kernel/contracts.js";
-import { projectOperatorSessionEvent, type OperatorSessionItem } from "./operator-session.js";
+import { appendOperatorItem, projectOperatorSessionEvent, type OperatorSessionItem } from "./operator-session.js";
 
 const STATES: readonly TaskState[] = ["BLOCKED", "READY", "IN_PROGRESS", "VERIFYING", "VERIFIED", "FAILED"];
 
 export function createWorkflowWebServer(application: WorkflowApplication, session?: WorkflowCodingSession) {
-  const sessionItems: OperatorSessionItem[] = [];
+  let sessionItems: OperatorSessionItem[] = [];
   let turnInFlight = false;
   session?.subscribe((event) => {
     const item = projectOperatorSessionEvent(event);
-    if (item) sessionItems.push(item);
+    if (item) sessionItems = appendOperatorItem(sessionItems, item);
   });
   return createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/") return html(response, PAGE);
