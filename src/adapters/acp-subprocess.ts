@@ -90,7 +90,7 @@ export class AcpSubprocessClient {
   }
 
   async authenticate(options: { readonly methodId: string }): Promise<void> {
-    await this.#request("authenticate", options);
+    await this.#request(methods.agent.authenticate, options);
   }
 
   async newSession(options: { readonly cwd: string }): Promise<AcpNewSessionResult> {
