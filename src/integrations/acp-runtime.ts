@@ -21,6 +21,7 @@ export async function createConfiguredAcpRuntime(
   application: WorkflowApplication,
   workspace: string,
   taskId: TaskId,
+  resumeFrom?: string,
 ): Promise<WorkflowAcpRuntime> {
   const scratchHome = resolve(homedir(), ".workflow", "acp-home");
   mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
@@ -48,6 +49,7 @@ export async function createConfiguredAcpRuntime(
   try {
     writeFileSync(settingsPath, JSON.stringify(meteredProviderSettings(proxy.url, provider)), { encoding: "utf8", mode: 0o600 });
     const model = process.env.CLINE_MODEL;
+    const resume = resumeFrom ?? process.env.WORKFLOW_ACP_RESUME;
     const driver = AcpSessionDriver.contained({
       containment: new LinuxBubblewrapContainment(),
       launch: {
@@ -66,7 +68,7 @@ export async function createConfiguredAcpRuntime(
       workspace,
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,
-      ...(process.env.WORKFLOW_ACP_RESUME ? { resumeFrom: process.env.WORKFLOW_ACP_RESUME } : {}),
+      ...(resume !== undefined ? { resumeFrom: resume } : {}),
     });
     return {
       driver,

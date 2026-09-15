@@ -566,6 +566,7 @@ function configValueLabel(option: SessionConfigOption): string {
 }
 
 function formatSessionEvent(event: CodingSessionEvent, assistantLabel: string): TranscriptEntry {
+  if (event.type === "user") return { label: "You", text: event.text };
   if (event.type === "assistant") return { label: assistantLabel, text: event.text };
   if (event.type === "status") return { label: "[status]", text: event.status, dim: true };
   if (event.type === "tool-proposal") {

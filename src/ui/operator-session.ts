@@ -16,6 +16,7 @@ export type OperatorSessionItem =
 
 /** Projects provider/session events into the stable semantics shown to operators. */
 export function projectOperatorSessionEvent(event: CodingSessionEvent): OperatorSessionItem | undefined {
+  if (event.type === "user") return { kind: "user", text: event.text };
   if (event.type === "assistant") return { kind: "assistant", text: event.text };
   if (event.type === "tool-proposal") return { kind: "action", action: event.tool, subjects: event.subjects };
   if (event.type === "tool-outcome") {
@@ -51,6 +52,9 @@ export function appendOperatorItem(
   const last = items.at(-1);
   if (item.kind === "assistant" && last?.kind === "assistant") {
     return [...items.slice(0, -1), { kind: "assistant", text: last.text + item.text }];
+  }
+  if (item.kind === "user" && last?.kind === "user") {
+    return [...items.slice(0, -1), { kind: "user", text: last.text + item.text }];
   }
   if (
     item.kind === "completion" && item.outcome === "completed" &&

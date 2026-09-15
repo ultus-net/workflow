@@ -66,6 +66,68 @@ function advance(taskId: string, requested: string, refresh: () => Promise<void>
   }).then(() => refresh());
 }
 
+interface SessionMeta {
+  readonly id: string;
+  readonly title: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly active: boolean;
+}
+
+/** Polls the session registry; undefined when the server runs a single session. */
+function useSessions() {
+  const [sessions, setSessions] = useState<SessionMeta[] | undefined>(undefined);
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/sessions");
+      if (response.status === 503) return; // single-session server: hide the panel
+      if (response.ok) setSessions((await response.json() as { sessions: SessionMeta[] }).sessions);
+    } catch {
+      // Keep the last good list; the next poll retries.
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), PANEL_POLL_MS);
+    return () => clearInterval(timer);
+  }, [load]);
+  return { sessions, refresh: load };
+}
+
+function createSession(refresh: () => Promise<void>): void {
+  void fetch("/api/sessions", { method: "POST" }).then(() => refresh());
+}
+
+function activateSession(id: string, refresh: () => Promise<void>): void {
+  void fetch("/api/sessions/activate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id }),
+  }).then(() => refresh());
+}
+
+function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]; readonly refresh: () => Promise<void> }) {
+  return (
+    <section className="sessions">
+      <h2>
+        Sessions
+        <button className="btn btn-ghost sessions-new" onClick={() => createSession(refresh)} aria-label="New session">+ New</button>
+      </h2>
+      {sessions.map((session) => (
+        <button
+          className={`session-row ${session.active ? "session-active" : ""}`}
+          key={session.id}
+          onClick={() => activateSession(session.id, refresh)}
+          aria-current={session.active}
+        >
+          <span className="session-title">{session.title}</span>
+          <span className="session-time">{new Date(session.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+        </button>
+      ))}
+    </section>
+  );
+}
+
 function UserMessage() {
   return (
     <MessagePrimitive.Root className="msg msg-user">
@@ -139,9 +201,15 @@ function Composer() {
   );
 }
 
-function Panels({ snapshot, refresh }: { readonly snapshot: Snapshot | undefined; readonly refresh: () => Promise<void> }) {
+function Panels({ snapshot, sessions, refresh, refreshSessions }: {
+  readonly snapshot: Snapshot | undefined;
+  readonly sessions: SessionMeta[] | undefined;
+  readonly refresh: () => Promise<void>;
+  readonly refreshSessions: () => Promise<void>;
+}) {
   return (
     <aside className="panels">
+      {sessions !== undefined && <SessionsPanel sessions={sessions} refresh={refreshSessions} />}
       <section>
         <h2>Tasks</h2>
         {(snapshot?.tasks ?? []).map((task) => (
@@ -189,6 +257,7 @@ const ENFORCEMENT_COPY: Record<string, string> = {
 
 export function App() {
   const { snapshot, refresh } = useSnapshot();
+  const { sessions, refresh: refreshSessions } = useSessions();
   const enforcementCopy = snapshot === undefined ? undefined : ENFORCEMENT_COPY[snapshot.enforcementLevel];
   return (
     <div className="shell">
@@ -226,7 +295,7 @@ export function App() {
             </div>
           </ThreadPrimitive.Root>
         </section>
-        <Panels snapshot={snapshot} refresh={refresh} />
+        <Panels snapshot={snapshot} sessions={sessions} refresh={refresh} refreshSessions={refreshSessions} />
       </main>
     </div>
   );

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import test from "node:test";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import vm from "node:vm";
 
 import {
@@ -13,6 +16,7 @@ import {
   type WorkflowTask,
 } from "../src/index.js";
 import type { CodingSessionDriver } from "../src/application/coding-session.js";
+import { WebSessionManager } from "../src/ui/web-sessions.js";
 import { buildWebappBundle } from "../src/ui/webapp/bundle.js";
 
 test("web UI reads snapshots and submits commands through the application API", async (context) => {
@@ -172,9 +176,11 @@ test("web UI forwards prompt images to the session and serves them back", async 
   const session = await fetch(`http://127.0.0.1:${port}/api/session`).then((response) => response.json()) as {
     items: { kind: string; images?: { id: string; mediaType: string }[] }[];
   };
-  assert.deepEqual(session.items[0]?.images, [{ id: "1", mediaType: "image/png" }]);
+  const stored = session.items[0]?.images?.[0];
+  assert.equal(stored?.mediaType, "image/png");
+  assert.ok(stored !== undefined && stored.id.length > 0);
 
-  const image = await fetch(`http://127.0.0.1:${port}/api/image/1`);
+  const image = await fetch(`http://127.0.0.1:${port}/api/image/${stored!.id}`);
   assert.equal(image.status, 200);
   assert.equal(image.headers.get("content-type"), "image/png");
   assert.deepEqual(Buffer.from(await image.arrayBuffer()), Buffer.from(png, "base64"));
@@ -276,4 +282,68 @@ test("web UI does not admit a new turn until a cancelled ACP turn settles", asyn
   await pending;
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal((await postPrompt("second")).status, 202);
+});
+
+test("web UI manages sessions through guarded routes", async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), "web-routes-test-"));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => {
+      const driver: CodingSessionDriver = {
+        async start(_prompt, emit) { emit({ type: "completed", result: "done" }); },
+        async cancel() {},
+      };
+      return {
+        driver: { ...driver, agentSessionId: () => "agent-x", connect: async () => {}, subscribe: () => () => {} } as never,
+        session: new WorkflowCodingSession(driver),
+        async dispose() {},
+      };
+    },
+  });
+  context.after(() => manager.dispose());
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, manager);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+
+  const empty = await fetch(`http://127.0.0.1:${port}/api/sessions`).then((response) => response.json()) as { sessions: unknown[] };
+  assert.deepEqual(empty.sessions, []);
+
+  const created = await fetch(`http://127.0.0.1:${port}/api/sessions`, { method: "POST" });
+  assert.equal(created.status, 201);
+  const meta = await created.json() as { id: string; active: boolean };
+  assert.equal(meta.active, true);
+
+  const hostile = await fetch(`http://127.0.0.1:${port}/api/sessions`, { method: "POST", headers: { origin: "https://attacker.example" } });
+  assert.equal(hostile.status, 403);
+
+  const activated = await fetch(`http://127.0.0.1:${port}/api/sessions/activate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: meta.id }),
+  });
+  assert.equal(activated.status, 200);
+
+  const unknown = await fetch(`http://127.0.0.1:${port}/api/sessions/activate`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: "nope" }),
+  });
+  assert.equal(unknown.status, 404);
+
+  const nonJson = await fetch(`http://127.0.0.1:${port}/api/sessions/activate`, {
+    method: "POST",
+    headers: { "content-type": "text/plain" },
+    body: JSON.stringify({ id: meta.id }),
+  });
+  assert.equal(nonJson.status, 415);
+
+  const listed = await fetch(`http://127.0.0.1:${port}/api/sessions`).then((response) => response.json()) as { sessions: { id: string; active: boolean }[] };
+  assert.equal(listed.sessions.length, 1);
+  assert.equal(listed.sessions[0]?.active, true);
 });

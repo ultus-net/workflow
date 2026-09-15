@@ -43,6 +43,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #toolTitles = new Map<string, string>();
   #assistant: string[] = [];
   #emit: (event: CodingSessionEvent) => void = () => {};
+  #listeners = new Set<(event: CodingSessionEvent) => void>();
 
   constructor(options: {
     child: ChildProcessWithoutNullStreams;
@@ -67,14 +68,29 @@ export class AcpSessionDriver implements CodingSessionDriver {
       resolvePermission: (request) => this.#resolvePermission(request),
     });
     // Projection is registered once: replays from session/load and any
-    // notification before the first prompt still reach the surface.
+    // notification before the first prompt still reach the surface. Turn
+    // prompts receive events through start()'s emit; explicit subscribers
+    // (e.g. a resume loader) receive every projection event via #listeners.
     this.#client.onSessionUpdate((update) => {
       if (update.update.sessionUpdate === "config_option_update" && Array.isArray(update.update.configOptions)) {
         this.#sessionConfig = { ...this.#sessionConfig, configOptions: update.update.configOptions };
       }
       const event = this.#project(update, this.#assistant);
-      if (event !== undefined) this.#emit(event);
+      if (event !== undefined) {
+        this.#emit(event);
+        for (const listener of this.#listeners) listener(event);
+      }
     });
+  }
+
+  /**
+   * Receives every projected session event, including session/load replays
+   * outside any prompt turn. Surfaces with their own event channel subscribe
+   * for the duration of a resume and then unsubscribe.
+   */
+  subscribe(listener: (event: CodingSessionEvent) => void): () => void {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
   }
 
   /**
@@ -95,13 +111,13 @@ export class AcpSessionDriver implements CodingSessionDriver {
     return new AcpSessionDriver({ ...options, child });
   }
 
-  async start(
-    prompt: string,
-    emit: (event: CodingSessionEvent) => void,
-    images?: readonly CodingSessionImage[],
-  ): Promise<void> {
-    this.#emit = emit;
-    this.#toolTitles.clear();
+  /**
+   * Establishes the ACP session eagerly: initializes the connection and
+   * creates (or loads, when resuming) the agent session. start() invokes it
+   * lazily; surfaces resuming history call it directly so the session/load
+   * replay reaches listeners before the next prompt.
+   */
+  async connect(): Promise<void> {
     if (!this.#initialized) {
       const initialized = await this.#client.initialize();
       this.#canLoadSession = initialized.agentCapabilities.loadSession === true;
@@ -124,6 +140,18 @@ export class AcpSessionDriver implements CodingSessionDriver {
         this.#emit({ type: "status", status: AcpSessionDriver.configSummary(this.#sessionConfig) });
       }
     }
+  }
+
+  async start(
+    prompt: string,
+    emit: (event: CodingSessionEvent) => void,
+    images?: readonly CodingSessionImage[],
+  ): Promise<void> {
+    this.#emit = emit;
+    this.#toolTitles.clear();
+    await this.connect();
+    const agentSessionId = this.#agentSessionId;
+    if (agentSessionId === undefined) throw new Error("ACP session was not established");
     // Replay chunks were already projected as events; the completion result
     // is scoped to this prompt's assistant text.
     this.#assistant = [];
@@ -131,7 +159,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
       { type: "text", text: prompt },
       ...(images ?? []).map((image) => ({ type: "image", data: image.data, mimeType: image.mediaType })),
     ];
-    const result = (await this.#client.prompt({ sessionId: this.#agentSessionId, prompt: content })) as
+    const result = (await this.#client.prompt({ sessionId: agentSessionId, prompt: content })) as
       { stopReason?: string } | undefined;
     const stopReason = result?.stopReason;
     if (stopReason === "end_turn") {
@@ -151,6 +179,11 @@ export class AcpSessionDriver implements CodingSessionDriver {
   /** Terminate the agent process; surfaces must call this on exit. */
   async dispose(): Promise<void> {
     await this.#client.close();
+  }
+
+  /** Agent-side ACP session id (undefined until the first prompt creates/loads it). */
+  agentSessionId(): string | undefined {
+    return this.#agentSessionId;
   }
 
   /** Config captured from session/new (undefined until the first session is created). */
@@ -185,6 +218,12 @@ export class AcpSessionDriver implements CodingSessionDriver {
       const text = typeof content?.text === "string" ? content.text : content?.data ?? "";
       assistant.push(text);
       return { type: "assistant", text };
+    }
+    if (kind === "user_message_chunk") {
+      // Replayed history (session/load) includes the operator's own turns.
+      const content = update.update.content as { type?: string; text?: string; data?: string } | undefined;
+      const text = typeof content?.text === "string" ? content.text : content?.data ?? "";
+      return { type: "user", text };
     }
     if (kind === "agent_thought_chunk") {
       const content = update.update.content as { type?: string; text?: string } | undefined;

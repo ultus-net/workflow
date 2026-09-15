@@ -1,0 +1,213 @@
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+
+import type { WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
+import { SessionChannel } from "./web-session-channel.js";
+
+export interface WebSessionMeta {
+  readonly id: string;
+  readonly title: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly active: boolean;
+}
+
+interface SessionRecord {
+  id: string;
+  agentSessionId?: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ActiveSession {
+  record: SessionRecord;
+  runtime: WorkflowAcpRuntime;
+  channel: SessionChannel;
+}
+
+export type SessionSwitchResult =
+  | { readonly kind: "ok"; readonly meta: WebSessionMeta }
+  | { readonly kind: "busy" }
+  | { readonly kind: "unknown" }
+  | { readonly kind: "failed"; readonly error: string };
+
+/**
+ * Owns the session registry (persisted metadata) and the single live ACP
+ * runtime behind the browser UI. One agent process runs at a time: switching
+ * or creating disposes the current runtime and spawns the next one, resuming
+ * history through ACP session/load when the registry knows the agent id.
+ */
+export class WebSessionManager {
+  readonly #factory: (resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
+  readonly #registryPath: string;
+  #sessions: SessionRecord[];
+  #active: ActiveSession | undefined;
+  #starting: Promise<ActiveSession> | undefined;
+
+  constructor(options: {
+    readonly factory: (resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
+    readonly registryPath?: string;
+  }) {
+    this.#factory = options.factory;
+    this.#registryPath = options.registryPath ?? join(homedir(), ".workflow", "web-sessions.json");
+    this.#sessions = loadRegistry(this.#registryPath);
+  }
+
+  list(): WebSessionMeta[] {
+    return [...this.#sessions]
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map((record) => this.#meta(record));
+  }
+
+  /** Active channel, lazily creating the first session on demand. */
+  async channel(): Promise<SessionChannel> {
+    if (this.#starting !== undefined) await this.#starting.catch(() => undefined);
+    return (await this.#ensureActive()).channel;
+  }
+
+  activeMeta(): WebSessionMeta | undefined {
+    return this.#active === undefined ? undefined : this.#meta(this.#active.record);
+  }
+
+  async create(): Promise<SessionSwitchResult> {
+    if (this.#starting !== undefined) await this.#starting.catch(() => undefined);
+    const record: SessionRecord = {
+      id: `web-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
+      title: "New session",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    return this.#switchTo(record, undefined);
+  }
+
+  async activate(id: string): Promise<SessionSwitchResult> {
+    if (this.#starting !== undefined) await this.#starting.catch(() => undefined);
+    const record = this.#sessions.find((entry) => entry.id === id);
+    if (record === undefined) return { kind: "unknown" };
+    if (this.#active?.record.id === id) return { kind: "ok", meta: this.#meta(record) };
+    return this.#switchTo(record, record.agentSessionId);
+  }
+
+  async dispose(): Promise<void> {
+    this.#captureActive();
+    this.#persist();
+    const active = this.#active;
+    this.#active = undefined;
+    await active?.runtime.dispose();
+  }
+
+  async #switchTo(record: SessionRecord, resumeFrom: string | undefined): Promise<SessionSwitchResult> {
+    // Busy-check and capture the outgoing session without spawning a runtime
+    // when nothing is active yet.
+    if (this.#active !== undefined) {
+      if (this.#active.channel.busy()) return { kind: "busy" };
+      this.#captureActive();
+    }
+    this.#sessions = [record, ...this.#sessions.filter((entry) => entry.id !== record.id)];
+    const previous = this.#active;
+    this.#active = undefined;
+    await previous?.runtime.dispose();
+    try {
+      const runtime = await this.#factory(resumeFrom);
+      const channel = new SessionChannel(runtime.session);
+      // Eagerly load the resumed session so its replayed history reaches the
+      // channel before the UI polls — otherwise the transcript looks empty
+      // until the first prompt. The subscription lasts only for the load.
+      if (resumeFrom !== undefined) {
+        const unsubscribe = runtime.driver.subscribe((event) => channel.ingest(event));
+        try {
+          await runtime.driver.connect();
+        } finally {
+          unsubscribe();
+        }
+      }
+      this.#active = { record, runtime, channel };
+      this.#persist();
+      return { kind: "ok", meta: this.#meta(record) };
+    } catch (error) {
+      this.#persist();
+      return { kind: "failed", error: error instanceof Error ? error.message : "session start failed" };
+    }
+  }
+
+  async #ensureActive(): Promise<ActiveSession> {
+    if (this.#active !== undefined) {
+      this.#touchActive();
+      return this.#active;
+    }
+    this.#starting ??= (async () => {
+      // Restart continuity: resume the most recent session instead of
+      // accumulating an empty "New session" record on every service start.
+      const existing = this.#sessions[0];
+      if (existing !== undefined) {
+        const resumed = await this.#switchTo(existing, existing.agentSessionId);
+        if (resumed.kind === "ok" && this.#active !== undefined) return this.#active;
+      }
+      const created = await this.#switchTo({
+        id: `web-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
+        title: "New session",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }, undefined);
+      if (created.kind !== "ok" || this.#active === undefined) {
+        throw new Error(created.kind === "failed" ? created.error : "session start failed");
+      }
+      return this.#active;
+    })();
+    try {
+      return await this.#starting;
+    } finally {
+      this.#starting = undefined;
+    }
+  }
+
+  /** Copies volatile facts (agent session id, derived title) into the record. */
+  #captureActive(): void {
+    if (this.#active === undefined) return;
+    const agentId = this.#active.runtime.driver.agentSessionId();
+    if (agentId !== undefined) this.#active.record.agentSessionId = agentId;
+    if (this.#active.record.title === "New session") {
+      const firstUser = this.#active.channel.items().find((item) => item.kind === "user");
+      if (firstUser !== undefined && firstUser.kind === "user") {
+        this.#active.record.title = firstUser.text.length > 60 ? `${firstUser.text.slice(0, 60)}…` : firstUser.text;
+      }
+    }
+    this.#active.record.updatedAt = new Date().toISOString();
+  }
+
+  #touchActive(): void {
+    this.#captureActive();
+    this.#persist();
+  }
+
+  #meta(record: SessionRecord): WebSessionMeta {
+    return {
+      id: record.id,
+      title: record.title,
+      createdAt: record.createdAt,
+      updatedAt: record.updatedAt,
+      active: this.#active?.record.id === record.id,
+    };
+  }
+
+  #persist(): void {
+    mkdirSync(dirname(this.#registryPath), { recursive: true, mode: 0o700 });
+    const payload = JSON.stringify({ version: 1, sessions: this.#sessions }, null, 2);
+    const temporary = `${this.#registryPath}.tmp`;
+    writeFileSync(temporary, payload, { encoding: "utf8", mode: 0o600 });
+    renameSync(temporary, this.#registryPath);
+  }
+}
+
+function loadRegistry(path: string): SessionRecord[] {
+  if (!existsSync(path)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as { sessions?: SessionRecord[] };
+    return Array.isArray(parsed.sessions) ? parsed.sessions : [];
+  } catch {
+    return [];
+  }
+}

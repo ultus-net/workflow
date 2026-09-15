@@ -180,7 +180,7 @@ body {
 .composer-row {
   display: flex;
   gap: 0.6rem;
-  align-items: flex-end;
+  align-items: center;
 }
 
 .composer-attachments:empty { display: none; }
@@ -239,13 +239,14 @@ body {
 .composer-input {
   flex: 1;
   resize: none;
-  min-height: 2.6rem;
+  min-height: 2.3rem;
   max-height: 12rem;
   background: transparent;
   border: none;
   outline: none;
   color: var(--text);
   font: inherit;
+  line-height: 1.5;
   padding: 0.4rem 0.35rem;
 }
 
@@ -284,8 +285,8 @@ body {
 
 .btn-ghost {
   background: transparent;
-  font-size: 0.82rem;
-  padding: 0.25rem 0.6rem;
+  font-size: 0.88rem;
+  padding: 0.45rem 0.9rem;
 }
 
 /* Visible focus trail for keyboard operators */
@@ -341,6 +342,38 @@ body {
   white-space: pre-wrap;
   overflow-wrap: break-word;
 }
+
+/* Sessions panel */
+
+.sessions h2 {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.sessions-new { font-size: 0.78rem; }
+
+.session-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 0.45rem 0.6rem;
+  margin-bottom: 0.4rem;
+  cursor: pointer;
+}
+
+.session-row:hover { border-color: var(--accent); }
+.session-active { border-color: var(--accent); background: var(--surface); }
+.session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-time { color: var(--text-muted); font-size: 0.72rem; }
 
 /* Side panels */
 

@@ -4,7 +4,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { taskId, type TaskState } from "../kernel/contracts.js";
-import { appendOperatorItem, projectOperatorSessionEvent, type OperatorSessionItem } from "./operator-session.js";
+import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
+import { WebSessionManager, type SessionSwitchResult } from "./web-sessions.js";
 import type { WebappBundle } from "./webapp/bundle.js";
 import { PWA_MANIFEST, renderIconPng, serviceWorkerSource } from "./webapp/pwa.js";
 
@@ -13,19 +14,22 @@ const STATES: readonly TaskState[] = ["BLOCKED", "READY", "IN_PROGRESS", "VERIFY
 /**
  * Serves the React operator surface (PWA) plus the Workflow-owned session API.
  * The browser only talks to these endpoints; ACP authority stays server-side.
+ * With a WebSessionManager the UI can list, create, and resume chat sessions.
  */
 export function createWorkflowWebServer(
   application: WorkflowApplication,
-  session?: WorkflowCodingSession,
+  session?: WorkflowCodingSession | WebSessionManager,
   webapp?: WebappBundle,
 ) {
-  let sessionItems: OperatorSessionItem[] = [];
-  let turnInFlight = false;
-  const images = new ImageStore();
-  session?.subscribe((event) => {
-    const item = projectOperatorSessionEvent(event);
-    if (item) sessionItems = appendOperatorItem(sessionItems, item);
-  });
+  const manager = session instanceof WebSessionManager ? session : undefined;
+  const single = session !== undefined && !(session instanceof WebSessionManager) ? session : undefined;
+  const singleChannel = single === undefined ? undefined : new SessionChannel(single);
+
+  async function channel(): Promise<SessionChannel | undefined> {
+    if (manager !== undefined) return manager.channel();
+    return singleChannel;
+  }
+
   return createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/") return html(response, PAGE);
     if (request.method === "GET" && request.url === "/app.js") {
@@ -52,17 +56,50 @@ export function createWorkflowWebServer(
       return asset(response, "image/png", renderIconPng(512));
     }
     if (request.method === "GET" && request.url === "/api/snapshot") return json(response, 200, application.snapshot());
-    if (request.method === "GET" && request.url === "/api/session") {
-      return json(response, 200, { available: Boolean(session), state: session?.snapshot() ?? { state: "unavailable" }, items: sessionItems });
+    if (request.method === "GET" && request.url === "/api/sessions") {
+      if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
+      return json(response, 200, { sessions: manager.list() });
+    }
+    if (request.method === "POST" && request.url === "/api/sessions") {
+      if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      return switchResult(response, await manager.create(), 201);
+    }
+    if (request.method === "POST" && request.url === "/api/sessions/activate") {
+      if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const id = typeof (body as { id?: unknown } | null)?.id === "string" ? (body as { id: string }).id : undefined;
+        if (id === undefined) return json(response, 400, { error: "invalid activation request" });
+        return switchResult(response, await manager.activate(id), 200);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
     }
     if (request.method === "GET" && request.url?.startsWith("/api/image/")) {
-      const stored = images.get(decodeURIComponent(request.url.slice("/api/image/".length)));
+      const active = await channel();
+      const stored = active?.image(decodeURIComponent(request.url.slice("/api/image/".length)));
       if (stored === undefined) return json(response, 404, { error: "not found" });
       response.writeHead(200, { "content-type": stored.mediaType, "cache-control": "private, immutable" });
       return response.end(Buffer.from(stored.data, "base64"));
     }
+    if (request.method === "GET" && request.url === "/api/session") {
+      const active = await channel();
+      const meta = manager?.activeMeta();
+      return json(response, 200, {
+        available: active !== undefined,
+        ...(meta === undefined ? {} : { id: meta.id, title: meta.title }),
+        state: active?.state() ?? { state: "unavailable" },
+        items: active?.items() ?? [],
+      });
+    }
     if (request.method === "POST" && request.url === "/api/prompt") {
-      if (!session) return json(response, 503, { error: "ACP session unavailable" });
+      const active = await channel();
+      if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
         return json(response, 415, { error: "content-type must be application/json" });
@@ -70,20 +107,19 @@ export function createWorkflowWebServer(
       try {
         const body = await readJson(request, PROMPT_BODY_LIMIT);
         if (!isPromptRequest(body)) return json(response, 400, { error: "invalid prompt request" });
-        if (turnInFlight) return json(response, 409, { error: "coding session is already running" });
-        turnInFlight = true;
-        const userImages = (body.images ?? []).map((image) => ({ id: images.store(image), mediaType: image.mediaType }));
-        sessionItems = appendOperatorItem(sessionItems, { kind: "user", text: body.prompt, ...(userImages.length > 0 ? { images: userImages } : {}) });
-        void session.submit(body.prompt, body.images ?? []).finally(() => { turnInFlight = false; });
+        if (active.submit(body.prompt, body.images ?? []) === "busy") {
+          return json(response, 409, { error: "coding session is already running" });
+        }
         return json(response, 202, { accepted: true });
       } catch {
         return json(response, 400, { error: "invalid request body" });
       }
     }
     if (request.method === "POST" && request.url === "/api/cancel") {
-      if (!session) return json(response, 503, { error: "ACP session unavailable" });
+      const active = await channel();
+      if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
-      await session.cancel();
+      await active.cancel();
       return json(response, 200, { cancelled: true });
     }
     if (request.method === "POST" && request.url === "/api/transition") {
@@ -104,63 +140,21 @@ export function createWorkflowWebServer(
   });
 }
 
+function switchResult(response: ServerResponse, result: SessionSwitchResult, okStatus: number) {
+  switch (result.kind) {
+    case "ok": return json(response, okStatus, result.meta);
+    case "busy": return json(response, 409, { error: "a turn is still running" });
+    case "unknown": return json(response, 404, { error: "unknown session" });
+    case "failed": return json(response, 502, { error: result.error });
+  }
+}
+
 function isTrustedMutation(request: IncomingMessage): boolean {
   const origin = request.headers.origin;
   if (origin === undefined) return request.headers["sec-fetch-site"] !== "cross-site";
   const host = request.headers.host;
   if (!host) return false;
   return origin === `http://${host}` || origin === `https://${host}`;
-}
-
-/** Four images at ≤ 5 MB base64 payload each, plus the prompt body margin. */
-const PROMPT_BODY_LIMIT = 24 * 1024 * 1024;
-const MAX_PROMPT_IMAGES = 4;
-const MAX_IMAGE_DATA_CHARS = 7_000_000;
-const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-const BASE64_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/;
-
-interface PromptImage {
-  readonly mediaType: string;
-  readonly data: string;
-}
-
-/** Bounded FIFO store so images stay fetchable without bloating the polled transcript. */
-class ImageStore {
-  #entries = new Map<string, { readonly mediaType: string; readonly data: string }>();
-  #nextId = 0;
-
-  get(id: string): { readonly mediaType: string; readonly data: string } | undefined {
-    return this.#entries.get(id);
-  }
-
-  store(image: PromptImage): string {
-    this.#nextId += 1;
-    const id = String(this.#nextId);
-    this.#entries.set(id, image);
-    while (this.#entries.size > 24) {
-      const oldest = this.#entries.keys().next().value;
-      if (oldest === undefined) break;
-      this.#entries.delete(oldest);
-    }
-    return id;
-  }
-}
-
-function isPromptRequest(value: unknown): value is { prompt: string; images?: PromptImage[] } {
-  if (typeof value !== "object" || value === null) return false;
-  const prompt = (value as Record<string, unknown>).prompt;
-  if (typeof prompt !== "string" || prompt.trim().length === 0 || prompt.length > 100_000) return false;
-  const images = (value as Record<string, unknown>).images;
-  if (images === undefined) return true;
-  if (!Array.isArray(images) || images.length > MAX_PROMPT_IMAGES) return false;
-  return images.every((image) =>
-    typeof image === "object" && image !== null &&
-    ALLOWED_IMAGE_TYPES.has((image as PromptImage).mediaType) &&
-    typeof (image as PromptImage).data === "string" &&
-    (image as PromptImage).data.length > 0 &&
-    (image as PromptImage).data.length <= MAX_IMAGE_DATA_CHARS &&
-    BASE64_PATTERN.test((image as PromptImage).data),
-  );
 }
 
 function isTransitionRequest(value: unknown): value is { taskId: string; requested: TaskState } {

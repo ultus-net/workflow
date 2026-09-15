@@ -1,6 +1,7 @@
 import type { DecisionBrief, DiagnosticLesson, LearningOpportunity } from "../pedagogy/contracts.js";
 
 export type CodingSessionEvent =
+  | { readonly type: "user"; readonly text: string }
   | { readonly type: "assistant"; readonly text: string }
   | { readonly type: "status"; readonly status: string }
   | { readonly type: "tool-proposal"; readonly tool: string; readonly subjects: readonly string[] }
