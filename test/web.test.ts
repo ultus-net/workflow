@@ -831,11 +831,22 @@ test("web UI guards session rename, task retry/add, and evidence recording", asy
     body: JSON.stringify({ taskId: "T3", title: "Added from test", dependencies: ["T1"] }),
   });
   assert.equal(added.status, 201);
+  const addedBody = await added.json() as { taskId: string; state: string };
+  // A dependency-free task recomputes to READY immediately: the response must
+  // echo the post-add graph state, never a hard-coded BLOCKED.
+  const ready = await fetch(`${base}/api/tasks`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ taskId: "T4", title: "Dependency-free" }),
+  });
+  assert.equal(ready.status, 201);
+  assert.equal((await ready.json() as { state: string }).state, "READY");
   const snapshot = await fetch(`${base}/api/snapshot`).then((response) => response.json()) as {
     tasks: { id: string; state: string; title: string }[];
   };
   const newTask = snapshot.tasks.find((task) => task.id === "T3");
   assert.equal(newTask?.state, "BLOCKED");
+  assert.equal(addedBody.state, "BLOCKED");
   assert.equal(newTask?.title, "Added from test");
 
   // Evidence: guards, validation, and recording visibility.

@@ -168,7 +168,10 @@ export function createWorkflowWebServer(
           })
           : [];
         application.addTask({ id: taskId(rawTaskId), title, dependencies, requiredEvidence });
-        return json(response, 201, { taskId: rawTaskId, state: "BLOCKED" });
+        // Echo the post-add state: a dependency-free task recomputes to READY
+        // immediately, so a hard-coded BLOCKED would misreport the graph.
+        const state = application.snapshot().tasks.find((task) => task.id === rawTaskId)?.state ?? "BLOCKED";
+        return json(response, 201, { taskId: rawTaskId, state });
       } catch {
         return json(response, 400, { error: "invalid request body" });
       }
