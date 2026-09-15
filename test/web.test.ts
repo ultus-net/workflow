@@ -346,6 +346,55 @@ test("web UI manages sessions through guarded routes", async (context) => {
   const listed = await fetch(`http://127.0.0.1:${port}/api/sessions`).then((response) => response.json()) as { sessions: { id: string; active: boolean }[] };
   assert.equal(listed.sessions.length, 1);
   assert.equal(listed.sessions[0]?.active, true);
+
+  const dismissHostile = await fetch(`http://127.0.0.1:${port}/api/sessions/dismiss`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://attacker.example" },
+    body: JSON.stringify({ id: meta.id }),
+  });
+  assert.equal(dismissHostile.status, 403);
+
+  const dismissNonJson = await fetch(`http://127.0.0.1:${port}/api/sessions/dismiss`, {
+    method: "POST",
+    headers: { "content-type": "text/plain" },
+    body: JSON.stringify({ id: meta.id }),
+  });
+  assert.equal(dismissNonJson.status, 415);
+
+  const dismissUnknown = await fetch(`http://127.0.0.1:${port}/api/sessions/dismiss`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: "nope" }),
+  });
+  assert.equal(dismissUnknown.status, 404);
+
+  // After a second create: two untitled records, one non-active → clearUnused
+  // removes exactly that one and preserves the active record.
+  const second = await fetch(`http://127.0.0.1:${port}/api/sessions`, { method: "POST" });
+  const secondMeta = await second.json() as { id: string };
+  const cleared = await fetch(`http://127.0.0.1:${port}/api/sessions/dismiss`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clearUnused: true }),
+  });
+  assert.equal(cleared.status, 200);
+  assert.equal((await cleared.json() as { removed: number }).removed, 1, "the untitled non-active record was cleared");
+
+  // The original record is gone; dismissing the remaining active record works.
+  assert.equal((await fetch(`http://127.0.0.1:${port}/api/sessions/dismiss`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: meta.id }),
+  })).status, 404);
+  const dismissed = await fetch(`http://127.0.0.1:${port}/api/sessions/dismiss`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: secondMeta.id }),
+  });
+  assert.equal(dismissed.status, 200);
+  const remaining = await fetch(`http://127.0.0.1:${port}/api/sessions`).then((response) => response.json()) as { sessions: { active: boolean }[] };
+  assert.equal(remaining.sessions.length, 1);
+  assert.equal(remaining.sessions[0]?.active, true);
 });
 
 test("web UI returns 503 instead of crashing when the runtime factory fails", async (context) => {

@@ -128,7 +128,7 @@ function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]
     });
     await refresh();
   };
-  const hasUnused = sessions.some((session) => session.title === "New session");
+  const hasUnused = sessions.some((session) => !session.active && session.title === "New session");
   return (
     <section className="sessions">
       <h2>

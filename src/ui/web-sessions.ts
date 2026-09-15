@@ -113,6 +113,7 @@ export class WebSessionManager {
    */
   async dismiss(id: string): Promise<SessionSwitchResult> {
     if (this.#starting !== undefined) await this.#starting.catch(() => undefined);
+    if (this.#active?.record.id === id && this.#active.channel.busy()) return { kind: "busy" };
     const record = this.#sessions.find((entry) => entry.id === id);
     if (record === undefined) return { kind: "unknown" };
     const wasActive = this.#active?.record.id === id;
@@ -125,7 +126,8 @@ export class WebSessionManager {
   }
 
   /** Removes every unused ("New session"-titled) non-active record; returns how many. */
-  clearUnused(): number {
+  async clearUnused(): Promise<number> {
+    if (this.#starting !== undefined) await this.#starting.catch(() => undefined);
     const before = this.#sessions.length;
     this.#sessions = this.#sessions.filter((entry) => entry.title !== "New session" || this.#active?.record.id === entry.id);
     if (this.#sessions.length !== before) this.#persist();

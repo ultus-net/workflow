@@ -192,9 +192,13 @@ test("session manager persists the registry and activates unknown ids fail safel
 test("session manager dismisses sessions and keeps the next one active", async (context) => {
   const dir = registryDir();
   context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const resumes: (string | undefined)[] = [];
   const manager = new WebSessionManager({
     registryPath: join(dir, "registry.json"),
-    factory: async () => fakeRuntime("agent-1").runtime,
+    factory: async (resumeFrom) => {
+      resumes.push(resumeFrom);
+      return fakeRuntime("agent-1").runtime;
+    },
   });
 
   await manager.channel();
@@ -204,10 +208,50 @@ test("session manager dismisses sessions and keeps the next one active", async (
   assert.equal((await manager.dismiss(previous!.id)).kind, "ok");
   assert.equal(manager.list().length, 1);
 
-  // Dismissing the active session moves to the next one (or creates fresh).
-  assert.equal((await manager.dismiss(fresh!.id)).kind, "ok");
+  // With another record present, dismissing the active one must switch to the
+  // existing next record — resuming it by agent session id, never a new record.
+  const second = await manager.create();
+  assert.equal(second.kind, "ok");
+  const remaining = manager.list().find((session) => !session.active)!;
+  const resumesBeforeDismiss = resumes.length;
+  assert.equal((await manager.dismiss(second.kind === "ok" ? second.meta.id : "")).kind, "ok");
+  assert.equal(manager.list().length, 1);
+  assert.equal(manager.list()[0]?.id, remaining.id);
+  assert.equal(manager.list()[0]?.active, true);
+  assert.equal(resumes.length, resumesBeforeDismiss + 1);
+  assert.equal(resumes[resumes.length - 1], "agent-1", "the fallback switch resumes the next record's agent session");
+
+  // With no records left, dismissing the active session creates a fresh one.
+  assert.equal((await manager.dismiss(remaining.id)).kind, "ok");
   assert.equal(manager.list().length, 1);
   assert.equal(manager.list()[0]?.active, true);
+  await manager.dispose();
+});
+
+test("session manager refuses to dismiss the active session while a turn is running", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  let finish: (() => void) | undefined;
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => fakeRuntime("agent-1", async (_prompt, emit) => {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      emit({ type: "completed", result: "done" });
+    }).runtime,
+  });
+
+  const channel = await manager.channel();
+  channel.submit("long turn", []);
+  for (let i = 0; i < 200 && !channel.busy(); i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(channel.busy(), true, "turn should be in flight");
+  const activeId = manager.list().find((session) => session.active)!.id;
+  assert.equal((await manager.dismiss(activeId)).kind, "busy");
+  assert.equal(manager.list().length, 1, "the running session stays registered");
+  finish!();
+  await settle(channel);
+  assert.equal((await manager.dismiss(activeId)).kind, "ok", "dismiss succeeds once the turn completes");
   await manager.dispose();
 });
 
@@ -225,7 +269,7 @@ test("session manager clears only unused (untitled) non-active records", async (
   assert.equal(manager.list().some((session) => !session.active && session.title === "real work"), true);
 
   const before = manager.list().length;
-  const removed = manager.clearUnused();
+  const removed = await manager.clearUnused();
   assert.equal(removed, 1, "only the untitled non-active record was removed");
   assert.equal(manager.list().length, before - 1);
   assert.deepEqual(manager.list().map((session) => session.title), ["New session", "real work"]);

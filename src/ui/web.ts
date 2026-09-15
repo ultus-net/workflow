@@ -95,7 +95,7 @@ export function createWorkflowWebServer(
       try {
         const body = await readJson(request);
         const input = body as { id?: unknown; clearUnused?: unknown } | null;
-        if (input?.clearUnused === true) return json(response, 200, { removed: manager.clearUnused() });
+        if (input?.clearUnused === true) return json(response, 200, { removed: await manager.clearUnused() });
         const id = typeof input?.id === "string" ? input.id : undefined;
         if (id === undefined) return json(response, 400, { error: "invalid dismiss request" });
         return switchResult(response, await manager.dismiss(id), 200);
