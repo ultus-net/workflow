@@ -14,6 +14,12 @@ export interface WorkflowAcpPermissionResolverOptions {
   readonly guard?: WorkflowGuardProvider;
   /** Workspace root forwarded to the guard for policy scoping. */
   readonly workspaceRoot?: string;
+  /**
+   * Plan Task F1/F3: called when an allowed tool call delivered skill content
+   * (a read_skill-shaped MCP call carrying a skill name), so the application
+   * layer can journal the delivery for its skill precondition.
+   */
+  readonly onSkillRead?: (skill: string) => void;
 }
 
 export function createWorkflowAcpPermissionResolver(
@@ -57,8 +63,32 @@ export function createWorkflowAcpPermissionResolver(
         }
       }
     }
+    const skill = skillNameFromReadToolCall(correlated.toolCall.name, correlated.toolCall.rawInput);
+    if (skill !== undefined) options.onSkillRead?.(skill);
     return { kind: "allow" };
   };
+}
+
+// An allowed read_skill call records the delivery. Tool-name matching is
+// generous across MCP naming schemes (skills-mcp's own name, prefixed forms
+// like skills-mcp__read_skill, or lazy-discovery call_tool indirection) —
+// over-matching is safe (an observation, never a grant), under-matching
+// would silently break the delivery precondition.
+function skillNameFromReadToolCall(toolName: string, rawInput: unknown): string | undefined {
+  const lowered = toolName.toLowerCase();
+  const isReadSkillTool = lowered === "read_skill" || lowered.endsWith("__read_skill") || lowered === "call_tool";
+  if (!isReadSkillTool) return undefined;
+  if (typeof rawInput !== "object" || rawInput === null) return undefined;
+  const record = rawInput as Record<string, unknown>;
+  for (const key of ["skill", "skill_name", "skillName", "name"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  // Lazy-discovery indirection: { tool: "read_skill", arguments: { name } }.
+  if (typeof record.tool === "string" && record.tool.toLowerCase() === "read_skill") {
+    return skillNameFromReadToolCall("read_skill", record.arguments);
+  }
+  return undefined;
 }
 
 function authorizationLocations(

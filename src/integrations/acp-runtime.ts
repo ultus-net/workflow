@@ -77,6 +77,17 @@ export async function createConfiguredAcpRuntime(
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
       ...(guard === undefined ? {} : { guard }),
+      // Plan Task F1/F3: journal skill delivery into the application's
+      // precondition. A delivery with no active task cannot bind — skip it
+      // rather than fail the read; the precondition only matters once a
+      // task is running.
+      onSkillRead: (skill) => {
+        try {
+          application.recordSkillRead(skill);
+        } catch {
+          // No active task yet: nothing to journal.
+        }
+      },
     });
     return {
       driver,

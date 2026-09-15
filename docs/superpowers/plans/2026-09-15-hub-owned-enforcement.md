@@ -325,16 +325,30 @@ delivery, never adherence (prompts are not a security boundary).
       (observation journal for `read_skill` calls)
 - Test: toolbox `verify`, `test/acp-session.test.ts` (extend)
 
-- [ ] **Step 1:** hub owns agent MCP config → skills reach the model only
+- [x] **Step 1:** hub owns agent MCP config → skills reach the model only
       through this server. Native host skill injection stays **off** on all
       hosts (`cline-runtime.ts` `enableSkills: false` becomes the enforcement
       precondition, not a limitation). For opencode, its native `skill` tool
       is denied via permission config (`"skill": "deny"`), same
       single-delivery-path rule.
-- [ ] **Step 2:** skill storage readable by the host's raw `read_file` is a
+- [x] **Step 2:** skill storage readable by the host's raw `read_file` is a
       bypass — classify reads under skill paths as recording the same
       `read_skill` observation, or move skill storage outside
       workspace-readable scope. Decide up front.
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`: `skills-mcp` in the
+> toolbox (`list_skills` metadata-only, `read_skill` the single content
+> delivery path; names are single path segments — traversal rejected;
+> results bounded via the E1 helper). **Bypass decision:** skills live under
+> `SKILLS_MCP_DIR` (default `~/.agents/skills`, outside any agent workspace)
+> so a *contained* agent's raw `read_file` is denied by workspace confinement
+> — the bypass is closed structurally, not by classification. The ACP driver
+> classifies `read_skill`/`list_skills` (and `__`-prefixed MCP forms) as
+> `read`, and the resolver journals the delivered skill on allow.
+> **Remaining (probe-dependent):** mounting skills-mcp into a contained ACP
+> agent's MCP config (`acp-runtime.ts` scratch-home MCP settings) needs a
+> gated probe against the real agent to verify Cline's ACP MCP-config
+> surface; native `skill`-tool denial on opencode is config-side (G1 probe).
 
 ### Task F2: Availability gating by learner level
 
@@ -343,8 +357,16 @@ delivery, never adherence (prompts are not a security boundary).
   skills-mcp config
 - Test: extend pedagogy tests
 
-- [ ] **Step 1:** learner level gates which skills `list_skills` returns and
+- [x] **Step 1:** learner level gates which skills `list_skills` returns and
       which are required (below).
+
+> Implemented 2026-09-15: `src/pedagogy/skill-gating.ts`
+> (`loadSkillsLevelMap` + `skillGatingFor`) reads the same operator-managed
+> `levels.json` convention skills-mcp uses — one config drives both server
+> availability (`SKILLS_MCP_LEVEL` + map: honest `off`/`active`/`closed`
+> states, malformed maps throw) and the hub-side required set
+> (`setTaskRequiredSkills`). Composition into TUI mode-switching lands with
+> the surfaces (A3-family wiring).
 
 ### Task F3: Delivery precondition in the application layer
 
@@ -352,13 +374,22 @@ delivery, never adherence (prompts are not a security boundary).
 - Modify: `src/application/workflow.ts`
 - Test: `test/application.test.ts` (extend)
 
-- [ ] **Step 1: failing tests** — tasks carrying `requiredSkills` deny
+- [x] **Step 1: failing tests** — tasks carrying `requiredSkills` deny
       `mutation` until the session log contains a `read_skill` observation for
       each required skill, fresh within the current task/mutation-epoch; skill
       reads are **preconditions, never `requiredEvidence`** (model-initiated
       tool calls must not self-certify); kernel stays prompt/skill-free.
-- [ ] **Step 2: implement + run — passes.** Docs state the honest limit:
+- [x] **Step 2: implement + run — passes.** Docs state the honest limit:
       delivery is enforced, adherence is not.
+
+> Implemented 2026-09-15: `setTaskRequiredSkills`/`recordSkillRead` +
+> `SKILL_DELIVERY_REQUIRED` deny in `WorkflowApplication.authorize`, after
+> capability/workspace/task-state/pedagogy gates. Freshness is per-task (a
+> new task must re-read its required skills; skill reads never appear as
+> evidence in snapshots). `createConfiguredAcpRuntime` journals deliveries
+> into the application from the resolver's `onSkillRead` observation.
+> **Honest limit, enforced in docs and tests:** delivery is enforced;
+> adherence is not.
 
 ---
 

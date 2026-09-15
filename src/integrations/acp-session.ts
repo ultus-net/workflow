@@ -75,6 +75,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #taskId: TaskId;
   #resumeFrom: string | undefined;
   #guard: WorkflowGuardProvider | undefined;
+  #onSkillRead: ((skill: string) => void) | undefined;
   #initialized = false;
   #canLoadSession = false;
   #agentSessionId?: string;
@@ -93,6 +94,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
+    onSkillRead?: (skill: string) => void;
   }) {
     const authorize = typeof options.authorize === "function"
       ? options.authorize
@@ -104,6 +106,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#taskId = options.taskId;
     this.#resumeFrom = options.resumeFrom;
     this.#guard = options.guard;
+    this.#onSkillRead = options.onSkillRead;
     this.#client = new AcpSubprocessClient({
       child: options.child,
       resolvePermission: (request) => this.#resolvePermission(request),
@@ -160,6 +163,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
+    onSkillRead?: (skill: string) => void;
   }): AcpSessionDriver {
     const child = launchContainedAcpAgent(options.containment, options.launch);
     return new AcpSessionDriver({ ...options, child });
@@ -339,6 +343,8 @@ export class AcpSessionDriver implements CodingSessionDriver {
       // the /before-tool route when a provider is composed into the runtime.
       ...(this.#guard === undefined ? {} : { guard: this.#guard }),
       workspaceRoot: this.#workspace,
+      // Plan Task F1/F3: journal skill delivery on allowed read_skill calls.
+      ...(this.#onSkillRead === undefined ? {} : { onSkillRead: this.#onSkillRead }),
     });
     return resolver(request);
   }
@@ -364,6 +370,13 @@ export class AcpSessionDriver implements CodingSessionDriver {
     }
     if (["fetch_web_content", "web_fetch", "web_search"].includes(toolName)) {
       return "network";
+    }
+    // Skill delivery (plan Task F1) is a read: list/read tools must pass the
+    // unknown-mutation fail-closed check so the delivery observation can be
+    // journaled. Prefixed MCP names (skills-mcp__read_skill) match by suffix.
+    const lowered = toolName.toLowerCase();
+    if (lowered === "list_skills" || lowered === "read_skill" || lowered.endsWith("__list_skills") || lowered.endsWith("__read_skill")) {
+      return "read";
     }
     return "mutation";
   }
