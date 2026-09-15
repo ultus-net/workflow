@@ -381,7 +381,13 @@ function pluginFor(application: WorkflowApplication, guard?: WorkflowGuardProvid
   return createWorkflowClinePlugin(application, adapterFor(application), undefined, guard);
 }
 
-function shellExecutorFor(
+/**
+ * Contained shell executor for a workspace-bound application. The hub-owned
+ * run gates use this for git-diff sourcing (read-only) and test execution
+ * (writable); it composes application authorization with the containment
+ * backend, exactly like the `/bash` route.
+ */
+export function shellExecutorFor(
   application: WorkflowApplication,
   fixedTaskId?: TaskId,
   writableWorkspace = true,

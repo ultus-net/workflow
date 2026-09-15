@@ -7,7 +7,7 @@ import type { WorkflowApplication } from "../application/workflow.js";
 import type { TaskGraph } from "../kernel/task-graph.js";
 import { createWorkflowClineTuiBridge, type WorkflowClineTuiBridge } from "./cline-tui-bridge.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
-import { createRunRegistry } from "./run-registry.js";
+import { createRunRegistry, type RunReviewerFactory, type RunTestRunner } from "./run-registry.js";
 
 /**
  * The Workflow hub daemon: a long-running loopback authority that any Cline
@@ -39,6 +39,8 @@ export async function createWorkflowHub(
     observeBridgeStarted?: (url: string) => void;
     teamTaskVerificationCommand?: string;
     guard?: WorkflowGuardProvider;
+    reviewerFactory?: RunReviewerFactory;
+    testRunner?: RunTestRunner;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -51,7 +53,10 @@ export async function createWorkflowHub(
   let discoveryPublished = false;
   acquireInstanceLock(lockDir);
   try {
-    const runs = options.graph === undefined ? undefined : createRunRegistry(application, options.graph);
+    const runs = options.graph === undefined ? undefined : createRunRegistry(application, options.graph, {
+      ...(options.reviewerFactory === undefined ? {} : { reviewer: options.reviewerFactory }),
+      ...(options.testRunner === undefined ? {} : { testRunner: options.testRunner }),
+    });
     bridge = await createWorkflowClineTuiBridge(
       application,
       runs?.resolve,
