@@ -377,7 +377,7 @@ export function WorkflowTui({
           <Box marginTop={1} flexDirection="column">
           <Text dimColor>----------------------------------------------------------------</Text>
           {sessionState?.state === "running" ? (
-            <Text><Text bold>[running]</Text> Cline is working. Ctrl+C cancel</Text>
+            <Text><Text bold>[running]</Text> {assistantLabel} is working. Ctrl+C cancel</Text>
           ) : (
             <Text><Text bold>&gt;</Text> {prompt.length === 0 ? <Text dimColor>What do you want to build?</Text> : prompt}</Text>
           )}

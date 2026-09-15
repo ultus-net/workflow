@@ -20,7 +20,7 @@ Transform Workflow from a passive safety harness into an **active pedagogical pa
 
 ## 2. The Collaborative Spectrum: Five Operating Modes
 
-Workflow supports a dynamic spectrum of collaborative modes, switchable at any time via the TUI (e.g., `Tab` or `m` hotkey) or session configuration.
+Workflow supports a dynamic spectrum of collaborative modes, switchable at any time via the TUI options menu (`/` or Ctrl+P) or session configuration.
 
 ```text
 [ Learn to Code ] -> [ Socratic Tutor ] -> [ Co-Architect ] -> [ Walkthrough ] -> [ Autonomous ]
