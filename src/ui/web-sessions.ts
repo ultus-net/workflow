@@ -151,6 +151,10 @@ export class WebSessionManager {
       if (this.#active.channel.busy()) return { kind: "busy" };
       this.#captureActive();
     }
+    // Stamp the incoming record after the outgoing capture so the activated
+    // session is never older than the one it replaces — the capture above can
+    // otherwise land on a later millisecond and flip the recency sort.
+    record.updatedAt = new Date().toISOString();
     this.#sessions = [record, ...this.#sessions.filter((entry) => entry.id !== record.id)];
     const previous = this.#active;
     this.#active = undefined;

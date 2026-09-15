@@ -40,7 +40,7 @@
     "tui:universal": "tsx src/cli/universal-tui.tsx",
     "style:eval": "tsx src/cli/style-eval.ts",
     "tui:cline:build": "node scripts/build-cline-tui.mjs",
-  "build:cline-agent": "node scripts/build-cline-tui.mjs --with-cli-bin",
+    "build:cline-agent": "node scripts/build-cline-tui.mjs --with-cli-bin",
     "cline:bump": "node scripts/bump-cline-tag.mjs",
     "contained-shell": "tsx src/cli/contained-shell.ts",
     "web": "tsx src/cli/web.ts",
