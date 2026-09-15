@@ -289,10 +289,16 @@ body {
   padding: 0.45rem 0.9rem;
 }
 
-/* Visible focus trail for keyboard operators */
+/* Visible focus trail for keyboard operators — swap border color rather than
+   stacking an outline on top of the button's own border (no double ring). */
 .btn:focus-visible,
-.composer-input:focus-visible,
-.attachment-remove:focus-visible {
+.attachment-remove:focus-visible,
+.session-row:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.composer-input:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -351,27 +357,52 @@ body {
   align-items: baseline;
 }
 
-.sessions-new { font-size: 0.78rem; }
+.sessions-actions { display: flex; gap: 0.35rem; }
+.sessions-clear, .sessions-new { font-size: 0.78rem; }
 
 .session-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  width: 100%;
-  text-align: left;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: stretch;
   background: transparent;
   border: 1px solid var(--border);
   border-radius: 8px;
+  margin-bottom: 0.4rem;
+}
+
+.session-activate {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  text-align: left;
+  background: transparent;
+  border: none;
   color: var(--text);
   font: inherit;
   font-size: 0.85rem;
   padding: 0.45rem 0.6rem;
-  margin-bottom: 0.4rem;
   cursor: pointer;
+  min-width: 0;
 }
+
+.session-activate:disabled { cursor: default; opacity: 0.6; }
+
+.session-dismiss {
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.95rem;
+  padding: 0 0.55rem;
+}
+
+.session-dismiss:hover:not(:disabled) { color: var(--deny); }
+.session-dismiss:disabled { opacity: 0.4; cursor: default; }
 
 .session-row:hover { border-color: var(--accent); }
 .session-active { border-color: var(--accent); background: var(--surface); }
+.session-pending { border-color: var(--accent); opacity: 0.75; }
 .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-time { color: var(--text-muted); font-size: 0.72rem; }
 
@@ -381,6 +412,20 @@ body {
   overflow-y: auto;
   overflow-x: hidden;
   min-height: 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.panels::-webkit-scrollbar { width: 6px; }
+.panels::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* Cap the sessions list so the tasks panel below always keeps usable room;
+   both scroll independently when their content overflows. */
+.sessions-list {
+  max-height: 38%;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
 .panels h2 {

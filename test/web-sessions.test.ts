@@ -189,6 +189,49 @@ test("session manager persists the registry and activates unknown ids fail safel
   await reloaded.dispose();
 });
 
+test("session manager dismisses sessions and keeps the next one active", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => fakeRuntime("agent-1").runtime,
+  });
+
+  await manager.channel();
+  await manager.create();
+  const [fresh, previous] = manager.list();
+  assert.equal((await manager.dismiss("missing")).kind, "unknown");
+  assert.equal((await manager.dismiss(previous!.id)).kind, "ok");
+  assert.equal(manager.list().length, 1);
+
+  // Dismissing the active session moves to the next one (or creates fresh).
+  assert.equal((await manager.dismiss(fresh!.id)).kind, "ok");
+  assert.equal(manager.list().length, 1);
+  assert.equal(manager.list()[0]?.active, true);
+  await manager.dispose();
+});
+
+test("session manager clears only unused (untitled) non-active records", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const manager = new WebSessionManager({ registryPath: join(dir, "registry.json"), factory: async () => fakeRuntime("agent-1").runtime });
+
+  const channel = await manager.channel();
+  channel.submit("real work", []);
+  await settle(channel);
+  await manager.create();
+  await manager.create();
+  // Now: one untitled active, one titled non-active, one untitled non-active.
+  assert.equal(manager.list().some((session) => !session.active && session.title === "real work"), true);
+
+  const before = manager.list().length;
+  const removed = manager.clearUnused();
+  assert.equal(removed, 1, "only the untitled non-active record was removed");
+  assert.equal(manager.list().length, before - 1);
+  assert.deepEqual(manager.list().map((session) => session.title), ["New session", "real work"]);
+  await manager.dispose();
+});
+
 test("session manager ingests replayed history when resuming a session", async (context) => {
   const dir = registryDir();
   context.after(() => rmSync(dir, { recursive: true, force: true }));

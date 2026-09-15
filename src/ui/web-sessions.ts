@@ -106,6 +106,32 @@ export class WebSessionManager {
     return this.#enqueueSwitch(record, record.agentSessionId);
   }
 
+  /**
+   * Removes a session from the registry. Dismissing the active session moves
+   * to the next most recent one (or creates a fresh one when none remain).
+   * The agent's own session store is untouched; Workflow simply forgets the link.
+   */
+  async dismiss(id: string): Promise<SessionSwitchResult> {
+    if (this.#starting !== undefined) await this.#starting.catch(() => undefined);
+    const record = this.#sessions.find((entry) => entry.id === id);
+    if (record === undefined) return { kind: "unknown" };
+    const wasActive = this.#active?.record.id === id;
+    this.#sessions = this.#sessions.filter((entry) => entry.id !== id);
+    this.#persist();
+    if (!wasActive) return { kind: "ok", meta: { ...this.#meta(record), active: false } };
+    const next = this.#sessions[0];
+    if (next === undefined) return this.create();
+    return this.#enqueueSwitch(next, next.agentSessionId);
+  }
+
+  /** Removes every unused ("New session"-titled) non-active record; returns how many. */
+  clearUnused(): number {
+    const before = this.#sessions.length;
+    this.#sessions = this.#sessions.filter((entry) => entry.title !== "New session" || this.#active?.record.id === entry.id);
+    if (this.#sessions.length !== before) this.#persist();
+    return before - this.#sessions.length;
+  }
+
   async dispose(): Promise<void> {
     this.#captureActive();
     this.#persist();

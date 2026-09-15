@@ -98,32 +98,71 @@ function createSession(refresh: () => Promise<void>): void {
   void fetch("/api/sessions", { method: "POST" }).then(() => refresh());
 }
 
-function activateSession(id: string, refresh: () => Promise<void>): void {
-  void fetch("/api/sessions/activate", {
+function dismissSession(id: string, refresh: () => Promise<void>): void {
+  void fetch("/api/sessions/dismiss", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ id }),
   }).then(() => refresh());
 }
 
+function clearUnusedSessions(refresh: () => Promise<void>): void {
+  void fetch("/api/sessions/dismiss", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clearUnused: true }),
+  }).then(() => refresh());
+}
+
 function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]; readonly refresh: () => Promise<void> }) {
+  const [pending, setPending] = useState<string | undefined>(undefined);
+  const switchTo = (id: string): void => {
+    setPending(id);
+    void activate(id).finally(() => setPending(undefined));
+  };
+  const activate = async (id: string): Promise<void> => {
+    await fetch("/api/sessions/activate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    await refresh();
+  };
+  const hasUnused = sessions.some((session) => session.title === "New session");
   return (
     <section className="sessions">
       <h2>
         Sessions
-        <button className="btn btn-ghost sessions-new" onClick={() => createSession(refresh)} aria-label="New session">+ New</button>
+        <span className="sessions-actions">
+          {hasUnused && (
+            <button className="btn btn-ghost sessions-clear" onClick={() => clearUnusedSessions(refresh)}>Clear</button>
+          )}
+          <button className="btn btn-ghost sessions-new" onClick={() => createSession(refresh)} aria-label="New session">+ New</button>
+        </span>
       </h2>
-      {sessions.map((session) => (
-        <button
-          className={`session-row ${session.active ? "session-active" : ""}`}
-          key={session.id}
-          onClick={() => activateSession(session.id, refresh)}
-          aria-current={session.active}
-        >
-          <span className="session-title">{session.title}</span>
-          <span className="session-time">{new Date(session.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
-        </button>
-      ))}
+      <div className="sessions-list">
+        {sessions.map((session) => (
+          <div className={`session-row ${session.active ? "session-active" : ""} ${pending === session.id ? "session-pending" : ""}`} key={session.id}>
+            <button
+              className="session-activate"
+              onClick={() => switchTo(session.id)}
+              aria-current={session.active}
+              disabled={pending !== undefined}
+            >
+              <span className="session-title">{pending === session.id ? "loading…" : session.title}</span>
+              <span className="session-time">{new Date(session.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+            </button>
+            <button
+              className="session-dismiss"
+              onClick={() => dismissSession(session.id, refresh)}
+              aria-label={`Dismiss ${session.title}`}
+              disabled={pending !== undefined}
+            >
+              ×
+            </button>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
