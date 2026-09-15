@@ -7,6 +7,7 @@ import {
 } from "@assistant-ui/react";
 
 import { ActionPart, AttentionPart, CompletionPart, OutcomePart } from "./message-parts.js";
+import { MarkdownText } from "./markdown-text.js";
 
 interface SnapshotTask {
   readonly id: string;
@@ -77,7 +78,7 @@ function AssistantMessage() {
     <MessagePrimitive.Root className="msg msg-assistant">
       <MessagePrimitive.Parts
         components={{
-          Text: (part) => <p className="msg-text">{part.text}</p>,
+          Text: MarkdownText,
           data: {
             by_name: {
               action: ActionPart,
