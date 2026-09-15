@@ -88,6 +88,43 @@ test("session manager creates, lists, and activates sessions with resume ids", a
   assert.equal(spawned[2]?.disposed, true);
 });
 
+test("session manager lists registry order first when updatedAt timestamps tie", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  // Freeze the clock so both records land on the same millisecond: the sort
+  // must then fall back to the registry order (most-recent-first), never to
+  // stale index order that would resurrect an older session at the top.
+  const RealDate = Date;
+  const fixedMs = RealDate.parse("2026-09-15T00:00:00.000Z");
+  const FrozenDate = class extends RealDate {
+    constructor(value?: number | string | Date) {
+      super(value === undefined ? fixedMs : value);
+    }
+    static now(): number { return fixedMs; }
+  };
+  globalThis.Date = FrozenDate as unknown as typeof RealDate;
+  try {
+    const manager = new WebSessionManager({
+      registryPath: join(dir, "registry.json"),
+      factory: async () => fakeRuntime("agent-1").runtime,
+    });
+    const first = await manager.channel();
+    first.submit("older titled turn", []);
+    await settle(first);
+    const created = await manager.create();
+    assert.equal(created.kind, "ok");
+
+    const sessions = manager.list();
+    assert.equal(sessions.length, 2);
+    assert.equal(sessions[0]?.updatedAt, sessions[1]?.updatedAt, "the test must actually create a timestamp tie");
+    assert.equal(sessions[0]?.active, true, "the most recently created session leads on ties");
+    assert.equal(sessions[1]?.title, "older titled turn");
+    await manager.dispose();
+  } finally {
+    globalThis.Date = RealDate;
+  }
+});
+
 test("session manager refuses to switch while a turn is running", async (context) => {
   const dir = registryDir();
   context.after(() => rmSync(dir, { recursive: true, force: true }));

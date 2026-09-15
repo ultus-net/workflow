@@ -142,6 +142,171 @@ index ad1f032..6a5768a 100644
  		buildAutoApproveConfigOption(session.autoApproveTools),
  	];
  }
+diff --git a/apps/cli/src/acp/effort.test.ts b/apps/cli/src/acp/effort.test.ts
+new file mode 100644
+index 0000000..025c9b8
+--- /dev/null
++++ b/apps/cli/src/acp/effort.test.ts
+@@ -0,0 +1,81 @@
++import { describe, expect, it } from "vitest";
++import {
++	buildEffortConfigOption,
++	EFFORT_CONFIG_ID,
++	parseEffortValue,
++	resolveDefaultEffort,
++} from "./effort";
++
++describe("buildEffortConfigOption", () => {
++	it("builds a thought_level select reflecting the current value", () => {
++		const option = buildEffortConfigOption("high");
++
++		expect(option).toMatchObject({
++			type: "select",
++			id: EFFORT_CONFIG_ID,
++			category: "thought_level",
++			currentValue: "high",
++		});
++		expect(option.name).toBeTruthy();
++	});
++
++	it("advertises Off plus the active effort levels", () => {
++		const option = buildEffortConfigOption("none");
++		if (option.type !== "select") {
++			throw new Error("expected a select option");
++		}
++
++		const values = option.options.flatMap((choice) =>
++			"value" in choice ? [choice.value as string] : [],
++		);
++		expect(values).toContain("none");
++		expect(values).toContain("low");
++		expect(values).toContain("medium");
++		expect(values).toContain("high");
++		expect(values).toContain("xhigh");
++	});
++});
++
++describe("parseEffortValue", () => {
++	it("accepts the advertised effort levels", () => {
++		expect(parseEffortValue("none")).toBe("none");
++		expect(parseEffortValue("low")).toBe("low");
++		expect(parseEffortValue("medium")).toBe("medium");
++		expect(parseEffortValue("high")).toBe("high");
++		expect(parseEffortValue("xhigh")).toBe("xhigh");
++	});
++
++	it("fails closed for unrecognized values", () => {
++		expect(parseEffortValue("minimal")).toBeUndefined();
++		expect(parseEffortValue("max")).toBeUndefined();
++		expect(parseEffortValue(true)).toBeUndefined();
++		expect(parseEffortValue(undefined)).toBeUndefined();
++	});
++});
++
++describe("resolveDefaultEffort", () => {
++	it("maps active persisted efforts onto the session default", () => {
++		expect(resolveDefaultEffort({ enabled: true, effort: "low" })).toBe("low");
++		expect(resolveDefaultEffort({ enabled: true, effort: "high" })).toBe(
++			"high",
++		);
++	});
++
++	it("disabled or explicitly-none persistence resolves to Off", () => {
++		expect(resolveDefaultEffort({ enabled: false })).toBe("none");
++		expect(resolveDefaultEffort({ enabled: true, effort: "none" })).toBe(
++			"none",
++		);
++	});
++
++	it("enabled without a usable effort falls back to medium", () => {
++		expect(resolveDefaultEffort({ enabled: true })).toBe("medium");
++		expect(resolveDefaultEffort({ enabled: true, effort: "minimal" })).toBe(
++			"medium",
++		);
++	});
++
++	it("absent persistence resolves to Off", () => {
++		expect(resolveDefaultEffort(undefined)).toBe("none");
++	});
++});
+diff --git a/apps/cli/src/acp/effort.ts b/apps/cli/src/acp/effort.ts
+new file mode 100644
+index 0000000..7edf77c
+--- /dev/null
++++ b/apps/cli/src/acp/effort.ts
+@@ -0,0 +1,72 @@
++import type { SessionConfigOption } from "@agentclientprotocol/sdk";
++import type { ProviderSettings } from "@cline/core";
++
++import type { CliReasoningEffort } from "../utils/types.js";
++
++export const EFFORT_CONFIG_ID = "effort";
++
++const EFFORT_CHOICES: readonly {
++	value: CliReasoningEffort;
++	name: string;
++}[] = [
++	{ value: "none", name: "Off" },
++	{ value: "low", name: "Low" },
++	{ value: "medium", name: "Medium" },
++	{ value: "high", name: "High" },
++	{ value: "xhigh", name: "Extra High" },
++];
++
++export function buildEffortConfigOption(
++	currentValue: CliReasoningEffort,
++): SessionConfigOption {
++	return {
++		type: "select",
++		id: EFFORT_CONFIG_ID,
++		name: "Reasoning Effort",
++		description: "Controls how much the model thinks before responding",
++		category: "thought_level",
++		currentValue,
++		options: EFFORT_CHOICES.map((choice) => ({ ...choice })),
++	};
++}
++
++/**
++ * Interpret the value of a `session/set_config_option` request for the
++ * effort option. Returns `undefined` for anything unrecognized so the
++ * caller can reject the request.
++ */
++export function parseEffortValue(
++	value: unknown,
++): CliReasoningEffort | undefined {
++	return typeof value === "string" &&
++		EFFORT_CHOICES.some((choice) => choice.value === value)
++		? (value as CliReasoningEffort)
++		: undefined;
++}
++
++/**
++ * Session default: map the persisted provider reasoning settings onto a
++ * single effort value, mirroring resolveCliReasoning's merge rules.
++ */
++export function resolveDefaultEffort(
++	persistedReasoning: ProviderSettings["reasoning"] | undefined,
++): CliReasoningEffort {
++	if (
++		persistedReasoning?.enabled === false ||
++		persistedReasoning?.effort === "none"
++	) {
++		return "none";
++	}
++	if (
++		persistedReasoning?.effort === "low" ||
++		persistedReasoning?.effort === "medium" ||
++		persistedReasoning?.effort === "high" ||
++		persistedReasoning?.effort === "xhigh"
++	) {
++		return persistedReasoning.effort;
++	}
++	if (persistedReasoning?.enabled === true) {
++		return "medium";
++	}
++	return "none";
++}
 diff --git a/apps/cli/src/cli.tuistory.e2e.test.ts b/apps/cli/src/cli.tuistory.e2e.test.ts
 index e5a3796..cf8e3a7 100644
 --- a/apps/cli/src/cli.tuistory.e2e.test.ts
@@ -566,6 +731,175 @@ index d8590e0..f97b877 100644
 +		await expectVisible(terminal, "Configuration");
 +	});
  });
+diff --git a/apps/cli/src/tui/components/workflow-galaxy.tsx b/apps/cli/src/tui/components/workflow-galaxy.tsx
+new file mode 100644
+index 0000000..f494494
+--- /dev/null
++++ b/apps/cli/src/tui/components/workflow-galaxy.tsx
+@@ -0,0 +1,163 @@
++import { useTerminalDimensions } from "@opentui/react";
++import { useEffect, useState } from "react";
++
++/**
++ * Workflow galaxy animation: a procedural ASCII swirl of stars orbiting a
++ * core — guided by the "ASCII Rotating Galaxy" animation concept (spiral
++ * arms, twist, glow falloff, twinkle) but implemented from scratch with an
++ * original, deterministic renderer. No third-party artwork or code is
++ * imported. Characters, not colors, carry the depth cue, and each tick
++ * remaps star glyphs so the field shimmers in pattern, not just position.
++ * The grid adapts to the terminal so the ball always fits with margin —
++ * nothing clips against the header, footer, or input chrome.
++ */
++
++/** "Smooth" gradient from the reference: a luminance ramp (no jagged
++ * separator glyphs — the ball reads as continuous shading). */
++const PALETTE = " .:-=+*#%@";
++const ARMS = 3;
++const TWIST = 0.45;
++const GLOW = 0.45;
++const NOISE = 0.15;
++const TWINKLE = 0.35;
++/** Reference settings from the asciiart.eu "ASCII Rotating Galaxy" generator:
++ * Stars 600, Speed 20°/s, Twist 0.45, Noise 0.15, Glow 0.45, Twinkle 0.35,
++ * gradient "Smooth". Reproduced here, not copied. */
++const STAR_COUNT = 4000;
++const SPEED_RAD_PER_SEC = (20 * Math.PI) / 180;
++const TICK_MS = 60;
++/** Cell-aspect roundness — proportions fixed; clipping is solved by uniform
++ * scale, never by flattening. */
++const SQUASH = 0.42;
++
++interface Star {
++	readonly radius: number;
++	readonly phase: number;
++	readonly wobble: number;
++}
++
++/** Deterministic hash so the field is stable frame-to-frame, no Math.random. */
++function hash(seed: number): number {
++	let h = seed | 0;
++	h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
++	h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
++	return ((h ^ (h >>> 16)) >>> 0) / 0xffffffff;
++}
++
++const STARS: Star[] = (() => {
++	const stars: Star[] = [];
++	for (let i = 0; i < STAR_COUNT; i++) {
++		const arm = i % ARMS;
++		// Noise jitter sprays stars near their spiral slots so the arms show
++		// structure while the field looks organic.
++		const jitter = hash(i * 2 + 1) * NOISE;
++		// Full-radius fill: every star owns a radius slot so the spiral arms
++		// sweep from core to rim — glow accumulation alone makes the core
++		// dense; tails stay long (reference behavior).
++		const radius = (i + 1) / STAR_COUNT;
++		stars.push({
++			radius,
++			phase: arm * ((Math.PI * 2) / ARMS) + TWIST * radius * Math.PI * 2 + jitter,
++			wobble: hash(i * 3 + 7),
++		});
++	}
++	return stars;
++})();
++
++export function renderFrame(tick: number, width: number, height: number): string[] {
++	const halfW = width / 2;
++	const halfH = height / 2;
++	// Glow-accumulation buffer: cells sum the brightness of every star that
++	// lands on them, so overlap coheres into a solid glowing body — this is
++	// the difference from per-star writer-wins rendering.
++	const w: number[] = new Array<number>(width * height).fill(0);
++	// Speed is true 20°/s: tick cadence maps to radians per second, not a fixed
++	// per-tick step.
++	const progress = ((tick * TICK_MS) / 1000) * SPEED_RAD_PER_SEC;
++	// Proportions are preserved; the uniform scale fills the grid with a
++	// compact inset so the ball reads tidy — never flattened. Uniform scale,
++	// no shrink-by-squash. No noise halo: stray characters are unwanted.
++	const scale = 0.85 * Math.max(0, Math.min(1, (halfW - 2.6) / (halfW * 1.04), (halfH - 2.2) / (halfW * SQUASH * 1.04)));
++
++	STARS.forEach((star) => {
++		const angle = star.phase + progress + star.radius * TWIST * Math.PI * 2;
++		const radius = star.radius * halfW * scale;
++		const x = Math.round(halfW + Math.cos(angle) * radius);
++		// Aspect correction: terminal cells are taller than wide, squash y.
++		const y = Math.round(halfH + Math.sin(angle) * radius * SQUASH);
++		if (x < 0 || x >= width || y < 0 || y >= height) return;
++		const depth = 1 - star.radius;
++		const flicker = Math.sin(progress * 4 + star.wobble * Math.PI * 2);
++		const brightness = Math.max(0, Math.min(1, depth * (GLOW + flicker * 0.4) + GLOW * 0.4));
++		w[y * width + x] = (w[y * width + x] ?? 0) + brightness;
++	});
++
++	const cells: string[][] = Array.from({ length: height }, () => Array.from({ length: width }, () => " "));
++	for (let y = 0; y < height; y++) {
++		for (let x = 0; x < width; x++) {
++			const intensity = w[y * width + x] ?? 0;
++			if (intensity <= 0.01) continue;
++			// Twinkle: nudges the whole cell's glyph within the palette with
++			// amplitude set by the TWINKLE constant (reference value: 0.35).
++			const shimmer = (hash(y * 131 + x * 17 + tick * 13) - 0.5) * TWINKLE;
++			const value = intensity * (1 + shimmer);
++			// Thresholds map accumulated glow onto the palette; overlapping
++			// stars climb the gradient so the core is dense, the halo sparse.
++			// (10 bins, one per palette glyph.)
++			let index = 0;
++			if (value > 8) index = 9;
++			else if (value > 5.5) index = 8;
++			else if (value > 4) index = 7;
++			else if (value > 3) index = 6;
++			else if (value > 2.1) index = 5;
++			else if (value > 1.4) index = 4;
++			else if (value > 1) index = 3;
++			else if (value > 0.7) index = 2;
++			else if (value > 0.45) index = 1;
++			const glyph = PALETTE[index];
++			if (glyph !== undefined && glyph !== " ") cells[y]![x] = glyph;
++		}
++	}
++
++	// Core: the nearest, brightest point (guarded — a 1-row terminal can't
++	// hold a core).
++	if (height >= 2 && width >= 2) {
++		const coreGlyph = PALETTE[PALETTE.length - 1] ?? "@";
++		cells[Math.min(height - 1, Math.round(halfH))]![Math.min(width - 1, Math.round(halfW))] = coreGlyph;
++	}
++
++	return cells.map((row) => row.join(""));
++}
++
++export function WorkflowGalaxy(props: { defaultColor?: string }) {
++	const [tick, setTick] = useState(0);
++	const { width: terminalWidth, height: terminalHeight } = useTerminalDimensions();
++
++	useEffect(() => {
++		const interval = setInterval(() => {
++			setTick((current) => current + 1);
++		}, TICK_MS);
++		return () => clearInterval(interval);
++	}, []);
++
++	// Adaptive grid, no min/max clamps: the galaxy gets the terminal minus a
++	// stable reservation for home chrome (welcome/hint/input/status ~20
++	// rows), so it grows with the screen instead of shrinking to a nub. On
++	// ultra-wide terminals the width locks to the ball's aspect ratio so the
++	// uniform scale can't degenerate into a sparse dot.
++	const CHROME_ROWS = 20;
++	const gridHeight = Math.max(1, terminalHeight - CHROME_ROWS);
++	const aspectWidth = Math.floor(gridHeight / SQUASH);
++	const gridWidth = Math.max(1, Math.min(terminalWidth - 4, aspectWidth));
++	const frame = renderFrame(tick, gridWidth, gridHeight);
++	return (
++		<box flexDirection="column" alignItems="center" width="100%" flexShrink={1} overflow="hidden">
++			{frame.map((row, rowIdx) => (
++				// biome-ignore lint/suspicious/noArrayIndexKey: procedural animation frame with fixed row order
++				<text key={`row-${rowIdx}`} fg={props.defaultColor ?? "white"}>
++					{row}
++				</text>
++			))}
++		</box>
++	);
++}
 diff --git a/apps/cli/src/tui/hooks/use-root-keyboard.ts b/apps/cli/src/tui/hooks/use-root-keyboard.ts
 index 52ea615..643874f 100644
 --- a/apps/cli/src/tui/hooks/use-root-keyboard.ts
@@ -735,6 +1069,355 @@ index 753cf36..a0cb58d 100644
  					onImagePaste={onImagePaste}
  					onLargeTextPaste={onLargeTextPaste}
  					onFocusRequest={props.onInputFocusRequest}
+diff --git a/apps/cli/src/utils/workflow-bridge-local-runtime.ts b/apps/cli/src/utils/workflow-bridge-local-runtime.ts
+new file mode 100644
+index 0000000..7b847fa
+--- /dev/null
++++ b/apps/cli/src/utils/workflow-bridge-local-runtime.ts
+@@ -0,0 +1,10 @@
++import { createWorkflowBridge } from "./workflow-bridge";
++
++/**
++ * Every hub-side session creator (zen, schedule, connectors) must attach the
++ * Workflow authorization bridge as a localRuntime hook; the hub executes
++ * these client-side hooks through its contribution RPC.
++ */
++export function workflowBridgeLocalRuntime(): { localRuntime: { hooks: import("@cline/core").AgentHooks } } {
++	return { localRuntime: { hooks: createWorkflowBridge().authorize(undefined) } };
++}
+diff --git a/apps/cli/src/utils/workflow-bridge.test.ts b/apps/cli/src/utils/workflow-bridge.test.ts
+new file mode 100644
+index 0000000..e36a813
+--- /dev/null
++++ b/apps/cli/src/utils/workflow-bridge.test.ts
+@@ -0,0 +1,156 @@
++import { createServer, type Server } from "node:http";
++import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
++import type { AddressInfo } from "node:net";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import {
++	createWorkflowBridge,
++	createWorkflowSnapshotPoller,
++	type WorkflowSnapshot,
++} from "./workflow-bridge";
++
++describe("createWorkflowSnapshotPoller", () => {
++	it("keeps authoritative tasks visible while refreshing and ignores older completions", async () => {
++		const pending: Array<(snapshot: WorkflowSnapshot) => void> = [];
++		const states: Array<{ available: boolean; tasks: WorkflowSnapshot["tasks"] }> = [];
++		const poller = createWorkflowSnapshotPoller(
++			() => new Promise((resolve) => pending.push(resolve)),
++			(state) => states.push(state),
++		);
++
++		poller.refresh();
++		pending[0]?.({ tasks: [{ id: "first", title: "First", state: "READY", blockers: [] }] });
++		await Promise.resolve();
++		expect(states.at(-1)).toMatchObject({ available: true, tasks: [{ id: "first" }] });
++
++		poller.refresh();
++		expect(states.at(-1)).toMatchObject({ available: true, tasks: [{ id: "first" }] });
++		poller.refresh();
++		pending[1]?.({ tasks: [{ id: "stale", title: "Stale", state: "READY", blockers: [] }] });
++		await Promise.resolve();
++		expect(states.at(-1)).toMatchObject({ available: true, tasks: [{ id: "first" }] });
++
++		pending[2]?.({ tasks: [{ id: "latest", title: "Latest", state: "IN_PROGRESS", blockers: [] }] });
++		await Promise.resolve();
++		expect(states.at(-1)).toMatchObject({ available: true, tasks: [{ id: "latest" }] });
++		poller.stop();
++	});
++
++	it("clears tasks when the latest refresh fails", async () => {
++		let rejectLatest: ((error: Error) => void) | undefined;
++		const states: Array<{ available: boolean; tasks: WorkflowSnapshot["tasks"] }> = [];
++		const poller = createWorkflowSnapshotPoller(
++			() => new Promise((_resolve, reject) => { rejectLatest = reject; }),
++			(state) => states.push(state),
++		);
++
++		poller.refresh();
++		rejectLatest?.(new Error("unavailable"));
++		await Promise.resolve();
++		expect(states.at(-1)).toEqual({ available: false, tasks: [] });
++		poller.stop();
++	});
++
++	it("ignores an in-flight refresh after the poller stops", async () => {
++		let resolveSnapshot: ((snapshot: WorkflowSnapshot) => void) | undefined;
++		const states: Array<{ available: boolean; tasks: WorkflowSnapshot["tasks"] }> = [];
++		const poller = createWorkflowSnapshotPoller(
++			() => new Promise((resolve) => { resolveSnapshot = resolve; }),
++			(state) => states.push(state),
++		);
++
++		poller.refresh();
++		poller.stop();
++		resolveSnapshot?.({ tasks: [{ id: "late", title: "Late", state: "READY", blockers: [] }] });
++		await Promise.resolve();
++		expect(states).toEqual([]);
++	});
++});
++
++describe("createWorkflowBridge authority resolution", () => {
++	let server: Server | undefined;
++	let home: string;
++	let originalHome: string | undefined;
++	let bridgeUrl: string;
++
++	beforeEach(async () => {
++		originalHome = process.env.HOME;
++		home = mkdtempSync(join(tmpdir(), "workflow-bridge-home-"));
++		process.env.HOME = home;
++		server = createServer((request, response) => {
++			const chunks: Buffer[] = [];
++			request.on("data", (chunk) => chunks.push(chunk));
++			request.on("end", () => {
++				if (request.headers.authorization !== "Bearer test-token") {
++					response.writeHead(401, { "content-type": "application/json" });
++					response.end(JSON.stringify({ error: "unauthorized" }));
++					return;
++				}
++				response.writeHead(200, { "content-type": "application/json" });
++				response.end(JSON.stringify({}));
++			});
++		});
++		await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
++		bridgeUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
++	});
++
++	afterEach(async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		if (originalHome === undefined) delete process.env.HOME;
++		else process.env.HOME = originalHome;
++		rmSync(home, { recursive: true, force: true });
++		await new Promise<void>((resolve) => server?.close(() => resolve()));
++		server = undefined;
++	});
++
++	it("prefers the launcher-provided environment", async () => {
++		process.env.WORKFLOW_CLINE_BRIDGE_URL = bridgeUrl;
++		process.env.WORKFLOW_CLINE_BRIDGE_TOKEN = "test-token";
++		const bridge = createWorkflowBridge();
++		const decision = await bridge.authorize(undefined).beforeTool?.({
++			toolCall: { toolName: "read_file" },
++			input: {},
++		} as never);
++		expect(decision?.stop).toBeFalsy();
++	});
++
++	it("skips a tool denied by the Workflow authority without stopping the run", async () => {
++		await new Promise<void>((resolve) => server?.close(() => resolve()));
++		server = createServer((_request, response) => {
++			response.writeHead(200, { "content-type": "application/json" });
++			response.end(JSON.stringify({ stop: true, reason: "denied by workflow" }));
++		});
++		await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
++		bridgeUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
++		process.env.WORKFLOW_CLINE_BRIDGE_URL = bridgeUrl;
++		process.env.WORKFLOW_CLINE_BRIDGE_TOKEN = "test-token";
++
++		const decision = await createWorkflowBridge().authorize(undefined).beforeTool?.({
++			toolCall: { toolName: "write_to_file" },
++			input: {},
++		} as never);
++
++		expect(decision).toEqual({ skip: true, reason: "denied by workflow" });
++	});
++
++	it("falls back to the Workflow hub discovery file", async () => {
++		const discoveryDir = join(home, ".workflow", "hub");
++		mkdirSync(discoveryDir, { recursive: true });
++		writeFileSync(
++			join(discoveryDir, "discovery.json"),
++			JSON.stringify({ hubId: "hub-1", endpoint: bridgeUrl, token: "test-token" }),
++		);
++		const bridge = createWorkflowBridge();
++		const decision = await bridge.authorize(undefined).beforeTool?.({
++			toolCall: { toolName: "read_file" },
++			input: {},
++		} as never);
++		expect(decision?.stop).toBeFalsy();
++	});
++
++	it("throws when neither the environment nor a discovery file is available", () => {
++		expect(() => createWorkflowBridge()).toThrow(/Workflow authorization bridge/);
++	});
++});
+diff --git a/apps/cli/src/utils/workflow-bridge.ts b/apps/cli/src/utils/workflow-bridge.ts
+new file mode 100644
+index 0000000..f3f02ed
+--- /dev/null
++++ b/apps/cli/src/utils/workflow-bridge.ts
+@@ -0,0 +1,165 @@
++import type { AgentHooks, ShellExecutor } from "@cline/core";
++import { readFileSync } from "node:fs";
++import { homedir } from "node:os";
++import { join } from "node:path";
++
++type BridgeResponse = {
++	stop?: boolean;
++	reason?: string;
++	output?: string;
++	error?: string;
++	snapshot?: WorkflowSnapshot;
++};
++
++type BeforeToolContext = Parameters<NonNullable<AgentHooks["beforeTool"]>>[0];
++type AfterToolContext = Parameters<NonNullable<AgentHooks["afterTool"]>>[0];
++type ShellCommand = Parameters<ShellExecutor>[0];
++type ShellCwd = Parameters<ShellExecutor>[1];
++
++export type WorkflowTaskProjection = {
++	id: string;
++	title: string;
++	state: string;
++	blockers: string[];
++};
++
++export type WorkflowSnapshot = {
++	tasks: WorkflowTaskProjection[];
++};
++
++export function createWorkflowSnapshotPoller(
++	snapshot: () => Promise<WorkflowSnapshot>,
++	onState: (state: { available: boolean; tasks: WorkflowTaskProjection[] }) => void,
++) {
++	let active = true;
++	let generation = 0;
++	const refresh = () => {
++		const requestGeneration = ++generation;
++		void snapshot().then(
++			(result) => {
++				if (active && requestGeneration === generation) {
++					onState({ available: true, tasks: result.tasks });
++				}
++			},
++			() => {
++				if (active && requestGeneration === generation) {
++					onState({ available: false, tasks: [] });
++				}
++			},
++		);
++	};
++	return { refresh, stop: () => { active = false; } };
++}
++
++/**
++ * Resolves the Workflow authority: launcher-provided environment first, then
++ * the global Workflow hub's discovery file. See `docs/HUB.md` in the Workflow
++ * repository.
++ */
++function resolveBridgeAuthority(): { url: string; token: string } {
++	const url = process.env.WORKFLOW_CLINE_BRIDGE_URL?.trim();
++	const token = process.env.WORKFLOW_CLINE_BRIDGE_TOKEN?.trim();
++	if (url && token) return { url, token };
++	try {
++		const discovery = JSON.parse(
++			readFileSync(join(homedir(), ".workflow", "hub", "discovery.json"), "utf8"),
++		) as { endpoint?: unknown; token?: unknown };
++		if (typeof discovery.endpoint === "string" && typeof discovery.token === "string") {
++			return { url: discovery.endpoint, token: discovery.token };
++		}
++	} catch {
++		// No discovery file (or unreadable): fall through to fail closed.
++	}
++	throw new Error("Workflow authorization bridge is required for this Cline build");
++}
++
++export function createWorkflowBridge() {
++	const { url, token } = resolveBridgeAuthority();
++	let activeTeamTaskId: string | undefined;
++
++	const request = async (path: string, body: unknown): Promise<BridgeResponse> => {
++		const response = await fetch(`${url}${path}`, {
++			method: "POST",
++			headers: {
++				authorization: `Bearer ${token}`,
++				"content-type": "application/json",
++			},
++			body: JSON.stringify(body),
++		});
++		const payload = (await response.json()) as BridgeResponse;
++		if (!response.ok) {
++			throw new Error(payload.error || `Workflow bridge returned ${response.status}`);
++		}
++		return payload;
++	};
++
++	const authorize = (hooks: AgentHooks | undefined): AgentHooks => ({
++		...hooks,
++		beforeTool: async (ctx: BeforeToolContext) => {
++			try {
++				const decision = await request("/before-tool", {
++					toolCall: ctx.toolCall,
++					input: ctx.input,
++					workspace: process.cwd(),
++				});
++				if (decision.stop) {
++					return {
++						skip: true,
++						reason: decision.reason || "Workflow denied tool execution",
++					};
++				}
++			} catch (error) {
++				return {
++					stop: true,
++					reason: `Workflow authorization unavailable: ${error instanceof Error ? error.message : String(error)}`,
++				};
++			}
++			return await hooks?.beforeTool?.(ctx);
++		},
++		afterTool: async (ctx: AfterToolContext) => {
++			if (ctx.toolCall.toolName === "team_task" && !ctx.result.isError) {
++				try {
++					for (let attempt = 0; ; attempt += 1) {
++						try {
++							await request("/team-task", {
++								input: ctx.input,
++								result: ctx.result.output,
++								workspace: process.cwd(),
++							});
++							const output = ctx.result.output as { action?: unknown; taskId?: unknown; status?: unknown };
++							if (
++								typeof output.taskId === "string" &&
++								(output.status === "in_progress" || output.action === "complete")
++							) activeTeamTaskId = output.taskId;
++							break;
++						} catch (error) {
++							if (attempt === 2) throw error;
++						}
++					}
++				} catch (error) {
++					return {
++						stop: true,
++						reason: `Workflow task synchronization failed: ${error instanceof Error ? error.message : String(error)}`,
++					};
++				}
++			}
++			return await hooks?.afterTool?.(ctx);
++		},
++	});
++
++	const bash: ShellExecutor = async (command: ShellCommand, cwd: ShellCwd) => {
++		const result = await request("/bash", { command, cwd, teamTaskId: activeTeamTaskId });
++		if (typeof result.output !== "string") {
++			throw new Error(result.error || "Workflow bash executor returned no output");
++		}
++		return result.output;
++	};
++
++	const snapshot = async (workspace?: string): Promise<WorkflowSnapshot> => {
++		const result = await request("/snapshot", { workspace });
++		if (!result.snapshot) throw new Error("Workflow bridge returned no snapshot");
++		return result.snapshot;
++	};
++
++	return { authorize, bash, snapshot };
++}
 diff --git a/apps/cline-hub/src/server/sessions.ts b/apps/cline-hub/src/server/sessions.ts
 index ddbb760..60ad39f 100644
 --- a/apps/cline-hub/src/server/sessions.ts
@@ -1091,6 +1774,212 @@ index c8d4043..f53f254 100644
  export { createMcpTools } from "./tools";
  export type {
  	CreateMcpToolsOptions,
+diff --git a/sdk/packages/core/src/extensions/mcp/lazy-tools.test.ts b/sdk/packages/core/src/extensions/mcp/lazy-tools.test.ts
+new file mode 100644
+index 0000000..537c522
+--- /dev/null
++++ b/sdk/packages/core/src/extensions/mcp/lazy-tools.test.ts
+@@ -0,0 +1,83 @@
++import { describe, expect, it, vi } from "vitest";
++import { createLazyMcpTools, createMcpTools } from "./index";
++import type { McpToolDescriptor, McpToolProvider } from "./types";
++
++const descriptors: readonly McpToolDescriptor[] = [
++	{
++		name: "search_memory",
++		description: "Search durable project memory with a bounded result set and a fairly long description that costs context tokens.",
++		inputSchema: {
++			type: "object",
++			properties: {
++				workspaceRoot: { type: "string", description: "Absolute workspace root" },
++				query: { type: "string" },
++				limit: { type: "number" },
++			},
++			required: ["workspaceRoot", "query"],
++		},
++	},
++	{
++		name: "record_memory",
++		description: "Record a durable fact, decision, constraint, or lesson for future sessions.",
++		inputSchema: { type: "object", properties: { content: { type: "string" } }, required: ["content"] },
++	},
++];
++
++function provider(result: unknown = { ok: true }): McpToolProvider {
++	return {
++		listTools: vi.fn(async () => descriptors),
++		callTool: vi.fn(async () => result),
++	};
++}
++
++describe("createLazyMcpTools", () => {
++	it("exposes cheap meta-tools instead of full tool schemas", async () => {
++		const tools = await createLazyMcpTools({ serverName: "memory", provider: provider() });
++		expect(tools).toHaveLength(2);
++		const [discover, call] = tools;
++		expect(discover!.name).toContain("discover");
++		expect(call!.name).toContain("call");
++		// The discovery tool description enumerates names+descriptions but no schemas.
++		expect(discover!.description).toContain("search_memory");
++		expect(discover!.description).toContain("record_memory");
++		expect(discover!.description).not.toContain("workspaceRoot");
++		// The full schemas do not enter the model's tool list.
++		expect(JSON.stringify(tools.map((t) => t.inputSchema))).not.toContain("workspaceRoot");
++	});
++
++	it("returns full input schemas on demand via the discover tool", async () => {
++		const [discover] = await createLazyMcpTools({ serverName: "memory", provider: provider() });
++		const result = (await discover!.execute(
++			{ toolNames: ["search_memory"] },
++			{} as never,
++		)) as { content: Array<{ text: string }> };
++		expect(result.content[0]!.text).toContain("workspaceRoot");
++		expect(result.content[0]!.text).not.toContain("record_memory");
++	});
++
++	it("routes calls through the provider by tool name", async () => {
++		const client = provider({ content: [{ type: "text", text: "found" }] });
++		const [, call] = await createLazyMcpTools({ serverName: "memory", provider: client });
++		const result = await call!.execute(
++			{ toolName: "search_memory", arguments: { query: "atomic" } },
++			{} as never,
++		);
++		expect(client.callTool).toHaveBeenCalledWith({
++			serverName: "memory",
++			toolName: "search_memory",
++			arguments: { query: "atomic" },
++			context: {},
++		});
++		expect(result).toEqual({ content: [{ type: "text", text: "found" }] });
++	});
++});
++
++describe("createMcpTools lazy mode", () => {
++	it("returns only the meta-tools when lazy is enabled", async () => {
++		const tools = await createMcpTools({ serverName: "memory", provider: provider(), lazy: true });
++		expect(tools).toHaveLength(2);
++		const eager = await createMcpTools({ serverName: "memory", provider: provider() });
++		expect(eager).toHaveLength(2);
++		expect(JSON.stringify(eager.map((t) => t.inputSchema))).toContain("workspaceRoot");
++	});
++});
+diff --git a/sdk/packages/core/src/extensions/mcp/lazy-tools.ts b/sdk/packages/core/src/extensions/mcp/lazy-tools.ts
+new file mode 100644
+index 0000000..7e16c4c
+--- /dev/null
++++ b/sdk/packages/core/src/extensions/mcp/lazy-tools.ts
+@@ -0,0 +1,111 @@
++import { type AgentTool, createTool } from "@cline/shared";
++import { defaultMcpToolNameTransform } from "./name-transform";
++import type { CreateMcpToolsOptions, McpToolDescriptor } from "./types";
++
++const MAX_ENUMERATED_TOOLS = 50;
++const MAX_DESCRIPTION_CHARS = 120;
++
++/**
++ * Lazy MCP tool loading: instead of registering every server's full input
++ * schemas into the model's context (a fixed per-turn token tax that grows
++ * with every enabled server), expose two cheap meta-tools per server:
++ * - `discover_tools` enumerates names + one-line descriptions and returns
++ *   full schemas only for the tools the model actually asks about.
++ * - `call_tool` executes a discovered tool by name.
++ * Enable per server with `createMcpTools({ lazy: true })`.
++ */
++export async function createLazyMcpTools(
++	options: CreateMcpToolsOptions,
++): Promise<AgentTool[]> {
++	const descriptors = await options.provider.listTools(options.serverName);
++	const nameTransform = options.nameTransform ?? defaultMcpToolNameTransform;
++
++	const catalog = descriptors
++		.slice(0, MAX_ENUMERATED_TOOLS)
++		.map((descriptor) => {
++			const description = (descriptor.description?.trim() ?? "").slice(0, MAX_DESCRIPTION_CHARS);
++			return `- ${descriptor.name}${description.length > 0 ? `: ${description}` : ""}`;
++		})
++		.join("\n");
++	const omitted = descriptors.length - Math.min(descriptors.length, MAX_ENUMERATED_TOOLS);
++
++	const discoverName = nameTransform({ serverName: options.serverName, toolName: "discover_tools" });
++	const callName = nameTransform({ serverName: options.serverName, toolName: "call_tool" });
++
++	const discover = createTool({
++		name: discoverName,
++		description:
++			`List input schemas for MCP tools on server "${options.serverName}". ` +
++			`Call this first to learn a tool's schema, then invoke it via "${callName}". ` +
++			`Available tools:\n${catalog}${omitted > 0 ? `\n- …and ${omitted} more` : ""}`,
++		inputSchema: {
++			type: "object",
++			properties: {
++				toolNames: {
++					type: "array",
++					items: { type: "string" },
++					description: "Tools to return full input schemas for. Omit to list names only.",
++				},
++			},
++		},
++		timeoutMs: options.timeoutMs,
++		execute: async (input: unknown) => {
++			const requested = Array.isArray((input as { toolNames?: unknown })?.toolNames)
++				? ((input as { toolNames: unknown[] }).toolNames.filter((name): name is string => typeof name === "string"))
++				: [];
++			const selected = requested.length === 0
++				? []
++				: descriptors.filter((descriptor) => requested.includes(descriptor.name));
++			const payload = selected.length === 0
++				? { tools: catalog }
++				: {
++					schemas: selected.map((descriptor) => ({
++						name: descriptor.name,
++						description: descriptor.description,
++						inputSchema: descriptor.inputSchema,
++					})),
++				};
++			return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
++		},
++	});
++
++	const call = createTool({
++		name: callName,
++		description:
++			`Execute an MCP tool on server "${options.serverName}" by name. ` +
++			`Use "${discoverName}" first to learn the tool's input schema.`,
++		inputSchema: {
++			type: "object",
++			properties: {
++				toolName: { type: "string", description: "Name of the MCP tool to execute." },
++				arguments: { type: "object", description: "Tool input payload." },
++			},
++			required: ["toolName"],
++		},
++		timeoutMs: options.timeoutMs,
++		retryable: options.retryable,
++		maxRetries: options.maxRetries,
++		execute: async (input: unknown, context) => {
++			const { toolName, arguments: toolArguments } = (input ?? {}) as {
++				toolName?: string;
++				arguments?: Record<string, unknown>;
++			};
++			if (typeof toolName !== "string" || toolName.length === 0) {
++				throw new TypeError("call_tool requires a toolName");
++			}
++			if (!descriptors.some((descriptor: McpToolDescriptor) => descriptor.name === toolName)) {
++				throw new Error(
++					`unknown MCP tool "${toolName}" on server "${options.serverName}"; call "${discoverName}" to list tools`,
++				);
++			}
++			return options.provider.callTool({
++				serverName: options.serverName,
++				toolName,
++				arguments: toolArguments,
++				context,
++			});
++		},
++	});
++
++	return [discover, call];
++}
 diff --git a/sdk/packages/core/src/extensions/mcp/manager.test.ts b/sdk/packages/core/src/extensions/mcp/manager.test.ts
 index 435e726..fcd4f56 100644
 --- a/sdk/packages/core/src/extensions/mcp/manager.test.ts
@@ -1316,6 +2205,607 @@ index 7371b78..2e8a4e1 100644
  			return { applied: true };
  		},
  	};
+diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
+new file mode 100644
+index 0000000..1644171
+--- /dev/null
++++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.test.ts
+@@ -0,0 +1,162 @@
++import { createServer, type Server } from "node:http";
++import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
++import type { AddressInfo } from "node:net";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { createWorkflowHubHooks } from "./workflow-hooks";
++
++const toolCall = { toolCallId: "call-1", toolName: "read_file" };
++
++function beforeToolContext() {
++	return { toolCall, input: { path: "README.md" } } as never;
++}
++
++describe("createWorkflowHubHooks", () => {
++	let server: Server | undefined;
++	let lastBody: unknown;
++	let respondWith: { status?: number; body?: unknown } = {};
++	let home: string;
++	let originalHome: string | undefined;
++	let bridgeUrl: string;
++
++	beforeEach(async () => {
++		lastBody = undefined;
++		respondWith = {};
++		originalHome = process.env.HOME;
++		home = mkdtempSync(join(tmpdir(), "workflow-hooks-home-"));
++		process.env.HOME = home;
++		server = createServer((request, response) => {
++			const chunks: Buffer[] = [];
++			request.on("data", (chunk) => chunks.push(chunk));
++			request.on("end", () => {
++				lastBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
++				if (request.headers.authorization !== "Bearer test-token") {
++					response.writeHead(401, { "content-type": "application/json" });
++					response.end(JSON.stringify({ error: "unauthorized" }));
++					return;
++				}
++				response.writeHead(respondWith.status ?? 200, {
++					"content-type": "application/json",
++				});
++				response.end(JSON.stringify(respondWith.body ?? {}));
++			});
++		});
++		await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
++		const { port } = server.address() as AddressInfo;
++		bridgeUrl = `http://127.0.0.1:${port}`;
++		process.env.WORKFLOW_CLINE_BRIDGE_URL = bridgeUrl;
++		process.env.WORKFLOW_CLINE_BRIDGE_TOKEN = "test-token";
++	});
++
++	afterEach(async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		if (originalHome === undefined) delete process.env.HOME;
++		else process.env.HOME = originalHome;
++		rmSync(home, { recursive: true, force: true });
++		await new Promise<void>((resolve) => server?.close(() => resolve()));
++		server = undefined;
++	});
++
++	it("allows the tool when the Workflow authority does not stop it", async () => {
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBeFalsy();
++		expect(lastBody).toEqual({
++			toolCall,
++			input: { path: "README.md" },
++			workspace: process.cwd(),
++		});
++	});
++
++	it("uses the explicit session workspace when provided", async () => {
++		const hooks = createWorkflowHubHooks(undefined, "/repo/desktop-workspace");
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBeFalsy();
++		expect(lastBody).toEqual({
++			toolCall,
++			input: { path: "README.md" },
++			workspace: "/repo/desktop-workspace",
++		});
++	});
++
++	it("includes the run id in the authorization request when bound to a run", async () => {
++		const hooks = createWorkflowHubHooks("cron-1");
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBeFalsy();
++		expect(lastBody).toEqual({
++			toolCall,
++			input: { path: "README.md" },
++			workspace: process.cwd(),
++			runId: "cron-1",
++		});
++	});
++
++	it("skips a tool denied by the Workflow authority without stopping the run", async () => {
++		respondWith = { body: { stop: true, reason: "denied by workflow" } };
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result).toEqual({ skip: true, reason: "denied by workflow" });
++	});
++
++	it("fails closed when the authority rejects the request", async () => {
++		respondWith = { status: 500, body: { error: "authority exploded" } };
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBe(true);
++		expect(result?.reason).toContain("authority exploded");
++	});
++
++	it("fails closed when the authority is unreachable", async () => {
++		process.env.WORKFLOW_CLINE_BRIDGE_URL = "http://127.0.0.1:1";
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBe(true);
++		expect(result?.reason).toMatch(/unavailable/i);
++	});
++
++	it("fails closed when the bridge environment is not configured", async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBe(true);
++		expect(result?.reason).toMatch(/WORKFLOW_CLINE_BRIDGE/);
++	});
++
++	it("resolves the Workflow hub through its discovery file when the environment is absent", async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		const discoveryDir = join(home, ".workflow", "hub");
++		mkdirSync(discoveryDir, { recursive: true });
++		writeFileSync(
++			join(discoveryDir, "discovery.json"),
++			JSON.stringify({ hubId: "hub-1", endpoint: bridgeUrl, token: "test-token" }),
++		);
++
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBeFalsy();
++		expect(lastBody).toEqual({
++			toolCall,
++			input: { path: "README.md" },
++			workspace: process.cwd(),
++		});
++	});
++
++	it("fails closed when the discovery file is stale", async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		const discoveryDir = join(home, ".workflow", "hub");
++		mkdirSync(discoveryDir, { recursive: true });
++		writeFileSync(
++			join(discoveryDir, "discovery.json"),
++			JSON.stringify({ hubId: "stale", endpoint: "http://127.0.0.1:1", token: "test-token" }),
++		);
++
++		const hooks = createWorkflowHubHooks();
++		const result = await hooks.beforeTool?.(beforeToolContext());
++		expect(result?.stop).toBe(true);
++		expect(result?.reason).toMatch(/unavailable/i);
++	});
++});
+diff --git a/sdk/packages/core/src/hub/daemon/workflow-hooks.ts b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
+new file mode 100644
+index 0000000..341d56c
+--- /dev/null
++++ b/sdk/packages/core/src/hub/daemon/workflow-hooks.ts
+@@ -0,0 +1,98 @@
++import { readFileSync } from "node:fs";
++import { homedir } from "node:os";
++import { join } from "node:path";
++import type { AgentHooks } from "@cline/shared";
++
++type BridgeResponse = {
++	stop?: boolean;
++	reason?: string;
++	error?: string;
++};
++
++type BridgeAuthority = { url: string; token: string };
++
++/**
++ * Resolves the Workflow authority per hook call: launcher-provided
++ * environment first, then the global hub's discovery file. Per-call
++ * resolution keeps detached daemons working across hub restarts and token
++ * rotation. See `docs/HUB.md` in the Workflow repository.
++ */
++export function resolveBridgeAuthority(): BridgeAuthority | undefined {
++	const url = process.env.WORKFLOW_CLINE_BRIDGE_URL?.trim();
++	const token = process.env.WORKFLOW_CLINE_BRIDGE_TOKEN?.trim();
++	if (url && token) return { url, token };
++	try {
++		const discovery = JSON.parse(
++			readFileSync(join(homedir(), ".workflow", "hub", "discovery.json"), "utf8"),
++		) as { endpoint?: unknown; token?: unknown };
++		if (typeof discovery.endpoint === "string" && typeof discovery.token === "string") {
++			return { url: discovery.endpoint, token: discovery.token };
++		}
++	} catch {
++		// No discovery file (or unreadable): fall through to fail closed.
++	}
++	return undefined;
++}
++
++/**
++ * Workflow authorization hooks for sessions started inside the hub daemon
++ * (scheduled agents, chat connectors, teams). Every `beforeTool` decision is
++ * delegated to the Workflow authority over its loopback bridge and fails
++ * closed when the authority is unavailable. See `docs/HUB.md` in the Workflow
++ * repository.
++ *
++ * Review gate: orchestrators running review-gated authoring sessions should
++ * fetch the 5-axis rubric via `POST /review/rubric`, spawn an independent
++ * reviewer session (session metadata `reviewOfRunId`), and submit its
++ * verdict via `POST /run/review` (`submitWorkflowReview`). See
++ * `docs/HUB_PROTOCOL.md` §3 in the Workflow repository.
++ */
++export function createWorkflowHubHooks(runId?: string, workspace?: string): AgentHooks {
++	return {
++		beforeTool: async (ctx) => {
++			const authority = resolveBridgeAuthority();
++			if (!authority) {
++				return {
++					stop: true,
++					reason:
++						"Workflow authorization unavailable: WORKFLOW_CLINE_BRIDGE_URL/WORKFLOW_CLINE_BRIDGE_TOKEN are not configured and no hub discovery file exists",
++				};
++			}
++			const { url, token } = authority;
++			try {
++				const response = await fetch(`${url}/before-tool`, {
++					method: "POST",
++					headers: {
++						authorization: `Bearer ${token}`,
++						"content-type": "application/json",
++					},
++					body: JSON.stringify({
++					toolCall: ctx.toolCall,
++					input: ctx.input,
++					workspace: workspace ?? process.cwd(),
++					...(runId !== undefined ? { runId } : {}),
++				}),
++				});
++				const payload = (await response.json()) as BridgeResponse;
++				if (!response.ok) {
++					return {
++						stop: true,
++						reason: `Workflow authorization denied: ${payload.error || `bridge returned ${response.status}`}`,
++					};
++				}
++				if (payload.stop) {
++					return {
++						skip: true,
++						reason: payload.reason || "Workflow denied tool execution",
++					};
++				}
++				return undefined;
++			} catch (error) {
++				return {
++					stop: true,
++					reason: `Workflow authorization unavailable: ${error instanceof Error ? error.message : String(error)}`,
++				};
++			}
++		},
++	};
++}
+diff --git a/sdk/packages/core/src/hub/daemon/workflow-runs.test.ts b/sdk/packages/core/src/hub/daemon/workflow-runs.test.ts
+new file mode 100644
+index 0000000..3358e47
+--- /dev/null
++++ b/sdk/packages/core/src/hub/daemon/workflow-runs.test.ts
+@@ -0,0 +1,210 @@
++import { createServer, type Server } from "node:http";
++import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
++import type { AddressInfo } from "node:net";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import {
++	beginWorkflowRun,
++	fetchReviewRubric,
++	finishWorkflowRun,
++	submitWorkflowReview,
++} from "./workflow-runs";
++
++describe("workflow run lifecycle", () => {
++	let server: Server | undefined;
++	let lastPath: string | undefined;
++	let lastBody: unknown;
++	let lastAuthorization: string | undefined;
++	let home: string;
++	let originalHome: string | undefined;
++	let status = 200;
++
++	beforeEach(async () => {
++		lastPath = undefined;
++		lastBody = undefined;
++		lastAuthorization = undefined;
++		status = 200;
++		originalHome = process.env.HOME;
++		home = mkdtempSync(join(tmpdir(), "workflow-runs-home-"));
++		process.env.HOME = home;
++		server = createServer((request, response) => {
++			const chunks: Buffer[] = [];
++			request.on("data", (chunk) => chunks.push(chunk));
++			request.on("end", () => {
++				lastPath = request.url;
++				lastAuthorization = request.headers.authorization;
++				lastBody = JSON.parse(Buffer.concat(chunks).toString("utf8"));
++				response.writeHead(status, { "content-type": "application/json" });
++				if (status !== 200) {
++					response.end(JSON.stringify({ error: "boom" }));
++				} else if (lastPath === "/review/rubric") {
++					response.end(JSON.stringify({ rubric: "review axes: test integrity, ..." }));
++				} else if (lastPath === "/run/review") {
++					response.end(JSON.stringify({ recorded: true }));
++				} else {
++					response.end(JSON.stringify({}));
++				}
++			});
++		});
++		await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
++		const { port } = server.address() as AddressInfo;
++		process.env.WORKFLOW_CLINE_BRIDGE_URL = `http://127.0.0.1:${port}`;
++		process.env.WORKFLOW_CLINE_BRIDGE_TOKEN = "test-token";
++	});
++
++	afterEach(async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		delete process.env.WORKFLOW_CLINE_VERIFIER_URL;
++		delete process.env.WORKFLOW_CLINE_VERIFIER_TOKEN;
++		if (originalHome === undefined) delete process.env.HOME;
++		else process.env.HOME = originalHome;
++		rmSync(home, { recursive: true, force: true });
++		await new Promise<void>((resolve) => server?.close(() => resolve()));
++		server = undefined;
++	});
++
++	it("begins a run against the Workflow hub", async () => {
++		const ok = await beginWorkflowRun({ runId: "cron-1", title: "Nightly audit", workspace: "/repo" });
++		expect(ok).toBe(true);
++		expect(lastPath).toBe("/run/begin");
++		expect(lastBody).toEqual({ runId: "cron-1", title: "Nightly audit", workspace: "/repo" });
++	});
++
++	it("finishes a run against the Workflow hub", async () => {
++		const ok = await finishWorkflowRun({ runId: "cron-1", outcome: "verified" });
++		expect(ok).toBe(true);
++		expect(lastPath).toBe("/run/finish");
++		expect(lastBody).toEqual({ runId: "cron-1", outcome: "verified" });
++	});
++
++	it("threads requiresReview through run begin", async () => {
++		const ok = await beginWorkflowRun({ runId: "cron-2", title: "Authoring run", requiresReview: true });
++		expect(ok).toBe(true);
++		expect(lastPath).toBe("/run/begin");
++		expect(lastBody).toEqual({ runId: "cron-2", title: "Authoring run", requiresReview: true });
++	});
++
++	it("fetches the 5-axis review rubric (advisory)", async () => {
++		const result = await fetchReviewRubric({ diffText: "diff --git a/x b/x", taskPrompt: "ctx" });
++		expect(result).toEqual({ rubric: "review axes: test integrity, ..." });
++		expect(lastPath).toBe("/review/rubric");
++		expect(lastBody).toEqual({ diffText: "diff --git a/x b/x", taskPrompt: "ctx" });
++	});
++
++	it("returns undefined when the rubric fetch fails", async () => {
++		status = 500;
++		expect(await fetchReviewRubric({ diffText: "d" })).toBeUndefined();
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		expect(await fetchReviewRubric({ diffText: "d" })).toBeUndefined();
++	});
++
++	it("submits a cross-run review verdict and returns the recorded result", async () => {
++		const result = await submitWorkflowReview({
++			runId: "schedule:author",
++			reviewerRunId: "schedule:reviewer",
++			verdict: "approved",
++			summary: "test integrity, task completeness, security checked",
++		});
++		expect(result).toEqual({ recorded: true });
++		expect(lastPath).toBe("/run/review");
++		expect(lastBody).toEqual({
++			runId: "schedule:author",
++			reviewerRunId: "schedule:reviewer",
++			verdict: "approved",
++			summary: "test integrity, task completeness, security checked",
++		});
++	});
++
++	it("returns undefined when the review submission fails", async () => {
++		status = 500;
++		expect(
++			await submitWorkflowReview({
++				runId: "schedule:author",
++				reviewerRunId: "schedule:reviewer",
++				verdict: "rejected",
++				summary: "s",
++			}),
++		).toBeUndefined();
++	});
++
++	it("is advisory when the hub rejects the lifecycle call", async () => {
++		status = 500;
++		expect(await beginWorkflowRun({ runId: "cron-1", title: "t" })).toBe(false);
++		expect(await finishWorkflowRun({ runId: "cron-1", outcome: "failed" })).toBe(false);
++	});
++
++	it("is advisory when no hub authority is resolvable", async () => {
++		delete process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		delete process.env.WORKFLOW_CLINE_BRIDGE_TOKEN;
++		expect(await beginWorkflowRun({ runId: "cron-1", title: "t" })).toBe(false);
++	});
++
++	it("sends the verifier token when verifier.json exists with a distinct token", async () => {
++		const hubDir = join(home, ".workflow", "hub");
++		mkdirSync(hubDir, { recursive: true });
++		writeFileSync(
++			join(hubDir, "verifier.json"),
++			JSON.stringify({ endpoint: process.env.WORKFLOW_CLINE_BRIDGE_URL, token: "verifier-secret-token" }),
++			"utf8",
++		);
++
++		const finishOk = await finishWorkflowRun({ runId: "cron-1", outcome: "verified" });
++		expect(finishOk).toBe(true);
++		expect(lastPath).toBe("/run/finish");
++		expect(lastAuthorization).toBe("Bearer verifier-secret-token");
++
++		const reviewResult = await submitWorkflowReview({
++			runId: "schedule:author",
++			reviewerRunId: "schedule:reviewer",
++			verdict: "approved",
++			summary: "test integrity, task completeness, security checked",
++		});
++		expect(reviewResult).toEqual({ recorded: true });
++		expect(lastPath).toBe("/run/review");
++		expect(lastAuthorization).toBe("Bearer verifier-secret-token");
++
++		const beginOk = await beginWorkflowRun({ runId: "cron-1", title: "t" });
++		expect(beginOk).toBe(true);
++		expect(lastPath).toBe("/run/begin");
++		expect(lastAuthorization).toBe("Bearer test-token");
++	});
++
++	it("falls back to ordinary bridge authority when verifier authority is absent and handles 401 without throwing", async () => {
++		status = 401;
++		const finishOk = await finishWorkflowRun({ runId: "cron-1", outcome: "verified" });
++		expect(finishOk).toBe(false);
++		expect(lastPath).toBe("/run/finish");
++		expect(lastAuthorization).toBe("Bearer test-token");
++
++		const reviewResult = await submitWorkflowReview({
++			runId: "schedule:author",
++			reviewerRunId: "schedule:reviewer",
++			verdict: "approved",
++			summary: "s",
++		});
++		expect(reviewResult).toBeUndefined();
++		expect(lastPath).toBe("/run/review");
++		expect(lastAuthorization).toBe("Bearer test-token");
++	});
++
++	it("prefers WORKFLOW_CLINE_VERIFIER_URL and WORKFLOW_CLINE_VERIFIER_TOKEN over verifier.json", async () => {
++		const hubDir = join(home, ".workflow", "hub");
++		mkdirSync(hubDir, { recursive: true });
++		writeFileSync(
++			join(hubDir, "verifier.json"),
++			JSON.stringify({ endpoint: process.env.WORKFLOW_CLINE_BRIDGE_URL, token: "file-verifier-token" }),
++			"utf8",
++		);
++
++		process.env.WORKFLOW_CLINE_VERIFIER_URL = process.env.WORKFLOW_CLINE_BRIDGE_URL;
++		process.env.WORKFLOW_CLINE_VERIFIER_TOKEN = "env-verifier-token";
++
++		const finishOk = await finishWorkflowRun({ runId: "cron-1", outcome: "verified" });
++		expect(finishOk).toBe(true);
++		expect(lastPath).toBe("/run/finish");
++		expect(lastAuthorization).toBe("Bearer env-verifier-token");
++	});
++});
+diff --git a/sdk/packages/core/src/hub/daemon/workflow-runs.ts b/sdk/packages/core/src/hub/daemon/workflow-runs.ts
+new file mode 100644
+index 0000000..0f3a841
+--- /dev/null
++++ b/sdk/packages/core/src/hub/daemon/workflow-runs.ts
+@@ -0,0 +1,107 @@
++import { readFileSync } from "node:fs";
++import { homedir } from "node:os";
++import { join } from "node:path";
++import { resolveBridgeAuthority } from "./workflow-hooks";
++
++type BridgeAuthority = { url: string; token: string };
++
++/**
++ * Resolves the Workflow verifier authority per call: launcher-provided
++ * verifier environment first, then the global hub's verifier.json file.
++ * Returns undefined when neither is available, allowing callers to fall
++ * back to the ordinary bridge authority.
++ */
++export function resolveVerifierAuthority(): BridgeAuthority | undefined {
++	const url = process.env.WORKFLOW_CLINE_VERIFIER_URL?.trim();
++	const token = process.env.WORKFLOW_CLINE_VERIFIER_TOKEN?.trim();
++	if (url && token) return { url, token };
++	try {
++		const verifier = JSON.parse(
++			readFileSync(join(homedir(), ".workflow", "hub", "verifier.json"), "utf8"),
++		) as { endpoint?: unknown; token?: unknown };
++		if (typeof verifier.endpoint === "string" && typeof verifier.token === "string") {
++			return { url: verifier.endpoint, token: verifier.token };
++		}
++	} catch {
++		// No verifier file (or unreadable): fall through to fallback.
++	}
++	return undefined;
++}
++
++/**
++ * Run lifecycle reporting to the Workflow hub: each hub-started scheduled
++ * session gets a dedicated task and evidence in the Workflow task graph.
++ * Lifecycle calls are advisory — authorization itself is enforced per tool
++ * call via `createWorkflowHubHooks` and remains fail-closed; a missed
++ * lifecycle report must not block session management. See
++ * `docs/HUB_PROTOCOL.md` §3 in the Workflow repository.
++ */
++async function runRequest(
++	path: string,
++	body: unknown,
++	options: { verifier?: boolean } = {},
++): Promise<unknown | undefined> {
++	const authority = options.verifier
++		? (resolveVerifierAuthority() ?? resolveBridgeAuthority())
++		: resolveBridgeAuthority();
++	if (!authority) return undefined;
++	try {
++		const response = await fetch(`${authority.url}${path}`, {
++			method: "POST",
++			headers: {
++				authorization: `Bearer ${authority.token}`,
++				"content-type": "application/json",
++			},
++			body: JSON.stringify(body),
++		});
++		if (!response.ok) return undefined;
++		return await response.json();
++	} catch {
++		return undefined;
++	}
++}
++
++export async function beginWorkflowRun(input: {
++	runId: string;
++	title: string;
++	workspace?: string;
++	requiresReview?: boolean;
++}): Promise<boolean> {
++	return (await runRequest("/run/begin", input)) !== undefined;
++}
++
++export async function finishWorkflowRun(input: {
++	runId: string;
++	outcome: "verified" | "failed";
++}): Promise<boolean> {
++	return (await runRequest("/run/finish", input, { verifier: true })) !== undefined;
++}
++
++/**
++ * Fetches the hub's 5-axis review rubric for an orchestrator-spawned
++ * reviewer session. Advisory: returns undefined when the hub is
++ * unreachable or rejects the call.
++ */
++export async function fetchReviewRubric(input: {
++	diffText: string;
++	taskPrompt?: string;
++}): Promise<{ rubric: string } | undefined> {
++	const payload = (await runRequest("/review/rubric", input)) as { rubric?: unknown } | undefined;
++	return typeof payload?.rubric === "string" ? { rubric: payload.rubric } : undefined;
++}
++
++/**
++ * Records an independent reviewer session's verdict against an authoring
++ * run. Authoritative: the hub enforces cross-run and >=3-axis rules and
++ * reports whether reviewer evidence was recorded; the parsed result is
++ * returned to the caller (undefined only on transport failure).
++ */
++export async function submitWorkflowReview(input: {
++	runId: string;
++	reviewerRunId: string;
++	verdict: "approved" | "changes_requested" | "rejected";
++	summary: string;
++}): Promise<{ recorded: boolean } | undefined> {
++	const payload = (await runRequest("/run/review", input, { verifier: true })) as { recorded?: unknown } | undefined;
++	return typeof payload?.recorded === "boolean" ? { recorded: payload.recorded } : undefined;
++}
 diff --git a/sdk/packages/core/src/hub/index.ts b/sdk/packages/core/src/hub/index.ts
 index 4081a4c..1796176 100644
 --- a/sdk/packages/core/src/hub/index.ts

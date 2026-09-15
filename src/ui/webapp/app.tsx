@@ -291,7 +291,13 @@ function ConfigCombobox({ option, setOption, labelledBy }: {
 
   const openList = (): void => {
     setQuery("");
-    setActiveIndex(Math.max(0, selectable.findIndex((choice) => choice.value === current)));
+    // Recompute the reset list from the unfiltered choices: a stale query
+    // must not leak into the reopened active index.
+    const nextSelectable = [
+      ...all.filter((choice) => favourites.includes(choice.value)),
+      ...all.filter((choice) => !favourites.includes(choice.value)),
+    ];
+    setActiveIndex(Math.max(0, nextSelectable.findIndex((choice) => choice.value === current)));
     setOpen(true);
   };
 
@@ -302,6 +308,12 @@ function ConfigCombobox({ option, setOption, labelledBy }: {
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
       setActiveIndex((index) => Math.max(index - 1, 0));
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setActiveIndex(0);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setActiveIndex(Math.max(0, selectable.length - 1));
     } else if (event.key === "Enter") {
       event.preventDefault();
       const choice = selectable[activeIndex];
@@ -328,10 +340,10 @@ function ConfigCombobox({ option, setOption, labelledBy }: {
         <button
           type="button"
           className={`config-star ${starred ? "config-starred" : ""}`}
-          tabIndex={-1}
           aria-label={starred ? `Remove ${choice.name} from favourites` : `Add ${choice.name} to favourites`}
           aria-pressed={starred}
-          onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); toggleFavourite(choice.value); }}
+          onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
+          onClick={(event) => { event.stopPropagation(); toggleFavourite(choice.value); }}
         >
           {starred ? "★" : "☆"}
         </button>
@@ -358,7 +370,14 @@ function ConfigCombobox({ option, setOption, labelledBy }: {
         <ChevronIcon />
       </button>
       {open && (
-        <span className="config-combobox-pop">
+        <span
+          className="config-combobox-pop"
+          onBlur={(event) => {
+            // Tab flows through the search input and star toggles; once focus
+            // leaves the popover entirely, close it.
+            if (event.currentTarget.contains(event.relatedTarget) === false) closeList(false);
+          }}
+        >
           <input
             ref={inputRef}
             className="config-combobox-search"
