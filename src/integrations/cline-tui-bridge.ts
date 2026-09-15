@@ -29,6 +29,16 @@ export interface WorkflowRunController {
   finish(input: { runId: string; outcome: "verified" | "failed" }): Promise<void>;
   review(input: { runId: string; reviewerRunId: string; verdict: "approved" | "changes_requested" | "rejected"; summary: string }): Promise<{ recorded: boolean }>;
   hiddenSnapshotTaskIds(): readonly string[];
+  /**
+   * Plan Task A3: optional run-gate observability surfaced on /snapshot for
+   * hub-attached monitors. Observation only — canonical state never moves
+   * through this path.
+   */
+  gateObservability?(): {
+    reviewOutcomes: ReadonlyMap<string, { readonly reviewerRunId: string; readonly verdict: string; readonly recorded: boolean; readonly summary: string; readonly parseFailure?: string }>;
+    blockingReasons: ReadonlyMap<string, string>;
+    completionClaims: ReadonlyMap<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }>;
+  };
 }
 
 export async function createWorkflowClineTuiBridge(
@@ -137,9 +147,21 @@ async function handleRequest(
       const workspace = typeof body.workspace === "string" ? body.workspace : undefined;
       const snapshot = resolveApplication(workspace, undefined, { activateInteractiveTask: false }).snapshot();
       const hiddenTaskIds = new Set(runController?.hiddenSnapshotTaskIds() ?? []);
+      // Plan Task A3: run-gate observability rides alongside the canonical
+      // projection so hub-attached monitors can surface verdicts, blocking
+      // reasons, and claims mismatches. Observability only.
+      const gates = runController?.gateObservability?.();
+      const gateObservability = gates === undefined ? undefined : {
+        reviewOutcomes: Object.fromEntries(gates.reviewOutcomes),
+        blockingReasons: Object.fromEntries(gates.blockingReasons),
+        completionClaims: Object.fromEntries(gates.completionClaims),
+      };
       // Full WorkflowSnapshot shape so hub-attached monitors render the same
       // canonical projection as in-process surfaces.
-      return send(response, 200, { snapshot: { ...snapshot, tasks: snapshot.tasks.filter((task) => !hiddenTaskIds.has(task.id)) } });
+      return send(response, 200, {
+        snapshot: { ...snapshot, tasks: snapshot.tasks.filter((task) => !hiddenTaskIds.has(task.id)) },
+        ...(gateObservability === undefined ? {} : { gateObservability }),
+      });
     }
     if (request.url === "/team-task") {
       if (!isRecord(body) || !isRecord(body.input) || !isRecord(body.result)) {

@@ -4,6 +4,7 @@ import { Box, Text, useApp, useInput, useStdout } from "ink";
 import type { CodingSessionEvent, CodingSessionState } from "../application/coding-session.js";
 import { formatStyleStatus, nextBuildStyle, nextSpeechStyle, resolveStyleFromEnv, type SessionStyle } from "../integrations/response-style.js";
 import type { ReviewFollowUp } from "../integrations/review-followups.js";
+import type { HubGateObservability } from "../cli/hub-snapshot.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
 import type { WorkflowSnapshot } from "../application/workflow.js";
 import type { TaskState } from "../kernel/contracts.js";
@@ -68,6 +69,8 @@ export function WorkflowTui({
   onStyleChange,
   onModeChange,
   reviewFollowUps,
+  gateObservability,
+  usage,
   connectionLabel,
   assistantLabel = "Cline",
 }: {
@@ -82,12 +85,17 @@ export function WorkflowTui({
   readonly onStyleChange?: (style: SessionStyle) => void;
   readonly onModeChange?: (mode: PedagogicalMode) => void;
   readonly reviewFollowUps?: readonly ReviewFollowUp[];
+  readonly gateObservability?: () => HubGateObservability | undefined;
+  /** Web-parity usage meter (Batch 2): a live "tokens · cost" footer line. */
+  readonly usage?: () => string | undefined;
   readonly connectionLabel?: string;
   readonly assistantLabel?: string;
 }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot>(() => application.snapshot());
+  const [gates, setGates] = useState<HubGateObservability | undefined>(() => gateObservability?.());
+  const [usageLine, setUsageLine] = useState<string | undefined>(() => usage?.());
   const [prompt, setPrompt] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
@@ -106,6 +114,16 @@ export function WorkflowTui({
   const [, setConfigRevision] = useState(0);
   const activeSession = session;
   const [transcript, setTranscript] = useState<readonly TranscriptEntry[]>([]);
+  // Web-parity completion notification (Tier 2): a terminal bell on turn
+  // completion. Non-blocking, terminal-native.
+  useEffect(() => {
+    if (sessionState?.state === "completed") process.stdout.write("\u0007");
+  }, [sessionState?.state]);
+  useEffect(() => {
+    if (usage === undefined) return;
+    const timer = setInterval(() => setUsageLine(usage()), 1_000);
+    return () => clearInterval(timer);
+  }, [usage]);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [showWorkflow, setShowWorkflow] = useState(false);
   const [mode, setMode] = useState<PedagogicalMode>("autonomous");
@@ -129,7 +147,10 @@ export function WorkflowTui({
 
   useEffect(() => {
     if (activeSession !== undefined) return;
-    const timer = setInterval(() => setSnapshot(application.snapshot()), 1_000);
+    const timer = setInterval(() => {
+      setSnapshot(application.snapshot());
+      if (gateObservability !== undefined) setGates(gateObservability());
+    }, 1_000);
     return () => clearInterval(timer);
   }, [application, activeSession]);
 
@@ -320,7 +341,7 @@ export function WorkflowTui({
     <Box flexDirection="column" alignItems="center">
       <Box flexDirection="column" width="100%" maxWidth={68} paddingX={1}>
         <Box justifyContent="space-between">
-          <Text dimColor>[Mode: {MODE_LABELS[mode]}]{formatStyleStatus(style).length > 0 ? ` [${formatStyleStatus(style)}]` : ""}{connectionLabel !== undefined ? ` [${connectionLabel}]` : ""}</Text>
+          <Text dimColor>[Mode: {MODE_LABELS[mode]}]{formatStyleStatus(style).length > 0 ? ` [${formatStyleStatus(style)}]` : ""}{connectionLabel !== undefined ? ` [${connectionLabel}]` : ""}{usageLine !== undefined ? ` [${usageLine}]` : ""}</Text>
           <Text dimColor>^P menu</Text>
         </Box>
         {prompt.length === 0 && !menuOpen ? (
@@ -351,8 +372,8 @@ export function WorkflowTui({
           </Box>
         ) : null}
         <TaskListPanel snapshot={snapshot} />
-        {(activeSession !== undefined || openReviewFollowUps) ? (
-          <SessionActivityPanel state={sessionState} pendingTools={pendingTools} recentLogs={recentLogs} {...(reviewFollowUps === undefined ? {} : { reviewFollowUps })} />
+        {(activeSession !== undefined || openReviewFollowUps || gates !== undefined) ? (
+          <SessionActivityPanel state={sessionState} pendingTools={pendingTools} recentLogs={recentLogs} {...(reviewFollowUps === undefined ? {} : { reviewFollowUps })} {...(gates === undefined ? {} : { gateObservability: gates })} />
         ) : null}
         <Box flexDirection="column" minHeight={4}>
         {transcript.length === 0 ? (
@@ -434,13 +455,21 @@ function SessionActivityPanel({
   pendingTools,
   recentLogs,
   reviewFollowUps,
+  gateObservability,
 }: {
   readonly state: CodingSessionState | undefined;
   readonly pendingTools: readonly string[];
   readonly recentLogs: readonly SessionLog[];
   readonly reviewFollowUps?: readonly ReviewFollowUp[];
+  readonly gateObservability?: HubGateObservability;
 }) {
   const openFollowUps = (reviewFollowUps ?? []).filter((item) => item.status === "open");
+  // Plan Task A3: run-gate observability — latest verdicts, blocking reasons,
+  // and claims the kernel had not verified (Policy-24 mismatch port).
+  const blockedRuns = Object.entries(gateObservability?.blockingReasons ?? {});
+  const verdicts = Object.entries(gateObservability?.reviewOutcomes ?? {});
+  const unverifiedClaims = Object.entries(gateObservability?.completionClaims ?? [])
+    .filter(([, claim]) => claim.verifiedAtClaim === false);
   return (
     <Box marginTop={1} flexDirection="column" borderStyle="round" paddingX={1}>
       <Text bold>Activity <Text dimColor>{state?.state ?? "idle"}</Text></Text>
@@ -458,9 +487,38 @@ function SessionActivityPanel({
           ))}
         </Box>
       ) : null}
-      {pendingTools.length === 0 && recentLogs.length === 0 && openFollowUps.length === 0 ? <Text dimColor>No live activity.</Text> : null}
+      {blockedRuns.length > 0 ? (
+        <Box flexDirection="column">
+          <Text bold>  blocked runs ({blockedRuns.length})</Text>
+          {blockedRuns.slice(0, 3).map(([runId, reason]) => (
+            <Text key={runId} bold>    [blocked] {shortRun(runId)}: {reason.slice(0, 120)}</Text>
+          ))}
+        </Box>
+      ) : null}
+      {verdicts.length > 0 ? (
+        <Box flexDirection="column">
+          <Text dimColor>  review verdicts ({verdicts.length})</Text>
+          {verdicts.slice(0, 3).map(([runId, outcome]) => (
+            <Text key={runId} dimColor={outcome.recorded}>    {shortRun(runId)}: {outcome.verdict}{outcome.parseFailure === undefined ? "" : ` (parse: ${outcome.parseFailure.slice(0, 60)})`}</Text>
+          ))}
+        </Box>
+      ) : null}
+      {unverifiedClaims.length > 0 ? (
+        <Box flexDirection="column">
+          <Text dimColor>  unverified completion claims ({unverifiedClaims.length})</Text>
+          {unverifiedClaims.slice(0, 3).map(([runId, claim]) => (
+            <Text key={runId} bold>    [unverified claim] {shortRun(runId)}: {claim.claim.slice(0, 90)}</Text>
+          ))}
+        </Box>
+      ) : null}
+      {pendingTools.length === 0 && recentLogs.length === 0 && openFollowUps.length === 0 && blockedRuns.length === 0 && verdicts.length === 0 && unverifiedClaims.length === 0 ? <Text dimColor>No live activity.</Text> : null}
     </Box>
   );
+}
+
+function shortRun(runId: string): string {
+  const prefix = "schedule:hub-reviewer-";
+  return runId.startsWith(prefix) ? runId.slice(prefix.length, prefix.length + 8) : runId.slice(0, 28);
 }
 
 function DecisionBriefDrawer({ brief }: { readonly brief: DecisionBrief }) {
@@ -586,6 +644,11 @@ function formatSessionEvent(event: CodingSessionEvent, assistantLabel: string): 
     return { label: "[lesson]", text: `TS${event.lesson.code}: ${event.lesson.plainEnglishExplanation}` };
   }
   if (event.type === "log") {
+    if (event.source === "agent-thought") {
+      // Web-parity thinking blocks: agent reasoning interleaved in the
+      // transcript, dimmed like the web default-collapsed rows expanded.
+      return { label: "[thinking]", text: event.message, dim: true };
+    }
     const source = event.source === undefined ? "" : `${event.source}: `;
     return { label: `[${event.level}]`, text: `${source}${event.message}`, dim: event.level === "debug" };
   }

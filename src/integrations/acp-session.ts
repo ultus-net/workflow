@@ -306,6 +306,27 @@ export class AcpSessionDriver implements CodingSessionDriver {
       return { type: "status", status: `tool ${subject}: ${status || "unknown"}` };
     }
     if (kind === "session_info_update") return { type: "status", status: String(update.update.title ?? update.update.sessionUpdate) };
+    if (kind === "plan") {
+      // Web-parity plan projection (Batch 2): a compact checklist summary —
+      // the web renders the full list; the TUI gets counts plus the next
+      // pending step, and the full list rides the projection for surfaces
+      // that want it.
+      const entries = Array.isArray(update.update.entries)
+        ? (update.update.entries as unknown[])
+        : [];
+      const parsed = entries.flatMap((entry) => {
+        if (typeof entry !== "object" || entry === null) return [];
+        const record = entry as { content?: unknown; status?: unknown };
+        return typeof record.content === "string"
+          ? [{ content: record.content, status: String(record.status ?? "pending") }]
+          : [];
+      });
+      if (parsed.length === 0) return undefined;
+      const completed = parsed.filter((entry) => entry.status === "completed").length;
+      const next = parsed.find((entry) => entry.status !== "completed");
+      const suffix = next === undefined ? "all steps done" : `next: ${next.content.slice(0, 80)}`;
+      return { type: "status", status: `plan ${completed}/${parsed.length} — ${suffix}` };
+    }
     return undefined;
   }
 

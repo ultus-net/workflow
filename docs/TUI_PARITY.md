@@ -1,24 +1,58 @@
-# Universal TUI parity checklist
+# TUI ↔ Web UI parity matrix
 
-Convergence gates for making `workflow-tui` the primary interactive surface.
-Each item has an acceptance test; the primary surface flips only when every
-box is checked.
+Terminal parity with the browser operator UI (`docs/web-ui-feature-tiers.md`
+is the web roadmap; the web surface itself is in flight). Terminal parity
+means presenting the same *semantics* terminal-natively — not reproducing
+browser widgets. Each item carries its status and acceptance evidence;
+unchecked items are intentional gaps, not implied support.
 
-The cross-surface operator experience is defined in `docs/OPERATOR_UI.md`.
-Terminal parity means presenting those semantics clearly, not reproducing
-browser widgets or exposing the underlying event stream verbatim.
+## Batch 1 (config options)
 
-- [ ] Composer: multi-line editing, paste, and history recall (acceptance: PTY test).
-- [ ] Session resume/history via SDK-native persistence (acceptance: resume after restart for each primary driver).
-- [ ] Transcript scrollback with bounded memory (acceptance: component test).
-- [ ] Style dials (speech/build) wired to every composed driver that supports them (acceptance: driver applies the selected addendum).
-- [x] Pedagogy mode gate installed (acceptance: `test/tui.test.ts` proves mode changes replace the application pedagogy gate).
-- [x] Cancel keymap aborts the active driver (acceptance: `test/tui.test.ts` proves cancellation reaches the coding session driver).
-- [ ] Hub-mediated session driving: TUI projects and drives the hub's canonical state (acceptance: two surfaces share one authority).
-- [ ] Monitor parity: `workflow-monitor` attaches to the same session (acceptance: joint smoke).
-- [ ] Operator transcript: default output is intent + meaningful actions/results; opaque IDs, lifecycle churn, duplicate command echoes, and raw payloads are diagnostics (acceptance: component test).
-- [ ] Persistent options menu: keyboard navigation and repeated setting changes do not close the menu; only explicit close/Escape dismisses it (acceptance: component test).
+| Web item | TUI status | Evidence |
+|---|---|---|
+| Model/effort/mode pickers (composer-adjacent) | **Parity** — the `/`/Ctrl+P menu cycles every agent-advertised `configOption` (model, mode, thought_level, tool toggles) on the active session without rebuilding it | `test/tui.test.ts`, `test/acp-session.test.ts` (config cycling + `set_config_option` retention) |
+| Settings popover for boolean options | **Parity** (menu form) — boolean options cycle in the same menu | `test/tui.test.ts` (options menu) |
+| `session/set_mode` client-side when modes aren't configOptions | **Open** (web plans it too; no agent advertises modes-without-options yet) | — |
 
-Unchecked items are intentional product gaps, not implied support. Until they
-close, `workflow-tui` is a driver-selectable fallback and the patched Cline TUI
-remains the primary interactive surface.
+## Batch 2 (render what the projector drops)
+
+| Web item | TUI status | Evidence |
+|---|---|---|
+| Plan updates → checklist | **Parity (compact)** — ACP `plan` updates project as `plan done/total — next: …` status rows; the web renders the full list, the terminal renders counts + next step (terminal-native form of the same semantics) | `test/acp-session.test.ts` (plan-update mode) |
+| Typed tool cards with status/subjects | **Parity** — tool proposals/outcomes render with subjects and status markers; kind lives in the title | `test/tui.test.ts` (tool rows) |
+| Thinking blocks (default collapsed) | **Parity (terminal form)** — `agent_thought_chunk` interleaves as dim `[thinking]` transcript rows; the web's collapse/expand control has no terminal equivalent beyond scrolling, so the TUI shows the compact dim form | `test/tui-tasklist.test.ts` (thinking rows) |
+| Usage/cost readout (composer footer) | **Parity** — live `tokens · $cost` in the footer from the metering proxy | `test/tui-tasklist.test.ts` (usage meter) |
+| `session_info_update` → title sync | **Parity** — projects as a status row (terminal has no session chrome to title) | `test/acp-session.test.ts` |
+| Review verdicts + blocking reasons + claims (A3) | **Parity, TUI-first** — the hub serves run-gate observability on `/snapshot` and the Activity panel renders blocked runs, verdicts, and unverified completion claims | `test/tui-tasklist.test.ts`, `test/hub-snapshot.test.ts` |
+| Review follow-ups (P2/P3 ledger) | **Parity, TUI-first** — open follow-ups in the Activity panel | `test/tui-tasklist.test.ts` |
+
+## Tier 1 (protocol-supported, real server work)
+
+| Web item | TUI status | Evidence |
+|---|---|---|
+| In-thread permission prompts (opt-in ask) | **Different by design** — the TUI resolves permissions through Workflow automatically; the resolver IS the asker. An interactive ask mode is a future option (`acp-workflow-resolver` decides) | `test/acp-permission-ingress.test.ts` |
+| Capability toggles (process/network) | **Open** — the TUI grants the fixed set at composition; toggling capabilities is an application-layer change awaiting the same confinement gating the web plan requires | — |
+| Workspace confinement | **Parity** — same application-level confinement on every surface | `test/application.test.ts` |
+
+## Tier 2 (client-side value-adds)
+
+| Web item | TUI status | Evidence |
+|---|---|---|
+| Completion notification | **Parity (terminal form)** — bell on turn completion | `src/ui/tui.tsx` (completion effect) |
+| Copy / syntax highlighting | **N/A terminal-native** — selection/copy and 256-color are the terminal's job | — |
+| Edit & resubmit | **Parity** — prompt history recall + resubmit | `test/tui.test.ts` |
+| Keyboard shortcuts (cancel, menu, state) | **Parity** — Ctrl+C cancel, Ctrl+P menu, Ctrl+W state | `test/tui.test.ts` |
+| Message queue while running | **Open** — submit while running throws today; queuing is an application-layer change | — |
+| Export transcript to markdown | **Open** | — |
+| Follow-the-agent (locations) | **Parity** — subjects render on tool rows | `test/tui.test.ts` |
+
+## Deliberate divergences (stated, not gaps)
+
+- The TUI keeps the coding conversation primary and Workflow supervision
+  contextual (`PRODUCT.md`); the web composes richer chrome around the same
+  canonical state.
+- Enforcement claims are identical on both surfaces because both project the
+  hub's authority — neither can show `advisory` as `enforced`.
+- The monitor (`workflow-monitor`) attaches to the hub without an agent
+  process: usage metering there would need hub-side per-session aggregation
+  (open; the metering proxy records per-runtime metrics today).

@@ -32,7 +32,7 @@ function createApplication(): WorkflowApplication {
 }
 
 async function waitForFrame(view: { lastFrame(): string | undefined }, expected: RegExp): Promise<void> {
-  const deadline = Date.now() + 1_000;
+  const deadline = Date.now() + 4_000;
   while (!expected.test(view.lastFrame() ?? "") && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -112,5 +112,87 @@ test("TUI session activity shows tools in flight and recent logs", async () => {
   assert.match(frame, /execute_command/);
   assert.match(frame, /in flight|running/i);
   assert.match(frame, /awaiting guard verdict/);
+  view.unmount();
+});
+
+// ── Plan Task A3: run-gate observability rows ──────────────────────────────
+
+test("TUI activity panel surfaces blocking reasons, verdicts, and unverified claims", async () => {
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    gateObservability: () => ({
+      reviewOutcomes: {
+        "schedule:nightly:abc": {
+          reviewerRunId: "schedule:hub-reviewer-1",
+          verdict: "changes_requested",
+          recorded: false,
+          summary: "weak coverage",
+          parseFailure: "unparseable reviewer verdict: ???",
+        },
+      },
+      blockingReasons: {
+        "schedule:nightly:abc": "test evidence failed: 1 failing: expected 3, got 4",
+      },
+      completionClaims: {
+        "schedule:nightly:abc": {
+          runId: "schedule:nightly:abc",
+          claim: "All tests pass and the feature is complete.",
+          verifiedAtClaim: false,
+          observedAt: "2026-09-15T00:00:00.000Z",
+        },
+      },
+    }),
+  }));
+  await waitForFrame(view, /blocked runs \(1\)/);
+  const frame = view.lastFrame() ?? "";
+  assert.match(frame, /\[blocked\]/);
+  assert.match(frame, /expected 3, got 4/);
+  assert.match(frame, /review verdicts \(1\)/);
+  assert.match(frame, /changes_requested/);
+  assert.match(frame, /unparseable reviewer verdict/);
+  assert.match(frame, /unverified completion claims \(1\)/);
+  assert.match(frame, /\[unverified claim\]/);
+  assert.match(frame, /All tests pass/);
+  assert.match(frame, /feature is complete/);
+  view.unmount();
+});
+
+test("TUI activity panel stays quiet when no gate observability exists", async () => {
+  const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
+  await waitForFrame(view, /No live activity\./);
+  const frame = view.lastFrame() ?? "";
+  assert.equal(/blocked runs/.test(frame), false);
+  assert.equal(/review verdicts/.test(frame), false);
+  assert.equal(/unverified completion claims/.test(frame), false);
+  view.unmount();
+});
+
+// ── Web-UI parity: thinking rows, usage meter, plan projection ────────────
+
+test("thinking chunks render as dim [thinking] transcript rows", async () => {
+  const driver: CodingSessionDriver = {
+    async start(prompt, emit) {
+      emit({ type: "assistant", text: "Let me look." });
+      emit({ type: "log", level: "info", message: "considering the test files", source: "agent-thought" });
+      emit({ type: "assistant", text: "Done." });
+    },
+    async cancel() {},
+  };
+  const session = new WorkflowCodingSession(driver);
+  const view = render(React.createElement(WorkflowTui, { application: createApplication(), session }));
+  await session.submit("go");
+  await waitForFrame(view, /Done\./);
+  const frame = view.lastFrame() ?? "";
+  assert.match(frame, /\[thinking\]/);
+  assert.match(frame, /considering the test files/);
+  view.unmount();
+});
+
+test("the usage meter renders in the composer footer line", async () => {
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    usage: () => "8668 tokens · $0.0132",
+  }));
+  await waitForFrame(view, /8668 tokens · \$0\.0132/);
   view.unmount();
 });

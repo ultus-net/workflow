@@ -96,6 +96,24 @@ function handleMessage(message) {
   } else if (message.method === "session/prompt") {
     cancelled = false;
     activePromptId = message.id;
+    if (mode === "plan-update") {
+      // Web-parity plan projection (Batch 2): ACP plan updates with
+      // completed + pending entries.
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: {
+            sessionUpdate: "plan",
+            entries: [
+              { content: "Read the failing test", status: "completed" },
+              { content: "Fix the off-by-one in the parser", status: "pending" },
+            ],
+          },
+        },
+      });
+    }
     if (mode === "config-update") {
       configOptions = configOptions.map((option) => option.id === "model" ? { ...option, currentValue: "moonshot-v1" } : option);
       send({

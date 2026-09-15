@@ -143,6 +143,19 @@ export function createRunRegistry(
         ...finishedRunTaskIds,
       ];
     },
+    /**
+     * Plan Task A3: run-gate observability for hub-attached surfaces — the
+     * latest reviewer verdicts, blocking reasons, and unverified completion
+     * claims, serialized onto /snapshot. Observation only; canonical state
+     * never moves through this path.
+     */
+    gateObservability() {
+      return {
+        reviewOutcomes,
+        blockingReasons,
+        completionClaims,
+      };
+    },
     async begin({ runId, title, workspace, requiresReview }) {
       if (runId.trim().length === 0 || title.trim().length === 0) {
         throw new TypeError("run begin requires a non-empty runId and title");

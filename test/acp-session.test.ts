@@ -286,3 +286,21 @@ test("title detail is stripped to the tool name before classification", () => {
   assert.equal(AcpSessionDriver.toolNameFromTitle(undefined), "unknown");
   assert.equal(AcpSessionDriver.toolNameFromTitle("   "), "unknown");
 });
+
+test("ACP session driver projects plan updates as compact checklist statuses", async () => {
+  const { driver, child } = driverFor("plan-update");
+  const session = new WorkflowCodingSession(driver);
+  const events: CodingSessionEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.submit("start session");
+    const planStatus = events.find(
+      (event): event is { type: "status"; status: string } => event.type === "status" && /plan 1\/2/.test(event.status),
+    );
+    assert.ok(planStatus !== undefined, "the plan summary must surface as a status event");
+    assert.match(planStatus.status, /next: Fix the off-by-one/);
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+});
