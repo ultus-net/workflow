@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { WorkflowCodingSession, type CodingSessionEvent } from "../src/application/coding-session.js";
 import { taskId, type PolicyDecision } from "../src/kernel/contracts.js";
-import { AcpSessionDriver } from "../src/integrations/acp-session.js";
+import { AcpSessionDriver, displayRawToolText } from "../src/integrations/acp-session.js";
 import type { ProposedToolAction } from "../src/adapters/host.js";
 
 function fakeAgent(mode: string): ChildProcessWithoutNullStreams {
@@ -309,4 +309,16 @@ test("tool status mapping tolerates Cline's failed alias and stays pending on un
   assert.equal(AcpSessionDriver.toolStatus("completed"), "completed");
   assert.equal(AcpSessionDriver.toolStatus("cancelled"), "cancelled");
   assert.equal(AcpSessionDriver.toolStatus("weird"), "pending");
+});
+
+test("raw tool I/O is stringified, emptiness-dropped, and size-capped", () => {
+  assert.equal(displayRawToolText({ path: "a.ts" }), '{\n  "path": "a.ts"\n}');
+  assert.equal(displayRawToolText("plain output"), "plain output");
+  assert.equal(displayRawToolText({}), undefined);
+  assert.equal(displayRawToolText([]), undefined);
+  assert.equal(displayRawToolText(""), undefined);
+  assert.equal(displayRawToolText(42), undefined);
+  const huge = displayRawToolText({ dump: "x".repeat(64 * 1024) });
+  assert.ok(huge !== undefined && huge.length < 9 * 1024, "oversized I/O is truncated");
+  assert.ok(huge?.endsWith("… truncated"));
 });

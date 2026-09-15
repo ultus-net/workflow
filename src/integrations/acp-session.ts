@@ -150,6 +150,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   ): Promise<void> {
     this.#emit = emit;
     this.#toolTitles.clear();
+    this.#toolCalls.clear();
     await this.connect();
     const agentSessionId = this.#agentSessionId;
     if (agentSessionId === undefined) throw new Error("ACP session was not established");
@@ -365,16 +366,27 @@ export class AcpSessionDriver implements CodingSessionDriver {
   }
 }
 
+/** Displayed tool I/O cap: cards ride the 1 s /api/session poll, so whole-file
+ * dumps must not balloon every response payload. */
+const RAW_WIRE_TEXT_LIMIT = 8 * 1024;
+
 /**
  * Agents send raw tool input/output as strings OR structured JSON (Cline:
  * rawInput is a command object, rawOutput a result array); keep both as
- * displayable text without inventing content for absent fields.
+ * displayable text without inventing content for absent fields, capped so a
+ * single verbose tool call cannot dominate the polled transcript payload.
  */
 function rawWireText(value: unknown): string | undefined {
-  if (typeof value === "string") return value.length > 0 ? value : undefined;
-  if (typeof value === "object" && value !== null) {
-    const text = JSON.stringify(value, null, 2);
-    return text === undefined || text.length === 0 || text === "{}" || text === "[]" ? undefined : text;
+  let text: string | undefined;
+  if (typeof value === "string") {
+    text = value.length > 0 ? value : undefined;
+  } else if (typeof value === "object" && value !== null) {
+    const encoded = JSON.stringify(value, null, 2);
+    text = encoded.length === 0 || encoded === "{}" || encoded === "[]" ? undefined : encoded;
   }
-  return undefined;
+  if (text === undefined) return undefined;
+  return text.length > RAW_WIRE_TEXT_LIMIT ? `${text.slice(0, RAW_WIRE_TEXT_LIMIT)}\n… truncated` : text;
 }
+
+/** Exposed for tests: the display projection of raw tool I/O. */
+export const displayRawToolText = rawWireText;
