@@ -12,7 +12,7 @@ import type { RunReviewer, RunReviewerFactory, RunTestRunner } from "./run-regis
 /** Minimal runtime surface the reviewer adapter needs (WorkflowCodingSession-shaped). */
 export interface ReviewerRuntimeSession {
   submit(prompt: string): Promise<void>;
-  snapshot(): { readonly state: string; readonly result?: string };
+  snapshot(): { readonly state: string; readonly result?: string; readonly reason?: string };
   dispose(): Promise<void>;
 }
 
@@ -49,7 +49,10 @@ export function createReviewerFactory(options: {
             await runtime.submit(prompt);
             const snapshot = runtime.snapshot();
             if (snapshot.state !== "completed" || typeof snapshot.result !== "string") {
-              throw new Error(`reviewer turn did not complete (state: ${snapshot.state})`);
+              const reason = snapshot.state === "failed" && typeof snapshot.reason === "string"
+                ? `: ${snapshot.reason}`
+                : "";
+              throw new Error(`reviewer turn did not complete (state: ${snapshot.state}${reason})`);
             }
             return snapshot.result;
           },

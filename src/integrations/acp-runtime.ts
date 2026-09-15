@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -45,7 +45,10 @@ export async function createConfiguredAcpRuntime(
   // end up pointed at another runtime's (possibly dead) proxy. Cline writes
   // back to the same path, which must therefore be per-runtime.
   pruneStaleProviderSettings(scratchHome);
-  const settingsPath = join(scratchHome, `providers.${process.pid}.json`);
+  // Unique per runtime, not per process: one hub process creates a reviewer
+  // runtime per auto-review, and concurrent runtimes must never clobber each
+  // other's settings file.
+  const settingsPath = join(scratchHome, `providers.${process.pid}.${randomUUID()}.json`);
   try {
     writeFileSync(settingsPath, JSON.stringify(meteredProviderSettings(proxy.url, provider)), { encoding: "utf8", mode: 0o600 });
     const model = process.env.CLINE_MODEL;

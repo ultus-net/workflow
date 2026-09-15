@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFileSync } from "node:fs";
+import { appendFileSync, realpathSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
 import { hostCapabilities } from "../adapters/host.js";
@@ -53,11 +53,14 @@ const guard = await createDefaultToolboxGuardProvider().catch((error) => {
 // surfaces as a blocking reason, never a silent pass).
 const workspaceApplications = new Map<string, WorkflowApplication>();
 const workspaceApplicationFor = (target: string): WorkflowApplication => {
-  let bound = workspaceApplications.get(target);
+  // Same canonicalization discipline as the run registry: raw declared paths
+  // never create a second application for the same directory.
+  const canonical = realpathSync(target);
+  let bound = workspaceApplications.get(canonical);
   if (bound === undefined) {
-    bound = new WorkflowApplication(graph, application.host, [], new Set(["read", "mutation", "process"]), target);
+    bound = new WorkflowApplication(graph, application.host, [], new Set(["read", "mutation", "process"]), canonical);
     bound.startInteractiveTask();
-    workspaceApplications.set(target, bound);
+    workspaceApplications.set(canonical, bound);
   }
   return bound;
 };
