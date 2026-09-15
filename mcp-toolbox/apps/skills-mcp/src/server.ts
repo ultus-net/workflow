@@ -7,7 +7,16 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import { boundToolResultText } from "./vendor/result-bounds.js";
-import { gateSkills, loadSkillsLevelMap, isSkillName, readSkillContent, scanSkills } from "./skills.js";
+import { screenSkillContent } from "./screening.js";
+import {
+  gateSkills,
+  loadSkillsLevelMap,
+  isSkillName,
+  readSkillContent,
+  scanSkills,
+  skillReadableAt,
+  type SkillMeta,
+} from "./skills.js";
 
 const skillsDir = resolve(process.env.SKILLS_MCP_DIR ?? resolve(homedir(), ".agents", "skills"));
 const level = process.env.SKILLS_MCP_LEVEL === undefined || process.env.SKILLS_MCP_LEVEL.length === 0
@@ -53,19 +62,35 @@ const skillNameSchema = z.string().min(1).refine(isSkillName, "skill name must b
 server.registerTool(
   "list_skills",
   {
-    description: "List available skills (metadata only). Skill content is never returned here — it costs a read_skill call.",
+    description: "List available skills (metadata only). Skill content is never returned here — it costs a read_skill call. Screened (malicious-shaped) skills are quarantined and surfaced with their findings.",
     inputSchema: {},
     outputSchema: {
       skills: z.array(z.object({ name: z.string(), description: z.string() })),
+      quarantined: z.array(z.object({ name: z.string(), findings: z.array(z.string()) })),
       gating: z.enum(["off", "active", "closed"]),
       level: z.string().nullable(),
     },
     annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false },
   },
   async () => {
-    const gated = gateSkills(scanSkills(skillsDir), loadSkillsLevelMap(skillsDir), level);
+    // Operator safety check: web-fetched or manually loaded skills are
+    // untrusted input. Screened skills are quarantined — excluded from
+    // discovery and refused at delivery — with findings surfaced.
+    const scanned = scanSkills(skillsDir);
+    const clean: SkillMeta[] = [];
+    const quarantined: { name: string; findings: string[] }[] = [];
+    for (const skill of scanned) {
+      const screening = screenSkillContent(readSkillContent(skillsDir, skill.name));
+      if (screening.verdict === "flagged") {
+        quarantined.push({ name: skill.name, findings: [...screening.findings] });
+        continue;
+      }
+      clean.push(skill);
+    }
+    const gated = gateSkills(clean, loadSkillsLevelMap(skillsDir), level);
     const structuredContent = {
       skills: [...gated.skills],
+      quarantined,
       gating: gated.gating,
       level: gated.level === undefined ? null : gated.level,
     };
@@ -76,7 +101,7 @@ server.registerTool(
 server.registerTool(
   "read_skill",
   {
-    description: "Read one skill's full content by name. This is the only delivery path for skill content.",
+    description: "Read one skill's full content by name. This is the only delivery path for skill content. Quarantined (malicious-shaped) or level-locked skills are refused.",
     inputSchema: { name: skillNameSchema },
     outputSchema: {
       name: z.string(),
@@ -85,7 +110,16 @@ server.registerTool(
     annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false },
   },
   async (input: { name: string }) => {
+    // Level enforcement happens at read time too: list gating alone would
+    // let a learner read a locked skill by guessing its name.
+    const readable = skillReadableAt(loadSkillsLevelMap(skillsDir), level, input.name);
+    if (!readable.allowed) throw new Error(readable.reason ?? `skill '${input.name}' is not readable`);
+    // Re-screen at delivery time: the file may have changed since discovery.
     const content = readSkillContent(skillsDir, input.name);
+    const screening = screenSkillContent(content);
+    if (screening.verdict === "flagged") {
+      throw new Error(`skill '${input.name}' is quarantined by safety screening: ${screening.findings.join("; ")}`);
+    }
     const structuredContent = { name: input.name, content };
     return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };
   },

@@ -16,7 +16,7 @@ import { loadSkillsLevelMap, skillGatingFor } from "../src/pedagogy/skill-gating
  * observation is a precondition for mutations, never task evidence.
  */
 
-function appWith(tasks: WorkflowTask[]): { application: WorkflowApplication; graph: TaskGraph } {
+function appWith(tasks: WorkflowTask[]): WorkflowApplication {
   const graph = new TaskGraph(tasks.map((task) => ({ ...task })));
   const application = new WorkflowApplication(
     graph,
@@ -24,12 +24,12 @@ function appWith(tasks: WorkflowTask[]): { application: WorkflowApplication; gra
     [],
     new Set(["read", "mutation"]),
   );
-  return { application, graph };
+  return application;
 }
 
 const WORK: WorkflowTask = { id: taskId("work"), title: "Work", state: "READY", dependencies: [], requiredEvidence: [] };
 
-function startWork(application: WorkflowApplication, graph: TaskGraph): TaskId {
+function startWork(application: WorkflowApplication): TaskId {
   const started = application.transition(WORK.id, "IN_PROGRESS");
   assert.equal(started.kind, "accepted");
   application.selectActiveTask(WORK.id);
@@ -37,8 +37,8 @@ function startWork(application: WorkflowApplication, graph: TaskGraph): TaskId {
 }
 
 test("mutations are denied until every required skill is delivered for THIS task", () => {
-  const { application, graph } = appWith([{ ...WORK, state: "READY" }]);
-  const workId = startWork(application, graph);
+  const application = appWith([{ ...WORK, state: "READY" }]);
+  const workId = startWork(application);
   application.setTaskRequiredSkills(workId, ["test-driven-development", "code-review"]);
 
   const denied = application.authorize({
@@ -66,8 +66,8 @@ test("mutations are denied until every required skill is delivered for THIS task
 });
 
 test("skill reads are per-task: a new task must re-read its required skills", () => {
-  const { application, graph } = appWith([{ ...WORK, state: "READY" }]);
-  const first = startWork(application, graph);
+  const application = appWith([{ ...WORK, state: "READY" }]);
+  const first = startWork(application);
   application.setTaskRequiredSkills(first, ["code-review"]);
   application.recordSkillRead("code-review");
   assert.equal(application.authorize({
@@ -95,8 +95,8 @@ test("skill reads are per-task: a new task must re-read its required skills", ()
 });
 
 test("skill reads never become task evidence and non-mutating actions are unaffected", () => {
-  const { application, graph } = appWith([{ ...WORK, state: "READY" }]);
-  const workId = startWork(application, graph);
+  const application = appWith([{ ...WORK, state: "READY" }]);
+  const workId = startWork(application);
   application.setTaskRequiredSkills(workId, ["code-review"]);
 
   const readAllowed = application.authorize({
@@ -120,10 +120,10 @@ test("skill reads never become task evidence and non-mutating actions are unaffe
 });
 
 test("recordSkillRead fails closed without an active task and validates names", () => {
-  const { application } = appWith([{ ...WORK, state: "READY" }]);
+  const application = appWith([{ ...WORK, state: "READY" }]);
   assert.throws(() => application.recordSkillRead("code-review"), /no active task/);
-  const { application: started, graph } = appWith([{ ...WORK, state: "READY" }]);
-  const workId = startWork(started, graph);
+  const started = appWith([{ ...WORK, state: "READY" }]);
+  const workId = startWork(started);
   assert.throws(() => started.recordSkillRead("  "), /non-empty/);
   assert.throws(() => started.setTaskRequiredSkills(taskId("ghost"), ["x"]), /unknown task/);
   void workId;

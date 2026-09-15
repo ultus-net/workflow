@@ -73,6 +73,29 @@ export function gateSkills(
   return { skills: skills.filter((skill) => unlocked.has(skill.name)), gating: "active", level };
 }
 
+/**
+ * Read-time level enforcement (plan Task F2, review follow-up): list gating
+ * alone would let a learner read a locked skill by guessing its name. When
+ * gating is active, only unlocked ∪ required skills are readable; a closed
+ * level (configured but missing from the map) denies all reads — fail closed.
+ */
+export function skillReadableAt(
+  levelMap: SkillsLevelMap | undefined,
+  level: string | undefined,
+  name: string,
+): { readonly allowed: boolean; readonly reason?: string } {
+  if (levelMap === undefined || level === undefined) {
+    return { allowed: true };
+  }
+  const gate = levelMap[level];
+  if (gate === undefined) {
+    return { allowed: false, reason: `level '${level}' has no skill contract (gating closed)` };
+  }
+  const readable = new Set([...gate.unlocked, ...gate.required]);
+  if (readable.has(name)) return { allowed: true };
+  return { allowed: false, reason: `skill '${name}' is locked at level '${level}'` };
+}
+
 export function readSkillContent(skillsDir: string, name: string): string {
   if (!isSkillName(name)) throw new Error(`invalid skill name: '${name}'`);
   const content = readFileOrUndefined(join(skillsDir, name, "SKILL.md"));

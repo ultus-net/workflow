@@ -373,9 +373,14 @@ export class AcpSessionDriver implements CodingSessionDriver {
     }
     // Skill delivery (plan Task F1) is a read: list/read tools must pass the
     // unknown-mutation fail-closed check so the delivery observation can be
-    // journaled. Prefixed MCP names (skills-mcp__read_skill) match by suffix.
+    // journaled. Exact names plus the explicit skills-mcp prefix only — a
+    // broad suffix match would let any server's tool dodge the
+    // unknown-mutation fail-closed by naming itself *__read_skill.
     const lowered = toolName.toLowerCase();
-    if (lowered === "list_skills" || lowered === "read_skill" || lowered.endsWith("__list_skills") || lowered.endsWith("__read_skill")) {
+    if (
+      lowered === "list_skills" || lowered === "read_skill" ||
+      lowered === "skills-mcp__list_skills" || lowered === "skills-mcp__read_skill"
+    ) {
       return "read";
     }
     return "mutation";

@@ -292,7 +292,7 @@ test("ACP resolver fails closed when the guard itself errors", async () => {
 
 // ── Plan Task F1: skill delivery observation on allowed read_skill calls ──
 
-function skillReadResolver(delivered: string[], toolName: string, rawInput: unknown) {
+function skillReadResolver(delivered: string[], toolName: string) {
   return createWorkflowAcpPermissionResolver({
     adapter: new AcpHostAdapter({ authoritativePermissions: true }),
     correlation: {
@@ -309,7 +309,7 @@ function skillReadResolver(delivered: string[], toolName: string, rawInput: unkn
 
 test("an allowed read_skill call records the delivered skill", async () => {
   const delivered: string[] = [];
-  const resolver = skillReadResolver(delivered, "read_skill", { name: "test-driven-development" });
+  const resolver = skillReadResolver(delivered, "read_skill");
   const request_: AcpPermissionRequestParams = {
     ...request,
     toolCall: { toolCallId: "tool-skill", title: "read_skill: TDD", kind: "read", rawInput: { name: "test-driven-development" }, locations: [] },
@@ -318,7 +318,7 @@ test("an allowed read_skill call records the delivered skill", async () => {
   assert.deepEqual(delivered, ["test-driven-development"]);
 
   // Prefixed MCP tool names match too.
-  const prefixed = skillReadResolver(delivered, "skills-mcp__read_skill", { skill: "code-review" });
+  const prefixed = skillReadResolver(delivered, "skills-mcp__read_skill");
   assert.deepEqual(await prefixed({
     ...request_,
     toolCall: { ...request_.toolCall, title: "skills-mcp__read_skill: Review", rawInput: { skill: "code-review" } },
@@ -328,7 +328,7 @@ test("an allowed read_skill call records the delivered skill", async () => {
 
 test("non-skill tool calls never record a delivery", async () => {
   const delivered: string[] = [];
-  const resolver = skillReadResolver(delivered, "read_file", { path: "src/a.ts" });
+  const resolver = skillReadResolver(delivered, "read_file");
   await resolver({
     ...request,
     toolCall: { toolCallId: "tool-read", title: "Read file", kind: "read", rawInput: { path: "src/a.ts" }, locations: [{ path: "src/a.ts" }] },
