@@ -43,12 +43,26 @@ const INSTRUCTION_HIJACK = [
 ];
 
 const EXFILTRATION = [
-  /exfiltrat/i,
   /(?:upload|send|post)\s+(?:the\s+)?(?:contents?|files?|secrets?|tokens?|keys?|credentials?)\s+(?:of\s+)?[^\n]{0,120}(?:to|at)\s+(?:a|an|the|this)?\s*(?:url|endpoint|webhook|server|pastebin|gist|discord|telegram)/i,
+  /exfiltrat\w*\s+(?:the\s+|this\s+|all\s+)?(?:repo|repository|workspace|files?|contents?|data|secrets?|tokens?|keys?|credentials?)/i,
 ];
 
 /** Zero-width and bidi characters are prompt-injection obfuscation. */
 const HIDDEN_UNICODE = /[\u200B-\u200D\u2060\uFEFF\u202A-\u202E]/;
+
+// Line-level defensive-context scoping: legitimate security-guidance skills
+// QUOTE attack patterns while teaching defense (the live corpus's
+// browser-testing skill quotes "Ignore previous instructions..." inside an
+// e.g. list of things to treat as data). A pattern matches only on a line
+// that carries no defensive/quotation framing. The context list has no bare
+// negations ("do not"/"never") — a malicious "Do not tell the user" line
+// must not suppress its own detector. This is a heuristic tradeoff — an
+// attacker can game it with teaching phrasing — documented as such:
+// screening makes bad skills noisy, it does not make delivered skills
+// trustworthy. Operators who trust their skills directory can disable it
+// with SKILLS_MCP_SCREENING=off.
+const DEFENSIVE_CONTEXT =
+  /(?:attack|malicious|prompt[- ]injection|(?<!\.)\bexamples?\b|e\.g\.|beware|detect|defend|identif\w+|watch\s+for|recognize|anti[- ]?injection|adversar\w+|looks\s+like|such\s+as|quote)/i;
 
 const SCREENERS: readonly { readonly label: string; readonly patterns: readonly RegExp[] }[] = [
   { label: "remote-code-execution pipeline", patterns: REMOTE_CODE_EXECUTION },
@@ -59,13 +73,12 @@ const SCREENERS: readonly { readonly label: string; readonly patterns: readonly 
 
 export function screenSkillContent(content: string): SkillScreening {
   const findings: string[] = [];
+  const lines = content.split(/\r?\n/);
   for (const screener of SCREENERS) {
-    for (const pattern of screener.patterns) {
-      if (pattern.test(content)) {
-        findings.push(screener.label);
-        break;
-      }
-    }
+    const flagged = screener.patterns.some((pattern) =>
+      lines.some((line) => pattern.test(line) && !DEFENSIVE_CONTEXT.test(line)),
+    );
+    if (flagged) findings.push(screener.label);
   }
   if (HIDDEN_UNICODE.test(content)) findings.push("hidden unicode (prompt-injection obfuscation)");
   if (content.length > MAX_CLEAN_CONTENT_CHARS) {

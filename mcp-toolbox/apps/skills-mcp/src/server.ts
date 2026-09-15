@@ -22,6 +22,10 @@ const skillsDir = resolve(process.env.SKILLS_MCP_DIR ?? resolve(homedir(), ".age
 const level = process.env.SKILLS_MCP_LEVEL === undefined || process.env.SKILLS_MCP_LEVEL.length === 0
   ? undefined
   : process.env.SKILLS_MCP_LEVEL;
+// Operator trust decision: screening is heuristic and can false-positive on
+// security-guidance skills that quote attack patterns defensively. An
+// operator who curates their own skills directory may disable it.
+const screeningEnabled = process.env.SKILLS_MCP_SCREENING !== "off";
 
 const server = new McpServer(
   { name: "skills-mcp", version: "0.1.0" },
@@ -80,10 +84,12 @@ server.registerTool(
     const clean: SkillMeta[] = [];
     const quarantined: { name: string; findings: string[] }[] = [];
     for (const skill of scanned) {
-      const screening = screenSkillContent(readSkillContent(skillsDir, skill.name));
-      if (screening.verdict === "flagged") {
-        quarantined.push({ name: skill.name, findings: [...screening.findings] });
-        continue;
+      if (screeningEnabled) {
+        const screening = screenSkillContent(readSkillContent(skillsDir, skill.name));
+        if (screening.verdict === "flagged") {
+          quarantined.push({ name: skill.name, findings: [...screening.findings] });
+          continue;
+        }
       }
       clean.push(skill);
     }
@@ -116,9 +122,11 @@ server.registerTool(
     if (!readable.allowed) throw new Error(readable.reason ?? `skill '${input.name}' is not readable`);
     // Re-screen at delivery time: the file may have changed since discovery.
     const content = readSkillContent(skillsDir, input.name);
-    const screening = screenSkillContent(content);
-    if (screening.verdict === "flagged") {
-      throw new Error(`skill '${input.name}' is quarantined by safety screening: ${screening.findings.join("; ")}`);
+    if (screeningEnabled) {
+      const screening = screenSkillContent(content);
+      if (screening.verdict === "flagged") {
+        throw new Error(`skill '${input.name}' is quarantined by safety screening: ${screening.findings.join("; ")}`);
+      }
     }
     const structuredContent = { name: input.name, content };
     return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };

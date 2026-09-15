@@ -69,14 +69,21 @@ export function createWorkflowAcpPermissionResolver(
   };
 }
 
-// An allowed read_skill call records the delivery. Tool-name matching is
-// generous across MCP naming schemes (skills-mcp's own name, prefixed forms
-// like skills-mcp__read_skill, or lazy-discovery call_tool indirection) —
-// over-matching is safe (an observation, never a grant), under-matching
-// would silently break the delivery precondition.
+// An allowed read_skill call records the delivery. Tool-name matching covers
+// skills-mcp's own name, the explicit skills-mcp__ prefix, and lazy-discovery
+// call_tool indirection.
+//
+// HONEST LIMIT (title trust): tool names arrive from the agent's
+// permission-request titles, the same trust boundary as capability
+// classification — an agent that forges a read_skill-shaped request journals
+// a delivery without content ever being read, which satisfies the mutation
+// precondition. This is the delivery gate, not an adherence gate: the
+// precondition guarantees a delivery-shaped event occurred under
+// authorization, nothing more. Contained agents that lie about titles are
+// bounded by the guard dispatcher and OS containment, as everywhere else.
 function skillNameFromReadToolCall(toolName: string, rawInput: unknown): string | undefined {
   const lowered = toolName.toLowerCase();
-  const isReadSkillTool = lowered === "read_skill" || lowered.endsWith("__read_skill") || lowered === "call_tool";
+  const isReadSkillTool = lowered === "read_skill" || lowered === "skills-mcp__read_skill" || lowered === "call_tool";
   if (!isReadSkillTool) return undefined;
   if (typeof rawInput !== "object" || rawInput === null) return undefined;
   const record = rawInput as Record<string, unknown>;

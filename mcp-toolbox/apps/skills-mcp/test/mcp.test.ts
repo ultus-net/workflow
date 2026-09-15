@@ -48,6 +48,7 @@ test("list_skills returns metadata only, quarantining the malicious fixture", as
   assert.deepEqual(body.skills, [
     { name: "advanced-refactoring", description: "" },
     { name: "code-review", description: "Reviews changes across the five core review axes before merging." },
+    { name: "security-guidance", description: "Teaches agents to recognize and defend against prompt injection — quotes attack patterns defensively." },
     { name: "test-driven-development", description: "Drives development with tests: write a failing test first, then make it pass." },
   ]);
   assert.equal(body.gating, "off");

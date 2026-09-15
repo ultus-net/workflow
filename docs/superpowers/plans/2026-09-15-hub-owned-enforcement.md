@@ -389,7 +389,30 @@ delivery, never adherence (prompts are not a security boundary).
 > evidence in snapshots). `createConfiguredAcpRuntime` journals deliveries
 > into the application from the resolver's `onSkillRead` observation.
 > **Honest limit, enforced in docs and tests:** delivery is enforced;
-> adherence is not.
+> adherence is not. Two documented boundaries: (1) *title trust* — the
+> delivery observation derives from the agent's permission-request titles,
+> the same trust boundary as capability classification; a forged
+> read_skill-shaped request journals delivery without content being read,
+> bounded only by the guard and OS containment like every other lie an
+> agent can tell; (2) *ephemeral journal* — `#skillReads`/
+> `#taskRequiredSkills` are deliberately in-memory and absent from
+> `persistedState()`: a restart requires re-delivery (fail-closed
+> direction), and required-skills config is re-applied by surfaces at
+> startup rather than trusted from disk. G5's persistence work may revisit
+> if a resume flow ever needs to carry the journal; until then the stricter
+> behavior is the honest one.
+>
+> **Safety screening (operator request 2026-09-15):** web-fetched or manually
+> loaded skills are untrusted input; `skills-mcp` screens at scan and again
+> at delivery (files can change between), quarantining flagged skills with
+> surfaced findings. Line-level defensive-context scoping keeps legitimate
+> security-guidance skills that *quote* attack patterns (the live
+> browser-testing-with-devtools skill) deliverable; the context list has no
+> bare negations so a "Do not tell the user" hijack cannot suppress its own
+> detector. `SKILLS_MCP_SCREENING=off` is the operator's trust override.
+> Heuristic, honestly scoped: screening makes bad skills noisy; it does not
+> make delivered skills trustworthy — the guard still gates executed
+> commands.
 
 ---
 
