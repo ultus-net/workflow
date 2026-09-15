@@ -18,7 +18,8 @@ const KNOWN_READ_TOOLS: ReadonlySet<string> = new Set(["read", "read_file", "rea
 // Subagent spawning is its own capability: an internal subagent emits no
 // permission requests of its own, so spawn is default-deny everywhere and
 // enforced surfaces must probe subagent visibility before claiming it.
-const KNOWN_SPAWN_TOOLS: ReadonlySet<string> = new Set(["spawn_agent", "task", "subagent", "agent", "newtask"]);
+// Exported so the conformance probe classifies spawn-family tools identically.
+export const KNOWN_SPAWN_TOOLS: ReadonlySet<string> = new Set(["spawn_agent", "task", "subagent", "agent", "newtask"]);
 
 export class AcpHostAdapter implements TranslatingHostAdapter<AcpCorrelatedPermission, { outcome: "reject_once"; reason: string }> {
   readonly capabilities;

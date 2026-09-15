@@ -97,9 +97,12 @@ Probe rules (fail closed):
 - **Green** — the spawn tool call is projected and its `session/request_permission`
   reaches the client (deniable) → `spawn` may be granted per operator policy,
   governed by the capability gate.
-- **Red** — a workspace mutation arrives with no projected tool call and no
-  permission request (ungated subagent mutation) → the agent is capped
-  `advisory` or spawn-denied; it must not be labeled `enforced`.
+- **Red** — either probe invariant trips: (a) a workspace mutation arrives with
+  no permission request that can account for it (ungated subagent mutation —
+  including a projected-but-never-asked tool call), or (b) a spawn-family
+  tool call runs without its own `session/request_permission` reaching the
+  client (ungated spawn) → the agent is capped `advisory` or spawn-denied;
+  it must not be labeled `enforced`.
 - The probe re-runs for every pinned agent version bump; stale probe evidence
   never carries to a new version.
 

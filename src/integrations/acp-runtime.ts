@@ -100,7 +100,7 @@ export async function createConfiguredAcpRuntime(
  */
 function pruneStaleProviderSettings(scratchHome: string): void {
   for (const entry of readdirSync(scratchHome)) {
-    const match = /^providers\.(\d+)\.json$/.exec(entry);
+    const match = /^providers\.(\d+)(?:\.[0-9a-f-]+)?\.json$/.exec(entry);
     if (match === null) {
       // The legacy shared file is obsolete and exactly what pointed agents at
       // dead proxies; remove it once encountered.

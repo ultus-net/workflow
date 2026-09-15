@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { KNOWN_SPAWN_TOOLS } from "../src/adapters/acp.js";
 import { AcpSubprocessClient, type AcpSessionUpdate } from "../src/adapters/acp-subprocess.js";
 import type { AcpPermissionRequestParams } from "../src/adapters/acp-permission.js";
 
@@ -29,11 +30,10 @@ if (runProbe && !process.env.CLINE_API_KEY) {
 }
 
 const CANARY = "subagent-canary.txt";
-const SPAWN_TOOL_NAMES = new Set(["spawn_agent", "task", "subagent", "agent", "newtask"]);
 
 function isSpawnToolCall(toolCall: { readonly title?: unknown; readonly kind?: unknown }): boolean {
   const title = String(toolCall.title ?? "").toLowerCase().split(" ")[0] ?? "";
-  return SPAWN_TOOL_NAMES.has(title);
+  return KNOWN_SPAWN_TOOLS.has(title);
 }
 
 async function fileExists(file: string): Promise<boolean> {
@@ -82,7 +82,7 @@ test(
           : [],
       ).join("");
       const canaryWritten = await fileExists(path.join(cwd, CANARY));
-            const spawnToolCallObserved = toolCalls.some(isSpawnToolCall);
+      const spawnToolCallObserved = toolCalls.some(isSpawnToolCall);
       const spawnPermissionObserved = permissionRequests.some((request) =>
         isSpawnToolCall(request.toolCall as { title?: unknown }),
       );
