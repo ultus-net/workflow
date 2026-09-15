@@ -68,6 +68,7 @@
     "typescript-eslint": "^8.70.0"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^1.4.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "ink": "^7.1.1",
     "react": "^19.2.0"

@@ -1,6 +1,8 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 
+import { methods, PROTOCOL_VERSION } from "@agentclientprotocol/sdk";
+
 import { AcpNdjsonDecoder, encodeAcpMessage } from "./acp-wire.js";
 import type { AcpPermissionRequestParams } from "./acp-permission.js";
 
@@ -65,8 +67,8 @@ export class AcpSubprocessClient {
   }
 
   async initialize(): Promise<AcpInitializeResult> {
-    const result = await this.#request("initialize", {
-      protocolVersion: 1,
+    const result = await this.#request(methods.agent.initialize, {
+      protocolVersion: PROTOCOL_VERSION,
       clientCapabilities: { session: { configOptions: { boolean: {} } } },
       clientInfo: { name: "workflow-hub-acp-spike", version: "0.0.0" },
     });
@@ -92,7 +94,7 @@ export class AcpSubprocessClient {
   }
 
   async newSession(options: { readonly cwd: string }): Promise<AcpNewSessionResult> {
-    const result = await this.#request("session/new", { cwd: options.cwd, mcpServers: [] });
+    const result = await this.#request(methods.agent.session.new, { cwd: options.cwd, mcpServers: [] });
     const record = requireRecord(result, "invalid ACP session result");
     if (typeof record.sessionId !== "string" || record.sessionId.length === 0) {
       throw new TypeError("invalid ACP session result");
@@ -113,7 +115,7 @@ export class AcpSubprocessClient {
    * listeners registered via onSessionUpdate observe the replayed history.
    */
   async loadSession(options: { readonly sessionId: string; readonly cwd: string }): Promise<AcpSessionConfig> {
-    const result = await this.#request("session/load", { sessionId: options.sessionId, cwd: options.cwd, mcpServers: [] });
+    const result = await this.#request(methods.agent.session.load, { sessionId: options.sessionId, cwd: options.cwd, mcpServers: [] });
     if (result === null || result === undefined) return {};
     const record = requireRecord(result, "invalid ACP session/load result");
     return {
@@ -128,7 +130,7 @@ export class AcpSubprocessClient {
     readonly configId: string;
     readonly value: AcpConfigOptionValue;
   }): Promise<AcpSessionConfig> {
-    const result = requireRecord(await this.#request("session/set_config_option", options), "invalid ACP config result");
+    const result = requireRecord(await this.#request(methods.agent.session.setConfigOption, options), "invalid ACP config result");
     if (!Array.isArray(result.configOptions)) throw new TypeError("invalid ACP config result");
     return { configOptions: result.configOptions };
   }
@@ -137,11 +139,11 @@ export class AcpSubprocessClient {
     readonly sessionId: string;
     readonly prompt: readonly { readonly type: string; readonly text?: string; readonly data?: string; readonly mimeType?: string }[];
   }): Promise<unknown> {
-    return this.#request("session/prompt", options);
+    return this.#request(methods.agent.session.prompt, options);
   }
 
   async cancel(options: { readonly sessionId: string }): Promise<void> {
-    this.#send({ jsonrpc: "2.0", method: "session/cancel", params: options });
+    this.#send({ jsonrpc: "2.0", method: methods.agent.session.cancel, params: options });
   }
 
   async waitForUpdates(count: number, timeoutMs = 1000): Promise<void> {
@@ -185,7 +187,7 @@ export class AcpSubprocessClient {
     for (const message of messages) {
       try {
         validateInboundEnvelope(message);
-        if (message.method === "session/update") {
+        if (message.method === methods.client.session.update) {
           const params = requireRecord(message.params, "invalid ACP session update");
           const update = requireRecord(params.update, "invalid ACP session update");
           if (typeof params.sessionId !== "string" || typeof update.sessionUpdate !== "string") {
@@ -200,7 +202,7 @@ export class AcpSubprocessClient {
           continue;
         }
         const id = message.id;
-        if (message.method === "session/request_permission") {
+        if (message.method === methods.client.session.requestPermission) {
           if (typeof id !== "number" && typeof id !== "string") throw new TypeError("invalid ACP permission request id");
           void this.#answerPermission(id, message);
           continue;
