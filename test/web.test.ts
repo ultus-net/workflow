@@ -13,6 +13,7 @@ import {
   type WorkflowTask,
 } from "../src/index.js";
 import type { CodingSessionDriver } from "../src/application/coding-session.js";
+import { buildWebappBundle } from "../src/ui/webapp/bundle.js";
 
 test("web UI reads snapshots and submits commands through the application API", async (context) => {
   const tasks: WorkflowTask[] = [{
@@ -44,7 +45,27 @@ test("web UI reads snapshots and submits commands through the application API", 
   assert.equal(after.tasks[0]?.state, "IN_PROGRESS");
 });
 
-test("web UI serves /app.js as syntactically valid JavaScript", async (context) => {
+test("web UI serves the built /app.js bundle as syntactically valid JavaScript", async (context) => {
+  const webapp = await buildWebappBundle();
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, undefined, webapp);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+
+  const response = await fetch(`http://127.0.0.1:${port}/app.js`);
+  assert.equal(response.status, 200);
+  const source = await response.text();
+  assert.doesNotThrow(() => new vm.Script(source));
+  const styles = await fetch(`http://127.0.0.1:${port}/app.css`);
+  assert.equal(styles.status, 200);
+  assert.match(styles.headers.get("content-type") ?? "", /text\/css/);
+});
+
+test("web UI serves PWA install assets", async (context) => {
   const application = new WorkflowApplication(
     new TaskGraph([]),
     hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
@@ -54,13 +75,29 @@ test("web UI serves /app.js as syntactically valid JavaScript", async (context) 
   context.after(() => server.close());
   const { port } = server.address() as AddressInfo;
 
-  const response = await fetch(`http://127.0.0.1:${port}/app.js`);
-  assert.equal(response.status, 200);
-  const source = await response.text();
-  // A raw newline inside a string literal (from an unescaped `\n` in the
-  // TypeScript template) must never reach the browser: it kills the whole
-  // script, leaving the composer form to submit natively.
-  assert.doesNotThrow(() => new vm.Script(source));
+  const manifest = await fetch(`http://127.0.0.1:${port}/manifest.webmanifest`).then((response) => response.json()) as {
+    name: string;
+    display: string;
+    icons: { sizes: string }[];
+  };
+  assert.equal(manifest.name, "Workflow Control");
+  assert.equal(manifest.display, "standalone");
+  assert.deepEqual(manifest.icons.map((icon) => icon.sizes), ["192x192", "512x512"]);
+
+  const worker = await fetch(`http://127.0.0.1:${port}/sw.js`);
+  assert.equal(worker.status, 200);
+  const workerSource = await worker.text();
+  assert.doesNotThrow(() => new vm.Script(workerSource));
+
+  for (const size of [192, 512]) {
+    const icon = await fetch(`http://127.0.0.1:${port}/icon-${size}.png`);
+    assert.equal(icon.status, 200);
+    assert.match(icon.headers.get("content-type") ?? "", /image\/png/);
+    const bytes = Buffer.from(await icon.arrayBuffer());
+    assert.deepEqual([...bytes.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    assert.equal(bytes.readUInt32BE(16), size); // IHDR width
+    assert.equal(bytes.readUInt32BE(20), size); // IHDR height
+  }
 });
 
 test("web UI submits prompts through the authoritative coding session and exposes projected events", async (context) => {
@@ -98,6 +135,7 @@ test("web UI submits prompts through the authoritative coding session and expose
   };
   assert.equal(session.state.state, "completed");
   assert.deepEqual(session.items, [
+    { kind: "user", text: "Inspect this project" },
     { kind: "assistant", text: "Inspecting the workspace" },
     { kind: "completion", outcome: "completed", text: "Inspection complete" },
   ]);

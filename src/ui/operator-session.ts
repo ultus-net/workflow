@@ -1,6 +1,7 @@
 import type { CodingSessionEvent } from "../application/coding-session.js";
 
 export type OperatorSessionItem =
+  | { readonly kind: "user"; readonly text: string }
   | { readonly kind: "assistant"; readonly text: string }
   | { readonly kind: "action"; readonly action: string; readonly subjects: readonly string[] }
   | { readonly kind: "outcome"; readonly action: string; readonly outcome: "succeeded" | "denied" | "failed"; readonly detail?: string }

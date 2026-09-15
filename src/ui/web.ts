@@ -1,13 +1,24 @@
+import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { taskId, type TaskState } from "../kernel/contracts.js";
 import { appendOperatorItem, projectOperatorSessionEvent, type OperatorSessionItem } from "./operator-session.js";
+import type { WebappBundle } from "./webapp/bundle.js";
+import { PWA_MANIFEST, renderIconPng, serviceWorkerSource } from "./webapp/pwa.js";
 
 const STATES: readonly TaskState[] = ["BLOCKED", "READY", "IN_PROGRESS", "VERIFYING", "VERIFIED", "FAILED"];
 
-export function createWorkflowWebServer(application: WorkflowApplication, session?: WorkflowCodingSession) {
+/**
+ * Serves the React operator surface (PWA) plus the Workflow-owned session API.
+ * The browser only talks to these endpoints; ACP authority stays server-side.
+ */
+export function createWorkflowWebServer(
+  application: WorkflowApplication,
+  session?: WorkflowCodingSession,
+  webapp?: WebappBundle,
+) {
   let sessionItems: OperatorSessionItem[] = [];
   let turnInFlight = false;
   session?.subscribe((event) => {
@@ -17,8 +28,27 @@ export function createWorkflowWebServer(application: WorkflowApplication, sessio
   return createServer(async (request, response) => {
     if (request.method === "GET" && request.url === "/") return html(response, PAGE);
     if (request.method === "GET" && request.url === "/app.js") {
-      response.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
-      return response.end(APP_JS);
+      if (webapp === undefined) return json(response, 503, { error: "webapp bundle not built" });
+      return asset(response, "text/javascript; charset=utf-8", webapp.js);
+    }
+    if (request.method === "GET" && request.url === "/app.css") {
+      if (webapp === undefined) return json(response, 503, { error: "webapp bundle not built" });
+      return asset(response, "text/css; charset=utf-8", webapp.css);
+    }
+    if (request.method === "GET" && request.url === "/manifest.webmanifest") {
+      return json(response, 200, PWA_MANIFEST);
+    }
+    if (request.method === "GET" && request.url === "/sw.js") {
+      const version = webapp === undefined
+        ? "unbuilt"
+        : createHash("sha256").update(webapp.js).update(webapp.css).digest("hex").slice(0, 12);
+      return asset(response, "text/javascript; charset=utf-8", serviceWorkerSource(version));
+    }
+    if (request.method === "GET" && request.url === "/icon-192.png") {
+      return asset(response, "image/png", renderIconPng(192));
+    }
+    if (request.method === "GET" && request.url === "/icon-512.png") {
+      return asset(response, "image/png", renderIconPng(512));
     }
     if (request.method === "GET" && request.url === "/api/snapshot") return json(response, 200, application.snapshot());
     if (request.method === "GET" && request.url === "/api/session") {
@@ -35,6 +65,7 @@ export function createWorkflowWebServer(application: WorkflowApplication, sessio
         if (!isPromptRequest(body)) return json(response, 400, { error: "invalid prompt request" });
         if (turnInFlight) return json(response, 409, { error: "coding session is already running" });
         turnInFlight = true;
+        sessionItems = appendOperatorItem(sessionItems, { kind: "user", text: body.prompt });
         void session.submit(body.prompt).finally(() => { turnInFlight = false; });
         return json(response, 202, { accepted: true });
       } catch {
@@ -102,24 +133,27 @@ function json(response: ServerResponse, status: number, body: unknown): void {
   response.end(JSON.stringify(body));
 }
 
-function html(response: ServerResponse, body: string): void {
+function asset(response: ServerResponse, contentType: string, body: string | Buffer): void {
   response.writeHead(200, {
-    "content-type": "text/html; charset=utf-8",
-    "content-security-policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'",
+    "content-type": contentType,
+    "cache-control": "no-cache",
   });
   response.end(body);
 }
 
-const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Workflow Control</title><style>
-body{font:15px ui-monospace,SFMono-Regular,Consolas,monospace;max-width:72rem;margin:0 auto;padding:2rem;background:#f5f3ee;color:#20201d}header{display:flex;justify-content:space-between;border-bottom:2px solid;padding-bottom:1rem}main{display:grid;grid-template-columns:2fr 1fr;gap:2rem}section{margin-top:1.5rem}button,textarea{font:inherit;padding:.35rem .6rem;background:transparent;border:1px solid}button{cursor:pointer}.task{display:grid;grid-template-columns:7rem 9rem 1fr auto;gap:1rem;padding:.6rem 0;border-bottom:1px solid #bbb}.muted{opacity:.6}#conversation{white-space:pre-wrap}.message{padding:.7rem 0;border-bottom:1px solid #ccc}.composer{display:flex;gap:.5rem;margin-top:1rem}.composer textarea{flex:1;min-height:4rem}@media(max-width:700px){body{padding:1rem}main{display:block}.task{grid-template-columns:5rem 7rem 1fr}.task button{grid-column:3}.composer{display:block}.composer textarea{box-sizing:border-box;width:100%;margin-bottom:.5rem}}
-</style></head><body><header><strong>Workflow Control</strong><span id="host">connecting</span></header><main><section><h2>Agent</h2><div id="session-status" class="muted">connecting</div><div id="conversation"></div><form id="composer" class="composer"><textarea id="prompt" aria-label="Prompt" placeholder="Describe the work to perform"></textarea><button type="submit">Send</button><button type="button" id="cancel">Cancel</button></form><h2>Tasks</h2><div id="tasks"></div></section><aside><section><h2>Evidence</h2><div id="evidence"></div></section><section><h2>History</h2><div id="history"></div></section></aside></main><script src="/app.js"></script></body></html>`;
+function html(response: ServerResponse, body: string): void {
+  response.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    "content-security-policy": [
+      "default-src 'self'",
+      "script-src 'self'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data:",
+      "manifest-src 'self'",
+      "worker-src 'self'",
+    ].join("; "),
+  });
+  response.end(body);
+}
 
-const APP_JS = `
-const next={READY:'IN_PROGRESS',IN_PROGRESS:'VERIFYING',VERIFYING:'VERIFIED'};
-const esc=value=>String(value).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
-const itemText=i=>i.kind==='assistant'||i.kind==='attention'||i.kind==='completion'?i.text:i.kind==='action'?i.action+(i.subjects.length?'\\n'+i.subjects.join('\\n'):''):i.action+' / '+i.outcome+(i.detail?'\\n'+i.detail:'');
-async function refresh(){const [s,a]=await Promise.all([fetch('/api/snapshot').then(r=>r.json()),fetch('/api/session').then(r=>r.json())]);document.querySelector('#host').textContent=s.enforcementLevel.toUpperCase()+' / '+s.transport;document.querySelector('#session-status').textContent=a.available?'ACP / '+a.state.state:'ACP unavailable';document.querySelector('#conversation').innerHTML=a.items.map(i=>'<div class="message"><strong>'+esc(i.kind)+'</strong>\\n'+esc(itemText(i))+'</div>').join('');document.querySelector('#tasks').innerHTML=s.tasks.map(t=>'<div class="task '+(t.state==='BLOCKED'?'muted':'')+'"><strong>'+esc(t.id)+'</strong><span>'+esc(t.state)+'</span><span>'+esc(t.title)+(t.blockers.length?' [blocked by '+esc(t.blockers.join(', '))+']':'')+'</span>'+(next[t.state]?'<button data-task="'+esc(t.id)+'" data-next="'+next[t.state]+'">Advance</button>':'')+'</div>').join('');document.querySelector('#evidence').innerHTML=s.evidence.length?s.evidence.map(e=>'<p class="'+(e.freshness==='stale'?'muted':'')+'">'+esc(e.subject)+': '+esc(e.result)+' / '+esc(e.freshness)+'</p>').join(''):'<p class="muted">none observed</p>';document.querySelector('#history').innerHTML=s.history.length?s.history.slice(-8).map(h=>'<p>'+esc(h.taskId)+': '+esc(h.from)+' -> '+esc(h.to)+'</p>').join(''):'<p class="muted">no transitions</p>';}
-document.addEventListener('click',async e=>{const b=e.target.closest('button[data-task]');if(!b)return;await fetch('/api/transition',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({taskId:b.dataset.task,requested:b.dataset.next})});await refresh()});
-document.querySelector('#composer').addEventListener('submit',async e=>{e.preventDefault();const input=document.querySelector('#prompt');const prompt=input.value.trim();if(!prompt)return;const response=await fetch('/api/prompt',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt})});if(response.ok)input.value='';await refresh()});
-document.querySelector('#cancel').addEventListener('click',async()=>{await fetch('/api/cancel',{method:'POST'});await refresh()});
-refresh();setInterval(refresh,750);`;
+const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#14161a"><title>Workflow Control</title><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script src="/app.js"></script></body></html>`;

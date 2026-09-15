@@ -4,6 +4,7 @@ import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { createWorkflowWebServer } from "../ui/web.js";
+import { buildWebappBundle } from "../ui/webapp/bundle.js";
 
 const tasks: WorkflowTask[] = [
   {
@@ -27,7 +28,8 @@ const application = new WorkflowApplication(
   hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
 );
 const runtime = await createConfiguredAcpRuntime(application, process.cwd(), taskId("W001"));
-const server = createWorkflowWebServer(application, runtime.session);
+const webapp = await buildWebappBundle();
+const server = createWorkflowWebServer(application, runtime.session, webapp);
 const port = Number(process.env.PORT ?? 4173);
 
 async function shutdown(): Promise<void> {
