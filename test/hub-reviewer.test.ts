@@ -195,7 +195,7 @@ test("diff sourcing failures fail closed with no review recorded", async (t) => 
   assert.equal(reviewer.prompts.length, 0);
 });
 
-test("reviewer session failures fail closed and still dispose the session", async (t) => {
+test("reviewer session failures fail closed, dispose the session, and close the reviewer run", async (t) => {
   const reviewer = stubReviewer(new Error("reviewer agent crashed"));
   const { controller, workspace, application, runner } = await runnerWith(t, reviewer);
   await controller.begin({ runId: "author-7", title: "Author run", workspace, requiresReview: true });
@@ -204,6 +204,10 @@ test("reviewer session failures fail closed and still dispose the session", asyn
   assert.equal(reviewer.disposed, 1);
   const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
   assert.equal(runTask?.state, "IN_PROGRESS");
+  // The begun reviewer run must not leak a lingering IN_PROGRESS task.
+  const reviewerTasks = application.snapshot().tasks.filter((task) => task.title === "Hub reviewer run");
+  assert.equal(reviewerTasks.length, 1);
+  assert.equal(reviewerTasks[0]?.state, "FAILED");
 });
 
 test("createGitDiffSource runs a contained git diff and fails closed on non-zero exit", async () => {

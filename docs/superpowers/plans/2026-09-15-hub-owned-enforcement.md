@@ -71,6 +71,11 @@ cannot close without host-specific tooling.
       `AcpSessionDriver`/`acp-session.ts` (contained spawn),
       `model-usage-proxy.ts` (key custody + metering), `src/review/rubric.ts`
       (rubric text), `run-registry.ts` (run bookkeeping). No new deps.
+      **Implemented 2026-09-15 (branch `feat/hub-owned-enforcement`):** the
+      runner with injected seams (`ReviewerAgentSessionFactory`,
+      `DiffSource`) landed with full fail-closed tests; the concrete
+      contained-spawn factory (`launchContainedAcpAgent` + metering-proxy
+      provider settings) is production wiring that lands with A2.
 - [ ] **Step 3: run — passes**; lint + typecheck clean.
 
 ### Task A2: Automatic review trigger on run completion

@@ -74,38 +74,49 @@ export class HubReviewerRunner {
     // anti-rubber-stamp checks (existing, distinct reviewer) hold by construction.
     const reviewerRunId = `schedule:hub-reviewer-${randomUUID()}`;
     await this.#controller.begin({ runId: reviewerRunId, title: "Hub reviewer run", workspace: input.workspace });
-    const prompt = buildReviewRubric({ diffText, ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }) });
-    const session = await this.#spawnReviewer.spawn({
-      workspace: input.workspace,
-      ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }),
-    });
-    let finalMessage: string;
     try {
-      finalMessage = await session.review(prompt);
-    } finally {
-      await session.dispose();
-    }
-    const parsed = parseReviewVerdict(finalMessage);
-    if (parsed === undefined) {
-      return this.#recordFailClosed(input.runId, reviewerRunId, finalMessage, `unparseable reviewer verdict: ${finalMessage.slice(0, 200)}`);
-    }
-    if (parsed.verdict === "approved" && countReferencedAxes(parsed.summary) < MIN_REFERENCED_AXES) {
-      return this.#recordFailClosed(
-        input.runId,
+      const prompt = buildReviewRubric({ diffText, ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }) });
+      const session = await this.#spawnReviewer.spawn({
+        workspace: input.workspace,
+        ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }),
+      });
+      let finalMessage: string;
+      try {
+        finalMessage = await session.review(prompt);
+      } finally {
+        try {
+          await session.dispose();
+        } catch {
+          // Dispose failure must not mask the review outcome.
+        }
+      }
+      const parsed = parseReviewVerdict(finalMessage);
+      if (parsed === undefined) {
+        return this.#recordFailClosed(input.runId, reviewerRunId, finalMessage, `unparseable reviewer verdict: ${finalMessage.slice(0, 200)}`);
+      }
+      if (parsed.verdict === "approved" && countReferencedAxes(parsed.summary) < MIN_REFERENCED_AXES) {
+        return this.#recordFailClosed(
+          input.runId,
+          reviewerRunId,
+          parsed.summary,
+          `approved review summary must reference at least ${MIN_REFERENCED_AXES} of the 5 axes (found ${countReferencedAxes(parsed.summary)})`,
+        );
+      }
+      const recorded = await this.#controller.review({
+        runId: input.runId,
         reviewerRunId,
-        parsed.summary,
-        `approved review summary must reference at least ${MIN_REFERENCED_AXES} of the 5 axes (found ${countReferencedAxes(parsed.summary)})`,
-      );
+        verdict: parsed.verdict,
+        summary: parsed.summary,
+      });
+      // Plain reviewer run: its job is done once the verdict is recorded.
+      await this.#controller.finish({ runId: reviewerRunId, outcome: "verified" });
+      return { reviewerRunId, verdict: parsed.verdict, recorded: recorded.recorded, summary: parsed.summary };
+    } catch (error) {
+      // Infrastructure failure: the begun reviewer run must not leak an
+      // IN_PROGRESS task into the shared graph — close it as failed.
+      await this.#controller.finish({ runId: reviewerRunId, outcome: "failed" }).catch(() => undefined);
+      throw error;
     }
-    const recorded = await this.#controller.review({
-      runId: input.runId,
-      reviewerRunId,
-      verdict: parsed.verdict,
-      summary: parsed.summary,
-    });
-    // Plain reviewer run: its job is done once the verdict is recorded.
-    await this.#controller.finish({ runId: reviewerRunId, outcome: "verified" });
-    return { reviewerRunId, verdict: parsed.verdict, recorded: recorded.recorded, summary: parsed.summary };
   }
 
   async #recordFailClosed(
