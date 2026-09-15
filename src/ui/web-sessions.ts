@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
+import type { PermissionBroker } from "./permission-broker.js";
 import { SessionChannel } from "./web-session-channel.js";
 
 export interface WebSessionMeta {
@@ -46,6 +47,7 @@ const RESUME_LOAD_TIMEOUT_MS = 30_000;
 export class WebSessionManager {
   readonly #factory: (resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
   readonly #registryPath: string;
+  readonly #permissionBroker: PermissionBroker | undefined;
   #sessions: SessionRecord[];
   #active: ActiveSession | undefined;
   #starting: Promise<ActiveSession> | undefined;
@@ -65,8 +67,10 @@ export class WebSessionManager {
   constructor(options: {
     readonly factory: (resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
     readonly registryPath?: string;
+    readonly permissionBroker?: PermissionBroker;
   }) {
     this.#factory = options.factory;
+    this.#permissionBroker = options.permissionBroker;
     this.#registryPath = options.registryPath ?? join(homedir(), ".workflow", "web-sessions.json");
     this.#sessions = loadRegistry(this.#registryPath);
   }
@@ -158,10 +162,19 @@ export class WebSessionManager {
     this.#sessions = [record, ...this.#sessions.filter((entry) => entry.id !== record.id)];
     const previous = this.#active;
     this.#active = undefined;
+    // A parked permission prompt belongs to the outgoing runtime's turn;
+    // switching away must answer it (denied) instead of leaving the old
+    // agent process waiting on a response it will never receive.
+    this.#permissionBroker?.cancelPending("session switched away");
     await previous?.runtime.dispose();
     try {
       const runtime = await this.#factory(resumeFrom);
-      const channel = new SessionChannel(runtime.session, runtime.driver, runtime.usage?.bind(runtime));
+      const channel = new SessionChannel(
+        runtime.session,
+        runtime.driver,
+        runtime.usage?.bind(runtime),
+        this.#permissionBroker,
+      );
       // Eagerly load the resumed session so its replayed history reaches the
       // channel before the UI polls — otherwise the transcript looks empty
       // until the first prompt. The subscription lasts only for the load.

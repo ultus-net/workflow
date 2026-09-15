@@ -121,6 +121,97 @@ interface ConfigChoice {
   readonly description?: string;
 }
 
+type PermissionDecision = "allow_once" | "allow_always" | "reject_once" | "reject_always";
+
+interface PendingPermission {
+  readonly id: string;
+  readonly tool: string;
+  readonly capability?: string;
+  readonly subjects: readonly string[];
+  readonly inputPreview?: string;
+}
+
+interface PermissionsState {
+  readonly available: boolean;
+  readonly mode: "auto" | "ask";
+  readonly pending: PendingPermission | null;
+  readonly patterns: { readonly alwaysAllow: readonly string[]; readonly alwaysReject: readonly string[] };
+}
+
+const PERMISSION_POLL_MS = 1000;
+
+/** Polls operator permission-asking state; parked prompts need fast feedback. */
+function usePermissions() {
+  const [state, setState] = useState<PermissionsState>({
+    available: false,
+    mode: "auto",
+    pending: null,
+    patterns: { alwaysAllow: [], alwaysReject: [] },
+  });
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/permission");
+      if (response.ok) setState(await response.json() as PermissionsState);
+    } catch {
+      // Keep the last good state; the next poll retries.
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), PERMISSION_POLL_MS);
+    return () => clearInterval(timer);
+  }, [load]);
+  const answer = useCallback(async (id: string, decision: PermissionDecision): Promise<void> => {
+    await fetch("/api/permission", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, decision }),
+    });
+    await load();
+  }, [load]);
+  const update = useCallback(async (body: { mode?: "auto" | "ask"; reset?: boolean }): Promise<void> => {
+    await fetch("/api/permission-mode", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    await load();
+  }, [load]);
+  return { ...state, answer, update };
+}
+
+interface CapabilitiesState {
+  readonly capabilities: readonly string[];
+  readonly workspaceConfinement: boolean;
+}
+
+/** Polls the hub's capability grants (process/network toggles + confinement). */
+function useCapabilities() {
+  const [state, setState] = useState<CapabilitiesState | undefined>(undefined);
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/capabilities");
+      if (response.ok) setState(await response.json() as CapabilitiesState);
+    } catch {
+      // Keep the last good state; the next poll retries.
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), PANEL_POLL_MS);
+    return () => clearInterval(timer);
+  }, [load]);
+  const setCapability = useCallback(async (capability: "process" | "network", enabled: boolean): Promise<void> => {
+    await fetch("/api/capabilities", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ capability, enabled }),
+    });
+    await load();
+  }, [load]);
+  return { capabilities: state, setCapability };
+}
+
 interface ConfigOption {
   readonly id: string;
   readonly name: string;
@@ -416,9 +507,11 @@ function ConfigField({ option, setOption, labelledBy }: {
     : <ConfigSelect option={option} setOption={setOption} labelledBy={labelledBy} />;
 }
 
-function ConfigControls({ options, setOption }: {
+function ConfigControls({ options, setOption, permissions, capabilities }: {
   readonly options: readonly ConfigOption[];
   readonly setOption: (id: string, value: string | boolean) => void;
+  readonly permissions: ReturnType<typeof usePermissions>;
+  readonly capabilities: ReturnType<typeof useCapabilities>;
 }) {
   const [open, setOpen] = useState(false);
   const gearRef = useRef<HTMLButtonElement>(null);
@@ -445,59 +538,146 @@ function ConfigControls({ options, setOption }: {
     };
   }, [open]);
 
-  if (options.length === 0) return null;
   const pickers = options.filter((option) => option.type === "select" && option.category !== undefined && COMPOSER_CATEGORIES.includes(option.category));
   const toggles = options.filter((option) => option.type === "boolean");
   const popoverSelects = options.filter((option) => option.type === "select" && !pickers.includes(option));
+  const showSettings = permissions.available || toggles.length > 0 || popoverSelects.length > 0;
+  if (!showSettings) return null;
 
   return (
     <div className="config-row">
-      <div className="config-pickers">
-        {pickers.map((option) => (
-          <span className="config-picker" key={option.id}>
-            <span className="config-picker-label" id={`config-label-${option.id}`}>{option.name}</span>
-            <ConfigField option={option} setOption={setOption} labelledBy={`config-label-${option.id}`} />
-          </span>
-        ))}
-      </div>
-      {(toggles.length > 0 || popoverSelects.length > 0) && (
-        <span className="config-settings">
-          <button
-            ref={gearRef}
-            className="btn btn-ghost config-gear"
-            aria-expanded={open}
-            aria-haspopup="dialog"
-            aria-label="Session settings"
-            onClick={() => setOpen((value) => !value)}
-          >
-            <GearIcon />
-          </button>
-          {open && (
-            <div className="config-popover" role="dialog" aria-label="Session settings" ref={popoverRef}>
-              {popoverSelects.map((option) => (
-                <label className="config-field" key={option.id}>
-                  <span className="config-field-label">{option.name}</span>
-                  <ConfigSelect option={option} setOption={setOption} />
-                </label>
-              ))}
-              {toggles.map((option) => (
-                <label className="config-toggle" key={option.id} title={option.description}>
-                  <input
-                    type="checkbox"
-                    checked={option.currentValue === true}
-                    onChange={(event) => setOption(option.id, event.target.checked)}
-                  />
-                  <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
-                  <span className="config-toggle-text">
-                    {option.name}
-                    {option.description !== undefined && <span className="config-toggle-desc">{option.description}</span>}
-                  </span>
-                </label>
-              ))}
-            </div>
-          )}
-        </span>
+      {pickers.length > 0 && (
+        <div className="config-pickers">
+          {pickers.map((option) => (
+            <span className="config-picker" key={option.id}>
+              <span className="config-picker-label" id={`config-label-${option.id}`}>{option.name}</span>
+              <ConfigField option={option} setOption={setOption} labelledBy={`config-label-${option.id}`} />
+            </span>
+          ))}
+        </div>
       )}
+      <span className="config-settings">
+        <button
+          ref={gearRef}
+          className="btn btn-ghost config-gear"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          aria-label="Session settings"
+          onClick={() => setOpen((value) => !value)}
+        >
+          <GearIcon />
+        </button>
+        {open && (
+          <div className="config-popover" role="dialog" aria-label="Session settings" ref={popoverRef}>
+            {popoverSelects.map((option) => (
+              <label className="config-field" key={option.id}>
+                <span className="config-field-label">{option.name}</span>
+                <ConfigSelect option={option} setOption={setOption} />
+              </label>
+            ))}
+            {toggles.map((option) => (
+              <label className="config-toggle" key={option.id} title={option.description}>
+                <input
+                  type="checkbox"
+                  checked={option.currentValue === true}
+                  onChange={(event) => setOption(option.id, event.target.checked)}
+                />
+                <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
+                <span className="config-toggle-text">
+                  {option.name}
+                  {option.description !== undefined && <span className="config-toggle-desc">{option.description}</span>}
+                </span>
+              </label>
+            ))}
+            {permissions.available && (
+              <PermissionSettings permissions={permissions} capabilities={capabilities} />
+            )}
+          </div>
+        )}
+      </span>
+    </div>
+  );
+}
+
+/** Ask-mode and capability toggles inside the settings popover. */
+function PermissionSettings({ permissions, capabilities }: {
+  readonly permissions: ReturnType<typeof usePermissions>;
+  readonly capabilities: ReturnType<typeof useCapabilities>;
+}) {
+  const confinement = capabilities.capabilities?.workspaceConfinement ?? false;
+  const processEnabled = capabilities.capabilities?.capabilities.includes("process") ?? false;
+  const networkEnabled = capabilities.capabilities?.capabilities.includes("network") ?? false;
+  const remembered = permissions.patterns.alwaysAllow.length + permissions.patterns.alwaysReject.length;
+  return (
+    <div className="config-permissions">
+      <span className="config-field-label">Approvals</span>
+      <label className="config-toggle" title="Prompt in-thread before each gated tool the policy would allow">
+        <input
+          type="checkbox"
+          checked={permissions.mode === "ask"}
+          onChange={(event) => void permissions.update({ mode: event.target.checked ? "ask" : "auto" })}
+        />
+        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
+        <span className="config-toggle-text">
+          Ask before tool runs
+          <span className="config-toggle-desc">Hard policy denials never prompt</span>
+        </span>
+      </label>
+      <span className="config-field-label">Agent capabilities</span>
+      <label className="config-toggle" title="Shell command execution (run_commands)">
+        <input
+          type="checkbox"
+          checked={processEnabled}
+          disabled={!confinement}
+          onChange={(event) => void capabilities.setCapability("process", event.target.checked)}
+        />
+        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
+        <span className="config-toggle-text">
+          Shell commands
+          {!confinement && <span className="config-toggle-desc">requires workspace confinement</span>}
+        </span>
+      </label>
+      <label className="config-toggle" title="Web search and fetch tools">
+        <input
+          type="checkbox"
+          checked={networkEnabled}
+          disabled={!confinement}
+          onChange={(event) => void capabilities.setCapability("network", event.target.checked)}
+        />
+        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
+        <span className="config-toggle-text">
+          Web access
+          {!confinement && <span className="config-toggle-desc">requires workspace confinement</span>}
+        </span>
+      </label>
+      {remembered > 0 && (
+        <button className="btn btn-ghost config-reset-patterns" onClick={() => void permissions.update({ reset: true })}>
+          Forget {remembered} remembered decision{remembered === 1 ? "" : "s"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** In-thread permission prompt card; the hub parks a request until answered. */
+function PermissionPrompt({ pending, answer }: {
+  readonly pending: PendingPermission;
+  readonly answer: (id: string, decision: PermissionDecision) => Promise<void>;
+}) {
+  return (
+    <div className="part part-permission" role="alertdialog" aria-label={`Permission request for ${pending.tool}`}>
+      <div className="part-tool-head">
+        <span className="part-tool-kind">approval</span>
+        <code className="part-tool-title">{pending.tool}</code>
+      </div>
+      {pending.subjects.length > 0 && <div className="part-subjects">{pending.subjects.join("  ")}</div>}
+      {pending.inputPreview !== undefined && <pre className="part-permission-input">{pending.inputPreview}</pre>}
+      <div className="part-permission-actions">
+        <button className="btn" onClick={() => void answer(pending.id, "allow_once")}>Allow</button>
+        <button className="btn" onClick={() => void answer(pending.id, "allow_always")}>Always allow</button>
+        <button className="btn btn-ghost" onClick={() => void answer(pending.id, "reject_once")}>Deny</button>
+        <button className="btn btn-ghost" onClick={() => void answer(pending.id, "reject_always")}>Always deny</button>
+      </div>
     </div>
   );
 }
@@ -708,6 +888,8 @@ export function App() {
   const { snapshot, refresh } = useSnapshot();
   const { sessions, refresh: refreshSessions } = useSessions();
   const { options, setOption } = useConfigOptions();
+  const permissions = usePermissions();
+  const capabilities = useCapabilities();
   const enforcementCopy = snapshot === undefined ? undefined : ENFORCEMENT_COPY[snapshot.enforcementLevel];
   return (
     <div className="shell">
@@ -733,6 +915,9 @@ export function App() {
               <ThreadPrimitive.Messages>
                 {({ message }) => (message.role === "user" ? <UserMessage /> : <AssistantMessage />)}
               </ThreadPrimitive.Messages>
+              {permissions.pending !== null && (
+                <PermissionPrompt pending={permissions.pending} answer={permissions.answer} />
+              )}
               <AuiIf condition={(state) => state.thread.isRunning}>
                 <div className="working" role="status" aria-live="polite">
                   <span className="working-dot" aria-hidden="true" />
@@ -742,7 +927,7 @@ export function App() {
             </ThreadPrimitive.Viewport>
             <div className="composer-dock">
               <Composer />
-              <ConfigControls options={options} setOption={setOption} />
+              <ConfigControls options={options} setOption={setOption} permissions={permissions} capabilities={capabilities} />
               <UsageMeter />
             </div>
           </ThreadPrimitive.Root>

@@ -33,13 +33,14 @@ export class WorkflowApplication {
   readonly #graph: TaskGraph;
   #activeTaskId?: TaskId;
   #codingSessionCorrelation?: string;
-  #pedagogyGate: CheckpointLedger | undefined;
+#pedagogyGate: CheckpointLedger | undefined;
+  readonly #capabilities: Set<ToolCapability>;
 
   constructor(
     graph: TaskGraph,
     readonly host: HostCapabilities,
-    history: readonly { readonly taskId: TaskId; readonly from: TaskState; readonly to: TaskState }[] = [],
-    readonly allowedCapabilities: ReadonlySet<ToolCapability> = new Set<ToolCapability>(["read", "mutation"]),
+    history: readonly { readonly taskId: TaskId; from: TaskState; to: TaskState }[] = [],
+    allowedCapabilities: ReadonlySet<ToolCapability> = new Set<ToolCapability>(["read", "mutation"]),
     readonly workspaceRoot?: string,
     codingSessionCorrelation?: string,
   ) {
@@ -47,8 +48,26 @@ export class WorkflowApplication {
       throw new TypeError("workspace root must be an absolute path");
     }
     this.#graph = graph;
+    this.#capabilities = new Set(allowedCapabilities);
     this.#history.push(...history);
     if (codingSessionCorrelation !== undefined) this.#codingSessionCorrelation = codingSessionCorrelation;
+  }
+
+  get allowedCapabilities(): ReadonlySet<ToolCapability> {
+    return this.#capabilities;
+  }
+
+  /**
+   * Runtime capability reconfiguration for operator surfaces. Toggling a
+   * capability off denies every gated action that needs it from that point
+   * on; toggling on re-admits actions already passing the other policies.
+   */
+  setCapability(capability: ToolCapability, enabled: boolean): void {
+    if (enabled) {
+      this.#capabilities.add(capability);
+    } else {
+      this.#capabilities.delete(capability);
+    }
   }
 
   get codingSessionCorrelation(): string | undefined {

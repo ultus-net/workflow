@@ -5,7 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { WorkflowCodingSession, type CodingSessionDriver, type CodingSessionEvent } from "../src/application/coding-session.js";
+import { taskId } from "../src/kernel/contracts.js";
 import type { WorkflowAcpRuntime } from "../src/integrations/acp-runtime.js";
+import { PermissionBroker } from "../src/ui/permission-broker.js";
 import { WebSessionManager } from "../src/ui/web-sessions.js";
 
 interface FakeRuntime {
@@ -386,5 +388,62 @@ test("session manager syncs agent-provided titles and serves runtime usage", asy
   assert.equal(titled?.title, "Agent-titled work", "session_info_update titles win over the derived title");
   const active = await manager.channel();
   assert.deepEqual(active.usage(), metrics, "the next runtime's metrics flow through its own channel");
+  await manager.dispose();
+});
+
+test("session manager wires the permission broker: cancel and switch deny parked prompts", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const broker = new PermissionBroker();
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    permissionBroker: broker,
+    factory: async () => fakeRuntime("agent-1").runtime,
+  });
+
+  const channel = await manager.channel();
+  assert.equal(channel.permissionAskingAvailable(), true);
+  assert.equal(channel.permissionMode(), "auto");
+  channel.setPermissionMode("ask");
+  assert.equal(channel.permissionMode(), "ask");
+  assert.deepEqual(channel.permissionPatterns(), { alwaysAllow: [], alwaysReject: [] });
+
+  const action = {
+    sessionId: "ws",
+    taskId: taskId("HEADLINE-TASK"),
+    tool: "run_commands",
+    mutating: true,
+    subjects: [],
+    input: { command: "ls" },
+  };
+  const parked = broker.intercept(action, () => ({ kind: "allow" }));
+  await new Promise((resolve) => setImmediate(resolve));
+  const request = channel.pendingPermission();
+  assert.ok(request !== undefined, "the channel surfaces the parked request");
+  assert.equal(request.tool, "run_commands");
+  assert.equal(channel.answerPermission("bogus", "allow_once"), false, "stale ids fail closed");
+  assert.equal(channel.answerPermission(request.id, "allow_once"), true);
+  assert.deepEqual(await parked, { kind: "allow" });
+  assert.equal(channel.pendingPermission(), undefined);
+
+  // Cancelling a turn denies any still-parked prompt instead of leaving it dangling.
+  broker.setMode("ask");
+  const parkedAgain = broker.intercept(action, () => ({ kind: "allow" }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(channel.pendingPermission() !== undefined);
+  await channel.cancel();
+  const cancelled = await parkedAgain;
+  assert.equal(cancelled.kind, "deny", "cancel resolves the parked prompt as a denial");
+
+  // Switching sessions denies a parked prompt: it belongs to the outgoing turn.
+  broker.setMode("ask");
+  const parkedOnSwitch = broker.intercept(action, () => ({ kind: "allow" }));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(channel.pendingPermission() !== undefined);
+  const created = await manager.create();
+  assert.equal(created.kind, "ok");
+  const switched = await parkedOnSwitch;
+  assert.equal(switched.kind, "deny");
+  assert.equal((await manager.channel()).permissionMode(), "ask", "broker state survives switches");
   await manager.dispose();
 });

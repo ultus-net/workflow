@@ -16,6 +16,7 @@ import {
   type WorkflowTask,
 } from "../src/index.js";
 import type { CodingSessionDriver } from "../src/application/coding-session.js";
+import { PermissionBroker } from "../src/ui/permission-broker.js";
 import { WebSessionManager } from "../src/ui/web-sessions.js";
 import { buildWebappBundle } from "../src/ui/webapp/bundle.js";
 
@@ -548,4 +549,160 @@ test("web UI serves cumulative usage metrics for metered runtimes only", async (
     usage?: unknown;
   };
   assert.equal(unmetered.usage, undefined);
+});
+
+test("web UI guards permission answers, ask mode, and capability toggles", async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), "web-permission-test-"));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const broker = new PermissionBroker();
+  const fakeRuntimeFactory = async () => {
+    const driver: CodingSessionDriver = {
+      async start(_prompt, emit) { emit({ type: "completed", result: "done" }); },
+      async cancel() {},
+    };
+    return {
+      driver: {
+        ...driver,
+        agentSessionId: () => "agent-x",
+        connect: async () => {},
+        subscribe: () => () => {},
+      } as never,
+      session: new WorkflowCodingSession(driver),
+      async dispose() {},
+    };
+  };
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: fakeRuntimeFactory,
+    permissionBroker: broker,
+  });
+  context.after(() => manager.dispose());
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+    [],
+    new Set(["read", "mutation"]),
+    "/repo",
+  );
+  const server = createWorkflowWebServer(application, manager);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+
+  const initial = await fetch(`${base}/api/permission`).then((response) => response.json()) as {
+    available: boolean;
+    mode: string;
+    pending: unknown;
+  };
+  assert.equal(initial.available, true);
+  assert.equal(initial.mode, "auto");
+  assert.equal(initial.pending, null);
+
+  const hostile = await fetch(`${base}/api/permission`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://attacker.example" },
+    body: JSON.stringify({ id: "x", decision: "allow_once" }),
+  });
+  assert.equal(hostile.status, 403);
+  const nonJson = await fetch(`${base}/api/permission`, {
+    method: "POST",
+    headers: { "content-type": "text/plain" },
+    body: JSON.stringify({ id: "x", decision: "allow_once" }),
+  });
+  assert.equal(nonJson.status, 415);
+  const invalidDecision = await fetch(`${base}/api/permission`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: "x", decision: "maybe" }),
+  });
+  assert.equal(invalidDecision.status, 400);
+  const stale = await fetch(`${base}/api/permission`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: "does-not-exist", decision: "allow_once" }),
+  });
+  assert.equal(stale.status, 404);
+
+  const modeHostile = await fetch(`${base}/api/permission-mode`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://attacker.example" },
+    body: JSON.stringify({ mode: "ask" }),
+  });
+  assert.equal(modeHostile.status, 403);
+  const modeInvalid = await fetch(`${base}/api/permission-mode`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mode: "yolo" }),
+  });
+  assert.equal(modeInvalid.status, 400);
+  const modeSet = await fetch(`${base}/api/permission-mode`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ mode: "ask" }),
+  });
+  assert.equal(modeSet.status, 200);
+  assert.equal((await modeSet.json() as { mode: string }).mode, "ask");
+  const modeReset = await fetch(`${base}/api/permission-mode`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ reset: true }),
+  });
+  assert.equal(modeReset.status, 200);
+
+  const caps = await fetch(`${base}/api/capabilities`).then((response) => response.json()) as {
+    capabilities: string[];
+    workspaceConfinement: boolean;
+  };
+  assert.deepEqual([...caps.capabilities].sort(), ["mutation", "read"]);
+  assert.equal(caps.workspaceConfinement, true);
+
+  const capsHostile = await fetch(`${base}/api/capabilities`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://attacker.example" },
+    body: JSON.stringify({ capability: "process", enabled: true }),
+  });
+  assert.equal(capsHostile.status, 403);
+  const capsNotToggleable = await fetch(`${base}/api/capabilities`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capability: "read", enabled: false }),
+  });
+  assert.equal(capsNotToggleable.status, 400);
+  const capsEnabled = await fetch(`${base}/api/capabilities`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capability: "process", enabled: true }),
+  });
+  assert.equal(capsEnabled.status, 200);
+  const afterEnable = await fetch(`${base}/api/capabilities`).then((response) => response.json()) as {
+    capabilities: string[];
+  };
+  assert.equal(afterEnable.capabilities.includes("process"), true);
+  const capsDisable = await fetch(`${base}/api/capabilities`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capability: "process", enabled: false }),
+  });
+  assert.equal(capsDisable.status, 200);
+
+  // Without workspace confinement, enabling process/network must fail closed.
+  const unconfinedApplication = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const unconfinedServer = createWorkflowWebServer(unconfinedApplication, manager);
+  await new Promise<void>((resolve) => unconfinedServer.listen(0, "127.0.0.1", resolve));
+  context.after(() => unconfinedServer.close());
+  const unconfinedPort = (unconfinedServer.address() as AddressInfo).port;
+  const forbidden = await fetch(`http://127.0.0.1:${unconfinedPort}/api/capabilities`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ capability: "network", enabled: true }),
+  });
+  assert.equal(forbidden.status, 409);
+  const unconfinedView = await fetch(`http://127.0.0.1:${unconfinedPort}/api/capabilities`).then((response) => response.json()) as {
+    workspaceConfinement: boolean;
+  };
+  assert.equal(unconfinedView.workspaceConfinement, false);
 });

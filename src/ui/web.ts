@@ -133,6 +133,103 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
+    if (request.method === "GET" && request.url === "/api/permission") {
+      const active = await channel();
+      return json(response, 200, {
+        available: active?.permissionAskingAvailable() ?? false,
+        mode: active?.permissionMode() ?? "auto",
+        pending: active?.pendingPermission() ?? null,
+        patterns: active?.permissionPatterns() ?? { alwaysAllow: [], alwaysReject: [] },
+      });
+    }
+    if (request.method === "POST" && request.url === "/api/permission") {
+      const active = await channel();
+      if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const input = body as { id?: unknown; decision?: unknown } | null;
+        const id = typeof input?.id === "string" && input.id.length > 0 ? input.id : undefined;
+        const decision = input?.decision;
+        if (
+          id === undefined ||
+          (decision !== "allow_once" && decision !== "allow_always" && decision !== "reject_once" && decision !== "reject_always")
+        ) {
+          return json(response, 400, { error: "invalid permission decision request" });
+        }
+        if (!active.answerPermission(id, decision)) {
+          return json(response, 404, { error: "unknown or stale permission request" });
+        }
+        return json(response, 200, {
+          mode: active.permissionMode(),
+          pending: active.pendingPermission() ?? null,
+          patterns: active.permissionPatterns(),
+        });
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    if (request.method === "POST" && request.url === "/api/permission-mode") {
+      const active = await channel();
+      if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const input = body as { mode?: unknown; reset?: unknown } | null;
+        const mode = input?.mode;
+        if (mode !== undefined && mode !== "auto" && mode !== "ask") {
+          return json(response, 400, { error: "invalid permission mode" });
+        }
+        if (mode !== undefined) active.setPermissionMode(mode);
+        if (input?.reset === true) active.resetPermissionPatterns();
+        if (mode === undefined && input?.reset !== true) {
+          return json(response, 400, { error: "nothing to update" });
+        }
+        return json(response, 200, {
+          mode: active.permissionMode(),
+          patterns: active.permissionPatterns(),
+        });
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    if (request.method === "GET" && request.url === "/api/capabilities") {
+      return json(response, 200, {
+        capabilities: [...application.allowedCapabilities],
+        // Process/network can only be enabled when workspace confinement is
+        // active: the web CLI passes workspaceRoot before exposing toggles.
+        workspaceConfinement: application.workspaceRoot !== undefined,
+      });
+    }
+    if (request.method === "POST" && request.url === "/api/capabilities") {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const input = body as { capability?: unknown; enabled?: unknown } | null;
+        const capability = typeof input?.capability === "string" ? input.capability : undefined;
+        const enabled = input?.enabled;
+        if (capability !== "process" && capability !== "network") {
+          return json(response, 400, { error: "only process and network capabilities are toggleable" });
+        }
+        if (typeof enabled !== "boolean") return json(response, 400, { error: "enabled must be a boolean" });
+        if (enabled && application.workspaceRoot === undefined) {
+          return json(response, 409, { error: "capability requires workspace confinement, which is not active" });
+        }
+        application.setCapability(capability, enabled);
+        return json(response, 200, { capability, enabled });
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
     if (request.method === "GET" && request.url?.startsWith("/api/image/")) {
       const active = await channel();
       const stored = active?.image(decodeURIComponent(request.url.slice("/api/image/".length)));

@@ -4,12 +4,14 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { ProposedToolAction } from "../application/host.js";
 import type { WorkflowApplication } from "../application/workflow.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import type { TaskId } from "../kernel/contracts.js";
 import { AcpSessionDriver } from "./acp-session.js";
 import { globalClineEntrypoint, resolveClineLaunch } from "./cline-launch.js";
+import type { PermissionBroker } from "../ui/permission-broker.js";
 import { METERED_PLACEHOLDER_KEY, type ModelUsageMetrics, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
 
 export interface WorkflowAcpRuntime {
@@ -25,6 +27,7 @@ export async function createConfiguredAcpRuntime(
   workspace: string,
   taskId: TaskId,
   resumeFrom?: string,
+  options: { readonly permissionBroker?: PermissionBroker | undefined } = {},
 ): Promise<WorkflowAcpRuntime> {
   const scratchHome = resolve(homedir(), ".workflow", "acp-home");
   mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
@@ -72,7 +75,10 @@ export async function createConfiguredAcpRuntime(
           CLINE_PROVIDER_SETTINGS_PATH: settingsPath,
         },
       },
-      authorize: application,
+      authorize: options.permissionBroker === undefined
+        ? application
+        : (action: ProposedToolAction) =>
+          options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
       workspace,
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,

@@ -4,6 +4,7 @@ import type { CodingSessionState } from "../application/coding-session.js";
 import type { AcpConfigOptionValue, AcpSessionConfig } from "../adapters/acp-subprocess.js";
 import type { ModelUsageMetrics } from "../integrations/model-usage-proxy.js";
 import { appendOperatorItem, projectOperatorSessionEvent, type OperatorSessionImage, type OperatorSessionItem } from "./operator-session.js";
+import type { PermissionBroker, PermissionDecisionChoice, PermissionMode, PendingPermissionRequest } from "./permission-broker.js";
 import { normalizeConfigOptions, type WebConfigOption } from "./web-config-options.js";
 
 /** Four images at ≤ 5 MB base64 payload each, plus the prompt body margin. */
@@ -84,15 +85,18 @@ export class SessionChannel {
   readonly #images = new ImageStore(`img-${Math.random().toString(36).slice(2, 8)}-`);
   readonly #driver: ConfigCapableDriver | undefined;
   readonly #usage: (() => ModelUsageMetrics | undefined) | undefined;
+  readonly #broker: PermissionBroker | undefined;
   #agentTitle: string | undefined;
 
   constructor(
     readonly session: WorkflowCodingSession,
     driver?: ConfigCapableDriver,
     usage?: () => ModelUsageMetrics | undefined,
+    broker?: PermissionBroker,
   ) {
     this.#driver = driver;
     this.#usage = usage;
+    this.#broker = broker;
     session.subscribe((event) => this.ingest(event));
   }
 
@@ -115,6 +119,41 @@ export class SessionChannel {
   /** Cumulative metering-proxy metrics for the session's runtime, when metered. */
   usage(): ModelUsageMetrics | undefined {
     return this.#usage?.();
+  }
+
+  /** Operator permission-asking mode (auto when no broker is configured). */
+  permissionMode(): PermissionMode {
+    return this.#broker?.mode() ?? "auto";
+  }
+
+  /** Whether operator-controlled permission asking is wired to this channel. */
+  permissionAskingAvailable(): boolean {
+    return this.#broker !== undefined;
+  }
+
+  /** The parked permission request awaiting the operator, if any. */
+  pendingPermission(): PendingPermissionRequest | undefined {
+    return this.#broker?.pendingRequest();
+  }
+
+  /** Stored always-allow/always-reject tool patterns. */
+  permissionPatterns(): { readonly alwaysAllow: readonly string[]; readonly alwaysReject: readonly string[] } {
+    return this.#broker?.patterns() ?? { alwaysAllow: [], alwaysReject: [] };
+  }
+
+  /** Switches the operator permission mode (guarded routes call this). */
+  setPermissionMode(mode: PermissionMode): void {
+    this.#broker?.setMode(mode);
+  }
+
+  /** Forgets stored always-allow/always-reject decisions. */
+  resetPermissionPatterns(): void {
+    this.#broker?.resetPatterns();
+  }
+
+  /** Answers the parked permission request; false when unknown/stale. */
+  answerPermission(id: string, choice: PermissionDecisionChoice): boolean {
+    return this.#broker?.answer(id, choice) ?? false;
   }
 
   /** Projects one raw session event into the transcript (used for session/load replays). */
@@ -155,6 +194,9 @@ export class SessionChannel {
   }
 
   async cancel(): Promise<void> {
+    // A cancelled turn must not leave a permission prompt dangling: the
+    // agent stops waiting, so the parked request resolves as a denial.
+    this.#broker?.cancelPending("turn cancelled by operator");
     await this.session.cancel();
   }
 }

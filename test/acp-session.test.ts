@@ -5,6 +5,7 @@ import test from "node:test";
 import { WorkflowCodingSession, type CodingSessionEvent } from "../src/application/coding-session.js";
 import { taskId, type PolicyDecision } from "../src/kernel/contracts.js";
 import { AcpSessionDriver, displayRawToolText } from "../src/integrations/acp-session.js";
+import { PermissionBroker } from "../src/ui/permission-broker.js";
 import type { ProposedToolAction } from "../src/adapters/host.js";
 
 function fakeAgent(mode: string): ChildProcessWithoutNullStreams {
@@ -16,7 +17,7 @@ function fakeAgent(mode: string): ChildProcessWithoutNullStreams {
 
 function driverFor(
   mode: string,
-  authorize: (action: ProposedToolAction) => PolicyDecision = () => ({ kind: "allow" }),
+  authorize: (action: ProposedToolAction) => PolicyDecision | Promise<PolicyDecision> = () => ({ kind: "allow" }),
   resumeFrom?: string,
 ): { driver: AcpSessionDriver; child: ChildProcessWithoutNullStreams } {
   const child = fakeAgent(mode);
@@ -244,6 +245,35 @@ test("ACP permission denial selects the agent-provided rejecting option and stil
   // The fixture deterministically completes after the permission answer; a
   // deadlock here would hang the submit, so the terminal state is meaningful.
   assert.equal(session.snapshot().state, "completed");
+});
+
+test("ACP permission flow parks for the operator in ask mode and completes after the answer", async () => {
+  const broker = new PermissionBroker();
+  broker.setMode("ask");
+  const { driver, child } = driverFor("permission", (action) => broker.intercept(action, () => ({ kind: "allow" })));
+  const session = new WorkflowCodingSession(driver);
+  let submit: Promise<void> | undefined;
+  try {
+    submit = session.submit("edit the file");
+    // Wall-clock budget: agent-process I/O is not done in setImmediate turns.
+    const deadline = Date.now() + 5_000;
+    while (broker.pendingRequest() === undefined && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const request = broker.pendingRequest();
+    assert.ok(request !== undefined, "the gated action parks as an operator prompt in ask mode");
+    assert.equal(request.tool, "replace_in_file");
+    assert.ok(request.subjects.includes("target.txt"));
+    assert.equal(broker.answer(request.id, "allow_once"), true);
+    await submit;
+    assert.equal(session.snapshot().state, "completed");
+  } finally {
+    // Cancel any parked prompt first so the awaiting turn can always settle.
+    broker.cancelPending("test cleanup");
+    await driver.dispose();
+    if (submit !== undefined) await submit.catch(() => undefined);
+    await cleanup(child);
+  }
 });
 
 test("ACP session driver resumes via session/load instead of creating a new session", async () => {

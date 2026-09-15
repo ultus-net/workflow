@@ -279,6 +279,49 @@ body {
   color: var(--text-muted);
 }
 
+/* In-thread permission prompt */
+
+.part-permission {
+  display: block;
+  border-left-color: var(--accent);
+  background: var(--surface);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.part-permission-input {
+  margin: 0.3rem 0;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  max-height: 10rem;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.part-permission-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+/* Settings popover: approvals + capabilities */
+
+.config-permissions {
+  display: grid;
+  gap: 0.35rem;
+  padding-top: 0.5rem;
+  margin-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.config-reset-patterns {
+  justify-self: start;
+  font-size: 0.78rem;
+}
+
 /* Composer */
 
 .composer-dock {
