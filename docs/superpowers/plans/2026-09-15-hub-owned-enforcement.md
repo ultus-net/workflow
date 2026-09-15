@@ -283,10 +283,23 @@ Hub-executed tests are the strongest cheap evidence the control plane owns.
 - Modify: `mcp-toolbox/apps/*` (shared helper), per-server adoption
 - Test: toolbox `verify` command
 
-- [ ] **Step 1:** shared toolbox helper for bounded results (48k middle-cut
+- [x] **Step 1:** shared toolbox helper for bounded results (48k middle-cut
       parity) and optional discover/call meta-tools per server, so any
       MCP-capable agent inherits the token economy without host patches.
-- [ ] **Step 2:** adopt in the noisiest servers first (code/test-intelligence).
+- [x] **Step 2:** adopt in the noisiest servers first (code/test-intelligence).
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`: canonical helper in
+> `mcp-toolbox/packages/result-bounds` (middle-cut with visible marker,
+> head-only fallback for caps too small for a marker, `boundToolResultText`
+> wrapper). Adopted in code-intelligence-mcp and test-intelligence-mcp via
+> their existing `registerTool` wrappers — every tool result's model-visible
+> text is 48k-bounded; `structuredContent` stays exact. Because packed npm
+> artifacts must stay self-contained (per-app tarball install test), the
+> helper is vendored verbatim into each adopting app's `src/vendor/` with a
+> drift-guard test in the package failing on divergence — canonical source,
+> zero runtime deps. **Remaining from Step 1:** the optional server-side
+> discover/call meta-tools (lazy tool discovery without host patches) are
+> not implemented; the bounds half delivers the token-economy parity first.
 
 ### Task E2: usage_update adoption
 
