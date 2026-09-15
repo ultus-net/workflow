@@ -18,7 +18,7 @@ unchecked items are intentional gaps, not implied support.
 
 | Web item | TUI status | Evidence |
 |---|---|---|
-| Plan updates → checklist | **Parity (compact)** — ACP `plan` updates project as `plan done/total — next: …` status rows; the web renders the full list, the terminal renders counts + next step (terminal-native form of the same semantics) | `test/acp-session.test.ts` (plan-update mode) |
+| Plan updates → checklist | **Parity** — ACP `plan` updates project as typed `plan` events with structured entries; the web renders the full checklist, the terminal renders `[plan] N steps, M completed` counts (terminal-native form of the same semantics) | `test/acp-session.test.ts` (plan-update mode, typed plan entries) |
 | Typed tool cards with status/subjects | **Parity** — tool proposals/outcomes render with subjects and status markers; kind lives in the title | `test/tui.test.ts` (tool rows) |
 | Thinking blocks (default collapsed) | **Parity (terminal form)** — `agent_thought_chunk` interleaves as dim `[thinking]` transcript rows; the web's collapse/expand control has no terminal equivalent beyond scrolling, so the TUI shows the compact dim form | `test/tui-tasklist.test.ts` (thinking rows) |
 | Usage/cost readout (composer footer) | **Parity** — live `tokens · $cost` in the footer from the metering proxy | `test/tui-tasklist.test.ts` (usage meter) |

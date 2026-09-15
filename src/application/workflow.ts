@@ -33,7 +33,7 @@ export class WorkflowApplication {
   readonly #graph: TaskGraph;
   #activeTaskId?: TaskId;
   #codingSessionCorrelation?: string;
-#pedagogyGate: CheckpointLedger | undefined;
+  #pedagogyGate: CheckpointLedger | undefined;
   readonly #capabilities: Set<ToolCapability>;
   // Plan Task F3: skill delivery preconditions. A read_skill observation is a
   // PRECONDITION for mutating actions, never `requiredEvidence` — a

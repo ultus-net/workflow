@@ -131,7 +131,8 @@ export class AcpSessionDriver implements CodingSessionDriver {
           for (const listener of this.#listeners) listener(denial);
           return;
         }
-        this.#sessionConfig = { ...this.#sessionConfig, configOptions: update.update.configOptions };      }
+        this.#sessionConfig = { ...this.#sessionConfig, configOptions: update.update.configOptions };
+      }
       const event = this.#project(update, this.#assistant);
       if (event !== undefined) {
         this.#emit(event);

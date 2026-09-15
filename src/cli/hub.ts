@@ -188,4 +188,4 @@ await new Promise<void>((resolveShutdown) => {
   process.once("SIGTERM", shutdown);
 });
 await hub.close();
-await guard?.close();
+await guard.close();
