@@ -41,6 +41,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #agentSessionId?: string;
   #sessionConfig?: AcpSessionConfig;
   #toolTitles = new Map<string, string>();
+  #toolCalls = new Map<string, { title: string; toolKind: string; subjects: string[]; rawInput?: string }>();
   #assistant: string[] = [];
   #emit: (event: CodingSessionEvent) => void = () => {};
   #listeners = new Set<(event: CodingSessionEvent) => void>();
@@ -227,22 +228,81 @@ export class AcpSessionDriver implements CodingSessionDriver {
     }
     if (kind === "agent_thought_chunk") {
       const content = update.update.content as { type?: string; text?: string } | undefined;
-      return { type: "log", level: "info", message: content?.text ?? "", source: "agent-thought" };
+      return { type: "thought", text: content?.text ?? "" };
+    }
+    if (kind === "plan") {
+      const entries = AcpSessionDriver.planEntries(update.update.entries);
+      return entries.length > 0 ? { type: "plan", entries } : undefined;
     }
     if (kind === "tool_call") {
       const title = this.#toolTitle(update);
-      this.#toolTitles.set(String(update.update.toolCallId), title);
-      return { type: "tool-proposal", tool: title, subjects: this.#locations(update) };
+      const callId = String(update.update.toolCallId ?? "unknown");
+      const toolKind = typeof update.update.kind === "string" ? update.update.kind : "other";
+      const subjects = this.#locations(update);
+      const rawInput = rawWireText(update.update.rawInput);
+      this.#toolTitles.set(callId, title);
+      this.#toolCalls.set(callId, { title, toolKind, subjects, ...(rawInput !== undefined ? { rawInput } : {}) });
+      return {
+        type: "tool",
+        callId,
+        title,
+        toolKind,
+        status: "pending",
+        subjects,
+        ...(rawInput !== undefined ? { rawInput } : {}),
+      };
     }
     if (kind === "tool_call_update") {
-      const status = String(update.update.status ?? "");
-      const subject = this.#toolTitles.get(String(update.update.toolCallId)) ?? String(update.update.toolCallId ?? "unknown");
-      if (status === "completed") return { type: "tool-outcome", tool: subject, outcome: "succeeded" };
-      if (status === "failed") return { type: "tool-outcome", tool: subject, outcome: "failed", detail: status };
-      return { type: "status", status: `tool ${subject}: ${status || "unknown"}` };
+      const status = AcpSessionDriver.toolStatus(update.update.status);
+      const callId = String(update.update.toolCallId ?? "unknown");
+      const rawOutput = rawWireText(update.update.rawOutput);
+      const known = this.#toolCalls.get(callId);
+      if (known === undefined) {
+        // Update without a matching call (permission-phase echo): keep the
+        // legacy projection so surfaces still see the outcome.
+        const subject = this.#toolTitles.get(callId) ?? callId;
+        if (status === "completed") return { type: "tool-outcome", tool: subject, outcome: "succeeded" };
+        if (status === "error" || status === "cancelled") {
+          return { type: "tool-outcome", tool: subject, outcome: "failed", detail: status };
+        }
+        return { type: "status", status: `tool ${subject}: ${status}` };
+      }
+      return {
+        type: "tool",
+        callId,
+        title: known.title,
+        toolKind: known.toolKind,
+        status,
+        subjects: known.subjects,
+        ...(known.rawInput !== undefined ? { rawInput: known.rawInput } : {}),
+        ...(rawOutput !== undefined ? { rawOutput } : {}),
+      };
     }
-    if (kind === "session_info_update") return { type: "status", status: String(update.update.title ?? update.update.sessionUpdate) };
+    if (kind === "session_info_update") {
+      const title = update.update.title;
+      return typeof title === "string" && title.length > 0 ? { type: "session-info", title } : undefined;
+    }
     return undefined;
+  }
+
+  /** Tolerant ACP plan-entry parse: only well-formed entries survive. */
+  static planEntries(value: unknown): { id: string; content: string; status: "pending" | "in_progress" | "completed" }[] {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((entry) => {
+      if (typeof entry !== "object" || entry === null) return [];
+      const record = entry as { id?: unknown; content?: unknown; status?: unknown };
+      if (typeof record.id !== "string" || typeof record.content !== "string") return [];
+      const status = record.status === "in_progress" || record.status === "completed" ? record.status : "pending";
+      return [{ id: record.id, content: record.content, status }];
+    });
+  }
+
+  /** Maps ACP tool statuses; unknown values stay pending so cards never guess. */
+  static toolStatus(value: unknown): "pending" | "in_progress" | "completed" | "error" | "cancelled" {
+    // Cline 3.0.61 sends "failed" where the ACP spec says "error"; accept both.
+    if (value === "in_progress" || value === "completed" || value === "cancelled") return value;
+    if (value === "error" || value === "failed") return "error";
+    return "pending";
   }
 
   #toolTitle(update: AcpSessionUpdate): string {
@@ -303,4 +363,18 @@ export class AcpSessionDriver implements CodingSessionDriver {
     }
     return "mutation";
   }
+}
+
+/**
+ * Agents send raw tool input/output as strings OR structured JSON (Cline:
+ * rawInput is a command object, rawOutput a result array); keep both as
+ * displayable text without inventing content for absent fields.
+ */
+function rawWireText(value: unknown): string | undefined {
+  if (typeof value === "string") return value.length > 0 ? value : undefined;
+  if (typeof value === "object" && value !== null) {
+    const text = JSON.stringify(value, null, 2);
+    return text === undefined || text.length === 0 || text === "{}" || text === "[]" ? undefined : text;
+  }
+  return undefined;
 }

@@ -148,6 +148,7 @@ export function createWorkflowWebServer(
         ...(meta === undefined ? {} : { id: meta.id, title: meta.title }),
         state: active?.state() ?? { state: "unavailable" },
         items: active?.items() ?? [],
+        ...(active?.usage() !== undefined ? { usage: active.usage() } : {}),
       });
     }
     if (request.method === "POST" && request.url === "/api/prompt") {

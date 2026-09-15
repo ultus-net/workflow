@@ -52,7 +52,7 @@ test("ACP session driver projects a turn through the CodingSessionDriver contrac
     "the agent session id must surface as a status event so the operator can resume it later",
   );
   assert.ok(events.some((event) => event.type === "assistant" && event.text === "working"));
-  assert.ok(events.some((event) => event.type === "tool-proposal" && event.tool === "Read repo"));
+  assert.ok(events.some((event) => event.type === "tool" && event.title === "Read repo" && event.status === "pending"));
   const completed = events.find((event) => event.type === "completed");
   assert.deepEqual(completed, { type: "completed", result: "working" });
   // G2's slash-command replacement: session/new config must be captured and
@@ -72,6 +72,60 @@ test("ACP session driver projects a turn through the CodingSessionDriver contrac
   assert.ok(
     events.some((event) => event.type === "status" && event.status === AcpSessionDriver.configSummary(driver.config()!)),
     "the session config summary must surface as a status event",
+  );
+});
+
+test("ACP session driver projects plan, thinking, typed tool calls, and session titles", async () => {
+  const { driver, child } = driverFor("batch2");
+  const events: CodingSessionEvent[] = [];
+  const session = new WorkflowCodingSession(driver);
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.submit("plan and act");
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+  assert.equal(session.snapshot().state, "completed");
+
+  const plans = events.filter((event) => event.type === "plan");
+  assert.equal(plans.length, 2, "each plan update is one event");
+  const firstPlan = plans[0];
+  const secondPlan = plans[1];
+  if (firstPlan === undefined || secondPlan === undefined || firstPlan.type !== "plan" || secondPlan.type !== "plan") {
+    throw new Error("expected plan events");
+  }
+  assert.deepEqual(firstPlan.entries, [
+    { id: "p1", content: "Inspect the workspace", status: "pending" },
+    { id: "p2", content: "Apply the edit", status: "pending" },
+  ]);
+  assert.equal(secondPlan.entries[0]?.status, "completed");
+  assert.equal(secondPlan.entries[1]?.status, "in_progress");
+
+  const thoughts = events.filter((event) => event.type === "thought");
+  assert.deepEqual(
+    thoughts.map((event) => (event.type === "thought" ? event.text : "")),
+    ["reasoning about ", "the fixture"],
+  );
+
+  const toolEvents = events.filter((event) => event.type === "tool");
+  assert.equal(toolEvents.length, 3, "pending, in_progress, and completed tool events");
+  const [call, start, done] = toolEvents;
+  if (call === undefined || start === undefined || done === undefined || call.type !== "tool" || start.type !== "tool" || done.type !== "tool") {
+    throw new Error("expected tool events");
+  }
+  assert.equal(call.callId, "tool-batch2");
+  assert.equal(call.toolKind, "read");
+  assert.equal(call.title, "Read workspace");
+  assert.deepEqual(call.subjects, ["src/index.ts"]);
+  assert.equal(call.rawInput, '{\n  "path": "src/index.ts"\n}', "structured rawInput is stringified for display");
+  assert.equal(start.status, "in_progress");
+  assert.equal(done.status, "completed");
+  assert.equal(done.rawOutput, '[\n  {\n    "result": "file contents"\n  }\n]', "structured rawOutput is stringified for display");
+
+  assert.ok(
+    events.some((event) => event.type === "session-info" && event.title === "Fixture batch2 title"),
+    "agent-provided session titles must surface",
   );
 });
 
@@ -246,4 +300,13 @@ test("title detail is stripped to the tool name before classification", () => {
   assert.equal(AcpSessionDriver.toolNameFromTitle("replace_in_file"), "replace_in_file");
   assert.equal(AcpSessionDriver.toolNameFromTitle(undefined), "unknown");
   assert.equal(AcpSessionDriver.toolNameFromTitle("   "), "unknown");
+});
+
+test("tool status mapping tolerates Cline's failed alias and stays pending on unknowns", () => {
+  assert.equal(AcpSessionDriver.toolStatus("failed"), "error");
+  assert.equal(AcpSessionDriver.toolStatus("error"), "error");
+  assert.equal(AcpSessionDriver.toolStatus("in_progress"), "in_progress");
+  assert.equal(AcpSessionDriver.toolStatus("completed"), "completed");
+  assert.equal(AcpSessionDriver.toolStatus("cancelled"), "cancelled");
+  assert.equal(AcpSessionDriver.toolStatus("weird"), "pending");
 });

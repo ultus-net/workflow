@@ -494,3 +494,58 @@ test("web UI returns 503 instead of crashing when the runtime factory fails", as
   const cancel = await fetch(`http://127.0.0.1:${port}/api/cancel`, { method: "POST" });
   assert.equal(cancel.status, 503);
 });
+
+test("web UI serves cumulative usage metrics for metered runtimes only", async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), "web-usage-test-"));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const metrics = { requests: 1, usageEvents: 1, promptTokens: 10, completionTokens: 5, totalTokens: 15, costUsd: 0.001 };
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => {
+      const driver: CodingSessionDriver = {
+        async start(_prompt, emit) { emit({ type: "completed", result: "done" }); },
+        async cancel() {},
+      };
+      return {
+        driver: {
+          ...driver,
+          agentSessionId: () => "agent-x",
+          connect: async () => {},
+          subscribe: () => () => {},
+        } as never,
+        session: new WorkflowCodingSession(driver),
+        usage: () => metrics,
+        async dispose() {},
+      };
+    },
+  });
+  context.after(() => manager.dispose());
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, manager);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+
+  const metered = await fetch(`http://127.0.0.1:${port}/api/session`).then((response) => response.json()) as {
+    usage?: typeof metrics;
+  };
+  assert.deepEqual(metered.usage, metrics);
+
+  // Single-session mode has no metering proxy: the field must stay absent,
+  // not default to zeroed metrics that would mislead the operator.
+  const singleDriver: CodingSessionDriver = {
+    async start(_prompt, emit) { emit({ type: "completed", result: "done" }); },
+    async cancel() {},
+  };
+  const singleServer = createWorkflowWebServer(application, new WorkflowCodingSession(singleDriver));
+  await new Promise<void>((resolve) => singleServer.listen(0, "127.0.0.1", resolve));
+  context.after(() => singleServer.close());
+  const singlePort = (singleServer.address() as AddressInfo).port;
+  const unmetered = await fetch(`http://127.0.0.1:${singlePort}/api/session`).then((response) => response.json()) as {
+    usage?: unknown;
+  };
+  assert.equal(unmetered.usage, undefined);
+});

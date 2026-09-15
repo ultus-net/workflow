@@ -96,6 +96,42 @@ function handleMessage(message) {
   } else if (message.method === "session/prompt") {
     cancelled = false;
     activePromptId = message.id;
+    if (mode === "batch2") {
+      const sessionId = message.params.sessionId;
+      const update = (updateBody) => send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId, update: updateBody },
+      });
+      update({ sessionUpdate: "session_info_update", title: "Fixture batch2 title" });
+      update({
+        sessionUpdate: "plan",
+        entries: [
+          { id: "p1", status: "pending", content: "Inspect the workspace" },
+          { id: "p2", status: "pending", content: "Apply the edit" },
+        ],
+      });
+      update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "reasoning about " } });
+      update({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "the fixture" } });
+      update({
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-batch2",
+        title: "Read workspace",
+        kind: "read",
+        status: "pending",
+        rawInput: { path: "src/index.ts" },
+        locations: [{ path: "src/index.ts" }],
+      });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "tool-batch2", status: "in_progress" });
+      update({ sessionUpdate: "tool_call_update", toolCallId: "tool-batch2", status: "completed", rawOutput: [{ result: "file contents" }] });
+      update({ sessionUpdate: "plan", entries: [
+        { id: "p1", status: "completed", content: "Inspect the workspace" },
+        { id: "p2", status: "in_progress", content: "Apply the edit" },
+      ] });
+      update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "working" } });
+      send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
+      return;
+    }
     if (mode === "config-update") {
       configOptions = configOptions.map((option) => option.id === "model" ? { ...option, currentValue: "moonshot-v1" } : option);
       send({

@@ -4,14 +4,35 @@ export type CodingSessionEvent =
   | { readonly type: "user"; readonly text: string }
   | { readonly type: "assistant"; readonly text: string }
   | { readonly type: "status"; readonly status: string }
-  | { readonly type: "tool-proposal"; readonly tool: string; readonly subjects: readonly string[] }
-  | { readonly type: "tool-outcome"; readonly tool: string; readonly outcome: "succeeded" | "denied" | "failed"; readonly detail?: string }
+  | { readonly type: "tool-proposal"; readonly tool: string; readonly subjects: readonly string[]; readonly callId?: string | undefined }
+  | { readonly type: "tool-outcome"; readonly tool: string; readonly outcome: "succeeded" | "denied" | "failed"; readonly detail?: string; readonly callId?: string | undefined }
+  | {
+      /** Unified tool lifecycle for card-style surfaces; identified by callId. */
+      readonly type: "tool";
+      readonly callId: string;
+      readonly title: string;
+      readonly toolKind: string;
+      readonly status: "pending" | "in_progress" | "completed" | "error" | "cancelled";
+      readonly subjects: readonly string[];
+      readonly rawInput?: string | undefined;
+      readonly rawOutput?: string | undefined;
+    }
+  | { readonly type: "plan"; readonly entries: readonly PlanEntry[] }
+  | { readonly type: "thought"; readonly text: string }
+  | { readonly type: "session-info"; readonly title: string }
   | { readonly type: "decision-brief"; readonly brief: DecisionBrief }
   | { readonly type: "tutor-checkpoint"; readonly opportunity: LearningOpportunity }
   | { readonly type: "diagnostic-lesson"; readonly lesson: DiagnosticLesson }
   | { readonly type: "log"; readonly level: "debug" | "info" | "warning" | "error"; readonly message: string; readonly source?: string }
   | { readonly type: "completed"; readonly result: string }
   | { readonly type: "failed"; readonly reason: string };
+
+/** One plan checklist entry, mirroring the ACP plan update shape. */
+export interface PlanEntry {
+  readonly id: string;
+  readonly content: string;
+  readonly status: "pending" | "in_progress" | "completed";
+}
 
 export type CodingSessionState =
   | { readonly state: "idle" }

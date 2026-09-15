@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import {
   AssistantRuntimeProvider,
   SimpleImageAttachmentAdapter,
@@ -11,12 +11,30 @@ import { convertOperatorItem } from "./messages.js";
 
 const POLL_MS = 1000;
 
+/** Cumulative metering metrics from the hub-side proxy (undefined when unmetered). */
+export interface SessionUsage {
+  readonly requests: number;
+  readonly usageEvents: number;
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly totalTokens: number;
+  readonly costUsd: number;
+}
+
 interface SessionEnvelope {
   readonly available: boolean;
   readonly id?: string;
   readonly title?: string;
   readonly state: { readonly state: string };
   readonly items: readonly OperatorSessionItem[];
+  readonly usage?: SessionUsage;
+}
+
+const SessionUsageContext = createContext<SessionUsage | undefined>(undefined);
+
+/** Latest metering metrics for the active session; undefined when unmetered. */
+export function useSessionUsage(): SessionUsage | undefined {
+  return useContext(SessionUsageContext);
 }
 
 /** Polls the Workflow-owned session projection; the browser holds no authority. */
@@ -81,7 +99,13 @@ export function WorkflowRuntimeProvider({ children }: { readonly children: React
     adapters: { attachments },
   });
 
-  return <AssistantRuntimeProvider runtime={runtime}>{children}</AssistantRuntimeProvider>;
+  return (
+    <AssistantRuntimeProvider runtime={runtime}>
+      <SessionUsageContext.Provider value={envelope.usage}>
+        {children}
+      </SessionUsageContext.Provider>
+    </AssistantRuntimeProvider>
+  );
 }
 
 /** Splits a data URL (data:<mediaType>;base64,<data>) into its wire parts. */

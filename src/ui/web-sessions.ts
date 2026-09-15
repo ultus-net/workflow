@@ -161,7 +161,7 @@ export class WebSessionManager {
     await previous?.runtime.dispose();
     try {
       const runtime = await this.#factory(resumeFrom);
-      const channel = new SessionChannel(runtime.session, runtime.driver);
+      const channel = new SessionChannel(runtime.session, runtime.driver, runtime.usage?.bind(runtime));
       // Eagerly load the resumed session so its replayed history reaches the
       // channel before the UI polls — otherwise the transcript looks empty
       // until the first prompt. The subscription lasts only for the load.
@@ -224,12 +224,17 @@ export class WebSessionManager {
     }
   }
 
-  /** Copies volatile facts (agent session id, derived title) into the record. */
+  /** Copies volatile facts (agent session id, agent/derived title) into the record. */
   #captureActive(): void {
     if (this.#active === undefined) return;
     const agentId = this.#active.runtime.driver.agentSessionId();
     if (agentId !== undefined) this.#active.record.agentSessionId = agentId;
-    if (this.#active.record.title === "New session") {
+    // An agent-provided title (session_info_update) is the most accurate
+    // label and outranks both the placeholder and the derived-from-prompt title.
+    const agentTitle = this.#active.channel.agentTitle();
+    if (agentTitle !== undefined) {
+      this.#active.record.title = agentTitle.length > 60 ? `${agentTitle.slice(0, 60)}…` : agentTitle;
+    } else if (this.#active.record.title === "New session") {
       const firstUser = this.#active.channel.items().find((item) => item.kind === "user");
       if (firstUser !== undefined && firstUser.kind === "user") {
         this.#active.record.title = firstUser.text.length > 60 ? `${firstUser.text.slice(0, 60)}…` : firstUser.text;

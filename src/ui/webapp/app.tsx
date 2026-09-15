@@ -7,8 +7,9 @@ import {
   ThreadPrimitive,
 } from "@assistant-ui/react";
 
-import { ActionPart, AttentionPart, CompletionPart, OutcomePart } from "./message-parts.js";
+import { ActionPart, AttentionPart, CompletionPart, OutcomePart, PlanPart, ThinkingPart, ToolPart } from "./message-parts.js";
 import { MarkdownText } from "./markdown-text.js";
+import { useSessionUsage } from "./runtime.js";
 
 interface SnapshotTask {
   readonly id: string;
@@ -501,6 +502,25 @@ function ConfigControls({ options, setOption }: {
   );
 }
 
+function UsageMeter() {
+  const usage = useSessionUsage();
+  if (usage === undefined || usage.usageEvents === 0) return null;
+  return (
+    <div className="usage-meter" title={`${usage.requests} metered model request(s)`}>
+      <span className="usage-tokens" aria-label={`${usage.promptTokens} prompt tokens, ${usage.completionTokens} completion tokens`}>
+        ↑{formatTokens(usage.promptTokens)} ↓{formatTokens(usage.completionTokens)} tokens
+      </span>
+      <span className="usage-cost" aria-label={`${usage.costUsd} US dollars`}>${usage.costUsd.toFixed(4)}</span>
+    </div>
+  );
+}
+
+function formatTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
+  return String(count);
+}
+
 function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]; readonly refresh: () => Promise<void> }) {
   const [pending, setPending] = useState<string | undefined>(undefined);
   const switchTo = (id: string): void => {
@@ -582,6 +602,9 @@ function AssistantMessage() {
               outcome: OutcomePart,
               attention: AttentionPart,
               completion: CompletionPart,
+              plan: PlanPart,
+              thinking: ThinkingPart,
+              tool: ToolPart,
             },
           },
         }}
@@ -720,6 +743,7 @@ export function App() {
             <div className="composer-dock">
               <Composer />
               <ConfigControls options={options} setOption={setOption} />
+              <UsageMeter />
             </div>
           </ThreadPrimitive.Root>
         </section>

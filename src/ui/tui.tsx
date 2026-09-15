@@ -143,8 +143,18 @@ export function WorkflowTui({
     if (event.type === "tool-outcome") {
       setPendingTools((current) => current.filter((tool) => tool !== event.tool));
     }
+    if (event.type === "tool") {
+      setPendingTools((current) =>
+        event.status === "pending" || event.status === "in_progress"
+          ? [...current, event.title]
+          : current.filter((tool) => tool !== event.title));
+    }
     if (event.type === "log") {
       setRecentLogs((current) => [...current, event].slice(-3));
+    }
+    if (event.type === "thought") {
+      const entry: SessionLog = { type: "log", level: "info", message: event.text, source: "agent-thought" };
+      setRecentLogs((current) => [...current, entry].slice(-3));
     }
     setTranscript((current) => [...current, formatSessionEvent(event, assistantLabel)]);
     setScrollOffset(0);
@@ -589,6 +599,22 @@ function formatSessionEvent(event: CodingSessionEvent, assistantLabel: string): 
     const source = event.source === undefined ? "" : `${event.source}: `;
     return { label: `[${event.level}]`, text: `${source}${event.message}`, dim: event.level === "debug" };
   }
+  if (event.type === "thought") {
+    return { label: "[thought]", text: event.text, dim: true };
+  }
+  if (event.type === "tool") {
+    const marker = event.status === "completed" ? "[ok]" : event.status === "error" || event.status === "cancelled" ? "[failed]" : "[tool]";
+    return {
+      label: marker,
+      text: `${event.title}${event.subjects.length > 0 ? ` ${event.subjects.join(", ")}` : ""}`,
+      dim: event.status === "completed",
+    };
+  }
+  if (event.type === "plan") {
+    const done = event.entries.filter((entry) => entry.status === "completed").length;
+    return { label: "[plan]", text: `${event.entries.length} steps, ${done} completed`, dim: true };
+  }
+  if (event.type === "session-info") return { label: "[session]", text: event.title, dim: true };
   if (event.type === "completed") return { label: "completed", text: event.result };
-  return { label: "failed", text: event.reason };
+  return { label: "failed", text: (event as { type: "failed"; reason: string }).reason };
 }

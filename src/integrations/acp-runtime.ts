@@ -10,12 +10,14 @@ import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import type { TaskId } from "../kernel/contracts.js";
 import { AcpSessionDriver } from "./acp-session.js";
 import { globalClineEntrypoint, resolveClineLaunch } from "./cline-launch.js";
-import { METERED_PLACEHOLDER_KEY, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
+import { METERED_PLACEHOLDER_KEY, type ModelUsageMetrics, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
 
 export interface WorkflowAcpRuntime {
   readonly driver: AcpSessionDriver;
   readonly session: WorkflowCodingSession;
   dispose(): Promise<void>;
+  /** Cumulative metering-proxy metrics; absent for unmetered runtimes. */
+  usage?(): ModelUsageMetrics;
 }
 
 export async function createConfiguredAcpRuntime(
@@ -79,6 +81,7 @@ export async function createConfiguredAcpRuntime(
     return {
       driver,
       session: new WorkflowCodingSession(driver),
+      usage: (): ModelUsageMetrics => proxy.metrics(),
       async dispose() {
         try {
           await driver.dispose();

@@ -156,6 +156,129 @@ body {
 .part-completion-failed { border-left-color: var(--fail); }
 .part-completion-failed .part-label { color: var(--fail); }
 
+/* Typed tool-call cards */
+
+.part-tool { display: block; }
+
+.part-tool-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.part-tool-kind {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.05rem 0.4rem;
+}
+
+.part-tool-title { color: var(--text); }
+
+.part-tool-status { font-size: 0.75rem; color: var(--text-muted); }
+
+.part-tool-pending { border-left-color: var(--text-muted); }
+.part-tool-in_progress { border-left-color: var(--accent); }
+.part-tool-in_progress .part-tool-status { color: var(--accent); }
+.part-tool-completed { border-left-color: var(--ok); }
+.part-tool-completed .part-tool-status { color: var(--ok); }
+.part-tool-error, .part-tool-cancelled { border-left-color: var(--fail); }
+.part-tool-error .part-tool-status, .part-tool-cancelled .part-tool-status { color: var(--fail); }
+
+.part-tool-io summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 0.25rem 0;
+}
+
+.part-tool-io pre {
+  margin: 0.2rem 0 0.4rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  max-height: 16rem;
+  overflow: auto;
+}
+
+.part-tool-io-label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-top: 0.3rem;
+}
+
+/* Agent plan checklist */
+
+.part-plan { display: block; border-left-color: var(--accent); }
+
+.part-plan-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.part-plan-progress { font-size: 0.75rem; color: var(--text-muted); }
+
+.part-plan-entries {
+  list-style: none;
+  margin: 0.3rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.part-plan-entry { display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.88rem; }
+
+.part-plan-marker { width: 1rem; text-align: center; color: var(--text-muted); }
+.part-plan-in_progress .part-plan-marker { color: var(--accent); }
+.part-plan-completed .part-plan-marker { color: var(--ok); }
+.part-plan-done-text { color: var(--text-muted); text-decoration: line-through; }
+
+/* Collapsible agent reasoning */
+
+.part-thinking { display: block; border-left-color: var(--border); }
+
+.part-thinking summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.part-thinking-text {
+  margin: 0.3rem 0 0;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  max-height: 14rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  color: var(--text-muted);
+}
+
+/* Usage meter (composer footer) */
+
+.usage-meter {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
 /* Composer */
 
 .composer-dock {

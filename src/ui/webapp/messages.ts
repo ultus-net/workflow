@@ -38,6 +38,12 @@ export function convertOperatorItem(item: OperatorSessionItem, index: number, se
       return { id, role: "assistant", content: [{ type: "data-outcome", data: item }] };
     case "attention":
       return { id, role: "assistant", content: [{ type: "data-attention", data: { text: item.text } }] };
+    case "plan":
+      return { id, role: "assistant", content: [{ type: "data-plan", data: { entries: item.entries } }] };
+    case "thinking":
+      return { id, role: "assistant", content: [{ type: "data-thinking", data: { text: item.text } }] };
+    case "tool":
+      return { id, role: "assistant", content: [{ type: "data-tool", data: item }] };
     case "completion":
       return { id, role: "assistant", content: [{ type: "data-completion", data: item }] };
   }

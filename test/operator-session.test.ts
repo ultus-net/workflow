@@ -82,3 +82,91 @@ test("operator transcript keeps distinct completion results and failure reasons"
   items = appendOperatorItem(items, { kind: "completion", outcome: "failed", text: "Retrying" });
   assert.deepEqual(items[3], { kind: "completion", outcome: "failed", text: "Retrying" });
 });
+
+test("operator projection maps plan, thought, and tool events to their card items", () => {
+  assert.deepEqual(
+    projectOperatorSessionEvent({
+      type: "plan",
+      entries: [{ id: "p1", content: "Inspect", status: "in_progress" }],
+    }),
+    { kind: "plan", entries: [{ id: "p1", content: "Inspect", status: "in_progress" }] },
+  );
+  assert.deepEqual(
+    projectOperatorSessionEvent({ type: "thought", text: "considering" }),
+    { kind: "thinking", text: "considering" },
+  );
+  assert.deepEqual(
+    projectOperatorSessionEvent({
+      type: "tool",
+      callId: "t1",
+      title: "Read workspace",
+      toolKind: "read",
+      status: "pending",
+      subjects: ["a.ts"],
+    }),
+    { kind: "tool", callId: "t1", title: "Read workspace", toolKind: "read", status: "pending", subjects: ["a.ts"] },
+  );
+});
+
+test("operator projection suppresses callId-carrying proposal/outcome pairs already shown as tool cards", () => {
+  assert.equal(
+    projectOperatorSessionEvent({ type: "tool-proposal", tool: "read_file", subjects: [], callId: "t1" }),
+    undefined,
+  );
+  assert.equal(
+    projectOperatorSessionEvent({ type: "tool-outcome", tool: "read_file", outcome: "succeeded", callId: "t1" }),
+    undefined,
+  );
+  // Legacy callId-less events keep the action/outcome lines (other drivers).
+  assert.deepEqual(
+    projectOperatorSessionEvent({ type: "tool-proposal", tool: "read_file", subjects: [] }),
+    { kind: "action", action: "read_file", subjects: [] },
+  );
+});
+
+test("operator transcript merges tool-card updates by callId and accumulates thinking", () => {
+  let items: OperatorSessionItem[] = [];
+  items = appendOperatorItem(items, {
+    kind: "tool", callId: "t1", title: "Read workspace", toolKind: "read", status: "pending", subjects: ["a.ts"],
+  });
+  items = appendOperatorItem(items, { kind: "thinking", text: "reasoning " });
+  items = appendOperatorItem(items, { kind: "thinking", text: "about the file" });
+  items = appendOperatorItem(items, {
+    kind: "tool", callId: "t1", title: "ignored", toolKind: "ignored", status: "completed", subjects: [], rawOutput: "ok",
+  });
+
+  assert.equal(items.length, 2, "the completed update merges into the original card");
+  const card = items[0];
+  if (card?.kind !== "tool") throw new Error("expected a tool card");
+  assert.equal(card.title, "Read workspace", "card identity survives the merge");
+  assert.equal(card.toolKind, "read");
+  assert.equal(card.status, "completed");
+  assert.deepEqual(card.subjects, ["a.ts"]);
+  assert.equal(card.rawOutput, "ok");
+  assert.deepEqual(items[1], { kind: "thinking", text: "reasoning about the file" });
+
+  // A same-callId update after interleaved items still merges into its card:
+  // agents stream assistant text between tool_call and tool_call_update.
+  items = appendOperatorItem(items, { kind: "assistant", text: "next" });
+  items = appendOperatorItem(items, {
+    kind: "tool", callId: "t1", title: "Read workspace", toolKind: "read", status: "error", subjects: [],
+  });
+  assert.equal(items.length, 3, "the update merges into the original card across interleaved text");
+  const reopened = items[0];
+  if (reopened?.kind !== "tool") throw new Error("expected a tool card");
+  assert.equal(reopened.status, "error");
+});
+
+test("operator transcript replaces the trailing plan snapshot and keeps it after interleaved items", () => {
+  let items: OperatorSessionItem[] = [];
+  items = appendOperatorItem(items, { kind: "plan", entries: [{ id: "p1", content: "Step", status: "pending" }] });
+  items = appendOperatorItem(items, { kind: "plan", entries: [{ id: "p1", content: "Step", status: "completed" }] });
+  assert.equal(items.length, 1, "back-to-back plan snapshots coalesce");
+
+  items = appendOperatorItem(items, { kind: "assistant", text: "update" });
+  items = appendOperatorItem(items, { kind: "plan", entries: [{ id: "p1", content: "New plan", status: "pending" }] });
+  assert.equal(items.length, 3, "an interleaved item breaks the plan run");
+  const plan = items[2];
+  if (plan?.kind !== "plan") throw new Error("expected a plan item");
+  assert.equal(plan.entries[0]?.content, "New plan");
+});

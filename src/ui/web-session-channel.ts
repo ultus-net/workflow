@@ -2,6 +2,7 @@ import type { WorkflowCodingSession } from "../application/coding-session.js";
 import type { CodingSessionImage } from "../application/coding-session.js";
 import type { CodingSessionState } from "../application/coding-session.js";
 import type { AcpConfigOptionValue, AcpSessionConfig } from "../adapters/acp-subprocess.js";
+import type { ModelUsageMetrics } from "../integrations/model-usage-proxy.js";
 import { appendOperatorItem, projectOperatorSessionEvent, type OperatorSessionImage, type OperatorSessionItem } from "./operator-session.js";
 import { normalizeConfigOptions, type WebConfigOption } from "./web-config-options.js";
 
@@ -82,9 +83,16 @@ export class SessionChannel {
   #turnInFlight = false;
   readonly #images = new ImageStore(`img-${Math.random().toString(36).slice(2, 8)}-`);
   readonly #driver: ConfigCapableDriver | undefined;
+  readonly #usage: (() => ModelUsageMetrics | undefined) | undefined;
+  #agentTitle: string | undefined;
 
-  constructor(readonly session: WorkflowCodingSession, driver?: ConfigCapableDriver) {
+  constructor(
+    readonly session: WorkflowCodingSession,
+    driver?: ConfigCapableDriver,
+    usage?: () => ModelUsageMetrics | undefined,
+  ) {
     this.#driver = driver;
+    this.#usage = usage;
     session.subscribe((event) => this.ingest(event));
   }
 
@@ -99,8 +107,22 @@ export class SessionChannel {
     return normalizeConfigOptions(await this.#driver.setConfigOption(configId, value));
   }
 
+  /** Latest agent-provided session title (session_info_update), if any. */
+  agentTitle(): string | undefined {
+    return this.#agentTitle;
+  }
+
+  /** Cumulative metering-proxy metrics for the session's runtime, when metered. */
+  usage(): ModelUsageMetrics | undefined {
+    return this.#usage?.();
+  }
+
   /** Projects one raw session event into the transcript (used for session/load replays). */
   ingest(event: Parameters<typeof projectOperatorSessionEvent>[0]): void {
+    if (event.type === "session-info") {
+      this.#agentTitle = event.title;
+      return;
+    }
     const item = projectOperatorSessionEvent(event);
     if (item) this.#items = appendOperatorItem(this.#items, item);
   }

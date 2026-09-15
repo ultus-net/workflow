@@ -363,3 +363,28 @@ test("session manager ingests replayed history when resuming a session", async (
   ]);
   await manager.dispose();
 });
+
+test("session manager syncs agent-provided titles and serves runtime usage", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const metrics = { requests: 2, usageEvents: 1, promptTokens: 120, completionTokens: 45, totalTokens: 165, costUsd: 0.012 };
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => {
+      const fake = fakeRuntime("agent-1");
+      return { ...fake.runtime, usage: () => metrics };
+    },
+  });
+
+  const channel = await manager.channel();
+  assert.deepEqual(channel.usage(), metrics, "the channel exposes the runtime's metering metrics");
+  channel.ingest({ type: "session-info", title: "Agent-titled work" });
+  const created = await manager.create();
+  assert.equal(created.kind, "ok");
+
+  const titled = manager.list().find((session) => !session.active);
+  assert.equal(titled?.title, "Agent-titled work", "session_info_update titles win over the derived title");
+  const active = await manager.channel();
+  assert.deepEqual(active.usage(), metrics, "the next runtime's metrics flow through its own channel");
+  await manager.dispose();
+});
