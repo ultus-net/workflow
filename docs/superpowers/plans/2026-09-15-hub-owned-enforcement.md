@@ -401,18 +401,34 @@ probe-verified agent.
       wiring)
 - Test: `test/hub-guard-interception.test.ts` (extend), `test/mcp-toolbox-guard.test.ts` (extend)
 
-- [ ] **Step 1: failing tests** — every `/before-tool` call is evaluated by the
+- [x] **Step 1: failing tests** — every `/before-tool` call is evaluated by the
       vendored guard dispatcher (`guardCheck`) in addition to kernel/capability
       authorization; a guard deny is a hub deny (fail closed, `{stop: true}`),
       identical policy decisions for Cline ACP and opencode sessions;
       guard-unavailable → deny, never allow (fail closed).
-- [ ] **Step 2: implement + run — passes.** Single policy source of truth:
+- [x] **Step 2: implement + run — passes.** Single policy source of truth:
       the plugin stops being the only place policies run; it becomes one
       caller among several.
 - [ ] **Step 3:** in `opencode-workflow-guard`, demote the plugin to a thin
       forwarder (its `tool.execute.before` already throws on hub deny — that
       shape is correct; policy imports move behind the hub call). The plugin
       repo's release cadence can then slow to "conformance shim maintenance."
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement` (steps 1–2):
+> `guardInputFromToolCall` is now one shared mapping in
+> `src/integrations/mcp-toolbox-guard.ts` covering both the Cline hook
+> surface and the ACP approval surface (`run_commands`, `replace_in_file`,
+> `delete_file`, ...); the ACP permission resolver and the OpenCode plugin
+> both run the guard after kernel authorization (deny on policy, deny on
+> guard failure — fail closed); `createConfiguredAcpRuntime` accepts a
+> guard provider so hub-owned runtimes (reviewer + scheduled runs) carry it;
+> and `src/cli/hub.ts` refuses to start when the guard provider cannot be
+> created — a silently guardless authority is no longer possible.
+> **Step 3 remains:** the cross-repo plugin demotion in
+> `opencode-workflow-guard` — replace the in-process policy imports in
+> `workflow-guard.ts` with a discovery-file HTTP forward to the hub's
+> `/before-tool` (per-call resolution, fail closed on any non-200), then
+> retire its per-host policy bodies at the next release.
 
 ### Task G3: Tool substitution for non-cooperative agents
 

@@ -49,10 +49,11 @@ const teamTaskVerificationCommand = process.env.WORKFLOW_TEAM_TASK_VERIFY_COMMAN
   ? "true"
   : (teamTaskVerifyEnv && teamTaskVerifyEnv.length > 0 ? teamTaskVerifyEnv : undefined);
 
-const guard = await createDefaultToolboxGuardProvider().catch((error) => {
-  console.warn(`Workflow guard unavailable (advisory): ${error instanceof Error ? error.message : error}`);
-  return undefined;
-});
+// Plan Task G2: the guard dispatcher is part of the enforcement stack, not an
+// optional extra. If it cannot start, the hub refuses to run — a silently
+// guardless authority would issue permissive decisions no operator asked for.
+// "No hub, no mutations" stays true by failing the hub itself closed.
+const guard = await createDefaultToolboxGuardProvider();
 
 // Hub-owned run gates (plan Tasks A2/D1): the reviewer is a contained ACP
 // agent authorized read-only against its own session task; diff sourcing and
@@ -89,7 +90,7 @@ const reviewerFactory = createReviewerFactory({
     reviewerApplication.addTask({ id: reviewerTaskId, title: "Hub reviewer session", dependencies: [], requiredEvidence: [] });
     reviewerApplication.transition(reviewerTaskId, "IN_PROGRESS");
     reviewerApplication.selectActiveTask(reviewerTaskId);
-    const runtime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerTaskId);
+    const runtime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerTaskId, undefined, guard);
     return {
       submit: (prompt: string) => runtime.session.submit(prompt),
       snapshot: () => runtime.session.snapshot(),
@@ -120,7 +121,7 @@ const schedulerFactory = schedules.length === 0 ? undefined : (handles: Workflow
       const runApplication = handles.resolve(workspace, runId);
       const runTaskId: TaskId = taskId(`run:${runId}`);
       const turnWorkspace = workspace ?? process.cwd();
-      const runtime = await createConfiguredAcpRuntime(runApplication, turnWorkspace, runTaskId);
+      const runtime = await createConfiguredAcpRuntime(runApplication, turnWorkspace, runTaskId, undefined, guard);
       let budgetGuard: BudgetGuard | undefined;
       try {
         if (budget !== undefined) {

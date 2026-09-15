@@ -9,6 +9,7 @@ import { WorkflowCodingSession } from "../application/coding-session.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import type { TaskId } from "../kernel/contracts.js";
 import { AcpSessionDriver } from "./acp-session.js";
+import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { METERED_PLACEHOLDER_KEY, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
 
 export interface WorkflowAcpRuntime {
@@ -24,6 +25,7 @@ export async function createConfiguredAcpRuntime(
   workspace: string,
   taskId: TaskId,
   resumeFrom?: string,
+  guard?: WorkflowGuardProvider,
 ): Promise<WorkflowAcpRuntime> {
   const scratchHome = resolve(homedir(), ".workflow", "acp-home");
   mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
@@ -74,6 +76,7 @@ export async function createConfiguredAcpRuntime(
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
+      ...(guard === undefined ? {} : { guard }),
     });
     return {
       driver,

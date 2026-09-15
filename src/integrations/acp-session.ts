@@ -19,6 +19,7 @@ import {
 } from "../adapters/acp-subprocess.js";
 import type { AcpPermissionRequestParams } from "../adapters/acp-permission.js";
 import { createWorkflowAcpPermissionResolver } from "../adapters/acp-workflow-resolver.js";
+import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 
 /**
  * Plan Task B2: config options that would switch the agent into a
@@ -73,6 +74,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #workflowSessionId: string;
   #taskId: TaskId;
   #resumeFrom: string | undefined;
+  #guard: WorkflowGuardProvider | undefined;
   #initialized = false;
   #canLoadSession = false;
   #agentSessionId?: string;
@@ -90,6 +92,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     taskId: TaskId;
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
+    guard?: WorkflowGuardProvider;
   }) {
     const authorize = typeof options.authorize === "function"
       ? options.authorize
@@ -100,6 +103,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#workflowSessionId = options.workspaceSessionId;
     this.#taskId = options.taskId;
     this.#resumeFrom = options.resumeFrom;
+    this.#guard = options.guard;
     this.#client = new AcpSubprocessClient({
       child: options.child,
       resolvePermission: (request) => this.#resolvePermission(request),
@@ -155,6 +159,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     taskId: TaskId;
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
+    guard?: WorkflowGuardProvider;
   }): AcpSessionDriver {
     const child = launchContainedAcpAgent(options.containment, options.launch);
     return new AcpSessionDriver({ ...options, child });
@@ -330,6 +335,10 @@ export class AcpSessionDriver implements CodingSessionDriver {
         capability: AcpSessionDriver.classify(toolName),
       },
       authorize: (action) => this.#authorize(action),
+      // Plan Task G2: the guard dispatcher gates ACP sessions identically to
+      // the /before-tool route when a provider is composed into the runtime.
+      ...(this.#guard === undefined ? {} : { guard: this.#guard }),
+      workspaceRoot: this.#workspace,
     });
     return resolver(request);
   }

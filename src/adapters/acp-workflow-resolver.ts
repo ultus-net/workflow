@@ -4,11 +4,16 @@ import type { AcpPermissionCorrelation, AcpPermissionRequestParams } from "./acp
 import { correlateAcpPermissionRequest } from "./acp-permission.js";
 import type { AcpPermissionDecision } from "./acp-subprocess.js";
 import type { ProposedToolAction, ToolCapability } from "./host.js";
+import { guardInputFromToolCall, type WorkflowGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 
 export interface WorkflowAcpPermissionResolverOptions {
   readonly adapter: Pick<AcpHostAdapter, "proposalFromBeforeTool">;
   readonly correlation: AcpPermissionCorrelation;
   authorize(action: ProposedToolAction): Promise<PolicyDecision> | PolicyDecision;
+  /** When provided, the guard dispatcher gates every mapped tool call after kernel authorization (plan Task G2). */
+  readonly guard?: WorkflowGuardProvider;
+  /** Workspace root forwarded to the guard for policy scoping. */
+  readonly workspaceRoot?: string;
 }
 
 export function createWorkflowAcpPermissionResolver(
@@ -34,7 +39,25 @@ export function createWorkflowAcpPermissionResolver(
       toolCall,
     });
     const decision = await options.authorize(proposal);
-    return decision.kind === "allow" ? { kind: "allow" } : { kind: "deny", reason: decision.reason };
+    if (decision.kind !== "allow") return { kind: "deny", reason: decision.reason };
+    if (options.guard !== undefined) {
+      // Plan Task G2: identical policy decisions on ACP surfaces — the guard
+      // dispatcher runs after kernel authorization, and any guard failure is
+      // a denial (fail closed), never an allow.
+      const guardInput = guardInputFromToolCall(correlated.toolCall.name, correlated.toolCall.rawInput, options.workspaceRoot);
+      if (guardInput !== undefined) {
+        let guardDecision;
+        try {
+          guardDecision = await options.guard.guardCheck(guardInput);
+        } catch (error) {
+          return { kind: "deny", reason: `guard unavailable (fail closed): ${error instanceof Error ? error.message : String(error)}` };
+        }
+        if (guardDecision.decision !== "allow") {
+          return { kind: "deny", reason: `guard policy '${guardDecision.policy}': ${guardDecision.reason}` };
+        }
+      }
+    }
+    return { kind: "allow" };
   };
 }
 
