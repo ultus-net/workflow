@@ -13,6 +13,8 @@ const POLL_MS = 1000;
 
 interface SessionEnvelope {
   readonly available: boolean;
+  readonly id?: string;
+  readonly title?: string;
   readonly state: { readonly state: string };
   readonly items: readonly OperatorSessionItem[];
 }
@@ -71,7 +73,7 @@ export function WorkflowRuntimeProvider({ children }: { readonly children: React
 
   const runtime = useExternalStoreRuntime<OperatorSessionItem>({
     messages: envelope.items,
-    convertMessage: convertOperatorItem,
+    convertMessage: (item, index) => convertOperatorItem(item, index, envelope.id ?? "single"),
     isRunning,
     isSendDisabled: !envelope.available || isRunning,
     onNew,

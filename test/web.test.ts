@@ -347,3 +347,33 @@ test("web UI manages sessions through guarded routes", async (context) => {
   assert.equal(listed.sessions.length, 1);
   assert.equal(listed.sessions[0]?.active, true);
 });
+
+test("web UI returns 503 instead of crashing when the runtime factory fails", async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), "web-failure-test-"));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => { throw new Error("agent cannot launch"); },
+  });
+  context.after(() => manager.dispose());
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, manager);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+
+  const session = await fetch(`http://127.0.0.1:${port}/api/session`);
+  assert.equal(session.status, 200);
+  assert.deepEqual(await session.json(), { available: false, state: { state: "unavailable" }, items: [] });
+  const prompt = await fetch(`http://127.0.0.1:${port}/api/prompt`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "hello" }),
+  });
+  assert.equal(prompt.status, 503);
+  const cancel = await fetch(`http://127.0.0.1:${port}/api/cancel`, { method: "POST" });
+  assert.equal(cancel.status, 503);
+});

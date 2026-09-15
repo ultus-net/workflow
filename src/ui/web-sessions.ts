@@ -34,6 +34,9 @@ export type SessionSwitchResult =
   | { readonly kind: "unknown" }
   | { readonly kind: "failed"; readonly error: string };
 
+/** session/load gets this long to replay before the switch proceeds without it. */
+const RESUME_LOAD_TIMEOUT_MS = 30_000;
+
 /**
  * Owns the session registry (persisted metadata) and the single live ACP
  * runtime behind the browser UI. One agent process runs at a time: switching
@@ -46,6 +49,18 @@ export class WebSessionManager {
   #sessions: SessionRecord[];
   #active: ActiveSession | undefined;
   #starting: Promise<ActiveSession> | undefined;
+  #switchQueue: Promise<unknown> = Promise.resolve();
+
+  /**
+   * Serializes switches so concurrent create/activate calls can never spawn
+   * two runtimes at once — without it the losing runtime (agent process and
+   * metering proxy) would leak undisposed.
+   */
+  #enqueueSwitch(record: SessionRecord, resumeFrom: string | undefined): Promise<SessionSwitchResult> {
+    const run = this.#switchQueue.then(() => this.#switchTo(record, resumeFrom));
+    this.#switchQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
 
   constructor(options: {
     readonly factory: (resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
@@ -80,7 +95,7 @@ export class WebSessionManager {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    return this.#switchTo(record, undefined);
+    return this.#enqueueSwitch(record, undefined);
   }
 
   async activate(id: string): Promise<SessionSwitchResult> {
@@ -88,7 +103,7 @@ export class WebSessionManager {
     const record = this.#sessions.find((entry) => entry.id === id);
     if (record === undefined) return { kind: "unknown" };
     if (this.#active?.record.id === id) return { kind: "ok", meta: this.#meta(record) };
-    return this.#switchTo(record, record.agentSessionId);
+    return this.#enqueueSwitch(record, record.agentSessionId);
   }
 
   async dispose(): Promise<void> {
@@ -118,9 +133,20 @@ export class WebSessionManager {
       // until the first prompt. The subscription lasts only for the load.
       if (resumeFrom !== undefined) {
         const unsubscribe = runtime.driver.subscribe((event) => channel.ingest(event));
+        let timer: NodeJS.Timeout | undefined;
         try {
-          await runtime.driver.connect();
+          // Bounded wait: a hung session/load must not pend the switch queue
+          // forever. The session stays usable; the replay simply never arrived.
+          // The timer is always cleared so it never outlives the load itself.
+          const loading = runtime.driver.connect();
+          await Promise.race([
+            loading,
+            new Promise<void>((resolve) => {
+              timer = setTimeout(resolve, RESUME_LOAD_TIMEOUT_MS);
+            }),
+          ]);
         } finally {
+          if (timer !== undefined) clearTimeout(timer);
           unsubscribe();
         }
       }

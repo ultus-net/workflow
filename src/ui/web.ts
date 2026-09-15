@@ -26,8 +26,14 @@ export function createWorkflowWebServer(
   const singleChannel = single === undefined ? undefined : new SessionChannel(single);
 
   async function channel(): Promise<SessionChannel | undefined> {
-    if (manager !== undefined) return manager.channel();
-    return singleChannel;
+    try {
+      if (manager !== undefined) return await manager.channel();
+      return singleChannel;
+    } catch {
+      // A failed runtime factory must never reject the request listener:
+      // every caller maps undefined to 503.
+      return undefined;
+    }
   }
 
   return createServer(async (request, response) => {

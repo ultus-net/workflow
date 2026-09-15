@@ -4,11 +4,13 @@ import type { OperatorSessionItem } from "../operator-session.js";
 
 /**
  * Converts the framework-neutral operator transcript into assistant-ui
- * messages. Ids are index-based: the transcript is append-only and coalescing
- * replaces the last item in place, so index ids stay stable across polls.
+ * messages. Ids are scoped by session id plus index: the transcript is
+ * append-only and coalescing replaces the last item in place, so index ids
+ * stay stable across polls, while the session scope guarantees a session
+ * switch is seen as a completely new message set (never a stale-id reuse).
  */
-export function convertOperatorItem(item: OperatorSessionItem, index: number): ThreadMessageLike {
-  const id = `item-${index}`;
+export function convertOperatorItem(item: OperatorSessionItem, index: number, sessionId = "single"): ThreadMessageLike {
+  const id = `${sessionId}-${index}`;
   switch (item.kind) {
     case "user":
       return {

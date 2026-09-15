@@ -108,6 +108,44 @@ test("session manager refuses to switch while a turn is running", async (context
   await manager.dispose();
 });
 
+test("session manager serializes concurrent switches without leaking runtimes", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const spawned: FakeRuntime[] = [];
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => {
+      const fake = fakeRuntime(`agent-${spawned.length + 1}`);
+      spawned.push(fake);
+      return fake.runtime;
+    },
+  });
+
+  await manager.channel();
+  const [first, second] = await Promise.all([manager.create(), manager.create()]);
+  assert.equal(first.kind, "ok");
+  assert.equal(second.kind, "ok");
+  assert.equal(spawned.length, 3, "initial runtime plus one per switch");
+  assert.equal(spawned[0]?.disposed, true, "the initial runtime is disposed by the first switch");
+  assert.equal(spawned[1]?.disposed, true, "the outgoing runtime is always disposed");
+  assert.equal(spawned[2]?.disposed, false);
+  assert.equal(manager.list().length, 3);
+  await manager.dispose();
+});
+
+test("session manager surfaces factory failure without a stuck active session", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => { throw new Error("agent cannot launch"); },
+  });
+
+  await assert.rejects(manager.channel(), /agent cannot launch/);
+  assert.equal((await manager.create()).kind, "failed");
+  await manager.dispose();
+});
+
 test("session manager resumes the most recent session on restart instead of accumulating empties", async (context) => {
   const dir = registryDir();
   context.after(() => rmSync(dir, { recursive: true, force: true }));
