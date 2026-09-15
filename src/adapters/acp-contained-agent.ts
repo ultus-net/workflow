@@ -4,10 +4,14 @@ import { isAbsolute } from "node:path";
 import type { ProcessContainment } from "../containment/contracts.js";
 
 export interface ContainedAcpAgentLaunchOptions {
-  /** Absolute path to the runtime executable (e.g. the Node binary). */
+  /** Absolute path to the runtime executable (a Node binary or a self-contained agent binary). */
   readonly executable: string;
-  /** Absolute path to the agent entry script (e.g. the resolved `cline` bin). */
-  readonly script: string;
+  /**
+   * Absolute path to the agent entry script, when the executable needs one
+   * (e.g. the resolved `cline` wrapper run under Node). Self-contained
+   * compiled agents omit it and receive only `args`.
+   */
+  readonly script?: string | undefined;
   readonly args?: readonly string[];
   /** Absolute workspace path; the only project tree the agent can write. */
   readonly workspace: string;
@@ -39,15 +43,15 @@ export function launchContainedAcpAgent(
   }
   for (const [label, value] of [
     ["executable", options.executable],
-    ["script", options.script],
     ["workspace", options.workspace],
     ["home", options.home],
+    ...(options.script !== undefined ? ([["script", options.script]] as const) : []),
   ] as const) {
     if (!isAbsolute(value)) throw new TypeError(`${label} must be an absolute path`);
   }
   return containment.spawn({
     executable: options.executable,
-    args: [options.script, ...(options.args ?? [])],
+    args: [...(options.script !== undefined ? [options.script] : []), ...(options.args ?? [])],
     cwd: options.workspace,
     ...(options.readablePaths ? { readablePaths: options.readablePaths } : {}),
     writablePaths: [options.workspace, options.home],

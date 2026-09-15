@@ -1,14 +1,15 @@
-import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import type { TaskId } from "../kernel/contracts.js";
 import { AcpSessionDriver } from "./acp-session.js";
+import { globalClineEntrypoint, resolveClineLaunch } from "./cline-launch.js";
 import { METERED_PLACEHOLDER_KEY, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
 
 export interface WorkflowAcpRuntime {
@@ -26,7 +27,12 @@ export async function createConfiguredAcpRuntime(
   const scratchHome = resolve(homedir(), ".workflow", "acp-home");
   mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
 
-  const clineBin = realpathSync(execFileSync("/usr/bin/which", ["cline"], { encoding: "utf8" }).trim());
+  const workflowRoot = resolve(fileURLToPath(import.meta.url), "..", "..", "..");
+  const launchCline = resolveClineLaunch({
+    workflowRoot,
+    envBinOverride: process.env.WORKFLOW_CLINE_BIN,
+    clineOnPath: globalClineEntrypoint(),
+  });
   let apiKey = process.env.CLINE_API_KEY;
   if (apiKey === undefined) {
     try {
@@ -53,8 +59,8 @@ export async function createConfiguredAcpRuntime(
     const driver = AcpSessionDriver.contained({
       containment: new LinuxBubblewrapContainment(),
       launch: {
-        executable: process.execPath,
-        script: clineBin,
+        executable: launchCline.executable,
+        ...(launchCline.script !== undefined ? { script: launchCline.script } : {}),
         args: ["--acp", "--auto-approve", "false", ...(model ? ["--model", model] : [])],
         workspace,
         home: scratchHome,
