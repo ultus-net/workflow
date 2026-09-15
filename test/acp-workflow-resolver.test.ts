@@ -335,3 +335,30 @@ test("non-skill tool calls never record a delivery", async () => {
   });
   assert.deepEqual(delivered, []);
 });
+
+test("lazy-discovery call_tool indirection journals the delivered skill", async () => {
+  const delivered: string[] = [];
+  const resolver = skillReadResolver(delivered, "call_tool");
+  const callToolRequest: AcpPermissionRequestParams = {
+    ...request,
+    // The lazy-discovery wrapper gates as a mutation, so the caller declares
+    // the target as the subject (the skills dir) — the realistic shape.
+    toolCall: {
+      toolCallId: "tool-call-indirect",
+      title: "call_tool",
+      kind: "other",
+      rawInput: { tool: "read_skill", arguments: { name: "test-driven-development" } },
+      locations: [{ path: "/skills" }],
+    },
+  };
+  assert.deepEqual(await resolver(callToolRequest), { kind: "allow" });
+  assert.deepEqual(delivered, ["test-driven-development"], "the indirection must resolve to the inner skill name");
+
+  // call_tool targeting a non-skill tool journals nothing.
+  const nonSkill = skillReadResolver(delivered, "call_tool");
+  await nonSkill({
+    ...callToolRequest,
+    toolCall: { ...callToolRequest.toolCall, rawInput: { tool: "read_file", arguments: { path: "a.ts" } } },
+  });
+  assert.deepEqual(delivered, ["test-driven-development"]);
+});

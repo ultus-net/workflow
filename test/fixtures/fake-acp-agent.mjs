@@ -96,6 +96,19 @@ function handleMessage(message) {
   } else if (message.method === "session/prompt") {
     cancelled = false;
     activePromptId = message.id;
+    if (mode === "usage-update") {
+      // E2 forward-compat: usage_update is stabilized in ACP v1 but unknown to
+      // this client's projection — it must pass through untouched so the hub
+      // can adopt it when agents upgrade their pinned SDKs.
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: { sessionUpdate: "usage_update", totalTokens: 100, costUsd: 0.01 },
+        },
+      });
+    }
     if (mode === "plan-update") {
       // Web-parity plan projection (Batch 2): ACP plan updates with
       // completed + pending entries.
