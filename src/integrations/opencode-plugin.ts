@@ -30,7 +30,7 @@ export function createWorkflowOpenCodePlugin(
           try {
             guardDecision = await guard.guardCheck(guardInput);
           } catch (error) {
-            throw new Error(`guard unavailable (fail closed): ${error instanceof Error ? error.message : String(error)}`);
+            throw new Error(`guard unavailable (fail closed): ${error instanceof Error ? error.message : String(error)}`, { cause: error });
           }
           if (guardDecision.decision !== "allow") {
             throw new Error(`Workflow denied ${proposal.tool}: guard policy '${guardDecision.policy}': ${guardDecision.reason}`);

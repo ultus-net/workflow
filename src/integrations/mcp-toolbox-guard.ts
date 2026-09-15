@@ -97,7 +97,6 @@ export async function createWorkflowGuardMcpProvider(options: { serverPath: stri
   };
 }
 
-/** Maps a guard decision to normalized MCP evidence for the policy subject. */
 /** Resolves the vendored workflow-guard-mcp server entrypoint, building first if needed. */
 export function defaultToolboxGuardServerPath(): string {
   const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -125,45 +124,75 @@ export function guardPolicyEvidence(decision: GuardDecision, mutationEpoch: numb
 }
 
 // Plan Task G2: one shared tool-call → guard-input mapping, used by the
-// Cline plugin (/before-tool route) and the ACP permission resolver, so
-// every surface gets identical policy decisions from the guard dispatcher.
-// Tool-name families cover both the Cline hook surface and the ACP approval
-// surface (run_commands, replace_in_file, delete_file, ...).
+// Cline plugin (/before-tool route), the ACP permission resolver, and the
+// OpenCode plugin, so every surface gets identical policy decisions from the
+// guard dispatcher. Tool-name families cover the Cline hook surface, the ACP
+// approval surface (run_commands, replace_in_file, delete_file, ...), and the
+// OpenCode tool surface (edit, write, patch, bash, webfetch).
 const SHELL_TOOLS = new Set(["execute_command", "bash", "run_commands", "shell"]);
-const FILE_WRITE_TOOLS = new Set(["write_to_file", "new_file_template", "write_file", "editor", "replace_in_file"]);
+const FILE_WRITE_TOOLS = new Set(["write_to_file", "new_file_template", "write_file", "editor", "replace_in_file", "edit", "write"]);
 const PATCH_TOOLS = new Set(["apply_patch", "patch"]);
 const DELETE_TOOLS = new Set(["delete_file"]);
+const NETWORK_TOOLS = new Set(["webfetch", "web_fetch", "fetch_web_content", "websearch", "web_search"]);
 
 export function guardInputFromToolCall(toolName: string, input: unknown, workspaceRoot?: string): GuardCheckInput | undefined {
+  const base = workspaceRoot === undefined ? {} : { workspaceRoot };
   if (SHELL_TOOLS.has(toolName)) {
-    return { action: "shell", command: shellCommandFromInput(input), ...(workspaceRoot === undefined ? {} : { workspaceRoot }) };
+    return { action: "shell", command: shellCommandFromInput(input), ...base };
   }
   if (FILE_WRITE_TOOLS.has(toolName)) {
     const record = inputRecord(input);
+    // Extraction keys cover every host's shapes: path/filePath/file_path,
+    // content/newString — content-bearing edits must never reach the guard
+    // path- or content-blind.
+    const path = firstString(record, ["path", "filePath", "file_path"]);
+    const content = firstString(record, ["content", "newString"]);
+    const patchText = firstString(record, ["patchText", "patch", "diff"]);
     return {
       action: "file_write",
-      ...(typeof record?.path === "string" ? { path: record.path } : {}),
-      ...(typeof record?.content === "string" ? { content: record.content } : {}),
-      ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+      ...(path === undefined ? {} : { path }),
+      ...(content === undefined ? {} : { content }),
+      ...(patchText === undefined ? {} : { patchText }),
+      ...base,
     };
   }
   if (PATCH_TOOLS.has(toolName)) {
     const record = inputRecord(input);
-    const patchText = typeof record?.patch === "string" ? record.patch : typeof record?.diff === "string" ? record.diff : undefined;
+    const path = firstString(record, ["path", "filePath", "file_path"]);
+    const patchText = firstString(record, ["patchText", "patch", "diff"]);
     return {
       action: "file_write",
-      ...(typeof record?.path === "string" ? { path: record.path } : {}),
-      ...(patchText !== undefined ? { patchText } : {}),
-      ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+      ...(path === undefined ? {} : { path }),
+      ...(patchText === undefined ? {} : { patchText }),
+      ...base,
     };
   }
   if (DELETE_TOOLS.has(toolName)) {
     const record = inputRecord(input);
+    const path = firstString(record, ["path", "filePath", "file_path"]);
     return {
       action: "file_write",
-      ...(typeof record?.path === "string" ? { path: record.path } : {}),
-      ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+      ...(path === undefined ? {} : { path }),
+      ...base,
     };
+  }
+  if (NETWORK_TOOLS.has(toolName)) {
+    const record = inputRecord(input);
+    const url = firstString(record, ["url", "input"]);
+    return {
+      action: "network",
+      ...(url === undefined ? {} : { command: url }),
+      ...base,
+    };
+  }
+  return undefined;
+}
+
+function firstString(record: Record<string, unknown> | undefined, keys: readonly string[]): string | undefined {
+  if (record === undefined) return undefined;
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.length > 0) return value;
   }
   return undefined;
 }

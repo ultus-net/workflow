@@ -144,7 +144,7 @@ const schedulerFactory = schedules.length === 0 ? undefined : (handles: Workflow
 
 const hub = await createWorkflowHub(application, {
   graph,
-  ...(guard === undefined ? {} : { guard }),
+  guard,
   ...(teamTaskVerificationCommand === undefined ? {} : { teamTaskVerificationCommand }),
   ...(testRunner === undefined ? {} : { testRunner }),
   ...(schedulerFactory === undefined ? {} : { schedulerFactory }),

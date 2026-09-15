@@ -38,7 +38,15 @@ export function createWorkflowClinePlugin(
         if (guard !== undefined) {
           const guardInput = guardInputFromToolCall(toolCall.toolName, input, application.workspaceRoot);
           if (guardInput !== undefined) {
-            const decision = await guard.guardCheck(guardInput);
+            let decision;
+            try {
+              decision = await guard.guardCheck(guardInput);
+            } catch (error) {
+              // Fail closed with the same control shape the hub route uses.
+              const reason = `guard unavailable (fail closed): ${error instanceof Error ? error.message : String(error)}`;
+              onToolDenied?.(proposal.tool, reason, toolCall.toolCallId);
+              return { stop: true, reason };
+            }
             if (decision.decision !== "allow") {
               const reason = `guard policy '${decision.policy}': ${decision.reason}`;
               onToolDenied?.(proposal.tool, reason, toolCall.toolCallId);

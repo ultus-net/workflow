@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { guardPolicyEvidence } from "../src/integrations/mcp-toolbox-guard.js";
+import { guardInputFromToolCall, guardPolicyEvidence } from "../src/integrations/mcp-toolbox-guard.js";
 import { createWorkflowGuardMcpProvider } from "../src/integrations/mcp-toolbox-guard.js";
 
 const serverPath = resolve(process.cwd(), "mcp-toolbox", "apps", "workflow-guard-mcp", "dist", "server.js");
@@ -41,4 +41,26 @@ test("workflow-guard-mcp provider discovers and invokes guard_check over stdio",
 
   const status = await provider.guardStatus();
   assert.equal(status.mode, "policy-advisor");
+});
+
+// ── Plan Task G2: shared tool-call → guard-input mapping ────────────────────
+
+test("guardInputFromToolCall maps every host family to guard actions", () => {
+  // Cline hook surface
+  assert.deepEqual(guardInputFromToolCall("execute_command", { command: "git status" }), { action: "shell", command: "git status" });
+  assert.deepEqual(guardInputFromToolCall("write_to_file", { path: "src/a.ts", content: "let x = 1;" }), { action: "file_write", path: "src/a.ts", content: "let x = 1;" });
+  // ACP approval surface
+  assert.deepEqual(guardInputFromToolCall("run_commands", { commands: ["git status", { command: "make", args: ["build"] }] }), { action: "shell", command: "git status; make build" });
+  assert.deepEqual(guardInputFromToolCall("replace_in_file", { path: "a.ts", diff: "@@ -1 +1 @@" }), { action: "file_write", path: "a.ts", patchText: "@@ -1 +1 @@" });
+  // OpenCode surface — edit/write must carry the content, never an empty payload
+  assert.deepEqual(guardInputFromToolCall("edit", { filePath: "src/a.ts", newString: "let y = 2;" }), { action: "file_write", path: "src/a.ts", content: "let y = 2;" });
+  assert.deepEqual(guardInputFromToolCall("write", { filePath: "src/b.ts", content: "export {};" }), { action: "file_write", path: "src/b.ts", content: "export {};" });
+  assert.deepEqual(guardInputFromToolCall("apply_patch", { patchText: "*** Update File: x" }), { action: "file_write", patchText: "*** Update File: x" });
+  assert.deepEqual(guardInputFromToolCall("bash", { command: "echo hi" }), { action: "shell", command: "echo hi" });
+  // Network tools reach the guard with the target URL
+  assert.deepEqual(guardInputFromToolCall("webfetch", { url: "https://example.internal" }), { action: "network", command: "https://example.internal" });
+  // Unmapped tools stay out of the guard entirely
+  assert.equal(guardInputFromToolCall("search_codebase", { query: "x" }), undefined);
+  // workspaceRoot scoping applies to every mapped action
+  assert.deepEqual(guardInputFromToolCall("write", { filePath: "a.ts", content: "x" }, "/repo"), { action: "file_write", path: "a.ts", content: "x", workspaceRoot: "/repo" });
 });
