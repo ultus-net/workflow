@@ -294,8 +294,27 @@ test("web UI manages sessions through guarded routes", async (context) => {
         async start(_prompt, emit) { emit({ type: "completed", result: "done" }); },
         async cancel() {},
       };
+      type FakeOption = { id: string; name: string; category?: string; type: string; currentValue: string | boolean; options?: { value: string }[] };
+      let config: { configOptions: FakeOption[] } = {
+        configOptions: [
+          { id: "model", name: "Model", category: "model", type: "select", currentValue: "kimi-k2", options: [{ value: "kimi-k2" }, { value: "moonshot-v1" }] },
+          { id: "web-search", name: "Web search", type: "boolean", currentValue: false },
+        ],
+      };
       return {
-        driver: { ...driver, agentSessionId: () => "agent-x", connect: async () => {}, subscribe: () => () => {} } as never,
+        driver: {
+          ...driver,
+          agentSessionId: () => "agent-x",
+          connect: async () => {},
+          subscribe: () => () => {},
+          config: () => config,
+          setConfigOption: async (id: string, value: string | boolean) => {
+            config = {
+              configOptions: config.configOptions.map((option) => option.id === id ? { ...option, currentValue: value } : option),
+            };
+            return config;
+          },
+        } as never,
         session: new WorkflowCodingSession(driver),
         async dispose() {},
       };
@@ -395,6 +414,55 @@ test("web UI manages sessions through guarded routes", async (context) => {
   const remaining = await fetch(`http://127.0.0.1:${port}/api/sessions`).then((response) => response.json()) as { sessions: { active: boolean }[] };
   assert.equal(remaining.sessions.length, 1);
   assert.equal(remaining.sessions[0]?.active, true);
+
+  // Config options: listed, mutated through guards, unknown ids rejected.
+  const listedOptions = await fetch(`http://127.0.0.1:${port}/api/config-options`).then((response) => response.json()) as { options: { id: string; currentValue: unknown }[] };
+  assert.deepEqual(listedOptions.options.map((option) => option.id), ["model", "web-search"]);
+
+  const configHostile = await fetch(`http://127.0.0.1:${port}/api/config-options`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://attacker.example" },
+    body: JSON.stringify({ id: "model", value: "moonshot-v1" }),
+  });
+  assert.equal(configHostile.status, 403);
+
+  const configNonJson = await fetch(`http://127.0.0.1:${port}/api/config-options`, {
+    method: "POST",
+    headers: { "content-type": "text/plain" },
+    body: JSON.stringify({ id: "model", value: "moonshot-v1" }),
+  });
+  assert.equal(configNonJson.status, 415);
+
+  const configUnknown = await fetch(`http://127.0.0.1:${port}/api/config-options`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: "nope", value: "x" }),
+  });
+  assert.equal(configUnknown.status, 404);
+
+  const configBadValue = await fetch(`http://127.0.0.1:${port}/api/config-options`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: "model", value: 42 }),
+  });
+  assert.equal(configBadValue.status, 400);
+
+  const configUpdated = await fetch(`http://127.0.0.1:${port}/api/config-options`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: "model", value: "moonshot-v1" }),
+  });
+  assert.equal(configUpdated.status, 200);
+  const updatedOptions = await configUpdated.json() as { options: { id: string; currentValue: unknown }[] };
+  assert.equal(updatedOptions.options.find((option) => option.id === "model")?.currentValue, "moonshot-v1");
+
+  const toggleUpdated = await fetch(`http://127.0.0.1:${port}/api/config-options`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: "web-search", value: true }),
+  });
+  assert.equal(toggleUpdated.status, 200);
+  assert.equal((await toggleUpdated.json() as { options: { id: string; currentValue: unknown }[] }).options.find((option) => option.id === "web-search")?.currentValue, true);
 });
 
 test("web UI returns 503 instead of crashing when the runtime factory fails", async (context) => {

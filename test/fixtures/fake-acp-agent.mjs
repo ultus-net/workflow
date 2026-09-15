@@ -65,6 +65,11 @@ function handleMessage(message) {
       },
     });
   } else if (message.method === "session/set_config_option") {
+    // Mirror the ACP schema: boolean values must carry type:"boolean".
+    if (typeof message.params.value === "boolean" && message.params.type !== "boolean") {
+      send({ jsonrpc: "2.0", id: message.id, error: { code: -32602, message: "Invalid params: boolean value requires type boolean" } });
+      return;
+    }
     configOptions = configOptions.map((option) => option.id === message.params.configId
       ? { ...option, currentValue: message.params.value }
       : option);

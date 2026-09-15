@@ -60,6 +60,21 @@ test("hub-side ACP subprocess spike updates a session config option and returns 
   await client.close();
 });
 
+test("hub-side ACP subprocess spike sends boolean config values with the ACP type discriminator", async () => {
+  const client = new AcpSubprocessClient({ child: fakeAgent() });
+  await client.initialize();
+  const session = await client.newSession({ cwd: "/repo" });
+
+  const config = await client.setConfigOption({
+    sessionId: session.sessionId,
+    configId: "model",
+    value: true,
+  });
+
+  assert.equal((config.configOptions as { currentValue?: unknown }[])[0]?.currentValue, true);
+  await client.close();
+});
+
 test("hub-side ACP subprocess spike cancels an active prompt explicitly", async () => {
   const client = new AcpSubprocessClient({ child: fakeAgent() });
   await client.initialize();

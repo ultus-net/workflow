@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AttachmentPrimitive,
   AuiIf,
@@ -112,6 +112,175 @@ function clearUnusedSessions(refresh: () => Promise<void>): void {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ clearUnused: true }),
   }).then(() => refresh());
+}
+
+interface ConfigChoice {
+  readonly value: string;
+  readonly name: string;
+  readonly description?: string;
+}
+
+interface ConfigOption {
+  readonly id: string;
+  readonly name: string;
+  readonly description?: string;
+  readonly category?: string;
+  readonly type: "select" | "boolean";
+  readonly currentValue: string | boolean;
+  readonly choices?: readonly ConfigChoice[];
+}
+
+/** Polls the agent-advertised session configuration; empty when the agent offers none. */
+function useConfigOptions() {
+  const [options, setOptions] = useState<ConfigOption[]>([]);
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/config-options");
+      if (response.ok) setOptions((await response.json() as { options: ConfigOption[] }).options);
+    } catch {
+      // Keep the last good list; the next poll retries.
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), PANEL_POLL_MS);
+    return () => clearInterval(timer);
+  }, [load]);
+  const setOption = useCallback((id: string, value: string | boolean): void => {
+    // Optimistic: reflect the choice now, reconcile with the server response.
+    setOptions((previous) => previous.map((option) => option.id === id ? { ...option, currentValue: value } : option));
+    void fetch("/api/config-options", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id, value }),
+    }).then(async (response) => {
+      if (response.ok) setOptions((await response.json() as { options: ConfigOption[] }).options);
+      else await load();
+    }).catch(() => load());
+  }, [load]);
+  return { options, setOption };
+}
+
+/** Categories promoted to composer-adjacent pickers; everything else lives in the popover. */
+const COMPOSER_CATEGORIES: readonly string[] = ["model", "thought_level", "mode"];
+
+function GearIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
+      <circle cx="8" cy="8" r="2.2" />
+      <path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function ConfigSelect({ option, setOption, labelledBy }: {
+  readonly option: ConfigOption;
+  readonly setOption: (id: string, value: string | boolean) => void;
+  readonly labelledBy?: string;
+}) {
+  const choices = option.choices ?? [];
+  const current = String(option.currentValue);
+  // Agents may report a current value outside the advertised choices; show it truthfully.
+  const displayChoices = choices.some((choice) => choice.value === current)
+    ? choices
+    : [{ value: current, name: current }, ...choices];
+  return (
+    <select
+      value={current}
+      onChange={(event) => setOption(option.id, event.target.value)}
+      aria-label={labelledBy === undefined ? option.name : undefined}
+      aria-labelledby={labelledBy}
+      title={option.description}
+    >
+      {displayChoices.map((choice) => (
+        <option value={choice.value} key={choice.value} title={choice.description}>{choice.name}</option>
+      ))}
+    </select>
+  );
+}
+
+function ConfigControls({ options, setOption }: {
+  readonly options: readonly ConfigOption[];
+  readonly setOption: (id: string, value: string | boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const gearRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        gearRef.current?.focus();
+      }
+    };
+    const onPointerDown = (event: MouseEvent): void => {
+      if (popoverRef.current?.contains(event.target as Node) === false && gearRef.current?.contains(event.target as Node) === false) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onPointerDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onPointerDown);
+    };
+  }, [open]);
+
+  if (options.length === 0) return null;
+  const pickers = options.filter((option) => option.type === "select" && option.category !== undefined && COMPOSER_CATEGORIES.includes(option.category));
+  const toggles = options.filter((option) => option.type === "boolean");
+  const popoverSelects = options.filter((option) => option.type === "select" && !pickers.includes(option));
+
+  return (
+    <div className="config-row">
+      {pickers.map((option) => (
+        <span className="config-picker" key={option.id}>
+          <span className="config-picker-label" id={`config-label-${option.id}`}>{option.name}</span>
+          <ConfigSelect option={option} setOption={setOption} labelledBy={`config-label-${option.id}`} />
+        </span>
+      ))}
+      {(toggles.length > 0 || popoverSelects.length > 0) && (
+        <span className="config-settings">
+          <button
+            ref={gearRef}
+            className="btn btn-ghost config-gear"
+            aria-expanded={open}
+            aria-haspopup="dialog"
+            aria-label="Session settings"
+            onClick={() => setOpen((value) => !value)}
+          >
+            <GearIcon />
+          </button>
+          {open && (
+            <div className="config-popover" role="dialog" aria-label="Session settings" ref={popoverRef}>
+              {popoverSelects.map((option) => (
+                <label className="config-field" key={option.id}>
+                  <span className="config-field-label">{option.name}</span>
+                  <ConfigSelect option={option} setOption={setOption} />
+                </label>
+              ))}
+              {toggles.map((option) => (
+                <label className="config-toggle" key={option.id} title={option.description}>
+                  <input
+                    type="checkbox"
+                    checked={option.currentValue === true}
+                    onChange={(event) => setOption(option.id, event.target.checked)}
+                  />
+                  <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
+                  <span className="config-toggle-text">
+                    {option.name}
+                    {option.description !== undefined && <span className="config-toggle-desc">{option.description}</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+        </span>
+      )}
+    </div>
+  );
 }
 
 function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]; readonly refresh: () => Promise<void> }) {
@@ -297,6 +466,7 @@ const ENFORCEMENT_COPY: Record<string, string> = {
 export function App() {
   const { snapshot, refresh } = useSnapshot();
   const { sessions, refresh: refreshSessions } = useSessions();
+  const { options, setOption } = useConfigOptions();
   const enforcementCopy = snapshot === undefined ? undefined : ENFORCEMENT_COPY[snapshot.enforcementLevel];
   return (
     <div className="shell">
@@ -331,6 +501,7 @@ export function App() {
             </ThreadPrimitive.Viewport>
             <div className="composer-dock">
               <Composer />
+              <ConfigControls options={options} setOption={setOption} />
             </div>
           </ThreadPrimitive.Root>
         </section>

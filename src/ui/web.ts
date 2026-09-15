@@ -103,6 +103,36 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
+    if (request.method === "GET" && request.url === "/api/config-options") {
+      const active = await channel();
+      if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
+      return json(response, 200, { options: active.configOptions() });
+    }
+    if (request.method === "POST" && request.url === "/api/config-options") {
+      const active = await channel();
+      if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const input = body as { id?: unknown; value?: unknown } | null;
+        const id = typeof input?.id === "string" && input.id.length > 0 ? input.id : undefined;
+        const value = typeof input?.value === "string" || typeof input?.value === "boolean" ? input.value : undefined;
+        if (id === undefined || value === undefined) return json(response, 400, { error: "invalid config option request" });
+        if (!active.configOptions().some((option) => option.id === id)) {
+          return json(response, 404, { error: "unknown config option" });
+        }
+        try {
+          return json(response, 200, { options: await active.setConfigOption(id, value) });
+        } catch (error) {
+          return json(response, 502, { error: error instanceof Error ? error.message : "config update failed" });
+        }
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
     if (request.method === "GET" && request.url?.startsWith("/api/image/")) {
       const active = await channel();
       const stored = active?.image(decodeURIComponent(request.url.slice("/api/image/".length)));

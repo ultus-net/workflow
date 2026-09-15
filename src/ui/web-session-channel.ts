@@ -1,7 +1,9 @@
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import type { CodingSessionImage } from "../application/coding-session.js";
 import type { CodingSessionState } from "../application/coding-session.js";
+import type { AcpConfigOptionValue, AcpSessionConfig } from "../adapters/acp-subprocess.js";
 import { appendOperatorItem, projectOperatorSessionEvent, type OperatorSessionImage, type OperatorSessionItem } from "./operator-session.js";
+import { normalizeConfigOptions, type WebConfigOption } from "./web-config-options.js";
 
 /** Four images at ≤ 5 MB base64 payload each, plus the prompt body margin. */
 export const PROMPT_BODY_LIMIT = 24 * 1024 * 1024;
@@ -61,6 +63,16 @@ export function isPromptRequest(value: unknown): value is { prompt: string; imag
 }
 
 /**
+ * Minimal driver surface for session configuration. Optional: the
+ * single-session server path has no ACP driver, and agents may advertise no
+ * options at all — both yield an empty option list.
+ */
+export interface ConfigCapableDriver {
+  config(): AcpSessionConfig | undefined;
+  setConfigOption(configId: string, value: AcpConfigOptionValue): Promise<AcpSessionConfig>;
+}
+
+/**
  * One live chat channel: the operator transcript, turn serialization, and the
  * image store for a single coding session. The transcript records user turns
  * locally; assistant activity arrives through the session subscription.
@@ -69,9 +81,22 @@ export class SessionChannel {
   #items: OperatorSessionItem[] = [];
   #turnInFlight = false;
   readonly #images = new ImageStore(`img-${Math.random().toString(36).slice(2, 8)}-`);
+  readonly #driver: ConfigCapableDriver | undefined;
 
-  constructor(readonly session: WorkflowCodingSession) {
+  constructor(readonly session: WorkflowCodingSession, driver?: ConfigCapableDriver) {
+    this.#driver = driver;
     session.subscribe((event) => this.ingest(event));
+  }
+
+  /** Agent-advertised configuration options (empty until the session exists / if none advertised). */
+  configOptions(): WebConfigOption[] {
+    return normalizeConfigOptions(this.#driver?.config());
+  }
+
+  /** Mutate one option on the live agent session; returns the full updated list. */
+  async setConfigOption(configId: string, value: AcpConfigOptionValue): Promise<WebConfigOption[]> {
+    if (this.#driver === undefined) throw new Error("session configuration unavailable");
+    return normalizeConfigOptions(await this.#driver.setConfigOption(configId, value));
   }
 
   /** Projects one raw session event into the transcript (used for session/load replays). */

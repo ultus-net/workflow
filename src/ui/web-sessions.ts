@@ -155,7 +155,7 @@ export class WebSessionManager {
     await previous?.runtime.dispose();
     try {
       const runtime = await this.#factory(resumeFrom);
-      const channel = new SessionChannel(runtime.session);
+      const channel = new SessionChannel(runtime.session, runtime.driver);
       // Eagerly load the resumed session so its replayed history reaches the
       // channel before the UI polls — otherwise the transcript looks empty
       // until the first prompt. The subscription lasts only for the load.

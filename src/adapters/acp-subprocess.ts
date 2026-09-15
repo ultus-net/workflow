@@ -130,7 +130,11 @@ export class AcpSubprocessClient {
     readonly configId: string;
     readonly value: AcpConfigOptionValue;
   }): Promise<AcpSessionConfig> {
-    const result = requireRecord(await this.#request(methods.agent.session.setConfigOption, options), "invalid ACP config result");
+    // ACP discriminates the request on `type`: boolean values must carry type:"boolean".
+    const params = typeof options.value === "boolean"
+      ? { sessionId: options.sessionId, configId: options.configId, value: options.value, type: "boolean" as const }
+      : { sessionId: options.sessionId, configId: options.configId, value: options.value };
+    const result = requireRecord(await this.#request(methods.agent.session.setConfigOption, params), "invalid ACP config result");
     if (!Array.isArray(result.configOptions)) throw new TypeError("invalid ACP config result");
     return { configOptions: result.configOptions };
   }

@@ -203,7 +203,7 @@ test("session manager dismisses sessions and keeps the next one active", async (
 
   await manager.channel();
   await manager.create();
-  const [fresh, previous] = manager.list();
+  const [, previous] = manager.list();
   assert.equal((await manager.dismiss("missing")).kind, "unknown");
   assert.equal((await manager.dismiss(previous!.id)).kind, "ok");
   assert.equal(manager.list().length, 1);
