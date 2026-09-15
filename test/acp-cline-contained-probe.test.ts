@@ -9,7 +9,7 @@ import test from "node:test";
 import { launchContainedAcpAgent } from "../src/adapters/acp-contained-agent.js";
 import { AcpSubprocessClient, type AcpPermissionDecision, type AcpSessionUpdate } from "../src/adapters/acp-subprocess.js";
 import { LinuxBubblewrapContainment } from "../src/containment/linux-bwrap.js";
-import { clineEntrypoint, loadClineApiKey } from "./cline-probe-helpers.js";
+import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
 
 // Containment conformance proof: Cline 3.0.61 never delegates execution to
 // client terminal/*/fs/* capabilities (its ACP initialize ignores client
@@ -37,9 +37,10 @@ test(
     await writeFile(canary, `${canarySecret}\n`, "utf8");
 
     const clineApiKey = await loadClineApiKey("Cline contained probe");
+    const cline = clineLaunchEntry();
     const child = launchContainedAcpAgent(new LinuxBubblewrapContainment(), {
-      executable: process.execPath,
-      script: clineEntrypoint(),
+      executable: cline.executable,
+      ...(cline.script !== undefined ? { script: cline.script } : {}),
       args: ["--acp", "--provider", "openrouter", "--auto-approve", "false", "--cwd", workspace],
       workspace,
       home: scratchHome,

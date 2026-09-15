@@ -13,3 +13,12 @@ attach the Workflow authorization bridge:
 - scheduled agents: `createWorkflowHubHooks` in the hub daemon attaches
   authorization hooks to every hub-started session and opens dedicated tasks
   via `/run/begin` and `/run/finish`
+
+## Staged universal TUI convergence
+
+`workflow-tui` composes an explicit `cline`, `opencode`, or `acp` host session
+driver onto the SDK-neutral `WorkflowTui`. It currently owns standalone local
+authority rather than driving the hub's canonical session. The patched Cline
+CLI TUI stays the primary interactive surface until every item in
+`docs/TUI_PARITY.md` passes; afterwards the primary surface can flip to
+`workflow-tui` and per-SDK patched TUIs can become optional surfaces.

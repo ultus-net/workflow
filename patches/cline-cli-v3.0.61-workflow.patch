@@ -1,3 +1,312 @@
+diff --git a/apps/cli/src/acp/acpAgent.ts b/apps/cli/src/acp/acpAgent.ts
+index ad1f032..6a5768a 100644
+--- a/apps/cli/src/acp/acpAgent.ts
++++ b/apps/cli/src/acp/acpAgent.ts
+@@ -25,6 +25,7 @@ import type {
+ import { PROTOCOL_VERSION, RequestError } from "@agentclientprotocol/sdk";
+ import {
+ 	type AgentEvent,
++	buildConnectionUpdate,
+ 	type ClineCore,
+ 	Llms,
+ 	ProviderSettingsManager,
+@@ -38,7 +39,7 @@ import { createCliCore } from "../session/session";
+ import { isClineOrgIndividualInferenceSubscriptionErrorMessage } from "../utils/cline-pass-errors";
+ import { getCliBuildInfo } from "../utils/common";
+ import { randomSessionId, resolveWorkspaceRoot } from "../utils/helpers";
+-import type { Config } from "../utils/types";
++import type { CliReasoningEffort, Config } from "../utils/types";
+ import {
+ 	ACP_AUTH_METHODS,
+ 	type AcpAuthMethodId,
+@@ -51,6 +52,12 @@ import {
+ 	buildAutoApproveConfigOption,
+ 	parseAutoApproveValue,
+ } from "./auto-approve";
++import {
++	buildEffortConfigOption,
++	EFFORT_CONFIG_ID,
++	parseEffortValue,
++	resolveDefaultEffort,
++} from "./effort";
+ import {
+ 	buildOrganizationConfigOption,
+ 	fetchClineOrganizations,
+@@ -84,6 +91,8 @@ interface SessionState {
+ 	currentProviderId: string;
+ 	/** Current model id for the session. */
+ 	currentModelId: string;
++	/** Current reasoning effort for the session ("none" disables thinking). */
++	currentReasoningEffort: CliReasoningEffort;
+ 	/** When true, all tool calls are approved without asking the client. */
+ 	autoApproveTools: boolean;
+ 	/** Active session manager for the running agent, if any. */
+@@ -201,6 +210,7 @@ export class AcpAgent implements Agent {
+ 			process.env.CLINE_MODEL,
+ 			providerModels,
+ 		);
++		const defaultReasoningEffort = this.defaultEffort(providerId);
+ 
+ 		this.sessions.set(sessionId, {
+ 			id: sessionId,
+@@ -209,6 +219,7 @@ export class AcpAgent implements Agent {
+ 			currentMode: defaultMode,
+ 			currentProviderId: providerId,
+ 			currentModelId: defaultModelId,
++			currentReasoningEffort: defaultReasoningEffort,
+ 			autoApproveTools: this.defaultAutoApproveTools,
+ 		});
+ 
+@@ -237,6 +248,7 @@ export class AcpAgent implements Agent {
+ 				await buildProviderConfigOption(providerId),
+ 				buildModelConfigOption(defaultModelId, providerModels),
+ 				buildModeConfigOption(defaultMode),
++				buildEffortConfigOption(defaultReasoningEffort),
+ 				buildAutoApproveConfigOption(this.defaultAutoApproveTools),
+ 				...(organizationOption ? [organizationOption] : []),
+ 			],
+@@ -278,6 +290,7 @@ export class AcpAgent implements Agent {
+ 						process.env.CLINE_MODEL,
+ 						providerModels,
+ 					),
++					currentReasoningEffort: this.defaultEffort(providerId),
+ 					autoApproveTools: this.defaultAutoApproveTools,
+ 				};
+ 				this.sessions.set(params.sessionId, session);
+@@ -528,6 +541,28 @@ export class AcpAgent implements Agent {
+ 				break;
+ 			}
+ 
++			case EFFORT_CONFIG_ID: {
++				const effort = parseEffortValue(params.value);
++				if (effort === undefined) {
++					throw RequestError.invalidParams(
++						undefined,
++						`Invalid effort: ${String(params.value)}`,
++					);
++				}
++				session.currentReasoningEffort = effort;
++				if (session.sessionManager && session.activeSessionId) {
++					await session.sessionManager.updateSessionConnection?.(
++						session.activeSessionId,
++						buildConnectionUpdate(
++							effort === "none"
++								? { thinking: false }
++								: { reasoningEffort: effort },
++						),
++					);
++				}
++				break;
++			}
++
+ 			case "mode": {
+ 				if (value !== "plan" && value !== "act") {
+ 					throw RequestError.invalidParams(
+@@ -758,6 +793,12 @@ export class AcpAgent implements Agent {
+ 		return initialMessages;
+ 	}
+ 
++	private defaultEffort(providerId: string): CliReasoningEffort {
++		return resolveDefaultEffort(
++			this.providerSettingsManager.getProviderSettings(providerId)?.reasoning,
++		);
++	}
++
+ 	private async buildConfig(session: SessionState): Promise<Config> {
+ 		const cwd = session.cwd || process.cwd();
+ 		const workspaceRoot = resolveWorkspaceRoot(cwd);
+@@ -771,6 +812,8 @@ export class AcpAgent implements Agent {
+ 		});
+ 		const cliBuildInfo = getCliBuildInfo();
+ 
++		const effort = session.currentReasoningEffort;
++
+ 		return {
+ 			providerId,
+ 			modelId: session.currentModelId,
+@@ -779,7 +822,8 @@ export class AcpAgent implements Agent {
+ 			execution: undefined,
+ 			verbose: false,
+ 			sandbox: false,
+-			thinking: false,
++			thinking: effort !== "none",
++			reasoningEffort: effort !== "none" ? effort : undefined,
+ 			outputMode: "text",
+ 			mode: session.currentMode,
+ 			defaultToolAutoApprove: false,
+@@ -930,6 +974,7 @@ async function buildAllConfigOptions(
+ 		providerOption,
+ 		buildModelConfigOption(session.currentModelId, providerModels),
+ 		buildModeConfigOption(session.currentMode),
++		buildEffortConfigOption(session.currentReasoningEffort),
+ 		buildAutoApproveConfigOption(session.autoApproveTools),
+ 	];
+ }
+diff --git a/apps/cli/src/acp/effort.test.ts b/apps/cli/src/acp/effort.test.ts
+new file mode 100644
+index 0000000..025c9b8
+--- /dev/null
++++ b/apps/cli/src/acp/effort.test.ts
+@@ -0,0 +1,81 @@
++import { describe, expect, it } from "vitest";
++import {
++	buildEffortConfigOption,
++	EFFORT_CONFIG_ID,
++	parseEffortValue,
++	resolveDefaultEffort,
++} from "./effort";
++
++describe("buildEffortConfigOption", () => {
++	it("builds a thought_level select reflecting the current value", () => {
++		const option = buildEffortConfigOption("high");
++
++		expect(option).toMatchObject({
++			type: "select",
++			id: EFFORT_CONFIG_ID,
++			category: "thought_level",
++			currentValue: "high",
++		});
++		expect(option.name).toBeTruthy();
++	});
++
++	it("advertises Off plus the active effort levels", () => {
++		const option = buildEffortConfigOption("none");
++		if (option.type !== "select") {
++			throw new Error("expected a select option");
++		}
++
++		const values = option.options.flatMap((choice) =>
++			"value" in choice ? [choice.value as string] : [],
++		);
++		expect(values).toContain("none");
++		expect(values).toContain("low");
++		expect(values).toContain("medium");
++		expect(values).toContain("high");
++		expect(values).toContain("xhigh");
++	});
++});
++
++describe("parseEffortValue", () => {
++	it("accepts the advertised effort levels", () => {
++		expect(parseEffortValue("none")).toBe("none");
++		expect(parseEffortValue("low")).toBe("low");
++		expect(parseEffortValue("medium")).toBe("medium");
++		expect(parseEffortValue("high")).toBe("high");
++		expect(parseEffortValue("xhigh")).toBe("xhigh");
++	});
++
++	it("fails closed for unrecognized values", () => {
++		expect(parseEffortValue("minimal")).toBeUndefined();
++		expect(parseEffortValue("max")).toBeUndefined();
++		expect(parseEffortValue(true)).toBeUndefined();
++		expect(parseEffortValue(undefined)).toBeUndefined();
++	});
++});
++
++describe("resolveDefaultEffort", () => {
++	it("maps active persisted efforts onto the session default", () => {
++		expect(resolveDefaultEffort({ enabled: true, effort: "low" })).toBe("low");
++		expect(resolveDefaultEffort({ enabled: true, effort: "high" })).toBe(
++			"high",
++		);
++	});
++
++	it("disabled or explicitly-none persistence resolves to Off", () => {
++		expect(resolveDefaultEffort({ enabled: false })).toBe("none");
++		expect(resolveDefaultEffort({ enabled: true, effort: "none" })).toBe(
++			"none",
++		);
++	});
++
++	it("enabled without a usable effort falls back to medium", () => {
++		expect(resolveDefaultEffort({ enabled: true })).toBe("medium");
++		expect(resolveDefaultEffort({ enabled: true, effort: "minimal" })).toBe(
++			"medium",
++		);
++	});
++
++	it("absent persistence resolves to Off", () => {
++		expect(resolveDefaultEffort(undefined)).toBe("none");
++	});
++});
+diff --git a/apps/cli/src/acp/effort.ts b/apps/cli/src/acp/effort.ts
+new file mode 100644
+index 0000000..7edf77c
+--- /dev/null
++++ b/apps/cli/src/acp/effort.ts
+@@ -0,0 +1,72 @@
++import type { SessionConfigOption } from "@agentclientprotocol/sdk";
++import type { ProviderSettings } from "@cline/core";
++
++import type { CliReasoningEffort } from "../utils/types.js";
++
++export const EFFORT_CONFIG_ID = "effort";
++
++const EFFORT_CHOICES: readonly {
++	value: CliReasoningEffort;
++	name: string;
++}[] = [
++	{ value: "none", name: "Off" },
++	{ value: "low", name: "Low" },
++	{ value: "medium", name: "Medium" },
++	{ value: "high", name: "High" },
++	{ value: "xhigh", name: "Extra High" },
++];
++
++export function buildEffortConfigOption(
++	currentValue: CliReasoningEffort,
++): SessionConfigOption {
++	return {
++		type: "select",
++		id: EFFORT_CONFIG_ID,
++		name: "Reasoning Effort",
++		description: "Controls how much the model thinks before responding",
++		category: "thought_level",
++		currentValue,
++		options: EFFORT_CHOICES.map((choice) => ({ ...choice })),
++	};
++}
++
++/**
++ * Interpret the value of a `session/set_config_option` request for the
++ * effort option. Returns `undefined` for anything unrecognized so the
++ * caller can reject the request.
++ */
++export function parseEffortValue(
++	value: unknown,
++): CliReasoningEffort | undefined {
++	return typeof value === "string" &&
++		EFFORT_CHOICES.some((choice) => choice.value === value)
++		? (value as CliReasoningEffort)
++		: undefined;
++}
++
++/**
++ * Session default: map the persisted provider reasoning settings onto a
++ * single effort value, mirroring resolveCliReasoning's merge rules.
++ */
++export function resolveDefaultEffort(
++	persistedReasoning: ProviderSettings["reasoning"] | undefined,
++): CliReasoningEffort {
++	if (
++		persistedReasoning?.enabled === false ||
++		persistedReasoning?.effort === "none"
++	) {
++		return "none";
++	}
++	if (
++		persistedReasoning?.effort === "low" ||
++		persistedReasoning?.effort === "medium" ||
++		persistedReasoning?.effort === "high" ||
++		persistedReasoning?.effort === "xhigh"
++	) {
++		return persistedReasoning.effort;
++	}
++	if (persistedReasoning?.enabled === true) {
++		return "medium";
++	}
++	return "none";
++}
 diff --git a/apps/cli/src/cli.tuistory.e2e.test.ts b/apps/cli/src/cli.tuistory.e2e.test.ts
 index e5a3796..cf8e3a7 100644
 --- a/apps/cli/src/cli.tuistory.e2e.test.ts
@@ -424,7 +733,7 @@ index d8590e0..f97b877 100644
  });
 diff --git a/apps/cli/src/tui/components/workflow-galaxy.tsx b/apps/cli/src/tui/components/workflow-galaxy.tsx
 new file mode 100644
-index 0000000..cb7cbb2
+index 0000000..f494494
 --- /dev/null
 +++ b/apps/cli/src/tui/components/workflow-galaxy.tsx
 @@ -0,0 +1,163 @@
@@ -507,7 +816,7 @@ index 0000000..cb7cbb2
 +	// Proportions are preserved; the uniform scale fills the grid with a
 +	// compact inset so the ball reads tidy — never flattened. Uniform scale,
 +	// no shrink-by-squash. No noise halo: stray characters are unwanted.
-+	const scale = 0.85 * Math.min(1, (halfW - 2.6) / (halfW * 1.04), (halfH - 2.2) / (halfW * SQUASH * 1.04));
++	const scale = 0.85 * Math.max(0, Math.min(1, (halfW - 2.6) / (halfW * 1.04), (halfH - 2.2) / (halfW * SQUASH * 1.04)));
 +
 +	STARS.forEach((star) => {
 +		const angle = star.phase + progress + star.radius * TWIST * Math.PI * 2;
@@ -553,7 +862,7 @@ index 0000000..cb7cbb2
 +	// hold a core).
 +	if (height >= 2 && width >= 2) {
 +		const coreGlyph = PALETTE[PALETTE.length - 1] ?? "@";
-+		cells[Math.round(halfH)]![Math.round(halfW)] = coreGlyph;
++		cells[Math.min(height - 1, Math.round(halfH))]![Math.min(width - 1, Math.round(halfW))] = coreGlyph;
 +	}
 +
 +	return cells.map((row) => row.join(""));

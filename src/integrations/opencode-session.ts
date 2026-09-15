@@ -33,13 +33,20 @@ export class OpenCodeSessionDriver implements CodingSessionDriver {
     this.#sessionId = session.id;
     const events = await this.client.event.subscribe();
     const consumeEvents = this.#consumeEvents(events.stream, session.id, emit);
+    const eventFailure = consumeEvents.then<never>(
+      () => new Promise<never>(() => undefined),
+      (error: unknown) => Promise.reject(error),
+    );
     try {
       if (this.#cancelRequested) return;
       const parts: OpenCodePromptPart[] = [
         { type: "text", text: prompt },
         ...images.map(({ mediaType, data }) => ({ type: "file" as const, mime: mediaType, url: `data:${mediaType};base64,${data}` })),
       ];
-      const promptResult = await this.client.prompt({ path: { id: session.id }, body: { parts } });
+      const promptResult = await Promise.race([
+        this.client.prompt({ path: { id: session.id }, body: { parts } }),
+        eventFailure,
+      ]);
       if (promptResult.error !== undefined) throw new Error(`OpenCode prompt failed: ${errorMessage(promptResult.error)}`);
       const result = promptResult.data;
       if (result === undefined) throw new Error("OpenCode prompt returned no data");
@@ -47,7 +54,7 @@ export class OpenCodeSessionDriver implements CodingSessionDriver {
     } catch (error) {
       if (!this.#cancelRequested) emit({ type: "failed", reason: errorMessage(error) });
     } finally {
-      void consumeEvents;
+      void eventFailure;
     }
   }
 

@@ -46,6 +46,10 @@ if (hub !== undefined) {
     React.createElement(WorkflowTui, {
       application: source,
       reviewFollowUps,
+      // Plan Task A3: run-gate observability from the hub's /snapshot —
+      // verdicts, blocking reasons, and unverified claims in the Activity
+      // panel; refreshed on the same poll.
+      gateObservability: () => source.gateObservability(),
       connectionLabel: "hub",
     }),
   );
@@ -122,7 +126,7 @@ if (hub !== undefined) {
       reviewFollowUps,
       connectionLabel: "standalone (no hub)",
       onStyleChange: (style) => runtime.setSessionStyle(style),
-      // The mode bar installs the pedagogy gate on the application; cycling `m`
+      // The mode bar installs the pedagogy gate on the application; changing mode
       // re-creates the checkpoint ledger for the new mode. Leaves no gate when
       // the mode itself gates nothing (autonomous).
       onModeChange: (mode) => application.setPedagogyGate(createCheckpointLedger(mode)),

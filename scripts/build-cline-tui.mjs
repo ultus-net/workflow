@@ -29,6 +29,20 @@ if (needsBuild || !existsSync(sdkBuild)) {
   run("npx", ["--yes", "bun@1.3.13", "run", "build:sdk"], checkout);
 }
 
+// Optional: compile the vendored, Workflow-patched Cline CLI into a
+// self-contained binary. The ACP driver prefers this binary when present
+// (see src/integrations/cline-launch.ts), so it must be rebuilt whenever
+// the patch changes. Skipped during pretest to keep test runs fast.
+const withCliBin = process.argv.includes("--with-cli-bin");
+if (withCliBin) {
+  const platformDir = `cli-${process.platform === "win32" ? "windows" : process.platform}-${process.arch}`;
+  const binaryName = process.platform === "win32" ? "cline.exe" : "cline";
+  const cliBin = resolve(checkout, "apps", "cli", "dist", platformDir, "bin", binaryName);
+  run("npx", ["--yes", "bun@1.3.13", "run", "build:platforms:single"], resolve(checkout, "apps", "cli"));
+  if (!existsSync(cliBin)) throw new Error(`expected the compiled Cline binary at ${cliBin}`);
+  console.log(`Compiled Workflow-patched Cline agent at ${cliBin}`);
+}
+
 console.log(`Workflow Cline TUI is ready at ${checkout}`);
 
 function run(command, args, cwd) {

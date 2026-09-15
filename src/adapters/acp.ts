@@ -15,6 +15,12 @@ interface AcpCorrelatedPermission {
 
 const KNOWN_READ_TOOLS: ReadonlySet<string> = new Set(["read", "read_file", "read_files", "search", "glob", "grep", "list"]);
 
+// Subagent spawning is its own capability: an internal subagent emits no
+// permission requests of its own, so spawn is default-deny everywhere and
+// enforced surfaces must probe subagent visibility before claiming it.
+// Exported so the conformance probe classifies spawn-family tools identically.
+export const KNOWN_SPAWN_TOOLS: ReadonlySet<string> = new Set(["spawn_agent", "task", "subagent", "agent", "newtask"]);
+
 export class AcpHostAdapter implements TranslatingHostAdapter<AcpCorrelatedPermission, { outcome: "reject_once"; reason: string }> {
   readonly capabilities;
 
@@ -35,7 +41,9 @@ export class AcpHostAdapter implements TranslatingHostAdapter<AcpCorrelatedPermi
     // non-mutating only when the kind and the tool name both say read.
     const mutating = !(isReadKind(input.toolCall.kind) && KNOWN_READ_TOOLS.has(input.toolCall.name));
     const subjects = subjectsFrom(input.toolCall, locations);
-    const builtInCapability = acpCapability(input.toolCall.kind);
+    const builtInCapability = KNOWN_SPAWN_TOOLS.has(input.toolCall.name)
+      ? "spawn"
+      : acpCapability(input.toolCall.kind);
     const capability = stricterCapability(builtInCapability, input.toolCall.capability);
     // Mutation subjects gate workspace confinement: a mutating proposal we
     // cannot path-check fails closed. Process and credential proposals are
@@ -101,7 +109,7 @@ function acpCapability(kind: string | undefined): ToolCapability {
   return "mutation";
 }
 
-const CAPABILITY_SEVERITY: Record<ToolCapability, number> = { process: 4, credentials: 3, network: 2, mutation: 1, read: 0 };
+const CAPABILITY_SEVERITY: Record<ToolCapability, number> = { spawn: 5, process: 4, credentials: 3, network: 2, mutation: 1, read: 0 };
 
 // Event-supplied capability may escalate (make stricter) but never relax the
 // built-in classification.

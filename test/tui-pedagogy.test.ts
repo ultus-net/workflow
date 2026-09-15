@@ -28,14 +28,18 @@ async function waitForFrame(view: { lastFrame(): string | undefined }, expected:
   }
 }
 
-test("TUI , and . cycle speech and build styles in the mode bar", async () => {
+test("TUI menu cycles speech and build styles in the mode bar", async () => {
   const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
 
-  view.stdin.write(",");
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("2");
   await waitForFrame(view, /🪨/);
   assert.match(view.lastFrame() ?? "", /🪨/);
 
-  view.stdin.write(".");
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("3");
   await waitForFrame(view, /pt·lite/);
   assert.match(view.lastFrame() ?? "", /pt·lite/);
 
@@ -49,23 +53,29 @@ test("TUI style changes propagate to onStyleChange for live session restyling", 
     onStyleChange: (style) => styles.push(style),
   }));
 
-  view.stdin.write(",");
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("2");
   await waitForFrame(view, /caveman/);
   assert.deepEqual(styles.at(-1), { speech: "caveman", build: "normal" });
   view.unmount();
 });
 
 
-test("TUI installs the pedagogy gate via onModeChange on mount and on m", async () => {
+test("TUI installs the pedagogy gate via onModeChange on mount and menu changes", async () => {
   const modes: string[] = [];
   const view = render(React.createElement(WorkflowTui, {
     application: createApplication(),
     onModeChange: (mode: string) => modes.push(mode),
   }));
 
-  view.stdin.write("m");
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("1");
   await waitForFrame(view, /\[Mode: Learn to Code/);
-  view.stdin.write("m");
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("1");
   await waitForFrame(view, /\[Mode: Socratic Tutor/);
 
   assert.deepEqual(modes, ["autonomous", "learn-to-code", "socratic-tutor"]);
@@ -96,6 +106,15 @@ test("TUI / opens the Workflow options menu and 1-6 toggle options", async () =>
   view.unmount();
 });
 
+test("TUI Ctrl+P opens the Workflow options menu without consuming composer text", async () => {
+  const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
+
+  view.stdin.write("\u0010");
+  await waitForFrame(view, /Workflow options/);
+  assert.match(view.lastFrame() ?? "", /Mode: Autonomous/);
+  view.unmount();
+});
+
 test("TUI / menu digit selection runs the option and q closes", async () => {
   const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
 
@@ -116,30 +135,40 @@ test("TUI / menu digit selection runs the option and q closes", async () => {
   view.unmount();
 });
 
-test("TUI shows the autonomous mode by default and m cycles pedagogical modes", async () => {
+test("TUI shows the autonomous mode by default and the menu cycles pedagogical modes", async () => {
   const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
 
-  assert.match(view.lastFrame() ?? "", /\[Mode: Autonomous \(m to switch\)\]/);
+  assert.match(view.lastFrame() ?? "", /\[Mode: Autonomous\]/);
 
-  view.stdin.write("m");
-  await waitForFrame(view, /\[Mode: Learn to Code \(m to switch\)\]/);
-  assert.match(view.lastFrame() ?? "", /\[Mode: Learn to Code \(m to switch\)\]/);
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("1");
+  await waitForFrame(view, /\[Mode: Learn to Code\]/);
+  assert.match(view.lastFrame() ?? "", /\[Mode: Learn to Code\]/);
 
-  view.stdin.write("m");
-  await waitForFrame(view, /\[Mode: Socratic Tutor \(m to switch\)\]/);
-  assert.match(view.lastFrame() ?? "", /\[Mode: Socratic Tutor \(m to switch\)\]/);
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("1");
+  await waitForFrame(view, /\[Mode: Socratic Tutor\]/);
+  assert.match(view.lastFrame() ?? "", /\[Mode: Socratic Tutor\]/);
 
-  view.stdin.write("m");
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("1");
   await waitForFrame(view, /\[Mode: Co-Architect/);
-  view.stdin.write("m");
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("1");
   await waitForFrame(view, /\[Mode: Walkthrough/);
-  view.stdin.write("m");
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("1");
   await waitForFrame(view, /\[Mode: Autonomous/);
-  assert.match(view.lastFrame() ?? "", /\[Mode: Autonomous \(m to switch\)\]/);
+  assert.match(view.lastFrame() ?? "", /\[Mode: Autonomous\]/);
   view.unmount();
 });
 
-test("TUI p toggles a learner profile panel rendering concept stages", async () => {
+test("TUI menu toggles a learner profile panel rendering concept stages", async () => {
   const view = render(
     React.createElement(WorkflowTui, {
       application: createApplication(),
@@ -154,19 +183,23 @@ test("TUI p toggles a learner profile panel rendering concept stages", async () 
   );
 
   assert.doesNotMatch(view.lastFrame() ?? "", /Learner Profile/);
-  view.stdin.write("p");
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("4");
   await waitForFrame(view, /Learner Profile/);
   assert.match(view.lastFrame() ?? "", /Learner Profile/);
   assert.match(view.lastFrame() ?? "", /closures\s+developing/);
   assert.match(view.lastFrame() ?? "", /async-await\s+independent/);
 
-  view.stdin.write("p");
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("4");
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.doesNotMatch(view.lastFrame() ?? "", /Learner Profile/);
   view.unmount();
 });
 
-test("TUI ? shows a symbol inspect hint panel that invokes onInspectSymbol", async () => {
+test("TUI menu shows a symbol inspect hint panel that invokes onInspectSymbol", async () => {
   const inspected: string[] = [];
   const view = render(
     React.createElement(WorkflowTui, {
@@ -175,7 +208,9 @@ test("TUI ? shows a symbol inspect hint panel that invokes onInspectSymbol", asy
     }),
   );
 
-  view.stdin.write("?");
+  view.stdin.write("/");
+  await waitForFrame(view, /Workflow options/);
+  view.stdin.write("5");
   await waitForFrame(view, /Symbol Inspect/);
   assert.match(view.lastFrame() ?? "", /Symbol Inspect/);
   view.stdin.write("reduce");

@@ -1,0 +1,27 @@
+{
+  "name": "workflow-fs-exec-mcp",
+  "version": "0.1.0",
+  "description": "Hub-owned file edits and shell execution over MCP (plan Task G3): built-in host mutation tools are denied; the model's only mutation path authorizes through the hub first.",
+  "type": "module",
+  "bin": {
+    "workflow-fs-exec-mcp": "./dist/server.js"
+  },
+  "files": ["dist/", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/server.js', 0o755)\"",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "pnpm run build && node --test --import tsx test/*.test.ts",
+    "verify": "pnpm run typecheck && pnpm run test"
+  },
+  "engines": { "node": ">=22" },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

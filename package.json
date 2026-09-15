@@ -13,7 +13,9 @@
   },
   "bin": {
     "workflow": "dist/cli/tui.js",
+    "workflow-tui": "dist/cli/universal-tui.js",
     "workflow-hub": "dist/cli/hub.js",
+    "workflow-admin": "dist/cli/admin.js",
     "workflow-monitor": "dist/cli/ink-tui.js",
     "workflow-shell": "dist/cli/contained-shell.js"
   },
@@ -33,11 +35,14 @@
     "build": "tsc -p tsconfig.build.json",
     "lint": "eslint src test",
     "hub": "tsx src/cli/hub.ts",
+    "admin": "tsx src/cli/admin.ts",
     "tui": "node scripts/build-cline-tui.mjs && tsx src/cli/tui.tsx",
     "tui:workflow": "tsx src/cli/ink-tui.tsx",
     "tui:acp": "tsx src/cli/acp-tui.tsx",
+    "tui:universal": "tsx src/cli/universal-tui.tsx",
     "style:eval": "tsx src/cli/style-eval.ts",
     "tui:cline:build": "node scripts/build-cline-tui.mjs",
+    "build:cline-agent": "node scripts/build-cline-tui.mjs --with-cli-bin",
     "cline:bump": "node scripts/bump-cline-tag.mjs",
     "contained-shell": "tsx src/cli/contained-shell.ts",
     "web": "tsx src/cli/web.ts",
@@ -55,18 +60,27 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
+    "@assistant-ui/react": "^0.15.19",
+    "@assistant-ui/react-markdown": "^0.14.15",
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
     "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.28.2",
     "eslint": "^10.10.0",
     "ink-testing-library": "^4.0.0",
     "node-pty": "^1.1.0",
+    "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tsx": "^4.20.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.70.0"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "^1.4.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "highlight.js": "^11.12.0",
     "ink": "^7.1.1",
     "react": "^19.2.0"
   }

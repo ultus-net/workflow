@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { isAbsolute } from "node:path";
 
+import { boundToolResultText } from "./vendor/result-bounds.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -41,7 +42,9 @@ server.registerTool = ((name: string, config: unknown, handler: (input: never, e
       const result = await handler(input, extra);
       await server.server.sendLoggingMessage({ level: "info", logger: "code-intelligence-mcp", data: { tool: name, phase: "done" } });
       await progress("done", 2);
-      return result;
+      // Plan Task E1: bound every tool result's model-visible text (48k
+      // middle-cut parity) so any MCP host inherits the token economy.
+      return boundToolResultText(result);
     } catch (error) {
       await server.server.sendLoggingMessage({ level: "error", logger: "code-intelligence-mcp", data: { tool: name, phase: "error", message: error instanceof Error ? error.message : String(error) } });
       throw error;

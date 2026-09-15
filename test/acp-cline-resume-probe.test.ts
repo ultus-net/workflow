@@ -8,7 +8,7 @@ import test from "node:test";
 import { launchContainedAcpAgent } from "../src/adapters/acp-contained-agent.js";
 import { AcpSubprocessClient, type AcpPermissionDecision, type AcpSessionUpdate } from "../src/adapters/acp-subprocess.js";
 import { LinuxBubblewrapContainment } from "../src/containment/linux-bwrap.js";
-import { clineEntrypoint, loadClineApiKey } from "./cline-probe-helpers.js";
+import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
 
 // G4 resume fidelity: does Cline's advertised loadSession actually replay a
 // persisted session faithfully after the agent process restarts? Phase 1
@@ -28,11 +28,11 @@ test(
     const scratchHome = await mkdtemp(path.join(tmpdir(), "workflow-acp-resume-home-"));
     const keyword = `resume-${randomUUID().slice(0, 8)}`;
     const clineApiKey = await loadClineApiKey("Cline resume probe");
-    const script = clineEntrypoint();
+    const cline = clineLaunchEntry();
 
     const launch = () => launchContainedAcpAgent(new LinuxBubblewrapContainment(), {
-      executable: process.execPath,
-      script,
+      executable: cline.executable,
+      ...(cline.script !== undefined ? { script: cline.script } : {}),
       args: ["--acp", "--provider", "openrouter", "--auto-approve", "false", "--cwd", workspace],
       workspace,
       home: scratchHome,

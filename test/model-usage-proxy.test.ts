@@ -65,6 +65,7 @@ test("model usage proxy injects the real key, forces usage accounting, and meter
       completionTokens: 30,
       totalTokens: 150,
       costUsd: 0.0042,
+      latestPromptTokens: 120,
     });
   } finally {
     await proxy.close();
@@ -97,6 +98,29 @@ test("model usage proxy meters usage from the final SSE chunk while streaming by
     assert.equal(proxy.metrics().totalTokens, 14);
     assert.equal(proxy.metrics().costUsd, 0.0002);
     assert.equal(proxy.metrics().usageEvents, 1);
+    assert.equal(proxy.metrics().latestPromptTokens, 10);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("model usage proxy leaves latest prompt tokens unavailable until reported and preserves the last exact value", async () => {
+  let request = 0;
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    request += 1;
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [], usage: request === 2 ? { prompt_tokens: 42 } : { completion_tokens: 1 } }));
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    assert.equal(proxy.metrics().latestPromptTokens, undefined);
+    await fetch(`${proxy.url}/api/v1/chat/completions`, { method: "POST", body: "{}" });
+    assert.equal(proxy.metrics().latestPromptTokens, undefined);
+    await fetch(`${proxy.url}/api/v1/chat/completions`, { method: "POST", body: "{}" });
+    assert.equal(proxy.metrics().latestPromptTokens, 42);
+    await fetch(`${proxy.url}/api/v1/chat/completions`, { method: "POST", body: "{}" });
+    assert.equal(proxy.metrics().latestPromptTokens, 42);
   } finally {
     await proxy.close();
     await upstream.close();

@@ -8,7 +8,7 @@ import { launchContainedAcpAgent } from "../src/adapters/acp-contained-agent.js"
 import { AcpSubprocessClient, type AcpPermissionDecision } from "../src/adapters/acp-subprocess.js";
 import { LinuxBubblewrapContainment } from "../src/containment/linux-bwrap.js";
 import { createModelUsageProxy, METERED_PLACEHOLDER_KEY, meteredProviderSettings } from "../src/integrations/model-usage-proxy.js";
-import { clineEntrypoint, loadClineApiKey } from "./cline-probe-helpers.js";
+import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
 
 // G1 token/cost metering proof: the agent's environment contains only a
 // placeholder credential while the hub-held proxy injects the real OpenRouter
@@ -32,9 +32,10 @@ test(
     const settingsPath = path.join(scratchHome, "providers.json");
     await writeFile(settingsPath, JSON.stringify(meteredProviderSettings(proxy.url)), "utf8");
 
+    const cline = clineLaunchEntry();
     const child = launchContainedAcpAgent(new LinuxBubblewrapContainment(), {
-      executable: process.execPath,
-      script: clineEntrypoint(),
+      executable: cline.executable,
+      ...(cline.script !== undefined ? { script: cline.script } : {}),
       args: ["--acp", "--provider", "openrouter", "--auto-approve", "false", "--cwd", workspace],
       workspace,
       home: scratchHome,

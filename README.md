@@ -30,8 +30,8 @@ bubblewrap.
 npm run setup   # npm install -> build -> toolbox -> vendored cline -> npm i -g .
 ```
 
-This installs the four bins (`workflow`, `workflow-hub`, `workflow-monitor`,
-`workflow-shell`) onto PATH and is safe to re-run.
+This installs the five bins (`workflow`, `workflow-tui`, `workflow-hub`,
+`workflow-monitor`, `workflow-shell`) onto PATH and is safe to re-run.
 
 ## Commands
 
@@ -39,6 +39,7 @@ This installs the four bins (`workflow`, `workflow-hub`, `workflow-monitor`,
 |---|---|
 | `workflow-hub` | the authority daemon every surface needs (discovery + token) |
 | `workflow` | patched Cline TUI launcher; auto-spawns the hub when absent |
+| `workflow-tui` | universal interactive TUI with explicit `cline`, `opencode`, or `acp` driver selection; fallback surface |
 | `workflow-monitor` | Ink monitoring TUI over the hub's canonical snapshot; standalone local authority when the hub is unreachable |
 | `workflow-shell` | interactive contained shell |
 
@@ -46,6 +47,7 @@ This installs the four bins (`workflow`, `workflow-hub`, `workflow-monitor`,
 
 ```sh
 workflow --cwd /path/to/project   # self-starts the authority hub
+workflow-tui --driver acp --cwd /path/to/project  # universal fallback; standalone local authority
 workflow-monitor                  # monitoring TUI over the live hub
 workflow-shell                    # contained shell
 ```
@@ -57,12 +59,19 @@ the daemon manually with `workflow-hub` (source checkout: `npm run hub`). An
 optional systemd user unit lives at `packaging/workflow-hub.service` for
 fully-managed startup.
 
-In the monitor TUI: `/` (or `/workflow`) opens the Workflow options menu —
-digits 1-6 toggle **mode** (pedagogical gating), **speech** (caveman), **build**
+The browser operator UI (`npm run web`, http://127.0.0.1:4173) is installable
+as a PWA and can run as a managed background service via
+`packaging/workflow-web.service`: copy it to `~/.config/systemd/user/`, then
+`systemctl --user daemon-reload && systemctl --user enable --now workflow-web`.
+It restarts on failure and starts with the session; for start-at-boot without
+logging in, run `loginctl enable-linger "$USER"` once.
+
+In the monitor TUI: `/` (or Ctrl+P) opens the Workflow options menu — digits
+1-6 toggle **mode** (pedagogical gating), **speech** (caveman), **build**
 (ponytail/YAGNI), **learner profile**, **symbol inspect**, and **workflow
-details**; `q`/Esc closes. The same options are plain-key accelerators when the
-composer is empty: `m` cycles modes, `,` and `.` cycle speech/build, `p` opens
-the profile, `?` inspects a symbol, Ctrl+W toggles workflow details.
+details**; `q`/Esc closes. Ctrl+W toggles workflow details directly. Ordinary
+letter and punctuation keys are left to the composer so prompts are never
+changed by hidden first-character shortcuts.
 
 ## What you get
 

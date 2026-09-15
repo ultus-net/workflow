@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development (recommended) or executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `workflow-tui` composes any host session driver (cline/opencode) and renders the SDK-neutral `WorkflowTui`, with a documented parity checklist gating primary-surface migration.
+**Goal:** `workflow-tui` composes any registered host session driver (cline/opencode/acp) and renders the SDK-neutral `WorkflowTui`, with a documented parity checklist gating primary-surface migration.
 
-**Architecture:** Pure driver registry maps a driver name to a composer (cline = existing `createConfiguredClineRuntime`; opencode = new fetch client + `OpenCodeSessionDriver`). Entry mirrors monitor-standalone composition (one local authority, labelled). Parity checklist in `docs/TUI_PARITY.md` defines the convergence gates.
+**Architecture:** Pure driver registry maps a driver name to a composer (cline = existing `createConfiguredClineRuntime`; opencode = fetch client + `OpenCodeSessionDriver`; acp = contained `createConfiguredAcpRuntime`). Entry mirrors monitor-standalone composition (one local authority, labelled). Parity checklist in `docs/TUI_PARITY.md` defines the convergence gates.
 
 **Tech Stack:** Node 22, node:test, ink, fetch/SSE (no new deps).
 
@@ -16,7 +16,7 @@
 - Create: `src/cli/driver-registry.ts`
 - Test: `test/driver-registry.test.ts`
 
-- [ ] **Step 1: failing tests**
+- [x] **Step 1: failing tests**
 
 ```ts
 import assert from "node:assert/strict";
@@ -78,11 +78,11 @@ test("composeDriver uses an injected composer before built-ins", async () => {
 });
 ```
 
-- [ ] **Step 2: run — fails (module missing)**
+- [x] **Step 2: run — fails (module missing)**
 
 `node --import tsx --test test/driver-registry.test.ts`
 
-- [ ] **Step 3: implement `src/cli/driver-registry.ts`**
+- [x] **Step 3: implement `src/cli/driver-registry.ts`**
 
 ```ts
 import type { WorkflowApplication } from "../application/workflow.js";
@@ -146,7 +146,7 @@ export async function composeDriver(
 }
 ```
 
-- [ ] **Step 4: run — passes** (registry-only; the composeDriver built-ins are exercised by Task 3, opencode client by Task 2)
+- [x] **Step 4: run — passes** (registry/OpenCode/ACP/TUI focused run: 32/32 on 2026-09-15.)
 
 - [ ] **Step 5: commit** `feat(cli): driver registry with cline/opencode composers`
 
@@ -158,7 +158,7 @@ export async function composeDriver(
 - Create: `src/integrations/opencode-client.ts`
 - Test: `test/opencode-client.test.ts`
 
-- [ ] **Step 1: failing tests** — stub `globalThis.fetch`; assert request paths/methods/bodies, error mapping on non-ok, SSE frame parsing:
+- [x] **Step 1: failing tests** — stub `globalThis.fetch`; assert request paths/methods/bodies, error mapping on non-ok, SSE frame parsing:
 
 ```ts
 test("create posts to /session and maps non-ok to error", async () => {
@@ -202,9 +202,9 @@ test("event.subscribe parses SSE frames into an async stream", async () => {
 });
 ```
 
-- [ ] **Step 2: run — fails**
+- [x] **Step 2: run — fails**
 
-- [ ] **Step 3: implement `src/integrations/opencode-client.ts`**
+- [x] **Step 3: implement `src/integrations/opencode-client.ts`**
 
 ```ts
 import type { OpenCodeSessionClient } from "./opencode-session.js";
@@ -259,7 +259,7 @@ async function* sseFrames(body: ReadableStream<Uint8Array>): AsyncIterable<unkno
 }
 ```
 
-- [ ] **Step 4: run — passes**
+- [x] **Step 4: run — passes**
 
 - [ ] **Step 5: commit** `feat(integrations): fetch-based OpenCode session client (no new deps)`
 
@@ -271,7 +271,7 @@ async function* sseFrames(body: ReadableStream<Uint8Array>): AsyncIterable<unkno
 - Create: `src/cli/universal-tui.tsx`
 - Modify: `package.json` (bin + script)
 
-- [ ] **Step 1: write entry** (mirror monitor-standalone composition):
+- [x] **Step 1: write entry** (mirror monitor-standalone composition):
 
 ```tsx
 #!/usr/bin/env node
@@ -321,9 +321,9 @@ await composed.dispose();
 
 `package.json`: add bin `"workflow-tui": "dist/cli/universal-tui.js"` and script `"tui:universal": "tsx src/cli/universal-tui.tsx"`.
 
-- [ ] **Step 2: build + typecheck** — `npm run build && npm run typecheck` clean.
+- [x] **Step 2: build + typecheck** — both clean on 2026-09-15.
 
-- [ ] **Step 3: smoke** — `node dist/cli/universal-tui.js --driver cline --cwd /tmp/x` launches (or composition error is the exact, actionable message when the Cline runtime can't compose).
+- [x] **Step 3: smoke** — built universal entry with explicit `--driver acp` fails closed at composition with the exact actionable missing-credential error under an isolated HOME; no fallback is attempted (2026-09-15).
 
 - [ ] **Step 4: commit** `feat(cli): workflow-tui universal entry composing cline/opencode drivers`
 
@@ -335,7 +335,7 @@ await composed.dispose();
 - Create: `docs/TUI_PARITY.md`
 - Modify: `README.md` (command table + one line), `docs/TUI_INTEGRATION.md` (convergence rule)
 
-- [ ] **Step 1: write `docs/TUI_PARITY.md`** — one checklist item per convergence gate with acceptance criteria:
+- [x] **Step 1: write `docs/TUI_PARITY.md`** — one checklist item per convergence gate with acceptance criteria:
 
 ```markdown
 # Universal TUI parity checklist
@@ -354,9 +354,9 @@ flips only when every box is checked.
 - [ ] Monitor parity: `workflow-monitor` attaches to the same session (acceptance: joint smoke)
 ```
 
-- [ ] **Step 2: README command table** — add `| \`workflow-tui\` | universal interactive TUI (driver-selectable; fallback surface) |`.
+- [x] **Step 2: README command table** — documents `workflow-tui` as the driver-selectable fallback surface.
 
-- [ ] **Step 3: `docs/TUI_INTEGRATION.md`** — append the staged-convergence rule:
+- [x] **Step 3: `docs/TUI_INTEGRATION.md`** — append the staged-convergence rule:
 
 ```markdown
 ## Staged universal TUI convergence

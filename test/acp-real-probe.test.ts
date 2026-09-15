@@ -42,7 +42,7 @@ async function probe(command: string, args: string[], authMethodId?: string, pro
 
 test("real opencode acp initializes and completes a read-only prompt probe", { skip: !runReal, timeout: 30_000 }, async () => {
   const evidence = await probe("opencode", ["acp"]);
-  assert.equal(evidence.initialized.agentInfo.name, "OpenCode");
+  assert.equal(evidence.initialized.agentInfo?.name, "OpenCode");
   assert.equal(evidence.initialized.protocolVersion, 1);
   assert.ok(evidence.session.sessionId);
   console.log(JSON.stringify({ agent: "opencode", ...evidence }, null, 2));
@@ -50,7 +50,7 @@ test("real opencode acp initializes and completes a read-only prompt probe", { s
 
 test("real cline --acp initializes and completes a read-only prompt probe", { skip: !runReal, timeout: 30_000 }, async () => {
   const evidence = await probe("cline", ["--acp", "--auto-approve", "false"], "cline", 12_000);
-  assert.equal(evidence.initialized.agentInfo.name, "cline");
+  assert.equal(evidence.initialized.agentInfo?.name, "cline");
   assert.equal(evidence.initialized.protocolVersion, 1);
   assert.ok(evidence.session.sessionId);
   console.log(JSON.stringify({ agent: "cline", ...evidence }, null, 2));

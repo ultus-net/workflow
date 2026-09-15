@@ -8,6 +8,7 @@ export interface ModelUsageMetrics {
   readonly completionTokens: number;
   readonly totalTokens: number;
   readonly costUsd: number;
+  readonly latestPromptTokens: number | undefined;
 }
 
 export interface ModelUsageProxy {
@@ -53,6 +54,7 @@ interface MutableMetrics {
   completionTokens: number;
   totalTokens: number;
   costUsd: number;
+  latestPromptTokens: number | undefined;
 }
 
 /**
@@ -75,7 +77,7 @@ export async function createModelUsageProxy(options: {
   if (upstream.protocol !== "https:" && upstream.hostname !== "localhost" && upstream.hostname !== "127.0.0.1") {
     throw new TypeError("model usage proxy upstream must be https (or loopback for tests)");
   }
-  const metrics: MutableMetrics = { requests: 0, usageEvents: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0 };
+  const metrics: MutableMetrics = { requests: 0, usageEvents: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0, latestPromptTokens: undefined };
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((error) => {
@@ -186,6 +188,9 @@ export async function createModelUsageProxy(options: {
     metrics.completionTokens += numberOrZero(usage.completion_tokens);
     metrics.totalTokens += numberOrZero(usage.total_tokens);
     metrics.costUsd += numberOrZero(usage.cost);
+    if (typeof usage.prompt_tokens === "number" && Number.isFinite(usage.prompt_tokens)) {
+      metrics.latestPromptTokens = usage.prompt_tokens;
+    }
     options.onUsage?.(usage);
   }
 

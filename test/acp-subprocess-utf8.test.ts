@@ -34,5 +34,5 @@ test("ACP subprocess client preserves multi-byte UTF-8 split across stdout byte 
   stdout.write(bytes.subarray(splitAt));
 
   const initialized = await initialize;
-  assert.equal(initialized.agentInfo.name, "fake-é-agent");
+  assert.equal(initialized.agentInfo?.name, "fake-é-agent");
 });

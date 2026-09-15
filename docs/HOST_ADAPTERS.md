@@ -80,4 +80,30 @@ Fail closed on malformed recognized safety metadata. A malformed `path`, locatio
 
 Adapter conformance should prove at least: truthful enforced/advisory reporting, valid event normalization, malformed safety metadata rejection, denial-to-native-control translation, known process classification, credential classification when the SDK exposes it, combined capability requirements, and application authorization using the normalized proposal. `test/adapter-conformance.test.ts` runs the shared trace for Cline, OpenCode, and ACP; `test/cline-adapter.test.ts`, `test/acp-adapter.test.ts`, `test/opencode-plugin.test.ts`, and `test/application.test.ts` are the per-adapter executable examples.
 
+## Subagent conformance matrix (plan Task B3)
+
+Subagent spawning classifies as the `spawn` capability — default-deny on every
+surface; host metadata may escalate but never relax it (`src/adapters/acp.ts`).
+An `enforced` label for spawn-inclusive workflows requires probe evidence for
+the pinned agent version:
+
+| Agent (pinned) | Spawn tool advertised | Spawn gateable | Internal subagents visible to hub | Verdict |
+|---|---|---|---|---|
+| Cline 3.0.61 (ACP) | unprobed | unprobed | unprobed | **Probe pending** — run `WORKFLOW_ACP_CLINE_SUBAGENT=1` with `CLINE_API_KEY` via `node --import tsx --test test/acp-cline-subagent-probe.test.ts`; until green evidence exists, spawn stays default-denied and unprobed agents are not labeled `enforced` for spawn-inclusive workflows |
+| OpenCode (ACP) | — | — | — | Advisory-capped: default ACP mode mutates without permission requests (`docs/ACP_DECISION.md`); re-evaluation requires the ask-config probe (plan Task G1) |
+
+Probe rules (fail closed):
+
+- **Green** — the spawn tool call is projected and its `session/request_permission`
+  reaches the client (deniable) → `spawn` may be granted per operator policy,
+  governed by the capability gate.
+- **Red** — either probe invariant trips: (a) a workspace mutation arrives with
+  no permission request that can account for it (ungated subagent mutation —
+  including a projected-but-never-asked tool call), or (b) a spawn-family
+  tool call runs without its own `session/request_permission` reaching the
+  client (ungated spawn) → the agent is capped `advisory` or spawn-denied;
+  it must not be labeled `enforced`.
+- The probe re-runs for every pinned agent version bump; stale probe evidence
+  never carries to a new version.
+
 Run `npm test`, `npm run typecheck`, and `npm run build` after adding an adapter. `npm run test:cline-runtime` is the bounded Cline smoke flow: it loads the built Workflow fixture through the real `@cline/core` plugin loader supplied by an installed Cline CLI, then exercises the loaded `beforeTool` hook without starting a model session. It intentionally fails when that host runtime is unavailable rather than silently downgrading runtime evidence. This host check does not replace conformance tests.

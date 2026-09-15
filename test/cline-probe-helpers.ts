@@ -1,13 +1,16 @@
-import { execFileSync } from "node:child_process";
-import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { globalClineEntrypoint, resolveClineLaunch } from "../src/integrations/cline-launch.js";
 
 /**
  * Shared helpers for the gated Cline probe suites. This module is imported by
  * probe tests; it is never run as a test on its own.
  */
+
+const workflowRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export function defaultClineKeyFile(): string {
   return process.env.CLINE_API_KEY_FILE ?? path.join(homedir(), ".config", "workflow", "cline-api-key");
@@ -24,8 +27,16 @@ export async function loadClineApiKey(purpose = "Cline probe"): Promise<string> 
   return key;
 }
 
-/** Resolves the installed `cline` binary to its real entry path (Bubblewrap needs realpaths). */
-export function clineEntrypoint(): string {
-  const bin = execFileSync("/usr/bin/which", ["cline"], { encoding: "utf8" }).trim();
-  return realpathSync(bin);
+/**
+ * Resolves the Cline launch entry the probes should use (Bubblewrap needs
+ * realpaths). Matches the production launch resolution: the vendored,
+ * Workflow-patched compiled Cline binary when built (self-contained
+ * executable, no script), the global `cline` wrapper under Node otherwise.
+ */
+export function clineLaunchEntry(): { executable: string; script?: string | undefined } {
+  return resolveClineLaunch({
+    workflowRoot,
+    envBinOverride: process.env.WORKFLOW_CLINE_BIN,
+    clineOnPath: globalClineEntrypoint(),
+  });
 }

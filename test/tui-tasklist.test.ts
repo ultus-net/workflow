@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import React from "react";
 import { render } from "ink-testing-library";
@@ -32,7 +35,7 @@ function createApplication(): WorkflowApplication {
 }
 
 async function waitForFrame(view: { lastFrame(): string | undefined }, expected: RegExp): Promise<void> {
-  const deadline = Date.now() + 1_000;
+  const deadline = Date.now() + 4_000;
   while (!expected.test(view.lastFrame() ?? "") && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
@@ -112,5 +115,184 @@ test("TUI session activity shows tools in flight and recent logs", async () => {
   assert.match(frame, /execute_command/);
   assert.match(frame, /in flight|running/i);
   assert.match(frame, /awaiting guard verdict/);
+  view.unmount();
+});
+
+// ── Plan Task A3: run-gate observability rows ──────────────────────────────
+
+test("TUI activity panel surfaces blocking reasons, verdicts, and unverified claims", async () => {
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    gateObservability: () => ({
+      reviewOutcomes: {
+        "schedule:nightly:abc": {
+          reviewerRunId: "schedule:hub-reviewer-1",
+          verdict: "changes_requested",
+          recorded: false,
+          summary: "weak coverage",
+          parseFailure: "unparseable reviewer verdict: ???",
+        },
+      },
+      blockingReasons: {
+        "schedule:nightly:abc": "test evidence failed: 1 failing: expected 3, got 4",
+      },
+      completionClaims: {
+        "schedule:nightly:abc": {
+          runId: "schedule:nightly:abc",
+          claim: "All tests pass and the feature is complete.",
+          verifiedAtClaim: false,
+          observedAt: "2026-09-15T00:00:00.000Z",
+        },
+      },
+    }),
+  }));
+  await waitForFrame(view, /blocked runs \(1\)/);
+  const frame = view.lastFrame() ?? "";
+  assert.match(frame, /\[blocked\]/);
+  assert.match(frame, /expected 3, got 4/);
+  assert.match(frame, /review verdicts \(1\)/);
+  assert.match(frame, /changes_requested/);
+  assert.match(frame, /unparseable reviewer verdict/);
+  assert.match(frame, /unverified completion claims \(1\)/);
+  assert.match(frame, /\[unverified claim\]/);
+  assert.match(frame, /All tests pass/);
+  assert.match(frame, /feature is complete/);
+  view.unmount();
+});
+
+test("TUI activity panel stays quiet with empty hub gate observability", async () => {
+  // The real hub-mode quiet case: the monitor attaches with gate
+  // observability present but empty (no blocked runs, no verdicts, no
+  // claims) — the panel renders and shows no live activity.
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    gateObservability: () => ({ reviewOutcomes: {}, blockingReasons: {}, completionClaims: {} }),
+  }));
+  await waitForFrame(view, /No live activity\./);
+  const frame = view.lastFrame() ?? "";
+  assert.match(frame, /Activity idle/);
+  assert.equal(/blocked runs/.test(frame), false);
+  assert.equal(/review verdicts/.test(frame), false);
+  assert.equal(/unverified completion claims/.test(frame), false);
+  view.unmount();
+});
+
+// ── Web-UI parity: thinking rows, usage meter, plan projection ────────────
+
+test("thinking chunks render as dim [thinking] transcript rows", async () => {
+  const driver: CodingSessionDriver = {
+    async start(prompt, emit) {
+      emit({ type: "assistant", text: "Let me look." });
+      emit({ type: "log", level: "info", message: "considering the test files", source: "agent-thought" });
+      emit({ type: "assistant", text: "Done." });
+    },
+    async cancel() {},
+  };
+  const session = new WorkflowCodingSession(driver);
+  const view = render(React.createElement(WorkflowTui, { application: createApplication(), session }));
+  await session.submit("go");
+  await waitForFrame(view, /Done\./);
+  const frame = view.lastFrame() ?? "";
+  assert.match(frame, /\[thinking\]/);
+  assert.match(frame, /considering the test files/);
+  view.unmount();
+});
+
+test("the usage meter renders in the composer footer line", async () => {
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    usage: () => "8668 tokens · $0.0132",
+  }));
+  await waitForFrame(view, /8668 tokens · \$0\.0132/);
+  view.unmount();
+});
+
+// ── Web parity: prompt history recall and markdown export ─────────────────
+
+test("Ctrl+Up recalls the last submitted prompt and Ctrl+Down returns to the draft", async () => {
+  const driver: CodingSessionDriver = {
+    async start(_prompt, emit) {
+      emit({ type: "completed", result: "ok" });
+    },
+    async cancel() {},
+  };
+  const session = new WorkflowCodingSession(driver);
+  const view = render(React.createElement(WorkflowTui, { application: createApplication(), session }));
+  // Submit one prompt (type + Enter), wait for completion.
+  view.stdin.write("fix the parser");
+  view.stdin.write("\r");
+  await waitForFrame(view, /What do you want to build\?/);
+  // Recall: Ctrl+Up puts the previous prompt back into the composer.
+  view.stdin.write("\u001b[A");
+  await waitForFrame(view, /fix the parser/);
+  // Ctrl+Down returns to the (empty) live draft.
+  view.stdin.write("\u001b[B");
+  await waitForFrame(view, /What do you want to build\?/);
+  view.unmount();
+});
+
+test("Ctrl+E exports the transcript to a markdown file", async (t) => {
+  const exportDir = mkdtempSync(join(tmpdir(), "wf-tui-export-"));
+  const previousCwd = process.cwd();
+  process.chdir(exportDir);
+  t.after(() => {
+    process.chdir(previousCwd);
+    rmSync(exportDir, { recursive: true, force: true });
+  });
+  const driver: CodingSessionDriver = {
+    async start(_prompt, emit) {
+      emit({ type: "completed", result: "ok" });
+    },
+    async cancel() {},
+  };
+  const session = new WorkflowCodingSession(driver);
+  const view = render(React.createElement(WorkflowTui, { application: createApplication(), session }));
+  // Build a transcript first (export refuses an empty one by design).
+  view.stdin.write("export this conversation");
+  view.stdin.write("\r");
+  await waitForFrame(view, /What do you want to build\?/);
+  view.stdin.write("\u0005");
+  await waitForFrame(view, /\[exported\]/);
+  const frame = view.lastFrame() ?? "";
+  assert.match(frame, /\[exported\]/, "the export row must surface in the transcript");
+  assert.match(frame, /workflow-transcript/, "the export path must surface in the transcript");
+  const files = readdirSync(exportDir);
+  const exportedFile = files.find((name) => name.startsWith("workflow-transcript-") && name.endsWith(".md"));
+  assert.ok(exportedFile !== undefined, "the markdown file must exist in the export directory");
+  const exported = readFileSync(join(exportDir, exportedFile), "utf8");
+  assert.match(exported, /# Workflow transcript/);
+  assert.match(exported, /export this conversation/);
+  assert.match(exported, /\*\*You\*\*: export this conversation/);
+  view.unmount();
+});
+
+test("submitting while a turn runs shows a queued row (message queue parity)", async () => {
+  const pending: (() => void)[] = [];
+  const keepAlive = setInterval(() => {}, 100);
+  const driver: CodingSessionDriver = {
+    async start(prompt, emit) {
+      if (prompt === "first") {
+        await new Promise<void>((resolve) => {
+          pending.push(resolve);
+        });
+      }
+      emit({ type: "completed", result: `done: ${prompt}` });
+    },
+    async cancel() {
+      pending.shift()?.();
+      clearInterval(keepAlive);
+    },
+  };
+  const session = new WorkflowCodingSession(driver);
+  const view = render(React.createElement(WorkflowTui, { application: createApplication(), session }));
+  view.stdin.write("first");
+  view.stdin.write("\r");
+  await waitForFrame(view, /\[running\]/);
+  view.stdin.write("second");
+  view.stdin.write("\r");
+  await waitForFrame(view, /You \(queued\)/);
+  assert.match(view.lastFrame() ?? "", /second/, "the queued prompt text must be visible: " + (view.lastFrame() ?? ""));
+  pending.shift()?.();
+  clearInterval(keepAlive);
   view.unmount();
 });

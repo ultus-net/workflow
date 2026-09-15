@@ -90,6 +90,43 @@ test("legacy Ink projection renders conversation and tool activity", async () =>
   view.unmount();
 });
 
+test("TUI renders assistant activity with the composed driver label", async () => {
+  const driver: CodingSessionDriver = {
+    async start(_prompt, emit) {
+      emit({ type: "assistant", text: "ACP response" });
+      emit({ type: "completed", result: "done" });
+    },
+    async cancel() {},
+  };
+  const application = new WorkflowApplication(new TaskGraph([]), hostCapabilities({ transport: "native", authoritativePreMutation: true }));
+  const session = new WorkflowCodingSession(driver);
+  const view = render(React.createElement(WorkflowTui, { application, session, assistantLabel: "acp" }));
+
+  view.stdin.write("Inspect repository");
+  view.stdin.write("\r");
+  await waitForFrame(view, /acp\s+ACP response/);
+
+  assert.match(view.lastFrame() ?? "", /acp\s+ACP response/);
+  assert.doesNotMatch(view.lastFrame() ?? "", /Cline\s+ACP response/);
+  view.unmount();
+});
+
+for (const prompt of ["make a change", "please inspect", "?what changed", ",start here", ".check this"]) {
+  test(`empty composer preserves ordinary prompt ${JSON.stringify(prompt)}`, async () => {
+    const driver: CodingSessionDriver = { start: async () => undefined, cancel: async () => undefined };
+    const application = new WorkflowApplication(new TaskGraph([]), hostCapabilities({ transport: "native", authoritativePreMutation: true }));
+    const view = render(React.createElement(WorkflowTui, { application, session: new WorkflowCodingSession(driver) }));
+
+    // Real terminals deliver ordinary typing one key at a time.
+    view.stdin.write(prompt[0]!);
+    view.stdin.write(prompt.slice(1));
+    await waitForFrame(view, new RegExp(`> ${prompt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+
+    assert.match(view.lastFrame() ?? "", new RegExp(`> ${prompt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    view.unmount();
+  });
+}
+
 async function waitForFrame(view: { lastFrame(): string | undefined }, expected: RegExp): Promise<void> {
   const deadline = Date.now() + 1_000;
   while (!expected.test(view.lastFrame() ?? "") && Date.now() < deadline) {
@@ -125,5 +162,45 @@ test("legacy Ink projection cancels a coding session without changing canonical 
   assert.equal(cancelled, true);
   assert.match(view.lastFrame() ?? "", /cancelled/);
   assert.equal(application.snapshot().tasks[0]?.state, "READY");
+  view.unmount();
+});
+
+test("the `/` menu cycles agent config on the active session", async () => {
+  const selected: { id: string; value: string | boolean }[] = [];
+  let configOptions = [{
+    id: "model",
+    name: "Model",
+    category: "model",
+    type: "select" as const,
+    currentValue: "m1",
+    options: [{ value: "m1", name: "Model One" }, { value: "m2", name: "Model Two" }],
+  }];
+  const initialDriver: CodingSessionDriver = {
+    start: async () => undefined,
+    cancel: async () => undefined,
+  };
+  const task: WorkflowTask = { id: taskId("A"), title: "Model cycle", state: "BLOCKED", dependencies: [], requiredEvidence: [] };
+  const application = new WorkflowApplication(new TaskGraph([task]), hostCapabilities({ transport: "native", authoritativePreMutation: true }));
+  const view = render(React.createElement(WorkflowTui, {
+    application,
+    session: new WorkflowCodingSession(initialDriver),
+    sessionConfigOptions: () => configOptions,
+    onSetSessionConfig: async (id: string, value: string | boolean) => {
+      selected.push({ id, value });
+      configOptions = configOptions.map((option) => ({ ...option, currentValue: String(value) }));
+    },
+  }));
+
+  const hintRegex = /1-7 or/;
+  view.stdin.write("/");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(view.lastFrame() ?? "", hintRegex, "model item must tell the menu has seven entries");
+  assert.match(view.lastFrame() ?? "", /Model: Model One/);
+  view.stdin.write("7"); // 7th menu item -> Model
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  view.stdin.write("/");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.match(view.lastFrame() ?? "", /Model: Model Two/);
+  assert.deepEqual(selected, [{ id: "model", value: "m2" }], "the active session must receive the advertised option value");
   view.unmount();
 });
