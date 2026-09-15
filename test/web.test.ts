@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { AddressInfo } from "node:net";
+import vm from "node:vm";
 
 import {
   TaskGraph,
@@ -41,6 +42,25 @@ test("web UI reads snapshots and submits commands through the application API", 
   assert.equal(transition.status, 200);
   const after = await fetch(`http://127.0.0.1:${port}/api/snapshot`).then((response) => response.json()) as { tasks: { state: string }[] };
   assert.equal(after.tasks[0]?.state, "IN_PROGRESS");
+});
+
+test("web UI serves /app.js as syntactically valid JavaScript", async (context) => {
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+
+  const response = await fetch(`http://127.0.0.1:${port}/app.js`);
+  assert.equal(response.status, 200);
+  const source = await response.text();
+  // A raw newline inside a string literal (from an unescaped `\n` in the
+  // TypeScript template) must never reach the browser: it kills the whole
+  // script, leaving the composer form to submit natively.
+  assert.doesNotThrow(() => new vm.Script(source));
 });
 
 test("web UI submits prompts through the authoritative coding session and exposes projected events", async (context) => {
