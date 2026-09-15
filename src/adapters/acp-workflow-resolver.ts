@@ -4,11 +4,22 @@ import type { AcpPermissionCorrelation, AcpPermissionRequestParams } from "./acp
 import { correlateAcpPermissionRequest } from "./acp-permission.js";
 import type { AcpPermissionDecision } from "./acp-subprocess.js";
 import type { ProposedToolAction, ToolCapability } from "./host.js";
+import { guardInputFromToolCall, type WorkflowGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 
 export interface WorkflowAcpPermissionResolverOptions {
   readonly adapter: Pick<AcpHostAdapter, "proposalFromBeforeTool">;
   readonly correlation: AcpPermissionCorrelation;
   authorize(action: ProposedToolAction): Promise<PolicyDecision> | PolicyDecision;
+  /** When provided, the guard dispatcher gates every mapped tool call after kernel authorization (plan Task G2). */
+  readonly guard?: WorkflowGuardProvider;
+  /** Workspace root forwarded to the guard for policy scoping. */
+  readonly workspaceRoot?: string;
+  /**
+   * Plan Task F1/F3: called when an allowed tool call delivered skill content
+   * (a read_skill-shaped MCP call carrying a skill name), so the application
+   * layer can journal the delivery for its skill precondition.
+   */
+  readonly onSkillRead?: (skill: string) => void;
 }
 
 export function createWorkflowAcpPermissionResolver(
@@ -34,8 +45,57 @@ export function createWorkflowAcpPermissionResolver(
       toolCall,
     });
     const decision = await options.authorize(proposal);
-    return decision.kind === "allow" ? { kind: "allow" } : { kind: "deny", reason: decision.reason };
+    if (decision.kind !== "allow") return { kind: "deny", reason: decision.reason };
+    if (options.guard !== undefined) {
+      // Plan Task G2: identical policy decisions on ACP surfaces — the guard
+      // dispatcher runs after kernel authorization, and any guard failure is
+      // a denial (fail closed), never an allow.
+      const guardInput = guardInputFromToolCall(correlated.toolCall.name, correlated.toolCall.rawInput, options.workspaceRoot);
+      if (guardInput !== undefined) {
+        let guardDecision;
+        try {
+          guardDecision = await options.guard.guardCheck(guardInput);
+        } catch (error) {
+          return { kind: "deny", reason: `guard unavailable (fail closed): ${error instanceof Error ? error.message : String(error)}` };
+        }
+        if (guardDecision.decision !== "allow") {
+          return { kind: "deny", reason: `guard policy '${guardDecision.policy}': ${guardDecision.reason}` };
+        }
+      }
+    }
+    const skill = skillNameFromReadToolCall(correlated.toolCall.name, correlated.toolCall.rawInput);
+    if (skill !== undefined) options.onSkillRead?.(skill);
+    return { kind: "allow" };
   };
+}
+
+// An allowed read_skill call records the delivery. Tool-name matching covers
+// skills-mcp's own name, the explicit skills-mcp__ prefix, and lazy-discovery
+// call_tool indirection.
+//
+// HONEST LIMIT (title trust): tool names arrive from the agent's
+// permission-request titles, the same trust boundary as capability
+// classification — an agent that forges a read_skill-shaped request journals
+// a delivery without content ever being read, which satisfies the mutation
+// precondition. This is the delivery gate, not an adherence gate: the
+// precondition guarantees a delivery-shaped event occurred under
+// authorization, nothing more. Contained agents that lie about titles are
+// bounded by the guard dispatcher and OS containment, as everywhere else.
+function skillNameFromReadToolCall(toolName: string, rawInput: unknown): string | undefined {
+  const lowered = toolName.toLowerCase();
+  const isReadSkillTool = lowered === "read_skill" || lowered === "skills-mcp__read_skill" || lowered === "call_tool";
+  if (!isReadSkillTool) return undefined;
+  if (typeof rawInput !== "object" || rawInput === null) return undefined;
+  const record = rawInput as Record<string, unknown>;
+  for (const key of ["skill", "skill_name", "skillName", "name"]) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  // Lazy-discovery indirection: { tool: "read_skill", arguments: { name } }.
+  if (typeof record.tool === "string" && record.tool.toLowerCase() === "read_skill") {
+    return skillNameFromReadToolCall("read_skill", record.arguments);
+  }
+  return undefined;
 }
 
 function authorizationLocations(

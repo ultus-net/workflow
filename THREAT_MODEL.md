@@ -37,6 +37,10 @@ Capability withholding is useful only when the host's execution environment actu
 | Stale actor overwrites workflow state | Version conflict plus exclusive local writer lock | Store is not a distributed/HA consensus system |
 | Malformed/tampered persisted state | Persisted domain fields, graph invariants, verification evidence, and transition records are validated on restore | Private store-directory assumption remains; history is validated for legal transitions but is not a cryptographically authenticated audit log |
 | Remote browser drives transitions | Current server binds to loopback in the CLI and accepts only application commands | No authentication; exposing/reverse-proxying it beyond loopback is unsupported |
+| Agent spawns internal subagents the hub cannot gate | `spawn` capability is default-deny; spawn tool proposals classify as `spawn` and host metadata cannot relax it | Agents whose internal subagents emit no permission requests are capped `advisory` or spawn-denied unless probe-verified per pinned version (`docs/HOST_ADAPTERS.md`) |
+| Agent or prompt switches a bypass/auto-approve mode at runtime | Enforcement-altering config options are denied client-side before any wire call; agent-originated `config_option_update` is rejected from retained config with a visible status | An agent that ignores its own permission surface entirely degrades to the OS containment boundary — the denial is observable but the agent cannot be forced to ask |
+| Review-gated run promoted without a real review | Hub-owned reviewer records distinct-run evidence under the anti-rubber-stamp rules; fail-closed verdict parsing | Verdict quality is process discipline (gamable summary conventions), not determinism; evidence validates shape, not truth |
+| Run verifies on stale or inherited test results | `begin()` stales the workspace test subject; the hub runs the test command itself and records environment evidence at the current epoch | The test command is only as honest as the project's configured `verifyCommand`; a compromised workspace can pass its own tests |
 
 ## Operator Rules
 
@@ -45,3 +49,22 @@ Capability withholding is useful only when the host's execution environment actu
 3. Keep production credentials and destructive infrastructure permissions outside agent environments by default.
 4. Treat MCP, host, UI, model, and persisted bytes as boundary inputs rather than sources of workflow truth.
 5. Route allowed processes through `WorkflowContainedProcess` with the Linux backend when relying on W019 containment; direct process APIs bypass that boundary.
+
+## Residual Risk: Model-Channel Exfiltration (C3)
+
+Whole-agent Bubblewrap containment retains `network=host` for model egress
+(the contained agent must reach its provider). With ambient filesystem paths
+hidden but the network path open, **data exfiltration through the model
+channel is the main residual risk**: a prompted or poisoned agent can fold
+workspace contents into model requests that leave the machine. The
+containment boundary limits what the process can *read*, not what the model
+*is asked to send*.
+
+Current state: the metering proxy (`createModelUsageProxy`) is the only
+mandatory egress point for agent model traffic — it holds the real key and
+can observe request volume, but it does not inspect or filter payloads.
+Planned control: the proxy is the natural egress-policy point (destination
+allow-lists, size ceilings, per-run budgets), and per-run budget caps
+(plan Task C2) bound the channel's capacity. Until payload policy exists,
+operators should treat model egress as unmonitored and keep the most
+sensitive material out of agent-readable workspaces.

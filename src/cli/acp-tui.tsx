@@ -53,6 +53,14 @@ const { waitUntilExit } = render(
     onSetSessionConfig: async (id: string, value: string | boolean) => {
       await runtime.driver.setConfigOption(id, value);
     },
+    // Web-parity usage meter (Batch 2): live tokens + cost from the metering
+    // proxy in the composer footer.
+    usage: () => {
+      const metrics = runtime.metrics?.();
+      return metrics === undefined
+        ? undefined
+        : `${metrics.totalTokens} tokens · $${metrics.costUsd.toFixed(4)}`;
+    },
   }),
 );
 let renderError: unknown;

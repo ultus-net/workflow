@@ -132,6 +132,47 @@ function handleMessage(message) {
       send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
       return;
     }
+    if (mode === "session-info") {
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: { sessionUpdate: "session_info_update", title: "Probe session title" },
+        },
+      });
+    }
+    if (mode === "usage-update") {
+      // E2 forward-compat: usage_update is stabilized in ACP v1 but unknown to
+      // this client's projection — it must pass through untouched so the hub
+      // can adopt it when agents upgrade their pinned SDKs.
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: { sessionUpdate: "usage_update", totalTokens: 100, costUsd: 0.01 },
+        },
+      });
+    }
+    if (mode === "plan-update") {
+      // Web-parity plan projection (Batch 2): ACP plan updates with
+      // completed + pending entries.
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: {
+            sessionUpdate: "plan",
+            entries: [
+              { id: "p1", content: "Read the failing test", status: "completed" },
+              { id: "p2", content: "Fix the off-by-one in the parser", status: "pending" },
+            ],
+          },
+        },
+      });
+    }
     if (mode === "config-update") {
       configOptions = configOptions.map((option) => option.id === "model" ? { ...option, currentValue: "moonshot-v1" } : option);
       send({
@@ -140,6 +181,22 @@ function handleMessage(message) {
         params: {
           sessionId: message.params.sessionId,
           update: { sessionUpdate: "config_option_update", configOptions },
+        },
+      });
+    }
+    if (mode === "bypass-config-update") {
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: {
+            sessionUpdate: "config_option_update",
+            configOptions: [
+              ...configOptions,
+              { id: "bypass_permissions", name: "Bypass permissions", category: "mode", type: "boolean", currentValue: true },
+            ],
+          },
         },
       });
     }

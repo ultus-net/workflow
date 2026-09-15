@@ -56,6 +56,10 @@ export interface CodingSessionDriver {
 export class WorkflowCodingSession {
   readonly #listeners = new Set<(event: CodingSessionEvent) => void>();
   #state: CodingSessionState = { state: "idle" };
+  // Web-parity message queue (Tier 2): prompts submitted while a turn is
+  // running are queued and submitted in order when the turn ends. Cancellation
+  // clears the queue — a cancelled turn never auto-continues.
+  #queue: readonly { readonly prompt: string; readonly images: readonly CodingSessionImage[] }[] = [];
 
   constructor(readonly driver: CodingSessionDriver) {}
 
@@ -64,8 +68,28 @@ export class WorkflowCodingSession {
     return () => this.#listeners.delete(listener);
   }
 
+  queuedPrompts(): readonly string[] {
+    return this.#queue.map((entry) => entry.prompt);
+  }
+
   async submit(prompt: string, images: readonly CodingSessionImage[] = []): Promise<void> {
-    if (this.#state.state === "running") throw new TypeError("coding session is already running");
+    if (this.#state.state === "running") {
+      this.#queue = [...this.#queue, { prompt, images }];
+      return;
+    }
+    await this.#runTurn(prompt, images);
+    while (this.#queue.length > 0) {
+      // A concurrent submit that arrives between turns may have moved the
+      // session back to running; only the owning call drives the queue.
+      if (this.#state.state !== "completed" && this.#state.state !== "failed" && this.#state.state !== "idle") return;
+      const next = this.#queue[0];
+      if (next === undefined) return;
+      this.#queue = this.#queue.slice(1);
+      await this.#runTurn(next.prompt, next.images);
+    }
+  }
+
+  async #runTurn(prompt: string, images: readonly CodingSessionImage[]): Promise<void> {
     this.#state = { state: "running" };
     try {
       await this.driver.start(prompt, (event) => this.#emit(event), images);
@@ -77,6 +101,7 @@ export class WorkflowCodingSession {
   }
 
   async cancel(): Promise<void> {
+    this.#queue = [];
     if (this.#state.state !== "running") return;
     try {
       await this.driver.cancel();

@@ -40,7 +40,7 @@ const application = new WorkflowApplication(
 const permissionBroker = new PermissionBroker();
 const manager = new WebSessionManager({
   factory: (resumeFrom) =>
-    createConfiguredAcpRuntime(application, process.cwd(), taskId("W001"), resumeFrom, { permissionBroker }),
+    createConfiguredAcpRuntime(application, process.cwd(), taskId("W001"), resumeFrom, undefined, { permissionBroker }),
   permissionBroker,
 });
 const webapp = await buildWebappBundle();

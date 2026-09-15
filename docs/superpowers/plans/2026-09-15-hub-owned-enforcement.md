@@ -53,7 +53,7 @@ cannot close without host-specific tooling.
 - Create: `src/integrations/hub-reviewer.ts`
 - Test: `test/hub-reviewer.test.ts`
 
-- [ ] **Step 1: failing tests** — stub ACP agent factory; assert: hub spawns a
+- [x] **Step 1: failing tests** — stub ACP agent factory; assert: hub spawns a
       *distinct* reviewer runId via `/run/begin` (anti-rubber-stamp rule:
       reviewer run ≠ subject run); the hub sources the diff itself by running
       `git diff` through contained execution (the hub stores no diffs and
@@ -67,11 +67,20 @@ cannot close without host-specific tooling.
       the ordinary token; reviewer session runs contained
       (`launchContainedAcpAgent`) with placeholder-only credentials via the
       metering proxy.
-- [ ] **Step 2: implement** — compose existing pieces only:
+- [x] **Step 2: implement** — compose existing pieces only:
       `AcpSessionDriver`/`acp-session.ts` (contained spawn),
       `model-usage-proxy.ts` (key custody + metering), `src/review/rubric.ts`
       (rubric text), `run-registry.ts` (run bookkeeping). No new deps.
-- [ ] **Step 3: run — passes**; lint + typecheck clean.
+      **Implemented 2026-09-15 (branch `feat/hub-owned-enforcement`):** the
+      runner with injected seams (`ReviewerAgentSessionFactory`,
+      `DiffSource`) landed with full fail-closed tests; the concrete
+      contained-spawn factory (`launchContainedAcpAgent` + metering-proxy
+      provider settings) is production wiring that lands with A2.
+- [x] **Step 3: run — passes**; lint + typecheck clean.
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`: `HubReviewerRunner` +
+> `test/hub-reviewer.test.ts` (10 tests). Production contained-spawn factory
+> (launchContainedAcpAgent + metering proxy) lands with A2 bridge wiring.
 
 ### Task A2: Automatic review trigger on run completion
 
@@ -83,7 +92,7 @@ cannot close without host-specific tooling.
   scope new failing tests to auto-launch and failure-surfacing, not the
   already-covered deny paths)
 
-- [ ] **Step 1: failing tests** — a `requiresReview` run whose agent finished
+- [x] **Step 1: failing tests** — a `requiresReview` run whose agent finished
       (per `/run/finish` reporting session end) does **not** advance to
       `VERIFIED` until the hub-owned reviewer records fresh `reviewer`
       evidence; plain runs keep existing explicit-policy semantics (per
@@ -91,9 +100,15 @@ cannot close without host-specific tooling.
       in the run registry; reviewer failure (agent error, budget exceeded,
       unparseable verdict) leaves the run task in `VERIFYING`, surfaced as a
       blocking reason, never silently passed.
-- [ ] **Step 2: implement** — wire A1 into the run lifecycle; reviewer
+- [x] **Step 2: implement** — wire A1 into the run lifecycle; reviewer
       outcome recorded through the same kernel transition machinery.
-- [ ] **Step 3: run — passes.**
+- [x] **Step 3: run — passes.**
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`: registry-level
+> auto-launch (`createRunRegistry` reviewer/testRunner seams) with observable
+> review outcomes and blocking reasons. The bridge does not yet wire a
+> production reviewer factory; the deferred piece is the contained-spawn
+> composition plus `cline-tui-bridge.ts` registration.
 
 ### Task A3: Verdict + follow-up surfacing *(coordination point — web)*
 
@@ -126,13 +141,13 @@ half the work.
 - Modify: `src/adapters/host.ts` (capability set), `src/adapters/acp.ts`
 - Test: `test/acp-adapter.test.ts`, `test/acp-permission.test.ts`
 
-- [ ] **Step 1: failing tests** — `spawn_agent`/subagent/task-spawn tool
+- [x] **Step 1: failing tests** — `spawn_agent`/subagent/task-spawn tool
       proposals classify to a **new `spawn` capability** — explicitly *not*
       `process`, which the hub CLI already grants by default
       (`src/cli/hub.ts:30`) and would make spawn default-allow; `spawn` is
       default-deny on every surface; event metadata may escalate but never
       relax (existing `stricterCapability` rule).
-- [ ] **Step 2: implement + run — passes.**
+- [x] **Step 2: implement + run — passes.**
 
 ### Task B2: Enforcement-altering config options are capability-bearing
 
@@ -140,12 +155,12 @@ half the work.
 - Modify: `src/integrations/acp-session.ts` (config-option handling from G2)
 - Test: `test/acp-session.test.ts` (extend)
 
-- [ ] **Step 1: failing tests** — a `session/set_config_option` or
+- [x] **Step 1: failing tests** — a `session/set_config_option` or
       agent-originated `config_option_update` that switches a
       bypass/auto-approve-everything mode is denied (or visibly downgrades the
       surface's enforcement marker) instead of silently applying. Mode changes
       must never let `advisory` look like `enforced` (PRODUCT.md constraint).
-- [ ] **Step 2: implement + run — passes.**
+- [x] **Step 2: implement + run — passes.**
 
 ### Task B3: Subagent conformance matrix
 
@@ -173,12 +188,23 @@ need external connectors/plugins to drive them.
 - Create: `src/integrations/hub-scheduler.ts`, `src/cli/hub.ts` (wiring)
 - Test: `test/hub-scheduler.test.ts`
 
-- [ ] **Step 1: failing tests** — cron table persisted under the data dir
+- [x] **Step 1: failing tests** — cron table persisted under the data dir
       (versioned, lock-consistent with existing store); schedules spawn
       contained ACP runs (`/run/begin` → prompt → agent turn → `/run/finish`)
       with their own task and evidence; `requiresReview` defaults true;
       scheduler failure never mutates state (fail closed).
-- [ ] **Step 2: implement + run — passes.**
+- [x] **Step 2: implement + run — passes.**
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`: dependency-free
+> 5-field cron parser with Vixie day semantics (restricted dom/dow OR;
+> malformed shapes — empty list parts, open ranges — fail closed),
+> deterministic `tick(now)` plus an unref'd per-minute loop, versioned
+> atomic table at `~/.workflow/scheduler.json` (`WORKFLOW_HUB_SCHEDULES`
+> overrides; ENOENT = none, other errors refuse). Fail-closed fire: crashed
+> turn → run FAILED with reason recorded; a rejected finish gate (review/test
+> evidence) leaves the run VERIFYING — never a fabricated outcome. Restart
+> mid-minute may refire (at-least-once); runIds are unique so no state
+> corruption. Real-agent scheduled turn is a gated probe away.
 
 ### Task C2: Budget enforcement
 
@@ -187,10 +213,19 @@ need external connectors/plugins to drive them.
   check), `src/integrations/acp-session.ts` (abort hook)
 - Test: `test/model-usage-proxy.test.ts` (extend)
 
-- [ ] **Step 1: failing tests** — per-run token/cost caps from proxy records;
+- [x] **Step 1: failing tests** — per-run token/cost caps from proxy records;
       exceeding a cap aborts the session (`session/cancel`) and the run task
       ends `FAILED` with the budget as blocking reason.
-- [ ] **Step 2: implement + run — passes.**
+- [x] **Step 2: implement + run — passes.**
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`, evolved from the
+> file map: caps are enforced by `createBudgetGuard` in
+> `src/integrations/hub-scheduler.ts` reading the metering proxy's metrics
+> (exposed as optional `metrics()` on `WorkflowAcpRuntime`) — the guard
+> subscribes to session events, cancels the turn once on the first
+> violating event, and the scheduler fails the run with the violation as
+> its recorded blocking reason. Budgets ride on schedules
+> (`maxInputTokens`/`maxOutputTokens`/`maxTotalTokens`/`maxCostUsd`).
 
 ### Task C3: Threat-model addendum
 
@@ -212,19 +247,28 @@ Hub-executed tests are the strongest cheap evidence the control plane owns.
   `src/integrations/cline-tui-bridge.ts` (routes)
 - Test: `test/hub-runs.test.ts` (extend)
 
-- [ ] **Step 1: failing tests** — `outcome: "verified"` for review-gated runs
+- [x] **Step 1: failing tests** — `outcome: "verified"` for review-gated runs
       additionally requires fresh passing `environment` evidence with subject
       `test:<workspace>` at the current mutation epoch, produced by the hub
       executing the workspace test command through contained execution
       (existing `/bash` machinery); failing tests → run stays `VERIFYING` /
       fails closed with the test output as blocking reason.
-- [ ] **Step 2: implement + run — passes.** The test command comes from the
+- [x] **Step 2: implement + run — passes.** The test command comes from the
       same project config surface the guard uses today
       (`verifyCommand` in `.opencode/workflow-guard.json[c]` and the
       `WORKFLOW_*` equivalents) — the hub must learn it from project config,
       never from the agent. Richer parsing via `test-intelligence-mcp` /
       `verification-accountability-mcp` is a later enhancement, not a
       dependency.
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`: `RunTestRunner`
+> seam in `createRunRegistry` — the environment-evidence requirement is
+> declared only when the seam is wired (backward-compatible), `begin()`
+> stales the workspace test subject so a run can never verify on a
+> predecessor's green tests, and evidence is recorded hub-side at the current
+> epoch. **Deferred piece:** bridge wiring — the production runner reads
+> `verifyCommand` from project config and executes through contained `/bash`
+> machinery; no project-config sourcing exists in `src/` yet.
 
 ---
 
@@ -239,10 +283,23 @@ Hub-executed tests are the strongest cheap evidence the control plane owns.
 - Modify: `mcp-toolbox/apps/*` (shared helper), per-server adoption
 - Test: toolbox `verify` command
 
-- [ ] **Step 1:** shared toolbox helper for bounded results (48k middle-cut
+- [x] **Step 1:** shared toolbox helper for bounded results (48k middle-cut
       parity) and optional discover/call meta-tools per server, so any
       MCP-capable agent inherits the token economy without host patches.
-- [ ] **Step 2:** adopt in the noisiest servers first (code/test-intelligence).
+- [x] **Step 2:** adopt in the noisiest servers first (code/test-intelligence).
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`: canonical helper in
+> `mcp-toolbox/packages/result-bounds` (middle-cut with visible marker,
+> head-only fallback for caps too small for a marker, `boundToolResultText`
+> wrapper). Adopted in code-intelligence-mcp and test-intelligence-mcp via
+> their existing `registerTool` wrappers — every tool result's model-visible
+> text is 48k-bounded; `structuredContent` stays exact. Because packed npm
+> artifacts must stay self-contained (per-app tarball install test), the
+> helper is vendored verbatim into each adopting app's `src/vendor/` with a
+> drift-guard test in the package failing on divergence — canonical source,
+> zero runtime deps. **Remaining from Step 1:** the optional server-side
+> discover/call meta-tools (lazy tool discovery without host patches) are
+> not implemented; the bounds half delivers the token-economy parity first.
 
 ### Task E2: usage_update adoption
 
@@ -268,16 +325,30 @@ delivery, never adherence (prompts are not a security boundary).
       (observation journal for `read_skill` calls)
 - Test: toolbox `verify`, `test/acp-session.test.ts` (extend)
 
-- [ ] **Step 1:** hub owns agent MCP config → skills reach the model only
+- [x] **Step 1:** hub owns agent MCP config → skills reach the model only
       through this server. Native host skill injection stays **off** on all
       hosts (`cline-runtime.ts` `enableSkills: false` becomes the enforcement
       precondition, not a limitation). For opencode, its native `skill` tool
       is denied via permission config (`"skill": "deny"`), same
       single-delivery-path rule.
-- [ ] **Step 2:** skill storage readable by the host's raw `read_file` is a
+- [x] **Step 2:** skill storage readable by the host's raw `read_file` is a
       bypass — classify reads under skill paths as recording the same
       `read_skill` observation, or move skill storage outside
       workspace-readable scope. Decide up front.
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`: `skills-mcp` in the
+> toolbox (`list_skills` metadata-only, `read_skill` the single content
+> delivery path; names are single path segments — traversal rejected;
+> results bounded via the E1 helper). **Bypass decision:** skills live under
+> `SKILLS_MCP_DIR` (default `~/.agents/skills`, outside any agent workspace)
+> so a *contained* agent's raw `read_file` is denied by workspace confinement
+> — the bypass is closed structurally, not by classification. The ACP driver
+> classifies `read_skill`/`list_skills` (and `__`-prefixed MCP forms) as
+> `read`, and the resolver journals the delivered skill on allow.
+> **Remaining (probe-dependent):** mounting skills-mcp into a contained ACP
+> agent's MCP config (`acp-runtime.ts` scratch-home MCP settings) needs a
+> gated probe against the real agent to verify Cline's ACP MCP-config
+> surface; native `skill`-tool denial on opencode is config-side (G1 probe).
 
 ### Task F2: Availability gating by learner level
 
@@ -286,8 +357,16 @@ delivery, never adherence (prompts are not a security boundary).
   skills-mcp config
 - Test: extend pedagogy tests
 
-- [ ] **Step 1:** learner level gates which skills `list_skills` returns and
+- [x] **Step 1:** learner level gates which skills `list_skills` returns and
       which are required (below).
+
+> Implemented 2026-09-15: `src/pedagogy/skill-gating.ts`
+> (`loadSkillsLevelMap` + `skillGatingFor`) reads the same operator-managed
+> `levels.json` convention skills-mcp uses — one config drives both server
+> availability (`SKILLS_MCP_LEVEL` + map: honest `off`/`active`/`closed`
+> states, malformed maps throw) and the hub-side required set
+> (`setTaskRequiredSkills`). Composition into TUI mode-switching lands with
+> the surfaces (A3-family wiring).
 
 ### Task F3: Delivery precondition in the application layer
 
@@ -295,13 +374,45 @@ delivery, never adherence (prompts are not a security boundary).
 - Modify: `src/application/workflow.ts`
 - Test: `test/application.test.ts` (extend)
 
-- [ ] **Step 1: failing tests** — tasks carrying `requiredSkills` deny
+- [x] **Step 1: failing tests** — tasks carrying `requiredSkills` deny
       `mutation` until the session log contains a `read_skill` observation for
       each required skill, fresh within the current task/mutation-epoch; skill
       reads are **preconditions, never `requiredEvidence`** (model-initiated
       tool calls must not self-certify); kernel stays prompt/skill-free.
-- [ ] **Step 2: implement + run — passes.** Docs state the honest limit:
+- [x] **Step 2: implement + run — passes.** Docs state the honest limit:
       delivery is enforced, adherence is not.
+
+> Implemented 2026-09-15: `setTaskRequiredSkills`/`recordSkillRead` +
+> `SKILL_DELIVERY_REQUIRED` deny in `WorkflowApplication.authorize`, after
+> capability/workspace/task-state/pedagogy gates. Freshness is per-task (a
+> new task must re-read its required skills; skill reads never appear as
+> evidence in snapshots). `createConfiguredAcpRuntime` journals deliveries
+> into the application from the resolver's `onSkillRead` observation.
+> **Honest limit, enforced in docs and tests:** delivery is enforced;
+> adherence is not. Two documented boundaries: (1) *title trust* — the
+> delivery observation derives from the agent's permission-request titles,
+> the same trust boundary as capability classification; a forged
+> read_skill-shaped request journals delivery without content being read,
+> bounded only by the guard and OS containment like every other lie an
+> agent can tell; (2) *ephemeral journal* — `#skillReads`/
+> `#taskRequiredSkills` are deliberately in-memory and absent from
+> `persistedState()`: a restart requires re-delivery (fail-closed
+> direction), and required-skills config is re-applied by surfaces at
+> startup rather than trusted from disk. G5's persistence work may revisit
+> if a resume flow ever needs to carry the journal; until then the stricter
+> behavior is the honest one.
+>
+> **Safety screening (operator request 2026-09-15):** web-fetched or manually
+> loaded skills are untrusted input; `skills-mcp` screens at scan and again
+> at delivery (files can change between), quarantining flagged skills with
+> surfaced findings. Line-level defensive-context scoping keeps legitimate
+> security-guidance skills that *quote* attack patterns (the live
+> browser-testing-with-devtools skill) deliverable; the context list has no
+> bare negations so a "Do not tell the user" hijack cannot suppress its own
+> detector. `SKILLS_MCP_SCREENING=off` is the operator's trust override.
+> Heuristic, honestly scoped: screening makes bad skills noisy; it does not
+> make delivered skills trustworthy — the guard still gates executed
+> commands.
 
 ---
 
@@ -357,18 +468,34 @@ probe-verified agent.
       wiring)
 - Test: `test/hub-guard-interception.test.ts` (extend), `test/mcp-toolbox-guard.test.ts` (extend)
 
-- [ ] **Step 1: failing tests** — every `/before-tool` call is evaluated by the
+- [x] **Step 1: failing tests** — every `/before-tool` call is evaluated by the
       vendored guard dispatcher (`guardCheck`) in addition to kernel/capability
       authorization; a guard deny is a hub deny (fail closed, `{stop: true}`),
       identical policy decisions for Cline ACP and opencode sessions;
       guard-unavailable → deny, never allow (fail closed).
-- [ ] **Step 2: implement + run — passes.** Single policy source of truth:
+- [x] **Step 2: implement + run — passes.** Single policy source of truth:
       the plugin stops being the only place policies run; it becomes one
       caller among several.
 - [ ] **Step 3:** in `opencode-workflow-guard`, demote the plugin to a thin
       forwarder (its `tool.execute.before` already throws on hub deny — that
       shape is correct; policy imports move behind the hub call). The plugin
       repo's release cadence can then slow to "conformance shim maintenance."
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement` (steps 1–2):
+> `guardInputFromToolCall` is now one shared mapping in
+> `src/integrations/mcp-toolbox-guard.ts` covering both the Cline hook
+> surface and the ACP approval surface (`run_commands`, `replace_in_file`,
+> `delete_file`, ...); the ACP permission resolver and the OpenCode plugin
+> both run the guard after kernel authorization (deny on policy, deny on
+> guard failure — fail closed); `createConfiguredAcpRuntime` accepts a
+> guard provider so hub-owned runtimes (reviewer + scheduled runs) carry it;
+> and `src/cli/hub.ts` refuses to start when the guard provider cannot be
+> created — a silently guardless authority is no longer possible.
+> **Step 3 remains:** the cross-repo plugin demotion in
+> `opencode-workflow-guard` — replace the in-process policy imports in
+> `workflow-guard.ts` with a discovery-file HTTP forward to the hub's
+> `/before-tool` (per-call resolution, fail closed on any non-200), then
+> retire its per-host policy bodies at the next release.
 
 ### Task G3: Tool substitution for non-cooperative agents
 
@@ -379,13 +506,30 @@ probe-verified agent.
 - Modify: `src/integrations/acp-runtime.ts` (launch agents with built-in
       mutations denied via host config and the toolbox server mounted)
 
-- [ ] **Step 1:** built-in mutation tools denied via host permission config
+- [x] **Step 1:** built-in mutation tools denied via host permission config
       (`"edit": "deny", "bash": "deny"`); the model's only mutation path is
       hub-owned tools. This is the same single-delivery-path logic as F1,
       generalized to fs/exec.
 - [ ] **Step 2:** rawInput fidelity per agent is probe-verified
       (`acp-cline-tool-matrix` pattern); policy corpus cases (below) run
       against the substituted tools.
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement` (Step 1):
+> `mcp-toolbox/apps/workflow-fs-exec-mcp` — `workflow_write`/`workflow_edit`
+> authorize through `/before-tool` first (per-call hub resolution; every
+> failure mode — missing/stale discovery, 401, non-200, unreachable — is a
+> denial) then perform server-side bounded writes with symlink-ancestor
+> realpath (the corpus's known bypass shape, regression-tested with real
+> symlink escapes); `workflow_bash` routes through the hub's contained
+> `/bash`. **Step 2 is probe work:** mounting the server into a contained
+> ACP agent's MCP config + denying built-ins (`"edit": "deny"` /
+> `"bash": "deny"`) needs the same gated MCP-config probe as the F1 skills
+> mount; rawInput fidelity rides `acp-cline-tool-matrix`. **Honest note on
+> credentials:** the hub token reaches the agent environment so its MCP
+> server can authorize — this grants no new power (the token asks
+> authorization; the hub still gates, and `/bash` still runs contained), and
+> the agent could always ask the hub the same questions through its own
+> tools.
 
 ### Task G4: Overlay quarantine (universal fallback)
 
@@ -395,15 +539,42 @@ probe-verified agent.
       agents that offer neither interception nor deniable built-ins. Design
       task; not blocking G1–G3.
 
+> **Design (2026-09-15), intentionally unbuilt:** launch the contained agent
+> with the workspace bind-mounted read-only plus an OverlayFS upperdir
+> (`work` + `upper` under `<data-dir>/overlays/<runId>/`); the agent sees its
+> writes land normally while the real tree is untouched. Promotion is a
+> hub-owned operation gated on the run's full evidence chain (tests pass,
+> reviewer approved): `git apply`-style replay of the upperdir diff, or
+> rsync of upper → real tree, executed by `/bash` machinery so every promote
+> is itself authorized and journaled. Rejecting promotion IS the deny — the
+> overlay is discarded. This stays a design task because (a) bubblewrap +
+> overlayfs composition needs a runtime probe on the target kernel, (b)
+> tooling that expects writes to persist mid-run (test runs writing
+> artifacts) sees overlay-fine state, and (c) G1's ask-config probe may
+> make the universal fallback unnecessary for the agents we actually run.
+
 ### Task G5: Port the observability + extras
 
-- [ ] Claims-vs-evidence journaling (Policy 24) at end-of-turn, hub-side, observability-only.
-- [ ] `guard_status`/`guard_why`/review tools as a read-only toolbox server.
-- [ ] Audit/verify-cache/worktree/checkpoint/learning behind hub persistence
+- [x] Claims-vs-evidence journaling (Policy 24) at end-of-turn, hub-side, observability-only.
+- [x] `guard_status`/`guard_why`/review tools as a read-only toolbox server.
+- [x] Audit/verify-cache/worktree/checkpoint/learning behind hub persistence
       and endpoints (much already exists: `review-followups.ts`,
       `project-memory.ts`, hub run registry).
-- [ ] Guidance (`tool.definition`, `system.transform` equivalents) as
+- [x] Guidance (`tool.definition`, `system.transform` equivalents) as
       client-side prompt prepend; honestly advisory.
+
+> Implemented 2026-09-15: **claims journal** — `recordCompletionClaim` +
+> `completionClaims()` on the run registry (bounded; reads kernel task state
+> from the shared graph so a claim recorded right after a verified finish
+> sees `VERIFIED`; never blocks, never records evidence), wired into the
+> scheduled-run turn; **guidance** — `buildAdvisoryGuidance` in
+> `src/integrations/prompt-guidance.ts` composes style/workflow preamble
+> blocks for composing surfaces, honestly advisory (the text says the hub
+> enforces its rules independently of it). **Already ported by the original
+> toolbox effort:** guard_status/guard_check are `workflow-guard-mcp` tools,
+> review follow-ups live in `review-accountability-mcp` with a hub client,
+> learning/project-memory/worktree run as hub-owned toolbox servers — the
+> G5 delta was the claims journal and the guidance builder.
 
 ### Task G6: Port the adversarial corpus as hub conformance probes
 
@@ -413,11 +584,22 @@ parent/subagent freshness inheritance, `# allow-live` escapes — becomes a
 hub-side probe suite every pinned agent version must pass before its surface
 is labeled `enforced`.
 
-- [ ] Inventory `opencode-workflow-guard` test cases by policy; map each to a
+- [x] Inventory `opencode-workflow-guard` test cases by policy; map each to a
       hub probe or unit test (policy logic ports 1:1; hook-specific cases
       become ACP wire probes).
-- [ ] Any corpus case that cannot be expressed hub-side is a documented hole,
+- [x] Any corpus case that cannot be expressed hub-side is a documented hole,
       not a silent drop.
+
+> Implemented 2026-09-15: the full family-by-family mapping lives in
+> `docs/GUARD_CORPUS_MAP.md` — Ported / Probe / Hole status per corpus
+> family, with the three holes stated plainly (compaction-time events — gap
+> G7 regression; in-session host-event fidelity — probe-gated per agent;
+> plugin-internal circuit-breaker escalation counters) and the gated probe
+> backlog listed. The evasion matcher corpus itself (wrappers, chained
+> commands, cluster-CLI smuggling) lives in and stays alive with the
+> vendored `workflow-guard-mcp`, which the hub now enforces on every surface
+> (G2) — so those cases run on every `/before-tool`, `/bash`, and ACP
+> permission decision rather than only inside the plugin host.
 
 ---
 

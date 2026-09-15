@@ -4,7 +4,7 @@ import test from "node:test";
 
 import { AcpSubprocessClient, type AcpSessionUpdate } from "../src/adapters/acp-subprocess.js";
 
-function fakeAgent(mode: "happy" | "malformed" | "exit" | "invalid-update" | "invalid-jsonrpc" | "no-agent-info" | "require-boolean-capability" = "happy") {
+function fakeAgent(mode: "happy" | "malformed" | "exit" | "invalid-update" | "invalid-jsonrpc" | "no-agent-info" | "require-boolean-capability" | "usage-update" = "happy") {
   return spawn(process.execPath, ["test/fixtures/fake-acp-agent.mjs", mode], {
     cwd: process.cwd(),
     stdio: ["pipe", "pipe", "pipe"],
@@ -135,4 +135,27 @@ test("hub-side ACP subprocess spike turns process exit during initialize into te
 
   await assert.rejects(() => client.initialize(), /ACP agent exited/);
   await client.close();
+});
+
+// ── E2 hardening: usage_update passes through the client untouched ───────
+
+test("unknown update kinds like usage_update reach listeners untouched (E2 forward-compat)", async (t) => {
+  const child = fakeAgent("usage-update");
+  const client = new AcpSubprocessClient({ child });
+  t.after(() => {
+    void client.close();
+    if (child.exitCode === null && !child.killed) child.kill("SIGKILL");
+  });
+  const updates: unknown[] = [];
+  client.onSessionUpdate((update) => updates.push(update));
+  await client.initialize();
+  const session = await client.newSession({ cwd: "/repo" });
+  await client.prompt({ sessionId: session.sessionId, prompt: [{ type: "text", text: "go" }] });
+  const usage = updates.find(
+    (update) => (update as { update?: { sessionUpdate?: string } }).update?.sessionUpdate === "usage_update",
+  );
+  assert.ok(usage !== undefined, "usage_update must reach onSessionUpdate listeners (forwarded untouched)");
+  const payload = (usage as { update: Record<string, unknown> }).update;
+  assert.equal(payload.totalTokens, 100);
+  assert.equal(payload.costUsd, 0.01);
 });

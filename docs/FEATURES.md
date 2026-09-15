@@ -14,6 +14,8 @@ trip over.
 |---|---|---|
 | Deterministic task graph (states, dependencies, evidence, mutation epochs) | Complete | `src/kernel/`; no LLM/IO/UI deps |
 | Application authorization (capability withholding, workspace binding) | Complete | `src/application/workflow.ts` |
+| Spawn capability (default-deny subagent gating) | Complete | `src/adapters/acp.ts`, `src/application/host.ts` — `spawn` severity tops the escalation table; host metadata cannot relax it; enforced only via probe evidence (`docs/HOST_ADAPTERS.md`) |
+| Enforcement-altering config-option gating | Complete | `src/integrations/acp-session.ts` — bypass/auto-approve family denied client-side before any wire call; agent-originated `config_option_update` rejected from retained config with a visible status |
 | Process containment (bubblewrap on Linux) | Partial | `src/containment/platform.ts` — **policy-only passthrough on non-Linux, with a visible warning and an explicit `policy-only` result marker**; full isolation remains Linux-only |
 | Cross-platform graceful degradation | Complete | `selectContainment()` — no silent fallback; `ContainedProcessResult.enforcement` distinguishes `enforced` from `policy-only` at the type level |
 | Persistence (versioned JSON store, exclusive lock) | Complete | restart recovery marks orphaned IN_PROGRESS as FAILED |
@@ -27,8 +29,13 @@ trip over.
 | Per-surface workspace binding | Complete | surfaces declare workspace per request |
 | Dedicated task + evidence per scheduled run | Complete | `/run/begin`, `/run/finish` |
 | Review gate (5-axis rubric, cross-run adversarial reviews) | Complete | `/review/rubric`, `/run/review`; cross-run + ≥3-axis anti-rubber-stamp, kernel-enforced via `reviewer` evidence; ported from opencode-workflow-guard |
+| Hub-owned reviewer auto-launch on run completion | Complete | `createRunRegistry` reviewer seam (`src/integrations/run-registry.ts`) + production wiring (`src/integrations/hub-run-gates.ts`, `src/cli/hub.ts`) — contained ACP reviewer, contained git-diff sourcing, fail-closed verdict parsing; **real-agent gated probe pending credentials** |
+| Hub-run test evidence (`test:<workspace>`) | Complete | requirement declared only when a real `WORKFLOW_TEAM_TASK_VERIFY_COMMAND` is configured (never the `true` default); `begin()` stales the workspace test subject so runs cannot inherit a predecessor's green tests; **real-agent gated probe pending credentials** |
+| Subagent conformance probe | Partial | `test/acp-cline-subagent-probe.test.ts` (env-gated) written; **probe not yet run — matrix rows in `docs/HOST_ADAPTERS.md` await green evidence; unprobed agents are not labeled `enforced` for spawn-inclusive workflows** |
 | systemd user unit | Complete | `packaging/workflow-hub.service`; Linux/systemd only |
 | Surface coverage: TUI, headless, zen, connectors, cron, desktop (`cline-hub`) | Complete | all resolve via env or discovery file, fail closed |
+| Hub-native scheduler | Complete | `src/integrations/hub-scheduler.ts` — Vixie-semantics cron table at `~/.workflow/scheduler.json` (`WORKFLOW_HUB_SCHEDULES` overrides); fires review-gated contained runs; a rejected finish gate leaves the run VERIFYING (never fabricated); **real-agent scheduled turn is gated-probe pending** |
+| Per-run budget enforcement | Complete | token/cost caps from metering-proxy metrics; a violating event cancels the turn and the run fails with the budget as its recorded blocking reason |
 
 ## Surfaces & UX
 

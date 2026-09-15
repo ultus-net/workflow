@@ -19,6 +19,44 @@ import {
 } from "../adapters/acp-subprocess.js";
 import type { AcpPermissionRequestParams } from "../adapters/acp-permission.js";
 import { createWorkflowAcpPermissionResolver } from "../adapters/acp-workflow-resolver.js";
+import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
+
+/**
+ * Plan Task B2: config options that would switch the agent into a
+ * bypass/auto-approve-everything mode alter the session's enforcement level.
+ * Client-set values are denied before any wire call; agent-applied values
+ * are rejected from retained config with a visible denial — an `advisory`
+ * degradation must never happen silently on an `enforced` surface.
+ */
+const ENFORCEMENT_ALTERING_TOKENS: ReadonlySet<string> = new Set([
+  "bypass",
+  "bypasspermissions",
+  "autoapprove",
+  "approveall",
+  "skippermissions",
+  "neverask",
+  "donotask",
+  "dangerousskip",
+  "unrestricted",
+  "allowall",
+  "yolo",
+]);
+
+export function isEnforcementAlteringConfigOption(configId: string): boolean {
+  const normalized = configId.toLowerCase().replace(/[-_\s]/g, "");
+  for (const token of ENFORCEMENT_ALTERING_TOKENS) {
+    if (normalized === token || normalized.includes(token)) return true;
+  }
+  return false;
+}
+
+function enforcementAlteringOptionIds(options: readonly unknown[]): string[] {
+  return options.flatMap((option) => {
+    if (typeof option !== "object" || option === null) return [];
+    const id = (option as { id?: unknown }).id;
+    return typeof id === "string" && isEnforcementAlteringConfigOption(id) ? [id] : [];
+  });
+}
 
 /**
  * Clean-surface ACP session driver. A prompt runs through the host-neutral
@@ -36,6 +74,8 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #workflowSessionId: string;
   #taskId: TaskId;
   #resumeFrom: string | undefined;
+  #guard: WorkflowGuardProvider | undefined;
+  #onSkillRead: ((skill: string) => void) | undefined;
   #initialized = false;
   #canLoadSession = false;
   #agentSessionId?: string;
@@ -54,6 +94,8 @@ export class AcpSessionDriver implements CodingSessionDriver {
     taskId: TaskId;
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
+    guard?: WorkflowGuardProvider;
+    onSkillRead?: (skill: string) => void;
   }) {
     const authorize = typeof options.authorize === "function"
       ? options.authorize
@@ -64,6 +106,8 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#workflowSessionId = options.workspaceSessionId;
     this.#taskId = options.taskId;
     this.#resumeFrom = options.resumeFrom;
+    this.#guard = options.guard;
+    this.#onSkillRead = options.onSkillRead;
     this.#client = new AcpSubprocessClient({
       child: options.child,
       resolvePermission: (request) => this.#resolvePermission(request),
@@ -74,8 +118,20 @@ export class AcpSessionDriver implements CodingSessionDriver {
     // (e.g. a resume loader) receive every projection event via #listeners.
     this.#client.onSessionUpdate((update) => {
       if (update.update.sessionUpdate === "config_option_update" && Array.isArray(update.update.configOptions)) {
-        this.#sessionConfig = { ...this.#sessionConfig, configOptions: update.update.configOptions };
-      }
+        // Plan Task B2: an agent-applied bypass/auto-approve option must not
+        // silently enter retained config — the update is rejected whole and
+        // the denial surfaces as a visible status event.
+        const denied = enforcementAlteringOptionIds(update.update.configOptions);
+        if (denied.length > 0) {
+          const denial: CodingSessionEvent = {
+            type: "status",
+            status: `denied agent-applied enforcement-altering config option(s): ${denied.join(", ")}`,
+          };
+          this.#emit(denial);
+          for (const listener of this.#listeners) listener(denial);
+          return;
+        }
+        this.#sessionConfig = { ...this.#sessionConfig, configOptions: update.update.configOptions };      }
       const event = this.#project(update, this.#assistant);
       if (event !== undefined) {
         this.#emit(event);
@@ -107,6 +163,8 @@ export class AcpSessionDriver implements CodingSessionDriver {
     taskId: TaskId;
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
+    guard?: WorkflowGuardProvider;
+    onSkillRead?: (skill: string) => void;
   }): AcpSessionDriver {
     const child = launchContainedAcpAgent(options.containment, options.launch);
     return new AcpSessionDriver({ ...options, child });
@@ -195,6 +253,12 @@ export class AcpSessionDriver implements CodingSessionDriver {
 
   /** Mutate configuration on the existing ACP session and retain the agent's complete returned state. */
   async setConfigOption(configId: string, value: AcpConfigOptionValue): Promise<AcpSessionConfig> {
+    // Plan Task B2: enforcement-altering options are denied client-side
+    // before any wire call — the operator-visible enforcement level must
+    // never silently change under an `enforced` surface.
+    if (isEnforcementAlteringConfigOption(configId)) {
+      throw new TypeError(`denied: config option '${configId}' alters the session's enforcement level`);
+    }
     if (this.#agentSessionId === undefined) throw new Error("ACP session has not been created");
     const updated = await this.#client.setConfigOption({ sessionId: this.#agentSessionId, configId, value });
     this.#sessionConfig = { ...this.#sessionConfig, ...updated };
@@ -336,6 +400,12 @@ export class AcpSessionDriver implements CodingSessionDriver {
         capability: AcpSessionDriver.classify(toolName),
       },
       authorize: (action) => this.#authorize(action),
+      // Plan Task G2: the guard dispatcher gates ACP sessions identically to
+      // the /before-tool route when a provider is composed into the runtime.
+      ...(this.#guard === undefined ? {} : { guard: this.#guard }),
+      workspaceRoot: this.#workspace,
+      // Plan Task F1/F3: journal skill delivery on allowed read_skill calls.
+      ...(this.#onSkillRead === undefined ? {} : { onSkillRead: this.#onSkillRead }),
     });
     return resolver(request);
   }
@@ -361,6 +431,18 @@ export class AcpSessionDriver implements CodingSessionDriver {
     }
     if (["fetch_web_content", "web_fetch", "web_search"].includes(toolName)) {
       return "network";
+    }
+    // Skill delivery (plan Task F1) is a read: list/read tools must pass the
+    // unknown-mutation fail-closed check so the delivery observation can be
+    // journaled. Exact names plus the explicit skills-mcp prefix only — a
+    // broad suffix match would let any server's tool dodge the
+    // unknown-mutation fail-closed by naming itself *__read_skill.
+    const lowered = toolName.toLowerCase();
+    if (
+      lowered === "list_skills" || lowered === "read_skill" ||
+      lowered === "skills-mcp__list_skills" || lowered === "skills-mcp__read_skill"
+    ) {
+      return "read";
     }
     return "mutation";
   }

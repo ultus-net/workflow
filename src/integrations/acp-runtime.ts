@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -12,11 +12,14 @@ import type { TaskId } from "../kernel/contracts.js";
 import { AcpSessionDriver } from "./acp-session.js";
 import { globalClineEntrypoint, resolveClineLaunch } from "./cline-launch.js";
 import type { PermissionBroker } from "../ui/permission-broker.js";
+import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { METERED_PLACEHOLDER_KEY, type ModelUsageMetrics, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
 
 export interface WorkflowAcpRuntime {
   readonly driver: AcpSessionDriver;
   readonly session: WorkflowCodingSession;
+  /** Cumulative metering-proxy usage for this runtime (tokens + cost). */
+  metrics?(): ModelUsageMetrics;
   dispose(): Promise<void>;
   /** Cumulative metering-proxy metrics; absent for unmetered runtimes. */
   usage?(): ModelUsageMetrics;
@@ -27,6 +30,7 @@ export async function createConfiguredAcpRuntime(
   workspace: string,
   taskId: TaskId,
   resumeFrom?: string,
+  guard?: WorkflowGuardProvider,
   options: { readonly permissionBroker?: PermissionBroker | undefined } = {},
 ): Promise<WorkflowAcpRuntime> {
   const scratchHome = resolve(homedir(), ".workflow", "acp-home");
@@ -56,7 +60,10 @@ export async function createConfiguredAcpRuntime(
   // end up pointed at another runtime's (possibly dead) proxy. Cline writes
   // back to the same path, which must therefore be per-runtime.
   pruneStaleProviderSettings(scratchHome);
-  const settingsPath = join(scratchHome, `providers.${process.pid}.json`);
+  // Unique per runtime, not per process: one hub process creates a reviewer
+  // runtime per auto-review, and concurrent runtimes must never clobber each
+  // other's settings file.
+  const settingsPath = join(scratchHome, `providers.${process.pid}.${randomUUID()}.json`);
   try {
     writeFileSync(settingsPath, JSON.stringify(meteredProviderSettings(proxy.url, provider)), { encoding: "utf8", mode: 0o600 });
     const model = process.env.CLINE_MODEL;
@@ -83,11 +90,24 @@ export async function createConfiguredAcpRuntime(
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
+      ...(guard === undefined ? {} : { guard }),
+      // Plan Task F1/F3: journal skill delivery into the application's
+      // precondition. A delivery with no active task cannot bind — skip it
+      // rather than fail the read; the precondition only matters once a
+      // task is running.
+      onSkillRead: (skill) => {
+        try {
+          application.recordSkillRead(skill);
+        } catch {
+          // No active task yet: nothing to journal.
+        }
+      },
     });
     return {
       driver,
       session: new WorkflowCodingSession(driver),
       usage: (): ModelUsageMetrics => proxy.metrics(),
+      metrics: (): ModelUsageMetrics => proxy.metrics(),
       async dispose() {
         try {
           await driver.dispose();
@@ -112,7 +132,7 @@ export async function createConfiguredAcpRuntime(
  */
 function pruneStaleProviderSettings(scratchHome: string): void {
   for (const entry of readdirSync(scratchHome)) {
-    const match = /^providers\.(\d+)\.json$/.exec(entry);
+    const match = /^providers\.(\d+)(?:\.[0-9a-f-]+)?\.json$/.exec(entry);
     if (match === null) {
       // The legacy shared file is obsolete and exactly what pointed agents at
       // dead proxies; remove it once encountered.

@@ -46,6 +46,10 @@ if (hub !== undefined) {
     React.createElement(WorkflowTui, {
       application: source,
       reviewFollowUps,
+      // Plan Task A3: run-gate observability from the hub's /snapshot —
+      // verdicts, blocking reasons, and unverified claims in the Activity
+      // panel; refreshed on the same poll.
+      gateObservability: () => source.gateObservability(),
       connectionLabel: "hub",
     }),
   );

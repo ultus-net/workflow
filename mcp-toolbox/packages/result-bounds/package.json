@@ -1,0 +1,23 @@
+{
+  "name": "@agent-tools/result-bounds",
+  "description": "Server-side MCP result bounding: 48k middle-cut parity so any host inherits the token economy without patches.",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "pnpm run build && node --test dist/*.test.js",
+    "verify": "pnpm run typecheck && pnpm run test"
+  },
+  "engines": { "node": ">=22" },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  }
+}

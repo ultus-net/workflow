@@ -46,7 +46,8 @@ test("fetchHubSnapshot returns the full canonical snapshot over the hub protocol
   const discovery = readHubDiscovery(resolveHubDiscoveryPath(dir));
   assert.ok(discovery);
 
-  const snapshot = await fetchHubSnapshot({ url: discovery.endpoint, token: discovery.token }, process.cwd());
+  const response = await fetchHubSnapshot({ url: discovery.endpoint, token: discovery.token }, process.cwd());
+  const snapshot = response.snapshot!;
   assert.equal(snapshot.tasks.length, 1);
   assert.equal(snapshot.tasks[0]!.title, "observed via hub");
   assert.equal(snapshot.transport, "native");

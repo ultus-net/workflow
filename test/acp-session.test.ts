@@ -159,6 +159,45 @@ test("ACP session driver accepts agent-originated complete config updates", asyn
   }
 });
 
+test("enforcement-altering config options are denied client-side, before any wire call", async () => {
+  const { driver, child } = driverFor("done");
+  const session = new WorkflowCodingSession(driver);
+  try {
+    await session.submit("start session");
+    await assert.rejects(driver.setConfigOption("bypass_permissions", true), /enforcement/);
+    await assert.rejects(driver.setConfigOption("autoApprove", true), /enforcement/);
+    // Benign options keep working.
+    const config = await driver.setConfigOption("model", "moonshot-v1");
+    assert.equal((config.configOptions as { currentValue?: string }[])[0]?.currentValue, "moonshot-v1");
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+});
+
+test("agent-originated enforcement-altering config updates are not retained and surface a denial", async () => {
+  const { driver, child } = driverFor("bypass-config-update");
+  const session = new WorkflowCodingSession(driver);
+  const events: CodingSessionEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.submit("start session");
+    assert.ok(
+      events.some((event) => event.type === "status" && /denied agent-applied enforcement-altering config option/.test(event.status)),
+      "the denial must surface as a visible status event",
+    );
+    const options = driver.config()?.configOptions as Array<{ id: string }>;
+    assert.equal(
+      options.some((option) => option.id === "bypass_permissions"),
+      false,
+      "the bypass option must not be retained in session config",
+    );
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+});
+
 test("ACP session driver cancellation terminates the active turn", async () => {
   const { driver, child } = driverFor("done");
   const session = new WorkflowCodingSession(driver);
@@ -351,4 +390,38 @@ test("raw tool I/O is stringified, emptiness-dropped, and size-capped", () => {
   const huge = displayRawToolText({ dump: "x".repeat(64 * 1024) });
   assert.ok(huge !== undefined && huge.length < 9 * 1024, "oversized I/O is truncated");
   assert.ok(huge?.endsWith("… truncated"));
+});
+
+test("ACP session driver projects plan updates as typed plan entries", async () => {
+  const { driver, child } = driverFor("plan-update");
+  const session = new WorkflowCodingSession(driver);
+  const events: CodingSessionEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.submit("start session");
+    const plan = events.find(
+      (event): event is Extract<CodingSessionEvent, { type: "plan" }> => event.type === "plan",
+    );
+    assert.ok(plan !== undefined, "the plan must surface as a typed plan event");
+    assert.equal(plan.entries.filter((entry) => entry.status === "completed").length, 1);
+    assert.ok(plan.entries.some((entry) => entry.content === "Fix the off-by-one in the parser"));
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+});
+
+test("ACP session driver projects session_info_update as a typed session-info title", async () => {
+  const { driver, child } = driverFor("session-info");
+  const session = new WorkflowCodingSession(driver);
+  const events: CodingSessionEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.submit("start session");
+    const info = events.find((event) => event.type === "session-info" && event.title === "Probe session title");
+    assert.ok(info !== undefined, "session_info_update must surface as a session-info event");
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
 });

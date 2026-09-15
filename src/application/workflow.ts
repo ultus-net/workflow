@@ -35,6 +35,13 @@ export class WorkflowApplication {
   #codingSessionCorrelation?: string;
 #pedagogyGate: CheckpointLedger | undefined;
   readonly #capabilities: Set<ToolCapability>;
+  // Plan Task F3: skill delivery preconditions. A read_skill observation is a
+  // PRECONDITION for mutating actions, never `requiredEvidence` — a
+  // model-initiated tool call must not self-certify task verification. The
+  // journal maps skill -> the task that read it; per-task freshness means a
+  // new task must re-read its required skills.
+  readonly #taskRequiredSkills = new Map<TaskId, readonly string[]>();
+  readonly #skillReads = new Map<string, TaskId>();
 
   constructor(
     graph: TaskGraph,
@@ -83,6 +90,33 @@ export class WorkflowApplication {
     this.#codingSessionCorrelation = sessionId;
   }
 
+  /**
+   * Plan Task F3: declare the skills a task must have delivered (via
+   * `read_skill`) before its mutations will be authorized. The kernel stays
+   * prompt/skill-free — this is an application-layer precondition.
+   */
+  setTaskRequiredSkills(taskId: TaskId, skills: readonly string[]): void {
+    this.#graph.get(taskId);
+    const unique = [...new Set(skills)];
+    for (const skill of unique) {
+      if (skill.trim().length === 0) throw new TypeError("required skill names must be non-empty");
+    }
+    if (unique.length === 0) {
+      this.#taskRequiredSkills.delete(taskId);
+      return;
+    }
+    this.#taskRequiredSkills.set(taskId, unique);
+  }
+
+  /** Records that the session delivered a skill's content (read_skill call). */
+  recordSkillRead(skill: string, taskId?: TaskId): void {
+    const target = taskId ?? this.#activeTaskId;
+    if (target === undefined) throw new TypeError("skill read recorded with no active task");
+    this.#graph.get(target);
+    if (skill.trim().length === 0) throw new TypeError("skill name must be non-empty");
+    this.#skillReads.set(skill, target);
+  }
+
   authorize(action: ProposedToolAction): PolicyDecision {
     const capability = action.capability ?? (action.mutating ? "mutation" : "read");
     const requiredCapabilities = new Set([capability, ...(action.requiredCapabilities ?? [])]);
@@ -127,6 +161,22 @@ export class WorkflowApplication {
         code: "CHECKPOINT_PENDING",
         reason: `task ${task.id} has a pending ${pendingCheckpoint.kind} checkpoint: ${pendingCheckpoint.summary}`,
       };
+    }
+    // Plan Task F3: skill delivery precondition. Every required skill must
+    // have been delivered (read_skill) for THIS task — a different task's
+    // read does not carry over. Delivery is enforced; adherence is not (the
+    // model may still ignore the content — only environment evidence and
+    // reviews judge outcomes).
+    const requiredSkills = this.#taskRequiredSkills.get(task.id);
+    if (requiredSkills !== undefined) {
+      const undelivered = requiredSkills.filter((skill) => this.#skillReads.get(skill) !== task.id);
+      if (undelivered.length > 0) {
+        return {
+          kind: "deny",
+          code: "SKILL_DELIVERY_REQUIRED",
+          reason: `task ${task.id} requires skill delivery via read_skill before mutations: ${undelivered.join(", ")}`,
+        };
+      }
     }
     return { kind: "allow" };
   }

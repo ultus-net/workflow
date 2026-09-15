@@ -1,6 +1,6 @@
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { ClineHostAdapter } from "../adapters/cline.js";
-import type { GuardCheckInput, WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
+import { guardInputFromToolCall, type WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 
 export interface ClineBeforeToolHookInput {
   readonly toolCall: { readonly toolName: string; readonly toolCallId?: string };
@@ -38,7 +38,15 @@ export function createWorkflowClinePlugin(
         if (guard !== undefined) {
           const guardInput = guardInputFromToolCall(toolCall.toolName, input, application.workspaceRoot);
           if (guardInput !== undefined) {
-            const decision = await guard.guardCheck(guardInput);
+            let decision;
+            try {
+              decision = await guard.guardCheck(guardInput);
+            } catch (error) {
+              // Fail closed with the same control shape the hub route uses.
+              const reason = `guard unavailable (fail closed): ${error instanceof Error ? error.message : String(error)}`;
+              onToolDenied?.(proposal.tool, reason, toolCall.toolCallId);
+              return { stop: true, reason };
+            }
             if (decision.decision !== "allow") {
               const reason = `guard policy '${decision.policy}': ${decision.reason}`;
               onToolDenied?.(proposal.tool, reason, toolCall.toolCallId);
@@ -50,37 +58,4 @@ export function createWorkflowClinePlugin(
       },
     },
   };
-}
-
-function guardInputFromToolCall(toolName: string, input: unknown, workspaceRoot?: string): GuardCheckInput | undefined {
-  if (typeof input !== "object" || input === null) return undefined;
-  const record = input as Record<string, unknown>;
-  const base = workspaceRoot === undefined ? {} : { workspaceRoot };
-  if (toolName === "execute_command" || toolName === "bash") {
-    let command = "";
-    if (typeof record.command === "string") command = record.command;
-    else if (typeof record.command === "object" && record.command !== null) {
-      const c = record.command as { command?: string; args?: string[] };
-      command = [c.command, ...(c.args ?? [])].filter(Boolean).join(" ");
-    }
-    return { action: "shell", command, ...base };
-  }
-  if (toolName === "write_to_file" || toolName === "new_file_template" || toolName === "write_file" || toolName === "editor") {
-    return {
-      action: "file_write",
-      ...(typeof record.path === "string" ? { path: record.path } : {}),
-      ...(typeof record.content === "string" ? { content: record.content } : {}),
-      ...base,
-    };
-  }
-  if (toolName === "apply_patch" || toolName === "patch") {
-    const patchText = typeof record.patch === "string" ? record.patch : typeof record.diff === "string" ? record.diff : undefined;
-    return {
-      action: "file_write",
-      ...(typeof record.path === "string" ? { path: record.path } : {}),
-      ...(patchText !== undefined ? { patchText } : {}),
-      ...base,
-    };
-  }
-  return undefined;
 }

@@ -1,9 +1,12 @@
+import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 
 import type { CodingSessionEvent, CodingSessionState } from "../application/coding-session.js";
 import { formatStyleStatus, nextBuildStyle, nextSpeechStyle, resolveStyleFromEnv, type SessionStyle } from "../integrations/response-style.js";
 import type { ReviewFollowUp } from "../integrations/review-followups.js";
+import type { HubGateObservability } from "../cli/hub-snapshot.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
 import type { WorkflowSnapshot } from "../application/workflow.js";
 import type { TaskState } from "../kernel/contracts.js";
@@ -68,6 +71,8 @@ export function WorkflowTui({
   onStyleChange,
   onModeChange,
   reviewFollowUps,
+  gateObservability,
+  usage,
   connectionLabel,
   assistantLabel = "Cline",
 }: {
@@ -82,13 +87,24 @@ export function WorkflowTui({
   readonly onStyleChange?: (style: SessionStyle) => void;
   readonly onModeChange?: (mode: PedagogicalMode) => void;
   readonly reviewFollowUps?: readonly ReviewFollowUp[];
+  readonly gateObservability?: () => HubGateObservability | undefined;
+  /** Web-parity usage meter (Batch 2): a live "tokens · cost" footer line. */
+  readonly usage?: () => string | undefined;
   readonly connectionLabel?: string;
   readonly assistantLabel?: string;
 }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot>(() => application.snapshot());
+  const [gates, setGates] = useState<HubGateObservability | undefined>(() => gateObservability?.());
+  const [usageLine, setUsageLine] = useState<string | undefined>(() => usage?.());
   const [prompt, setPrompt] = useState("");
+  // Web-parity prompt history recall (Tier 2): submitted prompts are
+  // recalled with Ctrl+Up (older) / Ctrl+Down (newer); the live draft is
+  // preserved when navigating away and restored when returning.
+  const [promptHistory, setPromptHistory] = useState<readonly string[]>([]);
+  const historyIndex = useRef<number | undefined>(undefined);
+  const savedDraft = useRef<string | undefined>(undefined);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
   // Mirror of the prompt for synchronous reads in the input handler: fast
@@ -96,16 +112,35 @@ export function WorkflowTui({
   // directly would lose fast submissions (a ref never goes stale in useInput).
   const promptRef = useRef("");
   const updatePrompt = (update: string | ((value: string) => string)) => {
-    setPrompt((value) => {
-      const next = typeof update === "function" ? update(value) : update;
-      promptRef.current = next;
-      return next;
-    });
+    // The ref is the synchronous source of truth: batched stdin can deliver
+    // several keys (typing + Enter) before React flushes, so the ref must
+    // update OUTSIDE the state updater — setting it inside ran only at render
+    // time and dropped fast submissions.
+    const next = typeof update === "function" ? update(promptRef.current) : update;
+    promptRef.current = next;
+    setPrompt(next);
   };
   const [sessionState, setSessionState] = useState(() => session?.snapshot());
   const [, setConfigRevision] = useState(0);
   const activeSession = session;
   const [transcript, setTranscript] = useState<readonly TranscriptEntry[]>([]);
+  // Web-parity completion notification (Tier 2): a terminal bell on turn
+  // completion. Routed through Ink's stdout (not process.stdout) so it never
+  // pollutes non-TTY capture, and only fires on the transition INTO
+  // completed — an already-completed snapshot on mount stays silent.
+  const previousSessionState = useRef(sessionState?.state);
+  useEffect(() => {
+    const previous = previousSessionState.current;
+    previousSessionState.current = sessionState?.state;
+    if (sessionState?.state === "completed" && previous !== "completed") {
+      stdout.write("\u0007");
+    }
+  }, [sessionState?.state, stdout]);
+  useEffect(() => {
+    if (usage === undefined) return;
+    const timer = setInterval(() => setUsageLine(usage()), 1_000);
+    return () => clearInterval(timer);
+  }, [usage]);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [showWorkflow, setShowWorkflow] = useState(false);
   const [mode, setMode] = useState<PedagogicalMode>("autonomous");
@@ -129,7 +164,10 @@ export function WorkflowTui({
 
   useEffect(() => {
     if (activeSession !== undefined) return;
-    const timer = setInterval(() => setSnapshot(application.snapshot()), 1_000);
+    const timer = setInterval(() => {
+      setSnapshot(application.snapshot());
+      if (gateObservability !== undefined) setGates(gateObservability());
+    }, 1_000);
     return () => clearInterval(timer);
   }, [application, activeSession]);
 
@@ -295,15 +333,95 @@ export function WorkflowTui({
       setScrollOffset((value) => Math.max(0, value - 5));
       return;
     }
-    if (activeSession === undefined || sessionState?.state === "running") return;
+    if (key.ctrl && key.upArrow) {
+      // Prompt history: navigate toward older submitted prompts.
+      if (promptHistory.length === 0) return;
+      if (historyIndex.current === undefined) {
+        savedDraft.current = promptRef.current;
+        historyIndex.current = promptHistory.length - 1;
+      } else {
+        historyIndex.current = Math.max(0, historyIndex.current - 1);
+      }
+      updatePrompt(promptHistory[historyIndex.current] ?? "");
+      return;
+    }
+    if (key.ctrl && key.downArrow) {
+      // Prompt history: navigate back toward the live draft.
+      if (historyIndex.current === undefined) return;
+      if (historyIndex.current >= promptHistory.length - 1) {
+        historyIndex.current = undefined;
+        updatePrompt(savedDraft.current ?? "");
+        savedDraft.current = undefined;
+        return;
+      }
+      historyIndex.current += 1;
+      updatePrompt(promptHistory[historyIndex.current] ?? "");
+      return;
+    }
+    if (key.ctrl && input === "e") {
+      // Web-parity markdown export (Tier 2): Ctrl+E writes the transcript to
+      // a markdown file next to the session (operator action — this is the
+      // operator's own process writing, not an agent mutation).
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 23);
+      if (transcript.length === 0) {
+        setTranscript((current) => [...current, { label: "[export]", text: "refused: transcript is empty", dim: true }]);
+        return;
+      }
+      const exportPath = resolve(process.cwd(), `workflow-transcript-${stamp}.md`);
+      const markdown = [
+        `# Workflow transcript`,
+        ``,
+        `_Exported ${new Date().toISOString()} · ${connectionLabel ?? "local"}_`,
+        ``,
+        ...transcript.map((entry) => `**${entry.label}**: ${entry.text}`),
+        ``,
+      ].join("\n");
+      writeFileSync(exportPath, markdown, "utf8");
+      setTranscript((current) => [...current, { label: "[exported]", text: exportPath, dim: true }]);
+      return;
+    }
+    if (activeSession === undefined) return;
+    if (sessionState?.state === "running") {
+      // Web-parity message queue (Tier 2): typing and submitting while a turn
+      // runs queues the prompt — the session submits it in order when the
+      // current turn ends.
+      if (key.return) {
+        const submitted = promptRef.current.trim();
+        if (submitted.length === 0) return;
+        setTranscript((current) => [...current, { label: "You (queued)", text: submitted, dim: true }]);
+        setPromptHistory((current) => [...current, submitted].slice(-50));
+        historyIndex.current = undefined;
+        savedDraft.current = undefined;
+        updatePrompt("");
+        void activeSession.submit(submitted);
+        return;
+      }
+      if (key.backspace || key.delete) {
+        updatePrompt((value) => value.slice(0, -1));
+        return;
+      }
+      if (key.escape) {
+        updatePrompt("");
+        historyIndex.current = undefined;
+        savedDraft.current = undefined;
+        return;
+      }
+      if (input.length > 0 && !key.ctrl && !key.meta) updatePrompt((value) => value + input);
+      return;
+    }
     if (key.escape) {
       updatePrompt("");
+      historyIndex.current = undefined;
+      savedDraft.current = undefined;
       return;
     }
     if (key.return) {
       const submitted = promptRef.current.trim();
       if (submitted.length === 0) return;
       setTranscript((current) => [...current, { label: "You", text: submitted }]);
+      setPromptHistory((current) => [...current, submitted].slice(-50));
+      historyIndex.current = undefined;
+      savedDraft.current = undefined;
       updatePrompt("");
       setScrollOffset(0);
       setSessionState({ state: "running" });
@@ -330,7 +448,7 @@ export function WorkflowTui({
     <Box flexDirection="column" alignItems="center">
       <Box flexDirection="column" width="100%" maxWidth={68} paddingX={1}>
         <Box justifyContent="space-between">
-          <Text dimColor>[Mode: {MODE_LABELS[mode]}]{formatStyleStatus(style).length > 0 ? ` [${formatStyleStatus(style)}]` : ""}{connectionLabel !== undefined ? ` [${connectionLabel}]` : ""}</Text>
+          <Text dimColor>[Mode: {MODE_LABELS[mode]}]{formatStyleStatus(style).length > 0 ? ` [${formatStyleStatus(style)}]` : ""}{connectionLabel !== undefined ? ` [${connectionLabel}]` : ""}{usageLine !== undefined ? ` [${usageLine}]` : ""}</Text>
           <Text dimColor>^P menu</Text>
         </Box>
         {prompt.length === 0 && !menuOpen ? (
@@ -361,8 +479,8 @@ export function WorkflowTui({
           </Box>
         ) : null}
         <TaskListPanel snapshot={snapshot} />
-        {(activeSession !== undefined || openReviewFollowUps) ? (
-          <SessionActivityPanel state={sessionState} pendingTools={pendingTools} recentLogs={recentLogs} {...(reviewFollowUps === undefined ? {} : { reviewFollowUps })} />
+        {(activeSession !== undefined || openReviewFollowUps || gates !== undefined) ? (
+          <SessionActivityPanel state={sessionState} pendingTools={pendingTools} recentLogs={recentLogs} {...(reviewFollowUps === undefined ? {} : { reviewFollowUps })} {...(gates === undefined ? {} : { gateObservability: gates })} />
         ) : null}
         <Box flexDirection="column" minHeight={4}>
         {transcript.length === 0 ? (
@@ -444,13 +562,21 @@ function SessionActivityPanel({
   pendingTools,
   recentLogs,
   reviewFollowUps,
+  gateObservability,
 }: {
   readonly state: CodingSessionState | undefined;
   readonly pendingTools: readonly string[];
   readonly recentLogs: readonly SessionLog[];
   readonly reviewFollowUps?: readonly ReviewFollowUp[];
+  readonly gateObservability?: HubGateObservability;
 }) {
   const openFollowUps = (reviewFollowUps ?? []).filter((item) => item.status === "open");
+  // Plan Task A3: run-gate observability — latest verdicts, blocking reasons,
+  // and claims the kernel had not verified (Policy-24 mismatch port).
+  const blockedRuns = Object.entries(gateObservability?.blockingReasons ?? {});
+  const verdicts = Object.entries(gateObservability?.reviewOutcomes ?? {});
+  const unverifiedClaims = Object.entries(gateObservability?.completionClaims ?? [])
+    .filter(([, claim]) => claim.verifiedAtClaim === false);
   return (
     <Box marginTop={1} flexDirection="column" borderStyle="round" paddingX={1}>
       <Text bold>Activity <Text dimColor>{state?.state ?? "idle"}</Text></Text>
@@ -468,9 +594,38 @@ function SessionActivityPanel({
           ))}
         </Box>
       ) : null}
-      {pendingTools.length === 0 && recentLogs.length === 0 && openFollowUps.length === 0 ? <Text dimColor>No live activity.</Text> : null}
+      {blockedRuns.length > 0 ? (
+        <Box flexDirection="column">
+          <Text bold>  blocked runs ({blockedRuns.length})</Text>
+          {blockedRuns.slice(0, 3).map(([runId, reason]) => (
+            <Text key={runId} bold>    [blocked] {shortRun(runId)}: {reason.slice(0, 120)}</Text>
+          ))}
+        </Box>
+      ) : null}
+      {verdicts.length > 0 ? (
+        <Box flexDirection="column">
+          <Text dimColor>  review verdicts ({verdicts.length})</Text>
+          {verdicts.slice(0, 3).map(([runId, outcome]) => (
+            <Text key={runId} dimColor={outcome.recorded}>    {shortRun(runId)}: {outcome.verdict}{outcome.parseFailure === undefined ? "" : ` (parse: ${outcome.parseFailure.slice(0, 60)})`}</Text>
+          ))}
+        </Box>
+      ) : null}
+      {unverifiedClaims.length > 0 ? (
+        <Box flexDirection="column">
+          <Text dimColor>  unverified completion claims ({unverifiedClaims.length})</Text>
+          {unverifiedClaims.slice(0, 3).map(([runId, claim]) => (
+            <Text key={runId} bold>    [unverified claim] {shortRun(runId)}: {claim.claim.slice(0, 90)}</Text>
+          ))}
+        </Box>
+      ) : null}
+      {pendingTools.length === 0 && recentLogs.length === 0 && openFollowUps.length === 0 && blockedRuns.length === 0 && verdicts.length === 0 && unverifiedClaims.length === 0 ? <Text dimColor>No live activity.</Text> : null}
     </Box>
   );
+}
+
+function shortRun(runId: string): string {
+  const prefix = "schedule:hub-reviewer-";
+  return runId.startsWith(prefix) ? runId.slice(prefix.length, prefix.length + 8) : runId.slice(0, 28);
 }
 
 function DecisionBriefDrawer({ brief }: { readonly brief: DecisionBrief }) {
@@ -596,6 +751,11 @@ function formatSessionEvent(event: CodingSessionEvent, assistantLabel: string): 
     return { label: "[lesson]", text: `TS${event.lesson.code}: ${event.lesson.plainEnglishExplanation}` };
   }
   if (event.type === "log") {
+    if (event.source === "agent-thought") {
+      // Web-parity thinking blocks: agent reasoning interleaved in the
+      // transcript, dimmed like the web default-collapsed rows expanded.
+      return { label: "[thinking]", text: event.message, dim: true };
+    }
     const source = event.source === undefined ? "" : `${event.source}: `;
     return { label: `[${event.level}]`, text: `${source}${event.message}`, dim: event.level === "debug" };
   }

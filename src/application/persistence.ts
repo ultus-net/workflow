@@ -127,7 +127,7 @@ function isPersistedWorkflow(value: unknown): value is PersistedWorkflow {
 
 const TASK_STATES = new Set(["BLOCKED", "READY", "IN_PROGRESS", "VERIFYING", "VERIFIED", "FAILED"]);
 const EVIDENCE_AUTHORITIES = new Set(["environment", "host", "mcp", "reviewer"]);
-const TOOL_CAPABILITIES = new Set(["read", "mutation", "process", "credentials", "network"]);
+const TOOL_CAPABILITIES = new Set(["read", "mutation", "process", "spawn", "credentials", "network"]);
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
