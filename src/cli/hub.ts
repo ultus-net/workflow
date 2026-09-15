@@ -136,6 +136,12 @@ const schedulerFactory = schedules.length === 0 ? undefined : (handles: Workflow
         await runtime.session.submit(prompt);
         const violation = budgetGuard?.violation();
         if (violation !== undefined) throw new Error(violation);
+        // Plan Task G5: journal the turn's completion claim with whether the
+        // kernel had verified the run at that moment (observability-only).
+        const snapshot = runtime.session.snapshot();
+        if (snapshot.state === "completed") {
+          handles.recordCompletionClaim({ runId, claim: snapshot.result });
+        }
       } finally {
         await runtime.dispose();
       }

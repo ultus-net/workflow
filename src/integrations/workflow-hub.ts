@@ -41,6 +41,8 @@ export interface WorkflowHubSchedulerHandles {
   resolve: WorkflowApplicationResolver;
   controller: WorkflowRunController;
   recordBlockingReason: (input: { readonly runId: string; readonly reason: string }) => void;
+  /** Plan Task G5: journal a scheduled run's completion claim (observability-only). */
+  recordCompletionClaim: (input: { readonly runId: string; readonly claim: string }) => void;
 }
 
 export async function createWorkflowHub(
@@ -76,6 +78,7 @@ export async function createWorkflowHub(
         resolve: runs.resolve,
         controller: runs.controller,
         recordBlockingReason: runs.recordBlockingReason,
+        recordCompletionClaim: runs.recordCompletionClaim,
       })
       : undefined;
     bridge = await createWorkflowClineTuiBridge(

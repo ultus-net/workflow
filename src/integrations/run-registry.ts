@@ -65,6 +65,8 @@ export function createRunRegistry(
   reviewOutcomes(): ReadonlyMap<string, HubReviewerResult>;
   blockingReasons(): ReadonlyMap<string, string>;
   recordBlockingReason(input: { readonly runId: string; readonly reason: string }): void;
+  recordCompletionClaim(input: { readonly runId: string; readonly claim: string }): void;
+  completionClaims(): ReadonlyMap<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }>;
 } {
   const workspaceApplications = new Map<string, WorkflowApplication>();
   const runs = new Map<string, WorkflowApplication>();
@@ -90,6 +92,24 @@ export function createRunRegistry(
       const oldest = blockingReasons.keys().next().value;
       if (oldest === undefined) break;
       blockingReasons.delete(oldest);
+    }
+  };
+  // Plan Task G5: completion-claims journal (observability-only, ported from
+  // the plugin's Policy 24 claims-vs-evidence mismatch check). A claim is
+  // journaled with whether the run's task was VERIFIED at claim time; it
+  // never blocks, never mutates state, and never fabricates evidence.
+  const completionClaims = new Map<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }>();
+  const rememberCompletionClaim = (runId: string, claim: string, verifiedAtClaim: boolean): void => {
+    completionClaims.set(runId, {
+      runId,
+      claim,
+      verifiedAtClaim,
+      observedAt: new Date().toISOString(),
+    });
+    while (completionClaims.size > 64) {
+      const oldest = completionClaims.keys().next().value;
+      if (oldest === undefined) break;
+      completionClaims.delete(oldest);
     }
   };
 
@@ -329,6 +349,27 @@ export function createRunRegistry(
     /** Hub-side surfaces (e.g. the scheduler) record why a run was blocked. */
     recordBlockingReason(input: { readonly runId: string; readonly reason: string }): void {
       rememberBlockingReason(input.runId, input.reason);
+    },
+    /**
+     * Plan Task G5: journal a run's final completion claim (the agent's own
+     * "done" text) with whether the kernel had verified the run at that
+     * moment. Observability-only — never blocks, never records evidence.
+     */
+    recordCompletionClaim(input: { readonly runId: string; readonly claim: string }): void {
+      // The runs map drops finished runs; the shared graph keeps the task —
+      // a claim recorded right after a verified finish must still see
+      // VERIFIED, not a phantom mismatch.
+      const runTaskId = taskId(`run:${input.runId}`);
+      let verifiedAtClaim = false;
+      try {
+        verifiedAtClaim = graph.get(runTaskId).state === "VERIFIED";
+      } catch {
+        verifiedAtClaim = false;
+      }
+      rememberCompletionClaim(input.runId, input.claim, verifiedAtClaim);
+    },
+    completionClaims(): ReadonlyMap<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }> {
+      return completionClaims;
     },
   };
 }

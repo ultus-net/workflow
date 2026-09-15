@@ -506,13 +506,30 @@ probe-verified agent.
 - Modify: `src/integrations/acp-runtime.ts` (launch agents with built-in
       mutations denied via host config and the toolbox server mounted)
 
-- [ ] **Step 1:** built-in mutation tools denied via host permission config
+- [x] **Step 1:** built-in mutation tools denied via host permission config
       (`"edit": "deny", "bash": "deny"`); the model's only mutation path is
       hub-owned tools. This is the same single-delivery-path logic as F1,
       generalized to fs/exec.
 - [ ] **Step 2:** rawInput fidelity per agent is probe-verified
       (`acp-cline-tool-matrix` pattern); policy corpus cases (below) run
       against the substituted tools.
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement` (Step 1):
+> `mcp-toolbox/apps/workflow-fs-exec-mcp` — `workflow_write`/`workflow_edit`
+> authorize through `/before-tool` first (per-call hub resolution; every
+> failure mode — missing/stale discovery, 401, non-200, unreachable — is a
+> denial) then perform server-side bounded writes with symlink-ancestor
+> realpath (the corpus's known bypass shape, regression-tested with real
+> symlink escapes); `workflow_bash` routes through the hub's contained
+> `/bash`. **Step 2 is probe work:** mounting the server into a contained
+> ACP agent's MCP config + denying built-ins (`"edit": "deny"` /
+> `"bash": "deny"`) needs the same gated MCP-config probe as the F1 skills
+> mount; rawInput fidelity rides `acp-cline-tool-matrix`. **Honest note on
+> credentials:** the hub token reaches the agent environment so its MCP
+> server can authorize — this grants no new power (the token asks
+> authorization; the hub still gates, and `/bash` still runs contained), and
+> the agent could always ask the hub the same questions through its own
+> tools.
 
 ### Task G4: Overlay quarantine (universal fallback)
 
@@ -522,15 +539,42 @@ probe-verified agent.
       agents that offer neither interception nor deniable built-ins. Design
       task; not blocking G1–G3.
 
+> **Design (2026-09-15), intentionally unbuilt:** launch the contained agent
+> with the workspace bind-mounted read-only plus an OverlayFS upperdir
+> (`work` + `upper` under `<data-dir>/overlays/<runId>/`); the agent sees its
+> writes land normally while the real tree is untouched. Promotion is a
+> hub-owned operation gated on the run's full evidence chain (tests pass,
+> reviewer approved): `git apply`-style replay of the upperdir diff, or
+> rsync of upper → real tree, executed by `/bash` machinery so every promote
+> is itself authorized and journaled. Rejecting promotion IS the deny — the
+> overlay is discarded. This stays a design task because (a) bubblewrap +
+> overlayfs composition needs a runtime probe on the target kernel, (b)
+> tooling that expects writes to persist mid-run (test runs writing
+> artifacts) sees overlay-fine state, and (c) G1's ask-config probe may
+> make the universal fallback unnecessary for the agents we actually run.
+
 ### Task G5: Port the observability + extras
 
-- [ ] Claims-vs-evidence journaling (Policy 24) at end-of-turn, hub-side, observability-only.
-- [ ] `guard_status`/`guard_why`/review tools as a read-only toolbox server.
-- [ ] Audit/verify-cache/worktree/checkpoint/learning behind hub persistence
+- [x] Claims-vs-evidence journaling (Policy 24) at end-of-turn, hub-side, observability-only.
+- [x] `guard_status`/`guard_why`/review tools as a read-only toolbox server.
+- [x] Audit/verify-cache/worktree/checkpoint/learning behind hub persistence
       and endpoints (much already exists: `review-followups.ts`,
       `project-memory.ts`, hub run registry).
-- [ ] Guidance (`tool.definition`, `system.transform` equivalents) as
+- [x] Guidance (`tool.definition`, `system.transform` equivalents) as
       client-side prompt prepend; honestly advisory.
+
+> Implemented 2026-09-15: **claims journal** — `recordCompletionClaim` +
+> `completionClaims()` on the run registry (bounded; reads kernel task state
+> from the shared graph so a claim recorded right after a verified finish
+> sees `VERIFIED`; never blocks, never records evidence), wired into the
+> scheduled-run turn; **guidance** — `buildAdvisoryGuidance` in
+> `src/integrations/prompt-guidance.ts` composes style/workflow preamble
+> blocks for composing surfaces, honestly advisory (the text says the hub
+> enforces its rules independently of it). **Already ported by the original
+> toolbox effort:** guard_status/guard_check are `workflow-guard-mcp` tools,
+> review follow-ups live in `review-accountability-mcp` with a hub client,
+> learning/project-memory/worktree run as hub-owned toolbox servers — the
+> G5 delta was the claims journal and the guidance builder.
 
 ### Task G6: Port the adversarial corpus as hub conformance probes
 
@@ -540,11 +584,22 @@ parent/subagent freshness inheritance, `# allow-live` escapes — becomes a
 hub-side probe suite every pinned agent version must pass before its surface
 is labeled `enforced`.
 
-- [ ] Inventory `opencode-workflow-guard` test cases by policy; map each to a
+- [x] Inventory `opencode-workflow-guard` test cases by policy; map each to a
       hub probe or unit test (policy logic ports 1:1; hook-specific cases
       become ACP wire probes).
-- [ ] Any corpus case that cannot be expressed hub-side is a documented hole,
+- [x] Any corpus case that cannot be expressed hub-side is a documented hole,
       not a silent drop.
+
+> Implemented 2026-09-15: the full family-by-family mapping lives in
+> `docs/GUARD_CORPUS_MAP.md` — Ported / Probe / Hole status per corpus
+> family, with the three holes stated plainly (compaction-time events — gap
+> G7 regression; in-session host-event fidelity — probe-gated per agent;
+> plugin-internal circuit-breaker escalation counters) and the gated probe
+> backlog listed. The evasion matcher corpus itself (wrappers, chained
+> commands, cluster-CLI smuggling) lives in and stays alive with the
+> vendored `workflow-guard-mcp`, which the hub now enforces on every surface
+> (G2) — so those cases run on every `/before-tool`, `/bash`, and ACP
+> permission decision rather than only inside the plugin host.
 
 ---
 
