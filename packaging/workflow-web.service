@@ -1,0 +1,28 @@
+# Systemd user unit for the Workflow browser operator UI (PWA server).
+# Install:  mkdir -p ~/.config/systemd/user
+#           cp packaging/workflow-web.service ~/.config/systemd/user/
+#           systemctl --user daemon-reload
+#           systemctl --user enable --now workflow-web
+# Start at boot without logging in (one-time, per user):
+#           loginctl enable-linger "$USER"
+#
+# Runs from a source checkout with devDependencies installed (the web server
+# bundles the React surface at startup via esbuild). Adjust WorkingDirectory
+# and the absolute Node path when the checkout or toolchain lives elsewhere.
+[Unit]
+Description=Workflow browser operator UI — PWA server on 127.0.0.1:4173
+Documentation=https://github.com/ultus-net/workflow/blob/main/docs/OPERATOR_UI.md
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Workflow
+# Ensures the contained Cline checkout is present, patched, and built; fast
+# no-op once ready.
+ExecStartPre=%h/.local/share/pi-node/node-v22.22.3-linux-x64/bin/node --import tsx scripts/build-cline-tui.mjs
+ExecStart=%h/.local/share/pi-node/node-v22.22.3-linux-x64/bin/node --import tsx src/cli/web.ts
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

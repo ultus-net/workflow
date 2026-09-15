@@ -59,6 +59,13 @@ the daemon manually with `workflow-hub` (source checkout: `npm run hub`). An
 optional systemd user unit lives at `packaging/workflow-hub.service` for
 fully-managed startup.
 
+The browser operator UI (`npm run web`, http://127.0.0.1:4173) is installable
+as a PWA and can run as a managed background service via
+`packaging/workflow-web.service`: copy it to `~/.config/systemd/user/`, then
+`systemctl --user daemon-reload && systemctl --user enable --now workflow-web`.
+It restarts on failure and starts with the session; for start-at-boot without
+logging in, run `loginctl enable-linger "$USER"` once.
+
 In the monitor TUI: `/` (or Ctrl+P) opens the Workflow options menu — digits
 1-6 toggle **mode** (pedagogical gating), **speech** (caveman), **build**
 (ponytail/YAGNI), **learner profile**, **symbol inspect**, and **workflow
