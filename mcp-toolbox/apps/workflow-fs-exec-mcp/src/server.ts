@@ -60,12 +60,11 @@ server.registerTool(
       input: { path: input.path, content: input.content },
       workspace: input.workspace,
     });
-    const target = applyWrite(input);
+    applyWrite(input);
     return {
       content: [{ type: "text", text: JSON.stringify({ path: input.path }) }],
       structuredContent: { path: input.path },
     };
-    void target;
   },
 );
 

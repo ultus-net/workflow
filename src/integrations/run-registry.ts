@@ -360,7 +360,7 @@ export function createRunRegistry(
       // a claim recorded right after a verified finish must still see
       // VERIFIED, not a phantom mismatch.
       const runTaskId = taskId(`run:${input.runId}`);
-      let verifiedAtClaim = false;
+      let verifiedAtClaim: boolean;
       try {
         verifiedAtClaim = graph.get(runTaskId).state === "VERIFIED";
       } catch {

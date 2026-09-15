@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from "node:fs";
+import { lstatSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -154,6 +154,27 @@ test("fs writes stay inside the workspace and reject symlinked escapes", (t) => 
     () => applyWrite({ workspace, path: "link-parent/escape/pwned.ts", content: "x" }),
     /symlinked escape/,
   );
+
+  // DANGLING final symlink escape (P0 regression, empirically confirmed by
+  // review before the fix): existsSync treats it as nonexistent, and
+  // writeFileSync would follow it outside the workspace. It must be denied.
+  const danglingTarget = join(outside, "pwned-through-dangling.ts");
+  symlinkSync(danglingTarget, join(workspace, "dangling-link"));
+  assert.throws(
+    () => applyWrite({ workspace, path: "dangling-link", content: "exfil" }),
+    /dangling symlink/,
+  );
+  assert.equal(
+    lstatSync(danglingTarget, { throwIfNoEntry: false }),
+    undefined,
+    "the dangling symlink must not have been followed to create the outside file",
+  );
+
+  // A symlink whose target is INSIDE the workspace is deliverable (the
+  // resolution stays within bounds).
+  writeFileSync(join(workspace, "real-target.ts"), "x", "utf8");
+  symlinkSync(join(workspace, "real-target.ts"), join(workspace, "inner-link.ts"));
+  assert.doesNotThrow(() => resolveWithinWorkspace(workspace, "inner-link.ts"));
 
   // Exact-string edit semantics.
   writeFileSync(join(workspace, "edit.ts"), "const a = 1;\nconst b = 2;\n", "utf8");

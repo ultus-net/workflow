@@ -50,7 +50,7 @@ export function resolveHub(): HubTarget {
 async function postHub(
   path: string,
   body: Record<string, unknown>,
-  timeoutMs = 120_000,
+  timeoutMs: number,
 ): Promise<Record<string, unknown>> {
   const hub = resolveHub();
   const response = await fetch(`${hub.endpoint}${path}`, {
@@ -64,7 +64,10 @@ async function postHub(
   if (response.status === 401) {
     throw new HubUnavailableError("Workflow hub rejected the credential (stale discovery); refusing to act");
   }
-  const parsed = await response.json().catch(() => ({})) as Record<string, unknown>;
+  const parsed = await response.json().catch(() => null) as Record<string, unknown> | null;
+  if (parsed === null || typeof parsed !== "object") {
+    throw new HubUnavailableError(`Workflow hub returned an unparseable body (${response.status}); refusing to act`);
+  }
   if (!response.ok) {
     throw new HubUnavailableError(`Workflow hub error (${response.status}): ${String(parsed.error ?? response.statusText)}`);
   }
@@ -84,7 +87,7 @@ export async function authorizeBeforeTool(input: {
     toolCall: input.toolCall,
     input: input.input,
     ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
-  });
+  }, 30_000);
   if (result.stop === true && typeof result.reason === "string") {
     throw new Error(`Workflow denied ${input.toolCall.toolName}: ${result.reason}`);
   }
@@ -95,7 +98,7 @@ export async function authorizeBeforeTool(input: {
 
 /** Contained shell execution through the hub's `/bash` route. */
 export async function runBash(input: { readonly command: string; readonly cwd: string }): Promise<string> {
-  const result = await postHub("/bash", { command: input.command, cwd: input.cwd });
+  const result = await postHub("/bash", { command: input.command, cwd: input.cwd }, 300_000);
   if (typeof result.output !== "string") {
     throw new HubUnavailableError("Workflow hub returned no bash output");
   }

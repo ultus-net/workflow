@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve, sep } from "node:path";
 
 /**
@@ -19,19 +19,39 @@ export function resolveWithinWorkspace(workspace: string, target: string): strin
   if (!anchored.startsWith(canonicalWorkspace + sep)) {
     throw new Error(`path '${target}' resolves outside the workspace`);
   }
-  // Symlink bound: realpath the deepest EXISTING ancestor — every existing
-  // path segment is covered by it, and segments that do not exist yet cannot
-  // be symlinks. A symlinked directory smuggling the write outside the
-  // workspace fails here.
+  // Symlink bound. lstat (never follows links) finds the deepest existing
+  // path so a DANGLING final symlink cannot hide: existsSync would treat it
+  // as nonexistent, and writeFileSync would follow it outside the workspace
+  // (the corpus's known bypass). realpathSync then resolves every existing
+  // segment — throwing on dangling links — and any resolution outside the
+  // workspace is denied. Segments that do not exist yet cannot be symlinks.
   let probe = anchored;
-  while (!existsSync(probe)) {
+  while (lstatSync(probe, { throwIfNoEntry: false }) === undefined) {
     const parent = dirname(probe);
     if (parent === probe) break;
     probe = parent;
   }
-  const realAncestor = realpathSync(probe);
+  let realAncestor: string;
+  try {
+    realAncestor = realpathSync(probe);
+  } catch {
+    throw new Error(`path '${target}' resolves outside the workspace (dangling symlink)`);
+  }
   if (realAncestor !== canonicalWorkspace && !realAncestor.startsWith(canonicalWorkspace + sep)) {
     throw new Error(`path '${target}' resolves outside the workspace (symlinked escape)`);
+  }
+  // If the final path itself exists as a symlink, its resolution must also
+  // stay inside the workspace (writeFileSync follows it on the actual write).
+  if (lstatSync(anchored, { throwIfNoEntry: false })?.isSymbolicLink() === true) {
+    let resolved: string;
+    try {
+      resolved = realpathSync(anchored);
+    } catch {
+      throw new Error(`path '${target}' resolves outside the workspace (dangling symlink)`);
+    }
+    if (resolved !== canonicalWorkspace && !resolved.startsWith(canonicalWorkspace + sep)) {
+      throw new Error(`path '${target}' resolves outside the workspace (symlinked escape)`);
+    }
   }
   return anchored;
 }
