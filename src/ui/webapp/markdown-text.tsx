@@ -16,16 +16,16 @@ function CodePart({ className, children }: { className?: string | undefined; chi
   // without a language still keep block chrome — multi-line is the signal.
   const isBlock = language !== undefined || text.includes("\n");
   if (!isBlock) return <code className={className}>{children}</code>;
-  const shown = language ?? "plaintext";
-  const known = language !== undefined && hljs.getLanguage(language) !== undefined;
-  const highlighted = hljs.highlight(text, { language: known ? language! : "plaintext" }).value;
+  const highlightLanguage =
+    language !== undefined && hljs.getLanguage(language) !== undefined ? language : "plaintext";
+  const highlighted = hljs.highlight(text, { language: highlightLanguage }).value;
   return (
     <span className="code-block">
       <span className="code-block-head">
-        <span className="code-block-lang">{known ? language : ""}</span>
+        <span className="code-block-lang">{highlightLanguage === "plaintext" ? "" : highlightLanguage}</span>
         <CopyButton text={text} label="Copy" />
       </span>
-      <pre className="code-block-pre"><code className={`hljs language-${shown}`} dangerouslySetInnerHTML={{ __html: highlighted }} /></pre>
+      <pre className="code-block-pre"><code className={`hljs language-${highlightLanguage}`} dangerouslySetInnerHTML={{ __html: highlighted }} /></pre>
     </span>
   );
 }

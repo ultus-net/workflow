@@ -1000,9 +1000,12 @@ function exportMarkdownOf(items: readonly OperatorSessionItem[]): { readonly nam
   return { name: `workflow-session-${new Date().toISOString().slice(0, 10)}.md`, text: lines.join("\n") };
 }
 
-/** Wraps text in a fence long enough that embedded ``` cannot break the block. */
+/** Wraps text in a fence one longer than any backtick run inside it, so
+ * re-exported transcripts (round-tripped through the agent) cannot break it. */
 function fencedBlock(text: string): string {
-  const fence = text.includes("```") ? "````" : "```";
+  const runs = text.match(/`+/g) ?? [];
+  const longest = runs.reduce((max, run) => Math.max(max, run.length), 2);
+  const fence = "`".repeat(longest + 1);
   return `${fence}\n${text}\n${fence}`;
 }
 
