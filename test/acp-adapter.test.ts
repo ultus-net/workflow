@@ -124,3 +124,38 @@ test("ACP mutating proposals without checkable subjects fail closed", () => {
     /invalid ACP tool subject/,
   );
 });
+
+test("spawn tools classify to the spawn capability regardless of kind", () => {
+  const adapter = new AcpHostAdapter({ authoritativePermissions: true });
+  for (const name of ["spawn_agent", "task", "subagent", "agent"]) {
+    const action = adapter.proposalFromBeforeTool({
+      sessionId: "s",
+      taskId: taskId("A"),
+      toolCall: { name, rawInput: { prompt: "do the thing" } },
+    });
+    assert.equal(action.capability, "spawn", `${name} must classify as spawn`);
+    assert.equal(action.mutating, true, "spawning changes the world; it is not a read");
+  }
+
+  // A process kind on a spawn tool must not downgrade spawn either.
+  const executeKind = adapter.proposalFromBeforeTool({
+    sessionId: "s",
+    taskId: taskId("A"),
+    toolCall: { name: "spawn_agent", kind: "execute", rawInput: { prompt: "x" } },
+  });
+  assert.equal(executeKind.capability, "spawn");
+});
+
+test("host metadata cannot relax spawn classification (stricter-capability rule)", () => {
+  const adapter = new AcpHostAdapter({ authoritativePermissions: true });
+  const action = adapter.proposalFromBeforeTool({
+    sessionId: "s",
+    taskId: taskId("A"),
+    toolCall: { name: "spawn_agent", kind: "read", capability: "read", rawInput: { prompt: "x" } },
+  });
+  assert.equal(action.capability, "spawn");
+  assert.ok(
+    (action.requiredCapabilities ?? []).includes("spawn"),
+    "the spawn requirement must survive alongside any event-supplied capability",
+  );
+});
