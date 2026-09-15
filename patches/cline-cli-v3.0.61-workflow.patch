@@ -507,7 +507,7 @@ index 0000000..cb7cbb2
 +	// Proportions are preserved; the uniform scale fills the grid with a
 +	// compact inset so the ball reads tidy — never flattened. Uniform scale,
 +	// no shrink-by-squash. No noise halo: stray characters are unwanted.
-+	const scale = 0.85 * Math.min(1, (halfW - 2.6) / (halfW * 1.04), (halfH - 2.2) / (halfW * SQUASH * 1.04));
++	const scale = 0.85 * Math.max(0, Math.min(1, (halfW - 2.6) / (halfW * 1.04), (halfH - 2.2) / (halfW * SQUASH * 1.04)));
 +
 +	STARS.forEach((star) => {
 +		const angle = star.phase + progress + star.radius * TWIST * Math.PI * 2;
@@ -553,7 +553,7 @@ index 0000000..cb7cbb2
 +	// hold a core).
 +	if (height >= 2 && width >= 2) {
 +		const coreGlyph = PALETTE[PALETTE.length - 1] ?? "@";
-+		cells[Math.round(halfH)]![Math.round(halfW)] = coreGlyph;
++		cells[Math.min(height - 1, Math.round(halfH))]![Math.min(width - 1, Math.round(halfW))] = coreGlyph;
 +	}
 +
 +	return cells.map((row) => row.join(""));
