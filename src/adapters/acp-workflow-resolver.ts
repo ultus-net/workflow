@@ -74,12 +74,15 @@ const PATH_SUBJECT_TOOLS = new Set([
 // requests on the process-tool path (command required, cwd-only subject)
 // instead of failing closed as unknown mutation tools.
 const PROCESS_TOOLS = new Set(["run_commands", "execute_command", "shell", "bash"]);
-const NON_SUBJECT_TOOLS = new Set(["search_codebase", "fetch_web_content", "web_fetch", "web_search"]);
+const NON_SUBJECT_TOOLS = new Set(["fetch_web_content", "web_fetch", "web_search"]);
 
 function rawSubjects(toolName: string, rawInput: unknown): string[] {
   if (PROCESS_TOOLS.has(toolName)) return processSubjects(toolName, rawInput);
   if (NON_SUBJECT_TOOLS.has(toolName)) return [];
   if (!isRecord(rawInput)) return [];
+  if (toolName === "search_codebase") {
+    return typeof rawInput.path === "string" && rawInput.path.trim().length > 0 ? [rawInput.path] : [];
+  }
   if (toolName === "read_files") return readFilesSubjects(rawInput);
   if (PATH_SUBJECT_TOOLS.has(toolName)) {
     return typeof rawInput.path === "string" && rawInput.path.trim().length > 0 ? [rawInput.path] : [];
@@ -150,7 +153,7 @@ function isUnknownMutationTool(toolName: string, capability: ToolCapability | un
 }
 
 function isRecognizedTool(toolName: string): boolean {
-  return isSubjectBearingTool(toolName) || PROCESS_TOOLS.has(toolName) || NON_SUBJECT_TOOLS.has(toolName);
+  return toolName === "search_codebase" || isSubjectBearingTool(toolName) || PROCESS_TOOLS.has(toolName) || NON_SUBJECT_TOOLS.has(toolName);
 }
 
 function isSubjectBearingTool(toolName: string): boolean {

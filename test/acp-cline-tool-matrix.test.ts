@@ -103,6 +103,15 @@ test("read_files accepts file_paths and paths string arrays with strict validati
   assert.equal(seen.length, 2);
 });
 
+test("search_codebase preserves its optional path as an authorization subject", async () => {
+  const seen: ProposedToolAction[] = [];
+  const resolve = resolver("search_codebase", "read", seen);
+  await resolve(request("search_codebase", "search", { queries: ["auth flow"], path: "/repo/src" }));
+  await resolve(request("search_codebase", "search", { queries: ["auth flow"] }));
+  assert.deepEqual(seen[0]?.subjects, ["/repo/src"]);
+  assert.deepEqual(seen[1]?.subjects, []);
+});
+
 test("every path-subject tool fails closed without a usable path", async () => {
   const pathTools = [
     "read_file", "list_files", "list_code_definition_names", "search_files",
@@ -156,7 +165,8 @@ test("process tools never place command text into subjects", async () => {
   const resolve = resolver("run_commands", "process", seen);
   await resolve(request("run_commands", "execute", { commands: ["echo -n 'shell' >> shell-target.txt"], cwd: "/repo" }));
   // Subjects are workspace paths only; the kernel checks each one with
-  // pathWithinWorkspace, so command text would wrongly deny as outside the workspace.
+  // pathWithinWorkspace, so command text would be misclassified as a pseudo-path
+  // rather than authorized under process policy.
   assert.deepEqual(seen[0]?.subjects, ["/repo"]);
 });
 
