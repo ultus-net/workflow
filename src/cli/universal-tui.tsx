@@ -38,6 +38,7 @@ try {
   const { waitUntilExit } = render(React.createElement(WorkflowTui, {
     application,
     session: composed.session,
+    assistantLabel: composed.label,
     connectionLabel: `${composed.label} | standalone (local authority)`,
     onModeChange: (mode) => application.setPedagogyGate(createCheckpointLedger(mode)),
     ...(composed.setSessionStyle ? { onStyleChange: composed.setSessionStyle } : {}),

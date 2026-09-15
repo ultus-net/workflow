@@ -59,12 +59,12 @@ the daemon manually with `workflow-hub` (source checkout: `npm run hub`). An
 optional systemd user unit lives at `packaging/workflow-hub.service` for
 fully-managed startup.
 
-In the monitor TUI: `/` (or `/workflow`) opens the Workflow options menu —
-digits 1-6 toggle **mode** (pedagogical gating), **speech** (caveman), **build**
+In the monitor TUI: `/` (or Ctrl+P) opens the Workflow options menu — digits
+1-6 toggle **mode** (pedagogical gating), **speech** (caveman), **build**
 (ponytail/YAGNI), **learner profile**, **symbol inspect**, and **workflow
-details**; `q`/Esc closes. The same options are plain-key accelerators when the
-composer is empty: `m` cycles modes, `,` and `.` cycle speech/build, `p` opens
-the profile, `?` inspects a symbol, Ctrl+W toggles workflow details.
+details**; `q`/Esc closes. Ctrl+W toggles workflow details directly. Ordinary
+letter and punctuation keys are left to the composer so prompts are never
+changed by hidden first-character shortcuts.
 
 ## What you get
 

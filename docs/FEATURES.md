@@ -37,7 +37,7 @@ trip over.
 | `workflow` (patched Cline TUI launcher) | Complete | resolves the hub; refuses to start without it |
 | `workflow-monitor` (Ink monitoring TUI) | Complete | task panel, activity panel, log-enriched transcript; `npm run tui:workflow` |
 | Pedagogical modes (5 modes, checkpoints, learner profile, PRIMM) | Complete | `src/pedagogy/`; profile at `~/.local/share/workflow/learner-profile.json` |
-| Response/build styles (caveman speech, ponytail YAGNI build) | Complete | **model-advisory** — the model can ignore them; live switch with `,` and `.`; summaries kept by design |
+| Response/build styles (caveman speech, ponytail YAGNI build) | Complete | **model-advisory** — the model can ignore them; live switch through the `/` or Ctrl+P options menu; summaries kept by design |
 | Style-savings measurement (`npm run style:eval`) | Complete | `src/cli/style-eval.ts` — per-style output deltas from cumulative driver usage |
 | Browser projection | Partial | `src/ui/web.ts` demo; does not have the monitoring panels |
 

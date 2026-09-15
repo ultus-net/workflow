@@ -628,3 +628,64 @@ Current 2026-09-14 status: **decision recorded — GO** (`docs/ACP_DECISION.md`)
 **Verification:** ACP conformance fixture tests plus one real ACP-speaking agent smoke session; existing gates unchanged.
 
 W037 is complete. The universal registry explicitly composes ACP through the same contained `AcpSessionDriver` runtime used by the dedicated ACP surface; driver selection has no cross-SDK fallback path.
+
+## Phase 10: Review Control Plane
+
+The W037 universal surface is the acceptance-test baseline for this phase. Run operator acceptance testing before changing review-control-plane behavior so product-surface failures can be attributed to the verified W037 baseline rather than concurrent review infrastructure changes. These items adapt deterministic review-pipeline ideas observed in Alibaba OpenCodeReview; they do not add OpenCodeReview as a runtime dependency.
+
+### W038 - Universal surface operator acceptance baseline
+
+**Objective:** Exercise the clean W037 baseline with real operator workflows before further control-plane changes.
+
+**Depends on:** W037
+
+**Acceptance criteria:**
+- [x] Exercise the supported universal drivers needed for daily use and record composition, prompt, mutation/denial, cancellation, and failure-surfacing results without silently changing drivers.
+- [x] Confirm canonical task state, authorization level labels, containment claims, and session activity remain truthful during the exercised paths.
+- [x] Record material parity gaps as explicit follow-up work rather than folding unrelated control-plane changes into the baseline.
+
+W038 is complete (2026-09-15). The real `workflow-tui --driver acp` source surface launched through a PTY against Cline 3.0.61 + Bubblewrap, displayed `acp | standalone (local authority)` and `ENFORCED / native`, preserved ordinary first-character prompt input, and disposed cleanly. The real contained ACP probe passed with a workspace mutation while host-home canary and `/tmp` escape attempts remained contained; the real deny probe preserved the target after Workflow selected the agent's rejecting permission option. ACP session regressions cover cancellation and malformed-notification fail-closed behavior. Acceptance found and fixed two surface defects before moving on: assistant transcript entries were hard-coded as `Cline` instead of using the composed driver label, and plain-key empty-composer accelerators stole valid first prompt characters. The options menu is now explicit via `/` or Ctrl+P, ordinary composer characters are preserved, and regression tests pin both behaviors. Existing unchecked convergence items in `docs/TUI_PARITY.md` remain known product gaps rather than new W038 regressions.
+
+### W039 - Deterministic review coverage manifest
+
+**Objective:** Make review scope a control-plane fact rather than an LLM judgment by deriving the exact changed/untracked files, relevant tasks, tests, authority boundaries, and required review rules before a reviewer runs.
+
+**Depends on:** W038
+
+**Acceptance criteria:**
+- [ ] A deterministic manifest identifies every in-scope changed/untracked file and the review obligations attached to it.
+- [ ] Secondary review cannot report complete coverage while required manifest entries remain unreviewed.
+- [ ] Manifest generation and completion checks have behavioral tests for large diffs, untracked files, and security-sensitive changes.
+
+### W040 - Risk-aware review partitioning and rule matching
+
+**Objective:** Keep large reviews complete and context-efficient by deterministically grouping related files into isolated review units and attaching focused rules based on path, component, and risk class.
+
+**Depends on:** W039
+
+**Acceptance criteria:**
+- [ ] Related implementation/tests/configuration are grouped deterministically, with an integration review covering cross-unit behavior.
+- [ ] Security/authority, persistence/recovery, UI, and test changes receive their applicable focused rules without injecting every rule into every reviewer prompt.
+- [ ] Partitioning never removes a file or obligation from the W039 coverage manifest, and deterministic tests prove that invariant.
+
+### W041 - Review provenance and replay
+
+**Objective:** Bind independent-review evidence to the exact mutation and make review decisions auditable and resumable.
+
+**Depends on:** W039, W040
+
+**Acceptance criteria:**
+- [ ] Persist a compact review record containing the commit/diff fingerprint, coverage manifest and rule-set version, reviewer identity, inspected units, findings, verification evidence, and disposition.
+- [ ] Later mutations invalidate review completion when their fingerprint or covered obligations change.
+- [ ] Interrupted reviews can resume without treating stale review evidence as approval for new mutations.
+
+### W042 - Executable security assurance case
+
+**Objective:** Consolidate Workflow's distributed security guarantees into an auditable threat/assurance map tied to executable verification.
+
+**Depends on:** W038
+
+**Acceptance criteria:**
+- [ ] Document actors, trust boundaries, threats, mitigations, and fail-closed assumptions across hub authority, adapters, ACP, containment, model proxying, persistence, and local UI surfaces.
+- [ ] Each material security claim points to an implementation boundary and an automated test or explicitly identified manual/gated verification.
+- [ ] The assurance case does not upgrade advisory or policy-only behavior to enforced behavior and records known residual risks explicitly.

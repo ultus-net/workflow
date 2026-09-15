@@ -69,6 +69,7 @@ export function WorkflowTui({
   onModeChange,
   reviewFollowUps,
   connectionLabel,
+  assistantLabel = "Cline",
 }: {
   readonly application: WorkflowSnapshotSource;
   readonly session?: WorkflowCodingSession;
@@ -82,6 +83,7 @@ export function WorkflowTui({
   readonly onModeChange?: (mode: PedagogicalMode) => void;
   readonly reviewFollowUps?: readonly ReviewFollowUp[];
   readonly connectionLabel?: string;
+  readonly assistantLabel?: string;
 }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -122,7 +124,7 @@ export function WorkflowTui({
   // label with no corresponding application behavior.
   useEffect(() => {
     onModeChange?.(mode);
-    // Mount-only: subsequent changes are notified from the `m` handler below.
+    // Mount-only: subsequent changes are notified when the menu changes mode.
   }, []);
 
   useEffect(() => {
@@ -144,13 +146,13 @@ export function WorkflowTui({
     if (event.type === "log") {
       setRecentLogs((current) => [...current, event].slice(-3));
     }
-    setTranscript((current) => [...current, formatSessionEvent(event)]);
+    setTranscript((current) => [...current, formatSessionEvent(event, assistantLabel)]);
     setScrollOffset(0);
     setSessionState(activeSession.snapshot());
     setSnapshot(application.snapshot());
   }), [application, activeSession]);
 
-  // Option toggles shared by the accelerator keys and the `/workflow` menu.
+  // Option actions shared by the Workflow menu and direct shortcuts.
   const cycleMode = (): void => {
     setMode((value) => {
       const next = nextPedagogicalMode(value);
@@ -218,6 +220,11 @@ export function WorkflowTui({
       toggleWorkflow();
       return;
     }
+    if (key.ctrl && input === "p") {
+      setMenuOpen(true);
+      setMenuIndex(0);
+      return;
+    }
     if (menuOpen) {
       if (key.escape || (input === "" && !key.ctrl && !key.meta) || input === "q") {
         setMenuOpen(false);
@@ -264,31 +271,9 @@ export function WorkflowTui({
       return;
     }
     if (prompt.length === 0 && !key.ctrl && !key.meta) {
-      // `/` (or `/workflow`) opens the option menu; plain keys remain
-      // accelerators.
       if (input === "/") {
         setMenuOpen(true);
         setMenuIndex(0);
-        return;
-      }
-      if (input === "m") {
-        cycleMode();
-        return;
-      }
-      if (input === "p") {
-        toggleProfile();
-        return;
-      }
-      if (input === "?") {
-        openInspect();
-        return;
-      }
-      if (input === ",") {
-        cycleSpeech();
-        return;
-      }
-      if (input === ".") {
-        cycleBuild();
         return;
       }
     }
@@ -335,8 +320,8 @@ export function WorkflowTui({
     <Box flexDirection="column" alignItems="center">
       <Box flexDirection="column" width="100%" maxWidth={68} paddingX={1}>
         <Box justifyContent="space-between">
-          <Text dimColor>[Mode: {MODE_LABELS[mode]} (m to switch)]{formatStyleStatus(style).length > 0 ? ` [${formatStyleStatus(style)}]` : ""}{connectionLabel !== undefined ? ` [${connectionLabel}]` : ""}</Text>
-          <Text dimColor>? inspect</Text>
+          <Text dimColor>[Mode: {MODE_LABELS[mode]}]{formatStyleStatus(style).length > 0 ? ` [${formatStyleStatus(style)}]` : ""}{connectionLabel !== undefined ? ` [${connectionLabel}]` : ""}</Text>
+          <Text dimColor>^P menu</Text>
         </Box>
         {prompt.length === 0 && !menuOpen ? (
           <Text dimColor>keys: / menu · ^W state</Text>
@@ -580,8 +565,8 @@ function configValueLabel(option: SessionConfigOption): string {
   return option.options?.find((entry) => entry.value === option.currentValue)?.name ?? String(option.currentValue);
 }
 
-function formatSessionEvent(event: CodingSessionEvent): TranscriptEntry {
-  if (event.type === "assistant") return { label: "Cline", text: event.text };
+function formatSessionEvent(event: CodingSessionEvent, assistantLabel: string): TranscriptEntry {
+  if (event.type === "assistant") return { label: assistantLabel, text: event.text };
   if (event.type === "status") return { label: "[status]", text: event.status, dim: true };
   if (event.type === "tool-proposal") {
     return { label: "[tool]", text: `${event.tool}${event.subjects.length > 0 ? ` ${event.subjects.join(", ")}` : ""}`, dim: true };
