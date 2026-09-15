@@ -72,9 +72,11 @@ export class WebSessionManager {
   }
 
   list(): WebSessionMeta[] {
-    return [...this.#sessions]
-      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-      .map((record) => this.#meta(record));
+    // The registry is stored most-recent-first; updatedAt is millisecond-precision
+    // ISO, so co-created records tie — break ties toward the more recent entry.
+    return [...this.#sessions.entries()]
+      .sort(([indexA, a], [indexB, b]) => b.updatedAt.localeCompare(a.updatedAt) || indexA - indexB)
+      .map(([, record]) => this.#meta(record));
   }
 
   /** Active channel, lazily creating the first session on demand. */
