@@ -241,6 +241,15 @@ Hub-executed tests are the strongest cheap evidence the control plane owns.
       `verification-accountability-mcp` is a later enhancement, not a
       dependency.
 
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`: `RunTestRunner`
+> seam in `createRunRegistry` — the environment-evidence requirement is
+> declared only when the seam is wired (backward-compatible), `begin()`
+> stales the workspace test subject so a run can never verify on a
+> predecessor's green tests, and evidence is recorded hub-side at the current
+> epoch. **Deferred piece:** bridge wiring — the production runner reads
+> `verifyCommand` from project config and executes through contained `/bash`
+> machinery; no project-config sourcing exists in `src/` yet.
+
 ---
 
 ## Phase E — Token economy de-plugined (ACP-compatible)

@@ -82,6 +82,15 @@ export function createRunRegistry(
   };
   const finishedRunTaskIds = new Set<string>();
   const blockingReasons = new Map<string, string>();
+  const rememberBlockingReason = (runId: string, reason: string): void => {
+    blockingReasons.set(runId, reason);
+    // Same bounded-observability rule as review outcomes.
+    while (blockingReasons.size > 64) {
+      const oldest = blockingReasons.keys().next().value;
+      if (oldest === undefined) break;
+      blockingReasons.delete(oldest);
+    }
+  };
 
   const workspaceApplication = (
     workspace: string | undefined,
@@ -222,18 +231,18 @@ export function createRunRegistry(
               result = await reviewer({ runId, workspace: runWorkspaces.get(runId) });
             } catch (error) {
               const reason = `hub reviewer failed: ${error instanceof Error ? error.message : String(error)}`;
-              blockingReasons.set(runId, reason);
+              rememberBlockingReason(runId, reason);
               throw new Error(`cannot verify run ${runId}: ${reason}`, { cause: error });
             }
             rememberReviewOutcome(runId, result);
             if (!result.recorded) {
               const reason = result.parseFailure ?? "reviewer did not approve the run";
-              blockingReasons.set(runId, reason);
+              rememberBlockingReason(runId, reason);
               throw new Error(`cannot verify run ${runId}: ${reason}`);
             }
             verified = application.transition(runTaskId, "VERIFIED");
             if (verified.kind !== "accepted" && options?.testRunner === undefined) {
-              blockingReasons.set(runId, verified.reason);
+              rememberBlockingReason(runId, verified.reason);
               throw new Error(`cannot verify run ${runId}: ${verified.reason}`);
             }
           }
@@ -251,12 +260,12 @@ export function createRunRegistry(
               });
             } catch (error) {
               const reason = `hub test run failed: ${error instanceof Error ? error.message : String(error)}`;
-              blockingReasons.set(runId, reason);
+              rememberBlockingReason(runId, reason);
               throw new Error(`cannot verify run ${runId}: ${reason}`, { cause: error });
             }
             if (!testOutcome.passed) {
               const reason = `test evidence failed: ${testOutcome.output.slice(0, 200)}`;
-              blockingReasons.set(runId, reason);
+              rememberBlockingReason(runId, reason);
               throw new Error(`cannot verify run ${runId}: ${reason}`);
             }
             application.recordEvidence({
@@ -271,12 +280,12 @@ export function createRunRegistry(
             });
             verified = application.transition(runTaskId, "VERIFIED");
             if (verified.kind !== "accepted") {
-              blockingReasons.set(runId, verified.reason);
+              rememberBlockingReason(runId, verified.reason);
               throw new Error(`cannot verify run ${runId}: ${verified.reason}`);
             }
           }
           if (verified.kind !== "accepted") {
-            blockingReasons.set(runId, verified.reason);
+            rememberBlockingReason(runId, verified.reason);
             throw new Error(`cannot verify run ${runId}: ${verified.reason}`);
           }
           blockingReasons.delete(runId);
