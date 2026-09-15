@@ -191,7 +191,10 @@ function completionChime(success: boolean): void {
     oscillator.connect(gain).connect(context.destination);
     oscillator.start();
     oscillator.stop(context.currentTime + 0.4);
-    void context.close().catch(() => undefined);
+    // close() stops all audio processing — it must wait for the sound to end.
+    oscillator.onended = () => {
+      void context.close().catch(() => undefined);
+    };
   } catch {
     // Audio can be unavailable (no device, autoplay policy); the ping is best-effort.
   }

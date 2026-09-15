@@ -1185,7 +1185,9 @@ body {
   border-radius: var(--radius-s);
   padding: 0.1rem 0.35rem;
 }
-.aui-md pre {
+/* Fallback block chrome for language-less fences; highlighted blocks own
+   their chrome via .code-block-pre, which this rule must not override. */
+.aui-md pre:not(.code-block-pre) {
   background: #0e1013;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -1193,7 +1195,7 @@ body {
   overflow-x: auto;
   margin: 0.6rem 0;
 }
-.aui-md pre code {
+.aui-md pre:not(.code-block-pre) code {
   background: transparent;
   border: none;
   padding: 0;

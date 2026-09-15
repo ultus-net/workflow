@@ -525,8 +525,8 @@ function ConfigControls({ options, setOption, permissions, capabilities }: {
     if (!open) return;
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
-        // This Escape closes the popover; it must never also reach the global
-        // shortcut handler (which cancels running turns on Escape).
+        // stopPropagation is defense-in-depth for the focused-control case;
+        // the global Escape handler's open-chrome DOM guard is the primary fix.
         event.stopPropagation();
         setOpen(false);
         gearRef.current?.focus();
@@ -817,11 +817,16 @@ function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]
   );
 }
 
-/** Collects a message's visible text (skips data parts) for copy/edit affordances. */
+/**
+ * Collects a message's visible text (skips data parts) for copy/edit. User
+ * messages render plain `.msg-text`; assistant messages render markdown into
+ * `.aui-md`, so both containers contribute (rendered text, not source).
+ */
 function messageTextOf(root: Element | null): string {
   if (root === null) return "";
-  return [...root.querySelectorAll(".msg-text")]
-    .map((element) => element.textContent ?? "")
+  const collected = [...root.querySelectorAll<HTMLElement>(".msg-text, .aui-md")];
+  return collected
+    .map((element) => element.innerText || (element.textContent ?? ""))
     .join("\n\n")
     .trim();
 }
@@ -853,7 +858,7 @@ function UserMessage() {
           type="button"
           className="copy-button"
           title="Copy message"
-          onClick={(event) => void navigator.clipboard.writeText(messageTextOf(event.currentTarget.closest(".msg")))}
+          onClick={(event) => navigator.clipboard.writeText(messageTextOf(event.currentTarget.closest(".msg"))).catch(() => undefined)}
         >
           Copy
         </button>
@@ -894,7 +899,7 @@ function AssistantMessage() {
           type="button"
           className="copy-button"
           title="Copy message"
-          onClick={(event) => void navigator.clipboard.writeText(messageTextOf(event.currentTarget.closest(".msg")))}
+          onClick={(event) => navigator.clipboard.writeText(messageTextOf(event.currentTarget.closest(".msg"))).catch(() => undefined)}
         >
           Copy
         </button>
@@ -903,9 +908,11 @@ function AssistantMessage() {
   );
 }
 
-/** Tail affordance after a finished turn: re-sends the last prompt (client-side). */
+/** Tail affordance after a finished turn: re-sends the last prompt through the
+ * same send path as the composer, so a slow-to-settle turn parks it in the
+ * queue instead of silently losing it. */
 function RegenerateAction() {
-  const { isRunning, items } = useSessionState();
+  const { isRunning, items, queuePrompt } = useSessionState();
   if (isRunning) return null;
   const lastUser = [...items].reverse().find((item) => item.kind === "user");
   const last = items.at(-1);
@@ -913,16 +920,7 @@ function RegenerateAction() {
   if (last === undefined || (last.kind !== "completion" && last.kind !== "assistant")) return null;
   return (
     <div className="thread-tail">
-      <button
-        className="btn btn-ghost"
-        onClick={() => {
-          void fetch("/api/prompt", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ prompt: lastUser.text }),
-          });
-        }}
-      >
+      <button className="btn btn-ghost" onClick={() => queuePrompt(lastUser.text)}>
         Regenerate
       </button>
     </div>
@@ -970,7 +968,7 @@ function exportMarkdownOf(items: readonly OperatorSessionItem[]): { readonly nam
         lines.push("## Assistant", "", item.text, "");
         break;
       case "thinking":
-        lines.push("<details><summary>Thinking</summary>", "", "```", item.text, "```", "", "</details>", "");
+        lines.push("<details><summary>Thinking</summary>", "", fencedBlock(item.text), "");
         break;
       case "plan":
         lines.push("### Plan", "");
@@ -981,8 +979,8 @@ function exportMarkdownOf(items: readonly OperatorSessionItem[]): { readonly nam
         break;
       case "tool":
         lines.push(`**Tool — ${item.title}** (${item.status})`);
-        if (item.rawInput !== undefined) lines.push("", "Input:", "", "```", item.rawInput, "```");
-        if (item.rawOutput !== undefined) lines.push("", "Output:", "", "```", item.rawOutput, "```");
+        if (item.rawInput !== undefined) lines.push("", "Input:", "", fencedBlock(item.rawInput));
+        if (item.rawOutput !== undefined) lines.push("", "Output:", "", fencedBlock(item.rawOutput));
         lines.push("");
         break;
       case "action":
@@ -1000,6 +998,12 @@ function exportMarkdownOf(items: readonly OperatorSessionItem[]): { readonly nam
     }
   }
   return { name: `workflow-session-${new Date().toISOString().slice(0, 10)}.md`, text: lines.join("\n") };
+}
+
+/** Wraps text in a fence long enough that embedded ``` cannot break the block. */
+function fencedBlock(text: string): string {
+  const fence = text.includes("```") ? "````" : "```";
+  return `${fence}\n${text}\n${fence}`;
 }
 
 function downloadMarkdown(exported: { readonly name: string; readonly text: string }): void {
@@ -1021,6 +1025,8 @@ function Composer() {
         // While a turn runs, the framework composer swallows Enter; route the
         // follow-up through the queue path instead (sent when the turn ends).
         if (!isRunning || event.key !== "Enter" || event.shiftKey) return;
+        // IME composition (Chinese/Japanese input) owns its Enter commits.
+        if (event.nativeEvent.isComposing) return;
         const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(".composer-input");
         const text = (input?.value ?? "").trim();
         if (text.length === 0) return;

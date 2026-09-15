@@ -12,28 +12,32 @@ import remarkGfm from "remark-gfm";
 function CodePart({ className, children }: { className?: string | undefined; children?: ReactNode }) {
   const text = String(children ?? "").replace(/\n$/, "");
   const language = /language-([\w+-]+)/.exec(className ?? "")?.[1];
-  if (language === undefined) return <code className={className}>{children}</code>;
-  const known = hljs.getLanguage(language) !== undefined;
-  const highlighted = hljs.highlight(text, { language: known ? language : "plaintext" }).value;
+  // Inline code (no language, single line) renders untouched; fenced blocks
+  // without a language still keep block chrome — multi-line is the signal.
+  const isBlock = language !== undefined || text.includes("\n");
+  if (!isBlock) return <code className={className}>{children}</code>;
+  const shown = language ?? "plaintext";
+  const known = language !== undefined && hljs.getLanguage(language) !== undefined;
+  const highlighted = hljs.highlight(text, { language: known ? language! : "plaintext" }).value;
   return (
     <span className="code-block">
       <span className="code-block-head">
         <span className="code-block-lang">{known ? language : ""}</span>
         <CopyButton text={text} label="Copy" />
       </span>
-      <pre className="code-block-pre"><code className={`hljs language-${language}`} dangerouslySetInnerHTML={{ __html: highlighted }} /></pre>
+      <pre className="code-block-pre"><code className={`hljs language-${shown}`} dangerouslySetInnerHTML={{ __html: highlighted }} /></pre>
     </span>
   );
 }
 
-/** Small clipboard button shared by code blocks and message actions. */
-export function CopyButton({ text, label, className }: { readonly text: string; readonly label: string; readonly className?: string }) {
+/** Clipboard button for code blocks; failures (permissions, focus) stay quiet. */
+function CopyButton({ text, label }: { readonly text: string; readonly label: string }) {
   return (
     <button
       type="button"
-      className={className === undefined ? "copy-button" : className}
+      className="copy-button"
       onClick={() => {
-        void navigator.clipboard.writeText(text);
+        navigator.clipboard.writeText(text).catch(() => undefined);
       }}
     >
       {label}
