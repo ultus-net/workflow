@@ -9,7 +9,8 @@ import {
 
 import { ActionPart, AttentionPart, CompletionPart, OutcomePart, PlanPart, ThinkingPart, ToolPart } from "./message-parts.js";
 import { MarkdownText } from "./markdown-text.js";
-import { useSessionUsage } from "./runtime.js";
+import { useSessionState, useSessionUsage } from "./runtime.js";
+import type { OperatorSessionItem } from "../operator-session.js";
 
 interface SnapshotTask {
   readonly id: string;
@@ -412,6 +413,9 @@ function ConfigCombobox({ option, setOption, labelledBy }: {
       if (choice !== undefined) choose(choice.value);
     } else if (event.key === "Escape") {
       event.preventDefault();
+      // This Escape closes the combobox only; the global shortcut handler
+      // must not read it as "cancel the running turn".
+      event.stopPropagation();
       closeList(true);
     }
   };
@@ -521,6 +525,9 @@ function ConfigControls({ options, setOption, permissions, capabilities }: {
     if (!open) return;
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
+        // This Escape closes the popover; it must never also reach the global
+        // shortcut handler (which cancels running turns on Escape).
+        event.stopPropagation();
         setOpen(false);
         gearRef.current?.focus();
       }
@@ -532,6 +539,8 @@ function ConfigControls({ options, setOption, permissions, capabilities }: {
     };
     document.addEventListener("keydown", onKey);
     document.addEventListener("mousedown", onPointerDown);
+    // Dialogs open with focus inside them, never stranded on the page body.
+    popoverRef.current?.querySelector<HTMLElement>("input, select, button")?.focus();
     return () => {
       document.removeEventListener("keydown", onKey);
       document.removeEventListener("mousedown", onPointerDown);
@@ -569,6 +578,9 @@ function ConfigControls({ options, setOption, permissions, capabilities }: {
         </button>
         {open && (
           <div className="config-popover" role="dialog" aria-label="Session settings" ref={popoverRef}>
+            {(popoverSelects.length > 0 || toggles.length > 0) && (
+              <span className="config-field-label">Agent options</span>
+            )}
             {popoverSelects.map((option) => (
               <label className="config-field" key={option.id}>
                 <span className="config-field-label">{option.name}</span>
@@ -592,11 +604,44 @@ function ConfigControls({ options, setOption, permissions, capabilities }: {
             {permissions.available && (
               <PermissionSettings permissions={permissions} capabilities={capabilities} />
             )}
+            <GeneralSettings />
           </div>
         )}
       </span>
     </div>
   );
+}
+
+/** Settings popover: completion notifications (opt-in, persisted locally). */
+function GeneralSettings() {
+  const [notify, setNotify] = useNotifyOnCompletion();
+  return (
+    <div className="config-permissions">
+      <span className="config-field-label">Notifications</span>
+      <label className="config-toggle" title="Desktop notification and chime when a turn finishes while the tab is hidden">
+        <input type="checkbox" checked={notify} onChange={(event) => setNotify(event.target.checked)} />
+        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
+        <span className="config-toggle-text">
+          Notify on completion
+          <span className="config-toggle-desc">fires only while the tab is hidden</span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
+const NOTIFY_KEY = "workflow.notify-completion";
+
+function useNotifyOnCompletion(): readonly [boolean, (enabled: boolean) => void] {
+  const [enabled, setEnabled] = useState(() => window.localStorage.getItem(NOTIFY_KEY) === "true");
+  const update = useCallback((value: boolean): void => {
+    window.localStorage.setItem(NOTIFY_KEY, String(value));
+    if (value && typeof Notification !== "undefined" && Notification.permission === "default") {
+      void Notification.requestPermission();
+    }
+    setEnabled(value);
+  }, []);
+  return [enabled, update];
 }
 
 /** Ask-mode and capability toggles inside the settings popover. */
@@ -659,24 +704,42 @@ function PermissionSettings({ permissions, capabilities }: {
   );
 }
 
-/** In-thread permission prompt card; the hub parks a request until answered. */
-function PermissionPrompt({ pending, answer }: {
+/** In-thread permission prompt card; the hub parks a request until answered.
+ * The authorization boundary is the loudest card in the thread: focus lands
+ * on Allow when it appears, the groups read as allow-vs-deny, and the
+ * "always" choices state their scope. */
+function PermissionPrompt({ pending, answer, remembered }: {
   readonly pending: PendingPermission;
   readonly answer: (id: string, decision: PermissionDecision) => Promise<void>;
+  readonly remembered: number;
 }) {
+  const allowRef = useRef<HTMLButtonElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // A parked prompt is a blocking decision: bring it into view and put
+    // focus where the answer starts. Focus also announces it to screen readers.
+    cardRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    allowRef.current?.focus();
+  }, [pending.id]);
   return (
-    <div className="part part-permission" role="alertdialog" aria-label={`Permission request for ${pending.tool}`}>
-      <div className="part-tool-head">
-        <span className="part-tool-kind">approval</span>
-        <code className="part-tool-title">{pending.tool}</code>
+    <div className="part part-permission" role="alertdialog" aria-label={`Permission request for ${pending.tool}`} ref={cardRef}>
+      <div className="part-permission-head">
+        <span className="part-permission-label">Permission required</span>
+        <code className="part-permission-tool">{pending.tool}</code>
+        {remembered > 0 && <span className="part-permission-remembered">{remembered} remembered</span>}
       </div>
       {pending.subjects.length > 0 && <div className="part-subjects">{pending.subjects.join("  ")}</div>}
       {pending.inputPreview !== undefined && <pre className="part-permission-input">{pending.inputPreview}</pre>}
       <div className="part-permission-actions">
-        <button className="btn" onClick={() => void answer(pending.id, "allow_once")}>Allow</button>
-        <button className="btn" onClick={() => void answer(pending.id, "allow_always")}>Always allow</button>
-        <button className="btn btn-ghost" onClick={() => void answer(pending.id, "reject_once")}>Deny</button>
-        <button className="btn btn-ghost" onClick={() => void answer(pending.id, "reject_always")}>Always deny</button>
+        <div className="part-permission-group">
+          <button ref={allowRef} className="btn" onClick={() => void answer(pending.id, "allow_once")}>Allow</button>
+          <button className="btn btn-ghost" title={`Don't ask again for ${pending.tool} (policy still applies)`} onClick={() => void answer(pending.id, "allow_always")}>Always allow this tool</button>
+        </div>
+        <span className="part-permission-separator" aria-hidden="true" />
+        <div className="part-permission-group">
+          <button className="btn btn-ghost" onClick={() => void answer(pending.id, "reject_once")}>Deny</button>
+          <button className="btn btn-ghost" title={`Always reject ${pending.tool} without asking`} onClick={() => void answer(pending.id, "reject_always")}>Always deny this tool</button>
+        </div>
       </div>
     </div>
   );
@@ -754,6 +817,25 @@ function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]
   );
 }
 
+/** Collects a message's visible text (skips data parts) for copy/edit affordances. */
+function messageTextOf(root: Element | null): string {
+  if (root === null) return "";
+  return [...root.querySelectorAll(".msg-text")]
+    .map((element) => element.textContent ?? "")
+    .join("\n\n")
+    .trim();
+}
+
+/** Loads text into the aui composer via the native setter so React picks it up. */
+function setComposerText(text: string): void {
+  const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(".composer-input");
+  if (input === null) return;
+  const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(input, text);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.focus();
+}
+
 function UserMessage() {
   return (
     <MessagePrimitive.Root className="msg msg-user">
@@ -766,6 +848,24 @@ function UserMessage() {
         }}
       </MessagePrimitive.Attachments>
       <MessagePrimitive.Parts components={{ Text: (part) => <p className="msg-text">{part.text}</p> }} />
+      <div className="msg-actions">
+        <button
+          type="button"
+          className="copy-button"
+          title="Copy message"
+          onClick={(event) => void navigator.clipboard.writeText(messageTextOf(event.currentTarget.closest(".msg")))}
+        >
+          Copy
+        </button>
+        <button
+          type="button"
+          className="copy-button"
+          title="Edit and resubmit"
+          onClick={(event) => setComposerText(messageTextOf(event.currentTarget.closest(".msg")))}
+        >
+          Edit
+        </button>
+      </div>
     </MessagePrimitive.Root>
   );
 }
@@ -789,13 +889,146 @@ function AssistantMessage() {
           },
         }}
       />
+      <div className="msg-actions">
+        <button
+          type="button"
+          className="copy-button"
+          title="Copy message"
+          onClick={(event) => void navigator.clipboard.writeText(messageTextOf(event.currentTarget.closest(".msg")))}
+        >
+          Copy
+        </button>
+      </div>
     </MessagePrimitive.Root>
   );
 }
 
-function Composer() {
+/** Tail affordance after a finished turn: re-sends the last prompt (client-side). */
+function RegenerateAction() {
+  const { isRunning, items } = useSessionState();
+  if (isRunning) return null;
+  const lastUser = [...items].reverse().find((item) => item.kind === "user");
+  const last = items.at(-1);
+  if (lastUser === undefined || lastUser.kind !== "user") return null;
+  if (last === undefined || (last.kind !== "completion" && last.kind !== "assistant")) return null;
   return (
-    <ComposerPrimitive.Root className="composer">
+    <div className="thread-tail">
+      <button
+        className="btn btn-ghost"
+        onClick={() => {
+          void fetch("/api/prompt", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ prompt: lastUser.text }),
+          });
+        }}
+      >
+        Regenerate
+      </button>
+    </div>
+  );
+}
+
+/** Queued-prompt indicator: held while a turn runs, auto-sent when it settles.
+ * Echoes the queued text so the operator never wonders what will be sent. */
+function QueueIndicator() {
+  const { queuedPrompt, discardQueue } = useSessionState();
+  if (queuedPrompt === undefined) return null;
+  const preview = queuedPrompt.length > 80 ? `${queuedPrompt.slice(0, 80)}…` : queuedPrompt;
+  return (
+    <div className="queue-indicator" role="status">
+      <span>
+        Queued — <strong>{preview}</strong> — sends when the agent finishes
+      </span>
+      <button className="btn btn-ghost" aria-label="Discard queued prompt" onClick={discardQueue}>Discard</button>
+    </div>
+  );
+}
+
+/** Exports the active session transcript as a markdown download. */
+function ExportSessionButton() {
+  const { items } = useSessionState();
+  return (
+    <button
+      className="btn btn-ghost export-button"
+      title="Export this session as markdown"
+      onClick={() => downloadMarkdown(exportMarkdownOf(items))}
+    >
+      Export
+    </button>
+  );
+}
+
+function exportMarkdownOf(items: readonly OperatorSessionItem[]): { readonly name: string; readonly text: string } {
+  const lines: string[] = ["# Workflow session", ""];
+  for (const item of items) {
+    switch (item.kind) {
+      case "user":
+        lines.push("## Prompt", "", item.text, "");
+        break;
+      case "assistant":
+        lines.push("## Assistant", "", item.text, "");
+        break;
+      case "thinking":
+        lines.push("<details><summary>Thinking</summary>", "", "```", item.text, "```", "", "</details>", "");
+        break;
+      case "plan":
+        lines.push("### Plan", "");
+        for (const entry of item.entries) {
+          lines.push(`- [${entry.status === "completed" ? "x" : " "}] ${entry.content}`);
+        }
+        lines.push("");
+        break;
+      case "tool":
+        lines.push(`**Tool — ${item.title}** (${item.status})`);
+        if (item.rawInput !== undefined) lines.push("", "Input:", "", "```", item.rawInput, "```");
+        if (item.rawOutput !== undefined) lines.push("", "Output:", "", "```", item.rawOutput, "```");
+        lines.push("");
+        break;
+      case "action":
+        lines.push(`**Action:** ${item.action}${item.subjects.length > 0 ? ` — ${item.subjects.join(", ")}` : ""}`, "");
+        break;
+      case "outcome":
+        lines.push(`**Outcome:** ${item.action} — ${item.outcome}`, "");
+        break;
+      case "attention":
+        lines.push(`> ${item.text}`, "");
+        break;
+      case "completion":
+        lines.push(`---`, "", `*Turn ${item.outcome}${item.text.length > 0 ? `: ${item.text}` : ""}*`, "");
+        break;
+    }
+  }
+  return { name: `workflow-session-${new Date().toISOString().slice(0, 10)}.md`, text: lines.join("\n") };
+}
+
+function downloadMarkdown(exported: { readonly name: string; readonly text: string }): void {
+  const blob = new Blob([exported.text], { type: "text/markdown" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = exported.name;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
+function Composer() {
+  const { isRunning, queuePrompt } = useSessionState();
+  return (
+    <ComposerPrimitive.Root
+      className="composer"
+      onKeyDown={(event) => {
+        // While a turn runs, the framework composer swallows Enter; route the
+        // follow-up through the queue path instead (sent when the turn ends).
+        if (!isRunning || event.key !== "Enter" || event.shiftKey) return;
+        const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(".composer-input");
+        const text = (input?.value ?? "").trim();
+        if (text.length === 0) return;
+        event.preventDefault();
+        queuePrompt(text);
+        setComposerText("");
+      }}
+    >
       <div className="composer-attachments">
         <ComposerPrimitive.Attachments>
           {() => (
@@ -813,7 +1046,7 @@ function Composer() {
         </ComposerPrimitive.AddAttachment>
         <ComposerPrimitive.Input
           className="composer-input"
-          placeholder="Describe the work to perform"
+          placeholder={isRunning ? "Queue a follow-up — sends when the agent finishes" : "Describe the work to perform"}
           submitMode="enter"
           aria-label="Prompt"
         />
@@ -884,24 +1117,76 @@ const ENFORCEMENT_COPY: Record<string, string> = {
   enforced: "Enforced: agent file and command mutations require Workflow authorization before they run.",
 };
 
+/**
+ * Safety-relevant fact, styled as one: advisory can never render equivalent
+ * to enforced (PRODUCT.md invariant), so advisory is a persistent amber
+ * outline badge and enforced a neutral filled one — in the header and again
+ * beside the composer where prompts are sent.
+ */
+function EnforcementBadge({ level, transport, copy }: {
+  readonly level: string | undefined;
+  readonly transport: string | undefined;
+  readonly copy: string | undefined;
+}) {
+  if (level === undefined) return <span className="shell-host">connecting</span>;
+  return (
+    <span
+      className={`enforcement-badge enforcement-${level}`}
+      title={copy}
+      aria-label={copy ?? "enforcement level unavailable"}
+    >
+      {level.toUpperCase()}
+      {transport !== undefined && <span className="enforcement-transport"> / {transport}</span>}
+    </span>
+  );
+}
+
+/** Composer echo of the enforcement badge: visible where prompts are sent. */
+function EnforcementEcho({ level }: { readonly level: string | undefined }) {
+  if (level !== "advisory") return null;
+  return <span className="enforcement-echo" title={ENFORCEMENT_COPY.advisory}>ADVISORY — actions not pre-authorized</span>;
+}
+
 export function App() {
   const { snapshot, refresh } = useSnapshot();
   const { sessions, refresh: refreshSessions } = useSessions();
   const { options, setOption } = useConfigOptions();
   const permissions = usePermissions();
   const capabilities = useCapabilities();
+  const { isRunning } = useSessionState();
   const enforcementCopy = snapshot === undefined ? undefined : ENFORCEMENT_COPY[snapshot.enforcementLevel];
+
+  // Keyboard shortcuts: "/" focuses the composer, Escape cancels a running
+  // turn (when no popover/input has focus), Alt+N starts a new session.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      const active = document.activeElement;
+      const typing = active instanceof HTMLElement &&
+        (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable);
+      if (event.key === "/" && !typing) {
+        event.preventDefault();
+        document.querySelector<HTMLElement>(".composer-input")?.focus();
+      } else if (
+        event.key === "Escape" && isRunning && !typing &&
+        // Any open chrome (settings popover, model combobox) owns this Escape;
+        // cancelling a running turn must never ride along with closing it.
+        document.querySelector(".config-popover, .config-combobox-pop") === null
+      ) {
+        void fetch("/api/cancel", { method: "POST" });
+      } else if (event.altKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "n" && !typing) {
+        event.preventDefault();
+        createSession(refreshSessions);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [isRunning, refreshSessions]);
+
   return (
     <div className="shell">
       <header className="shell-header">
         <strong>Workflow Control</strong>
-        <span
-          className="shell-host"
-          title={enforcementCopy}
-          aria-label={enforcementCopy ?? "enforcement level unavailable"}
-        >
-          {snapshot === undefined ? "connecting" : `${snapshot.enforcementLevel.toUpperCase()} / ${snapshot.transport}`}
-        </span>
+        <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
       </header>
       <main className="shell-main">
         <section className="chat-column">
@@ -916,8 +1201,13 @@ export function App() {
                 {({ message }) => (message.role === "user" ? <UserMessage /> : <AssistantMessage />)}
               </ThreadPrimitive.Messages>
               {permissions.pending !== null && (
-                <PermissionPrompt pending={permissions.pending} answer={permissions.answer} />
+                <PermissionPrompt
+                  pending={permissions.pending}
+                  answer={permissions.answer}
+                  remembered={permissions.patterns.alwaysAllow.length + permissions.patterns.alwaysReject.length}
+                />
               )}
+              <RegenerateAction />
               <AuiIf condition={(state) => state.thread.isRunning}>
                 <div className="working" role="status" aria-live="polite">
                   <span className="working-dot" aria-hidden="true" />
@@ -927,8 +1217,13 @@ export function App() {
             </ThreadPrimitive.Viewport>
             <div className="composer-dock">
               <Composer />
+              <QueueIndicator />
               <ConfigControls options={options} setOption={setOption} permissions={permissions} capabilities={capabilities} />
-              <UsageMeter />
+              <div className="composer-utilities">
+                <EnforcementEcho level={snapshot?.enforcementLevel} />
+                <ExportSessionButton />
+                <UsageMeter />
+              </div>
             </div>
           </ThreadPrimitive.Root>
         </section>

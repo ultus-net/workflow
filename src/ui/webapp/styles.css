@@ -9,10 +9,12 @@
   --text-muted: #9aa4b0;
   --accent: #e8a33d;
   --accent-ink: #14161a;
+  --accent-soft: rgba(232, 163, 61, 0.16);
   --ok: #4caf7d;
   --deny: #e06c5c;
-  --fail: #d9534f;
+  --fail: #ff7377;
   --radius: 10px;
+  --radius-s: 6px;
   color-scheme: dark;
 }
 
@@ -42,8 +44,49 @@ body {
 
 .shell-host {
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   letter-spacing: 0.04em;
+}
+
+/* Enforcement level: a safety-relevant fact, not a footnote. Advisory can
+   never render equivalent to enforced — amber outline vs neutral fill. */
+
+.enforcement-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  padding: 0.15rem 0.55rem;
+  border-radius: var(--radius-s);
+}
+
+.enforcement-advisory {
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+}
+
+.enforcement-enforced {
+  color: var(--text);
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.enforcement-transport {
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+.enforcement-echo {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: var(--radius-s);
+  padding: 0.1rem 0.45rem;
+  margin-right: auto;
 }
 
 .shell-main {
@@ -116,6 +159,130 @@ body {
   padding: 0.25rem 0;
 }
 
+/* Message hover actions (copy / edit) */
+
+.msg-actions {
+  display: flex;
+  gap: 0.3rem;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.msg:hover .msg-actions,
+.msg:focus-within .msg-actions {
+  opacity: 1;
+}
+
+.copy-button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: var(--radius);
+  font-size: 0.72rem;
+  padding: 0.1rem 0.5rem;
+  cursor: pointer;
+}
+
+.copy-button:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+.msg-user .msg-actions {
+  justify-content: flex-end;
+}
+
+/* Fenced code blocks: highlighting + per-block copy */
+
+.code-block {
+  display: block;
+  margin: 0.4rem 0;
+}
+
+.code-block-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.code-block-lang {
+  text-transform: lowercase;
+  letter-spacing: 0.06em;
+}
+
+.code-block-pre {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 0 0 var(--radius) var(--radius);
+  overflow: auto;
+  max-height: 24rem;
+}
+
+.code-block-pre code {
+  font-size: 0.8rem;
+  line-height: 1.45;
+  background: none;
+  padding: 0;
+  border: none;
+}
+
+/* highlight.js token colors tuned to the app palette */
+
+.hljs-comment, .hljs-quote { color: #7c8699; font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-section, .hljs-doctag, .hljs-type, .hljs-name, .hljs-strong { color: #c792ea; }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute, .hljs-meta .hljs-string { color: #a5e07f; }
+.hljs-number, .hljs-symbol, .hljs-bullet, .hljs-variable, .hljs-template-variable, .hljs-selector-attr { color: #f78c6c; }
+.hljs-title, .hljs-title.function_, .hljs-built_in, .hljs-class .hljs-title { color: #82aaff; }
+.hljs-attr, .hljs-property, .hljs-selector-class, .hljs-selector-id { color: #ffcb6b; }
+.hljs-meta, .hljs-punctuation, .hljs-operator { color: #89ddff; }
+.hljs-deletion { color: #ff5370; }
+.hljs-emphasis { font-style: italic; }
+
+/* Thread tail + queue + composer utilities */
+
+.thread-tail {
+  display: flex;
+  justify-content: center;
+  margin: 0.4rem 0;
+}
+
+.queue-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.composer-utilities {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.export-button {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.6rem;
+}
+
 /* Operator parts (actions, outcomes, attention, completion) */
 
 .part {
@@ -125,7 +292,7 @@ body {
   border-left: 2px solid var(--border);
   padding: 0.35rem 0.75rem;
   margin: 0.35rem 0;
-  font-size: 0.88rem;
+  font-size: 0.875rem;
   overflow-wrap: break-word;
 }
 
@@ -152,7 +319,7 @@ body {
 
 .part-attention { border-left-color: var(--accent); background: var(--surface); border-radius: 0 var(--radius) var(--radius) 0; }
 
-.part-completion { opacity: 0.75; }
+.part-completion { color: var(--text-muted); }
 .part-completion-failed { border-left-color: var(--fail); }
 .part-completion-failed .part-label { color: var(--fail); }
 
@@ -179,7 +346,7 @@ body {
 
 .part-tool-title { color: var(--text); }
 
-.part-tool-status { font-size: 0.75rem; color: var(--text-muted); }
+.part-tool-status { font-size: 0.8rem; color: var(--text-muted); }
 
 .part-tool-pending { border-left-color: var(--text-muted); }
 .part-tool-in_progress { border-left-color: var(--accent); }
@@ -191,7 +358,7 @@ body {
 
 .part-tool-io summary {
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   color: var(--text-muted);
   margin: 0.25rem 0;
 }
@@ -226,7 +393,7 @@ body {
   gap: 0.6rem;
 }
 
-.part-plan-progress { font-size: 0.75rem; color: var(--text-muted); }
+.part-plan-progress { font-size: 0.8rem; color: var(--text-muted); }
 
 .part-plan-entries {
   list-style: none;
@@ -236,7 +403,7 @@ body {
   gap: 0.15rem;
 }
 
-.part-plan-entry { display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.88rem; }
+.part-plan-entry { display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.875rem; }
 
 .part-plan-marker { width: 1rem; text-align: center; color: var(--text-muted); }
 .part-plan-in_progress .part-plan-marker { color: var(--accent); }
@@ -249,7 +416,7 @@ body {
 
 .part-thinking summary {
   cursor: pointer;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -275,25 +442,57 @@ body {
   justify-content: flex-end;
   gap: 0.75rem;
   margin-top: 0.4rem;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   color: var(--text-muted);
 }
 
-/* In-thread permission prompt */
+/* In-thread permission prompt — the authorization boundary gets the loudest
+   card in the thread: raised surface, full border, accent header row. */
 
 .part-permission {
   display: block;
+  border: 1px solid var(--border);
+  /* Same accent left edge as the part grammar, via width/color so the card
+     keeps the part family's border recipe rather than a side-tab shorthand. */
+  border-left-width: 2px;
   border-left-color: var(--accent);
-  background: var(--surface);
+  background: var(--surface-raised);
   border-radius: 0 var(--radius) var(--radius) 0;
+  padding: 0.6rem 0.75rem;
+  margin: 0.8rem 0;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.part-permission-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.part-permission-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+
+.part-permission-tool {
+  color: var(--text);
+  font-size: 0.875rem;
+}
+
+.part-permission-remembered {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-left: auto;
 }
 
 .part-permission-input {
-  margin: 0.3rem 0;
+  margin: 0.4rem 0;
   padding: 0.4rem 0.6rem;
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: var(--radius-s);
   font-size: 0.8rem;
   max-height: 10rem;
   overflow: auto;
@@ -303,8 +502,20 @@ body {
 .part-permission-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+
+.part-permission-group {
+  display: flex;
   gap: 0.4rem;
-  margin-top: 0.5rem;
+}
+
+.part-permission-separator {
+  width: 1px;
+  align-self: stretch;
+  background: var(--border);
 }
 
 /* Settings popover: approvals + capabilities */
@@ -319,7 +530,7 @@ body {
 
 .config-reset-patterns {
   justify-self: start;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 
 /* Composer */
@@ -345,7 +556,7 @@ body {
   gap: 1px;
   background: var(--border);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius);
 }
 
 .config-picker {
@@ -356,11 +567,11 @@ body {
   padding: 0.25rem 0.6rem;
 }
 
-.config-picker:first-child { border-radius: 9px 0 0 9px; }
+.config-picker:first-child { border-radius: var(--radius) 0 0 var(--radius); }
 
-.config-picker:last-child { border-radius: 0 9px 9px 0; }
+.config-picker:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
 
-.config-picker:only-child { border-radius: 9px; }
+.config-picker:only-child { border-radius: var(--radius); }
 
 .config-picker-label {
   font-size: 0.72rem;
@@ -453,7 +664,7 @@ body {
   border-bottom: 1px solid var(--border);
   color: var(--text);
   font: inherit;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   padding: 0.5rem 0.65rem;
   outline: none;
 }
@@ -473,12 +684,16 @@ body {
   align-items: center;
   gap: 0.4rem;
   padding: 0.3rem 0.4rem;
-  border-radius: 6px;
-  font-size: 0.82rem;
+  border-radius: var(--radius-s);
+  font-size: 0.8rem;
   cursor: pointer;
 }
 
-.config-combobox-option.config-combobox-active { background: var(--surface); }
+/* Keyboard-active row: accent-tinted so the highlight reads on the raised
+   popover surface (the old surface-on-surface pairing was 1.1:1). */
+.config-combobox-option.config-combobox-active {
+  background: var(--accent-soft);
+}
 
 .config-combobox-option[aria-selected="true"] .config-combobox-name { color: var(--accent); }
 
@@ -489,11 +704,11 @@ body {
   white-space: nowrap;
 }
 
-.config-combobox-check { color: var(--accent); font-size: 0.75rem; }
+.config-combobox-check { color: var(--accent); font-size: 0.8rem; }
 
 .config-combobox-group {
   padding: 0.3rem 0.4rem 0.15rem;
-  font-size: 0.68rem;
+  font-size: 0.72rem;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -501,7 +716,7 @@ body {
 
 .config-combobox-empty {
   padding: 0.5rem 0.4rem;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: var(--text-muted);
 }
 
@@ -510,7 +725,7 @@ body {
   border: none;
   padding: 0 0.1rem;
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   line-height: 1;
   color: var(--text-muted);
   cursor: pointer;
@@ -555,7 +770,7 @@ body {
   justify-content: space-between;
   gap: 0.6rem;
   padding: 0.35rem 0.3rem;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
 }
 
 .config-field-label { flex: 1; }
@@ -565,9 +780,9 @@ body {
   align-items: flex-start;
   gap: 0.5rem;
   padding: 0.35rem 0.3rem;
-  border-radius: 6px;
+  border-radius: var(--radius-s);
   cursor: pointer;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
 }
 
 .config-toggle:hover { background: var(--surface); }
@@ -652,17 +867,17 @@ body {
   gap: 0.45rem;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 0.25rem 0.4rem;
   margin-right: 0.4rem;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
 }
 
 .composer-attachment-thumb {
   width: 2rem;
   height: 2rem;
   object-fit: cover;
-  border-radius: 5px;
+  border-radius: var(--radius-s);
 }
 
 .composer-attachment-name { color: var(--text-muted); max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -692,7 +907,7 @@ body {
   min-height: 4rem;
   object-fit: contain;
   background: var(--surface-raised);
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   margin-bottom: 0.4rem;
 }
@@ -721,7 +936,7 @@ body {
 .btn {
   font: inherit;
   padding: 0.45rem 0.9rem;
-  border-radius: 8px;
+  border-radius: var(--radius);
   border: 1px solid var(--border);
   background: var(--surface-raised);
   color: var(--text);
@@ -746,16 +961,19 @@ body {
 
 .btn-ghost {
   background: transparent;
-  font-size: 0.88rem;
+  font-size: 0.875rem;
   padding: 0.45rem 0.9rem;
 }
 
-/* Visible focus trail for keyboard operators — swap border color rather than
-   stacking an outline on top of the button's own border (no double ring). */
+/* Visible focus trail for keyboard operators — a distinct outline ring that
+   survives accent-bordered buttons (border-swap alone is invisible on
+   .btn-send, whose resting border is already the accent). */
 .btn:focus-visible,
+.copy-button:focus-visible,
 .attachment-remove:focus-visible {
   border-color: var(--accent);
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .composer-input:focus-visible {
@@ -770,7 +988,7 @@ body {
   align-items: center;
   gap: 0.5rem;
   color: var(--text-muted);
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   padding: 0.5rem 0.25rem;
 }
 
@@ -798,12 +1016,12 @@ body {
 .part-failure-detail summary {
   cursor: pointer;
   color: var(--text-muted);
-  font-size: 0.78rem;
+  font-size: 0.8rem;
 }
 .part-failure-detail code {
   display: block;
   margin-top: 0.3rem;
-  font-size: 0.78rem;
+  font-size: 0.8rem;
   color: var(--text-muted);
   white-space: pre-wrap;
   overflow-wrap: break-word;
@@ -818,7 +1036,7 @@ body {
 }
 
 .sessions-actions { display: flex; gap: 0.35rem; }
-.sessions-clear, .sessions-new { font-size: 0.78rem; }
+.sessions-clear, .sessions-new { font-size: 0.8rem; }
 
 .session-row {
   display: grid;
@@ -826,7 +1044,7 @@ body {
   align-items: stretch;
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   margin-bottom: 0.4rem;
 }
 
@@ -839,7 +1057,7 @@ body {
   border: none;
   color: var(--text);
   font: inherit;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   padding: 0.45rem 0.6rem;
   cursor: pointer;
   min-width: 0;
@@ -853,7 +1071,7 @@ body {
   border-left: 1px solid var(--border);
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 0.95rem;
+  font-size: 1rem;
   padding: 0 0.55rem;
 }
 
@@ -916,14 +1134,14 @@ body {
   align-items: baseline;
   padding: 0.5rem 0;
   border-bottom: 1px solid var(--border);
-  font-size: 0.88rem;
+  font-size: 0.875rem;
 }
 
 .task-blocked { opacity: 0.55; }
-.task-state { color: var(--text-muted); font-size: 0.78rem; }
+.task-state { color: var(--text-muted); font-size: 0.8rem; }
 .task-state-verified { color: var(--ok); }
 .task-state-failed { color: var(--fail); }
-.task-blockers { display: block; color: var(--text-muted); font-size: 0.78rem; }
+.task-blockers { display: block; color: var(--text-muted); font-size: 0.8rem; }
 .task-title { grid-column: 1 / -1; overflow-wrap: break-word; }
 
 @media (max-width: 900px) {
@@ -961,16 +1179,16 @@ body {
   color: var(--text-muted);
 }
 .aui-md code {
-  font: 0.88em ui-monospace, SFMono-Regular, Consolas, monospace;
+  font: 0.8rem ui-monospace, SFMono-Regular, Consolas, monospace;
   background: var(--surface-raised);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-s);
   padding: 0.1rem 0.35rem;
 }
 .aui-md pre {
   background: #0e1013;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 0.8rem 1rem;
   overflow-x: auto;
   margin: 0.6rem 0;
@@ -979,13 +1197,13 @@ body {
   background: transparent;
   border: none;
   padding: 0;
-  font-size: 0.85rem;
+  font-size: 0.875rem;
   line-height: 1.5;
 }
 .aui-md table {
   border-collapse: collapse;
   margin: 0.6rem 0;
-  font-size: 0.88rem;
+  font-size: 0.875rem;
 }
 .aui-md th, .aui-md td {
   border: 1px solid var(--border);
