@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { appendFileSync, realpathSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
@@ -8,7 +10,13 @@ import { shellExecutorFor } from "../integrations/cline-tui-bridge.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 import { createReviewerFactory, createRunTestRunner } from "../integrations/hub-run-gates.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
-import { createWorkflowHub } from "../integrations/workflow-hub.js";
+import {
+  createBudgetGuard,
+  createHubScheduler,
+  loadSchedulesTable,
+  type BudgetGuard,
+} from "../integrations/hub-scheduler.js";
+import { createWorkflowHub, type WorkflowHubSchedulerHandles } from "../integrations/workflow-hub.js";
 import { taskId, type TaskId } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 
@@ -96,11 +104,49 @@ const testRunner = teamTaskVerificationCommand !== undefined && teamTaskVerifica
   ? createRunTestRunner({ command: teamTaskVerificationCommand, shell: containedShell(true) })
   : undefined;
 
+// Plan Task C1/C2: the hub-native scheduler. The table lives under the data
+// dir (WORKFLOW_HUB_SCHEDULES overrides the path); an absent or empty table
+// means no scheduled runs. Every fired run is review-gated by default and
+// budget-enforced from metering-proxy metrics (plan C2).
+const schedulesPath = process.env.WORKFLOW_HUB_SCHEDULES ?? join(homedir(), ".workflow", "scheduler.json");
+const schedules = loadSchedulesTable(schedulesPath);
+const schedulerFactory = schedules.length === 0 ? undefined : (handles: WorkflowHubSchedulerHandles) =>
+  createHubScheduler({
+    controller: handles.controller,
+    recordBlockingReason: handles.recordBlockingReason,
+    schedules: () => schedules,
+    log: (message) => console.log(message),
+    runTurn: async ({ runId, workspace, prompt, budget }) => {
+      const runApplication = handles.resolve(workspace, runId);
+      const runTaskId: TaskId = taskId(`run:${runId}`);
+      const turnWorkspace = workspace ?? process.cwd();
+      const runtime = await createConfiguredAcpRuntime(runApplication, turnWorkspace, runTaskId);
+      let budgetGuard: BudgetGuard | undefined;
+      try {
+        if (budget !== undefined) {
+          budgetGuard = createBudgetGuard({
+            budget,
+            usageSnapshot: () => runtime.metrics?.(),
+            cancel: () => runtime.session.cancel(),
+            subscribe: (listener) => runtime.session.subscribe(listener),
+          });
+          budgetGuard.attach();
+        }
+        await runtime.session.submit(prompt);
+        const violation = budgetGuard?.violation();
+        if (violation !== undefined) throw new Error(violation);
+      } finally {
+        await runtime.dispose();
+      }
+    },
+  });
+
 const hub = await createWorkflowHub(application, {
   graph,
   ...(guard === undefined ? {} : { guard }),
   ...(teamTaskVerificationCommand === undefined ? {} : { teamTaskVerificationCommand }),
   ...(testRunner === undefined ? {} : { testRunner }),
+  ...(schedulerFactory === undefined ? {} : { schedulerFactory }),
   reviewerFactory,
   ...(requestLogPath === undefined ? {} : {
     observeRequest: (path) => appendFileSync(requestLogPath, `${path}\n`, { mode: 0o600 }),

@@ -14,6 +14,8 @@ import { METERED_PLACEHOLDER_KEY, createModelUsageProxy, meteredProviderSettings
 export interface WorkflowAcpRuntime {
   readonly driver: AcpSessionDriver;
   readonly session: WorkflowCodingSession;
+  /** Cumulative metering-proxy usage for this runtime (tokens + cost). */
+  metrics?(): { requests: number; usageEvents: number; promptTokens: number; completionTokens: number; totalTokens: number; costUsd: number };
   dispose(): Promise<void>;
 }
 
@@ -76,6 +78,7 @@ export async function createConfiguredAcpRuntime(
     return {
       driver,
       session: new WorkflowCodingSession(driver),
+      metrics: () => proxy.metrics(),
       async dispose() {
         try {
           await driver.dispose();

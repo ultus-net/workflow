@@ -64,6 +64,7 @@ export function createRunRegistry(
   controller: WorkflowRunController;
   reviewOutcomes(): ReadonlyMap<string, HubReviewerResult>;
   blockingReasons(): ReadonlyMap<string, string>;
+  recordBlockingReason(input: { readonly runId: string; readonly reason: string }): void;
 } {
   const workspaceApplications = new Map<string, WorkflowApplication>();
   const runs = new Map<string, WorkflowApplication>();
@@ -324,6 +325,10 @@ export function createRunRegistry(
     },
     blockingReasons(): ReadonlyMap<string, string> {
       return blockingReasons;
+    },
+    /** Hub-side surfaces (e.g. the scheduler) record why a run was blocked. */
+    recordBlockingReason(input: { readonly runId: string; readonly reason: string }): void {
+      rememberBlockingReason(input.runId, input.reason);
     },
   };
 }
