@@ -40,10 +40,10 @@ unchecked items are intentional gaps, not implied support.
 |---|---|---|
 | Completion notification | **Parity (terminal form)** — bell on turn completion | `src/ui/tui.tsx` (completion effect) |
 | Copy / syntax highlighting | **N/A terminal-native** — selection/copy and 256-color are the terminal's job | — |
-| Edit & resubmit | **Parity** — prompt history recall + resubmit | `test/tui.test.ts` |
-| Keyboard shortcuts (cancel, menu, state) | **Parity** — Ctrl+C cancel, Ctrl+P menu, Ctrl+W state | `test/tui.test.ts` |
-| Message queue while running | **Open** — submit while running throws today; queuing is an application-layer change | — |
-| Export transcript to markdown | **Open** | — |
+| Edit & resubmit | **Parity** — prompt history recall via Ctrl+Up/Ctrl+Down (last 50 prompts; the live draft is preserved while navigating and restored on return), resubmit by recall + Enter | `test/tui-tasklist.test.ts` (history recall) |
+| Keyboard shortcuts (cancel, menu, state) | **Parity** — Ctrl+C cancel, Ctrl+P menu, Ctrl+W state, Ctrl+E export, Ctrl+Up/Down history | `test/tui.test.ts`, `test/tui-tasklist.test.ts` |
+| Message queue while running | **Parity** — prompts submitted while a turn runs queue (bounded only by memory) and submit in order when the turn ends; cancellation clears the queue — a cancelled turn never auto-continues; failed turns still drain | `test/coding-session-queue.test.ts`, `test/tui-tasklist.test.ts` (You (queued) row) |
+| Export transcript to markdown | **Parity** — Ctrl+E writes `workflow-transcript-<timestamp>.md` next to the session (operator action in the operator process, not an agent mutation; empty transcripts refuse by design) | `test/tui-tasklist.test.ts` (export) |
 | Follow-the-agent (locations) | **Parity** — subjects render on tool rows | `test/tui.test.ts` |
 
 ## Deliberate divergences (stated, not gaps)

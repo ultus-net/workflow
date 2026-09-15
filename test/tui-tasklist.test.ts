@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import React from "react";
 import { render } from "ink-testing-library";
@@ -157,10 +160,17 @@ test("TUI activity panel surfaces blocking reasons, verdicts, and unverified cla
   view.unmount();
 });
 
-test("TUI activity panel stays quiet when no gate observability exists", async () => {
-  const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
+test("TUI activity panel stays quiet with empty hub gate observability", async () => {
+  // The real hub-mode quiet case: the monitor attaches with gate
+  // observability present but empty (no blocked runs, no verdicts, no
+  // claims) — the panel renders and shows no live activity.
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    gateObservability: () => ({ reviewOutcomes: {}, blockingReasons: {}, completionClaims: {} }),
+  }));
   await waitForFrame(view, /No live activity\./);
   const frame = view.lastFrame() ?? "";
+  assert.match(frame, /Activity idle/);
   assert.equal(/blocked runs/.test(frame), false);
   assert.equal(/review verdicts/.test(frame), false);
   assert.equal(/unverified completion claims/.test(frame), false);
@@ -194,5 +204,64 @@ test("the usage meter renders in the composer footer line", async () => {
     usage: () => "8668 tokens · $0.0132",
   }));
   await waitForFrame(view, /8668 tokens · \$0\.0132/);
+  view.unmount();
+});
+
+// ── Web parity: prompt history recall and markdown export ─────────────────
+
+test("Ctrl+Up recalls the last submitted prompt and Ctrl+Down returns to the draft", async () => {
+  const driver: CodingSessionDriver = {
+    async start(_prompt, emit) {
+      emit({ type: "completed", result: "ok" });
+    },
+    async cancel() {},
+  };
+  const session = new WorkflowCodingSession(driver);
+  const view = render(React.createElement(WorkflowTui, { application: createApplication(), session }));
+  // Submit one prompt (type + Enter), wait for completion.
+  view.stdin.write("fix the parser");
+  view.stdin.write("\r");
+  await waitForFrame(view, /What do you want to build\?/);
+  // Recall: Ctrl+Up puts the previous prompt back into the composer.
+  view.stdin.write("\u001b[A");
+  await waitForFrame(view, /fix the parser/);
+  // Ctrl+Down returns to the (empty) live draft.
+  view.stdin.write("\u001b[B");
+  await waitForFrame(view, /What do you want to build\?/);
+  view.unmount();
+});
+
+test("Ctrl+E exports the transcript to a markdown file", async (t) => {
+  const exportDir = mkdtempSync(join(tmpdir(), "wf-tui-export-"));
+  const previousCwd = process.cwd();
+  process.chdir(exportDir);
+  t.after(() => {
+    process.chdir(previousCwd);
+    rmSync(exportDir, { recursive: true, force: true });
+  });
+  const driver: CodingSessionDriver = {
+    async start(_prompt, emit) {
+      emit({ type: "completed", result: "ok" });
+    },
+    async cancel() {},
+  };
+  const session = new WorkflowCodingSession(driver);
+  const view = render(React.createElement(WorkflowTui, { application: createApplication(), session }));
+  // Build a transcript first (export refuses an empty one by design).
+  view.stdin.write("export this conversation");
+  view.stdin.write("\r");
+  await waitForFrame(view, /What do you want to build\?/);
+  view.stdin.write("\u0005");
+  await waitForFrame(view, /\[exported\]/);
+  const frame = view.lastFrame() ?? "";
+  assert.match(frame, /\[exported\]/, "the export row must surface in the transcript");
+  assert.match(frame, /workflow-transcript/, "the export path must surface in the transcript");
+  const files = readdirSync(exportDir);
+  const exportedFile = files.find((name) => name.startsWith("workflow-transcript-") && name.endsWith(".md"));
+  assert.ok(exportedFile !== undefined, "the markdown file must exist in the export directory");
+  const exported = readFileSync(join(exportDir, exportedFile), "utf8");
+  assert.match(exported, /# Workflow transcript/);
+  assert.match(exported, /export this conversation/);
+  assert.match(exported, /\*\*You\*\*: export this conversation/);
   view.unmount();
 });

@@ -163,4 +163,20 @@ test("workflow-hub forwards reviewer and test-runner seams into the run registry
   assert.equal(launches.length, 1, "the hub-owned reviewer seam must be reachable through the hub");
   assert.equal(testCalls.length, 1, "the hub test-runner seam must be reachable through the hub");
   assert.equal(testCalls[0]!.subject, `test:${workspace}`);
+
+  // Plan Task A3: /snapshot serves the run-gate observability so hub-attached
+  // monitors can render verdicts — the bridge serialization, registry wiring,
+  // and fetch parsing are all exercised end to end over HTTP.
+  const snapshot = await post("/snapshot", { workspace }, token);
+  assert.equal(snapshot.status, 200);
+  const body = (await snapshot.json()) as {
+    gateObservability?: {
+      reviewOutcomes?: Record<string, { verdict: string }>;
+      blockingReasons?: Record<string, string>;
+      completionClaims?: Record<string, unknown>;
+    };
+  };
+  assert.ok(body.gateObservability !== undefined, "/snapshot must serve gate observability");
+  assert.equal(body.gateObservability.reviewOutcomes?.["author-seam"]?.verdict, "approved");
+  assert.equal(body.gateObservability.blockingReasons?.["author-seam"], undefined);
 });

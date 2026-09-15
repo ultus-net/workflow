@@ -1,3 +1,5 @@
+import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 
@@ -97,6 +99,12 @@ export function WorkflowTui({
   const [gates, setGates] = useState<HubGateObservability | undefined>(() => gateObservability?.());
   const [usageLine, setUsageLine] = useState<string | undefined>(() => usage?.());
   const [prompt, setPrompt] = useState("");
+  // Web-parity prompt history recall (Tier 2): submitted prompts are
+  // recalled with Ctrl+Up (older) / Ctrl+Down (newer); the live draft is
+  // preserved when navigating away and restored when returning.
+  const [promptHistory, setPromptHistory] = useState<readonly string[]>([]);
+  const historyIndex = useRef<number | undefined>(undefined);
+  const savedDraft = useRef<string | undefined>(undefined);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
   // Mirror of the prompt for synchronous reads in the input handler: fast
@@ -115,10 +123,17 @@ export function WorkflowTui({
   const activeSession = session;
   const [transcript, setTranscript] = useState<readonly TranscriptEntry[]>([]);
   // Web-parity completion notification (Tier 2): a terminal bell on turn
-  // completion. Non-blocking, terminal-native.
+  // completion. Routed through Ink's stdout (not process.stdout) so it never
+  // pollutes non-TTY capture, and only fires on the transition INTO
+  // completed — an already-completed snapshot on mount stays silent.
+  const previousSessionState = useRef(sessionState?.state);
   useEffect(() => {
-    if (sessionState?.state === "completed") process.stdout.write("\u0007");
-  }, [sessionState?.state]);
+    const previous = previousSessionState.current;
+    previousSessionState.current = sessionState?.state;
+    if (sessionState?.state === "completed" && previous !== "completed") {
+      stdout.write("\u0007");
+    }
+  }, [sessionState?.state, stdout]);
   useEffect(() => {
     if (usage === undefined) return;
     const timer = setInterval(() => setUsageLine(usage()), 1_000);
@@ -306,15 +321,87 @@ export function WorkflowTui({
       setScrollOffset((value) => Math.max(0, value - 5));
       return;
     }
-    if (activeSession === undefined || sessionState?.state === "running") return;
+    if (key.ctrl && key.upArrow) {
+      // Prompt history: navigate toward older submitted prompts.
+      if (promptHistory.length === 0) return;
+      if (historyIndex.current === undefined) {
+        savedDraft.current = promptRef.current;
+        historyIndex.current = promptHistory.length - 1;
+      } else {
+        historyIndex.current = Math.max(0, historyIndex.current - 1);
+      }
+      updatePrompt(promptHistory[historyIndex.current] ?? "");
+      return;
+    }
+    if (key.ctrl && key.downArrow) {
+      // Prompt history: navigate back toward the live draft.
+      if (historyIndex.current === undefined) return;
+      if (historyIndex.current >= promptHistory.length - 1) {
+        historyIndex.current = undefined;
+        updatePrompt(savedDraft.current ?? "");
+        savedDraft.current = undefined;
+        return;
+      }
+      historyIndex.current += 1;
+      updatePrompt(promptHistory[historyIndex.current] ?? "");
+      return;
+    }
+    if (key.ctrl && input === "e") {
+      // Web-parity markdown export (Tier 2): Ctrl+E writes the transcript to
+      // a markdown file next to the session (operator action — this is the
+      // operator's own process writing, not an agent mutation).
+      if (transcript.length === 0) return;
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const exportPath = resolve(process.cwd(), `workflow-transcript-${stamp}.md`);
+      const markdown = [
+        `# Workflow transcript`,
+        ``,
+        `_Exported ${new Date().toISOString()} · ${connectionLabel ?? "local"}_`,
+        ``,
+        ...transcript.map((entry) => `**${entry.label}**: ${entry.text}`),
+        ``,
+      ].join("\n");
+      writeFileSync(exportPath, markdown, "utf8");
+      setTranscript((current) => [...current, { label: "[exported]", text: exportPath, dim: true }]);
+      return;
+    }
+    if (activeSession === undefined) return;
+    if (sessionState?.state === "running") {
+      // Web-parity message queue (Tier 2): typing and submitting while a turn
+      // runs queues the prompt — the session submits it in order when the
+      // current turn ends.
+      if (key.return) {
+        const submitted = promptRef.current.trim();
+        if (submitted.length === 0) return;
+        setTranscript((current) => [...current, { label: "You (queued)", text: submitted, dim: true }]);
+        updatePrompt("");
+        void activeSession.submit(submitted);
+        return;
+      }
+      if (key.backspace || key.delete) {
+        updatePrompt((value) => value.slice(0, -1));
+        return;
+      }
+      if (key.escape) {
+        updatePrompt("");
+        return;
+      }
+      if (input.length > 0 && !key.ctrl && !key.meta) updatePrompt((value) => value + input);
+      return;
+    }
     if (key.escape) {
       updatePrompt("");
+      historyIndex.current = undefined;
+      savedDraft.current = undefined;
       return;
     }
     if (key.return) {
       const submitted = promptRef.current.trim();
       if (submitted.length === 0) return;
       setTranscript((current) => [...current, { label: "You", text: submitted }]);
+      setPromptHistory((current) => [...current, submitted].slice(-50));
+      historyIndex.current = undefined;
+      savedDraft.current = undefined;
       updatePrompt("");
       setScrollOffset(0);
       setSessionState({ state: "running" });
