@@ -112,11 +112,13 @@ export function WorkflowTui({
   // directly would lose fast submissions (a ref never goes stale in useInput).
   const promptRef = useRef("");
   const updatePrompt = (update: string | ((value: string) => string)) => {
-    setPrompt((value) => {
-      const next = typeof update === "function" ? update(value) : update;
-      promptRef.current = next;
-      return next;
-    });
+    // The ref is the synchronous source of truth: batched stdin can deliver
+    // several keys (typing + Enter) before React flushes, so the ref must
+    // update OUTSIDE the state updater — setting it inside ran only at render
+    // time and dropped fast submissions.
+    const next = typeof update === "function" ? update(promptRef.current) : update;
+    promptRef.current = next;
+    setPrompt(next);
   };
   const [sessionState, setSessionState] = useState(() => session?.snapshot());
   const [, setConfigRevision] = useState(0);
@@ -350,8 +352,11 @@ export function WorkflowTui({
       // Web-parity markdown export (Tier 2): Ctrl+E writes the transcript to
       // a markdown file next to the session (operator action — this is the
       // operator's own process writing, not an agent mutation).
-      if (transcript.length === 0) return;
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 23);
+      if (transcript.length === 0) {
+        setTranscript((current) => [...current, { label: "[export]", text: "refused: transcript is empty", dim: true }]);
+        return;
+      }
       const exportPath = resolve(process.cwd(), `workflow-transcript-${stamp}.md`);
       const markdown = [
         `# Workflow transcript`,
@@ -374,6 +379,9 @@ export function WorkflowTui({
         const submitted = promptRef.current.trim();
         if (submitted.length === 0) return;
         setTranscript((current) => [...current, { label: "You (queued)", text: submitted, dim: true }]);
+        setPromptHistory((current) => [...current, submitted].slice(-50));
+        historyIndex.current = undefined;
+        savedDraft.current = undefined;
         updatePrompt("");
         void activeSession.submit(submitted);
         return;
@@ -384,6 +392,8 @@ export function WorkflowTui({
       }
       if (key.escape) {
         updatePrompt("");
+        historyIndex.current = undefined;
+        savedDraft.current = undefined;
         return;
       }
       if (input.length > 0 && !key.ctrl && !key.meta) updatePrompt((value) => value + input);

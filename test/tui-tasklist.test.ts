@@ -265,3 +265,34 @@ test("Ctrl+E exports the transcript to a markdown file", async (t) => {
   assert.match(exported, /\*\*You\*\*: export this conversation/);
   view.unmount();
 });
+
+test("submitting while a turn runs shows a queued row (message queue parity)", async () => {
+  const pending: (() => void)[] = [];
+  const keepAlive = setInterval(() => {}, 100);
+  const driver: CodingSessionDriver = {
+    async start(prompt, emit) {
+      if (prompt === "first") {
+        await new Promise<void>((resolve) => {
+          pending.push(resolve);
+        });
+      }
+      emit({ type: "completed", result: `done: ${prompt}` });
+    },
+    async cancel() {
+      pending.shift()?.();
+      clearInterval(keepAlive);
+    },
+  };
+  const session = new WorkflowCodingSession(driver);
+  const view = render(React.createElement(WorkflowTui, { application: createApplication(), session }));
+  view.stdin.write("first");
+  view.stdin.write("\r");
+  await waitForFrame(view, /\[running\]/);
+  view.stdin.write("second");
+  view.stdin.write("\r");
+  await waitForFrame(view, /You \(queued\)/);
+  assert.match(view.lastFrame() ?? "", /second/, "the queued prompt text must be visible: " + (view.lastFrame() ?? ""));
+  pending.shift()?.();
+  clearInterval(keepAlive);
+  view.unmount();
+});

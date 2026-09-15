@@ -57,10 +57,7 @@ test(
         resolvePermission: (request) => {
           permissionRequests.push(request);
           // Deny every permission request: rejection must be honored.
-          const reject = request.options.find((option) => option.kind === "reject_once" || option.kind === "reject_always");
-          return reject === undefined
-            ? { kind: "deny", reason: "G1 probe: denied to test honor" }
-            : { kind: "deny", reason: "G1 probe: denied to test honor" };
+          return { kind: "deny", reason: "G1 probe: denied to test honor" };
         },
       });
       const updates: unknown[] = [];
@@ -104,6 +101,12 @@ test(
           // Denials honored: the honest green path — ask-config makes opencode
           // a candidate enforced surface (pending the B3-class probe matrix).
           assert.ok(true, "ask-config emitted deniable permission requests and the denial was honored");
+        }
+        if (mutated && permissionRequests.length > 0) {
+          assert.fail(
+            "DENIAL NOT HONORED under ask-config: permission requests reached the client but the canary still " +
+            "mutated — this launch mode is worse than advisory (it performs denial theater) and must never be labeled enforced",
+          );
         }
       } finally {
         await client.close();

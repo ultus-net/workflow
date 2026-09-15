@@ -130,11 +130,7 @@ test(
         const runtime = await createConfiguredAcpRuntime(application, turnWorkspace ?? workspace, taskId(`run:${runId}`));
         try {
           await runtime.session.submit("Read note.txt and reply with exactly its current content. Do not modify any file.");
-          const snapshot = runtime.session.snapshot();
-          if (snapshot.state === "completed") {
-            // Plan Task G5: journal the completion claim.
-            void snapshot.result;
-          }
+          void runtime;
         } finally {
           await runtime.dispose();
         }

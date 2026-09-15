@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -44,7 +45,10 @@ test(
   "Cline ACP MCP-mount probe: does the stock agent mount hub-configured MCP servers from the scratch home?",
   { skip: !runProbe, timeout: 300_000 },
   async () => {
-    const serverScript = path.resolve(import.meta.dirname, "..", "..", "mcp-toolbox", "apps", "skills-mcp", "dist", "server.js");
+    const serverScript = path.resolve(import.meta.dirname, "..", "mcp-toolbox", "apps", "skills-mcp", "dist", "server.js");
+    if (!existsSync(serverScript)) {
+      throw new Error(`skills-mcp is not built; run: pnpm --dir mcp-toolbox/apps/skills-mcp run build (expected ${serverScript})`);
+    }
     const scratchHome = await mkdtemp(path.join(tmpdir(), "wf-mcp-mount-home-"));
     const workspace = await mkdtemp(path.join(tmpdir(), "wf-mcp-mount-ws-"));
     try {

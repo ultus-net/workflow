@@ -304,3 +304,19 @@ test("ACP session driver projects plan updates as compact checklist statuses", a
     await cleanup(child);
   }
 });
+
+
+test("ACP session driver projects session_info_update as a title status row", async () => {
+  const { driver, child } = driverFor("session-info");
+  const session = new WorkflowCodingSession(driver);
+  const events: CodingSessionEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.submit("start session");
+    const info = events.find((event) => event.type === "status" && event.status === "Probe session title");
+    assert.ok(info !== undefined, "session_info_update must surface as a status event");
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+});

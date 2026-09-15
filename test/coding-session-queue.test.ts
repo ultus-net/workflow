@@ -36,6 +36,7 @@ function gatedFirstDriver(): {
     async cancel() {
       releaseFirst?.();
       releaseFirst = undefined;
+      clearInterval(keepAlive);
     },
   };
   return {

@@ -96,6 +96,16 @@ function handleMessage(message) {
   } else if (message.method === "session/prompt") {
     cancelled = false;
     activePromptId = message.id;
+    if (mode === "session-info") {
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: { sessionUpdate: "session_info_update", title: "Probe session title" },
+        },
+      });
+    }
     if (mode === "usage-update") {
       // E2 forward-compat: usage_update is stabilized in ACP v1 but unknown to
       // this client's projection — it must pass through untouched so the hub
