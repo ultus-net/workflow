@@ -37,7 +37,7 @@ test("contained ACP launch builds a streaming spawn request with workspace and s
     executable: "/usr/bin/node",
     args: ["/opt/agent/bin/agent.js", "--acp"],
     cwd: "/work/repo",
-    readablePaths: ["/opt/agent"],
+    readablePaths: ["/opt/agent", "/opt/agent/bin/agent.js"],
     writablePaths: ["/work/repo", "/work/home"],
     // Model API egress is required; the enforced property is filesystem isolation.
     network: "host",
@@ -54,9 +54,15 @@ test("contained ACP launch always wins HOME over caller environment", () => {
   assert.equal(captured.request?.environment?.HOME, "/work/home");
 });
 
-test("contained ACP launch omits readablePaths when none are given", () => {
+test("contained ACP launch omits readablePaths when no script or extra paths are given", () => {
   const captured: { request?: ContainedProcessRequest } = {};
-  launchContainedAcpAgent(capturingContainment(captured), baseOptions);
+  const withoutScript = {
+    executable: baseOptions.executable,
+    args: baseOptions.args,
+    workspace: baseOptions.workspace,
+    home: baseOptions.home,
+  };
+  launchContainedAcpAgent(capturingContainment(captured), withoutScript);
   assert.equal("readablePaths" in (captured.request ?? {}), false);
 });
 

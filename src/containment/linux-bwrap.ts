@@ -76,6 +76,15 @@ export class LinuxBubblewrapContainment implements ProcessContainment {
     if (network !== "isolated" && network !== "host") throw new TypeError("network must be isolated or host");
     const environment = request.environment ?? {};
     const args = this.#baseArgs(request.cwd);
+    // The child is exec'd inside the new mount tree, so the executable must
+    // exist there even when it lives outside the system binds (e.g. the
+    // vendored compiled Cline binary under the repository). Bind its
+    // realpath and keep the requested path valid so symlinked launchers
+    // resolve inside the boundary too. A missing binary keeps the previous
+    // fail-closed behavior: bwrap's execvp error, not an early throw here.
+    const executableTarget = existsSync(request.executable) ? realpathSync(request.executable) : request.executable;
+    args.push("--ro-bind", executableTarget, request.executable);
+    if (executableTarget !== request.executable) args.push("--ro-bind", executableTarget, executableTarget);
     if (network === "isolated") args.push("--unshare-net");
     const hostBinPaths: string[] = [];
     if (!process.execPath.startsWith("/usr/")) hostBinPaths.push(dirname(process.execPath));

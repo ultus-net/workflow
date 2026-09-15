@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, copyFile, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -137,6 +137,38 @@ test("Linux containment clears ambient credentials and disables network by defau
   assert.equal(result.network, "isolated");
   assert.equal(result.credentials, "cleared");
   assert.doesNotMatch(result.stdout, /HOME=|TOKEN=|SECRET=|KEY=/);
+});
+
+test("Linux containment execs an executable stored outside the system binds", async () => {
+  // Regression: bwrap execs the child inside the new mount tree, so a binary
+  // living outside /usr (e.g. the vendored compiled Cline binary under the
+  // repository) is invisible unless explicitly bound — the first live
+  // contained-Cline run died instantly on execvp ENOENT.
+  const directory = await mkdtemp(join(tmpdir(), "workflow-containment-exec-"));
+  const executable = join(directory, "contained-true");
+  try {
+    await copyFile("/usr/bin/true", executable);
+    const runtime = new LinuxBubblewrapContainment();
+    const result = await runtime.execute({ executable, args: [] });
+    assert.equal(result.exitCode, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Linux containment execs a symlinked launcher at its requested path", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-containment-symlink-"));
+  const target = join(directory, "contained-true");
+  const launcher = join(directory, "cliny");
+  try {
+    await copyFile("/usr/bin/true", target);
+    await symlink(target, launcher);
+    const runtime = new LinuxBubblewrapContainment();
+    const result = await runtime.execute({ executable: launcher, args: [] });
+    assert.equal(result.exitCode, 0);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("Linux containment hides ambient filesystem paths unless explicitly granted", async () => {
