@@ -173,17 +173,21 @@ function GearIcon() {
   );
 }
 
+/** Agents may report a current value outside the advertised choices; show it truthfully. */
+function withCurrentChoice(option: ConfigOption): ConfigChoice[] {
+  const choices = option.choices ?? [];
+  const current = String(option.currentValue);
+  return choices.some((choice) => choice.value === current)
+    ? [...choices]
+    : [{ value: current, name: current }, ...choices];
+}
+
 function ConfigSelect({ option, setOption, labelledBy }: {
   readonly option: ConfigOption;
   readonly setOption: (id: string, value: string | boolean) => void;
-  readonly labelledBy?: string;
+  readonly labelledBy?: string | undefined;
 }) {
-  const choices = option.choices ?? [];
   const current = String(option.currentValue);
-  // Agents may report a current value outside the advertised choices; show it truthfully.
-  const displayChoices = choices.some((choice) => choice.value === current)
-    ? choices
-    : [{ value: current, name: current }, ...choices];
   return (
     <select
       value={current}
@@ -192,11 +196,204 @@ function ConfigSelect({ option, setOption, labelledBy }: {
       aria-labelledby={labelledBy}
       title={option.description}
     >
-      {displayChoices.map((choice) => (
+      {withCurrentChoice(option).map((choice) => (
         <option value={choice.value} key={choice.value} title={choice.description}>{choice.name}</option>
       ))}
     </select>
   );
+}
+
+/** Long lists get a searchable combobox; short lists keep the native select. */
+const COMBOBOX_MIN_CHOICES = 8;
+
+/** Per-option favourite choices, persisted locally (presentation-only; never sent to the agent). */
+function useFavourites(optionId: string): readonly [readonly string[], (value: string) => void] {
+  const key = `workflow.config-favourites.${optionId}`;
+  const [favourites, setFavourites] = useState<readonly string[]>(() => {
+    try {
+      const stored: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
+      return Array.isArray(stored) ? stored.filter((entry): entry is string => typeof entry === "string") : [];
+    } catch {
+      return [];
+    }
+  });
+  const toggle = useCallback((value: string): void => {
+    setFavourites((previous) => {
+      const next = previous.includes(value) ? previous.filter((entry) => entry !== value) : [...previous, value];
+      try {
+        localStorage.setItem(key, JSON.stringify(next));
+      } catch {
+        // Private browsing or quota: favourites stay session-local.
+      }
+      return next;
+    });
+  }, [key]);
+  return [favourites, toggle];
+}
+
+function ChevronIcon() {
+  return (
+    <svg viewBox="0 0 10 6" width="10" height="6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+      <path d="M1 1l4 4 4-4" />
+    </svg>
+  );
+}
+
+function ConfigCombobox({ option, setOption, labelledBy }: {
+  readonly option: ConfigOption;
+  readonly setOption: (id: string, value: string | boolean) => void;
+  readonly labelledBy?: string | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const rootRef = useRef<HTMLSpanElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+  const [favourites, toggleFavourite] = useFavourites(option.id);
+
+  const current = String(option.currentValue);
+  const all = withCurrentChoice(option);
+  const currentName = all.find((choice) => choice.value === current)?.name ?? current;
+  const needle = query.trim().toLowerCase();
+  const filtered = needle === ""
+    ? all
+    : all.filter((choice) => choice.name.toLowerCase().includes(needle) || choice.value.toLowerCase().includes(needle));
+  const favouriteMatches = filtered.filter((choice) => favourites.includes(choice.value));
+  const otherMatches = filtered.filter((choice) => !favourites.includes(choice.value));
+  const selectable = [...favouriteMatches, ...otherMatches];
+  const showGroups = favouriteMatches.length > 0 && otherMatches.length > 0;
+
+  const closeList = useCallback((focusButton: boolean): void => {
+    setOpen(false);
+    if (focusButton) buttonRef.current?.focus();
+  }, []);
+  const choose = useCallback((value: string): void => {
+    setOption(option.id, value);
+    closeList(true);
+  }, [option.id, setOption, closeList]);
+
+  useEffect(() => {
+    if (!open) return;
+    inputRef.current?.focus();
+    const onPointerDown = (event: MouseEvent): void => {
+      if (rootRef.current?.contains(event.target as Node) === false) closeList(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [open, closeList]);
+
+  useEffect(() => {
+    if (!open) return;
+    listRef.current?.children[activeIndex]?.scrollIntoView({ block: "nearest" });
+  }, [open, activeIndex]);
+
+  const openList = (): void => {
+    setQuery("");
+    setActiveIndex(Math.max(0, selectable.findIndex((choice) => choice.value === current)));
+    setOpen(true);
+  };
+
+  const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveIndex((index) => Math.min(index + 1, selectable.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((index) => Math.max(index - 1, 0));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      const choice = selectable[activeIndex];
+      if (choice !== undefined) choose(choice.value);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      closeList(true);
+    }
+  };
+
+  const listId = `config-list-${option.id}`;
+  const renderChoice = (choice: ConfigChoice, index: number) => {
+    const starred = favourites.includes(choice.value);
+    return (
+      <li
+        key={choice.value}
+        id={`config-opt-${option.id}-${index}`}
+        role="option"
+        aria-selected={choice.value === current}
+        className={`config-combobox-option ${index === activeIndex ? "config-combobox-active" : ""}`}
+        onMouseDown={(event) => { event.preventDefault(); choose(choice.value); }}
+        onMouseEnter={() => setActiveIndex(index)}
+      >
+        <button
+          type="button"
+          className={`config-star ${starred ? "config-starred" : ""}`}
+          tabIndex={-1}
+          aria-label={starred ? `Remove ${choice.name} from favourites` : `Add ${choice.name} to favourites`}
+          aria-pressed={starred}
+          onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); toggleFavourite(choice.value); }}
+        >
+          {starred ? "★" : "☆"}
+        </button>
+        <span className="config-combobox-name" title={choice.description}>{choice.name}</span>
+        {choice.value === current && <span className="config-combobox-check" aria-hidden="true">✓</span>}
+      </li>
+    );
+  };
+
+  return (
+    <span className="config-combobox" ref={rootRef}>
+      <button
+        ref={buttonRef}
+        type="button"
+        className="config-combobox-button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={labelledBy === undefined ? option.name : undefined}
+        aria-labelledby={labelledBy}
+        title={option.description}
+        onClick={() => (open ? closeList(false) : openList())}
+      >
+        <span className="config-combobox-value">{currentName}</span>
+        <ChevronIcon />
+      </button>
+      {open && (
+        <span className="config-combobox-pop">
+          <input
+            ref={inputRef}
+            className="config-combobox-search"
+            value={query}
+            onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }}
+            onKeyDown={onSearchKeyDown}
+            placeholder={`Search ${option.name.toLowerCase()}…`}
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={listId}
+            aria-activedescendant={selectable[activeIndex] === undefined ? undefined : `config-opt-${option.id}-${activeIndex}`}
+            aria-autocomplete="list"
+            aria-label={`Search ${option.name}`}
+          />
+          <ul className="config-combobox-list" role="listbox" id={listId} aria-label={option.name} ref={listRef}>
+            {selectable.length === 0 && <li className="config-combobox-empty">no matches</li>}
+            {showGroups && <li className="config-combobox-group" role="presentation">Favourites</li>}
+            {favouriteMatches.map((choice, index) => renderChoice(choice, index))}
+            {showGroups && <li className="config-combobox-group" role="presentation">All</li>}
+            {otherMatches.map((choice, index) => renderChoice(choice, favouriteMatches.length + index))}
+          </ul>
+        </span>
+      )}
+    </span>
+  );
+}
+
+function ConfigField({ option, setOption, labelledBy }: {
+  readonly option: ConfigOption;
+  readonly setOption: (id: string, value: string | boolean) => void;
+  readonly labelledBy?: string | undefined;
+}) {
+  return (option.choices?.length ?? 0) >= COMBOBOX_MIN_CHOICES
+    ? <ConfigCombobox option={option} setOption={setOption} labelledBy={labelledBy} />
+    : <ConfigSelect option={option} setOption={setOption} labelledBy={labelledBy} />;
 }
 
 function ConfigControls({ options, setOption }: {
@@ -235,12 +432,14 @@ function ConfigControls({ options, setOption }: {
 
   return (
     <div className="config-row">
-      {pickers.map((option) => (
-        <span className="config-picker" key={option.id}>
-          <span className="config-picker-label" id={`config-label-${option.id}`}>{option.name}</span>
-          <ConfigSelect option={option} setOption={setOption} labelledBy={`config-label-${option.id}`} />
-        </span>
-      ))}
+      <div className="config-pickers">
+        {pickers.map((option) => (
+          <span className="config-picker" key={option.id}>
+            <span className="config-picker-label" id={`config-label-${option.id}`}>{option.name}</span>
+            <ConfigField option={option} setOption={setOption} labelledBy={`config-label-${option.id}`} />
+          </span>
+        ))}
+      </div>
       {(toggles.length > 0 || popoverSelects.length > 0) && (
         <span className="config-settings">
           <button
