@@ -706,3 +706,163 @@ test("web UI guards permission answers, ask mode, and capability toggles", async
   };
   assert.equal(unconfinedView.workspaceConfinement, false);
 });
+
+test("web UI guards session rename, task retry/add, and evidence recording", async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), "web-batch5-test-"));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => {
+      const driver: CodingSessionDriver = {
+        async start(_prompt, emit) { emit({ type: "completed", result: "done" }); },
+        async cancel() {},
+      };
+      return {
+        driver: {
+          ...driver,
+          agentSessionId: () => "agent-x",
+          connect: async () => {},
+          subscribe: () => () => {},
+        } as never,
+        session: new WorkflowCodingSession(driver),
+        async dispose() {},
+      };
+    },
+  });
+  context.after(() => manager.dispose());
+  const tasks: WorkflowTask[] = [
+    { id: taskId("T1"), title: "Retriable", state: "IN_PROGRESS", dependencies: [], requiredEvidence: [] },
+    { id: taskId("T2"), title: "Second", state: "BLOCKED", dependencies: [taskId("T1")], requiredEvidence: [] },
+  ];
+  const application = new WorkflowApplication(
+    new TaskGraph(tasks),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  application.transition(taskId("T1"), "FAILED");
+  const server = createWorkflowWebServer(application, manager);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+
+  // Rename: guards first, then the happy path.
+  const renameHostile = await fetch(`${base}/api/sessions/rename`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://attacker.example" },
+    body: JSON.stringify({ id: "x", title: "y" }),
+  });
+  assert.equal(renameHostile.status, 403);
+  const renameNonJson = await fetch(`${base}/api/sessions/rename`, {
+    method: "POST",
+    headers: { "content-type": "text/plain" },
+    body: JSON.stringify({ id: "x", title: "y" }),
+  });
+  assert.equal(renameNonJson.status, 415);
+  await fetch(`${base}/api/prompt`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: "seed a session" }),
+  });
+  const listed = await fetch(`${base}/api/sessions`).then((response) => response.json()) as { sessions: { id: string }[] };
+  const sessionId = listed.sessions[0]!.id;
+  const renamed = await fetch(`${base}/api/sessions/rename`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: sessionId, title: "Renamed from test" }),
+  });
+  assert.equal(renamed.status, 200);
+  assert.equal((await renamed.json() as { title: string }).title, "Renamed from test");
+  const renameUnknown = await fetch(`${base}/api/sessions/rename`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: "nope", title: "x" }),
+  });
+  assert.equal(renameUnknown.status, 404);
+  const renameBlank = await fetch(`${base}/api/sessions/rename`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: sessionId, title: "   " }),
+  });
+  assert.equal(renameBlank.status, 502);
+
+  // Retry: guards, a real FAILED task round-trip, and a non-FAILED rejection.
+  const retryHostile = await fetch(`${base}/api/tasks/retry`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://attacker.example" },
+    body: JSON.stringify({ taskId: "T1" }),
+  });
+  assert.equal(retryHostile.status, 403);
+  const retryInvalid = await fetch(`${base}/api/tasks/retry`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ taskId: "" }),
+  });
+  assert.equal(retryInvalid.status, 400);
+  const retried = await fetch(`${base}/api/tasks/retry`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ taskId: "T1" }),
+  });
+  assert.equal(retried.status, 200);
+  assert.equal((await retried.json() as { transition: { to: string } }).transition.to, "READY");
+  const retryNotFailed = await fetch(`${base}/api/tasks/retry`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ taskId: "T1" }),
+  });
+  assert.equal(retryNotFailed.status, 409, "retrying a non-FAILED task is rejected, not silently accepted");
+
+  // Add task: guards, happy path, and duplicate/snapshot visibility.
+  const addHostile = await fetch(`${base}/api/tasks`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://attacker.example" },
+    body: JSON.stringify({ taskId: "T3", title: "Added" }),
+  });
+  assert.equal(addHostile.status, 403);
+  const addInvalid = await fetch(`${base}/api/tasks`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ taskId: "T3", title: "" }),
+  });
+  assert.equal(addInvalid.status, 400);
+  const added = await fetch(`${base}/api/tasks`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ taskId: "T3", title: "Added from test", dependencies: ["T1"] }),
+  });
+  assert.equal(added.status, 201);
+  const snapshot = await fetch(`${base}/api/snapshot`).then((response) => response.json()) as {
+    tasks: { id: string; state: string; title: string }[];
+  };
+  const newTask = snapshot.tasks.find((task) => task.id === "T3");
+  assert.equal(newTask?.state, "BLOCKED");
+  assert.equal(newTask?.title, "Added from test");
+
+  // Evidence: guards, validation, and recording visibility.
+  const evidenceHostile = await fetch(`${base}/api/evidence`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://attacker.example" },
+    body: JSON.stringify({ subject: "s", result: "passed" }),
+  });
+  assert.equal(evidenceHostile.status, 403);
+  const evidenceInvalid = await fetch(`${base}/api/evidence`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ subject: "s", result: "maybe" }),
+  });
+  assert.equal(evidenceInvalid.status, 400);
+  const recorded = await fetch(`${base}/api/evidence`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ subject: "test-subject", result: "passed" }),
+  });
+  assert.equal(recorded.status, 201);
+  const evidence = await fetch(`${base}/api/snapshot`).then((response) => response.json()) as {
+    evidence: { subject: string; result: string; freshness: string }[];
+  };
+  const entry = evidence.evidence.find((item) => item.subject === "test-subject");
+  assert.deepEqual(
+    entry !== undefined && { result: entry.result, freshness: entry.freshness },
+    { result: "passed", freshness: "fresh" },
+  );
+});

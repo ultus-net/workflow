@@ -140,6 +140,17 @@ export class WebSessionManager {
     return before - this.#sessions.length;
   }
 
+  /** Operator rename; persists immediately and never triggers a runtime switch. */
+  rename(id: string, title: string): SessionSwitchResult {
+    const record = this.#sessions.find((entry) => entry.id === id);
+    if (record === undefined) return { kind: "unknown" };
+    const trimmed = title.trim();
+    if (trimmed.length === 0) return { kind: "failed", error: "title must not be empty" };
+    record.title = trimmed.length > 60 ? `${trimmed.slice(0, 60)}…` : trimmed;
+    this.#persist();
+    return { kind: "ok", meta: this.#meta(record) };
+  }
+
   async dispose(): Promise<void> {
     this.#captureActive();
     this.#persist();

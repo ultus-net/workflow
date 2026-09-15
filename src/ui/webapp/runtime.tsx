@@ -43,7 +43,17 @@ const SessionStateContext = createContext<{
   readonly queuedPrompt: string | undefined;
   readonly discardQueue: () => void;
   readonly queuePrompt: (text: string) => void;
-}>({ isRunning: false, items: [], queuedPrompt: undefined, discardQueue: () => {}, queuePrompt: () => {} });
+  readonly showThinking: boolean;
+  readonly setShowThinking: (value: boolean) => void;
+}>({
+  isRunning: false,
+  items: [],
+  queuedPrompt: undefined,
+  discardQueue: () => {},
+  queuePrompt: () => {},
+  showThinking: true,
+  setShowThinking: () => {},
+});
 
 /** Active-session state for tail affordances (regenerate, export, queue). */
 export function useSessionState(): Readonly<{
@@ -52,8 +62,22 @@ export function useSessionState(): Readonly<{
   readonly queuedPrompt: string | undefined;
   readonly discardQueue: () => void;
   readonly queuePrompt: (text: string) => void;
+  readonly showThinking: boolean;
+  readonly setShowThinking: (value: boolean) => void;
 }> {
   return useContext(SessionStateContext);
+}
+
+/** Whether agent thinking blocks render in the transcript (presentation-only). */
+const SHOW_THINKING_KEY = "workflow.show-thinking";
+
+function useShowThinking(): readonly [boolean, (value: boolean) => void] {
+  const [showThinking, setShowThinking] = useState(() => window.localStorage.getItem(SHOW_THINKING_KEY) !== "false");
+  const update = useCallback((value: boolean): void => {
+    window.localStorage.setItem(SHOW_THINKING_KEY, String(value));
+    setShowThinking(value);
+  }, []);
+  return [showThinking, update];
 }
 
 /** Polls the Workflow-owned session projection; the browser holds no authority. */
@@ -83,6 +107,7 @@ export function WorkflowRuntimeProvider({ children }: { readonly children: React
   const isRunning = envelope.state.state === "running";
   const [queuedPrompt, setQueuedPrompt] = useState<string | undefined>(undefined);
   const [seenState, setSeenState] = useState("connecting");
+  const [showThinking, setShowThinking] = useShowThinking();
 
   const sendPrompt = useCallback(async (prompt: string, images: readonly { readonly mediaType: string; readonly data: string }[] = []): Promise<void> => {
     const response = await fetch("/api/prompt", {
@@ -170,7 +195,7 @@ export function WorkflowRuntimeProvider({ children }: { readonly children: React
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <SessionUsageContext.Provider value={envelope.usage}>
-        <SessionStateContext.Provider value={{ isRunning, items: envelope.items, queuedPrompt, discardQueue, queuePrompt }}>
+        <SessionStateContext.Provider value={{ isRunning, items: envelope.items, queuedPrompt, discardQueue, queuePrompt, showThinking, setShowThinking }}>
           {children}
         </SessionStateContext.Provider>
       </SessionUsageContext.Provider>

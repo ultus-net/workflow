@@ -391,6 +391,49 @@ test("session manager syncs agent-provided titles and serves runtime usage", asy
   await manager.dispose();
 });
 
+test("session manager renames records without switching runtimes", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const spawned: FakeRuntime[] = [];
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => {
+      const fake = fakeRuntime(`agent-${spawned.length + 1}`);
+      spawned.push(fake);
+      return fake.runtime;
+    },
+  });
+
+  await manager.channel();
+  assert.equal(spawned.length, 1);
+  const created = await manager.create();
+  assert.equal(created.kind, "ok");
+
+  const record = manager.list().find((session) => !session.active)!;
+  assert.equal(manager.rename("does-not-exist", "nope").kind, "unknown");
+  assert.equal(manager.rename(record.id, "   ").kind, "failed", "blank titles are rejected");
+  const renamed = manager.rename(record.id, "Operator-titled session");
+  assert.equal(renamed.kind, "ok");
+  assert.equal(manager.list().find((session) => session.id === record.id)?.title, "Operator-titled session");
+  assert.equal(spawned.length, 2, "renaming must not spawn or dispose runtimes");
+  const long = manager.rename(record.id, "x".repeat(120));
+  assert.equal(long.kind, "ok");
+  assert.ok(long.kind === "ok" && long.meta.title.length <= 61, "titles are capped with an ellipsis");
+
+  // Renames persist across restarts.
+  await manager.dispose();
+  const reloaded = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => fakeRuntime("agent-1").runtime,
+  });
+  assert.equal(
+    reloaded.list().find((session) => session.id === record.id)?.title.startsWith("x".repeat(60)),
+    true,
+    "the operator rename survives a restart",
+  );
+  await reloaded.dispose();
+});
+
 test("session manager wires the permission broker: cancel and switch deny parked prompts", async (context) => {
   const dir = registryDir();
   context.after(() => rmSync(dir, { recursive: true, force: true }));

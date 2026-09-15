@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
-import { taskId, type TaskState } from "../kernel/contracts.js";
+import { evidenceId, observationId, taskId, type TaskState } from "../kernel/contracts.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
 import { WebSessionManager, type SessionSwitchResult } from "./web-sessions.js";
 import type { WebappBundle } from "./webapp/bundle.js";
@@ -99,6 +99,105 @@ export function createWorkflowWebServer(
         const id = typeof input?.id === "string" ? input.id : undefined;
         if (id === undefined) return json(response, 400, { error: "invalid dismiss request" });
         return switchResult(response, await manager.dismiss(id), 200);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    if (request.method === "POST" && request.url === "/api/sessions/rename") {
+      if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const input = body as { id?: unknown; title?: unknown } | null;
+        const id = typeof input?.id === "string" && input.id.length > 0 ? input.id : undefined;
+        const title = typeof input?.title === "string" ? input.title : undefined;
+        if (id === undefined || title === undefined) return json(response, 400, { error: "invalid rename request" });
+        return switchResult(response, manager.rename(id, title), 200);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    if (request.method === "POST" && request.url === "/api/tasks/retry") {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const rawTaskId = (body as { taskId?: unknown } | null)?.taskId;
+        if (typeof rawTaskId !== "string" || rawTaskId.trim().length === 0) {
+          return json(response, 400, { error: "invalid retry request" });
+        }
+        const result = application.retryFailedTask(taskId(rawTaskId));
+        return json(response, result.kind === "accepted" ? 200 : 409, result);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    if (request.method === "POST" && request.url === "/api/tasks") {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const input = body as { taskId?: unknown; title?: unknown; dependencies?: unknown; requiredEvidence?: unknown } | null;
+        const rawTaskId = typeof input?.taskId === "string" ? input.taskId.trim() : "";
+        const title = typeof input?.title === "string" ? input.title.trim() : "";
+        if (rawTaskId.length === 0 || title.length === 0) {
+          return json(response, 400, { error: "taskId and title are required" });
+        }
+        const dependencies = Array.isArray(input?.dependencies)
+          ? input.dependencies.flatMap((entry) => (typeof entry === "string" && entry.length > 0 ? [taskId(entry)] : []))
+          : [];
+        const requiredEvidence = Array.isArray(input?.requiredEvidence)
+          ? input.requiredEvidence.flatMap((entry) => {
+            if (typeof entry !== "object" || entry === null) return [];
+            const requirement = entry as { authority?: unknown; subject?: unknown };
+            const validAuthorities = ["environment", "host", "mcp", "reviewer"];
+            if (
+              typeof requirement.authority === "string" && validAuthorities.includes(requirement.authority) &&
+              typeof requirement.subject === "string" && requirement.subject.length > 0
+            ) {
+              return [{ authority: requirement.authority as "environment" | "host" | "mcp" | "reviewer", subject: requirement.subject }];
+            }
+            return [];
+          })
+          : [];
+        application.addTask({ id: taskId(rawTaskId), title, dependencies, requiredEvidence });
+        return json(response, 201, { taskId: rawTaskId, state: "BLOCKED" });
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    if (request.method === "POST" && request.url === "/api/evidence") {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const input = body as { subject?: unknown; result?: unknown } | null;
+        const subject = typeof input?.subject === "string" ? input.subject.trim() : "";
+        const result = input?.result;
+        if (subject.length === 0 || (result !== "passed" && result !== "failed")) {
+          return json(response, 400, { error: "subject and result (passed|failed) are required" });
+        }
+        const stamp = new Date().toISOString();
+        application.recordEvidence({
+          id: evidenceId(`evidence-${randomUUID()}`),
+          observationId: observationId(`observation-${randomUUID()}`),
+          authority: "reviewer",
+          subject,
+          result,
+          freshness: "fresh",
+          mutationEpoch: application.snapshot().mutationEpoch,
+          observedAt: stamp,
+        });
+        return json(response, 201, { recorded: true, subject, result });
       } catch {
         return json(response, 400, { error: "invalid request body" });
       }

@@ -1,4 +1,5 @@
 import { describeFailure } from "./failure-copy.js";
+import { useSessionState } from "./runtime.js";
 
 interface ActionData {
   readonly action: string;
@@ -125,8 +126,14 @@ export function PlanPart({ data }: { readonly data: { readonly entries: readonly
   );
 }
 
-/** Collapsible agent reasoning; default collapsed, streamed chunks accumulate. */
+/**
+ * Collapsible agent reasoning; default collapsed, streamed chunks accumulate.
+ * Rendering the block at all is an operator preference (settings toggle): the
+ * item stays in the transcript so toggling never shifts message ids.
+ */
 export function ThinkingPart({ data }: { readonly data: { readonly text: string } }) {
+  const { showThinking } = useSessionState();
+  if (!showThinking) return null;
   return (
     <details className="part part-thinking">
       <summary>Thinking</summary>

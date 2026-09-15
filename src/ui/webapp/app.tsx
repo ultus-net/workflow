@@ -612,11 +612,21 @@ function ConfigControls({ options, setOption, permissions, capabilities }: {
   );
 }
 
-/** Settings popover: completion notifications (opt-in, persisted locally). */
+/** Settings popover: transcript and notification preferences (persisted locally). */
 function GeneralSettings() {
   const [notify, setNotify] = useNotifyOnCompletion();
+  const { showThinking, setShowThinking } = useSessionState();
   return (
     <div className="config-permissions">
+      <span className="config-field-label">Transcript</span>
+      <label className="config-toggle" title="Show agent reasoning blocks in the thread (collapsed by default when shown)">
+        <input type="checkbox" checked={showThinking} onChange={(event) => setShowThinking(event.target.checked)} />
+        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
+        <span className="config-toggle-text">
+          Show thinking blocks
+          <span className="config-toggle-desc">the agent still reasons; only the display changes</span>
+        </span>
+      </label>
       <span className="config-field-label">Notifications</span>
       <label className="config-toggle" title="Desktop notification and chime when a turn finishes while the tab is hidden">
         <input type="checkbox" checked={notify} onChange={(event) => setNotify(event.target.checked)} />
@@ -766,6 +776,8 @@ function formatTokens(count: number): string {
 
 function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]; readonly refresh: () => Promise<void> }) {
   const [pending, setPending] = useState<string | undefined>(undefined);
+  const [query, setQuery] = useState("");
+  const [renaming, setRenaming] = useState<{ id: string; title: string } | undefined>(undefined);
   const switchTo = (id: string): void => {
     setPending(id);
     void activate(id).finally(() => setPending(undefined));
@@ -778,7 +790,21 @@ function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]
     });
     await refresh();
   };
+  const commitRename = async (): Promise<void> => {
+    if (renaming === undefined) return;
+    await fetch("/api/sessions/rename", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: renaming.id, title: renaming.title }),
+    });
+    setRenaming(undefined);
+    await refresh();
+  };
   const hasUnused = sessions.some((session) => !session.active && session.title === "New session");
+  // Title search over the registry (local-first): transcripts live in the
+  // agent process, so what the registry holds is what can be searched.
+  const needle = query.trim().toLowerCase();
+  const visible = needle === "" ? sessions : sessions.filter((session) => session.title.toLowerCase().includes(needle));
   return (
     <section className="sessions">
       <h2>
@@ -790,26 +816,62 @@ function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]
           <button className="btn btn-ghost sessions-new" onClick={() => createSession(refresh)} aria-label="New session">+ New</button>
         </span>
       </h2>
+      <input
+        className="sessions-search"
+        type="search"
+        placeholder="Search sessions"
+        aria-label="Search sessions by title"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
       <div className="sessions-list">
-        {sessions.map((session) => (
+        {visible.length === 0 && needle !== "" && <p className="muted sessions-none">no sessions match</p>}
+        {visible.map((session) => (
           <div className={`session-row ${session.active ? "session-active" : ""} ${pending === session.id ? "session-pending" : ""}`} key={session.id}>
-            <button
-              className="session-activate"
-              onClick={() => switchTo(session.id)}
-              aria-current={session.active}
-              disabled={pending !== undefined}
-            >
-              <span className="session-title">{pending === session.id ? "loading…" : session.title}</span>
-              <span className="session-time">{new Date(session.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
-            </button>
-            <button
-              className="session-dismiss"
-              onClick={() => dismissSession(session.id, refresh)}
-              aria-label={`Dismiss ${session.title}`}
-              disabled={pending !== undefined}
-            >
-              ×
-            </button>
+            {renaming?.id === session.id ? (
+              <span className="session-rename">
+                <input
+                  aria-label={`New title for ${session.title}`}
+                  value={renaming.title}
+                  autoFocus
+                  onChange={(event) => setRenaming({ id: session.id, title: event.target.value })}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void commitRename();
+                    if (event.key === "Escape") setRenaming(undefined);
+                  }}
+                />
+                <button className="btn btn-ghost session-rename-save" aria-label="Save title" onClick={() => void commitRename()} disabled={pending !== undefined}>✓</button>
+                <button className="btn btn-ghost session-rename-cancel" aria-label="Cancel rename" onClick={() => setRenaming(undefined)}>×</button>
+              </span>
+            ) : (
+              <>
+                <button
+                  className="session-activate"
+                  onClick={() => switchTo(session.id)}
+                  aria-current={session.active}
+                  disabled={pending !== undefined}
+                >
+                  <span className="session-title">{pending === session.id ? "loading…" : session.title}</span>
+                  <span className="session-time">{new Date(session.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                </button>
+                <button
+                  className="session-dismiss session-rename-trigger"
+                  onClick={() => setRenaming({ id: session.id, title: session.title })}
+                  aria-label={`Rename ${session.title}`}
+                  disabled={pending !== undefined}
+                >
+                  ✎
+                </button>
+                <button
+                  className="session-dismiss"
+                  onClick={() => dismissSession(session.id, refresh)}
+                  aria-label={`Dismiss ${session.title}`}
+                  disabled={pending !== undefined}
+                >
+                  ×
+                </button>
+              </>
+            )}
           </div>
         ))}
       </div>
@@ -1096,8 +1158,12 @@ function Panels({ snapshot, sessions, refresh, refreshSessions }: {
                 Advance
               </button>
             )}
+            {task.state === "FAILED" && (
+              <button className="btn btn-ghost" onClick={() => retryTask(task.id, refresh)}>Retry</button>
+            )}
           </div>
         ))}
+        <AddTaskForm refresh={refresh} />
       </section>
       <section>
         <h2>Evidence</h2>
@@ -1108,6 +1174,7 @@ function Panels({ snapshot, sessions, refresh, refreshSessions }: {
               {entry.subject}: {entry.result} / {entry.freshness}
             </p>
           ))}
+        <RecordEvidenceForm refresh={refresh} />
       </section>
       <section>
         <h2>History</h2>
@@ -1118,6 +1185,78 @@ function Panels({ snapshot, sessions, refresh, refreshSessions }: {
           ))}
       </section>
     </aside>
+  );
+}
+
+function retryTask(taskId: string, refresh: () => Promise<void>): void {
+  void fetch("/api/tasks/retry", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ taskId }),
+  }).then(() => refresh());
+}
+
+/** Compact form for the hub's addTask: id + title, added BLOCKED. */
+function AddTaskForm({ refresh }: { readonly refresh: () => Promise<void> }) {
+  const [taskId, setTaskId] = useState("");
+  const [title, setTitle] = useState("");
+  const submit = (): void => {
+    void fetch("/api/tasks", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId, title }),
+    }).then((response) => {
+      if (response.ok) {
+        setTaskId("");
+        setTitle("");
+      }
+      void refresh();
+    });
+  };
+  return (
+    <form
+      className="task-add"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (taskId.trim().length > 0 && title.trim().length > 0) submit();
+      }}
+    >
+      <input aria-label="New task id" placeholder="id" value={taskId} onChange={(event) => setTaskId(event.target.value)} />
+      <input aria-label="New task title" placeholder="title" value={title} onChange={(event) => setTitle(event.target.value)} />
+      <button className="btn btn-ghost" type="submit">Add task</button>
+    </form>
+  );
+}
+
+/** Compact form for the hub's recordEvidence (reviewer authority, fresh). */
+function RecordEvidenceForm({ refresh }: { readonly refresh: () => Promise<void> }) {
+  const [subject, setSubject] = useState("");
+  const [result, setResult] = useState<"passed" | "failed">("passed");
+  const submit = (): void => {
+    void fetch("/api/evidence", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ subject, result }),
+    }).then((response) => {
+      if (response.ok) setSubject("");
+      void refresh();
+    });
+  };
+  return (
+    <form
+      className="evidence-add"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (subject.trim().length > 0) submit();
+      }}
+    >
+      <input aria-label="Evidence subject" placeholder="subject" value={subject} onChange={(event) => setSubject(event.target.value)} />
+      <select aria-label="Evidence result" value={result} onChange={(event) => setResult(event.target.value === "failed" ? "failed" : "passed")}>
+        <option value="passed">passed</option>
+        <option value="failed">failed</option>
+      </select>
+      <button className="btn btn-ghost" type="submit">Record</button>
+    </form>
   );
 }
 
