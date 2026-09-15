@@ -9,6 +9,8 @@ import { TaskGraph } from "../src/kernel/task-graph.js";
 import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createWorkflowHub, resolveHubDiscoveryPath } from "../src/integrations/workflow-hub.js";
+import { createRunRegistry } from "../src/integrations/run-registry.js";
+import type { HubReviewerResult } from "../src/integrations/hub-reviewer.js";
 
 /**
  * Dedicated task/evidence per scheduled (cron) run: a surface begins a run,
@@ -206,4 +208,215 @@ test("hub snapshot hides the redundant interactive seed task", async (t) => {
   assert.equal(snapshot.status, 200);
   const projected = snapshot.body.snapshot as { tasks: Array<{ id: string }> };
   assert.equal(projected.tasks.some(({ id }) => id === "interactive"), false);
+});
+
+// ── Task A2: automatic review trigger on run completion ─────────────────────
+
+const AXES_SUMMARY = "test integrity: real assertions. task completeness: done. cleanliness: no dead code.";
+
+function setupRegistry() {
+  const { graph, application, workspace } = setup();
+  return { graph, application, workspace };
+}
+
+function registryWithReviewer(outcome: { result: HubReviewerResult } | { error: Error }) {
+  const base = setupRegistry();
+  const launches: Array<{ runId: string; workspace: string | undefined }> = [];
+  const registry = createRunRegistry(base.application, base.graph, {
+    reviewer: (controller) => async (input) => {
+      launches.push({ runId: input.runId, workspace: input.workspace });
+      if ("error" in outcome) throw outcome.error;
+      const { result } = outcome;
+      if (result.recorded) {
+        // Emulate the hub reviewer runner's recording path: begin the
+        // reviewer as its own registered run, then record through the
+        // controller so `recorded` reflects kernel-admitted evidence.
+        await controller.begin({
+          runId: result.reviewerRunId,
+          title: "Hub reviewer run",
+          ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
+        });
+        await controller.review({
+          runId: input.runId,
+          reviewerRunId: result.reviewerRunId,
+          verdict: "approved",
+          summary: result.summary,
+        });
+      }
+      return result;
+    },
+  });
+  return { ...base, registry, launches };
+}
+
+test("a review-gated run auto-launches the hub reviewer on finish and verifies on approval", async () => {
+  const { application, workspace, registry, launches } = registryWithReviewer({
+    result: {
+      reviewerRunId: "schedule:hub-reviewer-1",
+      verdict: "approved",
+      recorded: true,
+      summary: AXES_SUMMARY,
+    },
+  });
+  await registry.controller.begin({ runId: "author-1", title: "Author run", workspace, requiresReview: true });
+
+  await registry.controller.finish({ runId: "author-1", outcome: "verified" });
+
+  assert.equal(launches.length, 1);
+  assert.equal(launches[0]!.runId, "author-1");
+  assert.equal(launches[0]!.workspace, workspace);
+  const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
+  assert.equal(runTask?.state, "VERIFIED");
+  assert.equal(registry.reviewOutcomes().get("author-1")?.verdict, "approved");
+  assert.equal(registry.blockingReasons().has("author-1"), false);
+});
+
+test("a fail-closed reviewer outcome leaves the run VERIFYING with a surfaced blocking reason", async () => {
+  const { application, workspace, registry, launches } = registryWithReviewer({
+    result: {
+      reviewerRunId: "schedule:hub-reviewer-2",
+      verdict: "changes_requested",
+      recorded: false,
+      summary: "weak coverage",
+      parseFailure: "approved review summary must reference at least 3 of the 5 axes (found 0)",
+    },
+  });
+  await registry.controller.begin({ runId: "author-2", title: "Author run", workspace, requiresReview: true });
+
+  await assert.rejects(registry.controller.finish({ runId: "author-2", outcome: "verified" }), /axes/);
+  assert.equal(launches.length, 1);
+  const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
+  assert.equal(runTask?.state, "VERIFYING");
+  assert.match(registry.blockingReasons().get("author-2") ?? "", /axes/);
+  assert.equal(registry.reviewOutcomes().get("author-2")?.verdict, "changes_requested");
+});
+
+test("reviewer infrastructure failure leaves the run VERIFYING with a surfaced blocking reason", async () => {
+  const { application, workspace, registry } = registryWithReviewer({ error: new Error("reviewer agent crashed") });
+  await registry.controller.begin({ runId: "author-3", title: "Author run", workspace, requiresReview: true });
+
+  await assert.rejects(registry.controller.finish({ runId: "author-3", outcome: "verified" }), /hub reviewer failed/);
+  const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
+  assert.equal(runTask?.state, "VERIFYING");
+  assert.match(registry.blockingReasons().get("author-3") ?? "", /reviewer agent crashed/);
+});
+
+test("plain runs never launch the reviewer on finish (explicit-policy semantics unchanged)", async () => {
+  const { application, workspace, registry, launches } = registryWithReviewer({
+    result: { reviewerRunId: "schedule:hub-reviewer-4", verdict: "approved", recorded: true, summary: AXES_SUMMARY },
+  });
+  await registry.controller.begin({ runId: "author-4", title: "Author run", workspace });
+
+  await registry.controller.finish({ runId: "author-4", outcome: "verified" });
+
+  assert.equal(launches.length, 0);
+  const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
+  assert.equal(runTask?.state, "VERIFIED");
+});
+
+test("a run left VERIFYING by a failed review can still verify after evidence is recorded", async () => {
+  const { application, workspace, registry } = registryWithReviewer({
+    result: {
+      reviewerRunId: "schedule:hub-reviewer-5",
+      verdict: "changes_requested",
+      recorded: false,
+      summary: "unparseable reviewer verdict: ???",
+      parseFailure: "unparseable reviewer verdict: ???",
+    },
+  });
+  await registry.controller.begin({ runId: "author-5", title: "Author run", workspace, requiresReview: true });
+  await assert.rejects(registry.controller.finish({ runId: "author-5", outcome: "verified" }), /unparseable/);
+
+  // Evidence recorded later through the ordinary verifier path unblocks the run.
+  await registry.controller.begin({ runId: "late-reviewer", title: "Late reviewer run", workspace });
+  await registry.controller.review({
+    runId: "author-5",
+    reviewerRunId: "late-reviewer",
+    verdict: "approved",
+    summary: AXES_SUMMARY,
+  });
+
+  await registry.controller.finish({ runId: "author-5", outcome: "verified" });
+  const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
+  assert.equal(runTask?.state, "VERIFIED");
+  assert.equal(registry.blockingReasons().has("author-5"), false);
+});
+
+// ── Task D1: hub-run test evidence before VERIFIED ──────────────────────────
+
+function registryWithGates(testOutcome: { passed: boolean; output: string } | Error) {
+  const base = setupRegistry();
+  const launches: Array<{ runId: string; workspace: string | undefined }> = [];
+  const testCalls: Array<{ runId: string; workspace: string | undefined; subject: string }> = [];
+  const registry = createRunRegistry(base.application, base.graph, {
+    reviewer: (controller) => async (input) => {
+      launches.push({ runId: input.runId, workspace: input.workspace });
+      await controller.begin({
+        runId: "schedule:hub-reviewer-d1",
+        title: "Hub reviewer run",
+        ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
+      });
+      await controller.review({
+        runId: input.runId,
+        reviewerRunId: "schedule:hub-reviewer-d1",
+        verdict: "approved",
+        summary: AXES_SUMMARY,
+      });
+      return { reviewerRunId: "schedule:hub-reviewer-d1", verdict: "approved", recorded: true, summary: AXES_SUMMARY };
+    },
+    testRunner: async (input) => {
+      testCalls.push({ runId: input.runId, workspace: input.workspace, subject: input.subject });
+      if (testOutcome instanceof Error) throw testOutcome;
+      return testOutcome;
+    },
+  });
+  return { ...base, registry, launches, testCalls };
+}
+
+test("a review-gated run also requires hub-run test evidence: failing tests block verification", async () => {
+  const { application, workspace, registry, testCalls } = registryWithGates({
+    passed: false,
+    output: "1 failing: expected 3, got 4",
+  });
+  await registry.controller.begin({ runId: "author-d1", title: "Author run", workspace, requiresReview: true });
+
+  await assert.rejects(registry.controller.finish({ runId: "author-d1", outcome: "verified" }), /test evidence failed/);
+  assert.equal(testCalls.length, 1);
+  assert.equal(testCalls[0]!.subject, `test:${workspace}`);
+  const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
+  assert.equal(runTask?.state, "VERIFYING");
+  assert.match(registry.blockingReasons().get("author-d1") ?? "", /expected 3, got 4/);
+});
+
+test("passing hub-run test evidence completes the verified review-gated run", async () => {
+  const { application, workspace, registry, testCalls } = registryWithGates({ passed: true, output: "all green" });
+  await registry.controller.begin({ runId: "author-d2", title: "Author run", workspace, requiresReview: true });
+
+  await registry.controller.finish({ runId: "author-d2", outcome: "verified" });
+
+  assert.equal(testCalls.length, 1);
+  const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
+  assert.equal(runTask?.state, "VERIFIED");
+  assert.equal(registry.blockingReasons().has("author-d2"), false);
+});
+
+test("plain runs never run the hub test command", async () => {
+  const { workspace, registry, testCalls } = registryWithGates({ passed: true, output: "all green" });
+  await registry.controller.begin({ runId: "author-d3", title: "Author run", workspace });
+
+  await registry.controller.finish({ runId: "author-d3", outcome: "verified" });
+
+  assert.equal(testCalls.length, 0);
+  const runTask = registry.resolve(undefined, undefined).snapshot().tasks.find((task) => task.title === "Author run");
+  assert.equal(runTask?.state, "VERIFIED");
+});
+
+test("a crashing hub test run fails closed with a surfaced blocking reason", async () => {
+  const { application, workspace, registry } = registryWithGates(new Error("test command crashed"));
+  await registry.controller.begin({ runId: "author-d4", title: "Author run", workspace, requiresReview: true });
+
+  await assert.rejects(registry.controller.finish({ runId: "author-d4", outcome: "verified" }), /hub test run failed/);
+  const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
+  assert.equal(runTask?.state, "VERIFYING");
+  assert.match(registry.blockingReasons().get("author-d4") ?? "", /test command crashed/);
 });

@@ -53,7 +53,7 @@ cannot close without host-specific tooling.
 - Create: `src/integrations/hub-reviewer.ts`
 - Test: `test/hub-reviewer.test.ts`
 
-- [ ] **Step 1: failing tests** — stub ACP agent factory; assert: hub spawns a
+- [x] **Step 1: failing tests** — stub ACP agent factory; assert: hub spawns a
       *distinct* reviewer runId via `/run/begin` (anti-rubber-stamp rule:
       reviewer run ≠ subject run); the hub sources the diff itself by running
       `git diff` through contained execution (the hub stores no diffs and
@@ -67,7 +67,7 @@ cannot close without host-specific tooling.
       the ordinary token; reviewer session runs contained
       (`launchContainedAcpAgent`) with placeholder-only credentials via the
       metering proxy.
-- [ ] **Step 2: implement** — compose existing pieces only:
+- [x] **Step 2: implement** — compose existing pieces only:
       `AcpSessionDriver`/`acp-session.ts` (contained spawn),
       `model-usage-proxy.ts` (key custody + metering), `src/review/rubric.ts`
       (rubric text), `run-registry.ts` (run bookkeeping). No new deps.
@@ -76,7 +76,11 @@ cannot close without host-specific tooling.
       `DiffSource`) landed with full fail-closed tests; the concrete
       contained-spawn factory (`launchContainedAcpAgent` + metering-proxy
       provider settings) is production wiring that lands with A2.
-- [ ] **Step 3: run — passes**; lint + typecheck clean.
+- [x] **Step 3: run — passes**; lint + typecheck clean.
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`: `HubReviewerRunner` +
+> `test/hub-reviewer.test.ts` (10 tests). Production contained-spawn factory
+> (launchContainedAcpAgent + metering proxy) lands with A2 bridge wiring.
 
 ### Task A2: Automatic review trigger on run completion
 
@@ -88,7 +92,7 @@ cannot close without host-specific tooling.
   scope new failing tests to auto-launch and failure-surfacing, not the
   already-covered deny paths)
 
-- [ ] **Step 1: failing tests** — a `requiresReview` run whose agent finished
+- [x] **Step 1: failing tests** — a `requiresReview` run whose agent finished
       (per `/run/finish` reporting session end) does **not** advance to
       `VERIFIED` until the hub-owned reviewer records fresh `reviewer`
       evidence; plain runs keep existing explicit-policy semantics (per
@@ -96,9 +100,15 @@ cannot close without host-specific tooling.
       in the run registry; reviewer failure (agent error, budget exceeded,
       unparseable verdict) leaves the run task in `VERIFYING`, surfaced as a
       blocking reason, never silently passed.
-- [ ] **Step 2: implement** — wire A1 into the run lifecycle; reviewer
+- [x] **Step 2: implement** — wire A1 into the run lifecycle; reviewer
       outcome recorded through the same kernel transition machinery.
-- [ ] **Step 3: run — passes.**
+- [x] **Step 3: run — passes.**
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`: registry-level
+> auto-launch (`createRunRegistry` reviewer/testRunner seams) with observable
+> review outcomes and blocking reasons. The bridge does not yet wire a
+> production reviewer factory; the deferred piece is the contained-spawn
+> composition plus `cline-tui-bridge.ts` registration.
 
 ### Task A3: Verdict + follow-up surfacing *(coordination point — web)*
 
@@ -131,13 +141,13 @@ half the work.
 - Modify: `src/adapters/host.ts` (capability set), `src/adapters/acp.ts`
 - Test: `test/acp-adapter.test.ts`, `test/acp-permission.test.ts`
 
-- [ ] **Step 1: failing tests** — `spawn_agent`/subagent/task-spawn tool
+- [x] **Step 1: failing tests** — `spawn_agent`/subagent/task-spawn tool
       proposals classify to a **new `spawn` capability** — explicitly *not*
       `process`, which the hub CLI already grants by default
       (`src/cli/hub.ts:30`) and would make spawn default-allow; `spawn` is
       default-deny on every surface; event metadata may escalate but never
       relax (existing `stricterCapability` rule).
-- [ ] **Step 2: implement + run — passes.**
+- [x] **Step 2: implement + run — passes.**
 
 ### Task B2: Enforcement-altering config options are capability-bearing
 
@@ -145,12 +155,12 @@ half the work.
 - Modify: `src/integrations/acp-session.ts` (config-option handling from G2)
 - Test: `test/acp-session.test.ts` (extend)
 
-- [ ] **Step 1: failing tests** — a `session/set_config_option` or
+- [x] **Step 1: failing tests** — a `session/set_config_option` or
       agent-originated `config_option_update` that switches a
       bypass/auto-approve-everything mode is denied (or visibly downgrades the
       surface's enforcement marker) instead of silently applying. Mode changes
       must never let `advisory` look like `enforced` (PRODUCT.md constraint).
-- [ ] **Step 2: implement + run — passes.**
+- [x] **Step 2: implement + run — passes.**
 
 ### Task B3: Subagent conformance matrix
 

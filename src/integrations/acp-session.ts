@@ -21,6 +21,42 @@ import type { AcpPermissionRequestParams } from "../adapters/acp-permission.js";
 import { createWorkflowAcpPermissionResolver } from "../adapters/acp-workflow-resolver.js";
 
 /**
+ * Plan Task B2: config options that would switch the agent into a
+ * bypass/auto-approve-everything mode alter the session's enforcement level.
+ * Client-set values are denied before any wire call; agent-applied values
+ * are rejected from retained config with a visible denial — an `advisory`
+ * degradation must never happen silently on an `enforced` surface.
+ */
+const ENFORCEMENT_ALTERING_TOKENS: ReadonlySet<string> = new Set([
+  "bypass",
+  "bypasspermissions",
+  "autoapprove",
+  "skippermissions",
+  "neverask",
+  "donotask",
+  "dangerousskip",
+  "unrestricted",
+  "allowall",
+  "yolo",
+]);
+
+export function isEnforcementAlteringConfigOption(configId: string): boolean {
+  const normalized = configId.toLowerCase().replace(/[-_\s]/g, "");
+  for (const token of ENFORCEMENT_ALTERING_TOKENS) {
+    if (normalized === token || normalized.includes(token)) return true;
+  }
+  return false;
+}
+
+function enforcementAlteringOptionIds(options: readonly unknown[]): string[] {
+  return options.flatMap((option) => {
+    if (typeof option !== "object" || option === null) return [];
+    const id = (option as { id?: unknown }).id;
+    return typeof id === "string" && isEnforcementAlteringConfigOption(id) ? [id] : [];
+  });
+}
+
+/**
  * Clean-surface ACP session driver. A prompt runs through the host-neutral
  * CodingSessionDriver contract while permission interception is wired into
  * WorkflowApplication.authorize (the hub authority); session/update
@@ -73,8 +109,20 @@ export class AcpSessionDriver implements CodingSessionDriver {
     // (e.g. a resume loader) receive every projection event via #listeners.
     this.#client.onSessionUpdate((update) => {
       if (update.update.sessionUpdate === "config_option_update" && Array.isArray(update.update.configOptions)) {
-        this.#sessionConfig = { ...this.#sessionConfig, configOptions: update.update.configOptions };
-      }
+        // Plan Task B2: an agent-applied bypass/auto-approve option must not
+        // silently enter retained config — the update is rejected whole and
+        // the denial surfaces as a visible status event.
+        const denied = enforcementAlteringOptionIds(update.update.configOptions);
+        if (denied.length > 0) {
+          const denial: CodingSessionEvent = {
+            type: "status",
+            status: `denied agent-applied enforcement-altering config option(s): ${denied.join(", ")}`,
+          };
+          this.#emit(denial);
+          for (const listener of this.#listeners) listener(denial);
+          return;
+        }
+        this.#sessionConfig = { ...this.#sessionConfig, configOptions: update.update.configOptions };      }
       const event = this.#project(update, this.#assistant);
       if (event !== undefined) {
         this.#emit(event);
@@ -193,6 +241,12 @@ export class AcpSessionDriver implements CodingSessionDriver {
 
   /** Mutate configuration on the existing ACP session and retain the agent's complete returned state. */
   async setConfigOption(configId: string, value: AcpConfigOptionValue): Promise<AcpSessionConfig> {
+    // Plan Task B2: enforcement-altering options are denied client-side
+    // before any wire call — the operator-visible enforcement level must
+    // never silently change under an `enforced` surface.
+    if (isEnforcementAlteringConfigOption(configId)) {
+      throw new TypeError(`denied: config option '${configId}' alters the session's enforcement level`);
+    }
     if (this.#agentSessionId === undefined) throw new Error("ACP session has not been created");
     const updated = await this.#client.setConfigOption({ sessionId: this.#agentSessionId, configId, value });
     this.#sessionConfig = { ...this.#sessionConfig, ...updated };

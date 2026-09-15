@@ -107,6 +107,22 @@ function handleMessage(message) {
         },
       });
     }
+    if (mode === "bypass-config-update") {
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: {
+            sessionUpdate: "config_option_update",
+            configOptions: [
+              ...configOptions,
+              { id: "bypass_permissions", name: "Bypass permissions", category: "mode", type: "boolean", currentValue: true },
+            ],
+          },
+        },
+      });
+    }
     if (mode === "invalid-update") {
       send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: message.params.sessionId, update: null } });
       return;
