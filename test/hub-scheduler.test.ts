@@ -25,23 +25,40 @@ import {
 // ── Cron parser ─────────────────────────────────────────────────────────────
 
 test("cronMatches supports wildcard, exact, step, list, and range fields", () => {
-  const date = (minute: number, hour: number, day: number, month: number, _weekday: number) =>
+  const date = (minute: number, hour: number, day: number, month: number) =>
     new Date(2026, month - 1, day, hour, minute, 0, 0);
-  const friday = date(0, 9, 18, 9, 0);
+  // 2026-09-18 is a Friday.
+  const friday = date(0, 9, 18, 9);
 
   assert.equal(cronMatches("* * * * *", friday), true);
   assert.equal(cronMatches("0 9 18 9 *", friday), true);
   assert.equal(cronMatches("30 9 * * *", friday), false);
-  assert.equal(cronMatches("*/15 * * * *", date(45, 9, 18, 9, 0)), true);
-  assert.equal(cronMatches("*/15 * * * *", date(44, 9, 18, 9, 0)), false);
+  assert.equal(cronMatches("*/15 * * * *", date(45, 9, 18, 9)), true);
+  assert.equal(cronMatches("*/15 * * * *", date(44, 9, 18, 9)), false);
   assert.equal(cronMatches("0 9,18 * * *", friday), true);
   assert.equal(cronMatches("0 8-10 * * *", friday), true);
   assert.equal(cronMatches("0 9 * * 5", friday), true);
   assert.equal(cronMatches("0 9 * * 1", friday), false);
 });
 
+test("cronMatches uses Vixie day semantics: restricted dom OR dow, unrestricted must agree", () => {
+  const date = (day: number, month: number, hour: number, minute: number) =>
+    new Date(2026, month - 1, day, hour, minute, 0, 0);
+  // 2026-11-13 is a Friday.
+  assert.equal(cronMatches("0 9 13 11 5", date(13, 11, 9, 0)), true, "the 13th is a Friday: both restricted match either way");
+  assert.equal(cronMatches("0 9 13 11 1", date(13, 11, 9, 0)), true, "restricted dom matches even when dow does not (OR)");
+  assert.equal(cronMatches("0 9 12 11 5", date(13, 11, 9, 0)), true, "restricted dow matches even when dom does not (OR)");
+  assert.equal(cronMatches("0 9 12 11 1", date(13, 11, 9, 0)), false, "neither matches");
+  assert.equal(cronMatches("0 9 13 11 *", date(13, 11, 9, 0)), true);
+  assert.equal(cronMatches("0 9 * 11 5", date(13, 11, 9, 0)), true);
+  assert.equal(cronMatches("0 9 * 11 1", date(13, 11, 9, 0)), false);
+});
+
 test("cronMatches fails closed on malformed expressions", () => {
-  for (const bad of ["", "* * * *", "60 * * * *", "* 24 * * *", "* * 0 * *", "a b c d e", "* * * * * *"]) {
+  for (const bad of [
+    "", "* * * *", "60 * * * *", "* 24 * * *", "* * 0 * *", "a b c d e", "* * * * * *",
+    "1,,2 * * * *", "-5 * * * *", "5- * * * *", "* 1- * * *",
+  ]) {
     assert.throws(() => cronMatches(bad, new Date()), /invalid cron/, `expected rejection: '${bad}'`);
   }
 });
@@ -116,6 +133,7 @@ function schedulerHarness(t: TestContext, options: {
   const { calls, controller } = stubController();
   const turns: Array<{ runId: string; prompt: string; budget: RunBudget | undefined }> = [];
   const logs: string[] = [];
+  const reasons: Array<{ runId: string; reason: string }> = [];
   const scheduler = createHubScheduler({
     controller: {
       ...controller,
@@ -130,9 +148,10 @@ function schedulerHarness(t: TestContext, options: {
       if (options.turnError !== undefined) throw options.turnError;
     },
     log: (message) => logs.push(message),
+    recordBlockingReason: (input) => reasons.push({ runId: input.runId, reason: input.reason }),
   });
   t.after(() => scheduler.stop());
-  return { scheduler, calls, turns, logs };
+  return { scheduler, calls, turns, logs, reasons };
 }
 
 test("a due schedule spawns a review-gated run and verifies it on turn success", async (t) => {
@@ -185,8 +204,8 @@ test("a crashed turn fails the run closed and never escapes the tick", async (t)
   assert.ok(logs.some((message) => /agent crashed/.test(message)));
 });
 
-test("a rejected finish gate (review/test evidence) is surfaced, not swallowed", async (t) => {
-  const { scheduler, calls, logs } = schedulerHarness(t, {
+test("a rejected finish gate (review/test evidence) is surfaced and left VERIFYING, never fabricated failed", async (t) => {
+  const { scheduler, calls, logs, reasons } = schedulerHarness(t, {
     schedule: { id: "gated" },
     finishError: new Error("cannot verify run: reviewer did not approve the run"),
   });
@@ -194,8 +213,24 @@ test("a rejected finish gate (review/test evidence) is surfaced, not swallowed",
   await scheduler.tick(new Date(2026, 8, 18, 9, 0, 0, 0));
 
   const finish = calls.find(({ kind }) => kind === "finish");
-  assert.ok(finish === undefined || finish.detail === "failed", "no fabricated verified finish");
-  assert.ok(logs.some((message) => /reviewer did not approve/.test(message)));
+  assert.ok(finish === undefined, "a gate rejection must not be overridden with a fabricated outcome");
+  assert.ok(logs.some((message) => /blocked from verification/.test(message)));
+  assert.ok(reasons.some(({ reason }) => /reviewer did not approve/.test(reason)), "the blocking reason is recorded");
+});
+
+test("a budget-aborted turn fails the run with the budget as blocking reason", async (t) => {
+  const { scheduler, calls, logs, reasons } = schedulerHarness(t, {
+    schedule: { id: "budgeted", budget: { maxTotalTokens: 1_000 } },
+    turnError: new Error("budget exceeded: total tokens 600 > cap 1000"),
+  });
+
+  await scheduler.tick(new Date(2026, 8, 18, 9, 0, 0, 0));
+
+  const finish = calls.find(({ kind }) => kind === "finish");
+  assert.ok(finish !== undefined);
+  assert.equal(finish.detail, "failed");
+  assert.ok(logs.some((message) => /budget exceeded/.test(message)));
+  assert.ok(reasons.some(({ reason }) => /total tokens 600/.test(reason)), "the budget violation is the blocking reason");
 });
 
 test("a runId is never reused across fires", async (t) => {

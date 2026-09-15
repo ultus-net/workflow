@@ -103,6 +103,8 @@ function parseCronField(spec: string, index: number): ReadonlySet<number> {
   const bounds = CRON_BOUNDS[index]!;
   const values = new Set<number>();
   for (const part of spec.split(",")) {
+    // An empty list part (e.g. "1,,2") is a typo, not a wildcard: fail closed.
+    if (part.length === 0) throw new TypeError(`invalid cron ${bounds.label}: '${spec}'`);
     const [rangePart, stepPart] = part.split("/");
     const step = stepPart === undefined ? 1 : cronNumber(stepPart, bounds);
     if (step < 1) throw new TypeError(`invalid cron ${bounds.label} step: '${spec}'`);
@@ -113,8 +115,12 @@ function parseCronField(spec: string, index: number): ReadonlySet<number> {
       to = bounds.max;
     } else if (rangePart.includes("-")) {
       const [rawFrom, rawTo] = rangePart.split("-");
-      from = cronNumber(rawFrom ?? "", bounds);
-      to = cronNumber(rawTo ?? "", bounds);
+      // A missing bound (e.g. "-5" or "5-") is malformed, never an implicit 0.
+      if (rawFrom === undefined || rawFrom.length === 0 || rawTo === undefined || rawTo.length === 0) {
+        throw new TypeError(`invalid cron ${bounds.label} range: '${spec}'`);
+      }
+      from = cronNumber(rawFrom, bounds);
+      to = cronNumber(rawTo, bounds);
       if (from > to) throw new TypeError(`invalid cron ${bounds.label} range: '${spec}'`);
     } else {
       from = cronNumber(rangePart, bounds);
@@ -141,11 +147,19 @@ export function cronMatches(expression: string, date: Date): boolean {
   const dayOfMonth = parseCronField(fields[2]!, 2);
   const month = parseCronField(fields[3]!, 3);
   const dayOfWeek = parseCronField(fields[4]!, 4);
-  return minute.has(date.getMinutes()) &&
-    hour.has(date.getHours()) &&
-    dayOfMonth.has(date.getDate()) &&
-    month.has(date.getMonth() + 1) &&
-    dayOfWeek.has(date.getDay());
+  if (!minute.has(date.getMinutes()) || !hour.has(date.getHours()) || !month.has(date.getMonth() + 1)) {
+    return false;
+  }
+  // Vixie-cron day semantics: when both day-of-month and day-of-week are
+  // restricted, either match fires (standard crontab behavior); when only
+  // one is restricted, both must agree.
+  const domRestricted = fields[2] !== "*";
+  const dowRestricted = fields[4] !== "*";
+  const matchesDom = dayOfMonth.has(date.getDate());
+  const matchesDow = dayOfWeek.has(date.getDay());
+  return domRestricted && dowRestricted
+    ? matchesDom || matchesDow
+    : matchesDom && matchesDow;
 }
 
 // ── Persisted schedule table ───────────────────────────────────────────────
@@ -164,8 +178,11 @@ export function loadSchedulesTable(path: string): readonly ScheduleDefinition[] 
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
-  } catch {
-    return [];
+  } catch (error) {
+    // Only an absent table means "no schedules". Permission or type errors
+    // must not silently disable scheduling.
+    if (error instanceof Error && (error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
   }
   let parsed: unknown;
   try {
@@ -266,8 +283,9 @@ export function createHubScheduler(options: {
         prompt: schedule.prompt,
         budget: schedule.budget,
       });
-      await options.controller.finish({ runId, outcome: "verified" });
     } catch (error) {
+      // A crashed (or budget-aborted) turn genuinely failed: close the run
+      // as failed with the reason surfaced.
       const reason = error instanceof Error ? error.message : String(error);
       log(`scheduler '${schedule.id}': run ${runId} failed: ${reason}`);
       options.recordBlockingReason?.({ runId, reason });
@@ -279,6 +297,17 @@ export function createHubScheduler(options: {
         }`);
       }
       return;
+    }
+    try {
+      await options.controller.finish({ runId, outcome: "verified" });
+    } catch (error) {
+      // A rejected finish gate (review/test evidence) is not a run failure:
+      // the run stays VERIFYING at the gate — the honest state — with the
+      // blocking reason surfaced. Overriding it with finish("failed") would
+      // fabricate an outcome the gates never issued.
+      const reason = error instanceof Error ? error.message : String(error);
+      log(`scheduler '${schedule.id}': run ${runId} blocked from verification: ${reason}`);
+      options.recordBlockingReason?.({ runId, reason });
     }
   };
 

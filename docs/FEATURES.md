@@ -34,6 +34,8 @@ trip over.
 | Subagent conformance probe | Partial | `test/acp-cline-subagent-probe.test.ts` (env-gated) written; **probe not yet run — matrix rows in `docs/HOST_ADAPTERS.md` await green evidence; unprobed agents are not labeled `enforced` for spawn-inclusive workflows** |
 | systemd user unit | Complete | `packaging/workflow-hub.service`; Linux/systemd only |
 | Surface coverage: TUI, headless, zen, connectors, cron, desktop (`cline-hub`) | Complete | all resolve via env or discovery file, fail closed |
+| Hub-native scheduler | Complete | `src/integrations/hub-scheduler.ts` — Vixie-semantics cron table at `~/.workflow/scheduler.json` (`WORKFLOW_HUB_SCHEDULES` overrides); fires review-gated contained runs; a rejected finish gate leaves the run VERIFYING (never fabricated); **real-agent scheduled turn is gated-probe pending** |
+| Per-run budget enforcement | Complete | token/cost caps from metering-proxy metrics; a violating event cancels the turn and the run fails with the budget as its recorded blocking reason |
 
 ## Surfaces & UX
 

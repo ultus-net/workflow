@@ -188,12 +188,23 @@ need external connectors/plugins to drive them.
 - Create: `src/integrations/hub-scheduler.ts`, `src/cli/hub.ts` (wiring)
 - Test: `test/hub-scheduler.test.ts`
 
-- [ ] **Step 1: failing tests** — cron table persisted under the data dir
+- [x] **Step 1: failing tests** — cron table persisted under the data dir
       (versioned, lock-consistent with existing store); schedules spawn
       contained ACP runs (`/run/begin` → prompt → agent turn → `/run/finish`)
       with their own task and evidence; `requiresReview` defaults true;
       scheduler failure never mutates state (fail closed).
-- [ ] **Step 2: implement + run — passes.**
+- [x] **Step 2: implement + run — passes.**
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`: dependency-free
+> 5-field cron parser with Vixie day semantics (restricted dom/dow OR;
+> malformed shapes — empty list parts, open ranges — fail closed),
+> deterministic `tick(now)` plus an unref'd per-minute loop, versioned
+> atomic table at `~/.workflow/scheduler.json` (`WORKFLOW_HUB_SCHEDULES`
+> overrides; ENOENT = none, other errors refuse). Fail-closed fire: crashed
+> turn → run FAILED with reason recorded; a rejected finish gate (review/test
+> evidence) leaves the run VERIFYING — never a fabricated outcome. Restart
+> mid-minute may refire (at-least-once); runIds are unique so no state
+> corruption. Real-agent scheduled turn is a gated probe away.
 
 ### Task C2: Budget enforcement
 
@@ -202,10 +213,19 @@ need external connectors/plugins to drive them.
   check), `src/integrations/acp-session.ts` (abort hook)
 - Test: `test/model-usage-proxy.test.ts` (extend)
 
-- [ ] **Step 1: failing tests** — per-run token/cost caps from proxy records;
+- [x] **Step 1: failing tests** — per-run token/cost caps from proxy records;
       exceeding a cap aborts the session (`session/cancel`) and the run task
       ends `FAILED` with the budget as blocking reason.
-- [ ] **Step 2: implement + run — passes.**
+- [x] **Step 2: implement + run — passes.**
+
+> Implemented 2026-09-15 on `feat/hub-owned-enforcement`, evolved from the
+> file map: caps are enforced by `createBudgetGuard` in
+> `src/integrations/hub-scheduler.ts` reading the metering proxy's metrics
+> (exposed as optional `metrics()` on `WorkflowAcpRuntime`) — the guard
+> subscribes to session events, cancels the turn once on the first
+> violating event, and the scheduler fails the run with the violation as
+> its recorded blocking reason. Budgets ride on schedules
+> (`maxInputTokens`/`maxOutputTokens`/`maxTotalTokens`/`maxCostUsd`).
 
 ### Task C3: Threat-model addendum
 
