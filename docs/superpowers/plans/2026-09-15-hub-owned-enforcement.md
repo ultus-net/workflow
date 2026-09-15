@@ -227,13 +227,13 @@ Hub-executed tests are the strongest cheap evidence the control plane owns.
   `src/integrations/cline-tui-bridge.ts` (routes)
 - Test: `test/hub-runs.test.ts` (extend)
 
-- [ ] **Step 1: failing tests** — `outcome: "verified"` for review-gated runs
+- [x] **Step 1: failing tests** — `outcome: "verified"` for review-gated runs
       additionally requires fresh passing `environment` evidence with subject
       `test:<workspace>` at the current mutation epoch, produced by the hub
       executing the workspace test command through contained execution
       (existing `/bash` machinery); failing tests → run stays `VERIFYING` /
       fails closed with the test output as blocking reason.
-- [ ] **Step 2: implement + run — passes.** The test command comes from the
+- [x] **Step 2: implement + run — passes.** The test command comes from the
       same project config surface the guard uses today
       (`verifyCommand` in `.opencode/workflow-guard.json[c]` and the
       `WORKFLOW_*` equivalents) — the hub must learn it from project config,

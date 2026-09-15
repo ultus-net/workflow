@@ -31,6 +31,7 @@ const ENFORCEMENT_ALTERING_TOKENS: ReadonlySet<string> = new Set([
   "bypass",
   "bypasspermissions",
   "autoapprove",
+  "approveall",
   "skippermissions",
   "neverask",
   "donotask",

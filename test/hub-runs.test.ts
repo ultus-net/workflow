@@ -348,21 +348,23 @@ function registryWithGates(testOutcome: { passed: boolean; output: string } | Er
   const base = setupRegistry();
   const launches: Array<{ runId: string; workspace: string | undefined }> = [];
   const testCalls: Array<{ runId: string; workspace: string | undefined; subject: string }> = [];
+  let reviewerCounter = 0;
   const registry = createRunRegistry(base.application, base.graph, {
     reviewer: (controller) => async (input) => {
+      const reviewerRunId = `schedule:hub-reviewer-d1-${(reviewerCounter += 1)}`;
       launches.push({ runId: input.runId, workspace: input.workspace });
       await controller.begin({
-        runId: "schedule:hub-reviewer-d1",
+        runId: reviewerRunId,
         title: "Hub reviewer run",
         ...(input.workspace === undefined ? {} : { workspace: input.workspace }),
       });
       await controller.review({
         runId: input.runId,
-        reviewerRunId: "schedule:hub-reviewer-d1",
+        reviewerRunId,
         verdict: "approved",
         summary: AXES_SUMMARY,
       });
-      return { reviewerRunId: "schedule:hub-reviewer-d1", verdict: "approved", recorded: true, summary: AXES_SUMMARY };
+      return { reviewerRunId, verdict: "approved", recorded: true, summary: AXES_SUMMARY };
     },
     testRunner: async (input) => {
       testCalls.push({ runId: input.runId, workspace: input.workspace, subject: input.subject });
@@ -419,4 +421,17 @@ test("a crashing hub test run fails closed with a surfaced blocking reason", asy
   const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
   assert.equal(runTask?.state, "VERIFYING");
   assert.match(registry.blockingReasons().get("author-d4") ?? "", /test command crashed/);
+});
+
+test("a later run in the same workspace cannot verify on a predecessor's test evidence", async () => {
+  const { workspace, registry, testCalls } = registryWithGates({ passed: true, output: "all green" });
+  await registry.controller.begin({ runId: "author-first", title: "First run", workspace, requiresReview: true });
+  await registry.controller.finish({ runId: "author-first", outcome: "verified" });
+  assert.equal(testCalls.length, 1, "the first run ran its own tests");
+
+  // The second run must run its own tests: the first run's test evidence for
+  // this workspace was staled at begin time (cross-run inheritance closed).
+  await registry.controller.begin({ runId: "author-second", title: "Second run", workspace, requiresReview: true });
+  await registry.controller.finish({ runId: "author-second", outcome: "verified" });
+  assert.equal(testCalls.length, 2, "the second run re-ran the workspace tests instead of inheriting them");
 });

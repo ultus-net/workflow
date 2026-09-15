@@ -69,8 +69,18 @@ export function createRunRegistry(
   const runs = new Map<string, WorkflowApplication>();
   const runWorkspaces = new Map<string, string | undefined>();
   const runTestSubjects = new Map<string, string>();
-  const finishedRunTaskIds = new Set<string>();
   const reviewOutcomes = new Map<string, HubReviewerResult>();
+  const rememberReviewOutcome = (runId: string, result: HubReviewerResult): void => {
+    reviewOutcomes.set(runId, result);
+    // Bounded so a long-lived hub cannot grow the map without limit; the
+    // oldest outcomes (first insertion) are evicted first.
+    while (reviewOutcomes.size > 64) {
+      const oldest = reviewOutcomes.keys().next().value;
+      if (oldest === undefined) break;
+      reviewOutcomes.delete(oldest);
+    }
+  };
+  const finishedRunTaskIds = new Set<string>();
   const blockingReasons = new Map<string, string>();
 
   const workspaceApplication = (
@@ -94,11 +104,6 @@ export function createRunRegistry(
     if (activateInteractiveTask) application.startInteractiveTask();
     return application;
   };
-
-  // The reviewer factory receives the controller (the same machinery the
-  // verifier-token /run/review endpoint calls), so a HubReviewerRunner can be
-  // composed without a circular construction order.
-  let reviewer: RunReviewer | undefined;
 
   const controller: WorkflowRunController = {
     hiddenSnapshotTaskIds() {
@@ -142,9 +147,15 @@ export function createRunRegistry(
       const started = application.transition(runTaskId, "IN_PROGRESS");
       if (started.kind !== "accepted") throw new Error(`cannot start run ${runId}: ${started.reason}`);
       application.selectActiveTask(runTaskId);
+      if (testSubject !== undefined) {
+        runTestSubjects.set(runId, testSubject);
+        // Cross-run freshness: a new run in the same workspace invalidates any
+        // earlier run's still-fresh test evidence for that workspace — a run
+        // must never verify on a predecessor's green tests.
+        application.recordMutation([testSubject]);
+      }
       runs.set(runId, application);
       runWorkspaces.set(runId, workspace);
-      if (testSubject !== undefined) runTestSubjects.set(runId, testSubject);
     },
     async review({ runId, reviewerRunId, verdict, summary }) {
         const application = runs.get(runId);
@@ -195,20 +206,26 @@ export function createRunRegistry(
           // wired, plan Task D1). Recording synthetic "passed" evidence
           // without a real observation would self-certify the run.
           let verified = application.transition(runTaskId, "VERIFIED");
-          if (verified.kind !== "accepted" && reviewer !== undefined) {
+          const hasFreshReviewerEvidence = graph
+            .evidenceFor(runId)
+            .some((evidence) => evidence.authority === "reviewer" && evidence.result === "passed" && evidence.freshness === "fresh");
+          if (verified.kind !== "accepted" && !hasFreshReviewerEvidence && options?.reviewer !== undefined) {
             // Plan Task A2: a review-gated run missing reviewer evidence
             // auto-launches the hub reviewer. Approval verifies the run; a
             // fail-closed or crashed reviewer leaves the task VERIFYING with
-            // a surfaced blocking reason — never a silent pass.
+            // a surfaced blocking reason — never a silent pass. The factory
+            // receives the controller at call time (the same machinery the
+            // verifier-token /run/review endpoint calls).
+            const reviewer = options.reviewer(controller);
             let result: HubReviewerResult;
             try {
               result = await reviewer({ runId, workspace: runWorkspaces.get(runId) });
             } catch (error) {
               const reason = `hub reviewer failed: ${error instanceof Error ? error.message : String(error)}`;
               blockingReasons.set(runId, reason);
-              throw new Error(`cannot verify run ${runId}: ${reason}`);
+              throw new Error(`cannot verify run ${runId}: ${reason}`, { cause: error });
             }
-            reviewOutcomes.set(runId, result);
+            rememberReviewOutcome(runId, result);
             if (!result.recorded) {
               const reason = result.parseFailure ?? "reviewer did not approve the run";
               blockingReasons.set(runId, reason);
@@ -235,7 +252,7 @@ export function createRunRegistry(
             } catch (error) {
               const reason = `hub test run failed: ${error instanceof Error ? error.message : String(error)}`;
               blockingReasons.set(runId, reason);
-              throw new Error(`cannot verify run ${runId}: ${reason}`);
+              throw new Error(`cannot verify run ${runId}: ${reason}`, { cause: error });
             }
             if (!testOutcome.passed) {
               const reason = `test evidence failed: ${testOutcome.output.slice(0, 200)}`;
@@ -283,7 +300,6 @@ export function createRunRegistry(
         runTestSubjects.delete(runId);
       },
   };
-  reviewer = options?.reviewer?.(controller);
   return {
     resolve(workspace?: string, runId?: string, options?: { activateInteractiveTask?: boolean }): WorkflowApplication {
       if (runId !== undefined) {
