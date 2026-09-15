@@ -182,13 +182,23 @@ function Panels({ snapshot, refresh }: { readonly snapshot: Snapshot | undefined
   );
 }
 
+const ENFORCEMENT_COPY: Record<string, string> = {
+  advisory: "Advisory: the agent's actions are reviewed and recorded, but file and command mutations are not pre-authorized before they run.",
+  enforced: "Enforced: agent file and command mutations require Workflow authorization before they run.",
+};
+
 export function App() {
   const { snapshot, refresh } = useSnapshot();
+  const enforcementCopy = snapshot === undefined ? undefined : ENFORCEMENT_COPY[snapshot.enforcementLevel];
   return (
     <div className="shell">
       <header className="shell-header">
         <strong>Workflow Control</strong>
-        <span className="shell-host">
+        <span
+          className="shell-host"
+          title={enforcementCopy}
+          aria-label={enforcementCopy ?? "enforcement level unavailable"}
+        >
           {snapshot === undefined ? "connecting" : `${snapshot.enforcementLevel.toUpperCase()} / ${snapshot.transport}`}
         </span>
       </header>
@@ -204,6 +214,12 @@ export function App() {
               <ThreadPrimitive.Messages>
                 {({ message }) => (message.role === "user" ? <UserMessage /> : <AssistantMessage />)}
               </ThreadPrimitive.Messages>
+              <AuiIf condition={(state) => state.thread.isRunning}>
+                <div className="working" role="status" aria-live="polite">
+                  <span className="working-dot" aria-hidden="true" />
+                  agent is working…
+                </div>
+              </AuiIf>
             </ThreadPrimitive.Viewport>
             <div className="composer-dock">
               <Composer />
