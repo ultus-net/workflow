@@ -276,6 +276,10 @@ export function createHubScheduler(options: {
         title: schedule.title,
         ...(schedule.workspace === undefined ? {} : { workspace: schedule.workspace }),
         ...(schedule.requiresReview === false ? { requiresReview: false } : { requiresReview: true }),
+        // W041: the schedule's prompt is the run's ask — the reviewer binds
+        // it into the provenance fingerprint so the same diff under a
+        // different ask never replays this run's approval.
+        taskPrompt: schedule.prompt,
       });
     } catch (error) {
       log(`scheduler '${schedule.id}': could not begin run: ${error instanceof Error ? error.message : String(error)}`);

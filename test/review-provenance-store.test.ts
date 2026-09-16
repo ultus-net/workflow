@@ -19,6 +19,7 @@ function sampleRecord(index: number): ReviewProvenanceRecord {
     fingerprint: {
       commitHash: undefined,
       promptDigest: "a".repeat(64),
+      diffDigest: "d".repeat(64),
       manifestDigest: `${index}`.padEnd(64, "0"),
       partitionDigest: "b".repeat(64),
       ruleSetDigest: "c".repeat(64),

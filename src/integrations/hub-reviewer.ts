@@ -9,7 +9,9 @@ import {
   type ReviewPartition,
 } from "../review/partition.js";
 import {
+  INTEGRATION_PROVENANCE_UNIT_ID,
   resumableUnitCoverage,
+  reviewDiffDigest,
   reviewPromptDigest,
   reviewRuleSetDigest,
   type ReviewDisposition,
@@ -177,14 +179,16 @@ export class HubReviewerRunner {
     const commitHash = this.#commitSource === undefined || manifest === undefined
       ? undefined
       : await this.#commitSource(input.workspace);
-    // W041 fingerprint: binds the review to the exact commit, ask, scope,
-    // partition, and rule set. Records exist only when the manifest (scope)
-    // is derived — diff-only compositions journal nothing, honestly.
+    // W041 fingerprint: binds the review to the exact commit, ask, diff
+    // content, scope, partition, and rule set. Records exist only when the
+    // manifest (scope) is derived — diff-only compositions journal nothing,
+    // honestly.
     const fingerprint: ReviewProvenanceFingerprint | undefined = manifest === undefined || partition === undefined
       ? undefined
       : {
         commitHash,
         promptDigest: reviewPromptDigest(input.taskPrompt),
+        diffDigest: reviewDiffDigest(diffText),
         manifestDigest: manifest.digest,
         partitionDigest: partition.digest,
         ruleSetDigest: reviewRuleSetDigest(),
@@ -288,7 +292,7 @@ export class HubReviewerRunner {
       await this.#appendProvenance(input, reviewerRunId, fingerprint, {
         inspectedUnits: ["interrupted"],
         coveredPaths: [],
-        findings: `interrupted: ${error instanceof Error ? error.message : String(error)}`,
+        findings: `interrupted: ${error instanceof Error ? error.message : String(error)}`.slice(0, 4000),
         verification: ["review aborted before a verdict"],
         disposition: "interrupted",
       }).catch(() => undefined);
@@ -323,15 +327,13 @@ export class HubReviewerRunner {
         fingerprint,
         units: [
           ...partition.units.map((unit) => ({ id: unit.id, requiredCoverage: unit.paths })),
-          { id: "integration", requiredCoverage: partition.units.map((unit) => unit.id) },
+          { id: INTEGRATION_PROVENANCE_UNIT_ID, requiredCoverage: partition.units.map((unit) => unit.id) },
         ],
       });
-    const unitCoverage = new Map<string, readonly string[]>();
     let resumedCount = 0;
     for (const unit of partition.units) {
       const prior = resumable.get(unit.id);
       if (prior !== undefined) {
-        unitCoverage.set(unit.id, prior);
         resumedCount += 1;
         continue;
       }
@@ -345,7 +347,6 @@ export class HubReviewerRunner {
         });
       }
       const parsed = outcome.parsed!;
-      unitCoverage.set(unit.id, parsed.coveredPaths);
       await this.#appendProvenance(input, reviewerRunId, fingerprint, {
         inspectedUnits: [unit.id],
         coveredPaths: parsed.coveredPaths,
@@ -359,23 +360,21 @@ export class HubReviewerRunner {
     }
     if (partition.integration !== undefined) {
       const unitIds = partition.units.map((unit) => unit.id);
-      const prior = resumable.get("integration");
+      const prior = resumable.get(INTEGRATION_PROVENANCE_UNIT_ID);
       if (prior !== undefined) {
-        unitCoverage.set("integration", prior);
         resumedCount += 1;
       } else {
         const outcome = await this.#reviewOneUnit(input, diffText, renderIntegrationUnitText(partition));
         const failure = this.#unitFailure("integration", outcome, unitIds);
         if (failure !== undefined) {
           return this.#recordFailClosed(input, reviewerRunId, fingerprint, this.#outcomeSummary(outcome), failure, {
-            inspectedUnits: ["integration"],
+            inspectedUnits: [INTEGRATION_PROVENANCE_UNIT_ID],
             coveredPaths: outcome.parsed?.coveredPaths ?? [],
             verification: [`integration review failed: ${failure.slice(0, 120)}`],
           });
         }
-        unitCoverage.set("integration", outcome.parsed!.coveredPaths);
         await this.#appendProvenance(input, reviewerRunId, fingerprint, {
-          inspectedUnits: ["integration"],
+          inspectedUnits: [INTEGRATION_PROVENANCE_UNIT_ID],
           coveredPaths: outcome.parsed!.coveredPaths,
           findings: outcome.parsed!.summary.slice(0, 4000),
           verification: [`coverage: ${unitIds.length}/${unitIds.length} unit ids`],
@@ -409,7 +408,10 @@ export class HubReviewerRunner {
       ...(resumedCount > 0 ? [`Resumed ${resumedCount} unit review(s) from provenance at an identical fingerprint.`] : []),
     ].join(" ");
     await this.#appendProvenance(input, reviewerRunId, fingerprint, {
-      inspectedUnits: [...partition.units.map((unit) => unit.id), ...(partition.integration === undefined ? [] : ["integration"])],
+      inspectedUnits: [
+        ...partition.units.map((unit) => unit.id),
+        ...(partition.integration === undefined ? [] : [INTEGRATION_PROVENANCE_UNIT_ID]),
+      ],
       coveredPaths: union,
       findings: summary,
       verification: [

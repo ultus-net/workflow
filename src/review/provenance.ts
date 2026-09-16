@@ -13,14 +13,26 @@
 
 import { createHash } from "node:crypto";
 
+import { MAX_DIFF_CHARS, MIN_REFERENCED_AXES, REVIEW_AXES } from "./rubric.js";
 import { REVIEW_OBLIGATION_RULES } from "./manifest.js";
 import { BASELINE_REVIEW_RULES, INTEGRATION_REVIEW_RULES, MAX_REVIEW_UNIT_FILES, REVIEW_FOCUS_RULES, REVIEW_RISK_RULES } from "./partition.js";
+
+/**
+ * Provenance marker for the cross-unit integration review. NUL-prefixed
+ * because git paths can never contain NUL, so no path-derived component id
+ * can ever collide with it: a repository with a literal `integration/`
+ * directory produces an `integration` unit, and its records stay
+ * unambiguously distinct from integration-review records.
+ */
+export const INTEGRATION_PROVENANCE_UNIT_ID = "\0integration";
 
 export interface ReviewProvenanceFingerprint {
   /** HEAD commit at review time; undefined when the workspace has no commits yet. */
   readonly commitHash: string | undefined;
   /** sha256 of the task prompt — the same diff under a different ask is a different review. */
   readonly promptDigest: string;
+  /** sha256 of the tracked diff the reviewer actually saw — binds changed file CONTENT, not just paths. */
+  readonly diffDigest: string;
   /** W039 coverage manifest digest — binds the exact changed/untracked scope. */
   readonly manifestDigest: string;
   /** W040 partition digest — binds the unit grouping. */
@@ -51,9 +63,12 @@ export interface ReviewProvenanceRecord {
 }
 
 /**
- * Deterministic digest of every rule table that shapes a review — the
- * "rule-set version" W041 requires. Changing any rule text or the unit cap
- * invalidates prior provenance even when the diff is unchanged.
+ * Deterministic digest of every rule and gate constant that shapes a review —
+ * the "rule-set version" W041 requires. Changing any rule text, the unit cap,
+ * the axis gate, or the diff cap invalidates prior provenance even when the
+ * diff is unchanged. (REVIEW_COVERAGE_TOKEN is parsing mechanics, not gate
+ * strength: records store already-parsed coverage values, so a token change
+ * cannot corrupt matching.)
  */
 export function reviewRuleSetDigest(): string {
   const canonical = JSON.stringify({
@@ -63,6 +78,9 @@ export function reviewRuleSetDigest(): string {
     focus: REVIEW_FOCUS_RULES,
     integration: INTEGRATION_REVIEW_RULES,
     maxUnitFiles: MAX_REVIEW_UNIT_FILES,
+    reviewAxes: REVIEW_AXES,
+    minReferencedAxes: MIN_REFERENCED_AXES,
+    maxDiffChars: MAX_DIFF_CHARS,
   });
   return createHash("sha256").update(canonical).digest("hex");
 }
@@ -72,6 +90,11 @@ export function reviewPromptDigest(taskPrompt: string | undefined): string {
   return createHash("sha256").update(taskPrompt ?? "").digest("hex");
 }
 
+/** sha256 over the tracked diff text the reviewer saw (binds changed content, not just paths). */
+export function reviewDiffDigest(diffText: string): string {
+  return createHash("sha256").update(diffText).digest("hex");
+}
+
 /** A record is valid for the current state only when every fingerprint component matches. */
 export function reviewProvenanceFingerprintMatches(
   record: ReviewProvenanceRecord,
@@ -79,6 +102,7 @@ export function reviewProvenanceFingerprintMatches(
 ): boolean {
   return record.fingerprint.commitHash === current.commitHash &&
     record.fingerprint.promptDigest === current.promptDigest &&
+    record.fingerprint.diffDigest === current.diffDigest &&
     record.fingerprint.manifestDigest === current.manifestDigest &&
     record.fingerprint.partitionDigest === current.partitionDigest &&
     record.fingerprint.ruleSetDigest === current.ruleSetDigest;
@@ -131,6 +155,7 @@ export function isReviewProvenanceRecord(value: unknown): value is ReviewProvena
   const fp = fingerprint as Record<string, unknown>;
   if (fp.commitHash !== undefined && typeof fp.commitHash !== "string") return false;
   return isNonEmptyString(fp.promptDigest) &&
+    isNonEmptyString(fp.diffDigest) &&
     isNonEmptyString(fp.manifestDigest) &&
     isNonEmptyString(fp.partitionDigest) &&
     isNonEmptyString(fp.ruleSetDigest);

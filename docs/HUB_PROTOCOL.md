@@ -70,10 +70,14 @@ Registers a scheduled/attended run as its own Workflow task, so the run's
 tool calls authorize against an `IN_PROGRESS` task and the run records its
 own evidence (instead of sharing the interactive task).
 
-Request: `{ "runId": "schedule:<uuid>", "title": "Nightly audit", "workspace": "/abs/dir", "requiresReview": true }`
-(`workspace` and `requiresReview` optional; workspace validated as in
-`/before-tool`. `requiresReview` makes the run task require `reviewer`
-evidence before it can reach `VERIFIED` — the review gate.)
+Request: `{ "runId": "schedule:<uuid>", "title": "Nightly audit", "workspace": "/abs/dir", "requiresReview": true, "taskPrompt": "the ask the run was launched with" }`
+(`workspace`, `requiresReview`, and `taskPrompt` optional; workspace validated
+as in `/before-tool`. `requiresReview` makes the run task require `reviewer`
+evidence before it can reach `VERIFIED` — the review gate. `taskPrompt`
+(additive, W041) declares the run's ask: the hub-owned reviewer binds it into
+its provenance fingerprint, so the same diff under a different ask is
+reviewed fresh and never replays a prior approval; the scheduler always
+declares its schedule's prompt.)
 
 Response `200`: `{}`. Duplicate `runId` → authority error (fail closed).
 

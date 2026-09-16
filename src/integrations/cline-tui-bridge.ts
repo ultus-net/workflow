@@ -25,7 +25,7 @@ export type WorkflowApplicationResolver = (
 ) => WorkflowApplication;
 
 export interface WorkflowRunController {
-  begin(input: { runId: string; title: string; workspace?: string; requiresReview?: boolean }): Promise<void>;
+  begin(input: { runId: string; title: string; workspace?: string; requiresReview?: boolean; taskPrompt?: string }): Promise<void>;
   finish(input: { runId: string; outcome: "verified" | "failed" }): Promise<void>;
   review(input: { runId: string; reviewerRunId: string; verdict: "approved" | "changes_requested" | "rejected"; summary: string }): Promise<{ recorded: boolean }>;
   hiddenSnapshotTaskIds(): readonly string[];
@@ -117,6 +117,7 @@ async function handleRequest(
         title: body.title,
         ...(typeof body.workspace === "string" ? { workspace: body.workspace } : {}),
         ...(body.requiresReview === true ? { requiresReview: true } : {}),
+        ...(typeof body.taskPrompt === "string" ? { taskPrompt: body.taskPrompt } : {}),
       });
       return send(response, 200, {});
     }

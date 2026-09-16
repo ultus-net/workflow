@@ -22,6 +22,8 @@ import type { ReviewProvenanceStore } from "../src/integrations/review-provenanc
 import { deriveReviewCoverageManifest } from "../src/review/manifest.js";
 import { partitionReviewManifest } from "../src/review/partition.js";
 import {
+  INTEGRATION_PROVENANCE_UNIT_ID,
+  reviewDiffDigest,
   reviewPromptDigest,
   reviewRuleSetDigest,
   type ReviewDisposition,
@@ -523,6 +525,7 @@ function multiFingerprint(taskPrompt?: string, overrides: Partial<ReviewProvenan
   return {
     commitHash: undefined,
     promptDigest: reviewPromptDigest(taskPrompt),
+    diffDigest: reviewDiffDigest("diff --git a/x b/x"),
     manifestDigest: manifest.digest,
     partitionDigest: partition.digest,
     ruleSetDigest: reviewRuleSetDigest(),
@@ -587,9 +590,9 @@ test("a multi-unit review journals per-unit, integration, and run-level records"
   assert.deepEqual(provenance.appended[0]!.inspectedUnits, ["src/integrations"]);
   assert.equal(provenance.appended[0]!.disposition, "approved");
   assert.deepEqual(provenance.appended[1]!.inspectedUnits, ["src/ui"]);
-  assert.deepEqual(provenance.appended[2]!.inspectedUnits, ["integration"]);
+  assert.deepEqual(provenance.appended[2]!.inspectedUnits, [INTEGRATION_PROVENANCE_UNIT_ID]);
   const runLevel = provenance.appended[3]!;
-  assert.deepEqual(runLevel.inspectedUnits, ["src/integrations", "src/ui", "integration"]);
+  assert.deepEqual(runLevel.inspectedUnits, ["src/integrations", "src/ui", INTEGRATION_PROVENANCE_UNIT_ID]);
   assert.deepEqual(runLevel.coveredPaths, [
     "src/integrations/hub-reviewer.ts",
     "test/hub-reviewer.test.ts",
@@ -623,7 +626,7 @@ test("a fully-resumed review approves by pure replay with zero reviewer sessions
   const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI, provenance.store);
   provenance.seed(seedRecord(workspace, "src/integrations", ["src/integrations/hub-reviewer.ts", "test/hub-reviewer.test.ts"], multiFingerprint()));
   provenance.seed(seedRecord(workspace, "src/ui", ["src/ui/web.ts"], multiFingerprint()));
-  provenance.seed(seedRecord(workspace, "integration", ["src/integrations", "src/ui"], multiFingerprint()));
+  provenance.seed(seedRecord(workspace, INTEGRATION_PROVENANCE_UNIT_ID, ["src/integrations", "src/ui"], multiFingerprint()));
   await controller.begin({ runId: "author-33", title: "Author run", workspace, requiresReview: true });
 
   const result = await runner.reviewRun({ runId: "author-33", workspace });
@@ -635,24 +638,58 @@ test("a fully-resumed review approves by pure replay with zero reviewer sessions
   assert.ok(provenance.appended.at(-1)!.verification.includes("resumed from provenance: 3"));
 });
 
-test("stale fingerprints and foreign workspaces resume nothing", async (t) => {
+test("stale fingerprints resume nothing: every unit runs a fresh session", async (t) => {
   const reviewer = stubSequenceReviewer([UNIT1_APPROVED, UNIT2_APPROVED, INTEGRATION_APPROVED]);
-
   const stale = stubProvenanceStore();
-  const staleRun = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI, stale.store);
-  staleRun.controller.begin({ runId: "author-34", title: "Author run", workspace: staleRun.workspace, requiresReview: true });
-  // Same shape, different manifest digest: a real mutation happened since.
-  stale.seed(seedRecord(staleRun.workspace, "src/integrations", ["src/integrations/hub-reviewer.ts", "test/hub-reviewer.test.ts"], multiFingerprint(undefined, { manifestDigest: "changed".repeat(8) })));
-  await staleRun.runner.reviewRun({ runId: "author-34", workspace: staleRun.workspace });
-  assert.equal(reviewer.prompts.length, 3);
+  const run = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI, stale.store);
+  await run.controller.begin({ runId: "author-34", title: "Author run", workspace: run.workspace, requiresReview: true });
+  // Same shape, different manifest digest: a real mutation happened since,
+  // so the prior unit approval is stale history and must not resume.
+  stale.seed(seedRecord(run.workspace, "src/integrations", ["src/integrations/hub-reviewer.ts", "test/hub-reviewer.test.ts"], multiFingerprint(undefined, { manifestDigest: "changed".repeat(8) })));
 
+  const result = await run.runner.reviewRun({ runId: "author-34", workspace: run.workspace });
+
+  assert.equal(result.verdict, "approved");
+  // Nothing resumed: all three sessions ran.
+  assert.equal(reviewer.prompts.length, 3);
+  assert.ok(reviewer.prompts[0]!.includes("Review unit `src/integrations`"));
+  // All four records were written fresh — no replay from the stale seed.
+  assert.equal(stale.appended.length, 4);
+  assert.ok(stale.appended.at(-1)!.verification.includes("resumed from provenance: 0"));
+});
+
+test("records from another workspace never resume here, even at identical fingerprints", async (t) => {
+  const reviewer = stubSequenceReviewer([UNIT1_APPROVED, UNIT2_APPROVED, INTEGRATION_APPROVED]);
   const foreign = stubProvenanceStore();
-  const foreignRun = await runnerWith(t, stubSequenceReviewer([UNIT1_APPROVED, UNIT2_APPROVED, INTEGRATION_APPROVED]), "diff --git a/x b/x", STATUS_MULTI, foreign.store);
-  foreignRun.controller.begin({ runId: "author-35", title: "Author run", workspace: foreignRun.workspace, requiresReview: true });
-  // Identical fingerprint, different workspace: a clone's approval never applies here.
+  const run = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI, foreign.store);
+  await run.controller.begin({ runId: "author-35", title: "Author run", workspace: run.workspace, requiresReview: true });
+  // Identical fingerprint (a clone can produce one), different workspace:
+  // the clone's approvals never apply to this workspace's review.
   foreign.seed(seedRecord("/elsewhere", "src/integrations", ["src/integrations/hub-reviewer.ts", "test/hub-reviewer.test.ts"], multiFingerprint()));
-  await foreignRun.runner.reviewRun({ runId: "author-35", workspace: foreignRun.workspace });
-  assert.ok(foreignRun.runner !== staleRun.runner);
+
+  const result = await run.runner.reviewRun({ runId: "author-35", workspace: run.workspace });
+
+  assert.equal(result.verdict, "approved");
+  assert.equal(reviewer.prompts.length, 3);
+  assert.ok(reviewer.prompts[0]!.includes("Review unit `src/integrations`"));
+  assert.ok(foreign.appended.at(-1)!.verification.includes("resumed from provenance: 0"));
+});
+
+test("a different ask never resumes: the prompt is part of the fingerprint", async (t) => {
+  const reviewer = stubSequenceReviewer([UNIT1_APPROVED, UNIT2_APPROVED, INTEGRATION_APPROVED]);
+  const provenance = stubProvenanceStore();
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI, provenance.store);
+  // Prior approval under the OLD ask; this run carries a NEW ask.
+  provenance.seed(seedRecord(workspace, "src/integrations", ["src/integrations/hub-reviewer.ts", "test/hub-reviewer.test.ts"], multiFingerprint("old ask")));
+  await controller.begin({ runId: "author-38", title: "Author run", workspace, requiresReview: true });
+
+  const result = await runner.reviewRun({ runId: "author-38", workspace, taskPrompt: "new ask" });
+
+  assert.equal(result.verdict, "approved");
+  // The same diff under a different ask is a different review: nothing resumed.
+  assert.equal(reviewer.prompts.length, 3);
+  assert.ok(reviewer.prompts[0]!.includes("new ask"));
+  assert.ok(provenance.appended.at(-1)!.verification.includes("resumed from provenance: 0"));
 });
 
 test("an interrupted partitioned review journals progress and resumes it on the next run", async (t) => {

@@ -91,7 +91,13 @@ test("createReviewerFactory drives a full registry review through the runtime se
     }),
   });
   const registry = createRunRegistry(base.application, base.graph, { reviewer: factory });
-  await registry.controller.begin({ runId: "author-4", title: "Author run", workspace: base.workspace, requiresReview: true });
+  await registry.controller.begin({
+    runId: "author-4",
+    title: "Author run",
+    workspace: base.workspace,
+    requiresReview: true,
+    taskPrompt: "the scheduled ask",
+  });
 
   await registry.controller.finish({ runId: "author-4", outcome: "verified" });
 
@@ -100,6 +106,9 @@ test("createReviewerFactory drives a full registry review through the runtime se
   assert.ok(prompts[0]!.includes("diff --git a/x b/x"));
   assert.ok(prompts[0]!.includes("### Review Coverage Manifest (deterministic scope):"));
   assert.ok(prompts[0]!.includes("- src/thing.ts - modified [obligations: general]"));
+  // W041: the run's declared ask flows registry -> reviewer into the rubric,
+  // so the provenance fingerprint binds a real prompt, not always the empty one.
+  assert.ok(prompts[0]!.includes("the scheduled ask"));
   assert.equal(disposed, 1);
   const runTask = base.application.snapshot().tasks.find((task) => task.title === "Author run");
   assert.equal(runTask?.state, "VERIFIED");

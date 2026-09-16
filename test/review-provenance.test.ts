@@ -4,8 +4,10 @@ import { test } from "node:test";
 import { deriveReviewCoverageManifest } from "../src/review/manifest.js";
 import { partitionReviewManifest } from "../src/review/partition.js";
 import {
+  INTEGRATION_PROVENANCE_UNIT_ID,
   isReviewProvenanceRecord,
   resumableUnitCoverage,
+  reviewDiffDigest,
   reviewPromptDigest,
   reviewProvenanceFingerprintMatches,
   reviewRuleSetDigest,
@@ -29,6 +31,7 @@ function fingerprint(overrides: Partial<ReviewProvenanceFingerprint> = {}): Revi
   return {
     commitHash: undefined,
     promptDigest: reviewPromptDigest(undefined),
+    diffDigest: reviewDiffDigest("diff --git a/x b/x"),
     manifestDigest: manifest.digest,
     partitionDigest: partition.digest,
     ruleSetDigest: reviewRuleSetDigest(),
@@ -72,9 +75,13 @@ test("fingerprint matching fails closed on every component", () => {
   assert.ok(reviewProvenanceFingerprintMatches(record(), current));
   assert.equal(reviewProvenanceFingerprintMatches(record({ fingerprint: fingerprint({ commitHash: "abc" }) }), current), false);
   assert.equal(reviewProvenanceFingerprintMatches(record({ fingerprint: fingerprint({ promptDigest: "x" }) }), current), false);
+  assert.equal(reviewProvenanceFingerprintMatches(record({ fingerprint: fingerprint({ diffDigest: "x" }) }), current), false);
   assert.equal(reviewProvenanceFingerprintMatches(record({ fingerprint: fingerprint({ manifestDigest: "x" }) }), current), false);
   assert.equal(reviewProvenanceFingerprintMatches(record({ fingerprint: fingerprint({ partitionDigest: "x" }) }), current), false);
   assert.equal(reviewProvenanceFingerprintMatches(record({ fingerprint: fingerprint({ ruleSetDigest: "x" }) }), current), false);
+  // The diff digest binds changed file content, not just paths: same status
+  // shape with different content must not replay.
+  assert.notEqual(reviewDiffDigest("diff --git a/x b/x\n+one"), reviewDiffDigest("diff --git a/x b/x\n+two"));
   // commitHash undefined vs defined never matches, in either direction.
   const withCommit = fingerprint({ commitHash: "abc123" });
   assert.equal(reviewProvenanceFingerprintMatches(record({ fingerprint: current }), withCommit), false);
@@ -92,6 +99,7 @@ test("isReviewProvenanceRecord rejects malformed records", () => {
   assert.equal(isReviewProvenanceRecord({ ...record(), verification: ["ok", ""] }), false);
   assert.equal(isReviewProvenanceRecord({ ...record(), fingerprint: { ...fingerprint(), manifestDigest: "" } }), false);
   assert.equal(isReviewProvenanceRecord({ ...record(), fingerprint: { ...fingerprint(), promptDigest: 7 } }), false);
+  assert.equal(isReviewProvenanceRecord({ ...record(), fingerprint: { ...fingerprint(), diffDigest: "" } }), false);
   assert.equal(isReviewProvenanceRecord("not a record"), false);
   assert.equal(isReviewProvenanceRecord(null), false);
 });
@@ -101,7 +109,7 @@ test("resume requires approval with complete coverage under the exact fingerprin
   const units = [
     { id: "src/kernel", requiredCoverage: ["src/kernel/a.ts"] },
     { id: "src/ui", requiredCoverage: ["src/ui/b.ts"] },
-    { id: "integration", requiredCoverage: ["src/kernel", "src/ui"] },
+    { id: INTEGRATION_PROVENANCE_UNIT_ID, requiredCoverage: ["src/kernel", "src/ui"] },
   ];
 
   // Exact match with complete coverage resumes.
@@ -109,6 +117,16 @@ test("resume requires approval with complete coverage under the exact fingerprin
   const resumable = resumableUnitCoverage({ records: [kernelApproved], fingerprint: current, units });
   assert.deepEqual(resumable.get("src/kernel"), ["src/kernel/a.ts"]);
   assert.equal(resumable.has("src/ui"), false);
+  assert.equal(resumable.has(INTEGRATION_PROVENANCE_UNIT_ID), false);
+
+  // Run-level records (multi-unit inspectedUnits) never satisfy unit resume —
+  // only single-unit records do, so an aggregate approval cannot be replayed
+  // as per-unit work.
+  const runLevel = record({
+    inspectedUnits: ["src/kernel", "src/ui"],
+    coveredPaths: ["src/kernel/a.ts", "src/ui/b.ts"],
+  });
+  assert.equal(resumableUnitCoverage({ records: [runLevel], fingerprint: current, units }).size, 0);
 
   // Every fingerprint component change kills resume — stale evidence is history.
   for (const stale of [
@@ -149,10 +167,18 @@ test("resume requires approval with complete coverage under the exact fingerprin
     units,
   }).size, 0);
 
-  // The integration unit resumes on covered unit ids, not paths.
-  const integration = record({ inspectedUnits: ["integration"], coveredPaths: ["src/kernel", "src/ui"] });
+  // The integration unit resumes on covered unit ids, not paths — and its
+  // NUL-prefixed marker cannot collide with any path-derived component id
+  // (git paths can never contain NUL), so a repository with a literal
+  // `integration/` directory stays unambiguous in the journal.
+  const integration = record({ inspectedUnits: [INTEGRATION_PROVENANCE_UNIT_ID], coveredPaths: ["src/kernel", "src/ui"] });
   assert.deepEqual(
-    resumableUnitCoverage({ records: [integration], fingerprint: current, units }).get("integration"),
+    resumableUnitCoverage({ records: [integration], fingerprint: current, units }).get(INTEGRATION_PROVENANCE_UNIT_ID),
     ["src/kernel", "src/ui"],
   );
+
+  // A component literally named "integration" is a different unit than the
+  // integration review: its records never satisfy the integration marker.
+  const integrationComponent = record({ inspectedUnits: ["integration"], coveredPaths: ["integration/foo.ts"] });
+  assert.equal(resumableUnitCoverage({ records: [integrationComponent], fingerprint: current, units }).size, 0);
 });
