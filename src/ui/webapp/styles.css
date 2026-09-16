@@ -1,4 +1,8 @@
-/* Workflow Control — operator surface design system */
+/* Workflow Control — operator surface design system
+   Two typefaces, one job split: the operator chrome (panels, badges, composer,
+   paths, code) stays monospace; conversational prose reads in a humanist sans.
+   --accent is the text/outline-safe amber per theme; --accent-fill is the
+   constant amber used for fills (bubbles, buttons, toggles). */
 
 :root {
   --bg: #14161a;
@@ -10,18 +14,45 @@
   --text: #e6e8eb;
   --text-muted: #9aa4b0;
   --accent: #e8a33d;
+  --accent-fill: #e8a33d;
   --accent-ink: #14161a;
   --accent-soft: rgba(232, 163, 61, 0.16);
   --ok: #4caf7d;
   --deny: #e06c5c;
   --fail: #ff7377;
+  --composer-focus: #1e2127;
+  --code-bg: #0e1013;
   --radius: 10px;
   --radius-s: 6px;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
   --space-5: 1.25rem;
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color-scheme: dark;
+}
+
+/* Light theme: the same control-room grammar on paper-white surfaces. The
+   amber stays as fill; accent-as-text darkens so labels pass AA on light. */
+[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-deep: #f3f4f6;
+  --surface: #fbfbfd;
+  --surface-raised: #ffffff;
+  --border: #dcdfe4;
+  --border-strong: #c3c8d0;
+  --text: #22262c;
+  --text-muted: #5a6472;
+  --accent: #96590c;
+  --accent-ink: #14161a;
+  --accent-soft: rgba(150, 89, 12, 0.12);
+  --ok: #1e7d4f;
+  --deny: #b23b2e;
+  --fail: #c23340;
+  --composer-focus: #ffffff;
+  --code-bg: #f6f7f9;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -30,7 +61,7 @@ body {
   margin: 0;
   background: var(--bg-deep);
   color: var(--text);
-  font: 15px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font: 15px/1.55 var(--font-mono);
 }
 
 .shell {
@@ -49,9 +80,48 @@ body {
   background: var(--bg-deep);
 }
 
-.shell-header > strong {
+.shell-header > h1 {
   font-size: 0.9rem;
+  font-weight: 700;
   letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.shell-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Focus mode: hides both side rails so the thread centers (≥1101px only;
+   below that the layout is already a single stacked column). */
+.rail-toggle {
+  display: none;
+  align-items: center;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.rail-toggle:hover { color: var(--text); border-color: var(--border-strong); }
+
+.rail-toggle[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.rail-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (min-width: 1101px) {
+  .rail-toggle { display: inline-flex; }
+  html[data-rails="off"] .shell-main { grid-template-columns: 1fr minmax(0, 74ch) 1fr; }
+  html[data-rails="off"] .chat-column { grid-column: 2; }
+  html[data-rails="off"] .git-column,
+  html[data-rails="off"] .inspector-column { display: none; }
 }
 
 .shell-host {
@@ -163,6 +233,55 @@ body {
   padding: 1.5rem;
   color: var(--text-muted);
   margin-top: 1rem;
+  font-family: var(--font-sans);
+}
+
+.welcome-wordmark {
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  margin: 0;
+}
+
+.welcome-lede { margin: 0.45rem 0 0; max-width: 60ch; }
+
+.welcome-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 1rem;
+}
+
+.welcome-chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.welcome-chip:hover { color: var(--text); border-color: var(--border-strong); }
+
+.welcome-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.welcome-hints {
+  margin: 1.1rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.welcome-hints kbd {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface);
+  padding: 0 0.3rem;
 }
 
 /* Messages */
@@ -174,7 +293,7 @@ body {
 
 .msg-user {
   margin-left: auto;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--accent-ink);
   border-radius: var(--radius-s);
   padding: 0.65rem 0.85rem;
@@ -384,6 +503,16 @@ body {
   flex-wrap: wrap;
 }
 
+/* Kind glyph (ACP tool_call.kind) — status color rides the card edge; the
+   icon inherits the muted head tone and never competes with status text. */
+.part-tool-icon {
+  display: inline-flex;
+  align-self: center;
+  color: var(--text-muted);
+}
+
+.part-tool-icon svg { display: block; }
+
 .part-tool-kind {
   font-size: 0.72rem;
   text-transform: uppercase;
@@ -433,6 +562,29 @@ body {
   margin-top: 0.3rem;
 }
 
+/* Unified diffs (git rail + tool output): added/removed lines carry their own
+   tinted background, hunk headers get a raised strip. Color-only signal is
+   backed by the +/- glyph text itself, so the classes stay readable without
+   color vision. */
+.diff-text {
+  margin: 0.2rem 0 0.4rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: 0.78rem/1.5 var(--font-mono);
+  max-height: 16rem;
+  overflow: auto;
+}
+
+.diff-text > span { display: block; white-space: pre; }
+
+.diff-add { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.diff-del { color: var(--deny); background: color-mix(in srgb, var(--deny) 10%, transparent); }
+.diff-hunk { color: var(--text-muted); background: var(--surface-raised); }
+.diff-meta { color: var(--text-muted); }
+.diff-ctx { color: var(--text-muted); }
+
 /* Agent plan checklist */
 
 .part-plan { display: block; border-left-color: var(--accent); }
@@ -454,6 +606,15 @@ body {
 }
 
 .part-plan-entry { display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.875rem; }
+
+/* Conversational prose inside typed parts reads in the sans face; markers,
+   labels, subjects, and code stay monospace (the operator chrome). */
+.part-prose {
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  overflow-wrap: break-word;
+}
 
 .part-plan-marker { width: 1rem; text-align: center; color: var(--text-muted); }
 .part-plan-in_progress .part-plan-marker { color: var(--accent); }
@@ -478,7 +639,9 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  line-height: 1.55;
   max-height: 14rem;
   overflow: auto;
   white-space: pre-wrap;
@@ -495,7 +658,16 @@ body {
   color: var(--text-muted);
 }
 
-.usage-meter-composer { justify-content: flex-end; margin-top: 0.4rem; }
+/* Composer placement: a slim readout under the toolbar (absent when the
+   session is unmetered), mirroring inspector totals without displacing the
+   pickers. */
+.composer-footer {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 0.35rem;
+}
+
+.usage-meter-composer { justify-content: flex-end; margin: 0; font-size: 0.72rem; gap: 0.55rem; }
 
 .usage-meter-inspector {
   flex-wrap: wrap;
@@ -612,6 +784,43 @@ body {
   justify-self: start;
   font-size: 0.8rem;
 }
+
+/* Settings popover: color theme (System / Dark / Light segmented control) */
+
+.config-appearance {
+  display: grid;
+  gap: 0.35rem;
+  padding-top: 0.5rem;
+  margin-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.theme-choice {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+.theme-option {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-s);
+  padding: 0.3rem 0;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.theme-option:hover { color: var(--text); border-color: var(--border-strong); }
+
+.theme-option-on {
+  color: var(--text);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.theme-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Composer */
 
@@ -911,7 +1120,7 @@ body {
   transition: transform 120ms ease-out;
 }
 
-.config-toggle input:checked + .config-toggle-track { background: var(--accent); }
+.config-toggle input:checked + .config-toggle-track { background: var(--accent-fill); }
 .config-toggle input:checked + .config-toggle-track .config-toggle-thumb { transform: translateX(0.75rem); background: var(--accent-ink); }
 
 .config-toggle input:focus-visible + .config-toggle-track {
@@ -947,7 +1156,7 @@ body {
 
 .composer:focus-within {
   border-color: var(--accent);
-  background: #1e2127;
+  background: var(--composer-focus);
 }
 
 .composer-row {
@@ -1044,8 +1253,8 @@ body {
 .btn:disabled { opacity: 0.45; cursor: default; }
 
 .btn-send {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
   color: var(--accent-ink);
   font-weight: 600;
 }
@@ -1078,7 +1287,7 @@ body {
   outline-offset: 2px;
 }
 
-/* Working indicator while a turn runs */
+/* Working indicator while a turn runs: current activity + elapsed time. */
 
 .working {
   display: flex;
@@ -1089,9 +1298,24 @@ body {
   padding: 0.5rem 0.25rem;
 }
 
+.working-activity {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.working-elapsed {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .working-dot {
   width: 0.55rem;
   height: 0.55rem;
+  flex: none;
   border-radius: 50%;
   background: var(--accent);
   animation: working-pulse 1.2s ease-in-out infinite;
@@ -1180,6 +1404,8 @@ body {
 .session-row:hover { border-color: var(--accent); }
 .session-active { border-color: var(--accent); background: var(--surface); box-shadow: inset 2px 0 0 var(--accent); }
 .session-pending { border-color: var(--accent); opacity: 0.75; }
+.session-heading { display: flex; align-items: center; gap: 0.35rem; min-width: 0; }
+.session-active-dot { flex: none; width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--accent-fill); }
 .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-time { color: var(--text-muted); font-size: 0.72rem; }
 
@@ -1392,15 +1618,22 @@ body {
   .task-add input:nth-child(2), .task-add button { grid-column: 1 / -1; }
 }
 
-/* Markdown rendering (assistant messages) */
+/* Markdown rendering (assistant messages). Prose reads in the humanist sans;
+   inline and fenced code stay monospace via the explicit rules below. */
 
-.aui-md { line-height: 1.6; }
+.aui-md {
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.65;
+}
 .aui-md > :first-child { margin-top: 0; }
 .aui-md > :last-child { margin-bottom: 0; }
 .aui-md p { margin: 0.55rem 0; }
 .aui-md h1, .aui-md h2, .aui-md h3, .aui-md h4 {
   margin: 1rem 0 0.4rem;
-  font-size: 1rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   border-bottom: 1px solid var(--border);
   padding-bottom: 0.25rem;
 }
@@ -1415,7 +1648,7 @@ body {
   color: var(--text-muted);
 }
 .aui-md code {
-  font: 0.8rem ui-monospace, SFMono-Regular, Consolas, monospace;
+  font: 0.8rem var(--font-mono);
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
@@ -1424,7 +1657,7 @@ body {
 /* Fallback block chrome for language-less fences; highlighted blocks own
    their chrome via .code-block-pre, which this rule must not override. */
 .aui-md pre:not(.code-block-pre) {
-  background: #0e1013;
+  background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 0.8rem 1rem;
@@ -1452,3 +1685,28 @@ body {
 .aui-md hr { border: none; border-top: 1px solid var(--border); margin: 0.8rem 0; }
 /* diff fences: + / - lines carry their own signal */
 .aui-md pre code .line-added, .aui-md pre code .line-removed { display: block; }
+
+/* Light theme: the hljs token palette above is tuned for dark surfaces, so
+   light mode swaps in its light-surface equivalents (GitHub-light values). */
+[data-theme="light"] .hljs-comment, [data-theme="light"] .hljs-quote { color: #6a737d; font-style: italic; }
+[data-theme="light"] .hljs-keyword, [data-theme="light"] .hljs-selector-tag,
+[data-theme="light"] .hljs-literal, [data-theme="light"] .hljs-section,
+[data-theme="light"] .hljs-doctag, [data-theme="light"] .hljs-type,
+[data-theme="light"] .hljs-name, [data-theme="light"] .hljs-strong { color: #d73a49; }
+[data-theme="light"] .hljs-string, [data-theme="light"] .hljs-regexp,
+[data-theme="light"] .hljs-attribute, [data-theme="light"] .hljs-meta .hljs-string { color: #032f62; }
+[data-theme="light"] .hljs-number, [data-theme="light"] .hljs-symbol,
+[data-theme="light"] .hljs-bullet, [data-theme="light"] .hljs-variable,
+[data-theme="light"] .hljs-template-variable, [data-theme="light"] .hljs-selector-attr { color: #005cc5; }
+[data-theme="light"] .hljs-title, [data-theme="light"] .hljs-title.function_,
+[data-theme="light"] .hljs-built_in, [data-theme="light"] .hljs-class .hljs-title { color: #6f42c1; }
+[data-theme="light"] .hljs-attr, [data-theme="light"] .hljs-property,
+[data-theme="light"] .hljs-selector-class, [data-theme="light"] .hljs-selector-id { color: #e36209; }
+[data-theme="light"] .hljs-meta, [data-theme="light"] .hljs-punctuation, [data-theme="light"] .hljs-operator { color: #57606a; }
+[data-theme="light"] .hljs-addition { color: #22863a; }
+[data-theme="light"] .hljs-deletion { color: #b31d28; }
+
+/* Light theme: soften the dark-tuned popover/elevation shadows. */
+[data-theme="light"] .config-popover,
+[data-theme="light"] .config-combobox-pop { box-shadow: 0 8px 24px rgba(16, 18, 22, 0.12); }
+[data-theme="light"] .part-permission { box-shadow: 0 6px 18px rgba(16, 18, 22, 0.10); }

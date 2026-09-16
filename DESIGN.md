@@ -26,3 +26,14 @@ Cline owns keyboard and interaction behavior. Workflow must not advertise or emu
 ## Responsive Behavior
 
 Responsive terminal behavior is upstream Cline behavior. Workflow's patch must not introduce a second layout system.
+
+## Web Surface (browser operator UI)
+
+Direction and language of `src/ui/webapp` (basis: `docs/CHAT_UI_RESEARCH_2026.md`):
+
+- **Control-room identity.** Operator chrome — header, panels, badges, composer, tool titles, subjects, code — stays monospace. Conversational prose (assistant markdown, plan/completion/attention/thinking text, welcome) reads in a humanist sans stack. Monospace is for code, data, and measurement, never a costume for prose.
+- **One accent, two roles.** `--accent` is the text/outline-safe amber per theme (dark `#e8a33d`, light `#96590c`); `--accent-fill` is the constant amber for fills (user bubbles, send button, toggles, active dots). Advisory-vs-enforced badge semantics are unchanged.
+- **Two themes, one token set.** Dark is default; light re-maps the same custom properties under `[data-theme="light"]`. The System/Dark/Light control follows the OS live and applies pre-paint (`theme.ts`, `main.tsx`) so a light operator never sees a dark flash. Syntax-highlight tokens and elevation shadows carry explicit light equivalents.
+- **Typed part grammar is the thread's visual system.** Tool cards carry authored per-kind SVG glyphs (ACP `tool_call.kind`), status-colored card edges, and collapsible I/O; unified diffs render with add/del/hunk tinting (`diff-text.tsx`), color backed by `+`/`-` glyph text.
+- **Focus mode.** The header toggle hides both rails so the thread centers (≥1101px); below that the layout is already a stacked column with the thread first.
+- **Honest motion.** The only authored motion moments are the working-dot pulse and 120ms color/border transitions; `prefers-reduced-motion` disables both.

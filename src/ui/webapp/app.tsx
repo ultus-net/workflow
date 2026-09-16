@@ -8,8 +8,10 @@ import {
 } from "@assistant-ui/react";
 
 import { ActionPart, AttentionPart, CompletionPart, OutcomePart, PlanPart, ThinkingPart, ToolPart } from "./message-parts.js";
+import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
 import { useSessionState, useSessionUsage } from "./runtime.js";
+import { useTheme } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
 
 interface SnapshotTask {
@@ -633,10 +635,35 @@ function ConfigControls({ options, setOption, permissions, capabilities }: {
             {permissions.available && (
               <PermissionSettings permissions={permissions} capabilities={capabilities} />
             )}
+            <AppearanceSettings />
             <GeneralSettings />
           </div>
         )}
       </span>
+    </div>
+  );
+}
+
+/** Settings popover: color theme (System follows the OS, live). */
+function AppearanceSettings() {
+  const { choice, setChoice } = useTheme();
+  return (
+    <div className="config-appearance">
+      <span className="config-field-label">Appearance</span>
+      <div className="theme-choice" role="radiogroup" aria-label="Color theme">
+        {(["system", "dark", "light"] as const).map((option) => (
+          <button
+            key={option}
+            type="button"
+            role="radio"
+            aria-checked={choice === option}
+            className={`theme-option ${choice === option ? "theme-option-on" : ""}`}
+            onClick={() => setChoice(option)}
+          >
+            {option === "system" ? "System" : option === "dark" ? "Dark" : "Light"}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -809,6 +836,106 @@ function formatTokens(count: number): string {
   return String(count);
 }
 
+/** Session-list timestamps: relative ("5m ago"), full stamp on hover. */
+function formatRelativeTime(iso: string): string {
+  const elapsed = Date.now() - new Date(iso).getTime();
+  if (elapsed < 60_000) return "just now";
+  const minutes = Math.floor(elapsed / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+/** Header toggle: hides the git rail and inspector so the thread centers. */
+const RAILS_KEY = "workflow.rails";
+
+function RailsToggle() {
+  const [off, setOff] = useState((): boolean => {
+    try {
+      return window.localStorage.getItem(RAILS_KEY) === "off";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    document.documentElement.dataset.rails = off ? "off" : "on";
+    try {
+      window.localStorage.setItem(RAILS_KEY, off ? "off" : "on");
+    } catch {
+      // Storage unavailable: the toggle applies for this session only.
+    }
+  }, [off]);
+  return (
+    <button
+      type="button"
+      className="rail-toggle"
+      aria-pressed={off}
+      title={off ? "Show the git rail and inspector panels" : "Focus the conversation — hide the side panels"}
+      onClick={() => setOff((value) => !value)}
+    >
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+        <path d="M5.8 2.5v11M10.2 2.5v11" />
+      </svg>
+    </button>
+  );
+}
+
+/** Live activity while a turn runs: what the agent is doing plus elapsed time.
+ * The status reads the same projection the transcript renders — no extra
+ * server surface. */
+function WorkingStatus() {
+  const { items } = useSessionState();
+  const [elapsed, setElapsed] = useState(0);
+  const startedRef = useRef(0);
+  useEffect(() => {
+    startedRef.current = Date.now();
+    setElapsed(0);
+    const timer = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <div className="working" role="status" aria-live="polite">
+      <span className="working-dot" aria-hidden="true" />
+      <span className="working-activity">{describeActivity(items)}</span>
+      <span className="working-elapsed">{formatElapsed(elapsed)}</span>
+    </div>
+  );
+}
+
+function describeActivity(items: readonly OperatorSessionItem[]): string {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item === undefined) continue;
+    if (item.kind === "tool") {
+      if (item.status === "in_progress") return item.title;
+      if (item.status === "pending") return `${item.title} — awaiting`;
+      continue;
+    }
+    if (item.kind === "thinking") return "thinking…";
+    if (item.kind === "assistant") return "writing…";
+    if (item.kind === "plan") return "planning…";
+  }
+  return "working…";
+}
+
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+/** Empty-state suggestions; presentation-only — they fill the composer. */
+const SUGGESTED_PROMPTS: readonly string[] = [
+  "Explain what the failing tests in this repository cover",
+  "Draft a plan for the next change, then wait for my approval",
+  "Summarize the working-tree changes",
+];
+
 function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]; readonly refresh: () => Promise<void> }) {
   const [pending, setPending] = useState<string | undefined>(undefined);
   const [query, setQuery] = useState("");
@@ -886,8 +1013,11 @@ function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]
                   aria-current={session.active}
                   disabled={pending !== undefined}
                 >
-                  <span className="session-title">{pending === session.id ? "loading…" : session.title}</span>
-                  <span className="session-time">{new Date(session.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                  <span className="session-heading">
+                    {session.active && <span className="session-active-dot" aria-hidden="true" />}
+                    <span className="session-title">{pending === session.id ? "loading…" : session.title}</span>
+                  </span>
+                  <span className="session-time" title={new Date(session.updatedAt).toLocaleString()}>{formatRelativeTime(session.updatedAt)}</span>
                 </button>
                 <button
                   className="session-dismiss session-rename-trigger"
@@ -1274,7 +1404,9 @@ function GitRail({ status }: { readonly status: GitStatus | undefined }) {
               <span className={`git-status git-status-${change.status}`}>{GIT_STATUS_MARK[change.status]}</span>
               <span className="git-path" title={change.path}>{change.path}</span>
             </button>
-            {selected === change.path && <pre className="git-diff">{diff ?? "loading diff…"}</pre>}
+            {selected === change.path && (diff === undefined
+              ? <pre className="git-diff">loading diff…</pre>
+              : looksLikeDiff(diff) ? <DiffText text={diff} /> : <pre className="git-diff">{diff}</pre>)}
           </div>
         ))}
       </div>
@@ -1421,8 +1553,11 @@ export function App() {
   return (
     <div className="shell">
       <header className="shell-header">
-        <strong>Workflow Control</strong>
-        <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
+        <h1>Workflow Control</h1>
+        <div className="shell-header-actions">
+          <RailsToggle />
+          <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
+        </div>
       </header>
       <main className="shell-main">
         <div className="git-column"><GitRail status={gitStatus} /></div>
@@ -1431,7 +1566,18 @@ export function App() {
             <ThreadPrimitive.Viewport className="thread-viewport">
               <AuiIf condition={(state) => state.thread.isEmpty}>
                 <div className="welcome">
-                  <p>Describe the work to perform. Every action the agent takes is proposed and authorized through Workflow.</p>
+                  <p className="welcome-wordmark">Workflow</p>
+                  <p className="welcome-lede">Describe the work to perform. Every action the agent takes is proposed and authorized through Workflow.</p>
+                  <div className="welcome-suggestions">
+                    {SUGGESTED_PROMPTS.map((prompt) => (
+                      <button type="button" className="welcome-chip" key={prompt} onClick={() => setComposerText(prompt)}>
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="welcome-hints">
+                    <kbd>/</kbd> focus · <kbd>Enter</kbd> send · <kbd>Esc</kbd> cancel · <kbd>Alt</kbd>+<kbd>N</kbd> new session
+                  </p>
                 </div>
               </AuiIf>
               <ThreadPrimitive.Messages>
@@ -1446,10 +1592,7 @@ export function App() {
               )}
               <RegenerateAction />
               <AuiIf condition={(state) => state.thread.isRunning}>
-                <div className="working" role="status" aria-live="polite">
-                  <span className="working-dot" aria-hidden="true" />
-                  agent is working…
-                </div>
+                <WorkingStatus />
               </AuiIf>
             </ThreadPrimitive.Viewport>
             <div className="composer-dock">
@@ -1460,6 +1603,9 @@ export function App() {
                 <div className="composer-utilities">
                   <ExportSessionButton />
                 </div>
+              </div>
+              <div className="composer-footer">
+                <UsageMeter placement="composer" />
               </div>
             </div>
           </ThreadPrimitive.Root>
