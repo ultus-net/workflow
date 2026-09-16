@@ -1,47 +1,39 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { launchContainedAcpAgent } from "../src/adapters/acp-contained-agent.js";
 import { AcpSubprocessClient, type AcpPermissionDecision, type AcpSessionUpdate } from "../src/adapters/acp-subprocess.js";
-import { LinuxBubblewrapContainment } from "../src/containment/linux-bwrap.js";
-import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
 
-// G4 resume fidelity: does Cline's advertised loadSession actually replay a
-// persisted session faithfully after the agent process restarts? Phase 1
-// creates a session with a unique keyword turn inside a contained, persistent
-// scratch HOME; phase 2 relaunches a fresh contained agent against the same
-// HOME and loads the session, asserting the replay carries the original
-// prompt (in user chunks) and the keyword answer (in agent chunks). The
-// continuation recall assertion below is the G4 gap contract and it
-// currently FAILS deterministically (G4 reopened 2026-09-16,
-// docs/ACP_SURFACE.md): loadSession replays the visible transcript but does
-// NOT restore the model's context, so a resumed continuation cannot recall
-// the keyword. Keep the assertion as the desired-behavior contract — a
-// gated run documents the failure until Cline's session/load restores model
-// context; do not weaken it into a pass.
-const runResumeProbe = process.env.WORKFLOW_ACP_CLINE_RESUME === "1";
+// G4-equivalent resume fidelity for OpenCode: does the advertised loadSession
+// actually restore a persisted session faithfully after the agent process
+// restarts? Phase 1 creates a session with a unique keyword turn; phase 2
+// relaunches a fresh `opencode acp` against the same workspace and loads the
+// session, asserting the replay carries the original prompt (in user chunks)
+// and the keyword answer (in agent chunks). The continuation recall
+// assertion is the desired-behavior contract — whether OpenCode's
+// session/load restores the model's context (unlike Cline 3.0.61, where the
+// equivalent probe fails deterministically per docs/ACP_SURFACE.md G4) is
+// exactly what this probe measures; do not weaken it into a pass. Sessions
+// persist through OpenCode's ambient store (keyed by the workspace path), so
+// the launch keeps the ambient environment that the other OpenCode probes
+// proved working.
+const runResumeProbe = process.env.WORKFLOW_ACP_OPENCODE_RESUME === "1";
 
 test(
-  "Cline ACP resume probe replays a persisted session faithfully after an agent restart",
+  "OpenCode ACP resume probe replays and recalls a persisted session after an agent restart",
   { skip: !runResumeProbe, timeout: 300_000 },
   async () => {
-    const workspace = await mkdtemp(path.join(tmpdir(), "workflow-acp-resume-ws-"));
-    const scratchHome = await mkdtemp(path.join(tmpdir(), "workflow-acp-resume-home-"));
+    const workspace = await mkdtemp(path.join(tmpdir(), "wf-opencode-resume-ws-"));
     const keyword = `resume-${randomUUID().slice(0, 8)}`;
-    const clineApiKey = await loadClineApiKey("Cline resume probe");
-    const cline = clineLaunchEntry();
 
-    const launch = () => launchContainedAcpAgent(new LinuxBubblewrapContainment(), {
-      executable: cline.executable,
-      ...(cline.script !== undefined ? { script: cline.script } : {}),
-      args: ["--acp", "--provider", "openrouter", "--auto-approve", "false", "--cwd", workspace],
-      workspace,
-      home: scratchHome,
-      environment: { CLINE_API_KEY: clineApiKey, CLINE_PROVIDER: process.env.CLINE_PROVIDER ?? "openrouter" },
+    const launch = () => spawn("opencode", ["acp", "--pure", "--cwd", workspace], {
+      cwd: workspace,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env },
     });
     const promptWithTimeout = (client: AcpSubprocessClient, sessionId: string, text: string, ms: number) =>
       Promise.race([
@@ -90,13 +82,12 @@ test(
       await phaseTwo.close();
       if (phaseTwoChild.exitCode === null && !phaseTwoChild.killed) phaseTwoChild.kill("SIGKILL");
       await rm(workspace, { recursive: true, force: true });
-      await rm(scratchHome, { recursive: true, force: true });
     }
 
     // Scope assertions to specific chunk kinds so the keyword embedded in the
-    // user prompt cannot satisfy the agent-answer check; the recall assertion
-    // is the G4 contract (see the header comment — it currently fails
-    // deterministically because loadSession does not restore model context).
+    // user prompt cannot satisfy the agent-answer check; chunk text is joined
+    // across updates before matching so a reply split across chunk boundaries
+    // still satisfies the recall contract.
     const chunkText = (updates: AcpSessionUpdate[], kind: string) =>
       updates.flatMap((update) =>
         update.update.sessionUpdate === kind ? [(update.update.content as { text?: string }).text ?? ""] : [],
@@ -105,12 +96,18 @@ test(
     const keywordReplayed = chunkText(replayed, "agent_message_chunk").includes(keyword);
     const keywordRecalled = chunkText(continuationUpdates, "agent_message_chunk").includes(keyword);
     const replayKinds = replayed.map((update) => update.update.sessionUpdate);
+    const continuationReply = continuationUpdates.flatMap((update) =>
+      update.update.sessionUpdate === "agent_message_chunk"
+        ? [(update.update.content as { text?: string }).text ?? ""]
+        : [],
+    ).join("");
     console.log(JSON.stringify({
       sessionId,
       replayKinds,
       userPromptReplayed,
       keywordReplayed,
       keywordRecalled,
+      continuationReply: continuationReply.slice(0, 300),
       continuation,
     }, null, 2));
 

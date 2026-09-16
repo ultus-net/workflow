@@ -57,6 +57,12 @@ hub's HTTP routes: fire → contained ACP turn → review gate + test evidence);
 the MCP-config mount probe (`test/acp-cline-mcp-mount-probe.test.ts` — ran
 against the vendored pinned entry and recorded a negative finding: the agent
 honors none of the candidate scratch-home settings paths, `NO_MCP_TOOLS`;
-the F1/G3 hub-owned MCP-config mounts stay deferred); tool-matrix probes
+the F1/G3 hub-owned MCP-config mounts stay deferred); the OpenCode
+conformance probes (`test/acp-opencode-subagent-probe.test.ts` — Green
+verdict: the `task` spawn projected and permission-gated at the hub;
+`test/acp-opencode-mcp-mount-probe.test.ts` — positive on both hub-written
+config surfaces, `list_skills` returned the fixture skill, F1/G3 unblocked
+on OpenCode; `test/acp-opencode-resume-probe.test.ts` — model context
+restored across restart, exact keyword recalled); tool-matrix probes
 re-run per pinned Cline bump. All probes skip without their env gate;
 evidence and verdicts live in the docs referenced above.
