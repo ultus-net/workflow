@@ -6,16 +6,23 @@ import path from "node:path";
 import test from "node:test";
 
 import { AcpSubprocessClient } from "../src/adapters/acp-subprocess.js";
+import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
 
 const runReal = process.env.WORKFLOW_ACP_REAL === "1";
 
-async function probe(command: string, args: string[], authMethodId?: string, promptTimeoutMs = 20_000) {
+async function probe(
+  command: string,
+  args: string[],
+  authMethodId?: string,
+  promptTimeoutMs = 20_000,
+  extraEnv: Record<string, string> = {},
+) {
   const cwd = await mkdtemp(path.join(tmpdir(), "workflow-acp-probe-"));
   await writeFile(path.join(cwd, "README.md"), "# ACP probe fixture\n");
   const child = spawn(command, [...args, "--cwd", cwd], {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env },
+    env: { ...process.env, ...extraEnv },
   });
   const client = new AcpSubprocessClient({ child });
   const updates: unknown[] = [];
@@ -49,7 +56,26 @@ test("real opencode acp initializes and completes a read-only prompt probe", { s
 });
 
 test("real cline --acp initializes and completes a read-only prompt probe", { skip: !runReal, timeout: 30_000 }, async () => {
-  const evidence = await probe("cline", ["--acp", "--auto-approve", "false"], "cline", 12_000);
+  // The established testing path: the vendored patched Cline binary with
+  // provider and key (CLI provider flags + CLINE_API_KEY env), matching the
+  // production hub launch. The stock PATH cline only authenticates via its
+  // account cloud and cannot run headless API-key sessions.
+  const clineApiKey = await loadClineApiKey("real cline probe");
+  const cline = clineLaunchEntry();
+  const evidence = await probe(
+    cline.executable,
+    [
+      ...(cline.script !== undefined ? [cline.script] : []),
+      "--acp",
+      "--provider",
+      "openrouter",
+      "--auto-approve",
+      "false",
+    ],
+    undefined,
+    20_000,
+    { CLINE_API_KEY: clineApiKey, CLINE_PROVIDER: "openrouter" },
+  );
   assert.equal(evidence.initialized.agentInfo?.name, "cline");
   assert.equal(evidence.initialized.protocolVersion, 1);
   assert.ok(evidence.session.sessionId);
