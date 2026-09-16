@@ -352,7 +352,7 @@ delivery, never adherence (prompts are not a security boundary).
 > **Probe-target correction (2026-09-16):** stock Cline is account-cloud-only
 > in ACP mode and cannot authenticate headlessly, so the probe must target
 > the vendored surface — the stock-launched mount probe can never pass
-> (`docs/ACP_RESEARCH.md` §11.3).
+> (`docs/ACP_RESEARCH.md`, "Patched-SDK versus stock-ACP" section).
 
 ### Task F2: Availability gating by learner level
 
