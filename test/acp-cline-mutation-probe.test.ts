@@ -1,51 +1,58 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { AcpSubprocessClient, type AcpPermissionDecision } from "../src/adapters/acp-subprocess.js";
 import type { AcpPermissionRequestParams } from "../src/adapters/acp-permission.js";
+import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
 
 const runClineMutation = process.env.WORKFLOW_ACP_CLINE_MUTATION === "1";
 const denyPermission = process.env.WORKFLOW_ACP_CLINE_DENY === "1";
-const defaultKeyFile = path.join(homedir(), ".config", "workflow", "cline-api-key");
-const keyFile = process.env.CLINE_API_KEY_FILE ?? defaultKeyFile;
 
-async function loadClineApiKey(): Promise<string | undefined> {
-  if (process.env.CLINE_API_KEY) return process.env.CLINE_API_KEY;
-  try {
-    const key = (await readFile(keyFile, "utf8")).trim();
-    return key.length > 0 ? key : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-if (runClineMutation && !process.env.CLINE_API_KEY && !process.env.CLINE_API_KEY_FILE && !process.env.HOME) {
-  throw new Error("CLINE_API_KEY or CLINE_API_KEY_FILE is required for the Cline mutation probe; do not paste it into chat");
-}
+/**
+ * Records permission behavior for one bounded edit against the vendored
+ * pinned Cline ACP surface. The probe launches the vendored entry via
+ * `clineLaunchEntry()` with `--provider openrouter` plus key env: stock PATH
+ * cline (3.0.62) is account-cloud-only in ACP mode and cannot authenticate
+ * headlessly (`docs/ACP_RESEARCH.md`) — the pre-retarget live run only
+ * passed by riding the ambient real-HOME account session on the stock
+ * binary, which is machine-specific evidence, not a headless path.
+ */
 
 test(
   "Cline ACP mutation probe records permission behavior for one bounded edit",
   { skip: !runClineMutation, timeout: 60_000 },
   async () => {
+    const clineApiKey = await loadClineApiKey("Cline mutation probe");
     const cwd = await mkdtemp(path.join(tmpdir(), "workflow-acp-cline-mutation-"));
     const target = path.join(cwd, "mutation-target.txt");
     await writeFile(target, "before\n", "utf8");
-    const clineApiKey = await loadClineApiKey();
-    if (!clineApiKey) throw new Error("Cline mutation probe requires CLINE_API_KEY or a readable CLINE_API_KEY_FILE");
-    const child = spawn("cline", ["--acp", "--auto-approve", "false", "--cwd", cwd], {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        CLINE_API_KEY: clineApiKey,
-        CLINE_PROVIDER: process.env.CLINE_PROVIDER ?? "openrouter",
+    const cline = clineLaunchEntry();
+    const child = spawn(
+      cline.executable,
+      [
+        ...(cline.script !== undefined ? [cline.script] : []),
+        "--acp",
+        "--provider",
+        "openrouter",
+        "--auto-approve",
+        "false",
+        "--cwd",
+        cwd,
+      ],
+      {
+        cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          CLINE_API_KEY: clineApiKey,
+          CLINE_PROVIDER: process.env.CLINE_PROVIDER ?? "openrouter",
+        },
       },
-    });
+    );
     const permissionRequests: AcpPermissionRequestParams[] = [];
     const client = new AcpSubprocessClient({
       child,

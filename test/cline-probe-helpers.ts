@@ -32,6 +32,9 @@ export async function loadClineApiKey(purpose = "Cline probe"): Promise<string> 
  * realpaths). Matches the production launch resolution: the vendored,
  * Workflow-patched compiled Cline binary when built (self-contained
  * executable, no script), the global `cline` wrapper under Node otherwise.
+ * The fallback is the stock PATH surface — account-cloud-only in ACP mode —
+ * so gated runs need the vendored build present (or `WORKFLOW_CLINE_BIN`
+ * pointing at an equivalent headless-capable binary) to authenticate.
  */
 export function clineLaunchEntry(): { executable: string; script?: string | undefined } {
   return resolveClineLaunch({

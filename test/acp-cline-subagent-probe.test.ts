@@ -8,6 +8,7 @@ import test from "node:test";
 import { KNOWN_SPAWN_TOOLS } from "../src/adapters/acp.js";
 import { AcpSubprocessClient, type AcpSessionUpdate } from "../src/adapters/acp-subprocess.js";
 import type { AcpPermissionRequestParams } from "../src/adapters/acp-permission.js";
+import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
 
 /**
  * Plan Task B3: subagent conformance probe (Cline over ACP). Establishes, per
@@ -17,17 +18,17 @@ import type { AcpPermissionRequestParams } from "../src/adapters/acp-permission.
  * workspace without any permission request the hub ever sees.
  *
  * Gated: run deliberately with WORKFLOW_ACP_CLINE_SUBAGENT=1 plus Cline ACP
- * credentials (CLINE_API_KEY). The probe fails closed when a workspace
- * mutation arrives with no projected tool activity at all — that is the
- * enforcement hole it exists to detect, and the finding that caps an agent
- * `advisory` or spawn-denied in docs/HOST_ADAPTERS.md.
+ * credentials (CLINE_API_KEY or CLINE_API_KEY_FILE). The probe launches the
+ * vendored pinned Cline via `clineLaunchEntry()` — the matrix row targets
+ * 3.0.61 and stock PATH cline (3.0.62) is account-cloud-only in ACP mode,
+ * so it cannot authenticate headlessly (`docs/ACP_RESEARCH.md`). The probe
+ * fails closed when a workspace mutation arrives with no projected tool
+ * activity at all — that is the enforcement hole it exists to detect, and
+ * the finding that caps an agent `advisory` or spawn-denied in
+ * docs/HOST_ADAPTERS.md.
  */
 
 const runProbe = process.env.WORKFLOW_ACP_CLINE_SUBAGENT === "1";
-
-if (runProbe && !process.env.CLINE_API_KEY) {
-  throw new Error("CLINE_API_KEY is required for the subagent probe; do not paste it into chat");
-}
 
 const CANARY = "subagent-canary.txt";
 
@@ -44,12 +45,31 @@ test(
   "Cline ACP subagent conformance probe: spawn visibility and gateability",
   { skip: !runProbe, timeout: 180_000 },
   async () => {
+    const clineApiKey = await loadClineApiKey("Cline subagent probe");
     const cwd = await mkdtemp(path.join(tmpdir(), "workflow-acp-subagent-"));
-    const child = spawn("cline", ["--acp", "--auto-approve", "false", "--cwd", cwd], {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env },
-    });
+    const cline = clineLaunchEntry();
+    const child = spawn(
+      cline.executable,
+      [
+        ...(cline.script !== undefined ? [cline.script] : []),
+        "--acp",
+        "--provider",
+        "openrouter",
+        "--auto-approve",
+        "false",
+        "--cwd",
+        cwd,
+      ],
+      {
+        cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          CLINE_API_KEY: clineApiKey,
+          CLINE_PROVIDER: process.env.CLINE_PROVIDER ?? "openrouter",
+        },
+      },
+    );
     const updates: AcpSessionUpdate[] = [];
     const permissionRequests: AcpPermissionRequestParams[] = [];
     const client = new AcpSubprocessClient({
@@ -92,6 +112,7 @@ test(
         spawnToolCallObserved,
         spawnPermissionObserved,
         anyPermissionObserved: permissionRequests.length > 0,
+        permissionCount: permissionRequests.length,
         toolCallCount: toolCalls.length,
         canaryWritten,
         finalMessage: finalMessage.slice(0, 500),

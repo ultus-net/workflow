@@ -47,13 +47,16 @@ the hub layer today; documented honestly.
    per-session escalation counters are not yet ported; scheduled-run budget
    caps bound the unattended case.
 
-**Probe backlog (gated, credentials required):** B3 subagent probe run
-(`test/acp-cline-subagent-probe.test.ts`, written); G1 opencode ask-config
-probe run (`test/acp-opencode-ask-probe.test.ts`, written — ask-configured
-project, denial-honor invariant); C1 scheduled real-agent turn
-(`test/hub-scheduled-turn-probe.test.ts`, written — full chain through the
+**Probe status (gated, credentials required — all ran live 2026-09-16):** B3
+subagent probe (`test/acp-cline-subagent-probe.test.ts` — Red verdict in
+`docs/HOST_ADAPTERS.md`: spawn tool call and permission invisible to the
+hub); G1 opencode ask-config probe (`test/acp-opencode-ask-probe.test.ts` —
+pass, denial-honor invariant); C1 scheduled real-agent turn
+(`test/hub-scheduled-turn-probe.test.ts` — pass, full chain through the
 hub's HTTP routes: fire → contained ACP turn → review gate + test evidence);
-the MCP-config mount probe (`test/acp-cline-mcp-mount-probe.test.ts`,
-written — writes every known candidate settings path into a scratch home and
-records which one the stock agent honors); `acp-cline-tool-matrix` re-run per
-pinned Cline bump. All probes skip without their env gate; none has run yet.
+the MCP-config mount probe (`test/acp-cline-mcp-mount-probe.test.ts` — ran
+against the vendored pinned entry and recorded a negative finding: the agent
+honors none of the candidate scratch-home settings paths, `NO_MCP_TOOLS`;
+the F1/G3 hub-owned MCP-config mounts stay deferred); tool-matrix probes
+re-run per pinned Cline bump. All probes skip without their env gate;
+evidence and verdicts live in the docs referenced above.

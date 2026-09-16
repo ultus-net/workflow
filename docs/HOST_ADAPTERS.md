@@ -89,7 +89,7 @@ the pinned agent version:
 
 | Agent (pinned) | Spawn tool advertised | Spawn gateable | Internal subagents visible to hub | Verdict |
 |---|---|---|---|---|
-| Cline 3.0.61 (ACP) | unprobed | unprobed | unprobed | **Probe pending** — run `WORKFLOW_ACP_CLINE_SUBAGENT=1` with `CLINE_API_KEY` via `node --import tsx --test test/acp-cline-subagent-probe.test.ts`; until green evidence exists, spawn stays default-denied and unprobed agents are not labeled `enforced` for spawn-inclusive workflows |
+| Cline 3.0.61 (ACP) | yes — `spawn_agent` exists and was used unprompted | no — no spawn tool call projected and no spawn permission reached the hub | no — the subagent's workspace write arrived with no accounting tool call | **Red (live 2026-09-16, vendored pinned entry)** — the spawn path is invisible to the hub: `spawn_agent` ran and the subagent wrote the canary, yet `spawnToolCallObserved: false` and `spawnPermissionObserved: false` in the probe evidence (`permissionCount: 3` unrelated permissions). Per the rules below the agent stays capped `advisory`/spawn-denied for spawn-inclusive workflows and must not be labeled `enforced`. Re-run on every pinned version bump: `WORKFLOW_ACP_CLINE_SUBAGENT=1` with Cline credentials (`CLINE_API_KEY` or `CLINE_API_KEY_FILE`) via `node --import tsx --test test/acp-cline-subagent-probe.test.ts` (vendored pinned entry — stock PATH cline is account-cloud-only in ACP mode and cannot authenticate headlessly — `docs/ACP_RESEARCH.md`) |
 | OpenCode (ACP) | — | — | — | Advisory-capped: default ACP mode mutates without permission requests (`docs/ACP_DECISION.md`); re-evaluation requires the ask-config probe (plan Task G1) |
 
 Probe rules (fail closed):
