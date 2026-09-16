@@ -1,6 +1,6 @@
 # ACP Surface Evaluation (W036)
 
-Decision inputs for the clean Workflow terminal surface versus the patched Cline fallback, grounded in Cline 3.0.61 source (`apps/cli/src/acp/session-updates.ts`), the current ACP spec, and the W035 runtime evidence. Status: 2026-09-14.
+Decision inputs for the clean Workflow terminal surface versus the patched Cline fallback, grounded in Cline 3.0.61 source (`apps/cli/src/acp/session-updates.ts`), the current ACP spec, and the W035 runtime evidence. Status: 2026-09-14; probe-fidelity corrections 2026-09-16 (G4 resume, stock-ACP headless auth).
 
 ## 1. What the hub ACP session stream projects reliably
 
@@ -14,7 +14,7 @@ From Cline 3.0.61's ACP emitter and probe evidence:
 | Mode / model / config | `session/new` result (`availableModes`, `availableModels`, `configOptions`), `current_mode_update`, `config_option_update`, `session_info_update` | Workflow retains the complete current config-option state and mutates advertised settings with `session/set_config_option` on the active session |
 | Permission authority | `session/request_permission` with usable allow/reject options; denial honored | Proven (W035) |
 | Cancellation | `session/cancel` honored at runtime (W035); fail-closed turn/session cancel on no-reject denial (unit-tested) | Proven |
-| Session resume | `session/load` replays user/agent message chunks + session info before resolving (tool-call replay code-inspected in `session-load.ts`, not probe-exercised) | **Proven** 2026-09-14 (gated resume probe): faithful message replay after a full agent restart; continuation turn recalls the original keyword (restored context) |
+| Session resume | `session/load` replays user/agent message chunks + session info before resolving (tool-call replay code-inspected in `session-load.ts`, not probe-exercised) | **Split verdict 2026-09-16:** transcript replay after a full agent restart is proven (2026-09-14 gated probe — user/agent chunks + session info), but continuation recall fails deterministically — `loadSession` restores the visible transcript, not the model's context. The resume probe's recall assertion documents the failure |
 
 Authority rule: the stream is agent-cooperative UX projection only. Enforcement never derives from it — subjects come from permission requests, filesystem effects from OS containment.
 
@@ -29,7 +29,7 @@ Authority rule: the stream is agent-cooperative UX projection only. Enforcement 
 - **Plan content** — plan/act exposed only as mode ids; no `plan` updates emitted.
 - **Available slash commands** — not emitted.
 - **Terminal output embedding** — `ToolCallContent` type `terminal` is agent-optional; Cline does not use it (and never calls `terminal/*`, W035).
-- **Exact conversation history** — agent-owned; `session/load` replay correctness was per-agent and unverified **until proven** (see §1 resume row — verified for Cline 3.0.61 on 2026-09-14).
+- **Exact conversation history** — agent-owned; `session/load` transcript replay is verified for Cline 3.0.61 (2026-09-14), but restored *model* context is disproven (2026-09-16): a resumed continuation cannot recall pre-restart turns (see §1 resume row).
 
 ## 3. Clean-surface daily-driver parity evaluation
 
@@ -44,7 +44,7 @@ Parity gaps:
 | G1 | ~~No token/cost visibility~~ **MITIGATED 2026-09-14** — hub metering proxy (`createModelUsageProxy` + `meteredProviderSettings`) holds the key proxy-side, forces `usage.include`, records tokens/cost; gated probe: 2 requests / 8,668 tokens / $0.0132 with placeholder-only sandbox env (post-P1-fix re-run; original 8,790 / $0.0140). Wired into the clean surface 2026-09-14: `tui:acp` runs all model traffic through the proxy (placeholder-only contained env) and prints metrics at exit | Remaining: budget enforcement |
 | G2 | No slash-command/mention parity (commands not emitted; `@`-mentions are CLI-side, not ACP) | Daily-driver ergonomics |
 | G3 | Input/editor UX (mid-turn queueing, attachments) must be built client-side | Build cost, not a protocol blocker (image prompt content exists) |
-| G4 | ~~Session resume fidelity~~ **RESOLVED 2026-09-14** — gated probe: full replay after agent restart (user/agent chunks + session info), keyword turn intact, continuation completes | None |
+| G4 | ~~Session resume fidelity~~ **REOPENED 2026-09-16** — the 2026-09-14 probe proved transcript replay (user/agent chunks + session info after agent restart), but continuation recall fails deterministically: `loadSession` does not restore model context, so a resumed session loses pre-restart conversational state | Correctness of long-running tasks across agent restarts |
 | G5 | Error surfacing is thin (error events dropped) | Debuggability cost |
 | G6 | Subagent/task spawning (`spawn_agent`) not distinctly gated or projected | Acceptable short-term |
 | G7 | Context/compaction not observable at runtime and not configurable on the ACP path (`--compaction` dropped before `runAcpMode` in 3.0.61; `usage_update` stabilized in spec but unimplemented by pinned SDK; compaction signaling still an RFD draft) | Same family as G1 — both control and visibility deferred on the ACP path |
@@ -52,5 +52,7 @@ Parity gaps:
 ## 4. Fallback classification
 
 Patched Cline Ink (the current `src/cli/tui.tsx` surface) remains the **fallback/migration surface**, not the base. It becomes required only if G1 (token economy) or G2 (commands/mentions) are judged material daily-driver requirements the clean surface cannot yet meet; otherwise the clean Workflow surface over stock-ACP Cline is the lead path, with the gaps tracked as explicit follow-ups. This classification stands unless spike evidence shows the clean surface cannot satisfy a material requirement.
+
+**Stock-ACP headless-auth qualification (2026-09-16):** the stock PATH Cline (3.0.62) is account-cloud-only in ACP mode — its `initialize` advertises no API-key auth method, and headless key sessions fail with `re-authenticate your Cline account`. Stock-ACP therefore cannot run headless; the vendored patched binary (`--acp --provider openrouter` plus `CLINE_API_KEY`, the production hub launch path) is the only headless Cline surface. Consequence for probing: the gated MCP mount probe launches stock `cline` headlessly, so it can never pass on stock; hub-owned MCP-config evidence must be gathered against the vendored surface.
 
 **Settings follow-up completed 2026-09-15:** Workflow now implements `session/set_config_option`, replaces local option state with the complete agent response (including dependent changes), accepts agent-originated `config_option_update` state, and projects advertised selectors through the `/` menu without rebuilding the active session. `CLINE_MODEL` remains only an optional initial launch selection.
