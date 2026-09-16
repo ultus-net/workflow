@@ -82,6 +82,38 @@ function stubDiff(diff: string | Error) {
   };
 }
 
+/**
+ * Serves one fresh reviewer session per spawn, each answering with the next
+ * message in order (W040 partitioned reviews run one isolated session per
+ * unit plus one integration session).
+ */
+function stubSequenceReviewer(finalMessages: (string | Error)[]): {
+  factory: ReviewerAgentSessionFactory;
+  prompts: string[];
+  disposed: number;
+} {
+  const prompts: string[] = [];
+  let spawned = 0;
+  let disposed = 0;
+  const factory: ReviewerAgentSessionFactory = {
+    async spawn() {
+      const message = finalMessages[Math.min(spawned, finalMessages.length - 1)]!;
+      spawned += 1;
+      return {
+        async review(prompt: string) {
+          prompts.push(prompt);
+          if (message instanceof Error) throw message;
+          return message;
+        },
+        async dispose() {
+          disposed += 1;
+        },
+      };
+    },
+  };
+  return { factory, prompts, get disposed() { return disposed; } };
+}
+
 function stubStatus(status: string | Error) {
   return async () => {
     if (status instanceof Error) throw status;
@@ -91,7 +123,7 @@ function stubStatus(status: string | Error) {
 
 async function runnerWith(
   t: TestContext,
-  reviewer: ReturnType<typeof stubReviewer>,
+  reviewer: { factory: ReviewerAgentSessionFactory; prompts: string[]; disposed: number },
   diff: string | Error = "diff --git a/x b/x",
   status?: string | Error,
 ) {
@@ -345,4 +377,110 @@ test("without a status source the manifest gate stays dormant (backward-compatib
   assert.equal(result.verdict, "approved");
   assert.equal(result.recorded, true);
   assert.ok(!reviewer.prompts[0]!.includes("Review Coverage Manifest"));
+});
+
+// W040: multi-component scope is reviewed per unit with fresh isolated
+// sessions carrying only that unit's focused rules, plus an integration
+// review; every unit must approve with complete [COVERAGE].
+const STATUS_MULTI = "M  src/integrations/hub-reviewer.ts\0M  test/hub-reviewer.test.ts\0M  src/ui/web.ts\0";
+const UNIT_AXES = `${AXES_SUMMARY}`;
+
+test("a multi-unit scope runs one isolated reviewer per unit plus integration, all approving", async (t) => {
+  const reviewer = stubSequenceReviewer([
+    `[APPROVE]\n${UNIT_AXES}\n[COVERAGE] src/integrations/hub-reviewer.ts, test/hub-reviewer.test.ts`,
+    `[APPROVE]\n${UNIT_AXES}\n[COVERAGE] src/ui/web.ts`,
+    `[APPROVE]\n${UNIT_AXES}\n[COVERAGE] src/integrations, src/ui`,
+  ]);
+  const { controller, workspace, application, runner } = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI);
+  await controller.begin({ runId: "author-14", title: "Author run", workspace, requiresReview: true });
+
+  const result = await runner.reviewRun({ runId: "author-14", workspace });
+
+  assert.equal(result.verdict, "approved");
+  assert.equal(result.recorded, true);
+  assert.equal(result.parseFailure, undefined);
+  // Unit 1: implementation + its paired test, focused rules, [COVERAGE] of its paths.
+  assert.ok(reviewer.prompts[0]!.includes("Review unit `src/integrations` — 2 file(s)"));
+  assert.ok(reviewer.prompts[0]!.includes("- test/hub-reviewer.test.ts"));
+  assert.ok(reviewer.prompts[0]!.includes("Focused rules for this unit:"));
+  // Unit 2 carries ui rules, not authority or security rules.
+  assert.ok(reviewer.prompts[1]!.includes("Review unit `src/ui` — 1 file(s)"));
+  assert.ok(reviewer.prompts[1]!.includes("cannot bypass kernel decisions"));
+  assert.ok(!reviewer.prompts[1]!.includes("legal kernel transitions"));
+  // Integration lists every unit id and requires [COVERAGE] of the ids.
+  assert.ok(reviewer.prompts[2]!.includes("Integration review — cross-unit behavior for 2 units:"));
+  assert.ok(reviewer.prompts[2]!.includes("- src/integrations ("));
+  assert.ok(reviewer.prompts[2]!.includes("- src/ui ("));
+  assert.equal(reviewer.disposed, 3);
+  assert.ok(result.summary.includes("Partitioned review approved across 2 unit(s) + integration"));
+  assert.ok(result.summary.includes("Units: src/integrations, src/ui"));
+  // The run can verify through the ordinary finish path.
+  await controller.finish({ runId: "author-14", outcome: "verified" });
+  const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
+  assert.equal(runTask?.state, "VERIFIED");
+});
+
+test("one unit's rejection fails the whole partitioned review closed", async (t) => {
+  const reviewer = stubSequenceReviewer([
+    `[APPROVE]\n${UNIT_AXES}\n[COVERAGE] src/integrations/hub-reviewer.ts, test/hub-reviewer.test.ts`,
+    `[REQUEST_CHANGES]\nfindings: P1 ui regression in test integrity.`,
+  ]);
+  const { controller, workspace, application, runner } = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI);
+  await controller.begin({ runId: "author-15", title: "Author run", workspace, requiresReview: true });
+
+  const result = await runner.reviewRun({ runId: "author-15", workspace });
+
+  assert.equal(result.verdict, "changes_requested");
+  assert.equal(result.recorded, false);
+  assert.match(result.parseFailure ?? "", /unit src\/ui: changes requested by unit review/);
+  // The rejecting unit stops the review: no integration session is spawned.
+  assert.equal(reviewer.prompts.length, 2);
+  const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
+  assert.equal(runTask?.state, "IN_PROGRESS");
+});
+
+test("a unit approval with incomplete [COVERAGE] fails closed naming the unit and the path", async (t) => {
+  const reviewer = stubSequenceReviewer([
+    `[APPROVE]\n${UNIT_AXES}\n[COVERAGE] src/integrations/hub-reviewer.ts`,
+  ]);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI);
+  await controller.begin({ runId: "author-16", title: "Author run", workspace, requiresReview: true });
+
+  const result = await runner.reviewRun({ runId: "author-16", workspace });
+
+  assert.equal(result.verdict, "changes_requested");
+  assert.equal(result.recorded, false);
+  assert.match(result.parseFailure ?? "", /unit src\/integrations: approved review coverage is incomplete/);
+  assert.match(result.parseFailure ?? "", /test\/hub-reviewer\.test\.ts/);
+});
+
+test("an integration approval that omits a unit id fails closed", async (t) => {
+  const reviewer = stubSequenceReviewer([
+    `[APPROVE]\n${UNIT_AXES}\n[COVERAGE] src/integrations/hub-reviewer.ts, test/hub-reviewer.test.ts`,
+    `[APPROVE]\n${UNIT_AXES}\n[COVERAGE] src/ui/web.ts`,
+    `[APPROVE]\n${UNIT_AXES}\n[COVERAGE] src/integrations`,
+  ]);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI);
+  await controller.begin({ runId: "author-17", title: "Author run", workspace, requiresReview: true });
+
+  const result = await runner.reviewRun({ runId: "author-17", workspace });
+
+  assert.equal(result.verdict, "changes_requested");
+  assert.equal(result.recorded, false);
+  assert.match(result.parseFailure ?? "", /unit integration: approved review coverage is incomplete/);
+  assert.match(result.parseFailure ?? "", /src\/ui/);
+});
+
+test("a single-component scope keeps the single-session flow (no integration review)", async (t) => {
+  const reviewer = stubReviewer(`[APPROVE]\n${AXES_SUMMARY}\n[COVERAGE] src/a.ts, src/b.ts`);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_TWO);
+  await controller.begin({ runId: "author-18", title: "Author run", workspace, requiresReview: true });
+
+  const result = await runner.reviewRun({ runId: "author-18", workspace });
+
+  assert.equal(result.verdict, "approved");
+  assert.equal(result.recorded, true);
+  assert.equal(reviewer.prompts.length, 1);
+  assert.ok(reviewer.prompts[0]!.includes("### Review Coverage Manifest (deterministic scope):"));
+  assert.ok(!reviewer.prompts[0]!.includes("Integration review"));
 });

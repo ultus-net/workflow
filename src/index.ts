@@ -30,6 +30,7 @@ export * from "./pedagogy/primm.js";
 export * from "./integrations/response-style.js";
 export * from "./review/rubric.js";
 export * from "./review/manifest.js";
+export * from "./review/partition.js";
 export * from "./integrations/run-registry.js";
 export * from "./ui/tui.js";
 export * from "./ui/web.js";
