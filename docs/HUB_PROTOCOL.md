@@ -27,7 +27,7 @@ Written atomically (temp file + rename) with mode `0600`:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `protocol` | number | Contract version. Clients must check `protocol === 1`. |
+| `protocol` | number | Contract version. Clients should treat any `protocol` value other than `1` as unknown and fail closed. (Note: the hub writes `protocol: 1`; the repo's reference client currently validates `hubId`/`endpoint`/`token` shape rather than asserting the protocol number — treat this field as reserved for future contract versioning.) |
 | `hubId` | string | 16 hex chars; unique per hub instance. |
 | `endpoint` | string | Loopback HTTP base URL (`http://127.0.0.1:<port>`). |
 | `token` | string | 64 hex chars; ordinary Cline bearer capability. Verifier-only endpoints use a separate capability. |
@@ -73,7 +73,12 @@ own evidence (instead of sharing the interactive task).
 Request: `{ "runId": "schedule:<uuid>", "title": "Nightly audit", "workspace": "/abs/dir", "requiresReview": true, "taskPrompt": "the ask the run was launched with" }`
 (`workspace`, `requiresReview`, and `taskPrompt` optional; workspace validated
 as in `/before-tool`. `requiresReview` makes the run task require `reviewer`
-evidence before it can reach `VERIFIED` — the review gate. `taskPrompt`
+evidence before it can reach `VERIFIED` — the review gate — and, when the
+hub is configured with a real `WORKFLOW_TEAM_TASK_VERIFY_COMMAND` (never the
+`"true"` default), it also declares fresh passing `environment` evidence for
+the workspace's own tests at subject `test:<workspace>`; `begin()` stales
+that subject so a later run cannot verify on a predecessor's green tests.
+`taskPrompt`
 (additive, W041) declares the run's ask: the hub-owned reviewer binds it into
 its provenance fingerprint, so the same diff under a different ask is
 reviewed fresh and never replays a prior approval; the scheduler always
@@ -111,14 +116,22 @@ Request: `{ "runId": "schedule:<uuid>", "outcome": "verified" | "failed" }`
 
 Requires the verifier capability. The ordinary discovery token cannot submit
 environment evidence or finish a run. For `verified`, the hub records **no**
-mutation and **no** fabricated evidence — a finish call only reports that the
-session ended. Promotion to `VERIFIED` is decided by the kernel on the run
-task's declared `requiredEvidence`: plain runs (empty requirements, the
-default) advance on that explicit policy alone, while `requiresReview` runs
-advance only on fresh reviewer evidence recorded through `/run/review`. For
-`failed`, it records a mutation and fresh failed environment evidence before
-transitioning the run task to `FAILED`. Unknown `runId` → authority error
-(fail closed).
+fabricated evidence — promotion is decided by the kernel on the run task's
+declared `requiredEvidence`: plain runs (empty requirements, the default)
+advance on the finish call alone, while `requiresReview` runs advance only
+on fresh reviewer evidence (and, when a real verify command is configured,
+fresh passing `test:<workspace>` evidence) — reviewer evidence first, then
+test evidence, then `VERIFIED`. When the hub owns a reviewer (production
+wiring wires a reviewer factory unconditionally), a finishing review-gated
+run that is still missing reviewer evidence auto-launches the contained
+hub-owned reviewer inside the finish call — that reviewer's approval IS a
+mutation and IS recorded through the same `/run/review` machinery (a
+finish call can therefore take minutes: reviewer turn plus, when
+configured, the workspace test command). A fail-closed reviewer outcome or
+failing/crashing tests leave the run `VERIFYING` with a surfaced blocking
+reason — never a silent pass. For `failed`, it records a mutation and fresh
+failed environment evidence before transitioning the run task to `FAILED`.
+Unknown `runId` → authority error (fail closed).
 
 ### `POST /team-task/verify` — verify a Cline team task from external evidence
 
@@ -127,7 +140,13 @@ Request: `{ "taskId": "task_0001", "workspace": "/abs/dir", "evidence": { ... } 
 
 Cline `team_task complete` moves its canonical task to `VERIFYING`; it may then
 advance in-process only when Workflow already holds fresh passing environment evidence
-from a trusted source. Without such evidence it remains `VERIFYING`. For a
+from a trusted source. What "already holds" means is verify-command-owned:
+the production hub defaults `WORKFLOW_TEAM_TASK_VERIFY_COMMAND` to `"true"`,
+so completion runs that command, records passing evidence at the
+`test:<workspace>` subject, and auto-promotes immediately; an empty value
+disables in-process promotion (the task stays `VERIFYING` until a
+verifier-token call supplies evidence); a real command gates promotion on its
+exit status (`docs/HUB.md`). For a
 workspace-scoped hub application, that task is namespaced as
 `cline-team:<encoded-workspace>:<taskId>` so Cline task IDs cannot collide
 across workspaces in the shared graph. A bridge without a workspace root uses
@@ -210,9 +229,11 @@ Error responses:
 Routes shell execution through Workflow containment (bubblewrap isolation,
 workspace limits).
 
-Request: `{ "command": "<string|argv record>", "cwd": "<absolute path>", "teamTaskId": "<optional active Cline task id>" }`
+Request: `{ "command": "<string|argv record>", "cwd": "<absolute path>", "workspace": "<optional absolute path>", "teamTaskId": "<optional active Cline task id>" }`
 
-`teamTaskId` is an ordinary-client lifecycle hint only. When present, Workflow
+`workspace` (optional) is the surface's workspace root, validated exactly as
+in `/before-tool`; when present, authorization targets the declared
+workspace's application (defaults to `cwd`). `teamTaskId` is an ordinary-client lifecycle hint only. When present, Workflow
 does not start the generic interactive seed task. Workflow resolves the hint into
 its workspace-canonical task namespace and permits process authorization only when
 that already-observed task is `IN_PROGRESS`. A known task that is no longer in

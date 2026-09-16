@@ -11,7 +11,7 @@ unchecked items are intentional gaps, not implied support.
 | Web item | TUI status | Evidence |
 |---|---|---|
 | Model/effort/mode pickers (composer-adjacent) | **Parity** — the `/`/Ctrl+P menu cycles every agent-advertised `configOption` (model, mode, thought_level, tool toggles) on the active session without rebuilding it | `test/tui.test.ts`, `test/acp-session.test.ts` (config cycling + `set_config_option` retention) |
-| Settings popover for boolean options | **Parity** (menu form) — boolean options cycle in the same menu | `test/tui.test.ts` (options menu) |
+| Settings popover for boolean options | **Parity** (menu form) — boolean options cycle in the same menu (no test exercises a boolean option specifically; the options-menu behavior itself is tested) | `test/tui.test.ts` (options menu) |
 | `session/set_mode` client-side when modes aren't configOptions | **Open** (web plans it too; no agent advertises modes-without-options yet) | — |
 
 ## Batch 2 (render what the projector drops)
@@ -21,7 +21,7 @@ unchecked items are intentional gaps, not implied support.
 | Plan updates → checklist | **Parity** — ACP `plan` updates project as typed `plan` events with structured entries; the web renders the full checklist, the terminal renders `[plan] N steps, M completed` counts (terminal-native form of the same semantics) | `test/acp-session.test.ts` (plan-update mode, typed plan entries) |
 | Typed tool cards with status/subjects | **Parity** — tool proposals/outcomes render with subjects and status markers; kind lives in the title | `test/tui.test.ts` (tool rows) |
 | Thinking blocks (default collapsed) | **Parity (terminal form)** — `agent_thought_chunk` interleaves as dim `[thinking]` transcript rows; the web's collapse/expand control has no terminal equivalent beyond scrolling, so the TUI shows the compact dim form | `test/tui-tasklist.test.ts` (thinking rows) |
-| Usage/cost readout (composer footer) | **Parity** — live `tokens · $cost` in the footer from the metering proxy | `test/tui-tasklist.test.ts` (usage meter) |
+| Usage/cost readout (composer footer) | **Parity** — live `tokens · $cost` in the header status line (refreshed once per second) from the metering proxy (the web item is composer-footer; the terminal renders it in the header status box) | `test/tui-tasklist.test.ts` (usage meter) |
 | `session_info_update` → title sync | **Parity** — projects as a status row (terminal has no session chrome to title) | `test/acp-session.test.ts` |
 | Review verdicts + blocking reasons + claims (A3) | **Parity, TUI-first** — the hub serves run-gate observability on `/snapshot` and the Activity panel renders blocked runs, verdicts, and unverified completion claims | `test/tui-tasklist.test.ts`, `test/hub-snapshot.test.ts` |
 | Review follow-ups (P2/P3 ledger) | **Parity, TUI-first** — open follow-ups in the Activity panel | `test/tui-tasklist.test.ts` |
@@ -43,7 +43,7 @@ unchecked items are intentional gaps, not implied support.
 | Edit & resubmit | **Parity** — prompt history recall via Ctrl+Up/Ctrl+Down (last 50 prompts; the live draft is preserved while navigating and restored on return), resubmit by recall + Enter | `test/tui-tasklist.test.ts` (history recall) |
 | Keyboard shortcuts (cancel, menu, state) | **Parity** — Ctrl+C cancel, Ctrl+P menu, Ctrl+W state, Ctrl+E export, Ctrl+Up/Down history | `test/tui.test.ts`, `test/tui-tasklist.test.ts` |
 | Message queue while running | **Parity** — prompts submitted while a turn runs queue (bounded only by memory) and submit in order when the turn ends; cancellation clears the queue — a cancelled turn never auto-continues; failed turns still drain | `test/coding-session-queue.test.ts`, `test/tui-tasklist.test.ts` (You (queued) row) |
-| Export transcript to markdown | **Parity** — Ctrl+E writes `workflow-transcript-<timestamp>.md` next to the session (operator action in the operator process, not an agent mutation; empty transcripts refuse by design) | `test/tui-tasklist.test.ts` (export) |
+| Export transcript to markdown | **Parity** — Ctrl+E writes `workflow-transcript-<timestamp>.md` to the operator process's working directory (which is the session workspace when the TUI is launched there; operator action in the operator process, not an agent mutation; empty transcripts refuse by design) | `test/tui-tasklist.test.ts` (export) |
 | Follow-the-agent (locations) | **Parity** — subjects render on tool rows | `test/tui.test.ts` |
 
 ## Deliberate divergences (stated, not gaps)
