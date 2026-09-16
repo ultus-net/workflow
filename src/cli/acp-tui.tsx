@@ -61,7 +61,12 @@ const { waitUntilExit } = render(
     // W044 (G1 metric surfacing): cumulative tokens + cost from the metering
     // proxy; the per-turn delta is computed in the UI at turn boundaries and
     // rendered alongside the cumulative line in the header status box.
-    usage: () => usageViewFromMetrics(runtime.metrics?.()),
+    // W045: a crossed session budget renders its sticky violation there too.
+    usage: () => {
+      const view = usageViewFromMetrics(runtime.metrics?.());
+      const violation = runtime.budgetViolation?.();
+      return view === undefined && violation === undefined ? undefined : { ...(view ?? { totalTokens: 0, costUsd: 0 }), ...(violation === undefined ? {} : { budgetViolation: violation }) };
+    },
     ...(composerBackground === undefined ? {} : { composerBackground }),
   }),
 );

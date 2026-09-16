@@ -61,7 +61,22 @@ export class WorkflowCodingSession {
   // clears the queue — a cancelled turn never auto-continues.
   #queue: readonly { readonly prompt: string; readonly images: readonly CodingSessionImage[] }[] = [];
 
-  constructor(readonly driver: CodingSessionDriver) {}
+  constructor(
+    readonly driver: CodingSessionDriver,
+    options: {
+      /**
+       * W045 budget enforcement: consulted before every submit. A defined
+       * reason refuses the prompt — the turn never starts, the queue is
+       * never entered, and the reason surfaces as a failed event when the
+       * session state still accepts events. Never a silent truncation.
+       */
+      readonly refusalGate?: () => string | undefined;
+    } = {},
+  ) {
+    this.#refusalGate = options.refusalGate;
+  }
+
+  readonly #refusalGate: (() => string | undefined) | undefined;
 
   subscribe(listener: (event: CodingSessionEvent) => void): () => void {
     this.#listeners.add(listener);
@@ -73,6 +88,15 @@ export class WorkflowCodingSession {
   }
 
   async submit(prompt: string, images: readonly CodingSessionImage[] = []): Promise<void> {
+    const refusal = this.#refusalGate?.();
+    if (refusal !== undefined) {
+      // Refuse fail-closed: the prompt is neither run nor queued, and the
+      // reason is surfaced. (When the session is in the cancelled state the
+      // event is intentionally dropped — the sticky violation is still
+      // visible through the session-budget guard's own surface.)
+      this.#emit({ type: "failed", reason: refusal });
+      return;
+    }
     if (this.#state.state === "running") {
       this.#queue = [...this.#queue, { prompt, images }];
       return;

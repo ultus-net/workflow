@@ -79,7 +79,11 @@ export async function composeDriver(
     session: runtime.session,
     sessionConfigOptions: () => (runtime.driver.config()?.configOptions ?? []) as readonly SessionConfigOption[],
     setSessionConfig: async (id, value) => { await runtime.driver.setConfigOption(id, value); },
-    usage: () => usageViewFromMetrics(runtime.metrics?.()),
+    usage: () => {
+      const view = usageViewFromMetrics(runtime.metrics?.());
+      const violation = runtime.budgetViolation?.();
+      return view === undefined && violation === undefined ? undefined : { ...(view ?? { totalTokens: 0, costUsd: 0 }), ...(violation === undefined ? {} : { budgetViolation: violation }) };
+    },
     dispose: () => runtime.dispose(),
   };
 }

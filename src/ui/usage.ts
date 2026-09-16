@@ -10,6 +10,8 @@ export interface UsageView {
   readonly costUsd: number;
   readonly perTurnTokens?: number;
   readonly perTurnCostUsd?: number;
+  /** W045: the sticky session-budget violation reason, once crossed. */
+  readonly budgetViolation?: string;
 }
 
 export type UsageSource = () => UsageView | undefined;
@@ -55,11 +57,12 @@ export class UsageTurnTracker {
   }
 }
 
-/** Header status line: cumulative + (when known) the last turn's delta. */
+/** Header status line: cumulative + (when known) the last turn's delta + a crossed budget. */
 export function formatUsageLine(usage: UsageView): string {
   const cumulative = `${usage.totalTokens} tokens · $${usage.costUsd.toFixed(4)}`;
-  if (usage.perTurnTokens === undefined || usage.perTurnCostUsd === undefined) {
-    return cumulative;
-  }
-  return `${cumulative} · +${usage.perTurnTokens} this turn · $${usage.perTurnCostUsd.toFixed(4)}`;
+  const perTurn = usage.perTurnTokens === undefined || usage.perTurnCostUsd === undefined
+    ? ""
+    : ` · +${usage.perTurnTokens} this turn · $${usage.perTurnCostUsd.toFixed(4)}`;
+  const violation = usage.budgetViolation === undefined ? "" : ` · ! ${usage.budgetViolation}`;
+  return `${cumulative}${perTurn}${violation}`;
 }

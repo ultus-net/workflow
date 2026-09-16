@@ -386,6 +386,7 @@ test("web UI manages sessions through guarded routes", async (context) => {
           },
         } as never,
         session: new WorkflowCodingSession(driver),
+      budgetMechanism: "test: no local caps (fake runtime)",
         async dispose() {},
       };
     },
@@ -584,6 +585,7 @@ test("web UI serves cumulative usage metrics for metered runtimes only", async (
           subscribe: () => () => {},
         } as never,
         session: new WorkflowCodingSession(driver),
+        budgetMechanism: "test: no local caps (fake runtime)",
         usage: () => metrics,
         async dispose() {},
       };
@@ -601,8 +603,11 @@ test("web UI serves cumulative usage metrics for metered runtimes only", async (
 
   const metered = await fetch(`http://127.0.0.1:${port}/api/session`).then((response) => response.json()) as {
     usage?: typeof metrics;
+    budgetMechanism?: string;
   };
   assert.deepEqual(metered.usage, metrics);
+  // W045: the hub records the active budget mechanism per runtime.
+  assert.equal(metered.budgetMechanism, "test: no local caps (fake runtime)");
 
   // Single-session mode has no metering proxy: the field must stay absent,
   // not default to zeroed metrics that would mislead the operator.
@@ -637,6 +642,7 @@ test("web UI guards permission answers, ask mode, and capability toggles", async
         subscribe: () => () => {},
       } as never,
       session: new WorkflowCodingSession(driver),
+      budgetMechanism: "test: no local caps (fake runtime)",
       async dispose() {},
     };
   };
@@ -794,6 +800,7 @@ test("web UI guards session rename, task retry/add, and evidence recording", asy
           subscribe: () => () => {},
         } as never,
         session: new WorkflowCodingSession(driver),
+      budgetMechanism: "test: no local caps (fake runtime)",
         async dispose() {},
       };
     },

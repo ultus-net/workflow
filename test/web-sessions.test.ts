@@ -33,6 +33,7 @@ function fakeRuntime(agentId: string, start: CodingSessionDriver["start"] = asyn
     runtime: {
       driver: driver as unknown as WorkflowAcpRuntime["driver"],
       session: new WorkflowCodingSession(driver),
+      budgetMechanism: "test: no local caps (fake runtime)",
       async dispose() { fake.disposed = true; },
     },
   };
@@ -344,6 +345,7 @@ test("session manager ingests replayed history when resuming a session", async (
       return {
         driver: driver as never,
         session: new WorkflowCodingSession(driver),
+      budgetMechanism: "test: no local caps (fake runtime)",
         async dispose() {},
       };
     },

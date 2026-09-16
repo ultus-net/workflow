@@ -6,10 +6,11 @@ import { fileURLToPath } from "node:url";
 
 import type { ProposedToolAction } from "../application/host.js";
 import type { WorkflowApplication } from "../application/workflow.js";
-import { WorkflowCodingSession } from "../application/coding-session.js";
+import { WorkflowCodingSession, type CodingSessionDriver } from "../application/coding-session.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import type { TaskId } from "../kernel/contracts.js";
 import { AcpSessionDriver } from "./acp-session.js";
+import { createSessionBudgetGuard, sessionBudgetFromEnv, sessionBudgetMechanism } from "./session-budget.js";
 import { globalClineEntrypoint, resolveClineLaunch } from "./cline-launch.js";
 import {
   globalOpencodeBinary,
@@ -18,13 +19,17 @@ import {
 } from "./opencode-agent-config.js";
 import type { PermissionBroker } from "../ui/permission-broker.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
-import { METERED_PLACEHOLDER_KEY, type ModelUsageMetrics, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
+import { METERED_PLACEHOLDER_KEY, type ModelUsageMetrics, type ModelUsageProxy, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
 
 export interface WorkflowAcpRuntime {
   readonly driver: AcpSessionDriver;
   readonly session: WorkflowCodingSession;
   /** Cumulative metering-proxy usage for this runtime (tokens + cost). */
   metrics?(): ModelUsageMetrics;
+  /** W045: the interactive session-budget violation reason, once crossed (sticky). */
+  budgetViolation?(): string | undefined;
+  /** W045: which budget enforcement mechanism is active for this runtime. */
+  readonly budgetMechanism: string;
   dispose(): Promise<void>;
   /** Cumulative metering-proxy metrics; absent for unmetered runtimes. */
   usage?(): ModelUsageMetrics;
@@ -58,6 +63,36 @@ export async function createConfiguredAcpRuntime(
   return acpAgentKind() === "opencode"
     ? createOpencodeRuntime(application, workspace, taskId, resumeFrom, guard, options)
     : createClineRuntime(application, workspace, taskId, resumeFrom, guard, options);
+}
+
+/**
+ * W045 (G1 budget enforcement): the session plus its interactive budget
+ * guard. The guard watches the metering proxy's recorded usage on every
+ * session event; crossing a configured cap cancels the in-flight turn and
+ * the sticky violation refuses every later prompt through the session's
+ * refusal gate. No caps configured → no guard; the OpenRouter per-key credit
+ * limit on the proxy's upstream key is the recorded backstop mechanism.
+ */
+export function composeSessionWithBudget(driver: CodingSessionDriver, proxy: ModelUsageProxy): {
+  readonly session: WorkflowCodingSession;
+  readonly budgetViolation?: () => string | undefined;
+  readonly budgetMechanism: string;
+} {
+  const budget = sessionBudgetFromEnv();
+  let session: WorkflowCodingSession | undefined;
+  const guard = budget === undefined ? undefined : createSessionBudgetGuard({
+    budget,
+    usageSnapshot: () => proxy.metrics(),
+    cancel: () => session?.cancel(),
+    subscribe: (listener) => session?.subscribe(listener) ?? (() => undefined),
+  });
+  session = new WorkflowCodingSession(driver, guard === undefined ? {} : { refusalGate: () => guard.violation() });
+  guard?.attach();
+  return {
+    session,
+    ...(guard === undefined ? {} : { budgetViolation: () => guard.violation() }),
+    budgetMechanism: sessionBudgetMechanism(),
+  };
 }
 
 async function createOpencodeRuntime(
@@ -167,7 +202,7 @@ async function createOpencodeRuntime(
     });
     return {
       driver,
-      session: new WorkflowCodingSession(driver),
+      ...composeSessionWithBudget(driver, proxy),
       usage: (): ModelUsageMetrics => proxy.metrics(),
       metrics: (): ModelUsageMetrics => proxy.metrics(),
       async dispose() {
@@ -257,7 +292,7 @@ async function createClineRuntime(
     });
     return {
       driver,
-      session: new WorkflowCodingSession(driver),
+      ...composeSessionWithBudget(driver, proxy),
       usage: (): ModelUsageMetrics => proxy.metrics(),
       metrics: (): ModelUsageMetrics => proxy.metrics(),
       async dispose() {

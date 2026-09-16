@@ -185,6 +185,12 @@ export class WebSessionManager {
         runtime.driver,
         runtime.usage?.bind(runtime),
         this.#permissionBroker,
+        // W045: the hub records the active budget mechanism (and the sticky
+        // violation once crossed) per runtime, served on /api/session.
+        {
+          mechanism: () => runtime.budgetMechanism,
+          ...(runtime.budgetViolation === undefined ? {} : { violation: () => runtime.budgetViolation?.() }),
+        },
       );
       // Eagerly load the resumed session so its replayed history reaches the
       // channel before the UI polls — otherwise the transcript looks empty
