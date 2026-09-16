@@ -91,7 +91,10 @@ test("every implementation-boundary reference in a claim row exists in the repos
   // A boundary pointing at a vanished file is a broken citation even when
   // the verification column still matches — extract path-like tokens and
   // require each to exist on disk.
-  const PATH_LIKE = /(?:^|[\s`('"])([A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+\.(?:ts|mts|cts|mjs|md))(?::\d+(?:-\d+)?)?(?=$|[\s`'":,)])/g;
+  // ts|tsx|mts|cts|mjs|md: source and doc files only — built artifacts (.js
+  // under dist/) are intentionally excluded so a fresh checkout cannot
+  // false-fail on unbuilt paths.
+  const PATH_LIKE = /(?:^|[\s`('"])([A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+\.(?:ts|tsx|mts|cts|mjs|md))(?::\d+(?:-\d+)?)?(?=$|[\s`'":,)])/g;
   const dataRows = doc.split("\n").filter((line) => line.startsWith("| ") && !line.includes("| ---") && !line.includes("| Claim |"));
   const missing: string[] = [];
   for (const row of dataRows) {
