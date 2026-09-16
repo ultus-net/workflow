@@ -69,6 +69,7 @@ test(
     });
 
     let content: string;
+    let promptResult: { stopReason?: string };
     let initialized: Awaited<ReturnType<AcpSubprocessClient["initialize"]>>;
     try {
       initialized = await client.initialize();
@@ -83,6 +84,7 @@ test(
         }),
         new Promise((resolve) => setTimeout(() => resolve({ stopReason: "probe_timeout" }), 90_000)),
       ]);
+      promptResult = result as { stopReason?: string };
       content = await readFile(target, "utf8");
       console.log(JSON.stringify({
         agent: initialized.agentInfo,
@@ -104,6 +106,7 @@ test(
 
     const metrics = proxy.metrics();
     assert.equal(initialized.agentInfo?.name, "OpenCode");
+    assert.equal(promptResult.stopReason, "end_turn", "the turn must complete (not time out) for metering evidence to count");
     assert.ok(content.includes("metered"), "the allowed workspace command must execute through the metered path");
     assert.ok(metrics.requests > 0, "proxy must have observed model traffic");
     assert.ok(metrics.usageEvents > 0, "proxy must have recorded usage accounting");

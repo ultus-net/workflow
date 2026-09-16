@@ -81,69 +81,78 @@ async function createOpencodeRuntime(
   // per auto-review, and concurrent runtimes must never clobber each other.
   pruneStaleRuntimeArtifacts(scratchHome);
   const configDir = join(scratchHome, `config.${process.pid}.${randomUUID()}`);
-  mkdirSync(join(configDir, "opencode"), { recursive: true, mode: 0o700 });
-  writeFileSync(
-    join(configDir, "opencode", "opencode.json"),
-    JSON.stringify(meteredOpencodeConfig({ proxyUrl: proxy.url, model: process.env.WORKFLOW_OPENCODE_MODEL })),
-    { encoding: "utf8", mode: 0o600 },
-  );
-  const opencode = resolveOpencodeLaunch({
-    envBinOverride: process.env.WORKFLOW_OPENCODE_BIN,
-    opencodeOnPath: globalOpencodeBinary(),
-  });
-  const resume = resumeFrom ?? process.env.WORKFLOW_ACP_RESUME;
-  const driver = AcpSessionDriver.contained({
-    containment: new LinuxBubblewrapContainment(),
-    launch: {
-      executable: opencode.executable,
-      args: ["acp", "--pure"],
-      workspace,
-      home: scratchHome,
-      environment: {
-        // The placeholder credential rides the 0600 per-runtime config file
-        // (same posture as the Cline providers.json); the real upstream key
-        // stays exclusively in the hub-side proxy. `--pure` keeps the
-        // operator's global plugins out of the contained agent so the
-        // hub-owned config is the whole surface.
-        XDG_CONFIG_HOME: configDir,
+  try {
+    mkdirSync(join(configDir, "opencode"), { recursive: true, mode: 0o700 });
+    writeFileSync(
+      join(configDir, "opencode", "opencode.json"),
+      JSON.stringify(meteredOpencodeConfig({ proxyUrl: proxy.url, model: process.env.WORKFLOW_OPENCODE_MODEL })),
+      { encoding: "utf8", mode: 0o600 },
+    );
+    const opencode = resolveOpencodeLaunch({
+      envBinOverride: process.env.WORKFLOW_OPENCODE_BIN,
+      opencodeOnPath: globalOpencodeBinary(),
+    });
+    const resume = resumeFrom ?? process.env.WORKFLOW_ACP_RESUME;
+    const driver = AcpSessionDriver.contained({
+      containment: new LinuxBubblewrapContainment(),
+      launch: {
+        executable: opencode.executable,
+        args: ["acp", "--pure"],
+        workspace,
+        home: scratchHome,
+        environment: {
+          // The placeholder credential rides the 0600 per-runtime config file
+          // (same posture as the Cline providers.json); the real upstream key
+          // stays exclusively in the hub-side proxy. `--pure` keeps the
+          // operator's global plugins out of the contained agent so the
+          // hub-owned config is the whole surface.
+          XDG_CONFIG_HOME: configDir,
+        },
       },
-    },
-    authorize: options.permissionBroker === undefined
-      ? application
-      : (action: ProposedToolAction) =>
-        options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
-    workspace,
-    workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
-    taskId,
-    ...(resume !== undefined ? { resumeFrom: resume } : {}),
-    ...(guard === undefined ? {} : { guard }),
-    // Plan Task F1/F3: journal skill delivery into the application's
-    // precondition. A delivery with no active task cannot bind — skip it
-    // rather than fail the read; the precondition only matters once a
-    // task is running.
-    onSkillRead: (skill) => {
-      try {
-        application.recordSkillRead(skill);
-      } catch {
-        // No active task yet: nothing to journal.
-      }
-    },
-  });
-  return {
-    driver,
-    session: new WorkflowCodingSession(driver),
-    usage: (): ModelUsageMetrics => proxy.metrics(),
-    metrics: (): ModelUsageMetrics => proxy.metrics(),
-    async dispose() {
-      try {
-        await driver.dispose();
-      } finally {
-        await proxy.close();
-        rmSync(configDir, { recursive: true, force: true });
-        console.log("metering proxy metrics:", JSON.stringify(proxy.metrics(), null, 2));
-      }
-    },
-  };
+      authorize: options.permissionBroker === undefined
+        ? application
+        : (action: ProposedToolAction) =>
+          options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
+      workspace,
+      workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
+      taskId,
+      ...(resume !== undefined ? { resumeFrom: resume } : {}),
+      ...(guard === undefined ? {} : { guard }),
+      // Plan Task F1/F3: journal skill delivery into the application's
+      // precondition. A delivery with no active task cannot bind — skip it
+      // rather than fail the read; the precondition only matters once a
+      // task is running.
+      onSkillRead: (skill) => {
+        try {
+          application.recordSkillRead(skill);
+        } catch {
+          // No active task yet: nothing to journal.
+        }
+      },
+    });
+    return {
+      driver,
+      session: new WorkflowCodingSession(driver),
+      usage: (): ModelUsageMetrics => proxy.metrics(),
+      metrics: (): ModelUsageMetrics => proxy.metrics(),
+      async dispose() {
+        try {
+          await driver.dispose();
+        } finally {
+          await proxy.close();
+          rmSync(configDir, { recursive: true, force: true });
+          console.log("metering proxy metrics:", JSON.stringify(proxy.metrics(), null, 2));
+        }
+      },
+    };
+  } catch (error) {
+    // A missing agent binary (the default first-run failure), an unwritable
+    // config dir, or a containment failure must not leak the proxy listener
+    // or the per-runtime config dir — mirror the Cline path's cleanup.
+    await proxy.close();
+    rmSync(configDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 async function createClineRuntime(
@@ -237,7 +246,9 @@ async function createClineRuntime(
  * The upstream (OpenRouter) key for the hub-side metering proxy. This key
  * never enters the agent's environment or config files: the proxy holds it
  * and injects it upstream. Env override first, then the key file shared
- * with the gated probes.
+ * with the gated probes. An empty or whitespace-only env value falls
+ * through to the key file (the pre-pivot Cline path would have passed the
+ * whitespace through; treating it as unset is the deliberate tightening).
  */
 function loadUpstreamApiKey(): string {
   const apiKey = process.env.CLINE_API_KEY?.trim() || readKeyFile();

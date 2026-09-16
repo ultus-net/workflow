@@ -22,17 +22,18 @@ import { randomUUID } from "node:crypto";
  * the review gate + hub-run test evidence decide VERIFIED. This is the
  * wedge feature's proof: unattended work closes only through the gates.
  *
- * Gated: WORKFLOW_ACP_CLINE_SCHEDULED=1 plus CLINE_API_KEY (and any auth env
- * the other Cline probes use, e.g. WORKFLOW_ACP_CLINE_ENV_AUTH=1), plus a
- * real WORKFLOW_TEAM_TASK_VERIFY_COMMAND (the test gate must not be
- * rubber-stamped by the `true` default).
+ * Gated: WORKFLOW_ACP_SCHEDULED=1 (the historical WORKFLOW_ACP_CLINE_SCHEDULED
+ * name still enables it), plus the upstream key for the metering proxy
+ * (CLINE_API_KEY env or ~/.config/workflow/cline-api-key), plus a real
+ * WORKFLOW_TEAM_TASK_VERIFY_COMMAND (the test gate must not be rubber-stamped
+ * by the `true` default). Post-pivot the chain exercises the selected lead
+ * agent: opencode by default, or the vendored Cline fallback via
+ * WORKFLOW_ACP_AGENT=cline (docs/ACP_DECISION.md) — the probe name is
+ * agent-neutral because the hub composition under test is.
  */
 
-const runProbe = process.env.WORKFLOW_ACP_CLINE_SCHEDULED === "1";
+const runProbe = process.env.WORKFLOW_ACP_SCHEDULED === "1" || process.env.WORKFLOW_ACP_CLINE_SCHEDULED === "1";
 
-if (runProbe && !process.env.CLINE_API_KEY) {
-  throw new Error("CLINE_API_KEY is required for the scheduled-run probe; do not paste it into chat");
-}
 if (runProbe) {
   const verify = process.env.WORKFLOW_TEAM_TASK_VERIFY_COMMAND?.trim();
   if (verify === undefined || verify.length === 0 || verify === "true") {
