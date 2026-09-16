@@ -8,6 +8,7 @@ import { AcpSubprocessClient } from "../src/adapters/acp-subprocess.js";
 import { launchContainedAcpAgent } from "../src/adapters/acp-contained-agent.js";
 import { LinuxBubblewrapContainment } from "../src/containment/linux-bwrap.js";
 import { gooseConfigYaml, gooseLaunchEnvironment, gooseProviderKind } from "../src/integrations/goose-agent-config.js";
+import { createModelUsageProxy } from "../src/integrations/model-usage-proxy.js";
 import { loadGooseApiKey, gooseLaunchEntry } from "./goose-probe-helpers.js";
 
 /**
@@ -32,6 +33,13 @@ test("goose PERMISSION probe: approve-mode interception with usable reject optio
   const provider = gooseProviderKind();
   const goose = gooseLaunchEntry();
   const key = provider === "openrouter" ? loadGooseApiKey("goose PERMISSION probe") : process.env.AZURE_FOUNDRY_API_KEY ?? "";
+  // The openrouter path needs a REAL loopback proxy — a dead proxyUrl would
+  // fail every live run at the end_turn gate spuriously (fail-loud, not a
+  // verdict); the azure path composes direct with no proxy.
+  const proxy = provider === "openrouter"
+    ? await createModelUsageProxy({ upstream: process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai", apiKey: key })
+    : undefined;
+  if (proxy !== undefined) t.after(() => { void proxy.close(); });
   const configRoot = join(scratchHome, "goose-root");
   mkdirSync(join(configRoot, "config"), { recursive: true, mode: 0o700 });
   const configYaml = gooseConfigYaml({});
@@ -41,7 +49,7 @@ test("goose PERMISSION probe: approve-mode interception with usable reject optio
   const environment = gooseLaunchEnvironment({
     provider,
     configRoot,
-    proxyUrl: "http://127.0.0.1:1",
+    proxyUrl: proxy?.url,
     env: { ...process.env, CLINE_API_KEY: key, AZURE_FOUNDRY_API_KEY: process.env.AZURE_FOUNDRY_API_KEY ?? "" },
   });
 
