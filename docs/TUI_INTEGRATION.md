@@ -23,6 +23,13 @@ CLI TUI stays the primary interactive surface until every item in
 `docs/TUI_PARITY.md` passes; afterwards the primary surface can flip to
 `workflow-tui` and per-SDK patched TUIs can become optional surfaces.
 
+> **Superseded 2026-09-16** (the same day this doc was written, by the
+> `docs/ACP_DECISION.md` Pivot): the lead interactive path is the
+> hub-composed stock-ACP OpenCode surface (`WORKFLOW_ACP_AGENT=opencode`,
+> contained `opencode acp --pure`); the patched Cline CLI TUI is retained
+> fallback insurance, and the workflow-tui flip criterion above is no longer
+> the operative plan. The standalone-local-authority statement remains true.
+
 ## Terminal theme (decision 2026-09-16, operator-approved)
 
 The universal `WorkflowTui` previously inherited the terminal foreground with
