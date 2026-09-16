@@ -62,6 +62,13 @@ export function buildReviewRubric(input: { readonly diffText: string; readonly t
     "```",
     "",
     "Provide your verdict: `[APPROVE]` or `[REQUEST_CHANGES]` with concise, actionable findings ranked by priority (P0-P3).",
+    "Structure the verdict with one short line per axis you evaluated, naming the axis explicitly",
+    "(at least 3 of: test integrity, task completeness, cleanliness, security, platform) —",
+    "an approval that does not name at least 3 axes is rejected as a rubber stamp.",
+    "",
+    "You are a read-only reviewer: the complete diff under review is embedded above, and shell",
+    "commands are not available to you — a rejected command ends the review without a verdict.",
+    "Review the diff as provided and always finish with the verdict line.",
   ].join("\n");
 }
 

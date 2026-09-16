@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,6 +53,20 @@ test(
     t.after(() => rmSync(workspace, { recursive: true, force: true }));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     writeFileSync(join(workspace, "note.txt"), "before\n", "utf8");
+    // A real workspace test command: the test-evidence gate must run the
+    // workspace's own tests (a plain node:test case with no toolchain
+    // dependency), not something that only resolves in the Workflow repo.
+    writeFileSync(
+      join(workspace, "smoke.test.mjs"),
+      'import test from "node:test";\nimport assert from "node:assert/strict";\ntest("workspace smoke", () => assert.equal(1 + 1, 2));\n',
+      "utf8",
+    );
+    // The reviewer's git-diff sourcing requires a git repository —
+    // production run workspaces are repos, so mirror that: an initial
+    // commit gives the reviewer the pre-run baseline to diff against.
+    execFileSync("git", ["init", "--quiet"], { cwd: workspace });
+    execFileSync("git", ["add", "note.txt", "smoke.test.mjs"], { cwd: workspace });
+    execFileSync("git", ["-c", "user.email=probe@workflow.invalid", "-c", "user.name=workflow-probe", "commit", "--quiet", "-m", "probe baseline"], { cwd: workspace });
 
     const graph = new TaskGraph(tasks.map((task) => ({ ...task })));
     const application = new WorkflowApplication(
@@ -61,6 +76,16 @@ test(
       new Set(["read", "mutation", "process"]),
       workspace,
     );
+    // Mirror the production per-workspace application initialization
+    // (src/cli/hub.ts workspaceApplicationFor → startInteractiveTask): the
+    // hub shell must authorize against an application with an active
+    // IN_PROGRESS task. Earlier probe runs bound the shell to this seed
+    // application without selecting a task, so the reviewer's git-diff
+    // sourcing threw "no active workflow task selected" and the run stayed
+    // VERIFYING — a probe-composition divergence, not a production defect
+    // (production initializes its workspace applications with an active
+    // task).
+    application.startInteractiveTask();
 
     const verifyCommand = process.env.WORKFLOW_TEAM_TASK_VERIFY_COMMAND!.trim();
     const containedShell = (writableWorkspace: boolean) => (command: string, cwd: string) =>
@@ -80,12 +105,7 @@ test(
         shell: containedShell(false),
         createRuntime: async ({ workspace: reviewerWorkspace }) => {
           // Mirror the production reviewer composition (src/cli/hub.ts): a
-          // dedicated reviewer application with its own selected task. The
-          // review gate still closes fail-closed in practice: the reviewer's
-          // git-diff sourcing runs through the hub shell, whose application
-          // has no active task to authorize against (a pre-existing
-          // production defect this probe exposes — the run stays VERIFYING,
-          // never fabricated; fix tracked in the review follow-up ledger).
+          // dedicated reviewer application with its own selected task.
           const reviewerApplication = new WorkflowApplication(
             graph,
             hostCapabilities({ transport: "native", authoritativePreMutation: true }),
@@ -97,9 +117,21 @@ test(
           reviewerApplication.addTask({ id: reviewerTaskId, title: "Hub reviewer session", dependencies: [], requiredEvidence: [] });
           reviewerApplication.transition(reviewerTaskId, "IN_PROGRESS");
           reviewerApplication.selectActiveTask(reviewerTaskId);
-          const runtime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerTaskId);
+          const runtime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerTaskId, undefined);
+          runtime.session.subscribe((event) => {
+            const summary = event.type === "tool" || event.type === "status" || event.type === "failed"
+              ? JSON.stringify(event).slice(0, 300)
+              : undefined;
+            if (summary !== undefined) console.log("reviewer event:", summary);
+          });
           return {
-            submit: (prompt: string) => runtime.session.submit(prompt),
+            submit: async (prompt: string) => {
+              await runtime.session.submit(prompt);
+              // Reviewer-session observability: a gated run must show the
+              // reviewer's state/result so verdict failures explain
+              // themselves.
+              console.log("reviewer snapshot:", JSON.stringify(runtime.session.snapshot()).slice(0, 1200));
+            },
             snapshot: () => runtime.session.snapshot(),
             dispose: () => runtime.dispose(),
           };
@@ -114,7 +146,7 @@ test(
       id: "probe-schedule",
       title: "Scheduled probe run",
       cron: "* * * * *",
-      prompt: "Read note.txt and reply with exactly its current content. Do not modify any file.",
+      prompt: "Append exactly the line `after` on a new line at the end of note.txt. Do not modify any other file and do not run tests.",
       workspace,
       requiresReview: true,
     }];
@@ -145,10 +177,17 @@ test(
         hiddenSnapshotTaskIds: () => [],
       },
       schedules: () => schedules,
-      runTurn: async ({ runId, workspace: turnWorkspace }) => {
+      runTurn: async ({ runId, workspace: turnWorkspace, prompt }) => {
         const runtime = await createConfiguredAcpRuntime(application, turnWorkspace ?? workspace, taskId(`run:${runId}`));
         try {
-          await runtime.session.submit("Read note.txt and reply with exactly its current content. Do not modify any file.");
+          // Submit the hub-composed scheduled prompt — the probe exercises
+          // the real delivery, not a hardcoded read-only stand-in (an earlier
+          // composition ignored the prompt, so the turn never produced the
+          // change the reviewer was asked to evaluate).
+          await runtime.session.submit(prompt);
+          // Record the turn's outcome so a gated run explains what the agent
+          // actually did (permission denials show up here).
+          console.log("scheduled turn snapshot:", JSON.stringify(runtime.session.snapshot()));
           void runtime;
         } finally {
           await runtime.dispose();
@@ -179,6 +218,7 @@ test(
       tasks: body.snapshot.tasks.map((task) => ({ title: task.title, state: task.state })),
       verdicts: body.gateObservability?.reviewOutcomes ?? {},
       blockingReasons: body.gateObservability?.blockingReasons ?? {},
+      noteContent: readFileSync(join(workspace, "note.txt"), "utf8"),
     };
     console.log(JSON.stringify(evidence, null, 2));
     assert.ok(evidence.tasks.length > 0, "the scheduled run must have produced a task");
