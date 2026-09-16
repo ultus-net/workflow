@@ -1,4 +1,4 @@
-import { budgetViolation, createBudgetGuard, type RunBudget } from "./hub-scheduler.js";
+import { createBudgetGuard, type RunBudget } from "./hub-scheduler.js";
 
 /**
  * W045 (G1 budget enforcement): spending caps for INTERACTIVE sessions,
