@@ -109,7 +109,7 @@ export function createCredentialControlPlane(
       const previousValue = await store.get(definition.id);
       await store.put(definition.id, value);
       definitions.set(definition.id, definition);
-try {
+      try {
         await onDefinitionsChanged?.([...definitions.values()]);
       } catch (error) {
         if (previousDefinition === undefined) definitions.delete(definition.id);
