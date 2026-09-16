@@ -621,8 +621,12 @@ test("web UI serves cumulative usage metrics for metered runtimes only", async (
   const singlePort = (singleServer.address() as AddressInfo).port;
   const unmetered = await fetch(`http://127.0.0.1:${singlePort}/api/session`).then((response) => response.json()) as {
     usage?: unknown;
+    budgetMechanism?: unknown;
   };
   assert.equal(unmetered.usage, undefined);
+  // W045: the budget record is a runtime-owned channel field — a bare
+  // single-session server has no runtime, so the mechanism stays absent.
+  assert.equal(unmetered.budgetMechanism, undefined);
 });
 
 test("web UI guards permission answers, ask mode, and capability toggles", async (context) => {

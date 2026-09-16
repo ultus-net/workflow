@@ -1,4 +1,4 @@
-import { budgetViolation, type RunBudget, type UsageSnapshot } from "./hub-scheduler.js";
+import { budgetViolation, createBudgetGuard, type RunBudget } from "./hub-scheduler.js";
 
 /**
  * W045 (G1 budget enforcement): spending caps for INTERACTIVE sessions,
@@ -76,41 +76,13 @@ export function sessionBudgetMechanism(env: BudgetEnv = process.env): string {
   return `local session-budget guard (${caps.join(", ")})`;
 }
 
-export interface SessionBudgetGuard {
-  /** Wire the guard into the session's event stream. */
-  attach(): void;
-  /** Check one session event; cancels the turn on the first violation. */
-  checkEvent(event: { readonly type: string }): void;
-  /** The recorded violation reason, once one has occurred (sticky). */
-  violation(): string | undefined;
-}
+export type SessionBudgetGuard = ReturnType<typeof createSessionBudgetGuard>;
 
-export function createSessionBudgetGuard(options: {
-  readonly budget: SessionBudget;
-  readonly usageSnapshot: () => UsageSnapshot | undefined;
-  readonly cancel: () => void | Promise<void>;
-  readonly subscribe: (listener: (event: { readonly type: string }) => void) => () => void;
-}): SessionBudgetGuard {
-  let violation: string | undefined;
-  let cancelled = false;
-  const checkEvent = (_event: { readonly type: string }): void => {
-    void _event;
-    if (violation !== undefined) return;
-    const usage = options.usageSnapshot();
-    if (usage === undefined) return;
-    const reason = budgetViolation(usage, options.budget);
-    if (reason === undefined) return;
-    violation = reason;
-    if (!cancelled) {
-      cancelled = true;
-      void Promise.resolve(options.cancel()).catch(() => undefined);
-    }
-  };
-  return {
-    attach() {
-      options.subscribe(checkEvent);
-    },
-    checkEvent,
-    violation: () => violation,
-  };
-}
+/**
+ * The interactive-session guard IS the scheduled-run guard
+ * (`createBudgetGuard` in `hub-scheduler.ts`): same signature, same
+ * cancel-once/sticky-violation semantics, same `budgetViolation` rules —
+ * one implementation, two enforcement points. Re-exported under the
+ * session-budget name so callers read the intent at the import site.
+ */
+export const createSessionBudgetGuard = createBudgetGuard;

@@ -79,19 +79,23 @@ export function composeSessionWithBudget(driver: CodingSessionDriver, proxy: Mod
   readonly budgetMechanism: string;
 } {
   const budget = sessionBudgetFromEnv();
-  let session: WorkflowCodingSession | undefined;
-  const guard = budget === undefined ? undefined : createSessionBudgetGuard({
+  const budgetMechanism = sessionBudgetMechanism();
+  if (budget === undefined) {
+    return { session: new WorkflowCodingSession(driver), budgetMechanism };
+  }
+  const guard = createSessionBudgetGuard({
     budget,
     usageSnapshot: () => proxy.metrics(),
-    cancel: () => session?.cancel(),
-    subscribe: (listener) => session?.subscribe(listener) ?? (() => undefined),
+    // Closures evaluated at guard-check time, after the session exists.
+    cancel: () => session.cancel(),
+    subscribe: (listener) => session.subscribe(listener),
   });
-  session = new WorkflowCodingSession(driver, guard === undefined ? {} : { refusalGate: () => guard.violation() });
-  guard?.attach();
+  const session = new WorkflowCodingSession(driver, { refusalGate: () => guard.violation() });
+  guard.attach();
   return {
     session,
-    ...(guard === undefined ? {} : { budgetViolation: () => guard.violation() }),
-    budgetMechanism: sessionBudgetMechanism(),
+    budgetViolation: () => guard.violation(),
+    budgetMechanism,
   };
 }
 
