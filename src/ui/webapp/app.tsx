@@ -10,6 +10,7 @@ import {
 import { ActionPart, AttentionPart, CompletionPart, OutcomePart, PlanPart, ThinkingPart, ToolPart } from "./message-parts.js";
 import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
+import { describeActivity, formatElapsed, formatRelativeTime } from "./presenters.js";
 import { useSessionState, useSessionUsage } from "./runtime.js";
 import { useTheme } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
@@ -542,11 +543,12 @@ function ConfigField({ option, setOption, labelledBy }: {
     : <ConfigSelect option={option} setOption={setOption} labelledBy={labelledBy} />;
 }
 
-function ConfigControls({ options, setOption, permissions, capabilities }: {
+function ConfigControls({ options, setOption, permissions, capabilities, theme }: {
   readonly options: readonly ConfigOption[];
   readonly setOption: (id: string, value: string | boolean) => void;
   readonly permissions: ReturnType<typeof usePermissions>;
   readonly capabilities: ReturnType<typeof useCapabilities>;
+  readonly theme: ReturnType<typeof useTheme>;
 }) {
   const [open, setOpen] = useState(false);
   const gearRef = useRef<HTMLButtonElement>(null);
@@ -635,7 +637,7 @@ function ConfigControls({ options, setOption, permissions, capabilities }: {
             {permissions.available && (
               <PermissionSettings permissions={permissions} capabilities={capabilities} />
             )}
-            <AppearanceSettings />
+            <AppearanceSettings choice={theme.choice} setChoice={theme.setChoice} />
             <GeneralSettings />
           </div>
         )}
@@ -644,9 +646,12 @@ function ConfigControls({ options, setOption, permissions, capabilities }: {
   );
 }
 
-/** Settings popover: color theme (System follows the OS, live). */
-function AppearanceSettings() {
-  const { choice, setChoice } = useTheme();
+/** Settings popover: color theme. The hook itself lives at the app root so
+ * System follows the OS even while this popover is closed. */
+function AppearanceSettings({ choice, setChoice }: {
+  readonly choice: ReturnType<typeof useTheme>["choice"];
+  readonly setChoice: ReturnType<typeof useTheme>["setChoice"];
+}) {
   return (
     <div className="config-appearance">
       <span className="config-field-label">Appearance</span>
@@ -836,19 +841,6 @@ function formatTokens(count: number): string {
   return String(count);
 }
 
-/** Session-list timestamps: relative ("5m ago"), full stamp on hover. */
-function formatRelativeTime(iso: string): string {
-  const elapsed = Date.now() - new Date(iso).getTime();
-  if (elapsed < 60_000) return "just now";
-  const minutes = Math.floor(elapsed / 60_000);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(iso).toLocaleDateString([], { month: "short", day: "numeric" });
-}
-
 /** Header toggle: hides the git rail and inspector so the thread centers. */
 const RAILS_KEY = "workflow.rails";
 
@@ -903,30 +895,12 @@ function WorkingStatus() {
     <div className="working" role="status" aria-live="polite">
       <span className="working-dot" aria-hidden="true" />
       <span className="working-activity">{describeActivity(items)}</span>
-      <span className="working-elapsed">{formatElapsed(elapsed)}</span>
+      {/* The elapsed counter is a glance affordance; the live region carries
+          the activity text only, so screen readers are not re-announced
+          every second. */}
+      <span className="working-elapsed" aria-hidden="true">{formatElapsed(elapsed)}</span>
     </div>
   );
-}
-
-function describeActivity(items: readonly OperatorSessionItem[]): string {
-  for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index];
-    if (item === undefined) continue;
-    if (item.kind === "tool") {
-      if (item.status === "in_progress") return item.title;
-      if (item.status === "pending") return `${item.title} — awaiting`;
-      continue;
-    }
-    if (item.kind === "thinking") return "thinking…";
-    if (item.kind === "assistant") return "writing…";
-    if (item.kind === "plan") return "planning…";
-  }
-  return "working…";
-}
-
-function formatElapsed(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 /** Empty-state suggestions; presentation-only — they fill the composer. */
@@ -1522,6 +1496,8 @@ export function App() {
   const permissions = usePermissions();
   const capabilities = useCapabilities();
   const { isRunning } = useSessionState();
+  const theme = useTheme();
+  const usage = useSessionUsage();
   const enforcementCopy = snapshot === undefined ? undefined : ENFORCEMENT_COPY[snapshot.enforcementLevel];
 
   // Keyboard shortcuts: "/" focuses the composer, Escape cancels a running
@@ -1599,14 +1575,18 @@ export function App() {
               <Composer />
               <QueueIndicator />
               <div className="composer-toolbar">
-                <ConfigControls options={options} setOption={setOption} permissions={permissions} capabilities={capabilities} />
+                <ConfigControls options={options} setOption={setOption} permissions={permissions} capabilities={capabilities} theme={theme} />
                 <div className="composer-utilities">
                   <ExportSessionButton />
                 </div>
               </div>
-              <div className="composer-footer">
-                <UsageMeter placement="composer" />
-              </div>
+              {/* The metered readout row exists only when the session is
+                  metered; unmetered sessions leave no empty strip. */}
+              {usage !== undefined && (
+                <div className="composer-footer">
+                  <UsageMeter placement="composer" />
+                </div>
+              )}
             </div>
           </ThreadPrimitive.Root>
         </section>

@@ -17,8 +17,10 @@
   --accent-fill: #e8a33d;
   --accent-ink: #14161a;
   --accent-soft: rgba(232, 163, 61, 0.16);
+  /* Deny is status text on its own 10% diff tint too — lightened so the
+     deletion lines pass AA, not just the bare surface pairs. */
   --ok: #4caf7d;
-  --deny: #e06c5c;
+  --deny: #ea8070;
   --fail: #ff7377;
   --composer-focus: #1e2127;
   --code-bg: #0e1013;
@@ -47,7 +49,8 @@
   --accent: #96590c;
   --accent-ink: #14161a;
   --accent-soft: rgba(150, 89, 12, 0.12);
-  --ok: #1e7d4f;
+  /* Status text must pass AA on the 10% diff tints, not just bare surfaces. */
+  --ok: #17714a;
   --deny: #b23b2e;
   --fail: #c23340;
   --composer-focus: #ffffff;
@@ -200,7 +203,9 @@ body {
 .git-status-deleted { color: var(--fail); }
 .git-status-modified, .git-status-renamed { color: var(--accent); }
 .git-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.git-diff { margin: 0 0 0.45rem; padding: 0.55rem; max-height: 18rem; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--bg-deep); color: var(--text-muted); font: 0.68rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre; }
+/* Same metrics as .diff-text so the rail never renders two text sizes for
+   the same content class (the fallback covers non-diff text only). */
+.git-diff { margin: 0 0 0.45rem; padding: 0.55rem; max-height: 16rem; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--bg-deep); color: var(--text-muted); font: 0.78rem/1.5 var(--font-mono); white-space: pre; }
 
 .inspector-column {
   display: flex;
@@ -1328,6 +1333,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .working-dot { animation: none; opacity: 0.8; }
+  .welcome-chip { transition: none; }
 }
 
 /* Failure detail (collapsed raw error under the plain-language summary) */
@@ -1405,7 +1411,7 @@ body {
 .session-active { border-color: var(--accent); background: var(--surface); box-shadow: inset 2px 0 0 var(--accent); }
 .session-pending { border-color: var(--accent); opacity: 0.75; }
 .session-heading { display: flex; align-items: center; gap: 0.35rem; min-width: 0; }
-.session-active-dot { flex: none; width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--accent-fill); }
+.session-active-dot { flex: none; width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--accent); }
 .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .session-time { color: var(--text-muted); font-size: 0.72rem; }
 

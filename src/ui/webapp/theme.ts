@@ -30,33 +30,29 @@ function apply(resolved: ResolvedTheme): void {
 
 /**
  * Applies the stored choice before first paint (called from main.tsx) so a
- * light-theme operator never sees a dark flash on load. Presentation-only:
- * theming never reaches the server or the agent.
+ * light-theme operator never sees a dark flash. Presentation-only: theming
+ * never reaches the server or the agent.
  */
 export function applyStoredTheme(): void {
   apply(resolve(readChoice()));
 }
 
-/** Color-theme control for the settings popover; System follows the OS live. */
+/**
+ * Color-theme control. Mounted once at the app root so "System" follows the
+ * OS for the whole session, not only while the settings popover is open;
+ * the popover reads/writes the same choice through props.
+ */
 export function useTheme(): {
   readonly choice: ThemeChoice;
-  readonly resolved: ResolvedTheme;
   readonly setChoice: (choice: ThemeChoice) => void;
 } {
   const [choice, setChoiceState] = useState<ThemeChoice>(readChoice);
-  const [resolved, setResolved] = useState<ResolvedTheme>(() => resolve(readChoice()));
 
   useEffect(() => {
-    const next = resolve(choice);
-    setResolved(next);
-    apply(next);
+    apply(resolve(choice));
     if (choice !== "system") return;
     const media = window.matchMedia(LIGHT_SCHEME);
-    const onChange = (): void => {
-      const followed = resolve("system");
-      setResolved(followed);
-      apply(followed);
-    };
+    const onChange = (): void => apply(resolve("system"));
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
   }, [choice]);
@@ -70,5 +66,5 @@ export function useTheme(): {
     setChoiceState(next);
   }, []);
 
-  return { choice, resolved, setChoice };
+  return { choice, setChoice };
 }

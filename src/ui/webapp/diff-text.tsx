@@ -4,16 +4,23 @@
  * non-diff text renders through the caller's ordinary <pre> path.
  */
 export function looksLikeDiff(text: string): boolean {
+  // A structural marker is required: +/- prefixes alone also occur in ordinary
+  // content (markdown bullets, flag lists), and tinting those as deletions
+  // would misreport file contents to the operator.
   if (text.length === 0) return false;
-  let markers = 0;
-  for (const line of text.split("\n")) {
-    if (line.startsWith("@@") || line.startsWith("diff --git")) markers += 2;
-    else if (/^[+-]/.test(line)) markers += 1;
-  }
-  return markers >= 3;
+  const lines = text.split("\n");
+  const hasMarker = lines.some((line) => line.startsWith("@@") || line.startsWith("diff --git"));
+  if (!hasMarker) return false;
+  return lines.some((line) => /^[+-]/.test(line));
 }
 
-function diffLineClass(line: string): string {
+/**
+ * One-line classification. Prefix-based by necessity: a deleted line whose
+ * content itself starts with `--` (SQL comments, `---` rules) reads as a file
+ * header here — inherent to unified-diff text without hunk offsets, and only
+ * a tinting nuance, never a content change.
+ */
+export function diffLineClass(line: string): string {
   if (line.startsWith("@@")) return "diff-hunk";
   if (
     line.startsWith("diff --git") || line.startsWith("index ") ||
