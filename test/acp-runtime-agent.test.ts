@@ -68,6 +68,20 @@ test("meteredOpencodeConfig honors an explicit model override", () => {
   assert.ok("anthropic/claude-sonnet-4" in (provider.models as Record<string, unknown>));
 });
 
+test("meteredOpencodeConfig mounts the skills delivery path only when composed", () => {
+  const withoutSkills = meteredOpencodeConfig({ proxyUrl: "http://127.0.0.1:61002" });
+  assert.equal("mcp" in withoutSkills, false, "no skills mount means no mcp block");
+  const withSkills = meteredOpencodeConfig({
+    proxyUrl: "http://127.0.0.1:61002",
+    skills: { serverScript: "/repo/mcp-toolbox/apps/skills-mcp/dist/server.js", skillsDir: "/home/op/.agents/skills" },
+  });
+  const mcp = withSkills.mcp as Record<string, Record<string, unknown>>;
+  const mount = mcp["skills-mcp"]!;
+  assert.equal(mount.type, "local");
+  assert.deepEqual(mount.command, [process.execPath, "/repo/mcp-toolbox/apps/skills-mcp/dist/server.js"]);
+  assert.deepEqual(mount.environment, { SKILLS_MCP_DIR: "/home/op/.agents/skills" });
+});
+
 test("resolveOpencodeLaunch fails closed on missing override and missing PATH binary", () => {
   withEnv({ WORKFLOW_OPENCODE_BIN: undefined }, () => {
     assert.throws(

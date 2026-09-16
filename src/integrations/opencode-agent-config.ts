@@ -20,6 +20,15 @@ export const DEFAULT_OPENCODE_MODEL = "openrouter/auto";
 export function meteredOpencodeConfig(options: {
   readonly proxyUrl: string;
   readonly model?: string | undefined;
+  /**
+   * Plan Task F1: the skills-mcp delivery mount. When provided, the agent
+   * mounts the hub-owned skills server (list_skills/read_skill) — the single
+   * delivery path the application's skill precondition journals against (the
+   * driver's onSkillRead). Probe-proven surface
+   * (`test/acp-opencode-mcp-mount-probe.test.ts`: hub-written config mounts
+   * from XDG_CONFIG_HOME and list_skills returns the fixture skill verbatim).
+   */
+  readonly skills?: { readonly serverScript: string; readonly skillsDir: string } | undefined;
 }): Record<string, unknown> {
   const model = options.model ?? DEFAULT_OPENCODE_MODEL;
   return {
@@ -48,6 +57,17 @@ export function meteredOpencodeConfig(options: {
     // `task` is included so subagent spawns are gateable at the hub
     // (subagent probe: the task tool call projected and permission-gated).
     permission: { edit: "ask", bash: "ask", task: "ask" },
+    ...(options.skills === undefined
+      ? {}
+      : {
+          mcp: {
+            "skills-mcp": {
+              type: "local",
+              command: [process.execPath, options.skills.serverScript],
+              environment: { SKILLS_MCP_DIR: options.skills.skillsDir },
+            },
+          },
+        }),
   };
 }
 
