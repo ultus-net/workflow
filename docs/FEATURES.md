@@ -25,6 +25,7 @@ trip over.
 | Feature | Status | Notes |
 |---|---|---|
 | `workflow-hub` daemon (loopback authority, discovery file, atomic lock, single instance) | Complete | `src/integrations/workflow-hub.ts`, `src/cli/hub.ts` |
+| Lead agent: stock-ACP OpenCode under whole-agent Bubblewrap (`WORKFLOW_ACP_AGENT` selects; vendored Cline = fallback) | Complete | pivot 2026-09-16 (`docs/ACP_DECISION.md`): `createConfiguredAcpRuntime` defaults to a contained `opencode acp --pure` launch with a hub-written per-runtime config (metered provider via the loopback proxy, `permission: {edit/bash/task: "ask"}` routed through `WorkflowApplication.authorize`); `WORKFLOW_ACP_AGENT=cline` selects the vendored patched fallback. Gated metered probe: contained key-free turn with proxy-recorded usage (`test/acp-opencode-metered-probe.test.ts`) |
 | Hub protocol v1 (discovery, `/health`, `/before-tool`, `/bash`, `/run/*`) | Complete | `docs/HUB_PROTOCOL.md`; conformance: `test/hub-protocol.test.ts` |
 | Per-surface workspace binding | Complete | surfaces declare workspace per request |
 | Dedicated task + evidence per scheduled run | Complete | `/run/begin`, `/run/finish` |
