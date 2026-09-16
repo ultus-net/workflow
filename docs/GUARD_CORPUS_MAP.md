@@ -26,6 +26,7 @@ the hub layer today; documented honestly.
 | Stale evidence / mutation freshness (parent-child sessions) | Kernel mutation epochs + per-task skill-read freshness | **Ported** |
 | Compaction hooks (`experimental.session.compacting` bridge) | **Hole** — no ACP equivalent (plan G7 documented regression); the compaction ↔ memory bridge stays on the plugin surface until ACP compaction signaling stabilizes | **Hole** |
 | Policy 24 claims-vs-evidence journal | `recordCompletionClaim` + `completionClaims()` (plan G5), observability-only | **Ported** |
+| Review-scope coverage (whole-diff review incl. untracked files) | W039 manifest: `src/review/manifest.ts` (deterministic scope + obligations + digest) + hub-reviewer `[COVERAGE]` approval gate (`test/review-manifest.test.ts`, `test/hub-reviewer.test.ts`); binds reviewer claims to the scope list — process discipline like the ≥3-axis rule, not proof of reading | **Ported** |
 | Worktree/checkpoint lifecycle guards | Hub-side worktree/run-registry lifecycle; scheduler fail-closed fire semantics | **Ported** (registry tests) |
 | Learner-profile/learning policies | `learning-mcp` (toolbox) + `src/pedagogy/*` with tests | **Ported** |
 | `permission.ask` journaling | Hub journals its own permission resolutions natively (reviewer/budget/claim journals) | **Ported** |

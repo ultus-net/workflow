@@ -1,10 +1,15 @@
-import { HubReviewerRunner, createGitDiffSource, type ReviewerAgentSessionFactory } from "./hub-reviewer.js";
+import {
+  HubReviewerRunner,
+  createGitDiffSource,
+  createGitStatusSource,
+  type ReviewerAgentSessionFactory,
+} from "./hub-reviewer.js";
 import type { RunReviewer, RunReviewerFactory, RunTestRunner } from "./run-registry.js";
 
 /**
  * Production wiring for the hub-owned run gates (plan Tasks A2/D1). Both
  * compositions take their host machinery as injected seams: the contained
- * shell (git diff sourcing, test execution) and the reviewer runtime
+ * shell (git diff/status sourcing, test execution) and the reviewer runtime
  * (contained ACP agent in production). The hub CLI composes them with the
  * real pieces; tests stub them.
  */
@@ -63,6 +68,7 @@ export function createReviewerFactory(options: {
     const runner = new HubReviewerRunner({
       controller,
       diffSource: (workspace) => createGitDiffSource(options.shell)(workspace),
+      statusSource: (workspace) => createGitStatusSource(options.shell)(workspace),
       spawnReviewer,
     });
     const reviewer: RunReviewer = async (input) => {
