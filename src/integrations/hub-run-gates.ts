@@ -1,9 +1,11 @@
 import {
   HubReviewerRunner,
+  createGitCommitSource,
   createGitDiffSource,
   createGitStatusSource,
   type ReviewerAgentSessionFactory,
 } from "./hub-reviewer.js";
+import { createJsonReviewProvenanceStore } from "./review-provenance-store.js";
 import type { RunReviewer, RunReviewerFactory, RunTestRunner } from "./run-registry.js";
 
 /**
@@ -41,6 +43,8 @@ export function createRunTestRunner(options: {
 export function createReviewerFactory(options: {
   readonly shell: (command: string, cwd: string) => Promise<string>;
   readonly createRuntime: (input: { readonly workspace: string; readonly taskPrompt?: string }) => Promise<ReviewerRuntimeSession>;
+  /** When set, review provenance (W041) is journaled at this hub-state path. */
+  readonly provenancePath?: string;
 }): RunReviewerFactory {
   return (controller) => {
     const spawnReviewer: ReviewerAgentSessionFactory = {
@@ -69,12 +73,20 @@ export function createReviewerFactory(options: {
       controller,
       diffSource: (workspace) => createGitDiffSource(options.shell)(workspace),
       statusSource: (workspace) => createGitStatusSource(options.shell)(workspace),
+      commitSource: (workspace) => createGitCommitSource(options.shell)(workspace),
+      ...(options.provenancePath === undefined
+        ? {}
+        : { provenanceStore: createJsonReviewProvenanceStore(options.provenancePath) }),
       spawnReviewer,
     });
     const reviewer: RunReviewer = async (input) => {
-      const { workspace } = input;
+      const { workspace, taskPrompt } = input;
       if (workspace === undefined) throw new Error("hub reviewer requires a workspace");
-      return runner.reviewRun({ runId: input.runId, workspace });
+      return runner.reviewRun({
+        runId: input.runId,
+        workspace,
+        ...(taskPrompt === undefined ? {} : { taskPrompt }),
+      });
     };
     return reviewer;
   };

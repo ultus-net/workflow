@@ -12,6 +12,8 @@ import type { HubReviewerResult } from "./hub-reviewer.js";
 export type RunReviewer = (input: {
   readonly runId: string;
   readonly workspace: string | undefined;
+  /** The ask the run was launched with, when declared — the reviewer binds it into its provenance fingerprint (W041). */
+  readonly taskPrompt?: string;
 }) => Promise<HubReviewerResult>;
 
 export type RunReviewerFactory = (controller: WorkflowRunController) => RunReviewer;
@@ -86,6 +88,7 @@ export function createRunRegistry(
   const workspaceApplications = new Map<string, WorkflowApplication>();
   const runs = new Map<string, WorkflowApplication>();
   const runWorkspaces = new Map<string, string | undefined>();
+  const runPrompts = new Map<string, string>();
   const runTestSubjects = new Map<string, string>();
   const reviewOutcomes = new Map<string, HubReviewerResult>();
   const rememberReviewOutcome = (runId: string, result: HubReviewerResult): void => {
@@ -167,7 +170,7 @@ export function createRunRegistry(
         completionClaims,
       };
     },
-    async begin({ runId, title, workspace, requiresReview }) {
+    async begin({ runId, title, workspace, requiresReview, taskPrompt }) {
       if (runId.trim().length === 0 || title.trim().length === 0) {
         throw new TypeError("run begin requires a non-empty runId and title");
       }
@@ -210,6 +213,7 @@ export function createRunRegistry(
       }
       runs.set(runId, application);
       runWorkspaces.set(runId, workspace);
+      if (typeof taskPrompt === "string" && taskPrompt.length > 0) runPrompts.set(runId, taskPrompt);
     },
     async review({ runId, reviewerRunId, verdict, summary }) {
       const application = runs.get(runId);
@@ -273,7 +277,12 @@ export function createRunRegistry(
           const reviewer = options.reviewer(controller);
           let result: HubReviewerResult;
           try {
-            result = await reviewer({ runId, workspace: runWorkspaces.get(runId) });
+            const taskPrompt = runPrompts.get(runId);
+            result = await reviewer({
+              runId,
+              workspace: runWorkspaces.get(runId),
+              ...(taskPrompt === undefined ? {} : { taskPrompt }),
+            });
           } catch (error) {
             const reason = `hub reviewer failed: ${error instanceof Error ? error.message : String(error)}`;
             rememberBlockingReason(runId, reason);
@@ -351,6 +360,7 @@ export function createRunRegistry(
       finishedRunTaskIds.add(runTaskId);
       runs.delete(runId);
       runWorkspaces.delete(runId);
+      runPrompts.delete(runId);
       runTestSubjects.delete(runId);
     },
   };

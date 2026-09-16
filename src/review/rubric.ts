@@ -20,7 +20,7 @@ export const REVIEW_AXES: readonly ReviewAxis[] = [
 ] as const;
 
 export const MIN_REFERENCED_AXES = 3;
-const MAX_DIFF_CHARS = 30_000;
+export const MAX_DIFF_CHARS = 30_000;
 
 export function buildReviewRubric(input: {
   readonly diffText: string;

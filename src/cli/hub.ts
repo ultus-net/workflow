@@ -100,8 +100,14 @@ const workspaceApplicationFor = (target: string): WorkflowApplication => {
 const containedShell = (writableWorkspace: boolean) => (command: string, cwd: string) =>
   shellExecutorFor(workspaceApplicationFor(cwd), undefined, writableWorkspace, guard)(command, cwd, undefined);
 
+// Review provenance (W041) journals every hub review decision in hub state —
+// never inside a reviewed workspace, where it would mutate the very
+// fingerprint the records are bound to. WORKFLOW_HUB_PROVENANCE overrides.
+const reviewProvenancePath = process.env.WORKFLOW_HUB_PROVENANCE ?? join(homedir(), ".workflow", "review-provenance.jsonl");
+
 const reviewerFactory = createReviewerFactory({
   shell: containedShell(false),
+  provenancePath: reviewProvenancePath,
   createRuntime: async ({ workspace: reviewerWorkspace }) => {
     const reviewerApplication = new WorkflowApplication(
       graph,
