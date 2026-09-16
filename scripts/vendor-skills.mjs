@@ -147,7 +147,15 @@ async function defaultClone(repo, dest) {
 async function acquireSource(source, clone) {
   if (typeof source.repo === "string") {
     const root = mkdtempSync(path.join(tmpdir(), "vendor-skills-"));
-    const commit = await clone(source.repo, root);
+    let commit;
+    try {
+      commit = await clone(source.repo, root);
+    } catch (error) {
+      // A failed clone must not leak its temp directory — the caller only
+      // cleans up on the success path.
+      rmSync(root, { recursive: true, force: true });
+      throw error;
+    }
     return { root, commit, cleanup: () => rmSync(root, { recursive: true, force: true }) };
   }
   if (typeof source.path === "string") {
