@@ -114,9 +114,25 @@ export function createCredentialControlPlane(
       } catch (error) {
         if (previousDefinition === undefined) definitions.delete(definition.id);
         else definitions.set(definition.id, previousDefinition);
-        if (previousValue === undefined) await store.delete(definition.id);
-        else await store.put(definition.id, previousValue);
-        throw error;
+        const failure = error instanceof Error ? error : new Error(String(error));
+        let outcome: SecretRollbackOutcome;
+        try {
+          outcome = await restoreSecret(store, definition.id, previousValue, failure);
+        } catch (divergence) {
+          // Metadata persistence failed and every compensating secret op
+          // failed too: drop the in-memory definition so the live process
+          // fails closed instead of serving the new value under the
+          // rolled-back (older) authorization contract.
+          definitions.delete(definition.id);
+          throw divergence;
+        }
+        if (outcome === "fail-closed") {
+          throw new Error(
+            `credential '${definition.id}' set failed (${failure.message}); the previous secret could not be restored, so the credential is now unavailable (fail-closed) — re-set it`,
+            { cause: error },
+          );
+        }
+        throw failure;
       }
     },
     async revoke(id): Promise<void> {
@@ -129,11 +145,64 @@ export function createCredentialControlPlane(
         await onDefinitionsChanged?.([...definitions.values()]);
       } catch (error) {
         definitions.set(id, definition);
-        if (previousValue !== undefined) await store.put(id, previousValue);
-        throw error;
+        const failure = error instanceof Error ? error : new Error(String(error));
+        if (previousValue !== undefined) {
+          try {
+            await store.put(id, previousValue);
+          } catch (rollbackError) {
+            // The metadata rolled back but the secret could not be
+            // restored: the credential stays unmaterializable (fail-closed).
+            // Surface both failures so the operator knows to re-set it.
+            throw new Error(
+              `credential '${id}' revoke rolled back (${failure.message}) but the previous secret could not be restored (${
+                rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+              }); the credential is now unavailable (fail-closed) — re-set it`,
+              { cause: rollbackError },
+            );
+          }
+        }
+        throw failure;
       }
     },
   };
+}
+
+type SecretRollbackOutcome = "restored" | "fail-closed";
+
+/**
+ * Restores the secret store after a failed metadata change. When the
+ * compensating restore op itself fails, the newly-set value must never stay
+ * servable under the rolled-back (older) authorization contract: removing it
+ * outright makes materialization fail closed (unavailable) instead. If even
+ * that removal fails, the persisted metadata and the secret material have
+ * diverged — report it loudly so the operator re-sets the credential.
+ */
+async function restoreSecret(
+  store: SecretStore,
+  id: string,
+  previousValue: string | undefined,
+  failure: Error,
+): Promise<SecretRollbackOutcome> {
+  try {
+    if (previousValue === undefined) await store.delete(id);
+    else await store.put(id, previousValue);
+    return "restored";
+  } catch (rollbackError) {
+    if (previousValue !== undefined) {
+      try {
+        await store.delete(id);
+        return "fail-closed";
+      } catch {
+        // Both compensating ops failed — report the divergence below.
+      }
+    }
+    throw new Error(
+      `credential '${id}' state diverged: metadata change failed (${failure.message}) and the secret rollback failed too (${
+        rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+      }); persisted metadata and secret material no longer agree — re-set the credential`,
+      { cause: rollbackError },
+    );
+  }
 }
 
 export function validateCredentialDefinition(definition: CredentialDefinition): void {
