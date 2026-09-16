@@ -31,6 +31,21 @@ export function runTestSubject(runId: string, workspace: string | undefined): st
   return `test:${workspace ?? runId}`;
 }
 
+/**
+ * The single canonicalization discipline for surface-declared workspaces
+ * (`docs/HUB_PROTOCOL.md` §3): declarations must be absolute existing
+ * directories, and one canonical (realpath) path means one application —
+ * raw declared paths never create a second application for the same
+ * directory. Invalid declarations throw; callers surface that as an
+ * authority error so clients fail closed.
+ */
+export function canonicalWorkspace(target: string): string {
+  if (!isAbsolute(target)) throw new TypeError(`declared workspace must be absolute: ${target}`);
+  if (!statSync(target, { throwIfNoEntry: false })?.isDirectory()) {
+    throw new TypeError(`declared workspace is not an existing directory: ${target}`);
+  }
+  return realpathSync(target);
+}
 
 /**
  * Resolves the WorkflowApplication for a surface-declared workspace and
@@ -121,15 +136,11 @@ export function createRunRegistry(
       if (activateInteractiveTask) fallback.startInteractiveTask();
       return fallback;
     }
-    if (!isAbsolute(workspace)) throw new TypeError(`declared workspace must be absolute: ${workspace}`);
-    if (!statSync(workspace, { throwIfNoEntry: false })?.isDirectory()) {
-      throw new TypeError(`declared workspace is not an existing directory: ${workspace}`);
-    }
-    const canonicalWorkspace = realpathSync(workspace);
-    let application = workspaceApplications.get(canonicalWorkspace);
+    const canonical = canonicalWorkspace(workspace);
+    let application = workspaceApplications.get(canonical);
     if (application === undefined) {
-      application = new WorkflowApplication(graph, fallback.host, [], fallback.allowedCapabilities, canonicalWorkspace);
-      workspaceApplications.set(canonicalWorkspace, application);
+      application = new WorkflowApplication(graph, fallback.host, [], fallback.allowedCapabilities, canonical);
+      workspaceApplications.set(canonical, application);
     }
     if (activateInteractiveTask) application.startInteractiveTask();
     return application;
@@ -201,147 +212,147 @@ export function createRunRegistry(
       runWorkspaces.set(runId, workspace);
     },
     async review({ runId, reviewerRunId, verdict, summary }) {
-        const application = runs.get(runId);
-        if (application === undefined) throw new TypeError(`unknown run: ${runId}`);
-        if (!runs.has(reviewerRunId)) throw new TypeError(`unknown reviewer run: ${reviewerRunId}`);
-        // Anti-rubber-stamp: a run cannot review itself (ported from
-        // opencode-workflow-guard's subagent-only record_review).
-        if (reviewerRunId === runId) throw new TypeError("a run cannot review itself");
-        if (verdict === "approved" && countReferencedAxes(summary) < MIN_REFERENCED_AXES) {
-          throw new TypeError(
-            `review summary must reference at least ${MIN_REFERENCED_AXES} of the 5 axes (found ${countReferencedAxes(summary)})`,
-          );
+      const application = runs.get(runId);
+      if (application === undefined) throw new TypeError(`unknown run: ${runId}`);
+      if (!runs.has(reviewerRunId)) throw new TypeError(`unknown reviewer run: ${reviewerRunId}`);
+      // Anti-rubber-stamp: a run cannot review itself (ported from
+      // opencode-workflow-guard's subagent-only record_review).
+      if (reviewerRunId === runId) throw new TypeError("a run cannot review itself");
+      if (verdict === "approved" && countReferencedAxes(summary) < MIN_REFERENCED_AXES) {
+        throw new TypeError(
+          `review summary must reference at least ${MIN_REFERENCED_AXES} of the 5 axes (found ${countReferencedAxes(summary)})`,
+        );
+      }
+      if (verdict !== "approved") return { recorded: false };
+      application.recordMutation([runId]);
+      application.recordEvidence({
+        id: evidenceId(`review-evidence:${runId}`),
+        observationId: observationId(`review-observation:${runId}:${reviewerRunId}`),
+        authority: "reviewer",
+        subject: runId,
+        result: "passed",
+        freshness: "fresh",
+        mutationEpoch: application.snapshot().mutationEpoch,
+        observedAt: new Date().toISOString(),
+      });
+      return { recorded: true };
+    },
+    async finish({ runId, outcome }) {
+      const application = runs.get(runId);
+      if (application === undefined) throw new TypeError(`unknown run: ${runId}`);
+      const runTaskId = taskId(`run:${runId}`);
+      if (outcome === "verified") {
+        // No mutation here: verification observes the world as the run left
+        // it. Mutating at finish time would invalidate the reviewer and
+        // environment evidence that is supposed to validate this run.
+        const current = application.snapshot().tasks.find((task) => task.id === runTaskId)?.state;
+        if (current === "IN_PROGRESS") {
+          const verifying = application.transition(runTaskId, "VERIFYING");
+          if (verifying.kind !== "accepted") throw new Error(`cannot verify run ${runId}: ${verifying.reason}`);
+        } else if (current !== "VERIFYING") {
+          throw new Error(`cannot verify run ${runId}: task is ${current}`);
         }
-        if (verdict !== "approved") return { recorded: false };
-        application.recordMutation([runId]);
-        application.recordEvidence({
-          id: evidenceId(`review-evidence:${runId}`),
-          observationId: observationId(`review-observation:${runId}:${reviewerRunId}`),
-          authority: "reviewer",
-          subject: runId,
-          result: "passed",
-          freshness: "fresh",
-          mutationEpoch: application.snapshot().mutationEpoch,
-          observedAt: new Date().toISOString(),
-        });
-        return { recorded: true };
-      },
-      async finish({ runId, outcome }) {
-        const application = runs.get(runId);
-        if (application === undefined) throw new TypeError(`unknown run: ${runId}`);
-        const runTaskId = taskId(`run:${runId}`);
-        if (outcome === "verified") {
-          // No mutation here: verification observes the world as the run left
-          // it. Mutating at finish time would invalidate the reviewer and
-          // environment evidence that is supposed to validate this run.
-          const current = application.snapshot().tasks.find((task) => task.id === runTaskId)?.state;
-          if (current === "IN_PROGRESS") {
-            const verifying = application.transition(runTaskId, "VERIFYING");
-            if (verifying.kind !== "accepted") throw new Error(`cannot verify run ${runId}: ${verifying.reason}`);
-          } else if (current !== "VERIFYING") {
-            throw new Error(`cannot verify run ${runId}: task is ${current}`);
+        // No fabricated evidence here: a finish call only reports that the
+        // session ended. Promotion to VERIFIED is decided by the kernel -
+        // plain runs carry no evidence requirements, while requiresReview
+        // runs can only advance on reviewer evidence recorded through
+        // /run/review (plus hub-run test evidence when a test runner is
+        // wired, plan Task D1). Recording synthetic "passed" evidence
+        // without a real observation would self-certify the run.
+        let verified = application.transition(runTaskId, "VERIFIED");
+        const hasFreshReviewerEvidence = graph
+          .evidenceFor(runId)
+          .some((evidence) => evidence.authority === "reviewer" && evidence.result === "passed" && evidence.freshness === "fresh");
+        if (verified.kind !== "accepted" && !hasFreshReviewerEvidence && options?.reviewer !== undefined) {
+          // Plan Task A2: a review-gated run missing reviewer evidence
+          // auto-launches the hub reviewer. Approval verifies the run; a
+          // fail-closed or crashed reviewer leaves the task VERIFYING with
+          // a surfaced blocking reason — never a silent pass. The factory
+          // receives the controller at call time (the same machinery the
+          // verifier-token /run/review endpoint calls).
+          const reviewer = options.reviewer(controller);
+          let result: HubReviewerResult;
+          try {
+            result = await reviewer({ runId, workspace: runWorkspaces.get(runId) });
+          } catch (error) {
+            const reason = `hub reviewer failed: ${error instanceof Error ? error.message : String(error)}`;
+            rememberBlockingReason(runId, reason);
+            throw new Error(`cannot verify run ${runId}: ${reason}`, { cause: error });
           }
-          // No fabricated evidence here: a finish call only reports that the
-          // session ended. Promotion to VERIFIED is decided by the kernel -
-          // plain runs carry no evidence requirements, while requiresReview
-          // runs can only advance on reviewer evidence recorded through
-          // /run/review (plus hub-run test evidence when a test runner is
-          // wired, plan Task D1). Recording synthetic "passed" evidence
-          // without a real observation would self-certify the run.
-          let verified = application.transition(runTaskId, "VERIFIED");
-          const hasFreshReviewerEvidence = graph
-            .evidenceFor(runId)
-            .some((evidence) => evidence.authority === "reviewer" && evidence.result === "passed" && evidence.freshness === "fresh");
-          if (verified.kind !== "accepted" && !hasFreshReviewerEvidence && options?.reviewer !== undefined) {
-            // Plan Task A2: a review-gated run missing reviewer evidence
-            // auto-launches the hub reviewer. Approval verifies the run; a
-            // fail-closed or crashed reviewer leaves the task VERIFYING with
-            // a surfaced blocking reason — never a silent pass. The factory
-            // receives the controller at call time (the same machinery the
-            // verifier-token /run/review endpoint calls).
-            const reviewer = options.reviewer(controller);
-            let result: HubReviewerResult;
-            try {
-              result = await reviewer({ runId, workspace: runWorkspaces.get(runId) });
-            } catch (error) {
-              const reason = `hub reviewer failed: ${error instanceof Error ? error.message : String(error)}`;
-              rememberBlockingReason(runId, reason);
-              throw new Error(`cannot verify run ${runId}: ${reason}`, { cause: error });
-            }
-            rememberReviewOutcome(runId, result);
-            if (!result.recorded) {
-              const reason = result.parseFailure ?? "reviewer did not approve the run";
-              rememberBlockingReason(runId, reason);
-              throw new Error(`cannot verify run ${runId}: ${reason}`);
-            }
-            verified = application.transition(runTaskId, "VERIFIED");
-            if (verified.kind !== "accepted" && options?.testRunner === undefined) {
-              rememberBlockingReason(runId, verified.reason);
-              throw new Error(`cannot verify run ${runId}: ${verified.reason}`);
-            }
+          rememberReviewOutcome(runId, result);
+          if (!result.recorded) {
+            const reason = result.parseFailure ?? "reviewer did not approve the run";
+            rememberBlockingReason(runId, reason);
+            throw new Error(`cannot verify run ${runId}: ${reason}`);
           }
-          if (verified.kind !== "accepted" && options?.testRunner !== undefined && runTestSubjects.has(runId)) {
-            // Plan Task D1: the hub runs the workspace test command itself and
-            // records the environment observation. Failing or crashing tests
-            // leave the task VERIFYING with the output as blocking reason.
-            const subject = runTestSubjects.get(runId)!;
-            let testOutcome: { readonly passed: boolean; readonly output: string };
-            try {
-              testOutcome = await options.testRunner({
-                runId,
-                workspace: runWorkspaces.get(runId),
-                subject,
-              });
-            } catch (error) {
-              const reason = `hub test run failed: ${error instanceof Error ? error.message : String(error)}`;
-              rememberBlockingReason(runId, reason);
-              throw new Error(`cannot verify run ${runId}: ${reason}`, { cause: error });
-            }
-            if (!testOutcome.passed) {
-              const reason = `test evidence failed: ${testOutcome.output.slice(0, 200)}`;
-              rememberBlockingReason(runId, reason);
-              throw new Error(`cannot verify run ${runId}: ${reason}`);
-            }
-            application.recordEvidence({
-              id: evidenceId(`test-evidence:${runId}`),
-              observationId: observationId(`test-observation:${runId}`),
-              authority: "environment",
-              subject,
-              result: "passed",
-              freshness: "fresh",
-              mutationEpoch: application.snapshot().mutationEpoch,
-              observedAt: new Date().toISOString(),
-            });
-            verified = application.transition(runTaskId, "VERIFIED");
-            if (verified.kind !== "accepted") {
-              rememberBlockingReason(runId, verified.reason);
-              throw new Error(`cannot verify run ${runId}: ${verified.reason}`);
-            }
-          }
-          if (verified.kind !== "accepted") {
+          verified = application.transition(runTaskId, "VERIFIED");
+          if (verified.kind !== "accepted" && options?.testRunner === undefined) {
             rememberBlockingReason(runId, verified.reason);
             throw new Error(`cannot verify run ${runId}: ${verified.reason}`);
           }
-          blockingReasons.delete(runId);
-        } else {
-          application.recordMutation([runId]);
+        }
+        if (verified.kind !== "accepted" && options?.testRunner !== undefined && runTestSubjects.has(runId)) {
+          // Plan Task D1: the hub runs the workspace test command itself and
+          // records the environment observation. Failing or crashing tests
+          // leave the task VERIFYING with the output as blocking reason.
+          const subject = runTestSubjects.get(runId)!;
+          let testOutcome: { readonly passed: boolean; readonly output: string };
+          try {
+            testOutcome = await options.testRunner({
+              runId,
+              workspace: runWorkspaces.get(runId),
+              subject,
+            });
+          } catch (error) {
+            const reason = `hub test run failed: ${error instanceof Error ? error.message : String(error)}`;
+            rememberBlockingReason(runId, reason);
+            throw new Error(`cannot verify run ${runId}: ${reason}`, { cause: error });
+          }
+          if (!testOutcome.passed) {
+            const reason = `test evidence failed: ${testOutcome.output.slice(0, 200)}`;
+            rememberBlockingReason(runId, reason);
+            throw new Error(`cannot verify run ${runId}: ${reason}`);
+          }
           application.recordEvidence({
-            id: evidenceId(`run-evidence:${runId}`),
-            observationId: observationId(`run-observation:${runId}`),
+            id: evidenceId(`test-evidence:${runId}`),
+            observationId: observationId(`test-observation:${runId}`),
             authority: "environment",
-            subject: runId,
-            result: "failed",
+            subject,
+            result: "passed",
             freshness: "fresh",
             mutationEpoch: application.snapshot().mutationEpoch,
             observedAt: new Date().toISOString(),
           });
-          application.transition(runTaskId, "FAILED");
+          verified = application.transition(runTaskId, "VERIFIED");
+          if (verified.kind !== "accepted") {
+            rememberBlockingReason(runId, verified.reason);
+            throw new Error(`cannot verify run ${runId}: ${verified.reason}`);
+          }
         }
-        finishedRunTaskIds.add(runTaskId);
-        runs.delete(runId);
-        runWorkspaces.delete(runId);
-        runTestSubjects.delete(runId);
-      },
+        if (verified.kind !== "accepted") {
+          rememberBlockingReason(runId, verified.reason);
+          throw new Error(`cannot verify run ${runId}: ${verified.reason}`);
+        }
+        blockingReasons.delete(runId);
+      } else {
+        application.recordMutation([runId]);
+        application.recordEvidence({
+          id: evidenceId(`run-evidence:${runId}`),
+          observationId: observationId(`run-observation:${runId}`),
+          authority: "environment",
+          subject: runId,
+          result: "failed",
+          freshness: "fresh",
+          mutationEpoch: application.snapshot().mutationEpoch,
+          observedAt: new Date().toISOString(),
+        });
+        application.transition(runTaskId, "FAILED");
+      }
+      finishedRunTaskIds.add(runTaskId);
+      runs.delete(runId);
+      runWorkspaces.delete(runId);
+      runTestSubjects.delete(runId);
+    },
   };
   return {
     resolve(workspace?: string, runId?: string, options?: { activateInteractiveTask?: boolean }): WorkflowApplication {

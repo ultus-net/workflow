@@ -129,6 +129,7 @@ function schedulerHarness(t: TestContext, options: {
   schedule: Partial<ScheduleDefinition> & { id: string };
   turnError?: Error;
   finishError?: Error;
+  promptGuidance?: string;
 }) {
   const { calls, controller } = stubController();
   const turns: Array<{ runId: string; prompt: string; budget: RunBudget | undefined }> = [];
@@ -149,6 +150,7 @@ function schedulerHarness(t: TestContext, options: {
     },
     log: (message) => logs.push(message),
     recordBlockingReason: (input) => reasons.push({ runId: input.runId, reason: input.reason }),
+    ...(options.promptGuidance === undefined ? {} : { promptGuidance: options.promptGuidance }),
   });
   t.after(() => scheduler.stop());
   return { scheduler, calls, turns, logs, reasons };
@@ -171,6 +173,21 @@ test("a due schedule spawns a review-gated run and verifies it on turn success",
   assert.equal(finish.detail, "verified");
   assert.ok(begin.runId === finish.runId, "begin and finish bind the same run");
   assert.equal(turns[0]!.runId, begin.runId);
+});
+
+test("configured prompt guidance is prepended to every scheduled prompt", async (t) => {
+  const guidance = "Operating notes (advisory — the Workflow hub enforces its rules independently of this text):\n- stay terse\n\n";
+  const { scheduler, turns } = schedulerHarness(t, { schedule: { id: "guided" }, promptGuidance: guidance });
+  const at = new Date(2026, 8, 18, 9, 0, 0, 0);
+
+  await scheduler.tick(at);
+
+  assert.equal(turns.length, 1);
+  assert.equal(turns[0]!.prompt, `${guidance}nightly audit`, "the schedule's prompt follows the advisory preamble verbatim");
+
+  const bare = schedulerHarness(t, { schedule: { id: "unguided" } });
+  await bare.scheduler.tick(at);
+  assert.equal(bare.turns[0]!.prompt, "nightly audit", "absent guidance leaves the prompt unchanged");
 });
 
 test("a schedule does not fire twice within the same minute and not before it is due", async (t) => {

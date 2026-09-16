@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import React from "react";
+import { homedir } from "node:os";
 import { render } from "ink";
 
 import { hostCapabilities } from "../adapters/host.js";
@@ -7,6 +8,7 @@ import { WorkflowApplication } from "../application/workflow.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { createCheckpointLedger } from "../pedagogy/checkpoints.js";
+import { applySkillGating, resolveSkillsLevelMap } from "../pedagogy/skill-gating.js";
 import { WorkflowTui } from "../ui/tui.js";
 import { composeDriver, driverHasAuthoritativePreMutation, parseUniversalArgs, resolveDriverName } from "./driver-registry.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
@@ -35,12 +37,24 @@ const composed = await composeDriver(driverName, application, workspace, {
 
 let renderError: unknown;
 try {
+  // Plan Task F2 surface wiring: the same operator levels.json skills-mcp
+  // reads gates this surface's required-skill precondition. A malformed map
+  // refuses startup (fail-closed, mirroring skills-mcp) rather than running
+  // with silently missing gating — inside the try so the composed driver is
+  // still disposed on that fatal path.
+  const skillsLevelMap = resolveSkillsLevelMap(process.env.SKILLS_MCP_DIR, homedir());
   const { waitUntilExit } = render(React.createElement(WorkflowTui, {
     application,
     session: composed.session,
     assistantLabel: composed.label,
     connectionLabel: `${composed.label} | standalone (local authority)`,
-    onModeChange: (mode) => application.setPedagogyGate(createCheckpointLedger(mode)),
+    // Mode switching installs the checkpoint ledger AND re-binds the mode's
+    // required-skill set to the active task (a mode with no required skills
+    // clears the precondition).
+    onModeChange: (mode) => {
+      application.setPedagogyGate(createCheckpointLedger(mode));
+      applySkillGating(application, mode, skillsLevelMap);
+    },
     ...(composed.setSessionStyle ? { onStyleChange: composed.setSessionStyle } : {}),
     ...(composed.sessionConfigOptions ? { sessionConfigOptions: composed.sessionConfigOptions } : {}),
     ...(composed.setSessionConfig ? { onSetSessionConfig: composed.setSessionConfig } : {}),

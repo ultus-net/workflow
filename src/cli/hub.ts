@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFileSync, realpathSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -11,8 +11,10 @@ import { loadCredentialDefinitions } from "../integrations/credential-config.js"
 import { createCredentialBroker } from "../integrations/credentials.js";
 import { createSecretServiceStore } from "../integrations/secret-service.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
+import { advisoryGuidanceFromEnv } from "../integrations/prompt-guidance.js";
 import { createReviewerFactory, createRunTestRunner } from "../integrations/hub-run-gates.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
+import { canonicalWorkspace } from "../integrations/run-registry.js";
 import {
   createBudgetGuard,
   createHubScheduler,
@@ -82,9 +84,11 @@ const guard = await createDefaultToolboxGuardProvider({
 // surfaces as a blocking reason, never a silent pass).
 const workspaceApplications = new Map<string, WorkflowApplication>();
 const workspaceApplicationFor = (target: string): WorkflowApplication => {
-  // Same canonicalization discipline as the run registry: raw declared paths
-  // never create a second application for the same directory.
-  const canonical = realpathSync(target);
+  // Same canonicalization discipline as the run registry, now literally the
+  // same helper: raw declared paths never create a second application for
+  // the same directory, and invalid declarations fail closed instead of
+  // silently binding authorization to an unintended directory.
+  const canonical = canonicalWorkspace(target);
   let bound = workspaceApplications.get(canonical);
   if (bound === undefined) {
     bound = new WorkflowApplication(graph, application.host, [], new Set(["read", "mutation", "process"]), canonical);
@@ -131,12 +135,17 @@ const testRunner = teamTaskVerificationCommand !== undefined && teamTaskVerifica
 // budget-enforced from metering-proxy metrics (plan C2).
 const schedulesPath = process.env.WORKFLOW_HUB_SCHEDULES ?? join(homedir(), ".workflow", "scheduler.json");
 const schedules = loadSchedulesTable(schedulesPath);
+// Plan Task G5 wiring: the hub composes scheduled prompts, so the operator's
+// advisory guidance (WORKFLOW_ADVISORY_STYLE / WORKFLOW_ADVISORY_NOTES) is
+// prepended to every scheduled turn — honestly advisory prompt text.
+const promptGuidance = advisoryGuidanceFromEnv(process.env);
 const schedulerFactory = schedules.length === 0 ? undefined : (handles: WorkflowHubSchedulerHandles) =>
   createHubScheduler({
     controller: handles.controller,
     recordBlockingReason: handles.recordBlockingReason,
     schedules: () => schedules,
     log: (message) => console.log(message),
+    ...(promptGuidance === undefined ? {} : { promptGuidance }),
     runTurn: async ({ runId, workspace, prompt, budget }) => {
       const runApplication = handles.resolve(workspace, runId);
       const runTaskId: TaskId = taskId(`run:${runId}`);

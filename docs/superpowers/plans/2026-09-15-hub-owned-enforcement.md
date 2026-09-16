@@ -371,6 +371,11 @@ delivery, never adherence (prompts are not a security boundary).
 > states, malformed maps throw) and the hub-side required set
 > (`setTaskRequiredSkills`). Composition into TUI mode-switching lands with
 > the surfaces (A3-family wiring).
+> **Composition landed 2026-09-16** (`fix/p2-review-followups`):
+> `applySkillGating` + `resolveSkillsLevelMap` — the universal TUI and the
+> standalone monitor TUI mode bars bind (and clear) the active task's
+> required-skill set from the same `levels.json` (`SKILLS_MCP_DIR`
+> override); a malformed map refuses startup rather than running ungated.
 
 ### Task F3: Delivery precondition in the application layer
 
@@ -579,6 +584,10 @@ probe-verified agent.
 > review follow-ups live in `review-accountability-mcp` with a hub client,
 > learning/project-memory/worktree run as hub-owned toolbox servers — the
 > G5 delta was the claims journal and the guidance builder.
+> **Guidance wiring landed 2026-09-16** (`fix/p2-review-followups`): the hub
+> prepends `advisoryGuidanceFromEnv` (`WORKFLOW_ADVISORY_STYLE` /
+> `WORKFLOW_ADVISORY_NOTES`) to every scheduled-run prompt through the
+> scheduler's `promptGuidance` option; unset env leaves prompts unchanged.
 
 ### Task G6: Port the adversarial corpus as hub conformance probes
 
