@@ -49,11 +49,19 @@ export function launchContainedAcpAgent(
   ] as const) {
     if (!isAbsolute(value)) throw new TypeError(`${label} must be an absolute path`);
   }
+  const readablePaths = [
+    ...new Set([
+      ...(options.readablePaths ?? []),
+      // The entry script must stay visible inside the boundary even when it
+      // lives outside the system and node-prefix binds.
+      ...(options.script !== undefined ? [options.script] : []),
+    ]),
+  ];
   return containment.spawn({
     executable: options.executable,
     args: [...(options.script !== undefined ? [options.script] : []), ...(options.args ?? [])],
     cwd: options.workspace,
-    ...(options.readablePaths ? { readablePaths: options.readablePaths } : {}),
+    ...(readablePaths.length > 0 ? { readablePaths } : {}),
     writablePaths: [options.workspace, options.home],
     // Agents need network egress for their model API; the containment
     // property enforced here is filesystem/credential isolation.
