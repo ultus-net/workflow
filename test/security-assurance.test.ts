@@ -43,28 +43,72 @@ function* automatedCitations(): Generator<Citation> {
 test("the assurance case cites its verification comprehensively across all surfaces", () => {
   const citations = [...automatedCitations()];
   // Guard against gutting the map: every surface section must exist, and the
-  // citation count must stay substantial.
-  for (const section of ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12"]) {
+  // citation count must stay substantial — aggregate AND per-section. An
+  // aggregate floor alone can be satisfied while one surface is gutted; each
+  // of the twelve sections must keep carrying real verification weight.
+  const sections = ["S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8", "S9", "S10", "S11", "S12"];
+  for (const section of sections) {
     assert.ok(doc.includes(`## ${section} `), `assurance case must keep surface section ${section}`);
   }
   assert.ok(citations.length >= 100, `expected at least 100 automated/gated citations, found ${citations.length}`);
   const gated = citations.filter((citation) => citation.gate !== undefined);
   assert.ok(gated.length >= 8, `expected at least 8 gated probe citations, found ${gated.length}`);
   assert.ok([...doc.matchAll(MANUAL)].length >= 6, "expected at least 6 manual verification citations");
+  // Per-section floor: split the doc at section headers and require every
+  // surface to keep at least 5 verification citations of any kind.
+  const sectionBodies = doc.split(/\n(?=## S\d+ )/);
+  assert.ok(sectionBodies.length >= sections.length, "expected at least twelve section bodies");
+  for (const body of sectionBodies) {
+    const header = body.match(/^## (S\d+) /);
+    if (header === null) continue;
+    const weight = [...body.matchAll(AUTOMATED)].length + [...body.matchAll(MANUAL)].length;
+    assert.ok(
+      weight >= 5,
+      `surface section ${header[1]} dropped to ${weight} verification citations (floor: 5) — gutted sections fail even when the aggregate holds`,
+    );
+  }
 });
 
 test("every claims-table row carries a verification citation (no unverified claims)", () => {
   const dataRows = doc.split("\n").filter((line) => line.startsWith("| ") && !line.includes("| ---") && !line.includes("| Claim |"));
   for (const row of dataRows) {
-    const cells = row.split("|").filter((cell) => cell.trim().length > 0);
-    if (cells.length !== 3) continue; // catalog/prose tables (S12) have their own columns
-    const verification = cells[2] ?? "";
+    // Count middle cells WITHOUT dropping empties: a row with an empty
+    // verification cell (`| claim | impl |  |`) must be caught, not skipped —
+    // the old emptiness filter let gutted rows masquerade as 2-cell rows.
+    const middles = row.split("|").slice(1, -1);
+    if (middles.length !== 3) continue; // catalog/prose tables (S12) have their own columns
+    const verification = middles[2]?.trim() ?? "";
     assert.match(
       verification,
       /test\/[A-Za-z0-9._/-]+\.test\.ts#"|manual\[npm run /,
-      `claim row lacks a verification citation: ${cells[0]?.slice(0, 80)}`,
+      `claim row lacks a verification citation: ${middles[0]?.trim().slice(0, 80)}`,
     );
   }
+});
+
+test("every implementation-boundary reference in a claim row exists in the repository", () => {
+  // The middle cell of each claim row names the implementation boundary.
+  // A boundary pointing at a vanished file is a broken citation even when
+  // the verification column still matches — extract path-like tokens and
+  // require each to exist on disk.
+  const PATH_LIKE = /(?:^|[\s`('"])([A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+\.(?:ts|mts|cts|mjs|md))(?::\d+(?:-\d+)?)?(?=$|[\s`'":,)])/g;
+  const dataRows = doc.split("\n").filter((line) => line.startsWith("| ") && !line.includes("| ---") && !line.includes("| Claim |"));
+  const missing: string[] = [];
+  for (const row of dataRows) {
+    const middles = row.split("|").slice(1, -1);
+    if (middles.length !== 3) continue;
+    const impl = middles[1] ?? "";
+    const seen = new Set<string>();
+    for (const match of impl.matchAll(PATH_LIKE)) {
+      const candidate = match[1]!;
+      if (seen.has(candidate)) continue;
+      seen.add(candidate);
+      if (!existsSync(join(repoRoot, candidate))) {
+        missing.push(`claim row cites implementation boundary that does not exist: ${candidate}`);
+      }
+    }
+  }
+  assert.deepEqual(missing, []);
 });
 
 test("every cited automated test exists and still contains its cited title", () => {

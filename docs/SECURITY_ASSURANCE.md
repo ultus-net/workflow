@@ -1,6 +1,6 @@
 # Workflow Security Assurance Case (W042)
 
-This is the executable assurance map for Workflow's security guarantees. `THREAT_MODEL.md` states the threats, trust zones, and controls; this document binds every **material security claim** to its implementation boundary and to the verification that proves it — an automated test (exact file and title), a gated live probe, or an explicitly identified manual verification. `test/security-assurance.test.ts` parses this document and asserts that every cited automated test, gated probe, and manual command actually exists, so the map cannot silently drift from the tests it cites.
+This is the executable assurance map for Workflow's security guarantees. `THREAT_MODEL.md` states the threats, trust zones, and controls; this document binds every **material security claim** to its implementation boundary and to the verification that proves it — an automated test (exact file and title), a gated live probe, or an explicitly identified manual verification. `test/security-assurance.test.ts` parses this document and asserts that every cited automated test, gated probe, and manual command actually exists, that every claim row carries a non-empty verification, that implementation-boundary references point at files that exist, and that every surface section keeps real verification weight (per-section citation floors) — so the map cannot silently drift from the tests it cites, cannot hide an unverified claim behind an empty cell, and cannot be gutted one section at a time while the aggregate holds.
 
 Honesty rules that govern this case (unchanged from the threat model):
 
@@ -43,7 +43,7 @@ The hub owns run lifecycle, review gating, verifier-token separation, and worksp
 | A review-gated run cannot reach VERIFIED without reviewer evidence | `src/integrations/run-registry.ts:196` | test/hub-runs.test.ts#"a review-gated run cannot finish until an independent review is recorded" |
 | A run cannot review itself (anti-rubber-stamp) | `src/integrations/run-registry.ts:224` | test/hub-review.test.ts#"a review from the same run is rejected (anti-rubber-stamp)" |
 | Approvals naming fewer than three review axes are rejected | `src/integrations/run-registry.ts:225` | test/hub-review.test.ts#"a review referencing fewer than three axes is rejected" |
-| Verifier-only routes reject the ordinary token; tokens are separate random values compared constant-time | `src/integrations/cline-tui-bridge.ts:94` | test/hub-review.test.ts#"a review referencing fewer than three axes is rejected" |
+| Verifier-only routes reject the ordinary token; verifier and ordinary tokens are separate random values (constant-time comparison is an implementation property of `src/integrations/cline-tui-bridge.ts:432`, not separately test-verified) | `src/integrations/cline-tui-bridge.ts:94` | test/hub-review.test.ts#"a review referencing fewer than three axes is rejected" |
 | Run begin stales the workspace test subject — a later run cannot verify on a predecessor's green tests | `src/integrations/run-registry.ts:207` | test/hub-runs.test.ts#"a later run in the same workspace cannot verify on a predecessor's test evidence" |
 | A fail-closed reviewer outcome leaves the run VERIFYING with a surfaced blocking reason — never a silent pass | `src/integrations/run-registry.ts:287` | test/hub-runs.test.ts#"a fail-closed reviewer outcome leaves the run VERIFYING with a surfaced blocking reason" |
 | Reviewer infrastructure failure surfaces as a blocking reason and never fabricates evidence | `src/integrations/run-registry.ts:270` | test/hub-runs.test.ts#"reviewer infrastructure failure leaves the run VERIFYING with a surfaced blocking reason" |
@@ -74,7 +74,7 @@ Adapters translate host events into the generic contract; malformed or downgrade
 | OpenCode patch proposals expose every patch target; path-bearing tools fail closed without a subject | `src/adapters/opencode.ts:81` | test/opencode-plugin.test.ts#"OpenCode path-bearing tools fail closed when their subject is missing" |
 | MCP observations become evidence only after boundary validation; malformed observations never self-certify | `src/adapters/mcp.ts:20` | test/mcp.test.ts#"malformed MCP observations are rejected instead of self-certifying" |
 | Cline, ACP, and OpenCode each pass the same shared conformance trace (per-harness titles generated from the template literal in the file) | `test/adapter-conformance.test.ts` | test/adapter-conformance.test.ts#"passes the shared host adapter conformance trace" |
-| Per-version tool surfaces stay classified: gated tools recognized, path-subject tools fail closed without a path, process tools never leak command text into subjects | `src/adapters/acp.ts:112` | test/acp-cline-tool-matrix.test.ts#"every path-subject tool fails closed without a usable path" |
+| Per-version tool surfaces stay classified: gated tools recognized, path-subject tools fail closed without a path, process tools never leak command text into subjects | `src/adapters/acp.ts:51` (mutation subject fail-closed) + `src/adapters/acp.ts:112` (capability classification/escalation) | test/acp-cline-tool-matrix.test.ts#"every path-subject tool fails closed without a usable path" |
 
 ## S4 — ACP session and wire
 
@@ -197,7 +197,7 @@ The vendored guard corpus stays alive hub-side; credentials are a separate custo
 | Claim | Implementation | Verification |
 | --- | --- | --- |
 | The hub intercepts destructive commands and protected paths on every surface | `src/integrations/mcp-toolbox-guard.ts:130` | test/hub-guard-interception.test.ts#"Workflow hub with guard intercepts destructive commands and protected paths" |
-| The hub refuses to start guardless — a silently guardless authority never runs | `src/cli/hub.ts:69` | test/mcp-toolbox-guard.test.ts#"workflow-guard-mcp child receives only explicitly brokered credential environment" |
+| The hub refuses to start guardless — the startup awaits the guard provider, and a guard that cannot start fails the hub itself rather than running permissive | `src/cli/hub.ts:69` | test/hub-guardless-startup.test.ts#"the guard provider composition fails closed when the guard server cannot start" |
 | The guard child receives only explicitly brokered credential environment bindings | `src/integrations/mcp-toolbox-guard.ts:57` | test/credential-mcp.test.ts#"MCP environment contains only explicitly brokered credential bindings" |
 | The broker materializes a secret only for an allowed consumer and workspace | `src/integrations/credentials.ts` | test/credentials.test.ts#"credential broker materializes a secret only for an allowed consumer and workspace" |
 | Credential metadata never exposes stored secret material; secrets travel on stdin, never command arguments | `src/integrations/credentials.ts` | test/secret-service.test.ts#"Secret Service writes secret material on stdin rather than command arguments" |
@@ -254,7 +254,7 @@ Automated suites prove composition; live claims carry only through these gated r
 16. **Plugin-internal escalation counters are not ported hub-side** — fail-closed seams bound retry storms; scheduled budget caps bound the unattended case.
 17. **Provenance binds untracked files by path only** (the status source does not hash untracked bytes); mutations landing during a review remain the kernel epoch's job; the journal trim assumes a single writer.
 18. **A network-served agent (e.g. `goose serve` HTTP/WS) is outside the current containment composition** — enforcement targets stdio subprocess agents; remote transports are a threat-model follow-up.
-19. **Per-prompt task decomposition**: today every interactive proposal authorizes against the single session task (tracked as W046).
+19. **Per-prompt task decomposition**: today every interactive proposal authorizes against the single session task; finer-grained decomposition is future roadmap work, not a current guarantee.
 
 ---
 
