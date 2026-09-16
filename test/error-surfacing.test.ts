@@ -55,9 +55,15 @@ async function reapChild(child: ChildProcessWithoutNullStreams): Promise<void> {
 
 async function waitForFrame(view: { lastFrame(): string | undefined }, expected: RegExp): Promise<void> {
   const deadline = Date.now() + 4_000;
-  while (!expected.test(view.lastFrame() ?? "") && Date.now() < deadline) {
+  // Normalize whitespace inside the loop too: ink may wrap long lines
+  // (e.g. `fail-closed:` split across rows), so match the collapsed frame.
+  const normalized = () => (view.lastFrame() ?? "").replace(/\s+/g, " ");
+  while (!expected.test(normalized()) && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+  // The wait loop is not allowed to vacuously pass: assert the frame
+  // actually matched.
+  assert.ok(expected.test(normalized()), `frame never matched ${String(expected)}; last frame:\n${view.lastFrame() ?? ""}`);
 }
 
 // ── G5: crash paths surface with actionable causes ────────────────────────
@@ -65,10 +71,12 @@ async function waitForFrame(view: { lastFrame(): string | undefined }, expected:
 test("an agent crash mid-turn surfaces as a failed turn with the exit cause — never a hang", async () => {
   const { driver, child, session, events } = driverFor("crash-mid-turn");
   try {
+    // runTurn catches the driver throw itself and records the failure; the
+    // submit resolves once the failed turn is recorded.
     await session.submit("please crash");
-    assert.fail("the pending prompt must reject when the agent dies");
-  } catch {
-    // runTurn already caught the driver throw and recorded the failure.
+  } finally {
+    await driver.dispose();
+    await reapChild(child);
   }
   const snapshot = session.snapshot();
   assert.equal(snapshot.state, "failed");
@@ -76,8 +84,6 @@ test("an agent crash mid-turn surfaces as a failed turn with the exit cause — 
   const failure = events.find((event) => event.type === "failed");
   assert.ok(failure !== undefined && failure.type === "failed", "the failure reaches session subscribers");
   if (failure.type === "failed") assert.match(failure.reason, /ACP agent exited/);
-  await driver.dispose();
-  await reapChild(child);
 });
 
 test("an agent crash between turns surfaces on the next prompt as a closed-client cause", async () => {
@@ -224,7 +230,11 @@ test("the TUI renders a failed turn's actionable reason as a red row", async () 
     async cancel() {},
   });
   const view = render(React.createElement(WorkflowTui, { application: createApplication(), session }));
-  await session.submit("go");
+  // Drive the turn through the TUI's own composer (the queue-test pattern):
+  // direct session.submit bypasses the composer and predates this work with
+  // an ink-testing-library render quirk on completed turns.
+  view.stdin.write("go");
+  view.stdin.write("\r");
   await waitForFrame(view, /fail-closed: no_reject_option/);
   view.unmount();
   cleanup();
@@ -239,7 +249,9 @@ test("the TUI renders advisory agent-context as a dim [context] row", async () =
     async cancel() {},
   });
   const view = render(React.createElement(WorkflowTui, { application: createApplication(), session }));
-  await session.submit("go");
+  // Same composer-driven submit as the failed-row render test.
+  view.stdin.write("go");
+  view.stdin.write("\r");
   await waitForFrame(view, /usage_update: totalTokens 250 · \$0\.02/);
   view.unmount();
   cleanup();
