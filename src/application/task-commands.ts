@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { evidenceId, observationId, taskId, type TaskId, type WorkflowTask } from "../kernel/contracts.js";
+import { evidenceId, observationId, taskId, type TaskId, type TransitionResult, type WorkflowTask } from "../kernel/contracts.js";
 import type { WorkflowApplication } from "./workflow.js";
 
 /**
@@ -70,6 +70,13 @@ export function createTaskCommandPort(application: WorkflowApplication): TaskCom
     return taskId(`interactive-task-${randomUUID().slice(0, 8)}-${sequence}`);
   };
 
+  /** Kernel transition rejections surface as port errors — never silent. */
+  const assertTransition = (result: TransitionResult, id: TaskId): void => {
+    if (result.kind === "rejected") {
+      throw new Error(`task ${JSON.stringify(id)} transition rejected (${result.code}): ${result.reason}`);
+    }
+  };
+
   return {
     createTask(request) {
       const id = request.id ?? nextId();
@@ -88,7 +95,7 @@ export function createTaskCommandPort(application: WorkflowApplication): TaskCom
         throw new Error(`cannot activate unknown task ${JSON.stringify(id)}`);
       }
       if (task.state === "READY") {
-        application.transition(id, "IN_PROGRESS");
+        assertTransition(application.transition(id, "IN_PROGRESS"), id);
       } else if (task.state !== "IN_PROGRESS") {
         // BLOCKED (dependencies unverified), VERIFIED, FAILED, VERIFYING —
         // never guess; the operator sees the blockers in the task list.
@@ -103,7 +110,7 @@ export function createTaskCommandPort(application: WorkflowApplication): TaskCom
         throw new Error(`cannot complete unknown task ${JSON.stringify(id)}`);
       }
       if (task.state === "IN_PROGRESS") {
-        application.transition(id, "VERIFYING");
+        assertTransition(application.transition(id, "VERIFYING"), id);
       } else if (task.state !== "VERIFYING") {
         throw new Error(`cannot complete task ${JSON.stringify(id)} in state ${task.state}`);
       }
@@ -123,11 +130,14 @@ export function createTaskCommandPort(application: WorkflowApplication): TaskCom
           ...(observation.detail === undefined ? {} : { detail: observation.detail }),
         });
       }
-      application.transition(id, "VERIFIED");
+      // A kernel rejection here (e.g. EVIDENCE_REQUIRED for an unsatisfied
+      // requiredEvidence subject, or CHECKPOINT_PENDING under a pedagogy
+      // gate) is the operator-visible refusal — never a silent no-op.
+      assertTransition(application.transition(id, "VERIFIED"), id);
     },
 
     retryTask(id) {
-      application.retryFailedTask(id);
+      assertTransition(application.retryFailedTask(id), id);
     },
 
     activeTaskId() {

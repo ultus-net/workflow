@@ -765,6 +765,8 @@ W046 is complete. The mechanism, not a UI: `src/application/task-commands.ts` is
 
 **Verification:** application/session contract tests plus the interactive-shaped correlation suite green as listed; a real interactive session exercising a multi-task request lands with the operator's dogfood sessions (W049) — until then the flow is proven by the fake-agent interactive test only.
 
+Round-1 review fixed four findings: (P1) the acp-tui composition never initialized the active-task pointer — the lazy correlation would have denied every mutation on the lead interactive surface; the launcher now calls `startInteractiveTask()` before composing, pinned by a source-level boot test (the launcher is a top-level script, not importable in-process). (P2) the sentinel id was creatable — `WorkflowApplication.addTask` now reserves `no-active-task` at the application seam (covering the port, the web API, and every other creation path) so a hostile task with that id can never turn the no-active deny into an allow; pinned by test. (P3) kernel transition rejections now surface through the port (`assertTransition` throws with the code and reason — an unsatisfied `requiredEvidence` completes to VERIFYING and then refuses VERIFIED with EVIDENCE_REQUIRED, state-visible, never a silent no-op); pinned by test. (P3) the classify doc-comment was re-attached to its method. Test count: 11 (8 + sentinel reservation + rejection surfacing + the boot pin).
+
 ### W047 - G5 error surfacing and G7 context visibility
 
 **Objective:** Recover the diagnostics and context awareness the plugin's in-process hooks provided, honestly: surface every failure with an actionable cause, and project whatever context/usage signals the agent emits.

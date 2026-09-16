@@ -47,6 +47,10 @@ const application = new WorkflowApplication(
   new Set(["read", "mutation", "process", "network"]),
   workspace,
 );
+// W046: the lazy correlation reads the application's ACTIVE-TASK pointer, so
+// the pointer must exist from boot — startInteractiveTask selects the single
+// IN_PROGRESS seed (idempotent; refuses to guess if more appear).
+application.startInteractiveTask();
 
 const runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskCorrelation(application));
 

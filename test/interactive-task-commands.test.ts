@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 
 import { WorkflowCodingSession, type CodingSessionEvent } from "../src/application/coding-session.js";
@@ -131,6 +133,48 @@ test("activeTaskCorrelation fails closed with a sentinel when no task is IN_PROG
   assert.equal(correlate(), NO_ACTIVE_TASK_ID);
   // The sentinel is a non-existent id: the application gate denies UNKNOWN_TASK.
   assert.equal(application.authorize(mutatingAction("no-active-task")).kind, "deny");
+});
+
+test("the sentinel id is reserved: no creation path can make the fail-closed deny an allow", () => {
+  const application = interactiveApplication();
+  const port = createTaskCommandPort(application);
+  // Through the port...
+  assert.throws(() => port.createTask({ id: NO_ACTIVE_TASK_ID, title: "hostile" }), /reserved/);
+  // ...and through the application seam every other creation path uses
+  // (web /api/tasks, hub flows, direct callers).
+  assert.throws(
+    () => application.addTask({ id: NO_ACTIVE_TASK_ID, title: "hostile", dependencies: [], requiredEvidence: [] }),
+    /reserved/,
+  );
+});
+
+test("kernel transition rejections surface through the port — never a silent no-op", () => {
+  const application = interactiveApplication();
+  const port = createTaskCommandPort(application);
+  const gated = port.createTask({
+    title: "requires proof",
+    requiredEvidence: [{ authority: "environment", subject: "proof" }],
+  });
+  port.activateTask(gated);
+  // No evidence recorded: the kernel must reject VERIFIED and the port must
+  // throw the rejection, not swallow it.
+  assert.throws(() => port.completeTask(gated, []), /EVIDENCE_REQUIRED|rejected/);
+  // The task stays VERIFYING — the failure is state-visible, not narrated away.
+  assert.equal(application.snapshot().tasks.find((entry) => entry.id === gated)?.state, "VERIFYING");
+  // With the required evidence supplied the same call verifies.
+  port.completeTask(gated, [{ subject: "proof" }]);
+  assert.equal(application.snapshot().tasks.find((entry) => entry.id === gated)?.state, "VERIFIED");
+});
+
+test("the ACP TUI boot initializes the active-task pointer the lazy correlation reads", () => {
+  // acp-tui is a top-level script (side effects at import), so the boot
+  // contract is pinned at the source level like the other launcher
+  // contracts (test/tui-cli.test.ts pattern): the lazy correlation reads
+  // application.activeTaskId(), which throws unless the pointer exists —
+  // the launcher MUST call startInteractiveTask before composing the runtime.
+  const source = readFileSync(join(process.cwd(), "src", "cli", "acp-tui.tsx"), "utf8");
+  assert.match(source, /application\.startInteractiveTask\(\)/, "acp-tui must initialize the active-task pointer");
+  assert.match(source, /activeTaskCorrelation\(application\)/, "acp-tui must compose the lazy correlation");
 });
 
 // ── Interactive-shaped: the ACP driver correlates with the active task ─────
