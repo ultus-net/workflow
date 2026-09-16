@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { ProposedToolAction } from "../application/host.js";
@@ -111,16 +111,27 @@ async function createOpencodeRuntime(
         args: ["acp", "--pure"],
         workspace,
         home: scratchHome,
-        // The skills server script (under the repo, not the workspace) and
-        // the operator's skills directory must stay readable inside the
-        // boundary — the contained agent spawns the server, and the server
-        // reads skills + levels.json from there. Realpaths so symlinks
-        // resolve on the host side of the bind.
+        // The delivery mount's runtime dependencies must stay readable inside
+        // the boundary — the contained agent spawns the skills server, whose
+        // first imports reach siblings in its dist directory (vendor/,
+        // screening.js, skills.js), then packages through node_modules. pnpm's
+        // layout needs BOTH levels: the app's node_modules holds the package
+        // symlinks, and their targets live in the .pnpm store under the
+        // toolbox-level node_modules one directory further up — binding only
+        // the app level leaves every symlink dangling inside the boundary
+        // (verified live: ERR_MODULE_NOT_FOUND for @modelcontextprotocol/sdk).
+        // Directories are bound AS GIVEN so the relative symlinks keep
+        // resolving; the skills directory is dual-bound at its realpath too,
+        // mirroring the executable bind, so symlinked layouts resolve by
+        // either name.
         ...(skillsMount === undefined
           ? {}
           : {
               readablePaths: [
-                realpathSync(skillsMount.serverScript),
+                dirname(skillsMount.serverScript),
+                resolve(dirname(skillsMount.serverScript), "..", "node_modules"),
+                resolve(dirname(skillsMount.serverScript), "..", "..", "..", "node_modules"),
+                skillsMount.skillsDir,
                 realpathSync(skillsMount.skillsDir),
               ],
             }),
@@ -299,11 +310,27 @@ function readKeyFile(): string | undefined {
  * nothing to mount: no delivery path exists, and level gating composes to
  * no-ops without the directory, matching the TUI surfaces.
  */
-function resolveSkillsMount(): { readonly serverScript: string; readonly skillsDir: string } | undefined {
-  const workflowRoot = resolve(fileURLToPath(import.meta.url), "..", "..", "..");
-  const serverScript = resolve(workflowRoot, "mcp-toolbox", "apps", "skills-mcp", "dist", "server.js");
-  const skillsDir = resolve(process.env.SKILLS_MCP_DIR?.trim() || join(homedir(), ".agents", "skills"));
-  if (!existsSync(serverScript) || !existsSync(skillsDir)) return undefined;
+export function resolveSkillsMount(): { readonly serverScript: string; readonly skillsDir: string } | undefined {
+  return resolveSkillsMountFor({
+    root: resolve(fileURLToPath(import.meta.url), "..", "..", ".."),
+    envSkillsDir: process.env.SKILLS_MCP_DIR,
+    home: homedir(),
+  });
+}
+
+export function resolveSkillsMountFor(options: {
+  readonly root: string;
+  readonly envSkillsDir: string | undefined;
+  readonly home: string;
+  readonly exists?: (path: string) => boolean;
+}): { readonly serverScript: string; readonly skillsDir: string } | undefined {
+  const exists = options.exists ?? existsSync;
+  const serverScript = resolve(options.root, "mcp-toolbox", "apps", "skills-mcp", "dist", "server.js");
+  // Trim-to-default mirrors the hub's gating resolver (skill-gating.ts
+  // resolveSkillsLevelMap): a whitespace-only override lands both sides on
+  // the same default directory.
+  const skillsDir = resolve(options.envSkillsDir?.trim() || join(options.home, ".agents", "skills"));
+  if (!exists(serverScript) || !exists(skillsDir)) return undefined;
   return { serverScript, skillsDir };
 }
 
