@@ -45,8 +45,8 @@ test(
   "Cline ACP subagent conformance probe: spawn visibility and gateability",
   { skip: !runProbe, timeout: 180_000 },
   async () => {
-    const cwd = await mkdtemp(path.join(tmpdir(), "workflow-acp-subagent-"));
     const clineApiKey = await loadClineApiKey("Cline subagent probe");
+    const cwd = await mkdtemp(path.join(tmpdir(), "workflow-acp-subagent-"));
     const cline = clineLaunchEntry();
     const child = spawn(
       cline.executable,
@@ -112,6 +112,7 @@ test(
         spawnToolCallObserved,
         spawnPermissionObserved,
         anyPermissionObserved: permissionRequests.length > 0,
+        permissionCount: permissionRequests.length,
         toolCallCount: toolCalls.length,
         canaryWritten,
         finalMessage: finalMessage.slice(0, 500),
