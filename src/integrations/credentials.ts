@@ -110,32 +110,32 @@ export function createCredentialControlPlane(
       await store.put(definition.id, value);
       definitions.set(definition.id, definition);
 try {
-          await onDefinitionsChanged?.([...definitions.values()]);
-        } catch (error) {
-          if (previousDefinition === undefined) definitions.delete(definition.id);
-          else definitions.set(definition.id, previousDefinition);
-          const failure = error instanceof Error ? error : new Error(String(error));
-          let outcome: SecretRollbackOutcome;
-          try {
-            outcome = await restoreSecret(store, definition.id, previousValue, failure);
-          } catch (divergence) {
-            // Metadata persistence failed and every compensating secret op
-            // failed too: drop the in-memory definition so the live process
-            // fails closed instead of serving the new value under the
-            // rolled-back (older) authorization contract.
-            definitions.delete(definition.id);
-            throw divergence;
-          }
-          if (outcome !== "restored") {
-            throw new Error(
-              `credential '${definition.id}' set failed (${failure.message}); the previous secret could not be restored (${
-                outcome.rollbackError
-              }), so the credential is now unavailable (fail-closed) — re-set it`,
-              { cause: error },
-            );
-          }
-          throw failure;
+        await onDefinitionsChanged?.([...definitions.values()]);
+      } catch (error) {
+        if (previousDefinition === undefined) definitions.delete(definition.id);
+        else definitions.set(definition.id, previousDefinition);
+        const failure = error instanceof Error ? error : new Error(String(error));
+        let outcome: SecretRollbackOutcome;
+        try {
+          outcome = await restoreSecret(store, definition.id, previousValue, failure);
+        } catch (divergence) {
+          // Metadata persistence failed and every compensating secret op
+          // failed too: drop the in-memory definition so the live process
+          // fails closed instead of serving the new value under the
+          // rolled-back (older) authorization contract.
+          definitions.delete(definition.id);
+          throw divergence;
         }
+        if (outcome !== "restored") {
+          throw new Error(
+            `credential '${definition.id}' set failed (${failure.message}); the previous secret could not be restored (${
+              outcome.rollbackError
+            }), so the credential is now unavailable (fail-closed) — re-set it`,
+            { cause: error },
+          );
+        }
+        throw failure;
+      }
     },
     async revoke(id): Promise<void> {
       const definition = definitions.get(id);
