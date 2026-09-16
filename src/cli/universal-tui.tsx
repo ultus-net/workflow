@@ -61,6 +61,8 @@ try {
     ...(composed.setSessionStyle ? { onStyleChange: composed.setSessionStyle } : {}),
     ...(composed.sessionConfigOptions ? { sessionConfigOptions: composed.sessionConfigOptions } : {}),
     ...(composed.setSessionConfig ? { onSetSessionConfig: composed.setSessionConfig } : {}),
+    // W044: metering-proxy usage surfaces on every driver that records it.
+    ...(composed.usage ? { usage: composed.usage } : {}),
     ...(composerBackground === undefined ? {} : { composerBackground }),
   }));
   await waitUntilExit();

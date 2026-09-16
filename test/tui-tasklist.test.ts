@@ -203,12 +203,21 @@ test("thinking chunks render as dim [thinking] transcript rows", async () => {
   view.unmount();
 });
 
-test("the usage meter renders in the composer footer line", async () => {
+test("the usage meter renders cumulative tokens and cost in the header status line", async () => {
   const view = render(React.createElement(WorkflowTui, {
     application: createApplication(),
-    usage: () => "8668 tokens · $0.0132",
+    usage: () => ({ totalTokens: 8668, costUsd: 0.0132 }),
   }));
   await waitForFrame(view, /8668 tokens · \$0\.0132/);
+  view.unmount();
+});
+
+test("the usage meter renders the per-turn delta alongside the cumulative line", async () => {
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    usage: () => ({ totalTokens: 8668, costUsd: 0.0132, perTurnTokens: 120, perTurnCostUsd: 0.0011 }),
+  }));
+  await waitForFrame(view, /8668 tokens · \$0\.0132 · \+120 this turn · \$0\.0011/);
   view.unmount();
 });
 

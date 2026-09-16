@@ -6,6 +6,7 @@ import { createOpenCodeSessionClient } from "../integrations/opencode-client.js"
 import { OpenCodeSessionDriver } from "../integrations/opencode-session.js";
 import type { SessionStyle } from "../integrations/response-style.js";
 import type { SessionConfigOption } from "../ui/tui.js";
+import { usageViewFromMetrics, type UsageSource } from "../ui/usage.js";
 
 export const DRIVER_NAMES = ["cline", "opencode", "acp"] as const;
 export type DriverName = (typeof DRIVER_NAMES)[number];
@@ -16,6 +17,8 @@ export interface ComposedDriver {
   readonly sessionConfigOptions?: () => readonly SessionConfigOption[];
   readonly setSessionConfig?: (id: string, value: string | boolean) => Promise<void>;
   readonly setSessionStyle?: (style: SessionStyle) => void;
+  /** W044: metering-proxy usage when the driver's runtime records it (acp). */
+  readonly usage?: UsageSource;
   dispose(): Promise<void>;
 }
 
@@ -76,6 +79,7 @@ export async function composeDriver(
     session: runtime.session,
     sessionConfigOptions: () => (runtime.driver.config()?.configOptions ?? []) as readonly SessionConfigOption[],
     setSessionConfig: async (id, value) => { await runtime.driver.setConfigOption(id, value); },
+    usage: () => usageViewFromMetrics(runtime.metrics?.()),
     dispose: () => runtime.dispose(),
   };
 }
