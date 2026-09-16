@@ -16,15 +16,17 @@ import { AcpSubprocessClient, type AcpSessionUpdate } from "../src/adapters/acp-
  * single-delivery-path / single-mutation-path if the agent actually mounts
  * them from a config surface the hub controls. OpenCode has two such
  * surfaces: the project `opencode.json` in the workspace (hub-owned
- * workspace) and the global config in `OPENCODE_CONFIG_DIR` (hub-owned
- * launch env). The two tests attribute the finding to exactly one surface
- * each — a positive on either unblocks the F1/G3 wiring decision.
+ * workspace) and the global config resolved through `XDG_CONFIG_HOME`
+ * (hub-owned launch env; the config file is
+ * `$XDG_CONFIG_HOME/opencode/opencode.json`). The two tests attribute the
+ * finding to exactly one surface each — a positive on either unblocks the
+ * F1/G3 wiring decision.
  *
  * Gated: run deliberately with WORKFLOW_ACP_OPENCODE_MCP_MOUNT=1 (opencode
-  * on PATH with working ambient auth; skills-mcp must be built). The launch
-  * passes `--pure` so the stock surface is measured without the operator's
-  * global plugins.
-  *
+ * on PATH with working ambient auth; skills-mcp must be built). The launch
+ * passes `--pure` so the stock surface is measured without the operator's
+ * global plugins.
+ *
   * Interpretation: each test always records evidence — the recorded
  * finalMessage is what distinguishes the outcomes: a verbatim list_skills
  * output means the agent mounted the config from that surface (positive);
@@ -131,18 +133,20 @@ test(
       throw new Error(`skills-mcp is not built; run: pnpm --dir mcp-toolbox/apps/skills-mcp run build (expected ${SERVER_SCRIPT})`);
     }
     const evidence = await probeMount("project-opencode.json", { projectConfig: true, configDirConfig: false });
+    assert.equal(evidence.stopReason, "end_turn", "the turn must complete (not time out) for mount evidence to count");
     assert.ok(evidence.finalMessage.length > 0, "the turn must record a reply that distinguishes mounted from NO_MCP_TOOLS");
   },
 );
 
 test(
-  "OpenCode ACP MCP-mount probe: OPENCODE_CONFIG_DIR global config is honored",
+  "OpenCode ACP MCP-mount probe: XDG_CONFIG_HOME global config is honored",
   { skip: !runProbe, timeout: 300_000 },
   async () => {
     if (!existsSync(SERVER_SCRIPT)) {
       throw new Error(`skills-mcp is not built; run: pnpm --dir mcp-toolbox/apps/skills-mcp run build (expected ${SERVER_SCRIPT})`);
     }
-    const evidence = await probeMount("config-dir-opencode.json", { projectConfig: false, configDirConfig: true });
+    const evidence = await probeMount("xdg-config-home-opencode.json", { projectConfig: false, configDirConfig: true });
+    assert.equal(evidence.stopReason, "end_turn", "the turn must complete (not time out) for mount evidence to count");
     assert.ok(evidence.finalMessage.length > 0, "the turn must record a reply that distinguishes mounted from NO_MCP_TOOLS");
   },
 );
