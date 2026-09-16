@@ -70,7 +70,11 @@ test(
         }, null, 2));
         assert.equal(snapshot.state, "completed", "the delivery turn must complete");
         assert.notEqual(snapshot.result, "NO_MCP_TOOLS", "the skills-mcp mount must be visible to the contained agent");
-        const count = Number.parseInt((snapshot.result ?? "").replace(/[^\d]/g, ""), 10);
+        // The reply's leading integer is the count ("30"): parse the first
+        // digit run only — concatenating every digit in the reply would turn
+        // "30 skills, 2 quarantined" into 302.
+        const countText = (snapshot.result ?? "").match(/\d+/)?.[0];
+        const count = countText === undefined ? Number.NaN : Number.parseInt(countText, 10);
         assert.ok(Number.isInteger(count) && count > 0, `list_skills must report the real skills count (reply: ${JSON.stringify(snapshot.result)})`);
       } finally {
         await runtime.dispose();
