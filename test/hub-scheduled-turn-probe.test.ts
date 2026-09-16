@@ -7,7 +7,7 @@ import test from "node:test";
 import { WorkflowApplication } from "../src/application/workflow.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
 import { hostCapabilities } from "../src/adapters/host.js";
-import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
+import { taskId, type TaskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createWorkflowHub, resolveHubDiscoveryPath } from "../src/integrations/workflow-hub.js";
 import { createReviewerFactory, createRunTestRunner } from "../src/integrations/hub-run-gates.js";
 import { shellExecutorFor } from "../src/integrations/cline-tui-bridge.js";
@@ -79,7 +79,25 @@ test(
       reviewerFactory: createReviewerFactory({
         shell: containedShell(false),
         createRuntime: async ({ workspace: reviewerWorkspace }) => {
-          const runtime = await createConfiguredAcpRuntime(application, reviewerWorkspace, taskId(`hub-reviewer:${randomUUID()}`));
+          // Mirror the production reviewer composition (src/cli/hub.ts): a
+          // dedicated reviewer application with its own selected task. The
+          // review gate still closes fail-closed in practice: the reviewer's
+          // git-diff sourcing runs through the hub shell, whose application
+          // has no active task to authorize against (a pre-existing
+          // production defect this probe exposes — the run stays VERIFYING,
+          // never fabricated; fix tracked in the review follow-up ledger).
+          const reviewerApplication = new WorkflowApplication(
+            graph,
+            hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+            [],
+            new Set(["read"]),
+            reviewerWorkspace,
+          );
+          const reviewerTaskId: TaskId = taskId(`hub-reviewer:${randomUUID()}`);
+          reviewerApplication.addTask({ id: reviewerTaskId, title: "Hub reviewer session", dependencies: [], requiredEvidence: [] });
+          reviewerApplication.transition(reviewerTaskId, "IN_PROGRESS");
+          reviewerApplication.selectActiveTask(reviewerTaskId);
+          const runtime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerTaskId);
           return {
             submit: (prompt: string) => runtime.session.submit(prompt),
             snapshot: () => runtime.session.snapshot(),
