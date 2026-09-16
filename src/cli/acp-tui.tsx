@@ -52,7 +52,16 @@ const application = new WorkflowApplication(
 // IN_PROGRESS seed (idempotent; refuses to guess if more appear).
 application.startInteractiveTask();
 
-const runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskCorrelation(application));
+// W047 (G5): boot failures (agent binary missing, containment policy-only,
+// unwritable config, missing upstream key) surface as an actionable
+// blocking-reason-style cause instead of a raw stack trace.
+let runtime: Awaited<ReturnType<typeof createConfiguredAcpRuntime>>;
+try {
+  runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskCorrelation(application));
+} catch (error) {
+  console.error(`failed to start the contained session: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
 
 // Terminal-derived composer tint (OSC 11): must run before Ink owns stdin.
 const composerBackground = await detectTerminalBackground();

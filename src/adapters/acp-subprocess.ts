@@ -235,6 +235,27 @@ export class AcpSubprocessClient {
           void this.#answerFs(id, message.method, message.params);
           continue;
         }
+        if (typeof message.method === "string" && !("id" in message)) {
+          // W047: an agent-custom notification (validateInboundEnvelope
+          // tolerates methods without ids). A well-formed nested
+          // `update` record (goose's usage channel carries
+          // `_goose/unstable/session/update` with the standard update
+          // payload) flows through the same projection pipeline as a
+          // `session/update`; anything else projects as a raw
+          // agent-context notification named by its method. Projection
+          // only — never authorization input.
+          const params = isRecord(message.params) ? message.params : {};
+          const nested = isRecord(params.update) && typeof (params.update as Record<string, unknown>).sessionUpdate === "string"
+            ? (params.update as { sessionUpdate: string } & Record<string, unknown>)
+            : undefined;
+          const sessionId = typeof params.sessionId === "string" ? params.sessionId : "agent";
+          const projected = nested !== undefined
+            ? ({ sessionId, update: nested } as AcpSessionUpdate)
+            : { sessionId, update: { sessionUpdate: "agent_custom", method: message.method, params } };
+          this.#updates.push(projected);
+          for (const listener of this.#updateListeners) listener(projected);
+          continue;
+        }
         if (typeof message.id === "number") {
           const pending = this.#pending.get(message.id);
           if (!pending) continue;
@@ -327,8 +348,15 @@ function validateInboundEnvelope(message: Record<string, unknown>): void {
   if ("method" in message) {
     if (typeof message.method !== "string") throw new TypeError("invalid ACP method");
     const isFsRequest = inboundFsMethods.has(message.method);
-    if (message.method !== "session/update" && message.method !== "session/request_permission" && !isFsRequest) {
-      throw new TypeError(`unsupported ACP method: ${message.method}`);
+    const isKnown = message.method === "session/update" || message.method === "session/request_permission" || isFsRequest;
+    if (!isKnown) {
+      // W047 (G7 context visibility): agent-custom NOTIFICATION methods
+      // (e.g. goose's `_goose/unstable/session/update` usage channel) are
+      // tolerated as context carriers — they are UX projection only, never
+      // authorization input. Requests (with an id) stay fail-closed: the
+      // client cannot answer a method it doesn't implement.
+      if ("id" in message) throw new TypeError(`unsupported ACP method: ${message.method}`);
+      return;
     }
     if (message.method === "session/update" && "id" in message) throw new TypeError("invalid ACP notification");
     if ((message.method === "session/request_permission" || isFsRequest) && typeof message.id !== "number" && typeof message.id !== "string") {

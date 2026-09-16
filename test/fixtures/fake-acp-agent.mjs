@@ -174,6 +174,65 @@ function handleMessage(message) {
         },
       });
     }
+    if (mode === "goose-usage") {
+      // W047: the goose-shaped usage channel — an agent-custom NOTIFICATION
+      // method carrying the standard session/update payload. The client must
+      // tolerate the custom method (no id → notification, not a request) and
+      // project the nested update through the same pipeline.
+      send({
+        jsonrpc: "2.0",
+        method: "_goose/unstable/session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: { sessionUpdate: "usage_update", totalTokens: 250, costUsd: 0.02 },
+        },
+      });
+      send({
+        jsonrpc: "2.0",
+        method: "_goose/unstable/status",
+        params: { sessionId: message.params.sessionId, state: "thinking" },
+      });
+    }
+    if (mode === "crash-mid-turn") {
+      // W047: the agent dies while a prompt is pending — the pending request
+      // must reject (a failed turn with the exit cause), never hang.
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "partial" } },
+        },
+      });
+      process.exit(1);
+    }
+    if (mode === "crash-idle") {
+      // W047: the agent dies between turns — the next prompt must fail with
+      // the closed-client cause rather than a silent stop.
+      send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
+      setTimeout(() => process.exit(1), 10);
+      return;
+    }
+    if (mode === "hang") {
+      // W047: a hung agent — responds to nothing after the first chunk; the
+      // turn watchdog (env-armed) is the only failure that surfaces this.
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: message.params.sessionId,
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "started" } },
+        },
+      });
+      return;
+    }
+    if (mode === "custom-request") {
+      // W047: an agent-custom REQUEST (with an id) must stay fail-closed —
+      // the client cannot answer a method it doesn't implement, so the
+      // connection tears down rather than silently dropping a pending peer.
+      send({ jsonrpc: "2.0", id: 77, method: "_custom/needs-an-answer", params: {} });
+      return;
+    }
     if (mode === "plan-update") {
       // Web-parity plan projection (Batch 2): ACP plan updates with
       // completed + pending entries.

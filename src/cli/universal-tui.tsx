@@ -32,12 +32,15 @@ const application = new WorkflowApplication(
   new Set(["read", "mutation", "process", "network"]),
   workspace,
 );
-const composed = await composeDriver(driverName, application, workspace, {
-  opencodeUrl: args.opencodeUrl ?? process.env.WORKFLOW_OPENCODE_URL ?? "http://127.0.0.1:4096",
-});
-
 let renderError: unknown;
+// W047 (G5): composition failures (missing agent binary, containment
+// policy-only, config problems) surface as an actionable cause instead of
+// a raw stack trace; the composed driver is disposed only once it exists.
+let composed: Awaited<ReturnType<typeof composeDriver>> | undefined;
 try {
+  composed = await composeDriver(driverName, application, workspace, {
+    opencodeUrl: args.opencodeUrl ?? process.env.WORKFLOW_OPENCODE_URL ?? "http://127.0.0.1:4096",
+  });
   // Plan Task F2 surface wiring: the same operator levels.json skills-mcp
   // reads gates this surface's required-skill precondition. A malformed map
   // refuses startup (fail-closed, mirroring skills-mcp) rather than running
@@ -67,8 +70,12 @@ try {
   }));
   await waitUntilExit();
 } catch (error) {
+  if (composed === undefined) {
+    console.error(`failed to start the composed ${driverName} driver: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
   renderError = error;
 } finally {
-  await composed.dispose();
+  await composed?.dispose();
 }
 if (renderError !== undefined) throw renderError;

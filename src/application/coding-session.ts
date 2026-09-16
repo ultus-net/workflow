@@ -24,6 +24,18 @@ export type CodingSessionEvent =
   | { readonly type: "tutor-checkpoint"; readonly opportunity: LearningOpportunity }
   | { readonly type: "diagnostic-lesson"; readonly lesson: DiagnosticLesson }
   | { readonly type: "log"; readonly level: "debug" | "info" | "warning" | "error"; readonly message: string; readonly source?: string }
+  | {
+      /**
+       * W047 (G7 context visibility): an agent-emitted context/usage signal
+       * the session record keeps for observability — standard kinds the
+       * driver doesn't otherwise project (e.g. `usage_update`) and
+       * agent-custom notification methods (e.g. goose's usage channel).
+       * Advisory only: context visibility is never upgraded to control.
+       */
+      readonly type: "agent-context";
+      readonly kind: string;
+      readonly payload: unknown;
+    }
   | { readonly type: "completed"; readonly result: string }
   | { readonly type: "failed"; readonly reason: string };
 
