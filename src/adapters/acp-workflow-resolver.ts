@@ -28,10 +28,10 @@ export function createWorkflowAcpPermissionResolver(
   return async (request) => {
     const correlated = correlateAcpPermissionRequest(request, options.correlation);
     const validatedLocations = correlated.toolCall.locations.map((location) => ({ path: location.path as string }));
-    if (isUnknownMutationTool(correlated.toolCall.name, correlated.toolCall.capability)) {
+    if (isUnknownMutationTool(correlated.toolCall.name, correlated.toolCall.capability, correlated.toolCall.kind)) {
       throw new TypeError(`unknown ACP mutation tool: ${correlated.toolCall.name}`);
     }
-    const locations = authorizationLocations(correlated.toolCall.name, correlated.toolCall.rawInput, validatedLocations);
+    const locations = authorizationLocations(correlated.toolCall.name, correlated.toolCall.rawInput, validatedLocations, correlated.toolCall.kind);
     const toolCall = {
       name: correlated.toolCall.name,
       kind: correlated.toolCall.kind ?? "other",
@@ -102,6 +102,7 @@ function authorizationLocations(
   toolName: string,
   rawInput: unknown,
   locations: readonly { readonly path: string }[],
+  kind: string | undefined,
 ): readonly { readonly path: string }[] {
   if (locations.length > 0) return locations;
   const subjects = rawSubjects(toolName, rawInput);
@@ -109,7 +110,27 @@ function authorizationLocations(
   if (isSubjectBearingTool(toolName)) {
     throw new TypeError(`ACP permission request for ${toolName} has no authorization subject`);
   }
+  // Kind-recognized mutations (e.g. OpenCode `edit` requests whose title is
+  // the target path) are subject-bearing by nature: extract the path from
+  // the raw input, and fail closed when neither locations nor input carry
+  // one — a mutation with no authorization subject must never authorize.
+  if (kind !== undefined && acpMutationKinds.has(kind)) {
+    const raw = rawMutationSubject(rawInput);
+    if (raw !== undefined) return [{ path: raw }];
+    throw new TypeError(`ACP permission request with kind ${kind} has no authorization subject`);
+  }
   return [];
+}
+
+const acpMutationKinds = new Set(["edit", "delete", "move"]);
+
+function rawMutationSubject(rawInput: unknown): string | undefined {
+  if (!isRecord(rawInput)) return undefined;
+  for (const key of ["filepath", "file_path", "path"] as const) {
+    const value = rawInput[key];
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  return undefined;
 }
 
 // Cline 3.0.61 approval-gated tool surface (apps/vscode/src/sdk/sdk-tool-policies.ts
@@ -208,9 +229,17 @@ function noCommandError(toolName: string): TypeError {
   return new TypeError(`ACP permission request for ${toolName} has no command`);
 }
 
-function isUnknownMutationTool(toolName: string, capability: ToolCapability | undefined): boolean {
-  return !isRecognizedTool(toolName) && (capability === "mutation" || capability === "process" || capability === "network" || capability === "credentials");
+function isUnknownMutationTool(toolName: string, capability: ToolCapability | undefined, kind: string | undefined): boolean {
+  if (isRecognizedTool(toolName)) return false;
+  // A recognized ACP kind (the protocol's own discriminator) vouches for the
+  // call the same way a recognized Cline title does — OpenCode titles its
+  // edit-permission requests with the target path, so the kind is the only
+  // recognition surface. Unknown kinds stay fail-closed.
+  if (kind !== undefined && acpKindCapabilities.has(kind)) return false;
+  return capability === "mutation" || capability === "process" || capability === "network" || capability === "credentials";
 }
+
+const acpKindCapabilities = new Set(["read", "search", "think", "edit", "delete", "move", "execute", "fetch"]);
 
 function isRecognizedTool(toolName: string): boolean {
   return toolName === "search_codebase" || isSubjectBearingTool(toolName) || PROCESS_TOOLS.has(toolName) || NON_SUBJECT_TOOLS.has(toolName);

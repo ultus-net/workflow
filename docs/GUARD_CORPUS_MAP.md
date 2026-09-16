@@ -52,8 +52,15 @@ subagent probe (`test/acp-cline-subagent-probe.test.ts` — Red verdict in
 `docs/HOST_ADAPTERS.md`: spawn tool call and permission invisible to the
 hub); G1 opencode ask-config probe (`test/acp-opencode-ask-probe.test.ts` —
 pass, denial-honor invariant); C1 scheduled real-agent turn
-(`test/hub-scheduled-turn-probe.test.ts` — pass, full chain through the
-hub's HTTP routes: fire → contained ACP turn → review gate + test evidence);
+(`test/hub-scheduled-turn-probe.test.ts` — pass, **full chain closed VERIFIED
+live 2026-09-16 on the pivoted runtime: fire → contained OpenCode turn whose
+edit delegates through the hub-implemented ACP fs server under authorization →
+hub-owned reviewer reviews the real diff and approves with the 5-axis
+structured summary → the verify flow runs the workspace's own test command
+and records the passing test evidence → run verifies, no blocking reason**;
+the probe's earlier fail-closed outcomes — reviewer shell without an active
+task, empty-diff rejections, unparseable verdicts — are documented in the
+probe logs and `docs/ACP_DECISION.md`);
 the MCP-config mount probe (`test/acp-cline-mcp-mount-probe.test.ts` — ran
 against the vendored pinned entry and recorded a negative finding: the agent
 honors none of the candidate scratch-home settings paths, `NO_MCP_TOOLS`;

@@ -4,6 +4,8 @@ const mode = process.argv[2] ?? "happy";
 let cancelled = false;
 let activePromptId;
 let permissionRequestId = 9001;
+let fsRequestId = 9101;
+let fsSessionId;
 let configOptions = [
   {
     id: "model",
@@ -38,6 +40,23 @@ function handlePermissionResponse(message) {
 function handleMessage(message) {
   if (message.id === permissionRequestId && message.result) {
     handlePermissionResponse(message);
+    return;
+  }
+  if (message.id === fsRequestId && (message.result !== undefined || message.error !== undefined)) {
+    // The fs-relative-write mode reports the hub's fs-server response as the
+    // turn's message so the test can assert on the exact outcome.
+    send({
+      jsonrpc: "2.0",
+      method: "session/update",
+      params: {
+        sessionId: fsSessionId,
+        update: {
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: JSON.stringify(message.error ?? message.result) },
+        },
+      },
+    });
+    send({ jsonrpc: "2.0", id: activePromptId, result: { stopReason: "end_turn" } });
     return;
   }
   if (message.method === "initialize") {
@@ -209,6 +228,19 @@ function handleMessage(message) {
         jsonrpc: "2.0",
         method: "session/update",
         params: { sessionId: message.params.sessionId, update: { sessionUpdate: "config_option_update" } },
+      });
+      return;
+    }
+    if (mode === "fs-relative-write") {
+      // Delegate a RELATIVE-path write to the client fs server: the hub must
+      // reject it fail-closed (the authorized subject and the performed path
+      // must be the identical absolute string).
+      fsSessionId = message.params.sessionId;
+      send({
+        jsonrpc: "2.0",
+        id: fsRequestId,
+        method: "fs/write_text_file",
+        params: { path: "note.txt", content: "after" },
       });
       return;
     }

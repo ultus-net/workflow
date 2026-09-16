@@ -1,4 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { readFile, readdir, writeFile } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 
 import type { CodingSessionDriver, CodingSessionEvent, CodingSessionImage } from "../application/coding-session.js";
 import type { TaskId, PolicyDecision } from "../kernel/contracts.js";
@@ -19,7 +21,7 @@ import {
 } from "../adapters/acp-subprocess.js";
 import type { AcpPermissionRequestParams } from "../adapters/acp-permission.js";
 import { createWorkflowAcpPermissionResolver } from "../adapters/acp-workflow-resolver.js";
-import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
+import { guardInputFromToolCall, type WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 
 /**
  * Plan Task B2: config options that would switch the agent into a
@@ -111,6 +113,15 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#client = new AcpSubprocessClient({
       child: options.child,
       resolvePermission: (request) => this.#resolvePermission(request),
+      // The hub-implemented ACP fs server: agents that delegate file
+      // operations to the client (OpenCode's `--pure` ACP mode) cross hub
+      // authorization + guard on every call, then the hub performs the
+      // operation itself — the write literally passes through the authority.
+      fsServer: {
+        readTextFile: (params) => this.#resolveFs("fs/read_text_file", "read", false, params),
+        writeTextFile: (params) => this.#resolveFs("fs/write_text_file", "mutation", true, params),
+        listDirectory: (params) => this.#resolveFs("fs/list_directory", "read", false, params),
+      },
     });
     // Projection is registered once: replays from session/load and any
     // notification before the first prompt still reach the surface. Turn
@@ -398,7 +409,11 @@ export class AcpSessionDriver implements CodingSessionDriver {
         agentSessionId: this.#agentSessionId,
         taskId: this.#taskId,
         toolName,
-        capability: AcpSessionDriver.classify(toolName),
+        // OpenCode titles edit-permission requests with the target path, so
+        // the title-derived name can be unrecognized; the ACP kind field (the
+        // protocol's own discriminator) classifies those before the
+        // fail-closed mutation default applies.
+        capability: AcpSessionDriver.classify(toolName, request.toolCall?.kind),
       },
       authorize: (action) => this.#authorize(action),
       // Plan Task G2: the guard dispatcher gates ACP sessions identically to
@@ -412,6 +427,78 @@ export class AcpSessionDriver implements CodingSessionDriver {
   }
 
   /**
+   * The hub-implemented ACP fs server: every delegated file operation
+   * authorizes through the same proposal pipeline as a permission request
+   * (subjects = the path, capability by method), passes the guard dispatcher
+   * with policy parity, and only then is performed by the hub itself.
+   * Rejections throw and surface to the agent as JSON-RPC errors — a denied
+   * delegation is a normal outcome, exactly like a denied permission.
+   */
+  async #resolveFs(
+    toolName: "fs/read_text_file" | "fs/write_text_file" | "fs/list_directory",
+    capability: ToolCapability,
+    mutating: boolean,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
+    if (typeof params.path !== "string" || params.path.trim().length === 0) {
+      throw new TypeError(`ACP ${toolName} request has no path`);
+    }
+    const path = params.path;
+    // The authorized subject and the performed path must be the identical
+    // string: a relative path would be workspace-joined for authorization
+    // but resolved against the hub process's cwd for the actual operation —
+    // a scoping divergence. The ACP fs server spec uses absolute paths;
+    // anything else fails closed here.
+    if (!isAbsolute(path)) {
+      throw new TypeError(`ACP ${toolName} request path must be absolute: ${path}`);
+    }
+    const proposal = this.#adapter.proposalFromBeforeTool({
+      sessionId: this.#workflowSessionId,
+      taskId: this.#taskId,
+      toolCall: {
+        name: toolName,
+        kind: mutating ? "edit" : "read",
+        capability,
+        rawInput: params,
+        locations: [{ path }],
+      },
+    });
+    const decision = await this.#authorize(proposal);
+    if (decision.kind !== "allow") {
+      throw new Error(`${toolName} denied: ${decision.reason}`);
+    }
+    if (this.#guard !== undefined) {
+      const guardInput = guardInputFromToolCall(toolName, params, this.#workspace);
+      if (guardInput !== undefined) {
+        let guardDecision;
+        try {
+          guardDecision = await this.#guard.guardCheck(guardInput);
+        } catch (error) {
+          throw new Error(
+            `${toolName} denied (guard unavailable, fail closed): ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error },
+          );
+        }
+        if (guardDecision.decision !== "allow") {
+          throw new Error(`${toolName} denied by guard policy '${guardDecision.policy}': ${guardDecision.reason}`);
+        }
+      }
+    }
+    if (toolName === "fs/write_text_file") {
+      if (typeof params.content !== "string") {
+        throw new TypeError("fs/write_text_file requires string content");
+      }
+      await writeFile(path, params.content, "utf8");
+      return {};
+    }
+    if (toolName === "fs/read_text_file") {
+      return { content: await readFile(path, "utf8") };
+    }
+    const entries = await readdir(path, { withFileTypes: true });
+    return { entries: entries.map((entry) => ({ name: entry.name, type: entry.isDirectory() ? "directory" : "file" })) };
+  }
+
+  /**
    * Cline titles carry details (`run_commands: ls -la …`); the tool name is
    * the first token. An unrecognized remainder still resolves, and the
    * resolver fails closed on unknown names.
@@ -422,8 +509,13 @@ export class AcpSessionDriver implements CodingSessionDriver {
     return name !== undefined && name.length > 0 ? name : "unknown";
   }
 
-  /** Title classification is fail-closed: unknown tools map to the mutation capability. */
-  static classify(toolName: string): ToolCapability {
+  /** Title classification is fail-closed: unknown tools map to the mutation
+   * capability. When the title carries no recognized tool name (OpenCode, for
+   * example, titles its edit-permission requests with the target path), the
+   * ACP kind field — the protocol's own discriminator — classifies the call
+   * before the fail-closed default applies; unknown kinds still fail closed
+   * to mutation. */
+  static classify(toolName: string, kind?: string): ToolCapability {
     if (["read_file", "read_files", "list_files", "list_code_definition_names", "search_files", "search_codebase"].includes(toolName)) {
       return "read";
     }
@@ -445,9 +537,25 @@ export class AcpSessionDriver implements CodingSessionDriver {
     ) {
       return "read";
     }
+    const kindCapability = kind !== undefined ? acpKindCapabilities[kind] : undefined;
+    if (kindCapability !== undefined) return kindCapability;
     return "mutation";
   }
 }
+
+/** ACP toolCall.kind → capability. The kind is the protocol's own
+ * discriminator, used when the title-derived tool name is unrecognized.
+ * `other` and unknown kinds are absent on purpose: they fail closed. */
+const acpKindCapabilities: Readonly<Record<string, ToolCapability>> = {
+  read: "read",
+  search: "read",
+  think: "read",
+  edit: "mutation",
+  delete: "mutation",
+  move: "mutation",
+  execute: "process",
+  fetch: "network",
+};
 
 /** Displayed tool I/O cap: cards ride the 1 s /api/session poll, so whole-file
  * dumps must not balloon every response payload. */

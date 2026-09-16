@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,7 +8,7 @@ import test from "node:test";
 import { WorkflowApplication } from "../src/application/workflow.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
 import { hostCapabilities } from "../src/adapters/host.js";
-import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
+import { taskId, type TaskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createWorkflowHub, resolveHubDiscoveryPath } from "../src/integrations/workflow-hub.js";
 import { createReviewerFactory, createRunTestRunner } from "../src/integrations/hub-run-gates.js";
 import { shellExecutorFor } from "../src/integrations/cline-tui-bridge.js";
@@ -22,17 +23,18 @@ import { randomUUID } from "node:crypto";
  * the review gate + hub-run test evidence decide VERIFIED. This is the
  * wedge feature's proof: unattended work closes only through the gates.
  *
- * Gated: WORKFLOW_ACP_CLINE_SCHEDULED=1 plus CLINE_API_KEY (and any auth env
- * the other Cline probes use, e.g. WORKFLOW_ACP_CLINE_ENV_AUTH=1), plus a
- * real WORKFLOW_TEAM_TASK_VERIFY_COMMAND (the test gate must not be
- * rubber-stamped by the `true` default).
+ * Gated: WORKFLOW_ACP_SCHEDULED=1 (the historical WORKFLOW_ACP_CLINE_SCHEDULED
+ * name still enables it), plus the upstream key for the metering proxy
+ * (CLINE_API_KEY env or ~/.config/workflow/cline-api-key), plus a real
+ * WORKFLOW_TEAM_TASK_VERIFY_COMMAND (the test gate must not be rubber-stamped
+ * by the `true` default). Post-pivot the chain exercises the selected lead
+ * agent: opencode by default, or the vendored Cline fallback via
+ * WORKFLOW_ACP_AGENT=cline (docs/ACP_DECISION.md) — the probe name is
+ * agent-neutral because the hub composition under test is.
  */
 
-const runProbe = process.env.WORKFLOW_ACP_CLINE_SCHEDULED === "1";
+const runProbe = process.env.WORKFLOW_ACP_SCHEDULED === "1" || process.env.WORKFLOW_ACP_CLINE_SCHEDULED === "1";
 
-if (runProbe && !process.env.CLINE_API_KEY) {
-  throw new Error("CLINE_API_KEY is required for the scheduled-run probe; do not paste it into chat");
-}
 if (runProbe) {
   const verify = process.env.WORKFLOW_TEAM_TASK_VERIFY_COMMAND?.trim();
   if (verify === undefined || verify.length === 0 || verify === "true") {
@@ -51,6 +53,20 @@ test(
     t.after(() => rmSync(workspace, { recursive: true, force: true }));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
     writeFileSync(join(workspace, "note.txt"), "before\n", "utf8");
+    // A real workspace test command: the test-evidence gate must run the
+    // workspace's own tests (a plain node:test case with no toolchain
+    // dependency), not something that only resolves in the Workflow repo.
+    writeFileSync(
+      join(workspace, "smoke.test.mjs"),
+      'import test from "node:test";\nimport assert from "node:assert/strict";\ntest("workspace smoke", () => assert.equal(1 + 1, 2));\n',
+      "utf8",
+    );
+    // The reviewer's git-diff sourcing requires a git repository —
+    // production run workspaces are repos, so mirror that: an initial
+    // commit gives the reviewer the pre-run baseline to diff against.
+    execFileSync("git", ["init", "--quiet"], { cwd: workspace });
+    execFileSync("git", ["add", "note.txt", "smoke.test.mjs"], { cwd: workspace });
+    execFileSync("git", ["-c", "user.email=probe@workflow.invalid", "-c", "user.name=workflow-probe", "commit", "--quiet", "-m", "probe baseline"], { cwd: workspace });
 
     const graph = new TaskGraph(tasks.map((task) => ({ ...task })));
     const application = new WorkflowApplication(
@@ -60,6 +76,16 @@ test(
       new Set(["read", "mutation", "process"]),
       workspace,
     );
+    // Mirror the production per-workspace application initialization
+    // (src/cli/hub.ts workspaceApplicationFor → startInteractiveTask): the
+    // hub shell must authorize against an application with an active
+    // IN_PROGRESS task. Earlier probe runs bound the shell to this seed
+    // application without selecting a task, so the reviewer's git-diff
+    // sourcing threw "no active workflow task selected" and the run stayed
+    // VERIFYING — a probe-composition divergence, not a production defect
+    // (production initializes its workspace applications with an active
+    // task).
+    application.startInteractiveTask();
 
     const verifyCommand = process.env.WORKFLOW_TEAM_TASK_VERIFY_COMMAND!.trim();
     const containedShell = (writableWorkspace: boolean) => (command: string, cwd: string) =>
@@ -78,9 +104,34 @@ test(
       reviewerFactory: createReviewerFactory({
         shell: containedShell(false),
         createRuntime: async ({ workspace: reviewerWorkspace }) => {
-          const runtime = await createConfiguredAcpRuntime(application, reviewerWorkspace, taskId(`hub-reviewer:${randomUUID()}`));
+          // Mirror the production reviewer composition (src/cli/hub.ts): a
+          // dedicated reviewer application with its own selected task.
+          const reviewerApplication = new WorkflowApplication(
+            graph,
+            hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+            [],
+            new Set(["read"]),
+            reviewerWorkspace,
+          );
+          const reviewerTaskId: TaskId = taskId(`hub-reviewer:${randomUUID()}`);
+          reviewerApplication.addTask({ id: reviewerTaskId, title: "Hub reviewer session", dependencies: [], requiredEvidence: [] });
+          reviewerApplication.transition(reviewerTaskId, "IN_PROGRESS");
+          reviewerApplication.selectActiveTask(reviewerTaskId);
+          const runtime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerTaskId, undefined);
+          runtime.session.subscribe((event) => {
+            const summary = event.type === "tool" || event.type === "status" || event.type === "failed"
+              ? JSON.stringify(event).slice(0, 300)
+              : undefined;
+            if (summary !== undefined) console.log("reviewer event:", summary);
+          });
           return {
-            submit: (prompt: string) => runtime.session.submit(prompt),
+            submit: async (prompt: string) => {
+              await runtime.session.submit(prompt);
+              // Reviewer-session observability: a gated run must show the
+              // reviewer's state/result so verdict failures explain
+              // themselves.
+              console.log("reviewer snapshot:", JSON.stringify(runtime.session.snapshot()).slice(0, 1200));
+            },
             snapshot: () => runtime.session.snapshot(),
             dispose: () => runtime.dispose(),
           };
@@ -95,7 +146,7 @@ test(
       id: "probe-schedule",
       title: "Scheduled probe run",
       cron: "* * * * *",
-      prompt: "Read note.txt and reply with exactly its current content. Do not modify any file.",
+      prompt: "Append exactly the line `after` on a new line at the end of note.txt. Do not modify any other file and do not run tests.",
       workspace,
       requiresReview: true,
     }];
@@ -126,10 +177,17 @@ test(
         hiddenSnapshotTaskIds: () => [],
       },
       schedules: () => schedules,
-      runTurn: async ({ runId, workspace: turnWorkspace }) => {
+      runTurn: async ({ runId, workspace: turnWorkspace, prompt }) => {
         const runtime = await createConfiguredAcpRuntime(application, turnWorkspace ?? workspace, taskId(`run:${runId}`));
         try {
-          await runtime.session.submit("Read note.txt and reply with exactly its current content. Do not modify any file.");
+          // Submit the hub-composed scheduled prompt — the probe exercises
+          // the real delivery, not a hardcoded read-only stand-in (an earlier
+          // composition ignored the prompt, so the turn never produced the
+          // change the reviewer was asked to evaluate).
+          await runtime.session.submit(prompt);
+          // Record the turn's outcome so a gated run explains what the agent
+          // actually did (permission denials show up here).
+          console.log("scheduled turn snapshot:", JSON.stringify(runtime.session.snapshot()));
           void runtime;
         } finally {
           await runtime.dispose();
@@ -160,8 +218,21 @@ test(
       tasks: body.snapshot.tasks.map((task) => ({ title: task.title, state: task.state })),
       verdicts: body.gateObservability?.reviewOutcomes ?? {},
       blockingReasons: body.gateObservability?.blockingReasons ?? {},
+      noteContent: readFileSync(join(workspace, "note.txt"), "utf8"),
     };
     console.log(JSON.stringify(evidence, null, 2));
     assert.ok(evidence.tasks.length > 0, "the scheduled run must have produced a task");
+    // The chain's closing assertions: the turn's mutation landed, the reviewer
+    // approved with a recorded verdict, and no gate blocked the run. With the
+    // run task's required evidence satisfied (reviewer approval + the test
+    // evidence recorded by the verify flow), the verified run is hidden from
+    // the interactive snapshot — the observable closing evidence is the
+    // recorded verdict plus the absence of any blocking reason.
+    assert.ok(evidence.noteContent.includes("after"), "the scheduled turn's mutation must land in the workspace");
+    const runVerdict = Object.values(body.gateObservability?.reviewOutcomes ?? {})[0];
+    assert.ok(runVerdict !== undefined, "the hub-owned reviewer must have produced a recorded verdict");
+    assert.equal(runVerdict.verdict, "approved");
+    assert.equal(runVerdict.recorded, true);
+    assert.deepEqual(Object.keys(body.gateObservability?.blockingReasons ?? {}).length, 0, "no gate may block the closed chain");
   },
 );
