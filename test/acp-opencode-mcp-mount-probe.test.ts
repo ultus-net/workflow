@@ -27,7 +27,7 @@ import { AcpSubprocessClient, type AcpSessionUpdate } from "../src/adapters/acp-
  * passes `--pure` so the stock surface is measured without the operator's
  * global plugins.
  *
-  * Interpretation: each test always records evidence — the recorded
+ * Interpretation: each test always records evidence — the recorded
  * finalMessage is what distinguishes the outcomes: a verbatim list_skills
  * output means the agent mounted the config from that surface (positive);
  * a NO_MCP_TOOLS reply means that surface is ignored — a negative finding
