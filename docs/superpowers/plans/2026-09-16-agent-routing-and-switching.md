@@ -37,6 +37,7 @@ Two facts shape the design. An ACP session is bound to its agent process (G4 evi
 ## Follow-ups
 
 - Sequence: registry + TUI agent toggle + web `agent` field first (two agents already justify it); goose becomes the third registry entry when its probe family passes (the merged goose qualification plan); reviewer-as-goose is the first genuinely routed role; task-graph requirements last.
-- THREAT_MODEL entry for the hub-owned webhook/gateway receiver before any external trigger lands (pairing, payload validation, dispatch authorization).
+- THREAT_MODEL entry for the hub-owned webhook/gateway receiver before any external trigger lands (pairing, payload validation, dispatch authorization), and a second for the direct advisory chat door's exposed surface.
 - Handoff-bridge ergonomics (what the exported summary includes) defer to implementation review.
+- Source note for the goose flags cited here: `GOOSE_RECIPE_PATH` and `goose serve --enable-scheduler` are documented on goose-docs.ai (environment-variables and configuration-files guides, v1.50.1); the gateway surface is `goose gateway start <platform>` (experimental remote access, Telegram first, aaif-goose/goose PR #7199). The webhook-transport characterization of the integration gateways is the operator's observation, to be confirmed at implementation time.
 - If assistant traffic outgrows terminal sessions, evaluate a hub-owned gateway frontend (Telegram via the hub's receiver) rather than exposing goose's gateway directly.
