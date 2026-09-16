@@ -10,7 +10,7 @@ import {
 import { ActionPart, AttentionPart, CompletionPart, OutcomePart, PlanPart, ThinkingPart, ToolPart } from "./message-parts.js";
 import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
-import { describeActivity, formatElapsed, formatRelativeTime } from "./presenters.js";
+import { describeActivity, formatElapsed, formatRelativeTime, formatTokens, withCurrentChoice } from "./presenters.js";
 import { useSessionState, useSessionUsage } from "./runtime.js";
 import { SettingsDialog } from "./settings-dialog.js";
 import { useTheme } from "./theme.js";
@@ -285,15 +285,6 @@ function GearIcon() {
       <path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3" strokeLinecap="round" />
     </svg>
   );
-}
-
-/** Agents may report a current value outside the advertised choices; show it truthfully. */
-function withCurrentChoice(option: WebConfigOption): ConfigChoice[] {
-  const choices = option.choices ?? [];
-  const current = String(option.currentValue);
-  return choices.some((choice) => choice.value === current)
-    ? [...choices]
-    : [{ value: current, name: current }, ...choices];
 }
 
 function ConfigSelect({ option, setOption, labelledBy }: {
@@ -628,12 +619,6 @@ function UsageMeter({ placement = "composer" }: { readonly placement?: "composer
       <span className="usage-cost" aria-label={`${usage.costUsd} US dollars`}>${usage.costUsd.toFixed(4)}</span>
     </div>
   );
-}
-
-function formatTokens(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
-  return String(count);
 }
 
 /** Header toggle: hides the git rail and inspector so the thread centers.
@@ -1305,13 +1290,14 @@ export function App() {
 
   // Keyboard shortcuts: "/" focuses the composer, Escape cancels a running
   // turn (when no popover/input has focus), Alt+N starts a new session,
-  // Ctrl/Cmd+, opens settings.
+  // Ctrl/Cmd+, opens settings. While the settings dialog is open it owns the
+  // keyboard — focus never jumps out from behind the modal.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const active = document.activeElement;
       const typing = active instanceof HTMLElement &&
         (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable);
-      if (event.key === "/" && !typing) {
+      if (event.key === "/" && !typing && document.querySelector(".settings-dialog") === null) {
         event.preventDefault();
         document.querySelector<HTMLElement>(".composer-input")?.focus();
       } else if (
@@ -1321,7 +1307,10 @@ export function App() {
         document.querySelector(".settings-dialog, .config-combobox-pop") === null
       ) {
         void fetch("/api/cancel", { method: "POST" });
-      } else if (event.altKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "n" && !typing) {
+      } else if (
+        event.altKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "n" && !typing &&
+        document.querySelector(".settings-dialog") === null
+      ) {
         event.preventDefault();
         createSession(refreshSessions);
       } else if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key === ",") {

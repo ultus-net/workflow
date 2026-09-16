@@ -1235,17 +1235,6 @@ body {
   outline-offset: 2px;
 }
 
-.config-toggle-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.config-toggle-desc {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .config-toggle-track, .config-toggle-thumb { transition: none; }
 }

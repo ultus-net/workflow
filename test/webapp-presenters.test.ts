@@ -2,7 +2,47 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { diffLineClass, looksLikeDiff } from "../src/ui/webapp/diff-text.js";
-import { describeActivity, formatElapsed, formatRelativeTime } from "../src/ui/webapp/presenters.js";
+import { describeActivity, formatElapsed, formatRelativeTime, formatTokens, withCurrentChoice } from "../src/ui/webapp/presenters.js";
+
+test("formatTokens compacts counts for meters and readouts", () => {
+  assert.equal(formatTokens(0), "0");
+  assert.equal(formatTokens(42), "42");
+  assert.equal(formatTokens(999), "999");
+  assert.equal(formatTokens(1_000), "1.0k");
+  assert.equal(formatTokens(84_512), "84.5k");
+  assert.equal(formatTokens(1_200_000), "1.2M");
+});
+
+test("withCurrentChoice shows an unadvertised current value instead of replacing it", () => {
+  const option = {
+    id: "model",
+    name: "Model",
+    type: "select" as const,
+    currentValue: "custom/model-x",
+    choices: [
+      { value: "a", name: "A" },
+      { value: "b", name: "B" },
+    ],
+  };
+  const choices = withCurrentChoice(option);
+  assert.equal(choices[0]?.value, "custom/model-x");
+  assert.equal(choices.length, 3);
+});
+
+test("withCurrentChoice leaves advertised values in agent order", () => {
+  const option = {
+    id: "model",
+    name: "Model",
+    type: "select" as const,
+    currentValue: "b",
+    choices: [
+      { value: "a", name: "A" },
+      { value: "b", name: "B" },
+    ],
+  };
+  const choices = withCurrentChoice(option);
+  assert.deepEqual(choices.map((choice) => choice.value), ["a", "b"]);
+});
 
 test("looksLikeDiff accepts real unified diffs", () => {
   const diff = [

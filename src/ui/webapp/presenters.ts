@@ -1,4 +1,25 @@
 import type { OperatorSessionItem } from "../operator-session.js";
+import type { WebConfigOption } from "../web-config-options.js";
+
+/** Token counts compacted for meters and readouts ("84.5k", "1.2M"). */
+export function formatTokens(count: number): string {
+  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
+  return String(count);
+}
+
+/**
+ * Choice list for a config option, truthful about a current value the agent
+ * reports outside its advertised choices: the current value is shown first
+ * rather than silently replaced by the nearest known choice.
+ */
+export function withCurrentChoice(option: WebConfigOption): readonly { readonly value: string; readonly name: string; readonly description?: string }[] {
+  const choices = option.choices ?? [];
+  const current = String(option.currentValue);
+  return choices.some((choice) => choice.value === current)
+    ? [...choices]
+    : [{ value: current, name: current }, ...choices];
+}
 
 /** Session-list timestamps: relative ("5m ago"), full stamp on hover. */
 export function formatRelativeTime(iso: string, now: number = Date.now()): string {

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 
 import type { WebConfigOption } from "../web-config-options.js";
+import { formatTokens, withCurrentChoice } from "./presenters.js";
 import { useSessionState, useSessionUsage } from "./runtime.js";
 import type { ThemeChoice } from "./theme.js";
 
@@ -139,11 +140,12 @@ function Row({ label, description, control, title }: {
 }
 
 /** One toggle row: hidden checkbox + the shared track/thumb presentation. */
-function Toggle({ checked, disabled, onChange, ariaLabel }: {
+function Toggle({ checked, disabled, onChange, ariaLabel, inputRef }: {
   readonly checked: boolean;
   readonly disabled?: boolean | undefined;
   readonly onChange: (checked: boolean) => void;
   readonly ariaLabel: string;
+  readonly inputRef?: Ref<HTMLInputElement> | undefined;
 }) {
   return (
     <label className="config-toggle settings-toggle" title={ariaLabel}>
@@ -152,6 +154,7 @@ function Toggle({ checked, disabled, onChange, ariaLabel }: {
         checked={checked}
         disabled={disabled}
         aria-label={ariaLabel}
+        ref={inputRef}
         onChange={(event) => onChange(event.target.checked)}
       />
       <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
@@ -233,9 +236,7 @@ function AgentOptionsSection({ options, setOption }: {
             />
           );
         }
-        const choices = option.choices ?? [];
         const current = String(option.currentValue);
-        const known = choices.some((choice) => choice.value === current);
         return (
           <Row
             key={option.id}
@@ -249,9 +250,8 @@ function AgentOptionsSection({ options, setOption }: {
                 title={option.description}
                 onChange={(event) => setOption(option.id, event.target.value)}
               >
-                {!known && <option value={current}>{current}</option>}
-                {choices.map((choice) => (
-                  <option value={choice.value} key={choice.value}>{choice.name}</option>
+                {withCurrentChoice(option).map((choice) => (
+                  <option value={choice.value} key={choice.value} title={choice.description}>{choice.name}</option>
                 ))}
               </select>
             }
@@ -270,6 +270,13 @@ function ApprovalsSection({ permissions, capabilities }: {
   const processEnabled = capabilities.capabilities?.capabilities.includes("process") ?? false;
   const networkEnabled = capabilities.capabilities?.capabilities.includes("network") ?? false;
   const remembered = permissions.patterns.alwaysAllow.length + permissions.patterns.alwaysReject.length;
+  // The Forget button unmounts itself when the count drops to zero; focus
+  // then returns to the section's first control so the modal never strands
+  // focus on the body (where the Tab trap would stop engaging).
+  const askToggleRef = useRef<HTMLInputElement>(null);
+  const forget = (): void => {
+    void permissions.update({ reset: true }).then(() => askToggleRef.current?.focus());
+  };
   return (
     <Section title="Approvals">
       <Row
@@ -280,6 +287,7 @@ function ApprovalsSection({ permissions, capabilities }: {
             checked={permissions.mode === "ask"}
             onChange={(ask) => void permissions.update({ mode: ask ? "ask" : "auto" })}
             ariaLabel="Ask before tool runs"
+            inputRef={askToggleRef}
           />
         }
       />
@@ -311,7 +319,7 @@ function ApprovalsSection({ permissions, capabilities }: {
         <button
           type="button"
           className="btn btn-ghost settings-reset"
-          onClick={() => void permissions.update({ reset: true })}
+          onClick={forget}
         >
           Forget {remembered} remembered decision{remembered === 1 ? "" : "s"}
         </button>
@@ -406,12 +414,6 @@ function ShortcutsSection() {
       ))}
     </Section>
   );
-}
-
-function formatTokens(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
-  return String(count);
 }
 
 function SessionSection({ enforcement }: {
