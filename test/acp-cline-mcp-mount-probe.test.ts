@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { AcpSubprocessClient } from "../src/adapters/acp-subprocess.js";
+import { AcpSubprocessClient, type AcpSessionUpdate } from "../src/adapters/acp-subprocess.js";
 import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
 
 /**
@@ -27,10 +27,12 @@ import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
  * authenticate headlessly, so it can never produce this evidence
  * (docs/ACP_RESEARCH.md).
  *
- * Interpretation: the probe always records evidence. NO skills-shaped tool
- * activity plus a NO_MCP_TOOLS reply means the agent ignores every
- * candidate path — a negative finding that keeps the hub-owned MCP config
- * assumption unwired (F1/G3 mounts stay deferred), not a probe failure.
+ * Interpretation: the probe always records evidence — the recorded
+ * finalMessage is what distinguishes the outcomes: a verbatim list_skills
+ * output means the agent mounted the config (positive), a NO_MCP_TOOLS
+ * reply means the agent ignores every candidate path — a negative finding
+ * that keeps the hub-owned MCP config assumption unwired (F1/G3 mounts
+ * stay deferred), not a probe failure.
  */
 
 const runProbe = process.env.WORKFLOW_ACP_CLINE_MCP_MOUNT === "1";
@@ -110,8 +112,8 @@ test(
           return { kind: "allow" };
         },
       });
-      const updates: string[] = [];
-      client.onSessionUpdate((update) => updates.push(update.update.sessionUpdate));
+      const updates: AcpSessionUpdate[] = [];
+      client.onSessionUpdate((update) => updates.push(update));
 
       try {
         const initialized = await client.initialize();
@@ -127,12 +129,18 @@ test(
           new Promise<{ stopReason: string }>((resolve) => setTimeout(() => resolve({ stopReason: "probe_timeout" }), 240_000)),
         ]) as { stopReason?: string };
 
+        const finalMessage = updates.flatMap((update) =>
+          update.update.sessionUpdate === "agent_message_chunk"
+            ? [(update.update.content as { text?: string }).text ?? ""]
+            : [],
+        ).join("");
         const evidence = {
           agent: initialized.agentInfo,
           stopReason: result.stopReason,
           candidatePaths: written,
           gateableToolTitles: toolCalls,
-          updateKinds: [...new Set(updates)],
+          updateKinds: [...new Set(updates.map((update) => update.update.sessionUpdate))],
+          finalMessage: finalMessage.slice(0, 500),
         };
         console.log(JSON.stringify(evidence, null, 2));
         assert.equal(evidence.candidatePaths.length, CANDIDATES.length, "all candidate configs were written");

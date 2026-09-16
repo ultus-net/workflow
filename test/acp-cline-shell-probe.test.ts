@@ -7,24 +7,48 @@ import test from "node:test";
 
 import { AcpSubprocessClient, type AcpPermissionDecision } from "../src/adapters/acp-subprocess.js";
 import type { AcpPermissionRequestParams } from "../src/adapters/acp-permission.js";
-import { loadClineApiKey } from "./cline-probe-helpers.js";
+import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
 
 const runShellProbe = process.env.WORKFLOW_ACP_CLINE_SHELL === "1";
 const denyPermission = process.env.WORKFLOW_ACP_CLINE_DENY === "1";
+
+/**
+ * Records process permission behavior for one bounded command against the
+ * vendored pinned Cline ACP surface. The probe launches the vendored entry
+ * via `clineLaunchEntry()` with `--provider openrouter` plus key env: stock
+ * PATH cline (3.0.62) is account-cloud-only in ACP mode and cannot
+ * authenticate headlessly (`docs/ACP_RESEARCH.md`) — the pre-retarget live
+ * run only passed by riding the ambient real-HOME account session on the
+ * stock binary, which is machine-specific evidence, not a headless path.
+ */
 
 test(
   "Cline ACP shell probe records process permission behavior for one bounded command",
   { skip: !runShellProbe, timeout: 75_000 },
   async () => {
+    const clineApiKey = await loadClineApiKey("Cline shell probe");
     const cwd = await mkdtemp(path.join(tmpdir(), "workflow-acp-cline-shell-"));
     const target = path.join(cwd, "shell-target.txt");
     await writeFile(target, "before\n", "utf8");
-    const clineApiKey = await loadClineApiKey("Cline shell probe");
-    const child = spawn("cline", ["--acp", "--auto-approve", "false", "--cwd", cwd], {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, CLINE_API_KEY: clineApiKey, CLINE_PROVIDER: process.env.CLINE_PROVIDER ?? "openrouter" },
-    });
+    const cline = clineLaunchEntry();
+    const child = spawn(
+      cline.executable,
+      [
+        ...(cline.script !== undefined ? [cline.script] : []),
+        "--acp",
+        "--provider",
+        "openrouter",
+        "--auto-approve",
+        "false",
+        "--cwd",
+        cwd,
+      ],
+      {
+        cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, CLINE_API_KEY: clineApiKey, CLINE_PROVIDER: process.env.CLINE_PROVIDER ?? "openrouter" },
+      },
+    );
     const permissionRequests: AcpPermissionRequestParams[] = [];
     const client = new AcpSubprocessClient({
       child,
