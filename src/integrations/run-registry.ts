@@ -237,7 +237,7 @@ export function createRunRegistry(
       });
       return { recorded: true };
     },
-      async finish({ runId, outcome }) {
+    async finish({ runId, outcome }) {
       const application = runs.get(runId);
       if (application === undefined) throw new TypeError(`unknown run: ${runId}`);
       const runTaskId = taskId(`run:${runId}`);
@@ -291,7 +291,7 @@ export function createRunRegistry(
             throw new Error(`cannot verify run ${runId}: ${verified.reason}`);
           }
         }
-          if (verified.kind !== "accepted" && options?.testRunner !== undefined && runTestSubjects.has(runId)) {
+        if (verified.kind !== "accepted" && options?.testRunner !== undefined && runTestSubjects.has(runId)) {
           // Plan Task D1: the hub runs the workspace test command itself and
           // records the environment observation. Failing or crashing tests
           // leave the task VERIFYING with the output as blocking reason.

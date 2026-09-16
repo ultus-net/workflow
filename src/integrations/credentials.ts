@@ -109,31 +109,33 @@ export function createCredentialControlPlane(
       const previousValue = await store.get(definition.id);
       await store.put(definition.id, value);
       definitions.set(definition.id, definition);
-      try {
-        await onDefinitionsChanged?.([...definitions.values()]);
-      } catch (error) {
-        if (previousDefinition === undefined) definitions.delete(definition.id);
-        else definitions.set(definition.id, previousDefinition);
-        const failure = error instanceof Error ? error : new Error(String(error));
-        let outcome: SecretRollbackOutcome;
-        try {
-          outcome = await restoreSecret(store, definition.id, previousValue, failure);
-        } catch (divergence) {
-          // Metadata persistence failed and every compensating secret op
-          // failed too: drop the in-memory definition so the live process
-          // fails closed instead of serving the new value under the
-          // rolled-back (older) authorization contract.
-          definitions.delete(definition.id);
-          throw divergence;
+try {
+          await onDefinitionsChanged?.([...definitions.values()]);
+        } catch (error) {
+          if (previousDefinition === undefined) definitions.delete(definition.id);
+          else definitions.set(definition.id, previousDefinition);
+          const failure = error instanceof Error ? error : new Error(String(error));
+          let outcome: SecretRollbackOutcome;
+          try {
+            outcome = await restoreSecret(store, definition.id, previousValue, failure);
+          } catch (divergence) {
+            // Metadata persistence failed and every compensating secret op
+            // failed too: drop the in-memory definition so the live process
+            // fails closed instead of serving the new value under the
+            // rolled-back (older) authorization contract.
+            definitions.delete(definition.id);
+            throw divergence;
+          }
+          if (outcome !== "restored") {
+            throw new Error(
+              `credential '${definition.id}' set failed (${failure.message}); the previous secret could not be restored (${
+                outcome.rollbackError
+              }), so the credential is now unavailable (fail-closed) — re-set it`,
+              { cause: error },
+            );
+          }
+          throw failure;
         }
-        if (outcome === "fail-closed") {
-          throw new Error(
-            `credential '${definition.id}' set failed (${failure.message}); the previous secret could not be restored, so the credential is now unavailable (fail-closed) — re-set it`,
-            { cause: error },
-          );
-        }
-        throw failure;
-      }
     },
     async revoke(id): Promise<void> {
       const definition = definitions.get(id);
@@ -167,7 +169,9 @@ export function createCredentialControlPlane(
   };
 }
 
-type SecretRollbackOutcome = "restored" | "fail-closed";
+type SecretRollbackOutcome =
+  | "restored"
+  | { readonly kind: "fail-closed"; readonly rollbackError: string };
 
 /**
  * Restores the secret store after a failed metadata change. When the
@@ -188,18 +192,17 @@ async function restoreSecret(
     else await store.put(id, previousValue);
     return "restored";
   } catch (rollbackError) {
+    const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
     if (previousValue !== undefined) {
       try {
         await store.delete(id);
-        return "fail-closed";
+        return { kind: "fail-closed", rollbackError: rollbackMessage };
       } catch {
         // Both compensating ops failed — report the divergence below.
       }
     }
     throw new Error(
-      `credential '${id}' state diverged: metadata change failed (${failure.message}) and the secret rollback failed too (${
-        rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
-      }); persisted metadata and secret material no longer agree — re-set the credential`,
+      `credential '${id}' state diverged: metadata change failed (${failure.message}) and the secret rollback failed too (${rollbackMessage}); persisted metadata and secret material no longer agree — re-set the credential`,
       { cause: rollbackError },
     );
   }

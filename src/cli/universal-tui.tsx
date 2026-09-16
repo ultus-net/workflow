@@ -35,14 +35,14 @@ const composed = await composeDriver(driverName, application, workspace, {
   opencodeUrl: args.opencodeUrl ?? process.env.WORKFLOW_OPENCODE_URL ?? "http://127.0.0.1:4096",
 });
 
-// Plan Task F2 surface wiring: the same operator levels.json skills-mcp
-// reads gates this surface's required-skill precondition. A malformed map
-// refuses startup (fail-closed, mirroring skills-mcp) rather than running
-// with silently missing gating.
-const skillsLevelMap = resolveSkillsLevelMap(process.env.SKILLS_MCP_DIR, homedir());
-
 let renderError: unknown;
 try {
+  // Plan Task F2 surface wiring: the same operator levels.json skills-mcp
+  // reads gates this surface's required-skill precondition. A malformed map
+  // refuses startup (fail-closed, mirroring skills-mcp) rather than running
+  // with silently missing gating — inside the try so the composed driver is
+  // still disposed on that fatal path.
+  const skillsLevelMap = resolveSkillsLevelMap(process.env.SKILLS_MCP_DIR, homedir());
   const { waitUntilExit } = render(React.createElement(WorkflowTui, {
     application,
     session: composed.session,

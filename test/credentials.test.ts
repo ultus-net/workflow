@@ -185,7 +185,9 @@ test("set rollback that cannot restore the previous value fails closed", async (
     controlPlane.set({ ...githubCredential, label: "Changed GitHub PAT" }, "new-secret"),
     (error: unknown) => {
       const message = (error as Error).message;
-      return /metadata write failed/.test(message) && /unavailable \(fail-closed\) — re-set it/.test(message);
+      return /metadata write failed/.test(message)
+        && /store put failed/.test(message)
+        && /unavailable \(fail-closed\) — re-set it/.test(message);
     },
   );
   assert.equal(await backing.get("github-pat"), undefined, "the new value must not stay servable under the old contract");
