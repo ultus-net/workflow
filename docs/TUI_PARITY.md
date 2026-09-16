@@ -53,6 +53,19 @@ unchecked items are intentional gaps, not implied support.
   canonical state.
 - Enforcement claims are identical on both surfaces because both project the
   hub's authority — neither can show `advisory` as `enforced`.
+- Terminal accents are **terminal-derived, not fixed**: the TUI assigns only
+  allowlisted named ANSI-slot colors (cyan/green/yellow/red/gray — see the
+  Terminal theme decision in `docs/TUI_INTEGRATION.md`), which the user's
+  terminal theme remaps. The v0 inherit-only policy was lifted with operator
+  approval on 2026-09-16; hex/rgb/ansi256 values remain forbidden so the
+  theme always wins. The single permitted background is the composer's
+  OSC 11-sampled tint of the terminal's own background color (same decision
+  record); every other background stays forbidden.
+- The options menu stays open while digits toggle values in place (modes,
+  styles, config options can be cycled repeatedly); only symbol inspect —
+  which captures the keyboard — closes it. `q`/Esc always closes. The
+  empty state is session-aware: composer surfaces invite prompts, the
+  read-only monitor states that it observes and does not accept text.
 - The monitor (`workflow-monitor`) attaches to the hub without an agent
   process: usage metering there would need hub-side per-session aggregation
   (open; the metering proxy records per-runtime metrics today).

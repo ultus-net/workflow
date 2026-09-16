@@ -10,6 +10,7 @@ import { TaskGraph } from "../kernel/task-graph.js";
 import { createCheckpointLedger } from "../pedagogy/checkpoints.js";
 import { applySkillGating, resolveSkillsLevelMap } from "../pedagogy/skill-gating.js";
 import { WorkflowTui } from "../ui/tui.js";
+import { detectTerminalBackground } from "../ui/terminal-theme.js";
 import { composeDriver, driverHasAuthoritativePreMutation, parseUniversalArgs, resolveDriverName } from "./driver-registry.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 
@@ -43,6 +44,8 @@ try {
   // with silently missing gating — inside the try so the composed driver is
   // still disposed on that fatal path.
   const skillsLevelMap = resolveSkillsLevelMap(process.env.SKILLS_MCP_DIR, homedir());
+  // Terminal-derived composer tint (OSC 11): must run before Ink owns stdin.
+  const composerBackground = await detectTerminalBackground();
   const { waitUntilExit } = render(React.createElement(WorkflowTui, {
     application,
     session: composed.session,
@@ -58,6 +61,7 @@ try {
     ...(composed.setSessionStyle ? { onStyleChange: composed.setSessionStyle } : {}),
     ...(composed.sessionConfigOptions ? { sessionConfigOptions: composed.sessionConfigOptions } : {}),
     ...(composed.setSessionConfig ? { onSetSessionConfig: composed.setSessionConfig } : {}),
+    ...(composerBackground === undefined ? {} : { composerBackground }),
   }));
   await waitUntilExit();
 } catch (error) {

@@ -33,10 +33,57 @@ export function nextPedagogicalMode(mode: PedagogicalMode): PedagogicalMode {
   return PEDAGOGICAL_MODES[(index + 1) % PEDAGOGICAL_MODES.length] ?? "autonomous";
 }
 
+// Terminal theme (decision 2026-09-16, operator-approved): accents pull the
+// terminal's own palette. Ink routes named colors straight to chalk's basic-16
+// ANSI slots (\e[36m etc.), which the user's terminal theme remaps — so a
+// Nord/Catppuccin/Solarized terminal shows *its* cyan, not a hardcoded RGB.
+// Hex/rgb/ansi256 values are forbidden (they would override the theme), the
+// allowlist of slot names is pinned by test/tui.test.ts, and NO_COLOR
+// degrades automatically because chalk drops to level 0.
+const ACCENT_INTERACTIVE = "cyan";
+const ACCENT_SUCCESS = "green";
+const ACCENT_WARNING = "yellow";
+const ACCENT_FAILURE = "red";
+const ACCENT_FRAME = "gray";
+
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const;
+const SPINNER_INTERVAL_MS = 80;
+
+const TASK_GLYPHS: Record<TaskState, string> = {
+  READY: "○",
+  IN_PROGRESS: "◐",
+  VERIFYING: "◑",
+  VERIFIED: "✓",
+  FAILED: "✗",
+  BLOCKED: "⊘",
+};
+
 interface TranscriptEntry {
   readonly label: string;
   readonly text: string;
   readonly dim?: boolean;
+  /** Wall-clock arrival time of the projected event (display/export only). */
+  readonly at?: string;
+}
+
+function clock(date = new Date()): string {
+  return date.toTimeString().slice(0, 8);
+}
+
+/** Theme-slot accent for a transcript marker label; undefined keeps the terminal foreground. */
+function entryAccent(label: string): string | undefined {
+  if (label === "[ok]" || label === "completed") return ACCENT_SUCCESS;
+  if (label === "[failed]" || label === "failed" || label === "[error]") return ACCENT_FAILURE;
+  if (label === "[warning]") return ACCENT_WARNING;
+  if (label === "[tool]" || label === "[tutor]" || label === "[lesson]" || label === "[brief]") return ACCENT_INTERACTIVE;
+  return undefined;
+}
+
+function sessionStateAccent(state: string | undefined): string | undefined {
+  if (state === "running") return ACCENT_INTERACTIVE;
+  if (state === "completed") return ACCENT_SUCCESS;
+  if (state === "cancelled" || state === "failed") return ACCENT_FAILURE;
+  return undefined;
 }
 
 export function nextInteractiveState(state: TaskState): TaskState | undefined {
@@ -74,6 +121,7 @@ export function WorkflowTui({
   gateObservability,
   usage,
   connectionLabel,
+  composerBackground,
   assistantLabel = "Cline",
 }: {
   readonly application: WorkflowSnapshotSource;
@@ -91,6 +139,13 @@ export function WorkflowTui({
   /** Web-parity usage meter (Batch 2): a live "tokens · cost" footer line. */
   readonly usage?: () => string | undefined;
   readonly connectionLabel?: string;
+  /**
+   * Terminal-derived composer tint (OSC 11 background detection, see
+   * src/ui/terminal-theme.ts). Present → the composer renders as the "block"
+   * input style over the user's own terminal background; absent → the
+   * bordered fallback that works on any terminal.
+   */
+  readonly composerBackground?: string;
   readonly assistantLabel?: string;
 }) {
   const { exit } = useApp();
@@ -154,6 +209,25 @@ export function WorkflowTui({
   const [lesson, setLesson] = useState<DiagnosticLesson | undefined>();
   const [pendingTools, setPendingTools] = useState<readonly string[]>([]);
   const [recentLogs, setRecentLogs] = useState<readonly SessionLog[]>([]);
+  // Working-turn indicator: a braille spinner plus elapsed seconds while the
+  // session runs. The frame index lives in state; the turn start lives in a
+  // ref so re-entering "running" restarts the clock without stale closures.
+  const running = sessionState?.state === "running";
+  const [spinTick, setSpinTick] = useState(0);
+  const turnStartedRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    if (!running) {
+      turnStartedRef.current = undefined;
+      return;
+    }
+    turnStartedRef.current = Date.now();
+    const timer = setInterval(() => setSpinTick((tick) => tick + 1), SPINNER_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [running]);
+  const spinner = SPINNER_FRAMES[spinTick % SPINNER_FRAMES.length]!;
+  const elapsedSeconds = turnStartedRef.current === undefined
+    ? 0
+    : Math.floor((Date.now() - turnStartedRef.current) / 1_000);
 
   // Install the initial mode's gate on mount so the mode bar never shows a
   // label with no corresponding application behavior.
@@ -238,24 +312,33 @@ export function WorkflowTui({
     void Promise.resolve(onSetSessionConfig(option.id, next))
       .then(() => setConfigRevision((value) => value + 1))
       .catch((error: unknown) => {
-        setTranscript((current) => [...current, { label: "[failed]", text: error instanceof Error ? error.message : String(error) }]);
+        setTranscript((current) => [...current, { label: "[failed]", text: error instanceof Error ? error.message : String(error), at: clock() }]);
       });
   };
 
+  // Menu items carry their close behavior: cycle-type options keep the menu
+  // open so the operator can toggle through values in place; options that
+  // need the keyboard (symbol inspect) close it.
   const menuItems = [
-    { label: `Mode: ${MODE_LABELS[mode]}`, run: cycleMode },
-    { label: `Speech: ${style.speech}`, run: cycleSpeech },
-    { label: `Build: ${style.build}`, run: cycleBuild },
-    { label: "Learner profile", run: toggleProfile },
-    { label: "Inspect symbol", run: openInspect },
-    { label: "Workflow details", run: toggleWorkflow },
+    { label: `Mode: ${MODE_LABELS[mode]}`, run: cycleMode, closes: false },
+    { label: `Speech: ${style.speech}`, run: cycleSpeech, closes: false },
+    { label: `Build: ${style.build}`, run: cycleBuild, closes: false },
+    { label: "Learner profile", run: toggleProfile, closes: false },
+    { label: "Inspect symbol", run: openInspect, closes: true },
+    { label: "Workflow details", run: toggleWorkflow, closes: false },
     ...agentConfigOptions.map((option) => ({
       label: `${option.name}: ${configValueLabel(option)}`,
       run: () => cycleSessionConfig(option),
+      closes: false,
     })),
   ] as const;
 
   useInput((input, key) => {
+    // Drop late OSC 11 responses: the terminal may answer the background
+    // query (sent by src/ui/terminal-theme.ts before render) after the
+    // fail-soft window closed, and Ink's input parser has no OSC handling —
+    // unfiltered, the response payload would land in the composer as text.
+    if (input.includes("]11;rgb:")) return;
     if (key.ctrl && input === "c") {
       if (sessionState?.state === "running" && activeSession !== undefined) {
         void activeSession.cancel().finally(() => setSessionState(activeSession.snapshot()));
@@ -274,10 +357,13 @@ export function WorkflowTui({
       return;
     }
     if (menuOpen) {
-      if (key.escape || (input === "" && !key.ctrl && !key.meta) || input === "q") {
+      if (key.escape || input === "q") {
         setMenuOpen(false);
         return;
       }
+      // Arrows must be handled before any empty-input check: Ink delivers
+      // arrow keys with an empty input string, and the previous ordering
+      // closed the menu on the first ↑/↓ instead of moving the cursor.
       if (key.upArrow) {
         setMenuIndex((value) => Math.max(0, value - 1));
         return;
@@ -288,13 +374,17 @@ export function WorkflowTui({
       }
       const digit = Number.parseInt(input, 10);
       if (digit >= 1 && digit <= menuItems.length) {
-        menuItems[digit - 1]!.run();
-        setMenuOpen(false);
+        const item = menuItems[digit - 1]!;
+        item.run();
+        // Cycle-type options keep the menu open so values can be toggled in
+        // place; only options that capture the keyboard close it.
+        if (item.closes) setMenuOpen(false);
         return;
       }
       if (key.return) {
-        menuItems[menuIndex]!.run();
-        setMenuOpen(false);
+        const item = menuItems[menuIndex]!;
+        item.run();
+        if (item.closes) setMenuOpen(false);
         return;
       }
       return;
@@ -364,7 +454,7 @@ export function WorkflowTui({
       // operator's own process writing, not an agent mutation).
       const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 23);
       if (transcript.length === 0) {
-        setTranscript((current) => [...current, { label: "[export]", text: "refused: transcript is empty", dim: true }]);
+        setTranscript((current) => [...current, { label: "[export]", text: "refused: transcript is empty", dim: true, at: clock() }]);
         return;
       }
       const exportPath = resolve(process.cwd(), `workflow-transcript-${stamp}.md`);
@@ -373,11 +463,11 @@ export function WorkflowTui({
         ``,
         `_Exported ${new Date().toISOString()} · ${connectionLabel ?? "local"}_`,
         ``,
-        ...transcript.map((entry) => `**${entry.label}**: ${entry.text}`),
+        ...transcript.map((entry) => `${entry.at !== undefined ? `_${entry.at}_ ` : ""}**${entry.label}**: ${entry.text}`),
         ``,
       ].join("\n");
       writeFileSync(exportPath, markdown, "utf8");
-      setTranscript((current) => [...current, { label: "[exported]", text: exportPath, dim: true }]);
+      setTranscript((current) => [...current, { label: "[exported]", text: exportPath, dim: true, at: clock() }]);
       return;
     }
     if (activeSession === undefined) return;
@@ -388,7 +478,7 @@ export function WorkflowTui({
       if (key.return) {
         const submitted = promptRef.current.trim();
         if (submitted.length === 0) return;
-        setTranscript((current) => [...current, { label: "You (queued)", text: submitted, dim: true }]);
+        setTranscript((current) => [...current, { label: "You (queued)", text: submitted, dim: true, at: clock() }]);
         setPromptHistory((current) => [...current, submitted].slice(-50));
         historyIndex.current = undefined;
         savedDraft.current = undefined;
@@ -418,7 +508,7 @@ export function WorkflowTui({
     if (key.return) {
       const submitted = promptRef.current.trim();
       if (submitted.length === 0) return;
-      setTranscript((current) => [...current, { label: "You", text: submitted }]);
+      setTranscript((current) => [...current, { label: "You", text: submitted, at: clock() }]);
       setPromptHistory((current) => [...current, submitted].slice(-50));
       historyIndex.current = undefined;
       savedDraft.current = undefined;
@@ -439,33 +529,49 @@ export function WorkflowTui({
   });
 
   const openReviewFollowUps = (reviewFollowUps ?? []).some((item) => item.status === "open");
-  const transcriptRows = Math.max(4, (stdout.rows ?? 24) - (showWorkflow ? 16 : 10) - panelRows(snapshot, activeSession));
+  const showActivityPanel = activeSession !== undefined || openReviewFollowUps || gates !== undefined;
+  const composerRows = activeSession === undefined ? 0 : composerBackground === undefined ? 5 : 3;
+  const transcriptRows = Math.max(4, (stdout.rows ?? 24) - chromeRows(showWorkflow, composerRows) - panelRows(snapshot, showActivityPanel));
   const end = Math.max(0, transcript.length - scrollOffset);
   const visibleTranscript = transcript.slice(Math.max(0, end - transcriptRows), end);
   const taskSummary = summarizeTasks(snapshot);
+  const enforcement = snapshot.enforcementLevel.toUpperCase();
+  const styleStatus = formatStyleStatus(style);
 
   return (
     <Box flexDirection="column" alignItems="center">
       <Box flexDirection="column" width="100%" maxWidth={68} paddingX={1}>
-        <Box justifyContent="space-between">
-          <Text dimColor>[Mode: {MODE_LABELS[mode]}]{formatStyleStatus(style).length > 0 ? ` [${formatStyleStatus(style)}]` : ""}{connectionLabel !== undefined ? ` [${connectionLabel}]` : ""}{usageLine !== undefined ? ` [${usageLine}]` : ""}</Text>
-          <Text dimColor>^P menu</Text>
+        <Box flexDirection="column" borderStyle="round" borderColor={ACCENT_INTERACTIVE} paddingX={1}>
+          <Box justifyContent="space-between">
+            <Text bold color={ACCENT_INTERACTIVE}>◆ Workflow</Text>
+            <Text>
+              <Text bold color={enforcement === "ENFORCED" ? ACCENT_SUCCESS : ACCENT_WARNING}>{enforcement}</Text>
+              <Text dimColor> · {snapshot.transport}{usageLine !== undefined ? ` · ${usageLine}` : ""}</Text>
+            </Text>
+          </Box>
+          <Box justifyContent="space-between">
+            <Text>
+              <Text bold>Mode: {MODE_LABELS[mode]}</Text>
+              {styleStatus.length > 0 ? <Text dimColor> {styleStatus}</Text> : null}
+              {connectionLabel !== undefined ? <Text dimColor> · {connectionLabel}</Text> : null}
+            </Text>
+          </Box>
         </Box>
         {prompt.length === 0 && !menuOpen ? (
-          <Text dimColor>keys: / menu · ^W state</Text>
+          <Text dimColor>keys: / menu · ^P menu · ^W state · ^E export · PgUp/PgDn scroll</Text>
         ) : null}
         {menuOpen ? (
-          <Box marginTop={0} flexDirection="column">
-            <Text bold>Workflow options</Text>
+          <Box marginTop={1} flexDirection="column" borderStyle="round" borderColor={ACCENT_INTERACTIVE} paddingX={1}>
+            <Text bold color={ACCENT_INTERACTIVE}>Workflow options</Text>
             {menuItems.map((item, index) => {
               const active = index === menuIndex;
               return (
-                <Text key={item.label} dimColor={!active}>
-                  {active ? ">" : " "}{index + 1} {item.label}
+                <Text key={item.label} dimColor={!active} {...(active ? { color: ACCENT_INTERACTIVE } : {})}>
+                  {active ? "❯ " : "  "}{index + 1} {item.label}
                 </Text>
               );
             })}
-            <Text dimColor>1-{menuItems.length} or ↑↓ Enter · q/Esc closes · ^W state</Text>
+            <Text dimColor>1-{menuItems.length} toggles in place · ↑↓ Enter runs · q/Esc closes · ^W state</Text>
           </Box>
         ) : null}
         {decisionBrief !== undefined ? <DecisionBriefDrawer brief={decisionBrief} /> : null}
@@ -474,54 +580,87 @@ export function WorkflowTui({
         {showProfile && learnerProfile !== undefined ? <ProfilePanel profile={learnerProfile} /> : null}
         {showHint ? (
           <Box marginTop={1} flexDirection="column">
-            <Text bold>Symbol Inspect</Text>
+            <Text bold color={ACCENT_INTERACTIVE}>◆ Symbol Inspect</Text>
             <Text dimColor>Type a symbol name and press Enter{inspectQuery.length > 0 ? `: ${inspectQuery}` : ""}</Text>
           </Box>
         ) : null}
-        <TaskListPanel snapshot={snapshot} />
-        {(activeSession !== undefined || openReviewFollowUps || gates !== undefined) ? (
-          <SessionActivityPanel state={sessionState} pendingTools={pendingTools} recentLogs={recentLogs} {...(reviewFollowUps === undefined ? {} : { reviewFollowUps })} {...(gates === undefined ? {} : { gateObservability: gates })} />
+        {snapshot.tasks.length > 0 ? <TaskListPanel snapshot={snapshot} /> : null}
+        {showActivityPanel ? (
+          <SessionActivityPanel state={sessionState} pendingTools={pendingTools} recentLogs={recentLogs} spinner={spinner} {...(reviewFollowUps === undefined ? {} : { reviewFollowUps })} {...(gates === undefined ? {} : { gateObservability: gates })} />
         ) : null}
         <Box flexDirection="column" minHeight={4}>
         {transcript.length === 0 ? (
-          <Box flexDirection="column" alignItems="center">
+          <Box marginTop={1} flexDirection="column" alignItems="center">
             <Box>
-              <Text bold>What can I do for you?</Text>
+              <Text bold color={ACCENT_INTERACTIVE}>◆ Workflow</Text>
             </Box>
-            <Box marginTop={1} marginBottom={1}>
-              <Text dimColor italic>Use / for slash commands, @ for file mentions, Ctrl+P for menu</Text>
-            </Box>
+            {activeSession === undefined ? (
+              <Box marginTop={1} marginBottom={1} flexDirection="column" alignItems="center">
+                <Box>
+                  <Text dimColor>Observing the canonical snapshot — this surface is read-only.</Text>
+                </Box>
+                <Box marginTop={1}>
+                  <Text dimColor italic>/ options · ^W state · ^E export · PgUp/PgDn scroll</Text>
+                </Box>
+              </Box>
+            ) : (
+              <Box marginTop={1} marginBottom={1} flexDirection="column" alignItems="center">
+                <Box>
+                  <Text dimColor>model proposes · Workflow authorizes · evidence validates</Text>
+                </Box>
+                <Box marginTop={1}>
+                  <Text dimColor italic>Ask anything · / options · ^E export · PgUp/PgDn scroll</Text>
+                </Box>
+              </Box>
+            )}
           </Box>
         ) : null}
-        {scrollOffset > 0 ? <Text dimColor>[{scrollOffset} newer lines below]</Text> : null}
-        {visibleTranscript.map((entry, index) => (
-          <Text key={`${end}-${index}-${entry.label}`} dimColor={entry.dim === true}>
-            <Text bold={!entry.dim}>{entry.label.padEnd(10)}</Text>{entry.text}
-          </Text>
-        ))}
+        {scrollOffset > 0 ? <Text dimColor>↑ {scrollOffset} newer entries · PgUp/PgDn</Text> : null}
+        {visibleTranscript.map((entry, index) => {
+          const accent = entryAccent(entry.label);
+          return (
+            <Text key={`${end}-${index}-${entry.label}`} dimColor={entry.dim === true}>
+              {entry.at !== undefined ? <Text dimColor>{entry.at} </Text> : null}
+              <Text bold={!entry.dim} {...(accent === undefined ? {} : { color: accent })}>{entry.label.padEnd(10)} </Text>{entry.text}
+            </Text>
+          );
+        })}
         </Box>
 
         {activeSession !== undefined ? (
           <Box marginTop={1} flexDirection="column">
-          <Text dimColor>----------------------------------------------------------------</Text>
+          <Box
+            flexDirection="row"
+            paddingX={1}
+            {...(composerBackground === undefined
+              ? { borderStyle: "round" as const, borderColor: ACCENT_INTERACTIVE }
+              : { backgroundColor: composerBackground })}
+          >
           {sessionState?.state === "running" ? (
-            <Text><Text bold>[running]</Text> {assistantLabel} is working. Ctrl+C cancel</Text>
+            <Text>
+              <Text bold color={ACCENT_INTERACTIVE}>{spinner}</Text>
+              <Text bold> [running]</Text>
+              <Text> {assistantLabel} is working · {elapsedSeconds}s</Text>
+              <Text dimColor> · Ctrl+C cancel</Text>
+            </Text>
           ) : (
-            <Text><Text bold>&gt;</Text> {prompt.length === 0 ? <Text dimColor>What do you want to build?</Text> : prompt}</Text>
+            <Text>
+              <Text bold color={ACCENT_INTERACTIVE}>❯ </Text>
+              {prompt.length === 0 ? <Text dimColor italic>What do you want to build?</Text> : prompt}
+            </Text>
           )}
-          <Text dimColor>----------------------------------------------------------------</Text>
+          </Box>
           <Box justifyContent="space-between">
-            <Text dimColor>{sessionState?.state ?? "idle"} | PageUp/PageDown history</Text>
-            <Text dimColor>Ctrl+C quit</Text>
+            <Text dimColor>{sessionState?.state ?? "idle"} · PgUp/PgDn scroll · ^E export</Text>
+            <Text dimColor>{running ? "^C cancel" : "^C quit"}</Text>
           </Box>
           </Box>
         ) : null}
 
         <Box marginTop={1} justifyContent="space-between">
-          <Text bold>Workflow</Text>
-          <Text bold>{snapshot.enforcementLevel.toUpperCase()} / {snapshot.transport}</Text>
+          <Text dimColor>{taskSummary} · epoch {snapshot.mutationEpoch}</Text>
+          <Text dimColor>^W workflow</Text>
         </Box>
-        <Text dimColor>{taskSummary} | epoch {snapshot.mutationEpoch} | Ctrl+W workflow</Text>
 
         {showWorkflow ? <WorkflowDetails snapshot={snapshot} /> : null}
       </Box>
@@ -533,10 +672,21 @@ type SessionLog = Extract<CodingSessionEvent, { readonly type: "log" }>;
 
 const TASK_PANEL_MAX_ROWS = 6;
 
+/** Estimate of rows the fixed chrome occupies, used to bound the transcript. */
+function chromeRows(showWorkflow: boolean, composerRows: number): number {
+  const header = 5; // header box (border + two rows) + keys hint line
+  const footer = 1;
+  const margins = 2; // task panel + activity panel top margins
+  const details = showWorkflow ? 9 : 0; // workflow details drawer
+  return header + composerRows + footer + margins + details;
+}
+
 /** Estimate of rows the monitoring panels occupy, used to bound the transcript. */
-function panelRows(snapshot: WorkflowSnapshot, session: WorkflowCodingSession | undefined): number {
-  const taskRows = snapshot.tasks.length === 0 ? 4 : 3 + Math.min(snapshot.tasks.length, TASK_PANEL_MAX_ROWS) + (snapshot.tasks.length > TASK_PANEL_MAX_ROWS ? 1 : 0);
-  const activityRows = session === undefined ? 0 : 4;
+function panelRows(snapshot: WorkflowSnapshot, showActivity: boolean): number {
+  const taskRows = snapshot.tasks.length === 0
+    ? 0
+    : 3 + Math.min(snapshot.tasks.length, TASK_PANEL_MAX_ROWS) + (snapshot.tasks.length > TASK_PANEL_MAX_ROWS ? 1 : 0);
+  const activityRows = showActivity ? 4 : 0;
   return taskRows + activityRows;
 }
 
@@ -544,29 +694,48 @@ function TaskListPanel({ snapshot }: { readonly snapshot: WorkflowSnapshot }) {
   const total = snapshot.tasks.length;
   const verified = snapshot.tasks.filter((task) => task.state === "VERIFIED").length;
   const visible = snapshot.tasks.slice(0, TASK_PANEL_MAX_ROWS);
+  const segments = Math.min(total, 20);
+  const filled = Math.round((verified / total) * segments);
+  const bar = "▰".repeat(filled) + "▱".repeat(segments - filled);
   return (
-    <Box marginTop={1} flexDirection="column" borderStyle="round" paddingX={1}>
-      <Text bold>Tasks <Text dimColor>{verified}/{total} verified</Text></Text>
-      {total === 0 ? <Text dimColor>No workflow tasks.</Text> : visible.map((task) => (
-        <Text key={task.id} dimColor={task.state === "BLOCKED" || task.state === "VERIFIED"}>
-          {task.id.padEnd(8)} {task.state.padEnd(11)} {task.title}
-        </Text>
-      ))}
-      {total > TASK_PANEL_MAX_ROWS ? <Text dimColor>… {total - TASK_PANEL_MAX_ROWS} more (Ctrl+W for details)</Text> : null}
+    <Box marginTop={1} flexDirection="column" borderStyle="round" borderColor={ACCENT_FRAME} paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text bold>Tasks</Text>
+        <Text dimColor>{bar} {verified}/{total} verified</Text>
+      </Box>
+      {visible.map((task) => {
+        const accent = taskStateAccent(task.state);
+        return (
+          <Text key={task.id} dimColor={accent.dim === true} {...(accent.color === undefined ? {} : { color: accent.color })}>
+            {TASK_GLYPHS[task.state]} {task.id.padEnd(8)} {task.state.padEnd(11)} {task.title}
+          </Text>
+        );
+      })}
+      {total > TASK_PANEL_MAX_ROWS ? <Text dimColor>… {total - TASK_PANEL_MAX_ROWS} more (^W details)</Text> : null}
     </Box>
   );
+}
+
+function taskStateAccent(state: TaskState): { color?: string; dim?: boolean } {
+  if (state === "VERIFIED") return { color: ACCENT_SUCCESS };
+  if (state === "IN_PROGRESS") return { color: ACCENT_INTERACTIVE };
+  if (state === "VERIFYING") return { color: ACCENT_WARNING };
+  if (state === "FAILED") return { color: ACCENT_FAILURE };
+  return { dim: true };
 }
 
 function SessionActivityPanel({
   state,
   pendingTools,
   recentLogs,
+  spinner,
   reviewFollowUps,
   gateObservability,
 }: {
   readonly state: CodingSessionState | undefined;
   readonly pendingTools: readonly string[];
   readonly recentLogs: readonly SessionLog[];
+  readonly spinner: string;
   readonly reviewFollowUps?: readonly ReviewFollowUp[];
   readonly gateObservability?: HubGateObservability;
 }) {
@@ -577,28 +746,35 @@ function SessionActivityPanel({
   const verdicts = Object.entries(gateObservability?.reviewOutcomes ?? {});
   const unverifiedClaims = Object.entries(gateObservability?.completionClaims ?? [])
     .filter(([, claim]) => claim.verifiedAtClaim === false);
+  const sessionState = state?.state;
+  const stateAccent = sessionStateAccent(sessionState);
   return (
-    <Box marginTop={1} flexDirection="column" borderStyle="round" paddingX={1}>
-      <Text bold>Activity <Text dimColor>{state?.state ?? "idle"}</Text></Text>
-      {pendingTools.length > 0 ? <Text bold>  in flight: {pendingTools.join(", ")}</Text> : null}
-      {recentLogs.map((log, index) => (
-        <Text key={index} dimColor={log.level === "debug"}>
-          {`  [${log.level}] ${log.source === undefined ? "" : `${log.source}: `}${log.message}`}
-        </Text>
-      ))}
+    <Box marginTop={1} flexDirection="column" borderStyle="round" borderColor={ACCENT_FRAME} paddingX={1}>
+      <Text bold>Activity <Text dimColor {...(stateAccent === undefined ? {} : { color: stateAccent })}>{sessionState ?? "idle"}</Text></Text>
+      {pendingTools.length > 0 ? (
+        <Text color={ACCENT_INTERACTIVE}>  in flight: {pendingTools.map((tool) => `${spinner} ${tool}`).join("   ")}</Text>
+      ) : null}
+      {recentLogs.map((log, index) => {
+        const logAccent = log.level === "warning" ? ACCENT_WARNING : log.level === "error" ? ACCENT_FAILURE : undefined;
+        return (
+          <Text key={index} dimColor={log.level === "debug"} {...(logAccent === undefined ? {} : { color: logAccent })}>
+            {`  [${log.level}] ${log.source === undefined ? "" : `${log.source}: `}${log.message}`}
+          </Text>
+        );
+      })}
       {openFollowUps.length > 0 ? (
         <Box flexDirection="column">
           <Text dimColor>  review follow-ups ({openFollowUps.length} open)</Text>
           {openFollowUps.slice(0, 3).map((item) => (
-            <Text key={item.id} dimColor>    [{item.severity}] {item.summary}</Text>
+            <Text key={item.id} dimColor>    [<Text color={ACCENT_WARNING}>{item.severity}</Text>] {item.summary}</Text>
           ))}
         </Box>
       ) : null}
       {blockedRuns.length > 0 ? (
         <Box flexDirection="column">
-          <Text bold>  blocked runs ({blockedRuns.length})</Text>
+          <Text bold color={ACCENT_FAILURE}>  blocked runs ({blockedRuns.length})</Text>
           {blockedRuns.slice(0, 3).map(([runId, reason]) => (
-            <Text key={runId} bold>    [blocked] {shortRun(runId)}: {reason.slice(0, 120)}</Text>
+            <Text key={runId} color={ACCENT_FAILURE}>    [blocked] {shortRun(runId)}: {reason.slice(0, 120)}</Text>
           ))}
         </Box>
       ) : null}
@@ -614,7 +790,7 @@ function SessionActivityPanel({
         <Box flexDirection="column">
           <Text dimColor>  unverified completion claims ({unverifiedClaims.length})</Text>
           {unverifiedClaims.slice(0, 3).map(([runId, claim]) => (
-            <Text key={runId} bold>    [unverified claim] {shortRun(runId)}: {claim.claim.slice(0, 90)}</Text>
+            <Text key={runId} color={ACCENT_WARNING}>    [unverified claim] {shortRun(runId)}: {claim.claim.slice(0, 90)}</Text>
           ))}
         </Box>
       ) : null}
@@ -631,9 +807,9 @@ function shortRun(runId: string): string {
 function DecisionBriefDrawer({ brief }: { readonly brief: DecisionBrief }) {
   return (
     <Box marginTop={1} flexDirection="column">
-      <Text bold>Decision Brief: {brief.title}</Text>
+      <Text bold color={ACCENT_INTERACTIVE}>◆ Decision Brief: {brief.title}</Text>
       <Text dimColor>{brief.context}</Text>
-      <Text>  chosen: {brief.chosenOption.name} ({brief.chosenOption.blastRadius} blast radius)</Text>
+      <Text>  chosen: <Text bold>{brief.chosenOption.name}</Text> <Text dimColor>({brief.chosenOption.blastRadius} blast radius)</Text></Text>
       <Text dimColor>  {brief.chosenOption.rationale}</Text>
       {brief.rejectedAlternatives.map((alt) => (
         <Text key={alt.name} dimColor>  rejected: {alt.name} — {alt.drawback}</Text>
@@ -646,7 +822,7 @@ function DecisionBriefDrawer({ brief }: { readonly brief: DecisionBrief }) {
 function CheckpointDrawer({ opportunity }: { readonly opportunity: LearningOpportunity }) {
   return (
     <Box marginTop={1} flexDirection="column">
-      <Text bold>Socratic Question: {opportunity.concept}</Text>
+      <Text bold color={ACCENT_INTERACTIVE}>◆ Socratic Question: {opportunity.concept}</Text>
       <Text dimColor>{opportunity.teachableInsight}</Text>
       <Text>{opportunity.socraticQuestion}</Text>
       {(opportunity.candidateAnswers ?? []).map((answer) => (
@@ -659,7 +835,7 @@ function CheckpointDrawer({ opportunity }: { readonly opportunity: LearningOppor
 function DiagnosticLessonDrawer({ lesson }: { readonly lesson: DiagnosticLesson }) {
   return (
     <Box marginTop={1} flexDirection="column">
-      <Text bold>Lesson TS{lesson.code}: {lesson.file}:{lesson.line}:{lesson.column}</Text>
+      <Text bold color={ACCENT_INTERACTIVE}>◆ Lesson TS{lesson.code}: {lesson.file}:{lesson.line}:{lesson.column}</Text>
       <Text>{lesson.plainEnglishExplanation}</Text>
       {lesson.guidingHints.map((hint) => (
         <Text key={hint} dimColor>  hint: {hint}</Text>
@@ -672,7 +848,7 @@ function ProfilePanel({ profile }: { readonly profile: LearnerProfile }) {
   const concepts = Object.entries(profile.concepts);
   return (
     <Box marginTop={1} flexDirection="column">
-      <Text bold>Learner Profile</Text>
+      <Text bold color={ACCENT_INTERACTIVE}>◆ Learner Profile</Text>
       {concepts.length === 0 ? (
         <Text dimColor>No concepts observed yet.</Text>
       ) : concepts.map(([name, concept]) => (
@@ -692,7 +868,7 @@ function WorkflowDetails({ snapshot }: { readonly snapshot: WorkflowSnapshot }) 
         </Text>
       ))}
       <Text dimColor>
-        evidence {snapshot.evidence.length} | transitions {snapshot.history.length} | Ctrl+W close
+        evidence {snapshot.evidence.length} | transitions {snapshot.history.length} | ^W close
       </Text>
     </Box>
   );
@@ -731,6 +907,10 @@ function configValueLabel(option: SessionConfigOption): string {
 }
 
 function formatSessionEvent(event: CodingSessionEvent, assistantLabel: string): TranscriptEntry {
+  return { ...projectSessionEvent(event, assistantLabel), at: clock() };
+}
+
+function projectSessionEvent(event: CodingSessionEvent, assistantLabel: string): TranscriptEntry {
   if (event.type === "user") return { label: "You", text: event.text };
   if (event.type === "assistant") return { label: assistantLabel, text: event.text };
   if (event.type === "status") return { label: "[status]", text: event.status, dim: true };

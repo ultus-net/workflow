@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { afterEach, test } from "node:test";
 import React from "react";
-import { render } from "ink-testing-library";
+import { cleanup, render } from "ink-testing-library";
 
 import {
   TaskGraph,
@@ -16,6 +16,11 @@ import {
   type CodingSessionDriver,
   type WorkflowTask,
 } from "../src/index.js";
+
+// The monitor-mode TUI polls every second while mounted, so a view leaked by
+// a failing assertion would keep the test process alive past its results.
+// Unmount everything after each test; Ink's unmount is idempotent.
+afterEach(() => cleanup());
 
 function createApplication(): WorkflowApplication {
   const tasks: WorkflowTask[] = [

@@ -27,7 +27,7 @@ The primary interface is a standalone terminal coding UI used inside a local pro
 - Canonical invariant: `model proposes -> Workflow authorizes -> tool acts -> environment supplies evidence -> Workflow validates -> state may advance`.
 - UI state is projection and presentation state only; kernel/application state remains authoritative.
 - `advisory` enforcement must never appear equivalent to `enforced` enforcement.
-- The TUI must not depend on semantic foreground or background colors; it inherits the terminal theme and communicates through text, markers, emphasis, and layout.
+- The TUI must never override the terminal's theme: foreground accents pull only the themeable ANSI-slot names (remapped by the user's terminal), the sole background is the OSC 11-sampled composer tint, and the interface degrades to plain text under `NO_COLOR`. Semantics stay readable through text, markers, emphasis, and layout alone (decision 2026-09-16, `docs/TUI_INTEGRATION.md`).
 - Workflow supports interactive development and bounded autonomy. Safety semantics must not be weakened for UI or SDK convenience.
 - Cline is the current runtime used by the standalone TUI. OpenCode integration is separately contract-qualified.
 
