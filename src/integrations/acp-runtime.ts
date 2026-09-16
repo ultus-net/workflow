@@ -13,6 +13,13 @@ import { AcpSessionDriver } from "./acp-session.js";
 import { createSessionBudgetGuard, sessionBudgetFromEnv, sessionBudgetMechanism } from "./session-budget.js";
 import { globalClineEntrypoint, resolveClineLaunch } from "./cline-launch.js";
 import {
+  globalGooseBinary,
+  gooseConfigYaml,
+  gooseLaunchEnvironment,
+  gooseProviderKind,
+  resolveGooseLaunch,
+} from "./goose-agent-config.js";
+import {
   globalOpencodeBinary,
   meteredOpencodeConfig,
   resolveOpencodeLaunch,
@@ -35,7 +42,7 @@ export interface WorkflowAcpRuntime {
   usage?(): ModelUsageMetrics;
 }
 
-export type AcpAgentKind = "opencode" | "cline";
+export type AcpAgentKind = "opencode" | "cline" | "goose";
 
 /**
  * Lead-agent selection. Since the 2026-09-16 pivot (`docs/ACP_DECISION.md`)
@@ -43,13 +50,17 @@ export type AcpAgentKind = "opencode" | "cline";
  * hub-written config honored, session resume restoring model context, no
  * vendored patch — all probe-proven (`docs/HOST_ADAPTERS.md`). WORKFLOW_ACP_AGENT
  * selects the Cline fallback (vendored patched binary; stock Cline cannot
- * run headless) for compatibility and dogfooding.
+ * run headless) for compatibility and dogfooding, or the goose third kind
+ * (W048: contained `goose acp`, enforcement classification earned by the six
+ * gated probes, never configuration claims — until those probes run live,
+ * goose carries no enforcement verdict).
  */
 export function acpAgentKind(): AcpAgentKind {
   const raw = process.env.WORKFLOW_ACP_AGENT?.trim();
   if (raw === undefined || raw === "" || raw === "opencode") return "opencode";
   if (raw === "cline") return "cline";
-  throw new Error(`WORKFLOW_ACP_AGENT must be "opencode" or "cline" (got ${JSON.stringify(raw)})`);
+  if (raw === "goose") return "goose";
+  throw new Error(`WORKFLOW_ACP_AGENT must be "opencode", "cline", or "goose" (got ${JSON.stringify(raw)})`);
 }
 
 export async function createConfiguredAcpRuntime(
@@ -60,9 +71,12 @@ export async function createConfiguredAcpRuntime(
   guard?: WorkflowGuardProvider,
   options: { readonly permissionBroker?: PermissionBroker | undefined } = {},
 ): Promise<WorkflowAcpRuntime> {
-  return acpAgentKind() === "opencode"
+  const kind = acpAgentKind();
+  return kind === "opencode"
     ? createOpencodeRuntime(application, workspace, taskId, resumeFrom, guard, options)
-    : createClineRuntime(application, workspace, taskId, resumeFrom, guard, options);
+    : kind === "cline"
+      ? createClineRuntime(application, workspace, taskId, resumeFrom, guard, options)
+      : createGooseRuntime(application, workspace, taskId, resumeFrom, guard, options);
 }
 
 /**
@@ -330,6 +344,137 @@ function loadUpstreamApiKey(): string {
     throw new Error("ACP driver requires CLINE_API_KEY or ~/.config/workflow/cline-api-key (the upstream key for the metering proxy)");
   }
   return apiKey;
+}
+
+/**
+ * W048: the goose (AAIF) runtime — the third `WORKFLOW_ACP_AGENT` kind and
+ * the staged candidate for the vendored-Cline fallback slot. Structurally an
+ * opencode-shaped runtime (per-runtime config root, PATH launch, bwrap +
+ * AcpSessionDriver.contained, prune parity, dispose/cleanup parity) with a
+ * cline-shaped credential posture (env-key auth, no keyring inside
+ * containment). Everything here is PROBE-PENDING by design: the six gated
+ * probes (`docs/superpowers/plans/2026-09-16-goose-qualification.md`) earn
+ * the enforcement classification; goose carries no enforcement verdict
+ * until they run live. The provider fork: OpenRouter composes through the
+ * loopback metering proxy (placeholder-only credential inside the
+ * boundary, real key proxy-side — parity with the Cline/OpenCode paths);
+ * Azure AI Foundry is env-composed direct (endpoint + key env injected;
+ * ambient az-CLI and Entra auth cannot survive the scratch-HOME boundary).
+ */
+async function createGooseRuntime(
+  application: WorkflowApplication,
+  workspace: string,
+  taskId: TaskId | (() => TaskId),
+  resumeFrom: string | undefined,
+  guard: WorkflowGuardProvider | undefined,
+  options: { readonly permissionBroker?: PermissionBroker | undefined },
+): Promise<WorkflowAcpRuntime> {
+  const scratchHome = resolve(homedir(), ".workflow", "acp-home");
+  mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
+
+  const provider = gooseProviderKind();
+  // The `config.` prefix keeps prune parity: the stale-runtime pruner only
+  // matches `providers.`/`config.` entries.
+  pruneStaleRuntimeArtifacts(scratchHome);
+  const configDir = join(scratchHome, `config.${process.pid}.${randomUUID()}`);
+  // OpenRouter rides the hub-side metering proxy (the real key stays
+  // proxy-side); azure_foundry runs direct with no local proxy.
+  const proxy = provider === "openrouter"
+    ? await createModelUsageProxy({ upstream: process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai", apiKey: loadUpstreamApiKey() })
+    : undefined;
+  try {
+    mkdirSync(join(configDir, "config"), { recursive: true, mode: 0o700 });
+    const skillsMount = resolveSkillsMount();
+    const configYaml = gooseConfigYaml(skillsMount === undefined ? {} : {
+      skillsServerScript: skillsMount.serverScript,
+      skillsDir: skillsMount.skillsDir,
+    });
+    // Probe-pending: the config.yaml schema/location under GOOSE_PATH_ROOT
+    // is resolved by the gated MOUNT probe (a no-mount outcome is recorded
+    // as an honest negative finding, mirroring the Cline MCP-mount probe).
+    if (configYaml !== undefined) {
+      writeFileSync(join(configDir, "config", "config.yaml"), configYaml, { encoding: "utf8", mode: 0o600 });
+    }
+    const goose = resolveGooseLaunch({
+      envBinOverride: process.env.WORKFLOW_GOOSE_BIN,
+      gooseOnPath: globalGooseBinary(),
+    });
+    const resume = resumeFrom ?? process.env.WORKFLOW_ACP_RESUME;
+    const driver = AcpSessionDriver.contained({
+      containment: new LinuxBubblewrapContainment(),
+      launch: {
+        executable: goose.executable,
+        args: [...goose.args],
+        workspace,
+        home: scratchHome,
+        ...(skillsMount === undefined
+          ? {}
+          : {
+              readablePaths: [
+                dirname(skillsMount.serverScript),
+                resolve(dirname(skillsMount.serverScript), "..", "node_modules"),
+                resolve(dirname(skillsMount.serverScript), "..", "..", "..", "node_modules"),
+                skillsMount.skillsDir,
+                realpathSync(skillsMount.skillsDir),
+              ],
+            }),
+        environment: gooseLaunchEnvironment({
+          provider,
+          configRoot: configDir,
+          proxyUrl: proxy?.url,
+          env: process.env,
+        }),
+      },
+      authorize: options.permissionBroker === undefined
+        ? application
+        : (action: ProposedToolAction) =>
+          options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
+      workspace,
+      workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
+      taskId,
+      ...(resume !== undefined ? { resumeFrom: resume } : {}),
+      ...(guard === undefined ? {} : { guard }),
+      onSkillRead: (skill) => {
+        try {
+          application.recordSkillRead(skill);
+        } catch {
+          // No active task yet: nothing to journal.
+        }
+      },
+    });
+    return {
+      driver,
+      ...(proxy === undefined
+        ? {
+            session: new WorkflowCodingSession(driver),
+            // azure_foundry direct: no loopback proxy, so no locally recorded
+            // usage — the provider's own spend management is the budget
+            // surface, stated honestly (the OpenRouter per-key credit-limit
+            // backstop is OpenRouter-only).
+            budgetMechanism: "server-side: azure_foundry provider-side spend limits (no local metering proxy on the direct path); no local interactive caps",
+          }
+        : composeSessionWithBudget(driver, proxy)),
+      ...(proxy === undefined ? {} : {
+        usage: (): ModelUsageMetrics => proxy.metrics(),
+        metrics: (): ModelUsageMetrics => proxy.metrics(),
+      }),
+      async dispose() {
+        try {
+          await driver.dispose();
+        } finally {
+          if (proxy !== undefined) {
+            await proxy.close();
+            console.log("goose metering proxy metrics:", JSON.stringify(proxy.metrics(), null, 2));
+          }
+          rmSync(configDir, { recursive: true, force: true });
+        }
+      },
+    };
+  } catch (error) {
+    if (proxy !== undefined) await proxy.close();
+    rmSync(configDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 function readKeyFile(): string | undefined {
