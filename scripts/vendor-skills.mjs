@@ -116,8 +116,9 @@ export function listSkillCandidates(sourceRoot, include) {
 
 /**
  * Load the provenance map (skill name -> where it came from). Absent file is
- * an empty map; a malformed file throws — the operator must not lose the
- * ownership record that gates overwrites.
+ * an empty map; a malformed file — or an unknown format version — throws:
+ * the operator must not lose the ownership record that gates overwrites, and
+ * a future format must not be silently misread as v1.
  */
 export function loadProvenance(skillsDir) {
   const file = path.join(skillsDir, PROVENANCE_FILE);
@@ -130,6 +131,9 @@ export function loadProvenance(skillsDir) {
   }
   if (typeof parsed !== "object" || parsed === null || typeof parsed.skills !== "object" || parsed.skills === null) {
     throw new Error(`invalid ${PROVENANCE_FILE}: expected { version, importedAt, skills }`);
+  }
+  if (parsed.version !== PROVENANCE_VERSION) {
+    throw new Error(`unsupported ${PROVENANCE_FILE} version: ${String(parsed.version)} (expected ${PROVENANCE_VERSION}) — migrate or remove the file`);
   }
   return parsed.skills;
 }
@@ -266,6 +270,10 @@ export async function importSkills(options) {
 
   // Phase 5: prune owned skills that left the selection. Refused duplicates
   // stay owned and are kept — a refusal must never delete the live skill.
+  // Note the boundary of "left the selection": an owned skill whose upstream
+  // SKILL.md lost its frontmatter description is a reported skip, not a
+  // selection, so --prune removes its (now list_skills-invisible) directory —
+  // the same run reports both the skip and the prune, so nothing is silent.
   if (prune) {
     if (report.problems.length > 0) {
       report.problems.push("prune skipped: at least one source failed — refusing to prune on a partial selection view");
@@ -363,14 +371,15 @@ async function main() {
     return 0;
   }
   const sources = args.sourcesFile === undefined ? DEFAULT_SOURCES : await loadSources(args.sourcesFile);
+  const skillsDir = resolveSkillsDir(args.dir);
   const report = await importSkills({
-    skillsDir: resolveSkillsDir(args.dir),
+    skillsDir,
     sources,
     prune: args.prune,
     archive: args.archive,
     dryRun: args.list,
   });
-  printReport(resolveSkillsDir(args.dir), report, args.list);
+  printReport(skillsDir, report, args.list);
   return report.refused.length > 0 || report.skipped.length > 0 || report.problems.length > 0 ? 1 : 0;
 }
 
