@@ -50,10 +50,12 @@ export function launchContainedAcpAgent(
     if (!isAbsolute(value)) throw new TypeError(`${label} must be an absolute path`);
   }
   const readablePaths = [
-    ...(options.readablePaths ?? []),
-    // The entry script must stay visible inside the boundary even when it
-    // lives outside the system and node-prefix binds.
-    ...(options.script !== undefined ? [options.script] : []),
+    ...new Set([
+      ...(options.readablePaths ?? []),
+      // The entry script must stay visible inside the boundary even when it
+      // lives outside the system and node-prefix binds.
+      ...(options.script !== undefined ? [options.script] : []),
+    ]),
   ];
   return containment.spawn({
     executable: options.executable,
