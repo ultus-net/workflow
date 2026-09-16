@@ -67,8 +67,9 @@ test(
       resolvePermission: (): AcpPermissionDecision => ({ kind: "allow" }),
     });
     let continuation: unknown;
+    let phaseTwoAgent: Awaited<ReturnType<AcpSubprocessClient["initialize"]>>["agentInfo"];
     try {
-      await phaseTwo.initialize();
+      phaseTwoAgent = (await phaseTwo.initialize()).agentInfo;
       phaseTwo.onSessionUpdate((update) => (loading ? replayed : continuationUpdates).push(update));
       await phaseTwo.loadSession({ sessionId, cwd: workspace });
       loading = false;
@@ -102,6 +103,7 @@ test(
         : [],
     ).join("");
     console.log(JSON.stringify({
+      agent: phaseTwoAgent,
       sessionId,
       replayKinds,
       userPromptReplayed,
