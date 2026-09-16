@@ -691,3 +691,124 @@ W039 is complete. `src/review/manifest.ts` derives the manifest deterministicall
 - [ ] Document actors, trust boundaries, threats, mitigations, and fail-closed assumptions across hub authority, adapters, ACP, containment, model proxying, persistence, and local UI surfaces.
 - [ ] Each material security claim points to an implementation boundary and an automated test or explicitly identified manual/gated verification.
 - [ ] The assurance case does not upgrade advisory or policy-only behavior to enforced behavior and records known residual risks explicitly.
+
+## Phase 11: Daily-Driver Replacement Qualification
+
+The goal of this phase is what W031 left open: replacing the operator's current daily driver — opencode plus the agent-side workflow-guard plugin — with the hub-owned surface. The honesty rules are unchanged: advisory or policy-only behavior is never presented as enforced, per-version probe discipline stays (an unprobed agent bump is capped advisory), and every remaining gap versus the plugin is fixed here or recorded as an explicitly accepted delta.
+
+Operator direction for this phase: **goose (AAIF) takes the backup and general-purpose contained-agent slot** that the vendored-Cline runtime holds today — OpenCode remains the coding lead — per the 2026-09-16 research record (`docs/GOOSE_RESEARCH.md`) and qualification plan (`docs/superpowers/plans/2026-09-16-goose-qualification.md`). The backup-slot takeover and the SDK-seam retention are two separate, probe-gated decisions; Cline removal is evidence-gated, never date-gated. Documentation reconciliation comes first: the design has moved (OpenCode lead pivot, review control plane W039-W041, skills delivery, goose scoping) and every downstream item cites docs that must tell the truth.
+
+### W043 - Documentation reconciliation and AGENTS.md generation
+
+**Objective:** Eliminate documentation drift from the design changes, then generate the repo-root AGENTS.md (the operator's `/init` step) from the reconciled docs so future agent sessions start with accurate context instead of rediscovering it.
+
+**Depends on:** W038, W041
+
+**Acceptance criteria:**
+- [ ] A drift audit walks every operator-facing doc (`docs/ACP_RESEARCH.md`, `docs/ACP_DECISION.md`, `docs/HOST_ADAPTERS.md`, `docs/FEATURES.md`, `docs/TUI_PARITY.md`, `docs/TUI_INTEGRATION.md`, `docs/HUB_PROTOCOL.md`, `docs/GUARD_CORPUS_MAP.md`, `docs/OPENCODE_QUALIFICATION.md`, `docs/GOOSE_RESEARCH.md`, `THREAT_MODEL.md`) claim-by-claim against current code; living docs are corrected in place, dated decision records get append-only supersession notes — history is never silently rewritten.
+- [ ] `docs/FEATURES.md` rows and `docs/TUI_PARITY.md` convergence items are re-baselined against the shipped W039-W041 control plane and the W038-accepted surface; superseded claims are marked, not deleted.
+- [ ] AGENTS.md is generated at the repo root after reconciliation, capturing: the architecture layers and kernel-purity rule, the verification commands (lint/typecheck/build and the focused-test pattern; no full-suite-by-default resource directive), worktree and stacked-PR conventions, the five-axis review discipline, and the honest-claims culture.
+- [ ] Every path, command, and gate cited in AGENTS.md is verified to exist and run as documented.
+
+**Verification:** the drift-audit diff plus a freshness check that each cited doc claim matches its implementation boundary; AGENTS.md citations smoke-checked.
+
+### W044 - Hub session resource hygiene and G1 metric surfacing
+
+**Objective:** Make long daily use of the hub surface resource-safe and cost-visible: spawned daemons are reaped on session exit, and the metering proxy's recorded usage/cost is visible in the session surface.
+
+**Depends on:** W036, W038
+
+**Acceptance criteria:**
+- [ ] The surface's launcher terminates or reuses the hub/agent processes it spawns; no orphaned daemons survive session exit, and a regression test proves the spawned-process count returns to baseline after exit (the operator-flagged ~300MB-per-launch accumulation must be impossible).
+- [ ] Per-turn and cumulative per-session token/cost metrics from the metering proxy's records are visible in the session UI (TUI and/or web).
+- [ ] The PTY-based test suites themselves do not leak daemons (teardown reaps what they spawn).
+
+**Verification:** focused lifecycle/PTY tests plus a live operator session confirming metrics visibility and no accumulation across consecutive launches.
+
+### W045 - G1 budget enforcement on recorded usage
+
+**Objective:** Enforce spending caps for interactive sessions, not only scheduled runs, so cost accidents are impossible even in attended use.
+
+**Depends on:** W044
+
+**Acceptance criteria:**
+- [ ] A configurable per-session/per-run budget cap is enforced against the proxy's recorded usage: crossing the cap aborts the in-flight turn (session/cancel semantics) or refuses new prompts — fail-closed and operator-visible, never a silent truncation.
+- [ ] Server-side enforcement via OpenRouter per-key credit limits is configured or explicitly documented as the chosen mechanism; the hub records which mechanism is active per runtime.
+- [ ] Tests prove the cap-abort path and its operator-visible state; scheduled-run budget caps remain unchanged.
+
+**Verification:** focused budget tests plus a live metered session hitting a small cap.
+
+### W046 - Per-prompt task decomposition for interactive sessions
+
+**Objective:** Let an interactive prompt authorize against canonical decomposed Workflow tasks instead of a single session task, closing the plugin's in-session multi-task discipline gap.
+
+**Depends on:** W026, W027
+
+**Acceptance criteria:**
+- [ ] An interactive session can create, select, and complete canonical tasks through application commands only (deterministic kernel validation; no direct TaskGraph exposure).
+- [ ] Tool proposals correlate with the active eligible task; blocked work cannot mutate.
+- [ ] Decomposition suggestions are advisory (model-proposed); task creation and dependency changes stay deterministic operator-confirmed or rule-driven.
+- [ ] Tests prove blocked-decomposition rejection and evidence-driven unlocking in an interactive-shaped flow.
+
+**Verification:** application/session contract tests plus a real interactive session exercising a multi-task request.
+
+### W047 - G5 error surfacing and G7 context visibility
+
+**Objective:** Recover the diagnostics and context awareness the plugin's in-process hooks provided, honestly: surface every failure with an actionable cause, and project whatever context/usage signals the agent emits.
+
+**Depends on:** W027, W038
+
+**Acceptance criteria:**
+- [ ] Turn failures, reviewer/crash/containment failures surface in the session UI with actionable causes (blocking-reason style) rather than silent stops.
+- [ ] Agent-emitted usage/context notifications (standard or agent-custom session/update kinds, e.g. goose's usage channel) project into the session record.
+- [ ] Restart discipline is documented as the G7 mitigation (resume-backed), and compaction-time control is explicitly recorded as out of hub scope over ACP — visibility is never upgraded to control.
+- [ ] Tests cover the error-surfacing paths with controlled failures.
+
+**Verification:** focused surfacing tests plus a live session with an induced failure.
+
+### W048 - Goose backup-slot qualification
+
+**Objective:** Qualify goose (AAIF) as the backup and general-purpose contained-agent kind — `WORKFLOW_ACP_AGENT=goose` taking over the vendored-Cline fallback slot — with enforcement classification earned through the six gated probes, never configuration claims.
+
+**Depends on:** W035, W037, W043 (research: `docs/GOOSE_RESEARCH.md`; plan: `docs/superpowers/plans/2026-09-16-goose-qualification.md`)
+
+**Acceptance criteria:**
+- [ ] `AcpAgentKind` gains `goose` with a contained `goose acp` launch profile: `GOOSE_MODE=approve`, hub-written config under `GOOSE_PATH_ROOT` (probe-verified), provider env-composed per workload (`GOOSE_PROVIDER=openrouter|azure_foundry`; OpenRouter through the loopback metering proxy with a placeholder-only credential inside the boundary, Azure AI Foundry key env injected — no keyring inside containment), `GOOSE_TELEMETRY_ENABLED=false`, extension allowlist, no native `.agents/skills` in composed workspaces.
+- [ ] The six gated probes from the plan run live and their per-probe verdicts land in `docs/HOST_ADAPTERS.md` — PERMISSION (every mutating call reaches `request_permission` with usable reject options and denials honored, given LLM-classified write detection), SUBAGENT (absence-or-denial under approve mode), MOUNT (skills-mcp stdio extension delivers `list_skills` verbatim), RESUME (`session/load` across a contained restart), METERED (on both operator providers; `usage_update` channel confirmed), HOOKS (PreToolUse deny + `on_failure: block` under containment; subagent-internal coverage resolved) — no aggregate claims.
+- [ ] goose is reported `enforced` for its proven launch mode only if the permission probe proves pre-mutation interception with denials honored; otherwise it is honestly capped advisory.
+- [ ] Spawn classification covers goose's delegation tool names when applicable; unknown high-blast-radius tools fail closed.
+
+**Verification:** probe runs with evidence logs, `docs/HOST_ADAPTERS.md` rows, and the full repository gates on the runtime diff.
+
+### W049 - Goose as the operator's general-purpose daily agent
+
+**Objective:** Dogfood goose (contained, hub-composed) in the general-purpose/ops-plus-development workload on the universal surface, as the qualification plan's daily-driver criterion.
+
+**Depends on:** W048
+
+**Acceptance criteria:**
+- [ ] A recorded dogfood matrix covers representative real work: repo edits, shell/ops tasks, MCP participation, resume across restart, and a denial case.
+- [ ] Material gaps versus the current opencode+plugin setup are recorded with severity/workaround; no critical gap is hidden by the result.
+- [ ] Cost/usage visibility from W044/W045 is exercised in real sessions on both operator providers.
+
+**Verification:** the dogfood record plus full gates on any code changes it produces.
+
+### W050 - Cline fallback-slot retirement and SDK-seam decision
+
+**Objective:** Remove the vendored-Cline runtime — patched-TUI build, `.workflow-cline` checkout, Cline drivers/probes — once the two separate, probe-gated decisions resolve: the backup-slot takeover (goose) and the SDK seam's host-hook retention.
+
+**Depends on:** W048, W049
+
+**Acceptance criteria:**
+- [ ] The backup-slot takeover resolves: the six probes pass and the W049 dogfood period holds, so goose demonstrably covers the fallback/insurance role the vendored-Cline runtime holds today.
+- [ ] The SDK-seam retention resolves: the hooks probe proves PreToolUse deny + `on_failure: block` under containment AND subagent-internal tool calls demonstrably fire hooks — or, if they do not, the operator records an explicit accepted-risk decision in the decision doc that the seam's unique subagent-internal visibility is no longer required; the seam is not retired by silence or enthusiasm.
+- [ ] Removal removes: the `.workflow-cline` vendored checkout, the patched-TUI build/pretest, `WORKFLOW_ACP_AGENT=cline`, Cline session drivers/adapters, the Cline probe family and their tests — with all references updated (`docs/HOST_ADAPTERS.md`, `docs/FEATURES.md`, `docs/TUI_INTEGRATION.md`, `docs/ACP_DECISION.md`) and the plugin-era findings archived, not silently dropped.
+- [ ] The repository's full gates pass on the removal diff; the ACP conformance family still passes for the remaining agent kinds.
+
+**Verification:** the removal diff plus the full suite and an independent five-axis review; the decision record cites the probe evidence and (where applicable) the operator's written accepted-risk record.
+
+### Checkpoint D - Daily Driver Replaced
+
+- [ ] Fresh full verification (complete suite plus typecheck/lint/build) and an independent review pass on the final merged tree.
+- [ ] The operator's default harness is the hub-owned surface (OpenCode coding lead, goose general-purpose/backup), the opencode workflow-guard plugin is retired from daily use, and the switch is recorded with the honest delta list (G7 control, per-session escalation counters, any accepted risks).
+- [ ] No critical daily-driver gap is hidden: every remaining delta versus the plugin is fixed, accepted in writing, or tracked with severity.
