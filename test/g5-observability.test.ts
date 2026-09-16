@@ -6,7 +6,7 @@ import { TaskGraph } from "../src/kernel/task-graph.js";
 import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createRunRegistry } from "../src/integrations/run-registry.js";
-import { buildAdvisoryGuidance } from "../src/integrations/prompt-guidance.js";
+import { advisoryGuidanceFromEnv, buildAdvisoryGuidance } from "../src/integrations/prompt-guidance.js";
 
 /**
  * Plan Task G5: completion-claims journal (observability-only port of the
@@ -62,4 +62,27 @@ test("buildAdvisoryGuidance composes optional advisory blocks and stays silent w
   assert.match(guidance, /advisory — the Workflow hub enforces its rules independently of this text/);
   assert.match(guidance, /- keep the task list current/);
   assert.ok(guidance.endsWith("\n\n"), "guidance is a preamble — it ends with separation for the real prompt");
+});
+
+test("advisoryGuidanceFromEnv composes operator guidance and stays silent when unset or blank", () => {
+  assert.equal(advisoryGuidanceFromEnv({}), undefined, "no env means no guidance");
+  assert.equal(advisoryGuidanceFromEnv({ WORKFLOW_ADVISORY_STYLE: "   " }), undefined, "blank style is silence, not an empty block");
+  assert.equal(advisoryGuidanceFromEnv({ WORKFLOW_ADVISORY_NOTES: " \n \n" }), undefined, "blank note lines are dropped rather than turned into guidance");
+
+  const styled = advisoryGuidanceFromEnv({ WORKFLOW_ADVISORY_STYLE: "terse caveman" })!;
+  assert.match(styled, /Response style \(advisory\): terse caveman/);
+  assert.ok(!/Operating notes/.test(styled), "no notes env means no notes block");
+
+  const noted = advisoryGuidanceFromEnv({ WORKFLOW_ADVISORY_NOTES: "keep the task list current\n\nprefer tests" })!;
+  assert.match(noted, /- keep the task list current/);
+  assert.match(noted, /- prefer tests/, "blank lines between notes are dropped, real notes survive");
+  assert.ok(!/Response style/.test(noted));
+
+  const both = advisoryGuidanceFromEnv({
+    WORKFLOW_ADVISORY_STYLE: "terse",
+    WORKFLOW_ADVISORY_NOTES: "prefer tests",
+  })!;
+  assert.match(both, /Response style \(advisory\): terse/);
+  assert.match(both, /Operating notes \(advisory/);
+  assert.ok(both.endsWith("\n\n"), "env guidance composes to the same preamble shape");
 });

@@ -257,6 +257,12 @@ export function createHubScheduler(options: {
   readonly log?: (message: string) => void;
   readonly recordBlockingReason?: (input: { readonly runId: string; readonly reason: string }) => void;
   readonly now?: () => Date;
+  /**
+   * Plan Task G5 wiring: advisory guidance prepended to every scheduled
+   * prompt (honestly advisory — text, never a boundary). Absent means the
+   * schedule's prompt reaches the turn unchanged.
+   */
+  readonly promptGuidance?: string;
 }): HubScheduler {
   const log = options.log ?? (() => undefined);
   const lastFiredMinute = new Map<string, number>();
@@ -280,7 +286,7 @@ export function createHubScheduler(options: {
       await options.runTurn({
         runId,
         workspace: schedule.workspace,
-        prompt: schedule.prompt,
+        prompt: options.promptGuidance === undefined ? schedule.prompt : options.promptGuidance + schedule.prompt,
         budget: schedule.budget,
       });
     } catch (error) {

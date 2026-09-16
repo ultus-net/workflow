@@ -35,6 +35,7 @@ trip over.
 | systemd user unit | Complete | `packaging/workflow-hub.service`; Linux/systemd only |
 | Surface coverage: TUI, headless, zen, connectors, cron, desktop (`cline-hub`) | Complete | all resolve via env or discovery file, fail closed |
 | Hub-native scheduler | Complete | `src/integrations/hub-scheduler.ts` — Vixie-semantics cron table at `~/.workflow/scheduler.json` (`WORKFLOW_HUB_SCHEDULES` overrides); fires review-gated contained runs; a rejected finish gate leaves the run VERIFYING (never fabricated); **real-agent scheduled turn is gated-probe pending** |
+| Advisory guidance for hub-composed prompts | Complete | `WORKFLOW_ADVISORY_STYLE` / `WORKFLOW_ADVISORY_NOTES` (one note per line) prepend honestly-advisory preamble text to every scheduled-run prompt (`advisoryGuidanceFromEnv` → scheduler `promptGuidance`); unset means prompts reach the turn unchanged |
 | Per-run budget enforcement | Complete | token/cost caps from metering-proxy metrics; a violating event cancels the turn and the run fails with the budget as its recorded blocking reason |
 
 ## Surfaces & UX
@@ -44,6 +45,7 @@ trip over.
 | `workflow` (patched Cline TUI launcher) | Complete | resolves the hub; refuses to start without it |
 | `workflow-monitor` (Ink monitoring TUI) | Complete | task panel, activity panel, log-enriched transcript; `npm run tui:workflow` |
 | Pedagogical modes (5 modes, checkpoints, learner profile, PRIMM) | Complete | `src/pedagogy/`; profile at `~/.local/share/workflow/learner-profile.json` |
+| Learner-level skill gating (F2 surface wiring) | Complete | the TUI mode bar binds the mode's required-skill set (`levels.json` shared with skills-mcp, `SKILLS_MCP_DIR` override) to the active task's mutation precondition; switching modes re-binds, no-required-skill modes clear it, malformed maps refuse startup (`applySkillGating` in `src/pedagogy/skill-gating.ts`) |
 | Response/build styles (caveman speech, ponytail YAGNI build) | Complete | **model-advisory** — the model can ignore them; live switch through the `/` or Ctrl+P options menu; summaries kept by design |
 | Style-savings measurement (`npm run style:eval`) | Complete | `src/cli/style-eval.ts` — per-style output deltas from cumulative driver usage |
 | Browser projection | Partial | `src/ui/web.ts` demo; does not have the monitoring panels |

@@ -7,12 +7,14 @@ import { WorkflowApplication } from "../application/workflow.js";
 import { createConfiguredClineRuntime } from "../integrations/cline-runtime.js";
 import { createReviewFollowUpsClient, type ReviewFollowUp } from "../integrations/review-followups.js";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui } from "../ui/tui.js";
 import { createCheckpointLedger } from "../pedagogy/checkpoints.js";
+import { applySkillGating, resolveSkillsLevelMap } from "../pedagogy/skill-gating.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 import { resolveWorkflowHub } from "./hub-client.js";
 import { createHubSnapshotSource } from "./hub-snapshot.js";
@@ -119,6 +121,10 @@ if (hub !== undefined) {
 
   const runtime = await createConfiguredClineRuntime(application, workspace);
 
+  // Plan Task F2 surface wiring: same operator levels.json as skills-mcp; a
+  // malformed map refuses startup (fail-closed) rather than running ungated.
+  const skillsLevelMap = resolveSkillsLevelMap(process.env.SKILLS_MCP_DIR, homedir());
+
   const { waitUntilExit } = render(
     React.createElement(WorkflowTui, {
       application,
@@ -127,9 +133,13 @@ if (hub !== undefined) {
       connectionLabel: "standalone (no hub)",
       onStyleChange: (style) => runtime.setSessionStyle(style),
       // The mode bar installs the pedagogy gate on the application; changing mode
-      // re-creates the checkpoint ledger for the new mode. Leaves no gate when
-      // the mode itself gates nothing (autonomous).
-      onModeChange: (mode) => application.setPedagogyGate(createCheckpointLedger(mode)),
+      // re-creates the checkpoint ledger for the new mode AND re-binds the mode's
+      // required-skill set to the active task. Leaves no gate when the mode itself
+      // gates nothing (autonomous) and clears the skill precondition the same way.
+      onModeChange: (mode) => {
+        application.setPedagogyGate(createCheckpointLedger(mode));
+        applySkillGating(application, mode, skillsLevelMap);
+      },
     }),
   );
   await waitUntilExit();

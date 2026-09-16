@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -8,7 +8,7 @@ import { WorkflowApplication } from "../src/application/workflow.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
 import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type TaskId, type WorkflowTask } from "../src/kernel/contracts.js";
-import { loadSkillsLevelMap, skillGatingFor } from "../src/pedagogy/skill-gating.js";
+import { applySkillGating, loadSkillsLevelMap, resolveSkillsLevelMap, skillGatingFor, type SkillsLevelMap } from "../src/pedagogy/skill-gating.js";
 
 /**
  * Plan Tasks F2/F3: the learner-level skill mapping and the application-layer
@@ -154,4 +154,71 @@ test("skillGatingFor maps pedagogical modes and fails closed on malformed maps",
 
   writeFileSync(join(dir, "levels.json"), "{ not json", "utf8");
   assert.throws(() => loadSkillsLevelMap(dir), /invalid levels\.json/);
+});
+
+test("applySkillGating binds and clears the mode's required skills on the active task", () => {
+  const application = appWith([{ ...WORK, state: "READY" }]);
+  const workId = startWork(application);
+  const map: SkillsLevelMap = {
+    "learn-to-code": { unlocked: ["test-driven-development"], required: ["test-driven-development"] },
+    autonomous: { unlocked: ["test-driven-development", "code-review"], required: [] },
+  };
+  const mutation = {
+    sessionId: "s", taskId: workId, tool: "write_to_file", capability: "mutation",
+    mutating: true, subjects: ["a.ts"], input: {},
+  } as const;
+
+  applySkillGating(application, "learn-to-code", map);
+  const denied = application.authorize(mutation);
+  assert.equal(denied.kind === "deny" && denied.code === "SKILL_DELIVERY_REQUIRED" ? "SKILL_DELIVERY_REQUIRED" : undefined,
+    "SKILL_DELIVERY_REQUIRED", "the mode's required skills gate the active task's mutations");
+
+  application.recordSkillRead("test-driven-development");
+  assert.equal(application.authorize(mutation).kind, "allow");
+
+  // Switching to a mode with no required skills clears the precondition.
+  applySkillGating(application, "autonomous", map);
+  assert.equal(application.authorize(mutation).kind, "allow");
+
+  // An unconfigured mode or absent map composes to no requirement.
+  applySkillGating(application, "walkthrough", map);
+  applySkillGating(application, "learn-to-code", undefined);
+  assert.equal(application.authorize(mutation).kind, "allow");
+
+  // Fails closed on the caller's contract: no active task means no silent skip.
+  const bare = appWith([{ ...WORK, state: "READY" }]);
+  assert.throws(() => applySkillGating(bare, "learn-to-code", map), /no active workflow task selected/);
+});
+
+test("resolveSkillsLevelMap mirrors the skills-mcp directory contract", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "wf-skill-home-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const defaultDir = join(home, ".agents", "skills");
+
+  assert.equal(resolveSkillsLevelMap(undefined, home), undefined, "no levels.json in the default dir means no map");
+
+  mkdirSync(defaultDir, { recursive: true });
+  writeFileSync(join(defaultDir, "levels.json"), JSON.stringify({
+    "learn-to-code": { unlocked: [], required: ["test-driven-development"] },
+  }), "utf8");
+  assert.deepEqual(resolveSkillsLevelMap(undefined, home), {
+    "learn-to-code": { unlocked: [], required: ["test-driven-development"] },
+  });
+
+  const override = mkdtempSync(join(tmpdir(), "wf-skill-override-"));
+  t.after(() => rmSync(override, { recursive: true, force: true }));
+  writeFileSync(join(override, "levels.json"), JSON.stringify({
+    autonomous: { unlocked: ["code-review"], required: [] },
+  }), "utf8");
+  assert.deepEqual(resolveSkillsLevelMap(override, home), {
+    autonomous: { unlocked: ["code-review"], required: [] },
+  }, "a SKILLS_MCP_DIR-style override wins over the default dir");
+
+  assert.deepEqual(resolveSkillsLevelMap("  ", home), {
+    "learn-to-code": { unlocked: [], required: ["test-driven-development"] },
+  }, "a blank override falls back to the default dir");
+
+  writeFileSync(join(override, "levels.json"), "{ not json", "utf8");
+  assert.throws(() => resolveSkillsLevelMap(override, home), /invalid levels\.json/,
+    "a malformed map refuses startup instead of running ungated");
 });

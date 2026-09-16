@@ -11,6 +11,7 @@ import { loadCredentialDefinitions } from "../integrations/credential-config.js"
 import { createCredentialBroker } from "../integrations/credentials.js";
 import { createSecretServiceStore } from "../integrations/secret-service.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
+import { advisoryGuidanceFromEnv } from "../integrations/prompt-guidance.js";
 import { createReviewerFactory, createRunTestRunner } from "../integrations/hub-run-gates.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import {
@@ -131,12 +132,17 @@ const testRunner = teamTaskVerificationCommand !== undefined && teamTaskVerifica
 // budget-enforced from metering-proxy metrics (plan C2).
 const schedulesPath = process.env.WORKFLOW_HUB_SCHEDULES ?? join(homedir(), ".workflow", "scheduler.json");
 const schedules = loadSchedulesTable(schedulesPath);
+// Plan Task G5 wiring: the hub composes scheduled prompts, so the operator's
+// advisory guidance (WORKFLOW_ADVISORY_STYLE / WORKFLOW_ADVISORY_NOTES) is
+// prepended to every scheduled turn — honestly advisory prompt text.
+const promptGuidance = advisoryGuidanceFromEnv(process.env);
 const schedulerFactory = schedules.length === 0 ? undefined : (handles: WorkflowHubSchedulerHandles) =>
   createHubScheduler({
     controller: handles.controller,
     recordBlockingReason: handles.recordBlockingReason,
     schedules: () => schedules,
     log: (message) => console.log(message),
+    ...(promptGuidance === undefined ? {} : { promptGuidance }),
     runTurn: async ({ runId, workspace, prompt, budget }) => {
       const runApplication = handles.resolve(workspace, runId);
       const runTaskId: TaskId = taskId(`run:${runId}`);

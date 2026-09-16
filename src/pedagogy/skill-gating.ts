@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
+import type { TaskId } from "../kernel/contracts.js";
 import type { PedagogicalMode } from "./contracts.js";
 
 /**
@@ -65,6 +66,45 @@ export function skillGatingFor(mode: PedagogicalMode, levelMap: SkillsLevelMap |
     return { mode, unlocked: [], required: [], configured: false };
   }
   return { mode, unlocked: gate.unlocked, required: gate.required, configured: true };
+}
+
+/**
+ * The composition target for surfaces that switch pedagogical modes: the
+ * active task is the one whose mutations the required-skill precondition
+ * gates.
+ */
+export interface SkillGatingTarget {
+  setTaskRequiredSkills(taskId: TaskId, skills: readonly string[]): void;
+  activeTaskId(): TaskId;
+}
+
+/**
+ * Plan Task F2 surface wiring: bind the mode's required-skill set to the
+ * active task. A mode with no required skills (autonomous, unconfigured, or
+ * absent level map) clears the precondition, so switching modes never leaves
+ * a stale requirement behind. Fails closed on the caller's contract: throws
+ * when no task is active, never silently skips gating.
+ */
+export function applySkillGating(
+  target: SkillGatingTarget,
+  mode: PedagogicalMode,
+  levelMap: SkillsLevelMap | undefined,
+): void {
+  target.setTaskRequiredSkills(target.activeTaskId(), skillGatingFor(mode, levelMap).required);
+}
+
+/**
+ * Loads the level map from the same operator-managed skills directory
+ * skills-mcp reads (`SKILLS_MCP_DIR`, default `~/.agents/skills`), so
+ * server-side availability and hub-side requirements share one config. An
+ * absent `levels.json` means no map (gating composes to no-ops); a malformed
+ * one throws — the surface must refuse to run ungated, mirroring skills-mcp.
+ */
+export function resolveSkillsLevelMap(skillsDirOverride: string | undefined, homeDir: string): SkillsLevelMap | undefined {
+  const dir = skillsDirOverride !== undefined && skillsDirOverride.trim().length > 0
+    ? skillsDirOverride
+    : join(homeDir, ".agents", "skills");
+  return loadSkillsLevelMap(resolve(dir));
 }
 
 function requireLevelMap(value: unknown): SkillsLevelMap {
