@@ -7,32 +7,33 @@ import path from "node:path";
 import test from "node:test";
 
 import { AcpSubprocessClient } from "../src/adapters/acp-subprocess.js";
+import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
 
 /**
- * Plan Task F1/G3-Step2 mount probe: does a stock Cline ACP agent pick up
- * MCP servers from the scratch-home config? This is the load-bearing
- * assumption behind "the hub owns agent MCP config" — skills-mcp (F1) and
- * workflow-fs-exec-mcp (G3) are only enforceable single-delivery-path /
- * single-mutation-path if the agent actually mounts them from the config the
- * hub writes into the scratch home. The vendored patch used
- * ~/.workflow/cline_mcp_settings.json; the STOCK surface is unverified, so
- * this probe writes every known candidate path and reports evidence for
- * which (if any) the agent honored — the input the acp-runtime wiring needs.
+ * Plan Task F1/G3-Step2 mount probe: does the vendored pinned Cline ACP
+ * agent pick up MCP servers from the scratch-home config? This is the
+ * load-bearing assumption behind "the hub owns agent MCP config" —
+ * skills-mcp (F1) and workflow-fs-exec-mcp (G3) are only enforceable
+ * single-delivery-path / single-mutation-path if the agent actually mounts
+ * them from the config the hub writes into the scratch home. The vendored
+ * patch used ~/.workflow/cline_mcp_settings.json; this probe writes every
+ * known candidate path and reports evidence for which (if any) the agent
+ * honored — the input the acp-runtime wiring needs.
  *
- * Gated: WORKFLOW_ACP_CLINE_MCP_MOUNT=1 plus CLINE_API_KEY (and any auth env
- * the other Cline probes use, e.g. WORKFLOW_ACP_CLINE_ENV_AUTH=1).
+ * Gated: WORKFLOW_ACP_CLINE_MCP_MOUNT=1 plus Cline credentials
+ * (CLINE_API_KEY or CLINE_API_KEY_FILE). The probe launches the vendored
+ * pinned Cline via `clineLaunchEntry()` with `--provider openrouter` —
+ * stock PATH cline (3.0.62) is account-cloud-only in ACP mode and cannot
+ * authenticate headlessly, so it can never produce this evidence
+ * (docs/ACP_RESEARCH.md).
  *
  * Interpretation: the probe always records evidence. NO skills-shaped tool
- * activity plus a NO_MCP_TOOLS reply means the stock agent ignores every
+ * activity plus a NO_MCP_TOOLS reply means the agent ignores every
  * candidate path — a negative finding that keeps the hub-owned MCP config
  * assumption unwired (F1/G3 mounts stay deferred), not a probe failure.
  */
 
 const runProbe = process.env.WORKFLOW_ACP_CLINE_MCP_MOUNT === "1";
-
-if (runProbe && !process.env.CLINE_API_KEY) {
-  throw new Error("CLINE_API_KEY is required for the MCP mount probe; do not paste it into chat");
-}
 
 const CANDIDATES = [
   path.join(".workflow", "cline_mcp_settings.json"),
@@ -42,7 +43,7 @@ const CANDIDATES = [
 ];
 
 test(
-  "Cline ACP MCP-mount probe: does the stock agent mount hub-configured MCP servers from the scratch home?",
+  "Cline ACP MCP-mount probe: does the vendored agent mount hub-configured MCP servers from the scratch home?",
   { skip: !runProbe, timeout: 300_000 },
   async () => {
     const serverScript = path.resolve(import.meta.dirname, "..", "mcp-toolbox", "apps", "skills-mcp", "dist", "server.js");
@@ -75,11 +76,32 @@ test(
         "utf8",
       );
 
-      const child = spawn("cline", ["--acp", "--auto-approve", "false", "--cwd", workspace], {
-        cwd: workspace,
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, HOME: scratchHome, XDG_CONFIG_HOME: path.join(scratchHome, ".config") },
-      });
+      const clineApiKey = await loadClineApiKey("Cline MCP mount probe");
+      const cline = clineLaunchEntry();
+      const child = spawn(
+        cline.executable,
+        [
+          ...(cline.script !== undefined ? [cline.script] : []),
+          "--acp",
+          "--provider",
+          "openrouter",
+          "--auto-approve",
+          "false",
+          "--cwd",
+          workspace,
+        ],
+        {
+          cwd: workspace,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: {
+            ...process.env,
+            HOME: scratchHome,
+            XDG_CONFIG_HOME: path.join(scratchHome, ".config"),
+            CLINE_API_KEY: clineApiKey,
+            CLINE_PROVIDER: process.env.CLINE_PROVIDER ?? "openrouter",
+          },
+        },
+      );
       const toolCalls: string[] = [];
       const client = new AcpSubprocessClient({
         child,

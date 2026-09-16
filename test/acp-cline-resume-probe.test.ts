@@ -15,9 +15,14 @@ import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
 // creates a session with a unique keyword turn inside a contained, persistent
 // scratch HOME; phase 2 relaunches a fresh contained agent against the same
 // HOME and loads the session, asserting the replay carries the original
-// prompt (in user chunks) and the keyword answer (in agent chunks), then a
-// continuation turn recalls the keyword — proving restored model context,
-// not just turn completion.
+// prompt (in user chunks) and the keyword answer (in agent chunks). The
+// continuation recall assertion below is the G4 gap contract and it
+// currently FAILS deterministically (G4 reopened 2026-09-16,
+// docs/ACP_SURFACE.md): loadSession replays the visible transcript but does
+// NOT restore the model's context, so a resumed continuation cannot recall
+// the keyword. Keep the assertion as the desired-behavior contract — a
+// gated run documents the failure until Cline's session/load restores model
+// context; do not weaken it into a pass.
 const runResumeProbe = process.env.WORKFLOW_ACP_CLINE_RESUME === "1";
 
 test(
@@ -89,8 +94,9 @@ test(
     }
 
     // Scope assertions to specific chunk kinds so the keyword embedded in the
-    // user prompt cannot satisfy the agent-answer check, and continuation
-    // recall proves restored context rather than mere turn completion.
+    // user prompt cannot satisfy the agent-answer check; the recall assertion
+    // is the G4 contract (see the header comment — it currently fails
+    // deterministically because loadSession does not restore model context).
     const chunkText = (updates: AcpSessionUpdate[], kind: string) =>
       JSON.stringify(updates.filter((update) => update.update.sessionUpdate === kind));
     const userPromptReplayed = chunkText(replayed, "user_message_chunk").includes("Reply with exactly this token");

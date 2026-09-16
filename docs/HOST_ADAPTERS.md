@@ -89,7 +89,7 @@ the pinned agent version:
 
 | Agent (pinned) | Spawn tool advertised | Spawn gateable | Internal subagents visible to hub | Verdict |
 |---|---|---|---|---|
-| Cline 3.0.61 (ACP) | unprobed | unprobed | unprobed | **Probe pending** — run `WORKFLOW_ACP_CLINE_SUBAGENT=1` with `CLINE_API_KEY` via `node --import tsx --test test/acp-cline-subagent-probe.test.ts`; until green evidence exists, spawn stays default-denied and unprobed agents are not labeled `enforced` for spawn-inclusive workflows |
+| Cline 3.0.61 (ACP) | unprobed | unprobed | unprobed | **Probe pending** — run `WORKFLOW_ACP_CLINE_SUBAGENT=1` with Cline credentials (`CLINE_API_KEY` or `CLINE_API_KEY_FILE`) via `node --import tsx --test test/acp-cline-subagent-probe.test.ts`; the probe launches the vendored pinned 3.0.61 entry (stock PATH cline is account-cloud-only in ACP mode and cannot authenticate headlessly — `docs/ACP_RESEARCH.md`); until green evidence exists, spawn stays default-denied and unprobed agents are not labeled `enforced` for spawn-inclusive workflows |
 | OpenCode (ACP) | — | — | — | Advisory-capped: default ACP mode mutates without permission requests (`docs/ACP_DECISION.md`); re-evaluation requires the ask-config probe (plan Task G1) |
 
 Probe rules (fail closed):
