@@ -337,5 +337,6 @@ time-sensitive in §12); history is never rewritten — later facts land here.
    (`src/integrations/acp-runtime.ts`), the skills-mcp entry in the
    hub-written per-runtime config (`src/integrations/opencode-agent-config.ts`),
    and the gated delivery probe
-   (`test/acp-opencode-skills-delivery-probe.test.ts`). The deferral is
+   (`test/acp-opencode-skills-delivery-probe.test.ts`; wired and env-gated —
+   no live verdict recorded yet). The deferral is
    Cline-surface-specific, not general.

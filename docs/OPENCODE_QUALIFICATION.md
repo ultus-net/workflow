@@ -42,8 +42,11 @@ rewritten — later facts land here.
 2. **"Real OpenCode runtime E2E not yet claimed" (matrix row 21).** Still
    true for the plugin/SDK-session-driver surface this matrix tests — only
    contract tests exist there. Real OpenCode runtime evidence now exists on
-   the ACP surface (six gated probes; live verdicts recorded 2026-09-16 in
-   `docs/HOST_ADAPTERS.md`), so this row must not be read as "no real
+   the ACP surface (six gated probes exist; four live verdicts are recorded
+   2026-09-16 in `docs/HOST_ADAPTERS.md` — subagent, ask-config, MCP mounts,
+   resume; the metered probe's evidence is recorded in `docs/ACP_DECISION.md`
+   G1, and the skills-delivery probe has no live verdict yet), so this row
+   must not be read as "no real
    OpenCode runtime evidence at all."
 3. **Terminology (matrix row 19).** "Cline `McpToolProvider`" is the
    vendored patch's test-double name
