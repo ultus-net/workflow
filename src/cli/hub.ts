@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { appendFileSync, realpathSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +14,7 @@ import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-g
 import { advisoryGuidanceFromEnv } from "../integrations/prompt-guidance.js";
 import { createReviewerFactory, createRunTestRunner } from "../integrations/hub-run-gates.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
+import { canonicalWorkspace } from "../integrations/run-registry.js";
 import {
   createBudgetGuard,
   createHubScheduler,
@@ -83,9 +84,11 @@ const guard = await createDefaultToolboxGuardProvider({
 // surfaces as a blocking reason, never a silent pass).
 const workspaceApplications = new Map<string, WorkflowApplication>();
 const workspaceApplicationFor = (target: string): WorkflowApplication => {
-  // Same canonicalization discipline as the run registry: raw declared paths
-  // never create a second application for the same directory.
-  const canonical = realpathSync(target);
+  // Same canonicalization discipline as the run registry, now literally the
+  // same helper: raw declared paths never create a second application for
+  // the same directory, and invalid declarations fail closed instead of
+  // silently binding authorization to an unintended directory.
+  const canonical = canonicalWorkspace(target);
   let bound = workspaceApplications.get(canonical);
   if (bound === undefined) {
     bound = new WorkflowApplication(graph, application.host, [], new Set(["read", "mutation", "process"]), canonical);
