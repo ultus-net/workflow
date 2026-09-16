@@ -1,5 +1,7 @@
 # Workflow Threat Model
 
+The executable assurance map binding every material security claim below to its implementation boundary and its automated/gated/manual verification is `docs/SECURITY_ASSURANCE.md` (W042), kept honest by `test/security-assurance.test.ts`.
+
 ## Security Boundary
 
 Workflow is primarily an application policy and state-integrity layer. It does not become an OS/container boundary merely because policy allows an action. W019 adds an opt-in Linux Bubblewrap process-containment backend whose narrower guarantees are documented in `docs/RUNTIME_CONTAINMENT.md`; those guarantees apply only when execution actually passes through that backend and it returns enforced runtime evidence. Workflow is still not a VM or a boundary against a hostile kernel/administrator.
