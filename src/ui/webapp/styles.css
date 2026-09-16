@@ -775,30 +775,165 @@ body {
   background: var(--border);
 }
 
-/* Settings popover: approvals + capabilities */
+/* Settings dialog — the single surface for every operator preference. Same
+   token grammar as the popovers it replaces; sectioned rows, not cards. */
 
-.config-permissions {
-  display: grid;
-  gap: 0.35rem;
-  padding-top: 0.5rem;
-  margin-top: 0.5rem;
-  border-top: 1px solid var(--border);
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(0.75rem, 3vw, 2rem);
+  background: color-mix(in srgb, var(--bg-deep) 62%, transparent);
+  z-index: 40;
 }
 
-.config-reset-patterns {
-  justify-self: start;
+.settings-dialog {
+  width: min(34rem, 100%);
+  max-height: min(44rem, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.settings-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 1.1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-head h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+.settings-close {
+  padding: 0.2rem 0.6rem;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.settings-body {
+  overflow-y: auto;
+  padding: 0.25rem 1.1rem 1rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.settings-section {
+  padding: 0.65rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.settings-section:last-child { border-bottom: 0; }
+
+.settings-section h3 {
+  margin: 0.35rem 0 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  padding: 0.45rem 0;
+}
+
+.settings-row-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 0.85rem;
+}
+
+.settings-desc {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.settings-toggle { padding: 0.15rem 0; }
+
+.settings-select {
+  appearance: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  border-radius: var(--radius-s);
+  padding: 0.3rem 0.5rem;
+  max-width: 14rem;
+  cursor: pointer;
+}
+
+.settings-select:hover { color: var(--accent); }
+
+.settings-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.settings-reset { justify-self: start; font-size: 0.8rem; }
+
+.settings-kbd-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.28rem 0;
   font-size: 0.8rem;
 }
 
-/* Settings popover: color theme (System / Dark / Light segmented control) */
-
-.config-appearance {
-  display: grid;
-  gap: 0.35rem;
-  padding-top: 0.5rem;
-  margin-top: 0.5rem;
-  border-top: 1px solid var(--border);
+.settings-kbd {
+  display: flex;
+  gap: 0.25rem;
+  flex: none;
+  min-width: 7rem;
 }
+
+.settings-kbd kbd {
+  font: inherit;
+  font-size: 0.72rem;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface);
+  padding: 0 0.3rem;
+}
+
+.settings-kbd-desc { color: var(--text-muted); }
+
+.settings-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  align-items: center;
+  padding: 0.35rem 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.settings-docs { padding-top: 0.2rem; }
+
+[data-theme="light"] .settings-dialog { box-shadow: 0 12px 40px rgba(16, 18, 22, 0.18); }
+
+@media (max-width: 600px) {
+  .settings-backdrop { padding: 0.5rem; }
+  .settings-row { flex-wrap: wrap; }
+}
+
+/* Color theme segmented control (System / Dark / Light), used in settings */
 
 .theme-choice {
   display: grid;
@@ -893,8 +1028,7 @@ body {
   white-space: nowrap;
 }
 
-.config-picker select,
-.config-field select {
+.config-picker select {
   appearance: none;
   background-color: var(--surface);
   border: 0;
@@ -906,11 +1040,9 @@ body {
   cursor: pointer;
 }
 
-.config-picker select:hover,
-.config-field select:hover { color: var(--accent); }
+.config-picker select:hover { color: var(--accent); }
 
-.config-picker select:focus-visible,
-.config-field select:focus-visible {
+.config-picker select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -1053,36 +1185,6 @@ body {
 }
 
 .config-gear[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
-
-.config-popover {
-  position: absolute;
-  bottom: calc(100% + 0.5rem);
-  right: 0;
-  min-width: 15rem;
-  max-width: 20rem;
-  max-height: 60vh;
-  overflow-y: auto;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.5rem;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.config-field {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.6rem;
-  padding: 0.35rem 0.3rem;
-  font-size: 0.8rem;
-}
-
-.config-field-label { flex: 1; }
 
 .config-toggle {
   display: flex;
@@ -1712,7 +1814,6 @@ body {
 [data-theme="light"] .hljs-addition { color: #22863a; }
 [data-theme="light"] .hljs-deletion { color: #b31d28; }
 
-/* Light theme: soften the dark-tuned popover/elevation shadows. */
-[data-theme="light"] .config-popover,
+/* Light theme: soften the dark-tuned elevation shadows. */
 [data-theme="light"] .config-combobox-pop { box-shadow: 0 8px 24px rgba(16, 18, 22, 0.12); }
 [data-theme="light"] .part-permission { box-shadow: 0 6px 18px rgba(16, 18, 22, 0.10); }

@@ -184,6 +184,15 @@ endpoints):
 9. **Sessions list** — relative timestamps ("just now", "5m ago"), full
    timestamp on hover, active-session marker.
 10. **Heading semantics** — page title becomes `h1`.
+11. **Settings dialog** (operator request 2026-09-17; supersedes the
+    2026-09-15 "settings popover" scoping decision recorded above) — a modal
+    from the composer gear or Ctrl/Cmd+, surfaces every operator preference in
+    one place: color theme, focus mode, all agent-advertised options (model,
+    effort, mode, tool toggles — synced with the composer pickers through the
+    same state), ask-mode and process/network capabilities, remembered
+    permission decisions, thinking-block display, completion notifications,
+    the keyboard map, and the session's enforcement/usage facts. Composer
+    pickers stay for speed; the dialog is the complete map.
 
 Deferred (tracked, not built here — see `docs/web-ui-feature-tiers.md`):
 per-turn model/effort stamps in the transcript (needs a channel-level config

@@ -12,8 +12,10 @@ import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
 import { describeActivity, formatElapsed, formatRelativeTime } from "./presenters.js";
 import { useSessionState, useSessionUsage } from "./runtime.js";
+import { SettingsDialog } from "./settings-dialog.js";
 import { useTheme } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
+import type { WebConfigOption } from "../web-config-options.js";
 
 interface SnapshotTask {
   readonly id: string;
@@ -148,11 +150,8 @@ function clearUnusedSessions(refresh: () => Promise<void>): void {
   }).then(() => refresh());
 }
 
-interface ConfigChoice {
-  readonly value: string;
-  readonly name: string;
-  readonly description?: string;
-}
+/** Choice shape from the shared config-option projection (web-config-options). */
+type ConfigChoice = NonNullable<WebConfigOption["choices"]>[number];
 
 type PermissionDecision = "allow_once" | "allow_always" | "reject_once" | "reject_always";
 
@@ -245,23 +244,13 @@ function useCapabilities() {
   return { capabilities: state, setCapability };
 }
 
-interface ConfigOption {
-  readonly id: string;
-  readonly name: string;
-  readonly description?: string;
-  readonly category?: string;
-  readonly type: "select" | "boolean";
-  readonly currentValue: string | boolean;
-  readonly choices?: readonly ConfigChoice[];
-}
-
 /** Polls the agent-advertised session configuration; empty when the agent offers none. */
 function useConfigOptions() {
-  const [options, setOptions] = useState<ConfigOption[]>([]);
+  const [options, setOptions] = useState<WebConfigOption[]>([]);
   const load = useCallback(async (): Promise<void> => {
     try {
       const response = await fetch("/api/config-options");
-      if (response.ok) setOptions((await response.json() as { options: ConfigOption[] }).options);
+      if (response.ok) setOptions((await response.json() as { options: WebConfigOption[] }).options);
     } catch {
       // Keep the last good list; the next poll retries.
     }
@@ -279,7 +268,7 @@ function useConfigOptions() {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id, value }),
     }).then(async (response) => {
-      if (response.ok) setOptions((await response.json() as { options: ConfigOption[] }).options);
+      if (response.ok) setOptions((await response.json() as { options: WebConfigOption[] }).options);
       else await load();
     }).catch(() => load());
   }, [load]);
@@ -299,7 +288,7 @@ function GearIcon() {
 }
 
 /** Agents may report a current value outside the advertised choices; show it truthfully. */
-function withCurrentChoice(option: ConfigOption): ConfigChoice[] {
+function withCurrentChoice(option: WebConfigOption): ConfigChoice[] {
   const choices = option.choices ?? [];
   const current = String(option.currentValue);
   return choices.some((choice) => choice.value === current)
@@ -308,7 +297,7 @@ function withCurrentChoice(option: ConfigOption): ConfigChoice[] {
 }
 
 function ConfigSelect({ option, setOption, labelledBy }: {
-  readonly option: ConfigOption;
+  readonly option: WebConfigOption;
   readonly setOption: (id: string, value: string | boolean) => void;
   readonly labelledBy?: string | undefined;
 }) {
@@ -365,7 +354,7 @@ function ChevronIcon() {
 }
 
 function ConfigCombobox({ option, setOption, labelledBy }: {
-  readonly option: ConfigOption;
+  readonly option: WebConfigOption;
   readonly setOption: (id: string, value: string | boolean) => void;
   readonly labelledBy?: string | undefined;
 }) {
@@ -534,7 +523,7 @@ function ConfigCombobox({ option, setOption, labelledBy }: {
 }
 
 function ConfigField({ option, setOption, labelledBy }: {
-  readonly option: ConfigOption;
+  readonly option: WebConfigOption;
   readonly setOption: (id: string, value: string | boolean) => void;
   readonly labelledBy?: string | undefined;
 }) {
@@ -543,48 +532,15 @@ function ConfigField({ option, setOption, labelledBy }: {
     : <ConfigSelect option={option} setOption={setOption} labelledBy={labelledBy} />;
 }
 
-function ConfigControls({ options, setOption, permissions, capabilities, theme }: {
-  readonly options: readonly ConfigOption[];
+/** Composer-adjacent quick pickers (model/effort/mode) plus the settings
+ * entry point; the full surface lives in the SettingsDialog. */
+function ConfigControls({ options, setOption, onSettings, settingsOpen }: {
+  readonly options: readonly WebConfigOption[];
   readonly setOption: (id: string, value: string | boolean) => void;
-  readonly permissions: ReturnType<typeof usePermissions>;
-  readonly capabilities: ReturnType<typeof useCapabilities>;
-  readonly theme: ReturnType<typeof useTheme>;
+  readonly onSettings: () => void;
+  readonly settingsOpen: boolean;
 }) {
-  const [open, setOpen] = useState(false);
-  const gearRef = useRef<HTMLButtonElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        // stopPropagation is defense-in-depth for the focused-control case;
-        // the global Escape handler's open-chrome DOM guard is the primary fix.
-        event.stopPropagation();
-        setOpen(false);
-        gearRef.current?.focus();
-      }
-    };
-    const onPointerDown = (event: MouseEvent): void => {
-      if (popoverRef.current?.contains(event.target as Node) === false && gearRef.current?.contains(event.target as Node) === false) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("mousedown", onPointerDown);
-    // Dialogs open with focus inside them, never stranded on the page body.
-    popoverRef.current?.querySelector<HTMLElement>("input, select, button")?.focus();
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onPointerDown);
-    };
-  }, [open]);
-
   const pickers = options.filter((option) => option.type === "select" && option.category !== undefined && COMPOSER_CATEGORIES.includes(option.category));
-  const toggles = options.filter((option) => option.type === "boolean");
-  const popoverSelects = options.filter((option) => option.type === "select" && !pickers.includes(option));
-  const showSettings = permissions.available || toggles.length > 0 || popoverSelects.length > 0;
-  if (!showSettings) return null;
 
   return (
     <div className="config-row">
@@ -600,177 +556,16 @@ function ConfigControls({ options, setOption, permissions, capabilities, theme }
       )}
       <span className="config-settings">
         <button
-          ref={gearRef}
+          type="button"
           className="btn btn-ghost config-gear"
-          aria-expanded={open}
+          aria-expanded={settingsOpen}
           aria-haspopup="dialog"
-          aria-label="Session settings"
-          onClick={() => setOpen((value) => !value)}
+          aria-label="Settings"
+          onClick={onSettings}
         >
           <GearIcon />
         </button>
-        {open && (
-          <div className="config-popover" role="dialog" aria-label="Session settings" ref={popoverRef}>
-            {(popoverSelects.length > 0 || toggles.length > 0) && (
-              <span className="config-field-label">Agent options</span>
-            )}
-            {popoverSelects.map((option) => (
-              <label className="config-field" key={option.id}>
-                <span className="config-field-label">{option.name}</span>
-                <ConfigSelect option={option} setOption={setOption} />
-              </label>
-            ))}
-            {toggles.map((option) => (
-              <label className="config-toggle" key={option.id} title={option.description}>
-                <input
-                  type="checkbox"
-                  checked={option.currentValue === true}
-                  onChange={(event) => setOption(option.id, event.target.checked)}
-                />
-                <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
-                <span className="config-toggle-text">
-                  {option.name}
-                  {option.description !== undefined && <span className="config-toggle-desc">{option.description}</span>}
-                </span>
-              </label>
-            ))}
-            {permissions.available && (
-              <PermissionSettings permissions={permissions} capabilities={capabilities} />
-            )}
-            <AppearanceSettings choice={theme.choice} setChoice={theme.setChoice} />
-            <GeneralSettings />
-          </div>
-        )}
       </span>
-    </div>
-  );
-}
-
-/** Settings popover: color theme. The hook itself lives at the app root so
- * System follows the OS even while this popover is closed. */
-function AppearanceSettings({ choice, setChoice }: {
-  readonly choice: ReturnType<typeof useTheme>["choice"];
-  readonly setChoice: ReturnType<typeof useTheme>["setChoice"];
-}) {
-  return (
-    <div className="config-appearance">
-      <span className="config-field-label">Appearance</span>
-      <div className="theme-choice" role="radiogroup" aria-label="Color theme">
-        {(["system", "dark", "light"] as const).map((option) => (
-          <button
-            key={option}
-            type="button"
-            role="radio"
-            aria-checked={choice === option}
-            className={`theme-option ${choice === option ? "theme-option-on" : ""}`}
-            onClick={() => setChoice(option)}
-          >
-            {option === "system" ? "System" : option === "dark" ? "Dark" : "Light"}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** Settings popover: transcript and notification preferences (persisted locally). */
-function GeneralSettings() {
-  const [notify, setNotify] = useNotifyOnCompletion();
-  const { showThinking, setShowThinking } = useSessionState();
-  return (
-    <div className="config-permissions">
-      <span className="config-field-label">Transcript</span>
-      <label className="config-toggle" title="Show agent reasoning blocks in the thread (collapsed by default when shown)">
-        <input type="checkbox" checked={showThinking} onChange={(event) => setShowThinking(event.target.checked)} />
-        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
-        <span className="config-toggle-text">
-          Show thinking blocks
-          <span className="config-toggle-desc">the agent still reasons; only the display changes</span>
-        </span>
-      </label>
-      <span className="config-field-label">Notifications</span>
-      <label className="config-toggle" title="Desktop notification and chime when a turn finishes while the tab is hidden">
-        <input type="checkbox" checked={notify} onChange={(event) => setNotify(event.target.checked)} />
-        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
-        <span className="config-toggle-text">
-          Notify on completion
-          <span className="config-toggle-desc">fires only while the tab is hidden</span>
-        </span>
-      </label>
-    </div>
-  );
-}
-
-const NOTIFY_KEY = "workflow.notify-completion";
-
-function useNotifyOnCompletion(): readonly [boolean, (enabled: boolean) => void] {
-  const [enabled, setEnabled] = useState(() => window.localStorage.getItem(NOTIFY_KEY) === "true");
-  const update = useCallback((value: boolean): void => {
-    window.localStorage.setItem(NOTIFY_KEY, String(value));
-    if (value && typeof Notification !== "undefined" && Notification.permission === "default") {
-      void Notification.requestPermission();
-    }
-    setEnabled(value);
-  }, []);
-  return [enabled, update];
-}
-
-/** Ask-mode and capability toggles inside the settings popover. */
-function PermissionSettings({ permissions, capabilities }: {
-  readonly permissions: ReturnType<typeof usePermissions>;
-  readonly capabilities: ReturnType<typeof useCapabilities>;
-}) {
-  const confinement = capabilities.capabilities?.workspaceConfinement ?? false;
-  const processEnabled = capabilities.capabilities?.capabilities.includes("process") ?? false;
-  const networkEnabled = capabilities.capabilities?.capabilities.includes("network") ?? false;
-  const remembered = permissions.patterns.alwaysAllow.length + permissions.patterns.alwaysReject.length;
-  return (
-    <div className="config-permissions">
-      <span className="config-field-label">Approvals</span>
-      <label className="config-toggle" title="Prompt in-thread before each gated tool the policy would allow">
-        <input
-          type="checkbox"
-          checked={permissions.mode === "ask"}
-          onChange={(event) => void permissions.update({ mode: event.target.checked ? "ask" : "auto" })}
-        />
-        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
-        <span className="config-toggle-text">
-          Ask before tool runs
-          <span className="config-toggle-desc">Hard policy denials never prompt</span>
-        </span>
-      </label>
-      <span className="config-field-label">Agent capabilities</span>
-      <label className="config-toggle" title="Shell command execution (run_commands)">
-        <input
-          type="checkbox"
-          checked={processEnabled}
-          disabled={!confinement}
-          onChange={(event) => void capabilities.setCapability("process", event.target.checked)}
-        />
-        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
-        <span className="config-toggle-text">
-          Shell commands
-          {!confinement && <span className="config-toggle-desc">requires workspace confinement</span>}
-        </span>
-      </label>
-      <label className="config-toggle" title="Web search and fetch tools">
-        <input
-          type="checkbox"
-          checked={networkEnabled}
-          disabled={!confinement}
-          onChange={(event) => void capabilities.setCapability("network", event.target.checked)}
-        />
-        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
-        <span className="config-toggle-text">
-          Web access
-          {!confinement && <span className="config-toggle-desc">requires workspace confinement</span>}
-        </span>
-      </label>
-      {remembered > 0 && (
-        <button className="btn btn-ghost config-reset-patterns" onClick={() => void permissions.update({ reset: true })}>
-          Forget {remembered} remembered decision{remembered === 1 ? "" : "s"}
-        </button>
-      )}
     </div>
   );
 }
@@ -841,32 +636,22 @@ function formatTokens(count: number): string {
   return String(count);
 }
 
-/** Header toggle: hides the git rail and inspector so the thread centers. */
+/** Header toggle: hides the git rail and inspector so the thread centers.
+ * The state lives in App so the settings dialog's Focus mode row and this
+ * button always read/write the same setting. */
 const RAILS_KEY = "workflow.rails";
 
-function RailsToggle() {
-  const [off, setOff] = useState((): boolean => {
-    try {
-      return window.localStorage.getItem(RAILS_KEY) === "off";
-    } catch {
-      return false;
-    }
-  });
-  useEffect(() => {
-    document.documentElement.dataset.rails = off ? "off" : "on";
-    try {
-      window.localStorage.setItem(RAILS_KEY, off ? "off" : "on");
-    } catch {
-      // Storage unavailable: the toggle applies for this session only.
-    }
-  }, [off]);
+function RailsToggle({ off, onToggle }: {
+  readonly off: boolean;
+  readonly onToggle: (off: boolean) => void;
+}) {
   return (
     <button
       type="button"
       className="rail-toggle"
       aria-pressed={off}
       title={off ? "Show the git rail and inspector panels" : "Focus the conversation — hide the side panels"}
-      onClick={() => setOff((value) => !value)}
+      onClick={() => onToggle(!off)}
     >
       <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
         <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
@@ -1499,9 +1284,28 @@ export function App() {
   const theme = useTheme();
   const usage = useSessionUsage();
   const enforcementCopy = snapshot === undefined ? undefined : ENFORCEMENT_COPY[snapshot.enforcementLevel];
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Focus mode state lives here so the header button and the settings dialog
+  // read and write one setting (pre-paint application happens in main.tsx).
+  const [railsOff, setRailsOff] = useState((): boolean => {
+    try {
+      return window.localStorage.getItem(RAILS_KEY) === "off";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    document.documentElement.dataset.rails = railsOff ? "off" : "on";
+    try {
+      window.localStorage.setItem(RAILS_KEY, railsOff ? "off" : "on");
+    } catch {
+      // Storage unavailable: the toggle applies for this session only.
+    }
+  }, [railsOff]);
 
   // Keyboard shortcuts: "/" focuses the composer, Escape cancels a running
-  // turn (when no popover/input has focus), Alt+N starts a new session.
+  // turn (when no popover/input has focus), Alt+N starts a new session,
+  // Ctrl/Cmd+, opens settings.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const active = document.activeElement;
@@ -1512,14 +1316,17 @@ export function App() {
         document.querySelector<HTMLElement>(".composer-input")?.focus();
       } else if (
         event.key === "Escape" && isRunning && !typing &&
-        // Any open chrome (settings popover, model combobox) owns this Escape;
+        // Any open chrome (settings dialog, model combobox) owns this Escape;
         // cancelling a running turn must never ride along with closing it.
-        document.querySelector(".config-popover, .config-combobox-pop") === null
+        document.querySelector(".settings-dialog, .config-combobox-pop") === null
       ) {
         void fetch("/api/cancel", { method: "POST" });
       } else if (event.altKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "n" && !typing) {
         event.preventDefault();
         createSession(refreshSessions);
+      } else if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key === ",") {
+        event.preventDefault();
+        setSettingsOpen(true);
       }
     };
     document.addEventListener("keydown", onKey);
@@ -1531,7 +1338,7 @@ export function App() {
       <header className="shell-header">
         <h1>Workflow Control</h1>
         <div className="shell-header-actions">
-          <RailsToggle />
+          <RailsToggle off={railsOff} onToggle={setRailsOff} />
           <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
         </div>
       </header>
@@ -1552,7 +1359,7 @@ export function App() {
                     ))}
                   </div>
                   <p className="welcome-hints">
-                    <kbd>/</kbd> focus · <kbd>Enter</kbd> send · <kbd>Esc</kbd> cancel · <kbd>Alt</kbd>+<kbd>N</kbd> new session
+                    <kbd>/</kbd> focus · <kbd>Enter</kbd> send · <kbd>Esc</kbd> cancel · <kbd>Alt</kbd>+<kbd>N</kbd> new session · <kbd>Ctrl</kbd>+<kbd>,</kbd> settings
                   </p>
                 </div>
               </AuiIf>
@@ -1575,7 +1382,7 @@ export function App() {
               <Composer />
               <QueueIndicator />
               <div className="composer-toolbar">
-                <ConfigControls options={options} setOption={setOption} permissions={permissions} capabilities={capabilities} theme={theme} />
+                <ConfigControls options={options} setOption={setOption} onSettings={() => setSettingsOpen(true)} settingsOpen={settingsOpen} />
                 <div className="composer-utilities">
                   <ExportSessionButton />
                 </div>
@@ -1594,6 +1401,20 @@ export function App() {
           <Panels snapshot={snapshot} sessions={sessions} refresh={refresh} refreshSessions={refreshSessions} />
         </div>
       </main>
+      {settingsOpen && (
+        <SettingsDialog
+          onClose={() => setSettingsOpen(false)}
+          themeChoice={theme.choice}
+          onThemeChoice={theme.setChoice}
+          railsOff={railsOff}
+          onRailsToggle={setRailsOff}
+          options={options}
+          setOption={setOption}
+          permissions={permissions}
+          capabilities={capabilities}
+          enforcement={{ level: snapshot?.enforcementLevel, transport: snapshot?.transport, copy: enforcementCopy }}
+        />
+      )}
     </div>
   );
 }
