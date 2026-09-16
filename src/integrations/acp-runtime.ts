@@ -55,7 +55,7 @@ export function acpAgentKind(): AcpAgentKind {
 export async function createConfiguredAcpRuntime(
   application: WorkflowApplication,
   workspace: string,
-  taskId: TaskId,
+  taskId: TaskId | (() => TaskId),
   resumeFrom?: string,
   guard?: WorkflowGuardProvider,
   options: { readonly permissionBroker?: PermissionBroker | undefined } = {},
@@ -102,7 +102,7 @@ export function composeSessionWithBudget(driver: CodingSessionDriver, proxy: Mod
 async function createOpencodeRuntime(
   application: WorkflowApplication,
   workspace: string,
-  taskId: TaskId,
+  taskId: TaskId | (() => TaskId),
   resumeFrom: string | undefined,
   guard: WorkflowGuardProvider | undefined,
   options: { readonly permissionBroker?: PermissionBroker | undefined },
@@ -232,7 +232,7 @@ async function createOpencodeRuntime(
 async function createClineRuntime(
   application: WorkflowApplication,
   workspace: string,
-  taskId: TaskId,
+  taskId: TaskId | (() => TaskId),
   resumeFrom: string | undefined,
   guard: WorkflowGuardProvider | undefined,
   options: { readonly permissionBroker?: PermissionBroker | undefined },

@@ -255,7 +255,7 @@ Automated suites prove composition; live claims carry only through these gated r
 16. **Plugin-internal escalation counters are not ported hub-side** — fail-closed seams bound retry storms; scheduled budget caps bound the unattended case.
 17. **Provenance binds untracked files by path only** (the status source does not hash untracked bytes); mutations landing during a review remain the kernel epoch's job; the journal trim assumes a single writer.
 18. **A network-served agent (e.g. `goose serve` HTTP/WS) is outside the current containment composition** — enforcement targets stdio subprocess agents; remote transports are a threat-model follow-up.
-19. **Per-prompt task decomposition**: today every interactive proposal authorizes against the single session task; finer-grained decomposition is future roadmap work, not a current guarantee.
+19. **Task-command surfaces are deterministic but UX-thin (W046 landed the mechanism)**: interactive sessions now correlate proposals with the ACTIVE eligible task (`activeTaskCorrelation` lazy stamping; blocked work fails closed through the `no-active-task` sentinel → `UNKNOWN_TASK` deny), and canonical create/activate/complete/retry flow through the application-command port with full kernel validation. Residual: the selection UX is minimal (surfaces drive the port; no TUI task-selection palette yet), and a session whose active task completes must explicitly activate another — mutations deny until then. Decomposition suggestions remain advisory-only (plan projection); nothing model-proposed becomes canonical without an operator or rule confirming through the port.
 
 ---
 

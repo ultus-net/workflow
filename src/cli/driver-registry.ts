@@ -1,4 +1,5 @@
 import { WorkflowCodingSession } from "../application/coding-session.js";
+import { activeTaskCorrelation } from "../application/task-commands.js";
 import type { WorkflowApplication } from "../application/workflow.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { createConfiguredClineRuntime } from "../integrations/cline-runtime.js";
@@ -54,7 +55,11 @@ export async function composeDriver(
   workspace: string,
   options: { opencodeUrl: string; composers?: Partial<Record<DriverName, DriverComposer>> },
 ): Promise<ComposedDriver> {
-  const activeTaskId = application.startInteractiveTask();
+  // Boot the interactive seed task (idempotent; refuses to guess when more
+  // than one task is eligible). W046: the ACP driver correlates LAZILY with
+  // the active-task pointer, so task-commands activation mid-session moves
+  // the authorization target for every later proposal.
+  application.startInteractiveTask();
   const override = options.composers?.[name];
   if (override !== undefined) return override(application, workspace);
   if (name === "cline") {
@@ -73,7 +78,7 @@ export async function composeDriver(
       dispose: async () => undefined,
     };
   }
-  const runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskId);
+  const runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskCorrelation(application));
   return {
     label: "acp",
     session: runtime.session,

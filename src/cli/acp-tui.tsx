@@ -5,6 +5,7 @@ import { render } from "ink";
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
+import { activeTaskCorrelation } from "../application/task-commands.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui, type SessionConfigOption } from "../ui/tui.js";
@@ -27,9 +28,11 @@ import { resolveTuiWorkspace } from "./tui-args.js";
  */
 const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
 
-// One canonical session task: every tool proposal the agent makes is
-// authorized against it. Per-prompt task decomposition lives in the hub
-// follow-up, not here.
+// One canonical session task anchors the session at boot. W046: the driver
+// correlates lazily with the application's active-task pointer, so an
+// operator (via the task command port) can activate decomposed canonical
+// tasks mid-session and every later proposal authorizes against the new
+// active task; with no task IN_PROGRESS the correlation fails closed.
 const sessionTask: WorkflowTask = {
   id: taskId("ACP-SESSION"),
   title: "Stock-ACP coding session",
@@ -45,7 +48,7 @@ const application = new WorkflowApplication(
   workspace,
 );
 
-const runtime = await createConfiguredAcpRuntime(application, workspace, sessionTask.id);
+const runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskCorrelation(application));
 
 // Terminal-derived composer tint (OSC 11): must run before Ink owns stdin.
 const composerBackground = await detectTerminalBackground();

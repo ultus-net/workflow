@@ -74,7 +74,10 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #adapter: AcpHostAdapter;
   #workspace: string;
   #workflowSessionId: string;
-  #taskId: TaskId;
+  // W046: a fixed id (hub runs, reviewer, web sessions) or a lazy getter
+  // (interactive surfaces read the application's active-task pointer at
+  // proposal time, mirroring the Cline adapter's correlation).
+  #taskId: TaskId | (() => TaskId);
   #resumeFrom: string | undefined;
   #guard: WorkflowGuardProvider | undefined;
   #onSkillRead: ((skill: string) => void) | undefined;
@@ -93,7 +96,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     authorize: WorkflowApplication | ((action: ProposedToolAction) => PolicyDecision | Promise<PolicyDecision>);
     workspace: string;
     workspaceSessionId: string;
-    taskId: TaskId;
+    taskId: TaskId | (() => TaskId);
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
@@ -172,7 +175,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     authorize: WorkflowApplication | ((action: ProposedToolAction) => PolicyDecision | Promise<PolicyDecision>);
     workspace: string;
     workspaceSessionId: string;
-    taskId: TaskId;
+    taskId: TaskId | (() => TaskId);
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
@@ -407,7 +410,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
       correlation: {
         sessionId: this.#workflowSessionId,
         agentSessionId: this.#agentSessionId,
-        taskId: this.#taskId,
+        taskId: this.#correlatedTaskId(),
         toolName,
         // OpenCode titles edit-permission requests with the target path, so
         // the title-derived name can be unrecognized; the ACP kind field (the
@@ -454,7 +457,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     }
     const proposal = this.#adapter.proposalFromBeforeTool({
       sessionId: this.#workflowSessionId,
-      taskId: this.#taskId,
+      taskId: this.#correlatedTaskId(),
       toolCall: {
         name: toolName,
         kind: mutating ? "edit" : "read",
@@ -515,6 +518,15 @@ export class AcpSessionDriver implements CodingSessionDriver {
    * ACP kind field — the protocol's own discriminator — classifies the call
    * before the fail-closed default applies; unknown kinds still fail closed
    * to mutation. */
+  #correlatedTaskId(): TaskId {
+    // W046: lazy correlation — interactive surfaces re-read the application's
+    // active-task pointer at proposal time. A getter that throws (no active
+    // task, or the active task left IN_PROGRESS) fails the correlation, which
+    // the resolver and fs path surface as a fail-closed denial — the same
+    // posture as the Cline adapter's lazy correlation.
+    return typeof this.#taskId === "function" ? this.#taskId() : this.#taskId;
+  }
+
   static classify(toolName: string, kind?: string): ToolCapability {
     if (["read_file", "read_files", "list_files", "list_code_definition_names", "search_files", "search_codebase"].includes(toolName)) {
       return "read";
