@@ -13,10 +13,21 @@ import {
   HubReviewerRunner,
   parseReviewCoverage,
   parseReviewVerdict,
+  createGitCommitSource,
   createGitDiffSource,
   createGitStatusSource,
   type ReviewerAgentSessionFactory,
 } from "../src/integrations/hub-reviewer.js";
+import type { ReviewProvenanceStore } from "../src/integrations/review-provenance-store.js";
+import { deriveReviewCoverageManifest } from "../src/review/manifest.js";
+import { partitionReviewManifest } from "../src/review/partition.js";
+import {
+  reviewPromptDigest,
+  reviewRuleSetDigest,
+  type ReviewDisposition,
+  type ReviewProvenanceFingerprint,
+  type ReviewProvenanceRecord,
+} from "../src/review/provenance.js";
 
 /**
  * The hub-owned reviewer runner (plan Task A1): the hub spawns its own
@@ -126,6 +137,7 @@ async function runnerWith(
   reviewer: { factory: ReviewerAgentSessionFactory; prompts: string[]; disposed: number },
   diff: string | Error = "diff --git a/x b/x",
   status?: string | Error,
+  store?: ReviewProvenanceStore,
 ) {
   const base = setup();
   t.after(() => rmSync(base.workspace, { recursive: true, force: true }));
@@ -133,6 +145,7 @@ async function runnerWith(
     controller: base.controller,
     diffSource: stubDiff(diff),
     ...(status === undefined ? {} : { statusSource: stubStatus(status) }),
+    ...(store === undefined ? {} : { provenanceStore: store }),
     spawnReviewer: reviewer.factory,
   });
   return { ...base, runner };
@@ -483,4 +496,219 @@ test("a single-component scope keeps the single-session flow (no integration rev
   assert.equal(reviewer.prompts.length, 1);
   assert.ok(reviewer.prompts[0]!.includes("### Review Coverage Manifest (deterministic scope):"));
   assert.ok(!reviewer.prompts[0]!.includes("Integration review"));
+});
+
+// W041: review provenance and replay. Every decision is journaled bound to
+// its fingerprint, and interrupted partitioned reviews resume only units
+// whose fingerprint still matches exactly.
+
+function stubProvenanceStore() {
+  const records: ReviewProvenanceRecord[] = [];
+  const appended: ReviewProvenanceRecord[] = [];
+  const store: ReviewProvenanceStore = {
+    async append(record) {
+      records.push(record);
+      appended.push(record);
+    },
+    async records() {
+      return [...records];
+    },
+  };
+  return { store, appended, seed: (record: ReviewProvenanceRecord) => records.push(record) };
+}
+
+function multiFingerprint(taskPrompt?: string, overrides: Partial<ReviewProvenanceFingerprint> = {}): ReviewProvenanceFingerprint {
+  const manifest = deriveReviewCoverageManifest({ statusOutput: STATUS_MULTI });
+  const partition = partitionReviewManifest(manifest);
+  return {
+    commitHash: undefined,
+    promptDigest: reviewPromptDigest(taskPrompt),
+    manifestDigest: manifest.digest,
+    partitionDigest: partition.digest,
+    ruleSetDigest: reviewRuleSetDigest(),
+    ...overrides,
+  };
+}
+
+function seedRecord(
+  workspace: string,
+  inspectedUnit: string,
+  covered: readonly string[],
+  fingerprint: ReviewProvenanceFingerprint,
+  disposition: ReviewDisposition = "approved",
+): ReviewProvenanceRecord {
+  return {
+    version: 1,
+    workspace,
+    fingerprint,
+    reviewer: "schedule:hub-reviewer-prior",
+    inspectedUnits: [inspectedUnit],
+    coveredPaths: covered,
+    findings: "prior unit approval",
+    verification: ["axes: 3/5"],
+    disposition,
+    recordedAt: new Date().toISOString(),
+  };
+}
+
+const UNIT1_APPROVED = `[APPROVE]\n${AXES_SUMMARY}\n[COVERAGE] src/integrations/hub-reviewer.ts, test/hub-reviewer.test.ts`;
+const UNIT2_APPROVED = `[APPROVE]\n${AXES_SUMMARY}\n[COVERAGE] src/ui/web.ts`;
+const INTEGRATION_APPROVED = `[APPROVE]\n${AXES_SUMMARY}\n[COVERAGE] src/integrations, src/ui`;
+
+test("the single-session flow journals the manifest decision before recording it", async (t) => {
+  const reviewer = stubReviewer(`[APPROVE]\n${AXES_SUMMARY}\n[COVERAGE] src/a.ts, src/b.ts`);
+  const provenance = stubProvenanceStore();
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_TWO, provenance.store);
+  await controller.begin({ runId: "author-30", title: "Author run", workspace, requiresReview: true });
+
+  const result = await runner.reviewRun({ runId: "author-30", workspace });
+
+  assert.equal(result.verdict, "approved");
+  assert.equal(provenance.appended.length, 1);
+  const record = provenance.appended[0]!;
+  assert.equal(record.disposition, "approved");
+  assert.deepEqual(record.inspectedUnits, ["manifest"]);
+  assert.deepEqual(record.coveredPaths, ["src/a.ts", "src/b.ts"]);
+  assert.equal(record.workspace, workspace);
+  assert.equal(record.fingerprint.manifestDigest, deriveReviewCoverageManifest({ statusOutput: STATUS_TWO }).digest);
+  assert.ok(record.verification.some((fact) => fact.startsWith("axes: ")));
+  assert.ok(record.verification.includes("coverage gaps: 0"));
+});
+
+test("a multi-unit review journals per-unit, integration, and run-level records", async (t) => {
+  const reviewer = stubSequenceReviewer([UNIT1_APPROVED, UNIT2_APPROVED, INTEGRATION_APPROVED]);
+  const provenance = stubProvenanceStore();
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI, provenance.store);
+  await controller.begin({ runId: "author-31", title: "Author run", workspace, requiresReview: true });
+
+  await runner.reviewRun({ runId: "author-31", workspace });
+
+  assert.equal(provenance.appended.length, 4);
+  assert.deepEqual(provenance.appended[0]!.inspectedUnits, ["src/integrations"]);
+  assert.equal(provenance.appended[0]!.disposition, "approved");
+  assert.deepEqual(provenance.appended[1]!.inspectedUnits, ["src/ui"]);
+  assert.deepEqual(provenance.appended[2]!.inspectedUnits, ["integration"]);
+  const runLevel = provenance.appended[3]!;
+  assert.deepEqual(runLevel.inspectedUnits, ["src/integrations", "src/ui", "integration"]);
+  assert.deepEqual(runLevel.coveredPaths, [
+    "src/integrations/hub-reviewer.ts",
+    "test/hub-reviewer.test.ts",
+    "src/ui/web.ts",
+  ]);
+  assert.equal(runLevel.disposition, "approved");
+  assert.ok(runLevel.verification.includes("resumed from provenance: 0"));
+});
+
+test("units with matching-fingerprint approvals resume; only the rest run fresh sessions", async (t) => {
+  const reviewer = stubSequenceReviewer([UNIT2_APPROVED, INTEGRATION_APPROVED]);
+  const provenance = stubProvenanceStore();
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI, provenance.store);
+  provenance.seed(seedRecord(workspace, "src/integrations", ["src/integrations/hub-reviewer.ts", "test/hub-reviewer.test.ts"], multiFingerprint()));
+  await controller.begin({ runId: "author-32", title: "Author run", workspace, requiresReview: true });
+
+  const result = await runner.reviewRun({ runId: "author-32", workspace });
+
+  assert.equal(result.verdict, "approved");
+  // Unit 1 resumed from provenance: only unit 2 + integration spawned.
+  assert.equal(reviewer.prompts.length, 2);
+  assert.ok(reviewer.prompts[0]!.includes("Review unit `src/ui`"));
+  assert.ok(result.summary.includes("Resumed 1 unit review(s) from provenance at an identical fingerprint."));
+  const runLevel = provenance.appended.at(-1)!;
+  assert.ok(runLevel.verification.includes("resumed from provenance: 1"));
+});
+
+test("a fully-resumed review approves by pure replay with zero reviewer sessions", async (t) => {
+  const reviewer = stubSequenceReviewer([APPROVED_MESSAGE]);
+  const provenance = stubProvenanceStore();
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI, provenance.store);
+  provenance.seed(seedRecord(workspace, "src/integrations", ["src/integrations/hub-reviewer.ts", "test/hub-reviewer.test.ts"], multiFingerprint()));
+  provenance.seed(seedRecord(workspace, "src/ui", ["src/ui/web.ts"], multiFingerprint()));
+  provenance.seed(seedRecord(workspace, "integration", ["src/integrations", "src/ui"], multiFingerprint()));
+  await controller.begin({ runId: "author-33", title: "Author run", workspace, requiresReview: true });
+
+  const result = await runner.reviewRun({ runId: "author-33", workspace });
+
+  assert.equal(result.verdict, "approved");
+  assert.equal(result.recorded, true);
+  assert.equal(reviewer.prompts.length, 0);
+  assert.ok(result.summary.includes("Resumed 3 unit review(s)"));
+  assert.ok(provenance.appended.at(-1)!.verification.includes("resumed from provenance: 3"));
+});
+
+test("stale fingerprints and foreign workspaces resume nothing", async (t) => {
+  const reviewer = stubSequenceReviewer([UNIT1_APPROVED, UNIT2_APPROVED, INTEGRATION_APPROVED]);
+
+  const stale = stubProvenanceStore();
+  const staleRun = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI, stale.store);
+  staleRun.controller.begin({ runId: "author-34", title: "Author run", workspace: staleRun.workspace, requiresReview: true });
+  // Same shape, different manifest digest: a real mutation happened since.
+  stale.seed(seedRecord(staleRun.workspace, "src/integrations", ["src/integrations/hub-reviewer.ts", "test/hub-reviewer.test.ts"], multiFingerprint(undefined, { manifestDigest: "changed".repeat(8) })));
+  await staleRun.runner.reviewRun({ runId: "author-34", workspace: staleRun.workspace });
+  assert.equal(reviewer.prompts.length, 3);
+
+  const foreign = stubProvenanceStore();
+  const foreignRun = await runnerWith(t, stubSequenceReviewer([UNIT1_APPROVED, UNIT2_APPROVED, INTEGRATION_APPROVED]), "diff --git a/x b/x", STATUS_MULTI, foreign.store);
+  foreignRun.controller.begin({ runId: "author-35", title: "Author run", workspace: foreignRun.workspace, requiresReview: true });
+  // Identical fingerprint, different workspace: a clone's approval never applies here.
+  foreign.seed(seedRecord("/elsewhere", "src/integrations", ["src/integrations/hub-reviewer.ts", "test/hub-reviewer.test.ts"], multiFingerprint()));
+  await foreignRun.runner.reviewRun({ runId: "author-35", workspace: foreignRun.workspace });
+  assert.ok(foreignRun.runner !== staleRun.runner);
+});
+
+test("an interrupted partitioned review journals progress and resumes it on the next run", async (t) => {
+  const crashed = stubSequenceReviewer([UNIT1_APPROVED, new Error("reviewer agent crashed")]);
+  const provenance = stubProvenanceStore();
+  const { controller, workspace, runner } = await runnerWith(t, crashed, "diff --git a/x b/x", STATUS_MULTI, provenance.store);
+  await controller.begin({ runId: "author-36", title: "Author run", workspace, requiresReview: true });
+
+  await assert.rejects(runner.reviewRun({ runId: "author-36", workspace }), /reviewer agent crashed/);
+  // Unit 1's approval and the interruption are both journaled.
+  assert.deepEqual(provenance.appended[0]!.inspectedUnits, ["src/integrations"]);
+  assert.equal(provenance.appended.at(-1)!.disposition, "interrupted");
+  assert.ok(provenance.appended.at(-1)!.findings.includes("reviewer agent crashed"));
+
+  // The next run resumes the approved unit and only reviews what remains.
+  const resumed = stubSequenceReviewer([UNIT2_APPROVED, INTEGRATION_APPROVED]);
+  const runner2 = new HubReviewerRunner({
+    controller,
+    diffSource: stubDiff("diff --git a/x b/x"),
+    statusSource: stubStatus(STATUS_MULTI),
+    provenanceStore: provenance.store,
+    spawnReviewer: resumed.factory,
+  });
+  const result = await runner2.reviewRun({ runId: "author-36", workspace });
+
+  assert.equal(result.verdict, "approved");
+  assert.equal(resumed.prompts.length, 2);
+  assert.ok(result.summary.includes("Resumed 1 unit review(s)"));
+});
+
+test("a rejected unit journals the fail-closed decision", async (t) => {
+  const reviewer = stubSequenceReviewer([UNIT1_APPROVED, `[REQUEST_CHANGES]\nP1 regression in test integrity.`]);
+  const provenance = stubProvenanceStore();
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI, provenance.store);
+  await controller.begin({ runId: "author-37", title: "Author run", workspace, requiresReview: true });
+
+  const result = await runner.reviewRun({ runId: "author-37", workspace });
+
+  assert.equal(result.verdict, "changes_requested");
+  const runLevel = provenance.appended.at(-1)!;
+  assert.equal(runLevel.disposition, "changes_requested");
+  assert.deepEqual(runLevel.inspectedUnits, ["src/ui"]);
+  assert.ok(runLevel.findings.includes("changes requested by unit review"));
+});
+
+test("createGitCommitSource trims HEAD and fails soft on error", async () => {
+  const calls: { command: string; cwd: string }[] = [];
+  const source = createGitCommitSource(async (command, cwd) => {
+    calls.push({ command, cwd });
+    return "abc123\n";
+  });
+  assert.equal(await source("/ws"), "abc123");
+  assert.deepEqual(calls, [{ command: "git rev-parse HEAD", cwd: "/ws" }]);
+
+  const failing = createGitCommitSource(async () => {
+    throw new Error("exit 128");
+  });
+  assert.equal(await failing("/ws"), undefined);
 });
