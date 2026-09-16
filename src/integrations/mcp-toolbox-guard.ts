@@ -154,7 +154,19 @@ export function guardPolicyEvidence(decision: GuardDecision, mutationEpoch: numb
 // approval surface (run_commands, replace_in_file, delete_file, ...), and the
 // OpenCode tool surface (edit, write, patch, bash, webfetch).
 const SHELL_TOOLS = new Set(["execute_command", "bash", "run_commands", "shell"]);
-const FILE_WRITE_TOOLS = new Set(["write_to_file", "new_file_template", "write_file", "editor", "replace_in_file", "edit", "write"]);
+const FILE_WRITE_TOOLS = new Set([
+  "write_to_file",
+  "new_file_template",
+  "write_file",
+  "editor",
+  "replace_in_file",
+  "edit",
+  "write",
+  // The hub-implemented ACP fs server (agents that delegate file operations
+  // to the client — OpenCode `--pure`): a delegated write must hit the same
+  // guard policy as a direct one.
+  "fs/write_text_file",
+]);
 const PATCH_TOOLS = new Set(["apply_patch", "patch"]);
 const DELETE_TOOLS = new Set(["delete_file"]);
 const NETWORK_TOOLS = new Set(["webfetch", "web_fetch", "fetch_web_content", "websearch", "web_search"]);

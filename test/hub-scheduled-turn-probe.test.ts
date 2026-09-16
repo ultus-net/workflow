@@ -222,5 +222,17 @@ test(
     };
     console.log(JSON.stringify(evidence, null, 2));
     assert.ok(evidence.tasks.length > 0, "the scheduled run must have produced a task");
+    // The chain's closing assertions: the turn's mutation landed, the reviewer
+    // approved with a recorded verdict, and no gate blocked the run. With the
+    // run task's required evidence satisfied (reviewer approval + the test
+    // evidence recorded by the verify flow), the verified run is hidden from
+    // the interactive snapshot — the observable closing evidence is the
+    // recorded verdict plus the absence of any blocking reason.
+    assert.ok(evidence.noteContent.includes("after"), "the scheduled turn's mutation must land in the workspace");
+    const runVerdict = Object.values(body.gateObservability?.reviewOutcomes ?? {})[0];
+    assert.ok(runVerdict !== undefined, "the hub-owned reviewer must have produced a recorded verdict");
+    assert.equal(runVerdict.verdict, "approved");
+    assert.equal(runVerdict.recorded, true);
+    assert.deepEqual(Object.keys(body.gateObservability?.blockingReasons ?? {}).length, 0, "no gate may block the closed chain");
   },
 );

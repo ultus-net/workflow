@@ -1,5 +1,6 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { readFile, readdir, writeFile } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 
 import type { CodingSessionDriver, CodingSessionEvent, CodingSessionImage } from "../application/coding-session.js";
 import type { TaskId, PolicyDecision } from "../kernel/contracts.js";
@@ -443,6 +444,14 @@ export class AcpSessionDriver implements CodingSessionDriver {
       throw new TypeError(`ACP ${toolName} request has no path`);
     }
     const path = params.path;
+    // The authorized subject and the performed path must be the identical
+    // string: a relative path would be workspace-joined for authorization
+    // but resolved against the hub process's cwd for the actual operation —
+    // a scoping divergence. The ACP fs server spec uses absolute paths;
+    // anything else fails closed here.
+    if (!isAbsolute(path)) {
+      throw new TypeError(`ACP ${toolName} request path must be absolute: ${path}`);
+    }
     const proposal = this.#adapter.proposalFromBeforeTool({
       sessionId: this.#workflowSessionId,
       taskId: this.#taskId,
