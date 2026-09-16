@@ -13,6 +13,7 @@ import { resolve } from "node:path";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui } from "../ui/tui.js";
+import { detectTerminalBackground } from "../ui/terminal-theme.js";
 import { createCheckpointLedger } from "../pedagogy/checkpoints.js";
 import { applySkillGating, resolveSkillsLevelMap } from "../pedagogy/skill-gating.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
@@ -125,6 +126,9 @@ if (hub !== undefined) {
   // malformed map refuses startup (fail-closed) rather than running ungated.
   const skillsLevelMap = resolveSkillsLevelMap(process.env.SKILLS_MCP_DIR, homedir());
 
+  // Terminal-derived composer tint (OSC 11): must run before Ink owns stdin.
+  const composerBackground = await detectTerminalBackground();
+
   const { waitUntilExit } = render(
     React.createElement(WorkflowTui, {
       application,
@@ -140,6 +144,7 @@ if (hub !== undefined) {
         application.setPedagogyGate(createCheckpointLedger(mode));
         applySkillGating(application, mode, skillsLevelMap);
       },
+      ...(composerBackground === undefined ? {} : { composerBackground }),
     }),
   );
   await waitUntilExit();

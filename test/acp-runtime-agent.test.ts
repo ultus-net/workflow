@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { acpAgentKind } from "../src/integrations/acp-runtime.js";
+import { acpAgentKind, resolveSkillsMountFor } from "../src/integrations/acp-runtime.js";
 import { METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
 import {
   DEFAULT_OPENCODE_MODEL,
@@ -68,6 +68,20 @@ test("meteredOpencodeConfig honors an explicit model override", () => {
   assert.ok("anthropic/claude-sonnet-4" in (provider.models as Record<string, unknown>));
 });
 
+test("meteredOpencodeConfig mounts the skills delivery path only when composed", () => {
+  const withoutSkills = meteredOpencodeConfig({ proxyUrl: "http://127.0.0.1:61002" });
+  assert.equal("mcp" in withoutSkills, false, "no skills mount means no mcp block");
+  const withSkills = meteredOpencodeConfig({
+    proxyUrl: "http://127.0.0.1:61002",
+    skills: { serverScript: "/repo/mcp-toolbox/apps/skills-mcp/dist/server.js", skillsDir: "/home/op/.agents/skills" },
+  });
+  const mcp = withSkills.mcp as Record<string, Record<string, unknown>>;
+  const mount = mcp["skills-mcp"]!;
+  assert.equal(mount.type, "local");
+  assert.deepEqual(mount.command, [process.execPath, "/repo/mcp-toolbox/apps/skills-mcp/dist/server.js"]);
+  assert.deepEqual(mount.environment, { SKILLS_MCP_DIR: "/home/op/.agents/skills" });
+});
+
 test("resolveOpencodeLaunch fails closed on missing override and missing PATH binary", () => {
   withEnv({ WORKFLOW_OPENCODE_BIN: undefined }, () => {
     assert.throws(
@@ -89,4 +103,27 @@ test("resolveOpencodeLaunch fails closed on missing override and missing PATH bi
   });
   assert.equal(resolution.executable, "/real:/opt/opencode");
   assert.equal(resolveOpencodeLaunch({ opencodeOnPath: "/usr/bin/opencode" }).executable, "/usr/bin/opencode");
+});
+
+test("resolveSkillsMountFor composes the delivery mount from the shared skills dir semantics", () => {
+  const exists = (path: string) =>
+    path === "/repo/mcp-toolbox/apps/skills-mcp/dist/server.js" ||
+    path === "/home/op/.agents/skills" ||
+    path === "/srv/skills";
+  const base = { root: "/repo", home: "/home/op", exists };
+  // Default: SKILLS_MCP_DIR absent → ~/.agents/skills (the same default
+  // skills-mcp and the hub's pedagogy gating use).
+  assert.deepEqual(resolveSkillsMountFor({ ...base, envSkillsDir: undefined }), {
+    serverScript: "/repo/mcp-toolbox/apps/skills-mcp/dist/server.js",
+    skillsDir: "/home/op/.agents/skills",
+  });
+  // Explicit override wins.
+  assert.equal(resolveSkillsMountFor({ ...base, envSkillsDir: "/srv/skills" })?.skillsDir, "/srv/skills");
+  // Whitespace-only override falls to the default, mirroring the gating
+  // resolver's trim semantics.
+  assert.equal(resolveSkillsMountFor({ ...base, envSkillsDir: "   " })?.skillsDir, "/home/op/.agents/skills");
+  // Missing server build or missing skills dir compose to no mount.
+  assert.equal(resolveSkillsMountFor({ ...base, envSkillsDir: undefined, exists: () => false }), undefined);
+  const noDir = (path: string) => path === "/repo/mcp-toolbox/apps/skills-mcp/dist/server.js";
+  assert.equal(resolveSkillsMountFor({ ...base, envSkillsDir: undefined, exists: noDir }), undefined);
 });

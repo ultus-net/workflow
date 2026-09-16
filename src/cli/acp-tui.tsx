@@ -8,6 +8,7 @@ import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui, type SessionConfigOption } from "../ui/tui.js";
+import { detectTerminalBackground } from "../ui/terminal-theme.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 
 /**
@@ -45,6 +46,9 @@ const application = new WorkflowApplication(
 
 const runtime = await createConfiguredAcpRuntime(application, workspace, sessionTask.id);
 
+// Terminal-derived composer tint (OSC 11): must run before Ink owns stdin.
+const composerBackground = await detectTerminalBackground();
+
 const { waitUntilExit } = render(
   React.createElement(WorkflowTui, {
     application,
@@ -61,6 +65,7 @@ const { waitUntilExit } = render(
         ? undefined
         : `${metrics.totalTokens} tokens · $${metrics.costUsd.toFixed(4)}`;
     },
+    ...(composerBackground === undefined ? {} : { composerBackground }),
   }),
 );
 let renderError: unknown;

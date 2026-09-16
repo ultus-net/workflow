@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { ProposedToolAction } from "../application/host.js";
@@ -83,9 +83,20 @@ async function createOpencodeRuntime(
   const configDir = join(scratchHome, `config.${process.pid}.${randomUUID()}`);
   try {
     mkdirSync(join(configDir, "opencode"), { recursive: true, mode: 0o700 });
+    // Plan Task F1: mount the skills delivery path into the hub-owned config
+    // when the operator runs a skills directory (the same dir skills-mcp and
+    // the hub's pedagogy gating read: SKILLS_MCP_DIR ?? ~/.agents/skills).
+    // The mount is the single delivery path the skill precondition journals
+    // against; absent server or directory means no delivery to mount (levels
+    // gating composes to no-ops without the dir, matching the TUI surfaces).
+    const skillsMount = resolveSkillsMount();
     writeFileSync(
       join(configDir, "opencode", "opencode.json"),
-      JSON.stringify(meteredOpencodeConfig({ proxyUrl: proxy.url, model: process.env.WORKFLOW_OPENCODE_MODEL })),
+      JSON.stringify(meteredOpencodeConfig({
+        proxyUrl: proxy.url,
+        model: process.env.WORKFLOW_OPENCODE_MODEL,
+        ...(skillsMount === undefined ? {} : { skills: skillsMount }),
+      })),
       { encoding: "utf8", mode: 0o600 },
     );
     const opencode = resolveOpencodeLaunch({
@@ -100,6 +111,30 @@ async function createOpencodeRuntime(
         args: ["acp", "--pure"],
         workspace,
         home: scratchHome,
+        // The delivery mount's runtime dependencies must stay readable inside
+        // the boundary — the contained agent spawns the skills server, whose
+        // first imports reach siblings in its dist directory (vendor/,
+        // screening.js, skills.js), then packages through node_modules. pnpm's
+        // layout needs BOTH levels: the app's node_modules holds the package
+        // symlinks, and their targets live in the .pnpm store under the
+        // toolbox-level node_modules one directory further up — binding only
+        // the app level leaves every symlink dangling inside the boundary
+        // (verified live: ERR_MODULE_NOT_FOUND for @modelcontextprotocol/sdk).
+        // Directories are bound AS GIVEN so the relative symlinks keep
+        // resolving; the skills directory is dual-bound at its realpath too,
+        // mirroring the executable bind, so symlinked layouts resolve by
+        // either name.
+        ...(skillsMount === undefined
+          ? {}
+          : {
+              readablePaths: [
+                dirname(skillsMount.serverScript),
+                resolve(dirname(skillsMount.serverScript), "..", "node_modules"),
+                resolve(dirname(skillsMount.serverScript), "..", "..", "..", "node_modules"),
+                skillsMount.skillsDir,
+                realpathSync(skillsMount.skillsDir),
+              ],
+            }),
         environment: {
           // The placeholder credential rides the 0600 per-runtime config file
           // (same posture as the Cline providers.json); the real upstream key
@@ -264,6 +299,39 @@ function readKeyFile(): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Plan Task F1: resolves the skills-mcp delivery mount for the lead-agent
+ * runtime. The skills directory is the operator-managed surface skills-mcp
+ * and the hub's pedagogy gating both read (`SKILLS_MCP_DIR`, default
+ * `~/.agents/skills`) — one config source for availability (the mount) and
+ * requirements (levels.json). Absent server build or absent directory means
+ * nothing to mount: no delivery path exists, and level gating composes to
+ * no-ops without the directory, matching the TUI surfaces.
+ */
+export function resolveSkillsMount(): { readonly serverScript: string; readonly skillsDir: string } | undefined {
+  return resolveSkillsMountFor({
+    root: resolve(fileURLToPath(import.meta.url), "..", "..", ".."),
+    envSkillsDir: process.env.SKILLS_MCP_DIR,
+    home: homedir(),
+  });
+}
+
+export function resolveSkillsMountFor(options: {
+  readonly root: string;
+  readonly envSkillsDir: string | undefined;
+  readonly home: string;
+  readonly exists?: (path: string) => boolean;
+}): { readonly serverScript: string; readonly skillsDir: string } | undefined {
+  const exists = options.exists ?? existsSync;
+  const serverScript = resolve(options.root, "mcp-toolbox", "apps", "skills-mcp", "dist", "server.js");
+  // Trim-to-default mirrors the hub's gating resolver (skill-gating.ts
+  // resolveSkillsLevelMap): a whitespace-only override lands both sides on
+  // the same default directory.
+  const skillsDir = resolve(options.envSkillsDir?.trim() || join(options.home, ".agents", "skills"));
+  if (!exists(serverScript) || !exists(skillsDir)) return undefined;
+  return { serverScript, skillsDir };
 }
 
 /**

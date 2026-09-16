@@ -258,9 +258,9 @@ model proposes -> Workflow authorizes -> tool acts -> environment supplies evide
 3. **LSP Port (`src/adapters/lsp.ts`):**
    - Implements a host-neutral JSON-RPC client over stdio.
    - Normalizes diagnostics into pedagogy-oriented diagnostic objects (`DiagnosticInput`). **Epoch-bound `Evidence` normalization is not implemented** (see W032).
-4. **TUI Presentation (`src/ui/tui.tsx`):**
-    - Status bar shows current mode: `[Mode: Socratic Tutor]`, with `^P menu` as the options hint.
-   - Dedicated interactive panel displays Decision Briefs, Socratic Questions, and LSP Diagnostic Explanations.
+ 4. **TUI Presentation (`src/ui/tui.tsx`):**
+    - Header frame shows the current mode as `Mode: Socratic Tutor`, with `keys: / menu …` as the options hint.
+    - Dedicated interactive panel displays Decision Briefs, Socratic Questions, and LSP Diagnostic Explanations.
     - `/` or Ctrl+P opens the Workflow options menu for mode, learner profile, symbol inspect, and style controls; ordinary prompt characters are never treated as hidden shortcuts.
     - Ctrl+W toggles Workflow details directly.
 
