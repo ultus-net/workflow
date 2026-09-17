@@ -179,34 +179,36 @@ export class WebSessionManager {
     this.#permissionBroker?.cancelPending("session switched away");
     await previous?.runtime.dispose();
     try {
-      const runtime = await this.#factory(resumeFrom);
+            const runtime = await this.#factory(resumeFrom);
       const channel = new SessionChannel(
         runtime.session,
         runtime.driver,
         runtime.usage?.bind(runtime),
         this.#permissionBroker,
       );
-      // Eagerly load the resumed session so its replayed history reaches the
-      // channel before the UI polls — otherwise the transcript looks empty
-      // until the first prompt. The subscription lasts only for the load.
-      if (resumeFrom !== undefined) {
-        const unsubscribe = runtime.driver.subscribe((event) => channel.ingest(event));
-        let timer: NodeJS.Timeout | undefined;
-        try {
-          // Bounded wait: a hung session/load must not pend the switch queue
-          // forever. The session stays usable; the replay simply never arrived.
-          // The timer is always cleared so it never outlives the load itself.
-          const loading = runtime.driver.connect();
-          await Promise.race([
-            loading,
-            new Promise<void>((resolve) => {
-              timer = setTimeout(resolve, RESUME_LOAD_TIMEOUT_MS);
-            }),
-          ]);
-        } finally {
-          if (timer !== undefined) clearTimeout(timer);
-          unsubscribe();
-        }
+      // Eagerly establish the ACP session on every switch, not only on
+      // resume: a fresh session's connect() captures the agent's advertised
+      // config (model/effort/mode options) so the pickers are populated
+      // before the first prompt instead of staying empty until then. On
+      // resume the same connect replays history into the channel through the
+      // load subscription. The subscription lasts only for the connect.
+      const unsubscribe = runtime.driver.subscribe((event) => channel.ingest(event));
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        // Bounded wait: a hung session/new or session/load must not pend the
+        // switch queue forever. The session stays usable; the config/replay
+        // simply never arrived.
+        // The timer is always cleared so it never outlives the connect itself.
+        const loading = runtime.driver.connect();
+        await Promise.race([
+          loading,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, RESUME_LOAD_TIMEOUT_MS);
+          }),
+        ]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+        unsubscribe();
       }
       this.#active = { record, runtime, channel };
       this.#persist();

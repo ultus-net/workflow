@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 
 import type { WebConfigOption } from "../web-config-options.js";
-import { formatTokens, withCurrentChoice } from "./presenters.js";
+import { ConfigField } from "./config-field.js";
+import { formatTokens } from "./presenters.js";
 import { useSessionState, useSessionUsage } from "./runtime.js";
 import type { ThemeChoice } from "./theme.js";
 
@@ -236,24 +237,15 @@ function AgentOptionsSection({ options, setOption }: {
             />
           );
         }
-        const current = String(option.currentValue);
         return (
           <Row
             key={option.id}
             label={option.name}
             description={option.description}
             control={
-              <select
-                className="settings-select"
-                value={current}
-                aria-label={option.name}
-                title={option.description}
-                onChange={(event) => setOption(option.id, event.target.value)}
-              >
-                {withCurrentChoice(option).map((choice) => (
-                  <option value={choice.value} key={choice.value} title={choice.description}>{choice.name}</option>
-                ))}
-              </select>
+              <span className="settings-field">
+                <ConfigField option={option} setOption={setOption} />
+              </span>
             }
           />
         );

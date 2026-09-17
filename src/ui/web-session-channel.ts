@@ -72,6 +72,8 @@ export function isPromptRequest(value: unknown): value is { prompt: string; imag
 export interface ConfigCapableDriver {
   config(): AcpSessionConfig | undefined;
   setConfigOption(configId: string, value: AcpConfigOptionValue): Promise<AcpSessionConfig>;
+  /** Agent-reported context window size (ACP usage_update), when advertised. */
+  contextWindowTokens?(): number | undefined;
 }
 
 /**
@@ -116,9 +118,14 @@ export class SessionChannel {
     return this.#agentTitle;
   }
 
-  /** Cumulative metering-proxy metrics for the session's runtime, when metered. */
-  usage(): ModelUsageMetrics | undefined {
-    return this.#usage?.();
+  /** Cumulative metering-proxy metrics for the session's runtime, when metered.
+   * The agent-reported context window (ACP usage_update) rides along so the
+   * surface can show how full the window is. */
+  usage(): (ModelUsageMetrics & { readonly contextWindowTokens?: number }) | undefined {
+    const metrics = this.#usage?.();
+    if (metrics === undefined) return undefined;
+    const contextWindowTokens = this.#driver?.contextWindowTokens?.();
+    return contextWindowTokens === undefined ? metrics : { ...metrics, contextWindowTokens };
   }
 
   /** Operator permission-asking mode (auto when no broker is configured). */

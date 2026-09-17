@@ -80,6 +80,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #canLoadSession = false;
   #agentSessionId?: string;
   #sessionConfig?: AcpSessionConfig;
+  #contextWindowTokens?: number;
   #toolTitles = new Map<string, string>();
   #toolCalls = new Map<string, { title: string; toolKind: string; subjects: string[]; rawInput?: string }>();
   #assistant: string[] = [];
@@ -132,6 +133,13 @@ export class AcpSessionDriver implements CodingSessionDriver {
           return;
         }
         this.#sessionConfig = { ...this.#sessionConfig, configOptions: update.update.configOptions };
+      }
+      if (update.update.sessionUpdate === "usage_update") {
+        // ACP usage_update carries the context window size; capture it so
+        // surfaces can show how full the window is. Never enters the
+        // transcript — it is a meter, not a message.
+        const size = (update.update as { size?: unknown }).size;
+        if (typeof size === "number" && Number.isFinite(size) && size > 0) this.#contextWindowTokens = size;
       }
       const event = this.#project(update, this.#assistant);
       if (event !== undefined) {
@@ -250,6 +258,11 @@ export class AcpSessionDriver implements CodingSessionDriver {
   /** Config captured from session/new (undefined until the first session is created). */
   config(): AcpSessionConfig | undefined {
     return this.#sessionConfig;
+  }
+
+  /** Latest agent-reported context window size in tokens (ACP usage_update); undefined when the agent does not report it. */
+  contextWindowTokens(): number | undefined {
+    return this.#contextWindowTokens;
   }
 
   /** Mutate configuration on the existing ACP session and retain the agent's complete returned state. */

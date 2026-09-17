@@ -8,9 +8,10 @@ import {
 } from "@assistant-ui/react";
 
 import { ActionPart, AttentionPart, CompletionPart, OutcomePart, PlanPart, ThinkingPart, ToolPart } from "./message-parts.js";
+import { ConfigField } from "./config-field.js";
 import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
-import { describeActivity, formatElapsed, formatRelativeTime, formatTokens, withCurrentChoice } from "./presenters.js";
+import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } from "./presenters.js";
 import { useSessionState, useSessionUsage } from "./runtime.js";
 import { SettingsDialog } from "./settings-dialog.js";
 import { useTheme } from "./theme.js";
@@ -150,9 +151,6 @@ function clearUnusedSessions(refresh: () => Promise<void>): void {
   }).then(() => refresh());
 }
 
-/** Choice shape from the shared config-option projection (web-config-options). */
-type ConfigChoice = NonNullable<WebConfigOption["choices"]>[number];
-
 type PermissionDecision = "allow_once" | "allow_always" | "reject_once" | "reject_always";
 
 interface PendingPermission {
@@ -275,8 +273,10 @@ function useConfigOptions() {
   return { options, setOption };
 }
 
-/** Categories promoted to composer-adjacent pickers; everything else lives in the popover. */
-const COMPOSER_CATEGORIES: readonly string[] = ["model", "thought_level", "mode"];
+/** Categories promoted to composer-adjacent chips; everything else lives in
+ * the settings dialog. Provider rides alongside model — the agent's
+ * provider/model/effort/mode are the controls an operator reaches for most. */
+const COMPOSER_CATEGORIES: readonly string[] = ["provider", "model", "thought_level", "mode"];
 
 function GearIcon() {
   return (
@@ -287,276 +287,23 @@ function GearIcon() {
   );
 }
 
-function ConfigSelect({ option, setOption, labelledBy }: {
-  readonly option: WebConfigOption;
-  readonly setOption: (id: string, value: string | boolean) => void;
-  readonly labelledBy?: string | undefined;
-}) {
-  const current = String(option.currentValue);
-  return (
-    <select
-      value={current}
-      onChange={(event) => setOption(option.id, event.target.value)}
-      aria-label={labelledBy === undefined ? option.name : undefined}
-      aria-labelledby={labelledBy}
-      title={option.description}
-    >
-      {withCurrentChoice(option).map((choice) => (
-        <option value={choice.value} key={choice.value} title={choice.description}>{choice.name}</option>
-      ))}
-    </select>
-  );
-}
-
-/** Long lists get a searchable combobox; short lists keep the native select. */
-const COMBOBOX_MIN_CHOICES = 8;
-
-/** Per-option favourite choices, persisted locally (presentation-only; never sent to the agent). */
-function useFavourites(optionId: string): readonly [readonly string[], (value: string) => void] {
-  const key = `workflow.config-favourites.${optionId}`;
-  const [favourites, setFavourites] = useState<readonly string[]>(() => {
-    try {
-      const stored: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
-      return Array.isArray(stored) ? stored.filter((entry): entry is string => typeof entry === "string") : [];
-    } catch {
-      return [];
-    }
-  });
-  const toggle = useCallback((value: string): void => {
-    setFavourites((previous) => {
-      const next = previous.includes(value) ? previous.filter((entry) => entry !== value) : [...previous, value];
-      try {
-        localStorage.setItem(key, JSON.stringify(next));
-      } catch {
-        // Private browsing or quota: favourites stay session-local.
-      }
-      return next;
-    });
-  }, [key]);
-  return [favourites, toggle];
-}
-
-function ChevronIcon() {
-  return (
-    <svg viewBox="0 0 10 6" width="10" height="6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
-      <path d="M1 1l4 4 4-4" />
-    </svg>
-  );
-}
-
-function ConfigCombobox({ option, setOption, labelledBy }: {
-  readonly option: WebConfigOption;
-  readonly setOption: (id: string, value: string | boolean) => void;
-  readonly labelledBy?: string | undefined;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
-  const rootRef = useRef<HTMLSpanElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLUListElement>(null);
-  const [favourites, toggleFavourite] = useFavourites(option.id);
-
-  const current = String(option.currentValue);
-  const all = withCurrentChoice(option);
-  const currentName = all.find((choice) => choice.value === current)?.name ?? current;
-  const needle = query.trim().toLowerCase();
-  const filtered = needle === ""
-    ? all
-    : all.filter((choice) => choice.name.toLowerCase().includes(needle) || choice.value.toLowerCase().includes(needle));
-  const favouriteMatches = filtered.filter((choice) => favourites.includes(choice.value));
-  const otherMatches = filtered.filter((choice) => !favourites.includes(choice.value));
-  const selectable = [...favouriteMatches, ...otherMatches];
-  const showGroups = favouriteMatches.length > 0 && otherMatches.length > 0;
-
-  const closeList = useCallback((focusButton: boolean): void => {
-    setOpen(false);
-    if (focusButton) buttonRef.current?.focus();
-  }, []);
-  const choose = useCallback((value: string): void => {
-    setOption(option.id, value);
-    closeList(true);
-  }, [option.id, setOption, closeList]);
-
-  useEffect(() => {
-    if (!open) return;
-    inputRef.current?.focus();
-    const onPointerDown = (event: MouseEvent): void => {
-      if (rootRef.current?.contains(event.target as Node) === false) closeList(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [open, closeList]);
-
-  useEffect(() => {
-    if (!open) return;
-    listRef.current?.children[activeIndex]?.scrollIntoView({ block: "nearest" });
-  }, [open, activeIndex]);
-
-  const openList = (): void => {
-    setQuery("");
-    // Recompute the reset list from the unfiltered choices: a stale query
-    // must not leak into the reopened active index.
-    const nextSelectable = [
-      ...all.filter((choice) => favourites.includes(choice.value)),
-      ...all.filter((choice) => !favourites.includes(choice.value)),
-    ];
-    setActiveIndex(Math.max(0, nextSelectable.findIndex((choice) => choice.value === current)));
-    setOpen(true);
-  };
-
-  const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setActiveIndex((index) => Math.min(index + 1, selectable.length - 1));
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setActiveIndex((index) => Math.max(index - 1, 0));
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      setActiveIndex(0);
-    } else if (event.key === "End") {
-      event.preventDefault();
-      setActiveIndex(Math.max(0, selectable.length - 1));
-    } else if (event.key === "Enter") {
-      event.preventDefault();
-      const choice = selectable[activeIndex];
-      if (choice !== undefined) choose(choice.value);
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      // This Escape closes the combobox only; the global shortcut handler
-      // must not read it as "cancel the running turn".
-      event.stopPropagation();
-      closeList(true);
-    }
-  };
-
-  const listId = `config-list-${option.id}`;
-  const renderChoice = (choice: ConfigChoice, index: number) => {
-    const starred = favourites.includes(choice.value);
-    return (
-      <li
-        key={choice.value}
-        id={`config-opt-${option.id}-${index}`}
-        role="option"
-        aria-selected={choice.value === current}
-        className={`config-combobox-option ${index === activeIndex ? "config-combobox-active" : ""}`}
-        onMouseDown={(event) => { event.preventDefault(); choose(choice.value); }}
-        onMouseEnter={() => setActiveIndex(index)}
-      >
-        <button
-          type="button"
-          className={`config-star ${starred ? "config-starred" : ""}`}
-          aria-label={starred ? `Remove ${choice.name} from favourites` : `Add ${choice.name} to favourites`}
-          aria-pressed={starred}
-          onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
-          onClick={(event) => { event.stopPropagation(); toggleFavourite(choice.value); }}
-        >
-          {starred ? "★" : "☆"}
-        </button>
-        <span className="config-combobox-name" title={choice.description}>{choice.name}</span>
-        {choice.value === current && <span className="config-combobox-check" aria-hidden="true">✓</span>}
-      </li>
-    );
-  };
-
-  return (
-    <span className="config-combobox" ref={rootRef}>
-      <button
-        ref={buttonRef}
-        type="button"
-        className="config-combobox-button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={labelledBy === undefined ? option.name : undefined}
-        aria-labelledby={labelledBy}
-        title={option.description}
-        onClick={() => (open ? closeList(false) : openList())}
-      >
-        <span className="config-combobox-value">{currentName}</span>
-        <ChevronIcon />
-      </button>
-      {open && (
-        <span
-          className="config-combobox-pop"
-          onBlur={(event) => {
-            // Tab flows through the search input and star toggles; once focus
-            // leaves the popover entirely, close it.
-            if (event.currentTarget.contains(event.relatedTarget) === false) closeList(false);
-          }}
-        >
-          <input
-            ref={inputRef}
-            className="config-combobox-search"
-            value={query}
-            onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }}
-            onKeyDown={onSearchKeyDown}
-            placeholder={`Search ${option.name.toLowerCase()}…`}
-            role="combobox"
-            aria-expanded="true"
-            aria-controls={listId}
-            aria-activedescendant={selectable[activeIndex] === undefined ? undefined : `config-opt-${option.id}-${activeIndex}`}
-            aria-autocomplete="list"
-            aria-label={`Search ${option.name}`}
-          />
-          <ul className="config-combobox-list" role="listbox" id={listId} aria-label={option.name} ref={listRef}>
-            {selectable.length === 0 && <li className="config-combobox-empty">no matches</li>}
-            {showGroups && <li className="config-combobox-group" role="presentation">Favourites</li>}
-            {favouriteMatches.map((choice, index) => renderChoice(choice, index))}
-            {showGroups && <li className="config-combobox-group" role="presentation">All</li>}
-            {otherMatches.map((choice, index) => renderChoice(choice, favouriteMatches.length + index))}
-          </ul>
-        </span>
-      )}
-    </span>
-  );
-}
-
-function ConfigField({ option, setOption, labelledBy }: {
-  readonly option: WebConfigOption;
-  readonly setOption: (id: string, value: string | boolean) => void;
-  readonly labelledBy?: string | undefined;
-}) {
-  return (option.choices?.length ?? 0) >= COMBOBOX_MIN_CHOICES
-    ? <ConfigCombobox option={option} setOption={setOption} labelledBy={labelledBy} />
-    : <ConfigSelect option={option} setOption={setOption} labelledBy={labelledBy} />;
-}
-
-/** Composer-adjacent quick pickers (model/effort/mode) plus the settings
- * entry point; the full surface lives in the SettingsDialog. */
-function ConfigControls({ options, setOption, onSettings, settingsOpen }: {
+/** Composer-adjacent quick pickers (model/effort/mode) rendered as chips in
+ * the composer card footer; the full surface lives in the SettingsDialog. */
+function ConfigChips({ options, setOption }: {
   readonly options: readonly WebConfigOption[];
   readonly setOption: (id: string, value: string | boolean) => void;
-  readonly onSettings: () => void;
-  readonly settingsOpen: boolean;
 }) {
   const pickers = options.filter((option) => option.type === "select" && option.category !== undefined && COMPOSER_CATEGORIES.includes(option.category));
+  if (pickers.length === 0) return null;
 
   return (
-    <div className="config-row">
-      {pickers.length > 0 && (
-        <div className="config-pickers">
-          {pickers.map((option) => (
-            <span className="config-picker" key={option.id}>
-              <span className="config-picker-label" id={`config-label-${option.id}`}>{option.name}</span>
-              <ConfigField option={option} setOption={setOption} labelledBy={`config-label-${option.id}`} />
-            </span>
-          ))}
-        </div>
-      )}
-      <span className="config-settings">
-        <button
-          type="button"
-          className="btn btn-ghost config-gear"
-          aria-expanded={settingsOpen}
-          aria-haspopup="dialog"
-          aria-label="Settings"
-          onClick={onSettings}
-        >
-          <GearIcon />
-        </button>
-      </span>
+    <div className="composer-chips">
+      {pickers.map((option) => (
+        <span className="config-picker" key={option.id}>
+          <span className="config-picker-label" id={`config-label-${option.id}`}>{option.name}</span>
+          <ConfigField option={option} setOption={setOption} labelledBy={`config-label-${option.id}`} />
+        </span>
+      ))}
     </div>
   );
 }
@@ -602,15 +349,33 @@ function PermissionPrompt({ pending, answer, remembered }: {
   );
 }
 
-function UsageMeter({ placement = "composer" }: { readonly placement?: "composer" | "inspector" }) {
+/** The session's single usage readout (composer meta row): a context-window
+ * fill bar plus cumulative tokens and cost. Context fill needs both the
+ * latest context input (proxy) and the agent-reported window (ACP
+ * usage_update); without the window the used count still shows, honestly. */
+function UsageMeter() {
   const usage = useSessionUsage();
   if (usage === undefined) return null;
+  const contextUsed = usage.latestPromptTokens;
+  const contextWindow = usage.contextWindowTokens;
+  const fillPct = contextUsed !== undefined && contextWindow !== undefined && contextWindow > 0
+    ? Math.min(100, Math.round((contextUsed / contextWindow) * 100))
+    : undefined;
   return (
-    <div className={`usage-meter usage-meter-${placement}`} title={`${usage.requests} metered model request(s)`}>
-      {placement === "inspector" && <span className="usage-label">Session spend</span>}
-      {placement === "inspector" && (
-        <span className="usage-context" aria-label={usage.latestPromptTokens === undefined ? "Latest model context input unavailable" : `${usage.latestPromptTokens} tokens in the latest model context input`}>
-          Context now {usage.latestPromptTokens === undefined ? <strong>unavailable</strong> : <><strong>{formatTokens(usage.latestPromptTokens)}</strong> tokens</>}
+    <div className="usage-meter" title={`${usage.requests} metered model request(s)`}>
+      {contextUsed !== undefined && (
+        <span
+          className="usage-context"
+          aria-label={contextWindow === undefined
+            ? `${contextUsed} tokens in the latest model context input`
+            : `Context ${contextUsed} of ${contextWindow} tokens used (${fillPct}%)`}
+        >
+          <span className="usage-context-bar" aria-hidden="true">
+            <span className="usage-context-fill" style={{ "--context-fill": `${fillPct ?? 0}%` } as React.CSSProperties} />
+          </span>
+          Context {formatTokens(contextUsed)}
+          {contextWindow !== undefined && <> / {formatTokens(contextWindow)}</>}
+          {fillPct !== undefined && <> · {fillPct}%</>}
         </span>
       )}
       <span className="usage-tokens" aria-label={`${usage.promptTokens} prompt tokens, ${usage.completionTokens} completion tokens`}>
@@ -990,7 +755,10 @@ function downloadMarkdown(exported: { readonly name: string; readonly text: stri
   URL.revokeObjectURL(url);
 }
 
-function Composer() {
+function Composer({ options, setOption }: {
+  readonly options: readonly WebConfigOption[];
+  readonly setOption: (id: string, value: string | boolean) => void;
+}) {
   const { isRunning, queuePrompt } = useSessionState();
   return (
     <ComposerPrimitive.Root
@@ -1020,17 +788,18 @@ function Composer() {
           )}
         </ComposerPrimitive.Attachments>
       </div>
-      <div className="composer-row">
-        <ComposerPrimitive.AddAttachment className="btn btn-ghost btn-attach" aria-label="Attach image" multiple>
-          +
-        </ComposerPrimitive.AddAttachment>
-        <ComposerPrimitive.Input
-          className="composer-input"
-          placeholder={isRunning ? "Queue a follow-up — sends when the agent finishes" : "Describe the work to perform"}
-          submitMode="enter"
-          aria-label="Prompt"
-        />
+      <ComposerPrimitive.Input
+        className="composer-input"
+        placeholder={isRunning ? "Queue a follow-up — sends when the agent finishes" : "Describe the work to perform"}
+        submitMode="enter"
+        aria-label="Prompt"
+      />
+      <div className="composer-footer">
+        <ConfigChips options={options} setOption={setOption} />
         <div className="composer-actions">
+          <ComposerPrimitive.AddAttachment className="btn btn-ghost btn-attach" aria-label="Attach image" multiple>
+            +
+          </ComposerPrimitive.AddAttachment>
           <AuiIf condition={(state) => state.thread.isRunning}>
             <ComposerPrimitive.Cancel className="btn btn-cancel">Cancel</ComposerPrimitive.Cancel>
           </AuiIf>
@@ -1043,21 +812,12 @@ function Composer() {
   );
 }
 
-function Panels({ snapshot, sessions, refresh, refreshSessions }: {
+function Panels({ snapshot, refresh }: {
   readonly snapshot: Snapshot | undefined;
-  readonly sessions: SessionMeta[] | undefined;
   readonly refresh: () => Promise<void>;
-  readonly refreshSessions: () => Promise<void>;
 }) {
   return (
     <aside className="panels">
-      <UsageMeter placement="inspector" />
-      {sessions !== undefined && (
-        <details className="panel-disclosure">
-          <summary><span>Sessions</span><span className="panel-summary-meta">{sessions.length}</span></summary>
-          <div className="panel-disclosure-body"><SessionsPanel sessions={sessions} refresh={refreshSessions} /></div>
-        </details>
-      )}
       <section>
         <h2>Tasks</h2>
         {(snapshot?.tasks ?? []).map((task) => (
@@ -1322,17 +1082,37 @@ export function App() {
     return () => document.removeEventListener("keydown", onKey);
   }, [isRunning, refreshSessions]);
 
+  const activeTitle = sessions?.find((session) => session.active)?.title;
+
   return (
     <div className="shell">
       <header className="shell-header">
-        <h1>Workflow Control</h1>
-        <div className="shell-header-actions">
+        <div className="shell-header-left">
           <RailsToggle off={railsOff} onToggle={setRailsOff} />
+          <h1 className="shell-wordmark">Workflow</h1>
+          {activeTitle !== undefined && (
+            <span className="shell-session-title" title={activeTitle}>{activeTitle}</span>
+          )}
+        </div>
+        <div className="shell-header-actions">
           <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
+          <button
+            type="button"
+            className="btn btn-ghost config-gear"
+            aria-expanded={settingsOpen}
+            aria-haspopup="dialog"
+            aria-label="Settings"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <GearIcon />
+          </button>
         </div>
       </header>
-      <main className="shell-main">
-        <div className="git-column"><GitRail status={gitStatus} /></div>
+      <div className="shell-body">
+        <aside className="sidebar" aria-label="Sessions and repository changes">
+          {sessions !== undefined && <SessionsPanel sessions={sessions} refresh={refreshSessions} />}
+          <GitRail status={gitStatus} />
+        </aside>
         <section className="chat-column">
           <ThreadPrimitive.Root className="thread-root">
             <ThreadPrimitive.Viewport className="thread-viewport">
@@ -1368,28 +1148,19 @@ export function App() {
               </AuiIf>
             </ThreadPrimitive.Viewport>
             <div className="composer-dock">
-              <Composer />
+              <Composer options={options} setOption={setOption} />
               <QueueIndicator />
-              <div className="composer-toolbar">
-                <ConfigControls options={options} setOption={setOption} onSettings={() => setSettingsOpen(true)} settingsOpen={settingsOpen} />
-                <div className="composer-utilities">
-                  <ExportSessionButton />
-                </div>
+              <div className="composer-meta">
+                {usage !== undefined && <UsageMeter />}
+                <ExportSessionButton />
               </div>
-              {/* The metered readout row exists only when the session is
-                  metered; unmetered sessions leave no empty strip. */}
-              {usage !== undefined && (
-                <div className="composer-footer">
-                  <UsageMeter placement="composer" />
-                </div>
-              )}
             </div>
           </ThreadPrimitive.Root>
         </section>
-        <div className="inspector-column">
-          <Panels snapshot={snapshot} sessions={sessions} refresh={refresh} refreshSessions={refreshSessions} />
-        </div>
-      </main>
+        <aside className="inspector" aria-label="Workflow supervision">
+          <Panels snapshot={snapshot} refresh={refresh} />
+        </aside>
+      </div>
       {settingsOpen && (
         <SettingsDialog
           onClose={() => setSettingsOpen(false)}
