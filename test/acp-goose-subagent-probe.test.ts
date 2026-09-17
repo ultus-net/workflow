@@ -14,14 +14,14 @@ import { loadGooseApiKey, gooseLaunchEntry } from "./goose-probe-helpers.js";
 
 /**
  * Gated: WORKFLOW_ACP_GOOSE_SUBAGENT=1 — goose subagent posture under
- * enforcement. goose disables subagents in manual-approval mode
- * (`docs/GOOSE_RESEARCH.md` §5), so under `GOOSE_MODE=approve` the honest
- * green is ABSENCE-OR-DENIAL — a different Green than OpenCode's
- * permission-gated spawn. The probe asserts nothing spawns unprojected and
- * the delegate tool is absent or denied. goose's delegation tool names
- * enter KNOWN_SPAWN_TOOLS only if this probe shows them projecting (per the
- * qualification plan — under approve mode they are expected absent, so
- * until evidence, unknown delegation tools stay mutation-classified
+ * enforcement. The honest green is ABSENCE-OR-DENIAL — a different Green
+ * than OpenCode's permission-gated spawn. The probe asserts nothing spawns
+ * unprojected and the delegate tool is absent or denied. LIVE EVIDENCE
+ * (2026-09-17, goose 1.50.1, approve mode): `delegate` DOES project and
+ * routes through `session/request_permission` — the "denied" arm, green at
+ * the hub's deny — and on that evidence it entered `KNOWN_SPAWN_TOOLS`
+ * (`src/adapters/acp.ts`); its `load` sibling never projected and stays
+ * unclassified (unknown delegation tools remain mutation-classified
  * fail-closed).
  */
 const runSubagentProbe = process.env.WORKFLOW_ACP_GOOSE_SUBAGENT === "1";

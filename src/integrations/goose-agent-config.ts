@@ -137,16 +137,6 @@ export function gooseLaunchEnvironment(options: {
 }
 
 /**
- * The hub-written goose config.yaml candidate for the per-runtime root.
- * The research record gives the extension KINDS and attributes (stdio with
- * envs/env_keys, available_tools filtering — `docs/GOOSE_RESEARCH.md` §8)
- * but not a verified schema for `goose acp` under `GOOSE_PATH_ROOT`; the
- * MOUNT probe is the instrument that resolves exactly this (a no-mount
- * outcome is an honest negative finding). Skills arrive ONLY through the
- * skills-mcp stdio mount — no native `.agents/skills` in composed
- * workspaces.
- */
-/**
  * The hub-written goose config.yaml for the per-runtime root, in the
  * DOCUMENTED schema (goose-docs.ai/docs/guides/config-files — Extensions
  * Configuration): `extensions` is a MAP keyed by extension name, each entry
@@ -154,7 +144,7 @@ export function gooseLaunchEnvironment(options: {
  * through the skills-mcp stdio mount — no native `.agents/skills` in
  * composed workspaces. The first live MOUNT run (1.50.1) rejected the
  * earlier list-shaped candidate with NO_MCP_TOOLS; the documented map
- * shape is what the probe now verifies.
+ * shape is what the probe verified GREEN (2026-09-17).
  */
 export function gooseConfigYaml(options: {
   readonly skillsServerScript?: string | undefined;
