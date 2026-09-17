@@ -5,6 +5,7 @@ import { render } from "ink";
 
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
+import { createTaskCommandPort } from "../application/task-commands.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { createCheckpointLedger } from "../pedagogy/checkpoints.js";
@@ -53,6 +54,10 @@ try {
     application,
     session: composed.session,
     assistantLabel: composed.label,
+    // W046 parity: the standalone surface owns a real application, so its
+    // task palette gets the port too (create/activate/retry through the
+    // same application commands as acp-tui).
+    taskCommands: createTaskCommandPort(application),
     connectionLabel: `${composed.label} | standalone (local authority)`,
     // Mode switching installs the checkpoint ledger AND re-binds the mode's
     // required-skill set to the active task (a mode with no required skills

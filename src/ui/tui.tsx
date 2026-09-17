@@ -406,8 +406,13 @@ export function WorkflowTui({
     if (key.ctrl && input === "t") {
       // W046: the task palette. Opening resets the cursor to the top and
       // clears any stale message; closing (Esc/q inside) keeps the list.
+      // Ctrl+T also closes an open Ctrl+P menu (review P3: both overlays
+      // must never stay open at once) and clears a half-typed create title.
+      setMenuOpen(false);
       setPaletteOpen((open) => !open);
       setPaletteModeSynced("list");
+      paletteTitleRef.current = "";
+      setPaletteTitle("");
       paletteIndexRef.current = 0;
       setPaletteIndex(0);
       setPaletteMessage(undefined);
@@ -1034,7 +1039,7 @@ function SessionActivityPanel({
       {runUsage.length > 0 ? (
         <Box flexDirection="column">
           <Text dimColor>  run usage (hub metering, last {Math.min(runUsage.length, 3)})</Text>
-          {runUsage.slice(0, 3).map(([runId, usage]) => (
+          {runUsage.slice(-3).map(([runId, usage]) => (
             <Text key={runId} dimColor>    {shortRun(runId)}: {usage.totalTokens} tokens · ${usage.costUsd.toFixed(4)} · {usage.requests} requests</Text>
           ))}
         </Box>
