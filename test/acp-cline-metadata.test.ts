@@ -244,7 +244,7 @@ test("Cline permission mapping fails closed on whitespace-only path and command 
   assert.equal(seen.length, 0);
 });
 
-test("Cline permission mapping fails closed for unknown mutation tools but preserves read-only unknown tools", async () => {
+test("Cline permission mapping denies unknown mutation tools fail-closed (deny-and-adapt) but preserves read-only unknown tools", async () => {
   const seen: ProposedToolAction[] = [];
   const mutationResolve = resolver({
     sessionId: "workflow-session",
@@ -253,14 +253,18 @@ test("Cline permission mapping fails closed for unknown mutation tools but prese
     toolName: "custom_mutator",
     capability: "mutation",
   }, seen);
-  await assert.rejects(
-    () => mutationResolve({
-      sessionId: "cline-session",
-      toolCall: { toolCallId: "tool-custom", title: "custom_mutator", kind: "other", rawInput: {} },
-      options,
-    }),
-    /unknown ACP mutation tool/,
-  );
+  // W049 dogfood semantics (goose 1.50.1 `todo`): a well-formed request for
+  // an unrecognized mutating tool is DENIED — the tool never reaches
+  // authorize and never runs — but the resolver resolves instead of
+  // throwing, so the session survives and the agent adapts.
+  const decision = await mutationResolve({
+    sessionId: "cline-session",
+    toolCall: { toolCallId: "tool-custom", title: "custom_mutator", kind: "other", rawInput: {} },
+    options,
+  });
+  assert.equal(decision.kind, "deny");
+  assert.match(decision.kind === "deny" ? decision.reason : "", /unknown ACP mutation tool/);
+  assert.equal(seen.length, 0);
 
   const readResolve = resolver({
     sessionId: "workflow-session",

@@ -242,6 +242,43 @@ test("malformed provenance fails closed instead of silently taking ownership", a
   );
 });
 
+test("a provenance record from a different schema version is refused, not adopted", async (t) => {
+  const work = makeWorkspace();
+  t.after(() => rmSync(work, { recursive: true, force: true }));
+  const target = path.join(work, "skills");
+  mkdirSync(target, { recursive: true });
+  writeFileSync(
+    path.join(target, "vendor-skills.json"),
+    JSON.stringify({ version: 999, importedAt: "2026-01-01T00:00:00.000Z", skills: {} }),
+  );
+  const flat = path.join(work, "flat-src");
+  writeSkill(flat, "skills/tdd", "upstream tdd");
+
+  await assert.rejects(
+    () => importSkills({ skillsDir: target, sources: [flatSource(work)] }),
+    /unsupported vendor-skills\.json version/,
+    "a record the importer cannot interpret must abort, never silently take ownership",
+  );
+});
+
+test("a failed repo clone cleans up its temp directory and is reported, never fatal", async (t) => {
+  const work = makeWorkspace();
+  t.after(() => rmSync(work, { recursive: true, force: true }));
+  const before = new Set(readdirSync(tmpdir()));
+
+  const report = await importSkills({
+    skillsDir: path.join(work, "skills"),
+    sources: [{ name: "bad-repo", repo: path.join(work, "no-such-repo"), include: ["skills/*"] }],
+  });
+
+  assert.ok(
+    report.problems.some((problem) => problem.includes("bad-repo") && problem.includes("failed")),
+    "the failed clone is reported as a source problem",
+  );
+  const leaked = readdirSync(tmpdir()).filter((entry) => entry.startsWith("vendor-skills-") && !before.has(entry));
+  assert.equal(leaked.length, 0, "a failed clone must not leak its vendor-skills-* temp directory");
+});
+
 test("CLI --list is a dry run: it reports the plan and writes nothing", (t) => {
   const work = makeWorkspace();
   t.after(() => rmSync(work, { recursive: true, force: true }));
