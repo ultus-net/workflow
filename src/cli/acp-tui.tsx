@@ -5,7 +5,7 @@ import { render } from "ink";
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
-import { activeTaskCorrelation } from "../application/task-commands.js";
+import { activeTaskCorrelation, createTaskCommandPort } from "../application/task-commands.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui, type SessionConfigOption } from "../ui/tui.js";
@@ -70,6 +70,11 @@ const { waitUntilExit } = render(
   React.createElement(WorkflowTui, {
     application,
     session: runtime.session,
+    // W046 (open clause): the Ctrl+T task palette drives canonical task
+    // lifecycle through this port — create/activate/retry; the lazy
+    // activeTaskCorrelation above re-targets every later proposal at the
+    // newly active task.
+    taskCommands: createTaskCommandPort(application),
     sessionConfigOptions: () => (runtime.driver.config()?.configOptions ?? []) as readonly SessionConfigOption[],
     onSetSessionConfig: async (id: string, value: string | boolean) => {
       await runtime.driver.setConfigOption(id, value);

@@ -34,6 +34,21 @@ export function runTestSubject(runId: string, workspace: string | undefined): st
 }
 
 /**
+ * W044 (open clause): hub-side per-session usage aggregation. A scheduled
+ * run's metering-proxy totals, recorded at turn end from the runtime's
+ * metrics so hub-attached monitors can render per-run cost without an agent
+ * process of their own. Plain records (the /snapshot payload is JSON).
+ */
+export interface RunUsageSummary {
+  readonly requests: number;
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly totalTokens: number;
+  readonly costUsd: number;
+  readonly recordedAt: string;
+}
+
+/**
  * The single canonicalization discipline for surface-declared workspaces
  * (`docs/HUB_PROTOCOL.md` §3): declarations must be absolute existing
  * directories, and one canonical (realpath) path means one application —
@@ -84,6 +99,9 @@ export function createRunRegistry(
   recordBlockingReason(input: { readonly runId: string; readonly reason: string }): void;
   recordCompletionClaim(input: { readonly runId: string; readonly claim: string }): void;
   completionClaims(): ReadonlyMap<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }>;
+  /** W044 (open clause): per-run usage recorded from the runtime's metering-proxy metrics. */
+  recordRunUsage(input: { readonly runId: string; readonly usage: Omit<RunUsageSummary, "recordedAt"> }): void;
+  runUsage(): ReadonlyMap<string, RunUsageSummary>;
 } {
   const workspaceApplications = new Map<string, WorkflowApplication>();
   const runs = new Map<string, WorkflowApplication>();
@@ -130,6 +148,17 @@ export function createRunRegistry(
       completionClaims.delete(oldest);
     }
   };
+  // W044 (open clause): per-run usage from the metering proxy, recorded at
+  // turn end. Same bounded-observability rule as the other gate maps.
+  const runUsage = new Map<string, RunUsageSummary>();
+  const rememberRunUsage = (runId: string, usage: Omit<RunUsageSummary, "recordedAt">): void => {
+    runUsage.set(runId, { ...usage, recordedAt: new Date().toISOString() });
+    while (runUsage.size > 64) {
+      const oldest = runUsage.keys().next().value;
+      if (oldest === undefined) break;
+      runUsage.delete(oldest);
+    }
+  };
 
   const workspaceApplication = (
     workspace: string | undefined,
@@ -168,6 +197,7 @@ export function createRunRegistry(
         reviewOutcomes,
         blockingReasons,
         completionClaims,
+        runUsage,
       };
     },
     async begin({ runId, title, workspace, requiresReview, taskPrompt }) {
@@ -404,6 +434,12 @@ export function createRunRegistry(
     },
     completionClaims(): ReadonlyMap<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }> {
       return completionClaims;
+    },
+    recordRunUsage(input: { readonly runId: string; readonly usage: Omit<RunUsageSummary, "recordedAt"> }): void {
+      rememberRunUsage(input.runId, input.usage);
+    },
+    runUsage(): ReadonlyMap<string, RunUsageSummary> {
+      return runUsage;
     },
   };
 }

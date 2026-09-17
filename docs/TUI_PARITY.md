@@ -67,5 +67,10 @@ unchecked items are intentional gaps, not implied support.
   empty state is session-aware: composer surfaces invite prompts, the
   read-only monitor states that it observes and does not accept text.
 - The monitor (`workflow-monitor`) attaches to the hub without an agent
-  process: usage metering there would need hub-side per-session aggregation
-  (open; the metering proxy records per-runtime metrics today).
+  process: usage metering there aggregates HUB-OWNED runtimes only —
+  scheduled runs record their metering-proxy totals at turn end
+  (`run-registry.recordRunUsage`, bounded) and the Activity panel renders
+  per-run usage from `/snapshot` gate observability (W044 open clause
+  closed). Honest limit: the operator's INTERACTIVE TUI sessions meter in
+  their own TUI process — the hub never sees those runtimes, so the
+  monitor cannot show them; the TUI's own header does.
