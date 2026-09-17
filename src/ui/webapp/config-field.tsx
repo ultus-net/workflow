@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 
 import type { WebConfigOption } from "../web-config-options.js";
 import { withCurrentChoice } from "./presenters.js";
@@ -74,6 +75,10 @@ export function ConfigCombobox({ option, setOption, labelledBy }: {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const popRef = useRef<HTMLSpanElement>(null);
+  // Fixed-viewport coordinates for the portalled popover; computed on open so
+  // the list escapes any ancestor `overflow: hidden` (composer chips row).
+  const [popPos, setPopPos] = useState<{ left: number; top?: number; bottom?: number } | null>(null);
   const [favourites, toggleFavourite] = useFavourites(option.id);
 
   const current = String(option.currentValue);
@@ -101,10 +106,26 @@ export function ConfigCombobox({ option, setOption, labelledBy }: {
     if (!open) return;
     inputRef.current?.focus();
     const onPointerDown = (event: MouseEvent): void => {
-      if (rootRef.current?.contains(event.target as Node) === false) closeList(false);
+      const target = event.target as Node;
+      const insideButton = rootRef.current?.contains(target) === true;
+      const insidePop = popRef.current?.contains(target) === true;
+      if (!insideButton && !insidePop) closeList(false);
     };
+    // A scroll that moves the anchor detaches the fixed popover; close it. A
+    // scroll *inside* the popover (the operator scrolling the list) must not.
+    const onScroll = (event: Event): void => {
+      if (popRef.current?.contains(event.target as Node) === true) return;
+      closeList(false);
+    };
+    const onResize = (): void => closeList(false);
     document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onScroll, true);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onScroll, true);
+    };
   }, [open, closeList]);
 
   useEffect(() => {
@@ -121,6 +142,19 @@ export function ConfigCombobox({ option, setOption, labelledBy }: {
       ...all.filter((choice) => !favourites.includes(choice.value)),
     ];
     setActiveIndex(Math.max(0, nextSelectable.findIndex((choice) => choice.value === current)));
+    // Anchor the portalled popover in viewport coordinates: open toward the
+    // side with more room (up from the composer, down when high in a dialog),
+    // and clamp horizontally so the list never overflows the right edge.
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (rect !== undefined) {
+      const gap = 6;
+      const maxPopWidth = Math.min(352, window.innerWidth * 0.9);
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - maxPopWidth - 8));
+      const openUp = rect.top >= window.innerHeight - rect.bottom;
+      setPopPos(openUp
+        ? { left, bottom: window.innerHeight - rect.top + gap }
+        : { left, top: rect.bottom + gap });
+    }
     setOpen(true);
   };
 
@@ -195,9 +229,11 @@ export function ConfigCombobox({ option, setOption, labelledBy }: {
         <span className="config-combobox-value">{currentName}</span>
         <ChevronIcon />
       </button>
-      {open && (
+      {open && popPos !== null && createPortal(
         <span
+          ref={popRef}
           className="config-combobox-pop"
+          style={{ left: popPos.left, ...(popPos.top !== undefined ? { top: popPos.top } : { bottom: popPos.bottom }) }}
           onBlur={(event) => {
             // Tab flows through the search input and star toggles; once focus
             // leaves the popover entirely, close it.
@@ -225,7 +261,8 @@ export function ConfigCombobox({ option, setOption, labelledBy }: {
             {showGroups && <li className="config-combobox-group" role="presentation">All</li>}
             {otherMatches.map((choice, index) => renderChoice(choice, favouriteMatches.length + index))}
           </ul>
-        </span>
+        </span>,
+        document.body,
       )}
     </span>
   );

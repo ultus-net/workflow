@@ -109,6 +109,48 @@ interface SessionMeta {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly active: boolean;
+  readonly agent: string;
+}
+
+interface AgentInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly containment: "contained" | "advisory";
+  readonly available: boolean;
+  readonly reason?: string;
+}
+
+/** Polls the agents the server can compose (availability + posture). */
+function useAgents() {
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  useEffect(() => {
+    const load = async (): Promise<void> => {
+      try {
+        const response = await fetch("/api/agents");
+        if (response.ok) setAgents((await response.json() as { agents: AgentInfo[] }).agents);
+      } catch {
+        // Keep the last good list; the next poll retries.
+      }
+    };
+    void load();
+    const timer = setInterval(() => void load(), 5000);
+    return () => clearInterval(timer);
+  }, []);
+  return agents;
+}
+
+/** Switches the active session's agent server-side, then refreshes the registry. */
+function switchAgent(agent: string, refresh: () => Promise<void>): void {
+  void fetch("/api/sessions/agent", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agent }),
+  }).then((response) => {
+    // Refresh either way: on success the new agent shows; on 409/503 the list
+    // re-syncs to the agent the server actually kept, so the radio never lies.
+    if (!response.ok) console.warn(`agent switch rejected: ${response.status}`);
+    void refresh();
+  }).catch(() => {});
 }
 
 /** Polls the session registry; undefined when the server runs a single session. */
@@ -243,23 +285,35 @@ function useCapabilities() {
 }
 
 /** Polls the agent-advertised session configuration; empty when the agent offers none. */
+/** Last-used value per ACP option, persisted locally so the operator's choices
+ * survive reload and the agent reconnecting with its factory default. */
+const LAST_USED_KEY = "workflow.config-last-used";
+
+function readLastUsed(): Record<string, string | boolean> {
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(LAST_USED_KEY) ?? "{}");
+    return stored !== null && typeof stored === "object" && !Array.isArray(stored) ? stored as Record<string, string | boolean> : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeLastUsed(id: string, value: string | boolean): void {
+  try {
+    localStorage.setItem(LAST_USED_KEY, JSON.stringify({ ...readLastUsed(), [id]: value }));
+  } catch {
+    // Private browsing or quota: persistence is best-effort.
+  }
+}
+
 function useConfigOptions() {
   const [options, setOptions] = useState<WebConfigOption[]>([]);
-  const load = useCallback(async (): Promise<void> => {
-    try {
-      const response = await fetch("/api/config-options");
-      if (response.ok) setOptions((await response.json() as { options: WebConfigOption[] }).options);
-    } catch {
-      // Keep the last good list; the next poll retries.
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), PANEL_POLL_MS);
-    return () => clearInterval(timer);
-  }, [load]);
+  // Option ids whose last-used value we already pushed to the agent this
+  // session, so a reconnect can't loop restore→default→restore.
+  const restoredRef = useRef<Set<string>>(new Set());
   const setOption = useCallback((id: string, value: string | boolean): void => {
     // Optimistic: reflect the choice now, reconcile with the server response.
+    writeLastUsed(id, value);
     setOptions((previous) => previous.map((option) => option.id === id ? { ...option, currentValue: value } : option));
     void fetch("/api/config-options", {
       method: "POST",
@@ -267,22 +321,51 @@ function useConfigOptions() {
       body: JSON.stringify({ id, value }),
     }).then(async (response) => {
       if (response.ok) setOptions((await response.json() as { options: WebConfigOption[] }).options);
-      else await load();
-    }).catch(() => load());
+    }).catch(() => {});
+  }, []);
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/config-options");
+      if (!response.ok) return;
+      const fresh = (await response.json() as { options: WebConfigOption[] }).options;
+      // Restore the operator's last-used value wherever the agent reverted to
+      // its factory default. Each option is restored at most once per session,
+      // and the restored value is merged into the displayed list at once so
+      // there is no factory-default flash while the agent catches up.
+      const lastUsed = readLastUsed();
+      const toRestore = new Map<string, string | boolean>();
+      for (const option of fresh) {
+        const saved = lastUsed[option.id];
+        if (saved === undefined || restoredRef.current.has(option.id)) continue;
+        restoredRef.current.add(option.id);
+        if (String(option.currentValue) === String(saved)) continue;
+        if (option.type === "select" && option.choices !== undefined && !option.choices.some((choice) => choice.value === saved)) continue;
+        toRestore.set(option.id, saved);
+      }
+      if (toRestore.size > 0) {
+        setOptions(fresh.map((option) => toRestore.has(option.id) ? { ...option, currentValue: toRestore.get(option.id) as string | boolean } : option));
+        for (const [id, value] of toRestore) setOption(id, value);
+      } else {
+        setOptions(fresh);
+      }
+    } catch {
+      // Keep the last good list; the next poll retries.
+    }
+  }, [setOption]);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), PANEL_POLL_MS);
+    return () => clearInterval(timer);
   }, [load]);
   return { options, setOption };
 }
 
-/** Categories promoted to composer-adjacent chips; everything else lives in
- * the settings dialog. Provider rides alongside model — the agent's
- * provider/model/effort/mode are the controls an operator reaches for most. */
-const COMPOSER_CATEGORIES: readonly string[] = ["provider", "model", "thought_level", "mode"];
-
 function GearIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
-      <circle cx="8" cy="8" r="2.2" />
-      <path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3" strokeLinecap="round" />
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.1" />
+      <circle cx="8" cy="8" r="2" />
+      <path d="M8 1.2v1.7M8 13.1v1.7M14.8 8h-1.7M2.9 8H1.2M12.7 3.3l-1.2 1.2M4.5 11.5l-1.2 1.2M12.7 12.7l-1.2-1.2M4.5 4.5L3.3 3.3" />
     </svg>
   );
 }
@@ -316,12 +399,12 @@ function ChipIcon({ category }: { readonly category: string | undefined }) {
 
 /** Composer-adjacent quick pickers (provider/model/effort/mode) rendered as
  * quiet ghost controls in the composer card footer; the full surface lives in
- * the SettingsDialog. */
-function ConfigChips({ options, setOption }: {
+ * the SettingsDialog. Exported for the UI-surface regression pin. */
+export function ConfigChips({ options, setOption }: {
   readonly options: readonly WebConfigOption[];
   readonly setOption: (id: string, value: string | boolean) => void;
 }) {
-  const pickers = options.filter((option) => option.type === "select" && option.category !== undefined && COMPOSER_CATEGORIES.includes(option.category));
+  const pickers = options.filter((option) => option.type === "select");
   if (pickers.length === 0) return null;
 
   return (
@@ -554,7 +637,10 @@ function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]
                     {session.active && <span className="session-active-dot" aria-hidden="true" />}
                     <span className="session-title">{pending === session.id ? "loading…" : session.title}</span>
                   </span>
-                  <span className="session-time" title={new Date(session.updatedAt).toLocaleString()}>{formatRelativeTime(session.updatedAt)}</span>
+                  <span className="session-meta">
+                    <span className="session-time" title={new Date(session.updatedAt).toLocaleString()}>{formatRelativeTime(session.updatedAt)}</span>
+                    <span className="session-agent">{session.agent}</span>
+                  </span>
                 </button>
                 <button
                   className="session-dismiss session-rename-trigger"
@@ -826,9 +912,8 @@ function Composer({ options, setOption }: {
         <ConfigChips options={options} setOption={setOption} />
         <div className="composer-actions">
           <ComposerPrimitive.AddAttachment className="composer-icon-btn" aria-label="Attach image" multiple>
-            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M10.5 3.5l3 3L7 13H4v-3l6.5-6.5z" />
-              <path d="M12.5 5.5l-1.8-1.8" />
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+              <path d="M8 3.5v9M3.5 8h9" />
             </svg>
           </ComposerPrimitive.AddAttachment>
           <AuiIf condition={(state) => state.thread.isRunning}>
@@ -1115,6 +1200,10 @@ export function App() {
   const { snapshot, refresh } = useSnapshot();
   const gitStatus = useGitStatus();
   const { sessions, refresh: refreshSessions } = useSessions();
+  const agents = useAgents();
+  // The registry leads with the default agent (OpenCode); fall back to it while
+  // the agents list is still loading so the switcher never marks the wrong one.
+  const currentAgent = sessions?.find((session) => session.active)?.agent ?? agents[0]?.id ?? "opencode";
   const { options, setOption } = useConfigOptions();
   const permissions = usePermissions();
   const capabilities = useCapabilities();
@@ -1265,6 +1354,9 @@ export function App() {
           permissions={permissions}
           capabilities={capabilities}
           enforcement={{ level: snapshot?.enforcementLevel, transport: snapshot?.transport, copy: enforcementCopy }}
+          agents={agents}
+          currentAgent={currentAgent}
+          onSwitchAgent={(agent) => switchAgent(agent, refreshSessions)}
         />
       )}
     </div>

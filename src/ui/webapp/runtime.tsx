@@ -28,6 +28,7 @@ interface SessionEnvelope {
   readonly available: boolean;
   readonly id?: string;
   readonly title?: string;
+  readonly agent?: string;
   readonly state: { readonly state: string };
   readonly items: readonly OperatorSessionItem[];
   readonly usage?: SessionUsage;

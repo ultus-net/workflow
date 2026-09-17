@@ -74,6 +74,8 @@ export interface ConfigCapableDriver {
   setConfigOption(configId: string, value: AcpConfigOptionValue): Promise<AcpSessionConfig>;
   /** Agent-reported context window size (ACP usage_update), when advertised. */
   contextWindowTokens?(): number | undefined;
+  /** Agent-reported ACP usage (used/size/cost) for runtimes with no metering proxy. */
+  acpUsageSnapshot?(): { readonly used?: number; readonly size?: number; readonly costUsd?: number };
 }
 
 /**

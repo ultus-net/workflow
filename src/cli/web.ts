@@ -2,8 +2,8 @@ import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
-import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { PermissionBroker } from "../ui/permission-broker.js";
+import { createAgentRuntime } from "../ui/web-agents.js";
 import { createWorkflowWebServer } from "../ui/web.js";
 import { WebSessionManager } from "../ui/web-sessions.js";
 import { buildWebappBundle } from "../ui/webapp/bundle.js";
@@ -39,8 +39,8 @@ const application = new WorkflowApplication(
 // patterns survive session switches; parked prompts are denied on switch.
 const permissionBroker = new PermissionBroker();
 const manager = new WebSessionManager({
-  factory: (resumeFrom) =>
-    createConfiguredAcpRuntime(application, process.cwd(), taskId("W001"), resumeFrom, undefined, { permissionBroker }),
+  factory: (agent, resumeFrom) =>
+    createAgentRuntime(agent, application, process.cwd(), taskId("W001"), resumeFrom, { permissionBroker }),
   permissionBroker,
 });
 const webapp = await buildWebappBundle();

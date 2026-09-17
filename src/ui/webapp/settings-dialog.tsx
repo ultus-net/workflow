@@ -19,6 +19,14 @@ export interface SettingsCapabilities {
   readonly setCapability: (capability: "process" | "network", enabled: boolean) => Promise<void>;
 }
 
+export interface SettingsAgentInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly containment: "contained" | "advisory";
+  readonly available: boolean;
+  readonly reason?: string;
+}
+
 export interface SettingsDialogProps {
   readonly onClose: () => void;
   readonly themeChoice: ThemeChoice;
@@ -30,6 +38,9 @@ export interface SettingsDialogProps {
   readonly permissions: SettingsPermissions;
   readonly capabilities: SettingsCapabilities;
   readonly enforcement: { readonly level: string | undefined; readonly transport: string | undefined; readonly copy: string | undefined };
+  readonly agents: readonly SettingsAgentInfo[];
+  readonly currentAgent: string;
+  readonly onSwitchAgent: (agent: string) => void;
 }
 
 /**
@@ -100,6 +111,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
         </header>
         <div className="settings-body">
           <AppearanceSection {...props} />
+          <AgentSection agents={props.agents} currentAgent={props.currentAgent} onSwitchAgent={props.onSwitchAgent} />
           <AgentOptionsSection options={props.options} setOption={props.setOption} />
           {props.permissions.available && (
             <ApprovalsSection permissions={props.permissions} capabilities={props.capabilities} />
@@ -207,7 +219,54 @@ function AppearanceSection({ themeChoice, onThemeChoice, railsOff, onRailsToggle
   );
 }
 
-function AgentOptionsSection({ options, setOption }: {
+/** Which agent the session runs on. The containment posture is stated
+ * honestly per agent — a contained launch and advisory transport never read
+ * as equivalent. Exported for the UI-surface regression pin. */
+export function AgentSection({ agents, currentAgent, onSwitchAgent }: {
+  readonly agents: readonly SettingsAgentInfo[];
+  readonly currentAgent: string;
+  readonly onSwitchAgent: (agent: string) => void;
+}) {
+  if (agents.length === 0) return null;
+  return (
+    <Section title="Agent">
+      <div className="agent-list" role="radiogroup" aria-label="Agent">
+        {agents.map((agent) => {
+          const current = agent.id === currentAgent;
+          return (
+            <label
+              className={`agent-row ${current ? "agent-row-current" : ""} ${agent.available ? "" : "agent-row-unavailable"}`}
+              key={agent.id}
+            >
+              <input
+                type="radio"
+                name="agent"
+                checked={current}
+                disabled={!agent.available}
+                aria-label={`${agent.name} (${agent.containment === "contained" ? "contained launch" : "advisory transport"})`}
+                onChange={() => onSwitchAgent(agent.id)}
+              />
+              <span className="agent-row-text">
+                <span className="agent-row-name">{agent.name}</span>
+                <span className="settings-desc">
+                  {agent.containment === "contained"
+                    ? "contained launch — enforced boundary"
+                    : "advisory transport — no pre-mutation interception"}
+                  {!agent.available && agent.reason !== undefined && ` — ${agent.reason}`}
+                </span>
+              </span>
+              {current && <span className="agent-row-badge">current</span>}
+            </label>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
+/** Every advertised agent option, in full — the canonical complete set
+ * (operator preference #2). Exported for the UI-surface regression pin. */
+export function AgentOptionsSection({ options, setOption }: {
   readonly options: readonly WebConfigOption[];
   readonly setOption: (id: string, value: string | boolean) => void;
 }) {

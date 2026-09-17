@@ -81,6 +81,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #agentSessionId?: string;
   #sessionConfig?: AcpSessionConfig;
   #contextWindowTokens?: number;
+  #acpUsage: { used?: number; size?: number; costUsd?: number } = {};
   #toolTitles = new Map<string, string>();
   #toolCalls = new Map<string, { title: string; toolKind: string; subjects: string[]; rawInput?: string }>();
   #assistant: string[] = [];
@@ -135,11 +136,17 @@ export class AcpSessionDriver implements CodingSessionDriver {
         this.#sessionConfig = { ...this.#sessionConfig, configOptions: update.update.configOptions };
       }
       if (update.update.sessionUpdate === "usage_update") {
-        // ACP usage_update carries the context window size; capture it so
-        // surfaces can show how full the window is. Never enters the
-        // transcript — it is a meter, not a message.
-        const size = (update.update as { size?: unknown }).size;
-        if (typeof size === "number" && Number.isFinite(size) && size > 0) this.#contextWindowTokens = size;
+        // ACP usage_update carries context used, the window size, and cost;
+        // capture them so surfaces can show how full the window is and what
+        // the session cost — a meter, never a transcript message.
+        const usage = update.update as { used?: unknown; size?: unknown; cost?: unknown };
+        if (typeof usage.used === "number" && Number.isFinite(usage.used) && usage.used >= 0) this.#acpUsage.used = usage.used;
+        if (typeof usage.size === "number" && Number.isFinite(usage.size) && usage.size > 0) {
+          this.#acpUsage.size = usage.size;
+          this.#contextWindowTokens = usage.size;
+        }
+        const cost = usage.cost as { amount?: unknown } | undefined;
+        if (typeof cost?.amount === "number" && Number.isFinite(cost.amount) && cost.amount >= 0) this.#acpUsage.costUsd = cost.amount;
       }
       const event = this.#project(update, this.#assistant);
       if (event !== undefined) {
@@ -263,6 +270,13 @@ export class AcpSessionDriver implements CodingSessionDriver {
   /** Latest agent-reported context window size in tokens (ACP usage_update); undefined when the agent does not report it. */
   contextWindowTokens(): number | undefined {
     return this.#contextWindowTokens;
+  }
+
+  /** Latest agent-reported ACP usage (context used, window size, cost) for
+   * runtimes without a metering proxy (e.g. OpenCode, which manages its own
+   * provider auth). */
+  acpUsageSnapshot(): { readonly used?: number; readonly size?: number; readonly costUsd?: number } {
+    return { ...this.#acpUsage };
   }
 
   /** Mutate configuration on the existing ACP session and retain the agent's complete returned state. */

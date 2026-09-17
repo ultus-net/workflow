@@ -24,8 +24,8 @@
   --fail: #ff7377;
   --composer-focus: #262b33;
   --code-bg: #0e1013;
-  --radius: 10px;
-  --radius-s: 6px;
+  --radius: 0;
+  --radius-s: 0;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
@@ -289,7 +289,7 @@ body {
   border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text-muted);
-  border-radius: 999px;
+  border-radius: 0;
   padding: 0.3rem 0.75rem;
   font: inherit;
   font-size: 0.8rem;
@@ -311,7 +311,7 @@ body {
   font: inherit;
   border: 1px solid var(--border);
   border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--surface);
   padding: 0 0.3rem;
 }
@@ -712,7 +712,7 @@ body {
   display: inline-block;
   width: 3.5rem;
   height: 0.35rem;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--border);
   overflow: hidden;
 }
@@ -721,7 +721,7 @@ body {
   display: block;
   height: 100%;
   width: 100%;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--accent-fill);
   transform: scaleX(var(--context-fill-scale, 0));
   transform-origin: left center;
@@ -961,12 +961,49 @@ body {
   font-size: 0.72rem;
   border: 1px solid var(--border);
   border-bottom-width: 2px;
-  border-radius: 4px;
+  border-radius: 0;
   background: var(--surface);
   padding: 0 0.3rem;
 }
 
 .settings-kbd-desc { color: var(--text-muted); }
+
+/* Agent picker (settings): one radio row per composable agent, posture noted. */
+.agent-list { display: grid; gap: 0.3rem; }
+
+.agent-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.agent-row:hover { border-color: var(--border-strong); }
+
+.agent-row-current { border-color: var(--accent); background: var(--accent-soft); }
+
+.agent-row-unavailable { opacity: 0.55; cursor: default; }
+
+.agent-row input { accent-color: var(--accent-fill); }
+
+.agent-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-row-name { font-size: 0.85rem; color: var(--text); }
+
+.agent-row-badge {
+  font-size: 0.68rem;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
 
 .settings-meta {
   display: flex;
@@ -1040,12 +1077,14 @@ body {
   display: flex;
   align-items: center;
   gap: 0.1rem;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
+  overflow: hidden;
 }
 
 /* Quiet ghost controls: the category glyph carries the meaning, so no
-   uppercase labels and no ovals. Value + hover surface is the whole affair. */
+   uppercase labels and no ovals. Value + hover surface is the whole affair.
+   Chips stay on one line; the longest value (the model) truncates first. */
 .config-picker {
   display: inline-flex;
   align-items: center;
@@ -1055,6 +1094,8 @@ body {
   padding: 0.28rem 0.45rem;
   cursor: pointer;
   transition: background 120ms ease-out, color 120ms ease-out;
+  flex: none;
+  min-width: 0;
 }
 
 .config-picker:hover,
@@ -1071,7 +1112,8 @@ body {
   font-size: 0.82rem;
   padding: 0.1rem 0.1rem;
   cursor: pointer;
-  max-width: 12rem;
+  max-width: 8rem;
+  overflow: hidden;
 }
 
 .config-picker select:hover { color: var(--accent); }
@@ -1081,6 +1123,10 @@ body {
   outline-offset: 1px;
   border-radius: var(--radius-s);
 }
+
+/* The model chip (combobox) is the one allowed to shrink so all chips stay
+   on one line; its value truncates with an ellipsis. */
+.config-picker:has(.config-combobox) { flex: 0 1 auto; }
 
 /* Chevron for native-select chips (the combobox draws its own). */
 .config-picker:has(> select)::after {
@@ -1096,7 +1142,7 @@ body {
 
 /* Searchable combobox (long choice lists, e.g. models) */
 
-.config-combobox { position: relative; display: inline-flex; }
+.config-combobox { position: relative; display: inline-flex; min-width: 0; }
 
 .config-combobox-button {
   display: inline-flex;
@@ -1110,7 +1156,8 @@ body {
   border-radius: var(--radius-s);
   padding: 0.1rem 0.1rem;
   cursor: pointer;
-  max-width: 12rem;
+  max-width: 9rem;
+  min-width: 0;
 }
 
 .config-combobox-button:hover { color: var(--accent); }
@@ -1127,22 +1174,27 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: inherit;
+  min-width: 0;
 }
 
+/* Rendered in a portal to <body> and anchored with fixed viewport coordinates
+   (left/bottom set inline) so the list escapes ancestor `overflow: hidden`
+   (the composer chips row) — without this the upward-opening list is clipped. */
 .config-combobox-pop {
-  position: absolute;
-  bottom: calc(100% + 0.5rem);
-  left: 0;
+  position: fixed;
   display: flex;
   flex-direction: column;
   width: max-content;
   min-width: 16rem;
   max-width: min(22rem, 90vw);
+  max-height: min(20rem, 70vh);
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  z-index: 30;
+  /* Above the settings/diff modal backdrops (z-index 40) so the list is never
+     hidden behind a dialog it was opened from. */
+  z-index: 60;
   overflow: hidden;
 }
 
@@ -1254,7 +1306,7 @@ body {
   flex: none;
   width: 1.75rem;
   height: 1rem;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--border);
   position: relative;
   margin-top: 0.1rem;
@@ -1267,7 +1319,7 @@ body {
   left: 2px;
   width: 0.75rem;
   height: 0.75rem;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--text);
   transition: transform 120ms ease-out;
 }
@@ -1403,7 +1455,7 @@ body {
   justify-content: center;
   width: 2rem;
   height: 2rem;
-  border-radius: 50%;
+  border-radius: 0;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-muted);
@@ -1421,7 +1473,7 @@ body {
   justify-content: center;
   width: 2.1rem;
   height: 2.1rem;
-  border-radius: 50%;
+  border-radius: 0;
   border: 0;
   background: var(--accent-fill);
   color: var(--accent-ink);
@@ -1494,7 +1546,7 @@ body {
   width: 0.55rem;
   height: 0.55rem;
   flex: none;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--accent);
   animation: working-pulse 1.2s ease-in-out infinite;
 }
@@ -1584,9 +1636,19 @@ body {
 .session-active { border-color: var(--accent); background: var(--surface); box-shadow: inset 2px 0 0 var(--accent); }
 .session-pending { border-color: var(--accent); opacity: 0.75; }
 .session-heading { display: flex; align-items: center; gap: 0.35rem; min-width: 0; }
-.session-active-dot { flex: none; width: 0.4rem; height: 0.4rem; border-radius: 50%; background: var(--accent); }
+.session-active-dot { flex: none; width: 0.4rem; height: 0.4rem; border-radius: 0; background: var(--accent); }
 .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-meta { display: flex; align-items: baseline; gap: 0.5rem; }
 .session-time { color: var(--text-muted); font-size: 0.72rem; }
+.session-agent {
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0 0.4rem;
+}
 
 .sessions-search,
 .session-rename input {
@@ -1652,7 +1714,7 @@ body {
 }
 
 .panels::-webkit-scrollbar { width: 6px; }
-.panels::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.panels::-webkit-scrollbar-thumb { background: var(--border); border-radius: 0; }
 
 /* Cap the sessions list so the tasks panel below always keeps usable room;
    both scroll independently when their content overflows. (vh, not % — the

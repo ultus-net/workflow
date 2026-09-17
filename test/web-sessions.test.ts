@@ -58,7 +58,7 @@ test("session manager creates, lists, and activates sessions with resume ids", a
   const resumes: (string | undefined)[] = [];
   const manager = new WebSessionManager({
     registryPath: join(dir, "registry.json"),
-    factory: async (resumeFrom) => {
+    factory: async (_agent, resumeFrom) => {
       resumes.push(resumeFrom);
       const fake = fakeRuntime(`agent-${spawned.length + 1}`);
       spawned.push(fake);
@@ -190,7 +190,7 @@ test("session manager resumes the most recent session on restart instead of accu
   context.after(() => rmSync(dir, { recursive: true, force: true }));
   const registryPath = join(dir, "registry.json");
   const resumes: (string | undefined)[] = [];
-  const factory = async (resumeFrom: string | undefined) => {
+  const factory = async (_agent: string, resumeFrom: string | undefined) => {
     resumes.push(resumeFrom);
     return fakeRuntime("agent-1").runtime;
   };
@@ -234,7 +234,7 @@ test("session manager dismisses sessions and keeps the next one active", async (
   const resumes: (string | undefined)[] = [];
   const manager = new WebSessionManager({
     registryPath: join(dir, "registry.json"),
-    factory: async (resumeFrom) => {
+    factory: async (_agent, resumeFrom) => {
       resumes.push(resumeFrom);
       return fakeRuntime("agent-1").runtime;
     },
@@ -321,7 +321,7 @@ test("session manager ingests replayed history when resuming a session", async (
   type Listener = (event: CodingSessionEvent) => void;
   const manager = new WebSessionManager({
     registryPath: join(dir, "registry.json"),
-    factory: async (resumeFrom) => {
+    factory: async (_agent, resumeFrom) => {
       const listeners = new Set<Listener>();
       const driver: CodingSessionDriver & { agentSessionId(): string; connect(): Promise<void>; subscribe(listener: Listener): () => void } = {
         async start(_prompt, emit) {
@@ -488,5 +488,38 @@ test("session manager wires the permission broker: cancel and switch deny parked
   const switched = await parkedOnSwitch;
   assert.equal(switched.kind, "deny");
   assert.equal((await manager.channel()).permissionMode(), "ask", "broker state survives switches");
+  await manager.dispose();
+});
+
+test("switching the active agent re-launches the session on the new agent", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  const launches: { agent: string; resumeFrom: string | undefined }[] = [];
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async (agent, resumeFrom) => {
+      launches.push({ agent, resumeFrom });
+      return fakeRuntime(`${agent}-session`).runtime;
+    },
+  });
+
+  // First launch targets the default agent (OpenCode, the documented lead).
+  const first = await manager.channel();
+  first.submit("inspect the repo", []);
+  await settle(first);
+  assert.deepEqual(launches.map((launch) => launch.agent), ["opencode"]);
+  assert.equal(manager.list().find((session) => session.active)?.agent, "opencode");
+
+  // Switching agents re-launches the active session on the new agent and the
+  // session record reflects it.
+  await manager.setActiveAgent("cline");
+  assert.deepEqual(launches.map((launch) => launch.agent), ["opencode", "cline"]);
+  assert.equal(manager.list().find((session) => session.active)?.agent, "cline");
+
+  // The switched session still works end to end.
+  const channel = await manager.channel();
+  channel.submit("follow up", []);
+  await settle(channel);
   await manager.dispose();
 });
