@@ -165,6 +165,33 @@ test("TUI activity panel surfaces blocking reasons, verdicts, and unverified cla
   view.unmount();
 });
 
+test("TUI activity panel renders hub-recorded per-run usage (W044)", async () => {
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    gateObservability: () => ({
+      reviewOutcomes: {},
+      blockingReasons: {},
+      completionClaims: {},
+      usage: {
+        "schedule:nightly:abc": {
+          requests: 8,
+          promptTokens: 32594,
+          completionTokens: 353,
+          totalTokens: 32947,
+          costUsd: 0.003752536,
+          recordedAt: "2026-09-17T00:00:00.000Z",
+        },
+      },
+    }),
+  }));
+  await waitForFrame(view, /run usage \(hub metering/);
+  const frame = view.lastFrame() ?? "";
+  assert.match(frame, /32947 tokens/);
+  assert.match(frame, /\$0\.0038/);
+  assert.match(frame, /8 requests/);
+  view.unmount();
+});
+
 test("TUI activity panel stays quiet with empty hub gate observability", async () => {
   // The real hub-mode quiet case: the monitor attaches with gate
   // observability present but empty (no blocked runs, no verdicts, no

@@ -185,6 +185,22 @@ const schedulerFactory = schedules.length === 0 ? undefined : (handles: Workflow
           handles.recordCompletionClaim({ runId, claim: snapshot.result });
         }
       } finally {
+        // W044 (open clause): record the turn's metering-proxy totals for
+        // hub-attached monitors (per-session usage aggregation) BEFORE the
+        // runtime dies with its proxy.
+        const usage = runtime.metrics?.();
+        if (usage !== undefined) {
+          handles.recordRunUsage({
+            runId,
+            usage: {
+              requests: usage.requests,
+              promptTokens: usage.promptTokens,
+              completionTokens: usage.completionTokens,
+              totalTokens: usage.totalTokens,
+              costUsd: usage.costUsd,
+            },
+          });
+        }
         await runtime.dispose();
       }
     },

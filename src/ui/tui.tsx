@@ -8,6 +8,7 @@ import { formatStyleStatus, nextBuildStyle, nextSpeechStyle, resolveStyleFromEnv
 import type { ReviewFollowUp } from "../integrations/review-followups.js";
 import type { HubGateObservability } from "../cli/hub-snapshot.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
+import type { TaskCommandPort } from "../application/task-commands.js";
 import type { WorkflowSnapshot } from "../application/workflow.js";
 import type { TaskState } from "../kernel/contracts.js";
 import {
@@ -124,6 +125,7 @@ export function WorkflowTui({
   connectionLabel,
   composerBackground,
   assistantLabel = "Cline",
+  taskCommands,
 }: {
   readonly application: WorkflowSnapshotSource;
   readonly session?: WorkflowCodingSession;
@@ -152,6 +154,15 @@ export function WorkflowTui({
    */
   readonly composerBackground?: string;
   readonly assistantLabel?: string;
+  /**
+   * W046 (open clause): the task-command port, composed by the SURFACE that
+   * owns canonical state (acp-tui passes createTaskCommandPort(application)).
+   * Present → the Ctrl+T task palette can create/activate/retry canonical
+   * tasks through application commands; absent → the palette renders
+   * read-only. The TUI itself still never owns canonical state — it only
+   * forwards operator intents through the port.
+   */
+  readonly taskCommands?: TaskCommandPort;
 }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -171,6 +182,28 @@ export function WorkflowTui({
   const savedDraft = useRef<string | undefined>(undefined);
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuIndex, setMenuIndex] = useState(0);
+  // W046 (open clause): the Ctrl+T task palette — create/activate/retry
+  // canonical tasks through the taskCommands port. "list" browses and
+  // mutates; "create" captures a title. The title mirrors into a ref for
+  // the same fast-typing reason as the composer (promptRef above), and the
+  // cursor index is clamped at render so snapshot changes can never point
+  // outside the task list.
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteMode, setPaletteMode] = useState<"list" | "create">("list");
+  const [paletteIndex, setPaletteIndex] = useState(0);
+  const paletteIndexRef = useRef(0);
+  const [paletteTitle, setPaletteTitle] = useState("");
+  const paletteTitleRef = useRef("");
+  // The mode mirrors into a ref for the same reason as promptRef: keys
+  // typed immediately after a mode switch (↵ create → arrows) can arrive
+  // before React flushes, and a stale closure would consume them under the
+  // previous mode. The ref is the synchronous source of truth.
+  const paletteModeRef = useRef<"list" | "create">("list");
+  const setPaletteModeSynced = (mode: "list" | "create"): void => {
+    paletteModeRef.current = mode;
+    setPaletteMode(mode);
+  };
+  const [paletteMessage, setPaletteMessage] = useState<{ readonly text: string; readonly error?: boolean } | undefined>();
   // Mirror of the prompt for synchronous reads in the input handler: fast
   // keypresses can arrive before React flushes a render, and reading state
   // directly would lose fast submissions (a ref never goes stale in useInput).
@@ -370,6 +403,16 @@ export function WorkflowTui({
       setMenuIndex(0);
       return;
     }
+    if (key.ctrl && input === "t") {
+      // W046: the task palette. Opening resets the cursor to the top and
+      // clears any stale message; closing (Esc/q inside) keeps the list.
+      setPaletteOpen((open) => !open);
+      setPaletteModeSynced("list");
+      paletteIndexRef.current = 0;
+      setPaletteIndex(0);
+      setPaletteMessage(undefined);
+      return;
+    }
     if (menuOpen) {
       if (key.escape || input === "q") {
         setMenuOpen(false);
@@ -399,6 +442,104 @@ export function WorkflowTui({
         const item = menuItems[menuIndex]!;
         item.run();
         if (item.closes) setMenuOpen(false);
+        return;
+      }
+      return;
+    }
+    if (paletteOpen) {
+      // Fresh canonical read, not the React closure: fast keys (create →
+      // arrows → activate in one burst) arrive before the re-render, and a
+      // stale tasks list would clamp the cursor against the old count and
+      // mis-target the activation. The handler reads the application
+      // directly; the render still uses the React snapshot.
+      const tasks = application.snapshot().tasks;
+      const clamp = (value: number): number => Math.max(0, Math.min(tasks.length - 1, value));
+      if (paletteModeRef.current === "create") {
+        if (key.escape) {
+          setPaletteModeSynced("list");
+          setPaletteTitle("");
+          paletteTitleRef.current = "";
+          return;
+        }
+        if (key.return) {
+          const title = paletteTitleRef.current.trim();
+          if (title.length === 0) return;
+          try {
+            const id = taskCommands?.createTask({ title });
+            setPaletteMessage({ text: `created ${id ?? "?"} — ${title}` });
+            setPaletteModeSynced("list");
+            setPaletteTitle("");
+            paletteTitleRef.current = "";
+            setSnapshot(application.snapshot());
+          } catch (error) {
+            setPaletteMessage({ text: error instanceof Error ? error.message : String(error), error: true });
+          }
+          return;
+        }
+        if (key.backspace || key.delete) {
+          const next = paletteTitleRef.current.slice(0, -1);
+          paletteTitleRef.current = next;
+          setPaletteTitle(next);
+          return;
+        }
+        if (input.length > 0 && !key.ctrl && !key.meta) {
+          const next = paletteTitleRef.current + input;
+          paletteTitleRef.current = next;
+          setPaletteTitle(next);
+        }
+        return;
+      }
+      if (key.escape || input === "q") {
+        setPaletteOpen(false);
+        setPaletteMessage(undefined);
+        return;
+      }
+      if (key.upArrow) {
+        // The cursor mirrors into a ref (same stale-closure reasoning as the
+        // mode ref): a burst like ↓↓↓a must land all four keys on fresh
+        // values, not on the render-time paletteIndex.
+        paletteIndexRef.current = clamp(paletteIndexRef.current - 1);
+        setPaletteIndex(paletteIndexRef.current);
+        return;
+      }
+      if (key.downArrow) {
+        paletteIndexRef.current = clamp(paletteIndexRef.current + 1);
+        setPaletteIndex(paletteIndexRef.current);
+        return;
+      }
+      if (taskCommands === undefined) {
+        // Read-only surface (hub views, tests without a port): the palette
+        // lists tasks but every mutation key is inert.
+        return;
+      }
+      const cursorTask = tasks[clamp(paletteIndexRef.current)];
+      if ((key.return || input === "a") && cursorTask !== undefined) {
+        try {
+          taskCommands.activateTask(cursorTask.id);
+          setPaletteMessage({ text: `activated ${cursorTask.id} — ${cursorTask.title}` });
+          setSnapshot(application.snapshot());
+        } catch (error) {
+          // Kernel rejections (BLOCKED dependencies, non-activatable states)
+          // are the operator-visible refusal — the palette shows them, the
+          // canonical state never moved.
+          setPaletteMessage({ text: error instanceof Error ? error.message : String(error), error: true });
+        }
+        return;
+      }
+      if (input === "r" && cursorTask !== undefined) {
+        try {
+          taskCommands.retryTask(cursorTask.id);
+          setPaletteMessage({ text: `retried ${cursorTask.id}` });
+          setSnapshot(application.snapshot());
+        } catch (error) {
+          setPaletteMessage({ text: error instanceof Error ? error.message : String(error), error: true });
+        }
+        return;
+      }
+      if (input === "n") {
+        setPaletteModeSynced("create");
+        setPaletteTitle("");
+        paletteTitleRef.current = "";
         return;
       }
       return;
@@ -599,6 +740,16 @@ export function WorkflowTui({
           </Box>
         ) : null}
         {snapshot.tasks.length > 0 ? <TaskListPanel snapshot={snapshot} /> : null}
+        {paletteOpen ? (
+          <TaskPalette
+            snapshot={snapshot}
+            port={taskCommands}
+            index={paletteIndex}
+            mode={paletteMode}
+            title={paletteTitle}
+            message={paletteMessage}
+          />
+        ) : null}
         {showActivityPanel ? (
           <SessionActivityPanel state={sessionState} pendingTools={pendingTools} recentLogs={recentLogs} spinner={spinner} {...(reviewFollowUps === undefined ? {} : { reviewFollowUps })} {...(gates === undefined ? {} : { gateObservability: gates })} />
         ) : null}
@@ -704,6 +855,76 @@ function panelRows(snapshot: WorkflowSnapshot, showActivity: boolean): number {
   return taskRows + activityRows;
 }
 
+/**
+ * W046 (open clause): the Ctrl+T task palette. Pure projection — every
+ * mutation was already applied at the input-handler layer through the
+ * taskCommands port; this component renders the list, the cursor, the
+ * create-title entry, and the last port outcome (activation confirmations
+ * and kernel rejections alike). Without a port it is read-only and says so.
+ */
+function TaskPalette({
+  snapshot,
+  port,
+  index,
+  mode,
+  title,
+  message,
+}: {
+  readonly snapshot: WorkflowSnapshot;
+  readonly port: TaskCommandPort | undefined;
+  readonly index: number;
+  readonly mode: "list" | "create";
+  readonly title: string;
+  readonly message: { readonly text: string; readonly error?: boolean } | undefined;
+}) {
+  const tasks = snapshot.tasks;
+  const clamped = Math.max(0, Math.min(index, tasks.length - 1));
+  let activeId: string | undefined;
+  try {
+    activeId = port?.activeTaskId();
+  } catch {
+    activeId = undefined;
+  }
+  return (
+    <Box marginTop={1} flexDirection="column" borderStyle="round" borderColor={ACCENT_INTERACTIVE} paddingX={1}>
+      <Box justifyContent="space-between">
+        <Text bold>Task palette</Text>
+        <Text dimColor>{port === undefined ? "read-only (no task port on this surface)" : "Ctrl+T to close"}</Text>
+      </Box>
+      {mode === "create" ? (
+        <Text>
+          <Text bold color={ACCENT_INTERACTIVE}>new task title:</Text> {title}
+          <Text dimColor> — ↵ create · esc back</Text>
+        </Text>
+      ) : tasks.length === 0 ? (
+        <Text dimColor>no tasks yet{port === undefined ? "" : " — press n to create one"}</Text>
+      ) : (
+        tasks.map((task, taskIndex) => {
+          const accent = taskStateAccent(task.state);
+          const activeMark = task.id === activeId ? <Text bold color={ACCENT_INTERACTIVE}> ◂ active</Text> : null;
+          return (
+            <Text key={task.id} dimColor={accent.dim === true} {...(accent.color === undefined ? {} : { color: accent.color })}>
+              {taskIndex === clamped ? "▸" : " "} {TASK_GLYPHS[task.state]} {task.id.padEnd(8)} {task.state.padEnd(11)} {task.title}
+              {activeMark}
+            </Text>
+          );
+        })
+      )}
+      {message !== undefined ? (
+        <Text dimColor={message.error !== true} {...(message.error === true ? { color: ACCENT_FAILURE } : {})}>
+          {message.error === true ? "✗ " : "· "}
+          {message.text}
+        </Text>
+      ) : null}
+      {port === undefined ? (
+        <Text dimColor>read-only: this surface composes no task-command port</Text>
+      ) : mode === "list" ? (
+        <Text dimColor>↑/↓ move · a/↵ activate · n new · r retry failed · esc close</Text>
+      ) : null}
+    </Box>
+  );
+}
+
 function TaskListPanel({ snapshot }: { readonly snapshot: WorkflowSnapshot }) {
   const total = snapshot.tasks.length;
   const verified = snapshot.tasks.filter((task) => task.state === "VERIFIED").length;
@@ -760,6 +981,8 @@ function SessionActivityPanel({
   const verdicts = Object.entries(gateObservability?.reviewOutcomes ?? {});
   const unverifiedClaims = Object.entries(gateObservability?.completionClaims ?? [])
     .filter(([, claim]) => claim.verifiedAtClaim === false);
+  // W044 (open clause): hub-side per-run usage from the metering proxy.
+  const runUsage = Object.entries(gateObservability?.usage ?? {});
   const sessionState = state?.state;
   const stateAccent = sessionStateAccent(sessionState);
   return (
@@ -808,7 +1031,15 @@ function SessionActivityPanel({
           ))}
         </Box>
       ) : null}
-      {pendingTools.length === 0 && recentLogs.length === 0 && openFollowUps.length === 0 && blockedRuns.length === 0 && verdicts.length === 0 && unverifiedClaims.length === 0 ? <Text dimColor>No live activity.</Text> : null}
+      {runUsage.length > 0 ? (
+        <Box flexDirection="column">
+          <Text dimColor>  run usage (hub metering, last {Math.min(runUsage.length, 3)})</Text>
+          {runUsage.slice(0, 3).map(([runId, usage]) => (
+            <Text key={runId} dimColor>    {shortRun(runId)}: {usage.totalTokens} tokens · ${usage.costUsd.toFixed(4)} · {usage.requests} requests</Text>
+          ))}
+        </Box>
+      ) : null}
+      {pendingTools.length === 0 && recentLogs.length === 0 && openFollowUps.length === 0 && blockedRuns.length === 0 && verdicts.length === 0 && unverifiedClaims.length === 0 && runUsage.length === 0 ? <Text dimColor>No live activity.</Text> : null}
     </Box>
   );
 }

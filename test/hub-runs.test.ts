@@ -435,3 +435,65 @@ test("a later run in the same workspace cannot verify on a predecessor's test ev
   await registry.controller.finish({ runId: "author-second", outcome: "verified" });
   assert.equal(testCalls.length, 2, "the second run re-ran the workspace tests instead of inheriting them");
 });
+
+test("recorded run usage is bounded, latest-per-run, and rides gateObservability", () => {
+  const base = setupRegistry();
+  const registry = createRunRegistry(base.application, base.graph);
+
+  // Two recordings on the same run: the latest wins.
+  registry.recordRunUsage({ runId: "usage-a", usage: { requests: 2, promptTokens: 100, completionTokens: 20, totalTokens: 120, costUsd: 0.01 } });
+  registry.recordRunUsage({ runId: "usage-a", usage: { requests: 5, promptTokens: 300, completionTokens: 50, totalTokens: 350, costUsd: 0.04 } });
+  assert.equal(registry.runUsage().get("usage-a")?.totalTokens, 350, "the latest recording per run wins");
+  assert.match(registry.runUsage().get("usage-a")?.recordedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+
+  // The 64-cap discipline shared with the other gate maps: a flood evicts
+  // the oldest entries first (usage-a and usage-b go; the newest survive).
+  registry.recordRunUsage({ runId: "usage-b", usage: { requests: 1, promptTokens: 10, completionTokens: 2, totalTokens: 12, costUsd: 0.001 } });
+  for (let index = 0; index < 70; index += 1) {
+    registry.recordRunUsage({ runId: `usage-fill-${index}`, usage: { requests: 1, promptTokens: 1, completionTokens: 1, totalTokens: 2, costUsd: 0 } });
+  }
+
+  assert.equal(registry.runUsage().size, 64, "the usage map is bounded at 64 like the other gate maps");
+  assert.equal(registry.runUsage().has("usage-a"), false, "oldest entries are evicted first");
+
+  // The monitor's view: usage rides gateObservability onto /snapshot.
+  const gates = registry.controller.gateObservability?.();
+  assert.ok(gates !== undefined);
+  const serialized = gates.runUsage === undefined ? undefined : Object.fromEntries(gates.runUsage);
+  assert.equal(serialized?.["usage-fill-69"]?.requests, 1, "the freshest entry survives serialization");
+});
+
+test("recorded run usage rides the hub /snapshot projection for monitors", async (t) => {
+  const { graph, application } = setup();
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-usage-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // A fake scheduler records a run's metering-proxy totals at start — the
+  // same surface hub.ts's runTurn uses at turn end.
+  let recorded = false;
+  const hub = await createWorkflowHub(application, {
+    discoveryDir: dir,
+    graph,
+    schedulerFactory: (handles) => ({
+      tick: async () => undefined,
+      start: () => {
+        if (recorded) return;
+        recorded = true;
+        handles.recordRunUsage({
+          runId: "schedule:usage-e2e",
+          usage: { requests: 3, promptTokens: 1200, completionTokens: 80, totalTokens: 1280, costUsd: 0.0042 },
+        });
+      },
+      stop: () => undefined,
+    }),
+  });
+  t.after(() => hub.close());
+  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
+
+  const response = await post(hub.url, token, "/snapshot", { workspace: process.cwd() });
+  assert.equal(response.status, 200);
+  const gates = response.body.gateObservability as { usage?: Record<string, { totalTokens: number; costUsd: number }> } | undefined;
+  assert.ok(gates !== undefined, "gate observability rides /snapshot");
+  assert.equal(gates.usage?.["schedule:usage-e2e"]?.totalTokens, 1280, "the monitor can read per-run usage from /snapshot");
+  assert.equal(gates.usage?.["schedule:usage-e2e"]?.costUsd, 0.0042);
+});
+
