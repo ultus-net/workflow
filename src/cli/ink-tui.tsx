@@ -13,10 +13,12 @@ import { resolve } from "node:path";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui } from "../ui/tui.js";
+import { detectTerminalBackground } from "../ui/terminal-theme.js";
 import { createCheckpointLedger } from "../pedagogy/checkpoints.js";
 import { applySkillGating, resolveSkillsLevelMap } from "../pedagogy/skill-gating.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
-import { resolveWorkflowHub } from "./hub-client.js";
+import { resolveWorkflowHub, terminateOwnedHub } from "./hub-client.js";
+import type { ChildProcess } from "node:child_process";
 import { createHubSnapshotSource } from "./hub-snapshot.js";
 
 /**
@@ -37,7 +39,21 @@ const followUpsClient = existsSync(reviewServer)
   : undefined;
 const reviewFollowUps: readonly ReviewFollowUp[] = followUpsClient === undefined ? [] : await followUpsClient.openFollowUps(8).catch(() => []);
 
-const hub = await resolveWorkflowHub().catch(() => undefined);
+// W044 resource hygiene: a monitor launch that auto-spawns the hub owns that
+// hub and must terminate it on exit; a probed-and-reused hub stays running.
+let ownedHub: ChildProcess | undefined;
+const terminateOwned = () => terminateOwnedHub(ownedHub);
+process.on("exit", terminateOwned);
+process.once("SIGTERM", () => {
+  terminateOwned();
+  process.exit(143);
+});
+process.once("SIGHUP", () => {
+  terminateOwned();
+  process.exit(129);
+});
+
+const hub = await resolveWorkflowHub({ onSpawned: (child) => { ownedHub = child; } }).catch(() => undefined);
 
 if (hub !== undefined) {
   const source = createHubSnapshotSource(hub, workspace);
@@ -125,6 +141,9 @@ if (hub !== undefined) {
   // malformed map refuses startup (fail-closed) rather than running ungated.
   const skillsLevelMap = resolveSkillsLevelMap(process.env.SKILLS_MCP_DIR, homedir());
 
+  // Terminal-derived composer tint (OSC 11): must run before Ink owns stdin.
+  const composerBackground = await detectTerminalBackground();
+
   const { waitUntilExit } = render(
     React.createElement(WorkflowTui, {
       application,
@@ -140,6 +159,7 @@ if (hub !== undefined) {
         application.setPedagogyGate(createCheckpointLedger(mode));
         applySkillGating(application, mode, skillsLevelMap);
       },
+      ...(composerBackground === undefined ? {} : { composerBackground }),
     }),
   );
   await waitUntilExit();

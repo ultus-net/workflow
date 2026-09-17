@@ -1,4 +1,5 @@
 import type { HostCapabilities, ProposedToolAction, ToolCapability } from "./host.js";
+import { NO_ACTIVE_TASK_ID } from "./task-commands.js";
 import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type {
@@ -208,6 +209,13 @@ export class WorkflowApplication {
   }
 
   addTask(task: Omit<WorkflowTask, "state">): void {
+    // W046: the active-task correlation's fail-closed sentinel must never be
+    // a creatable task — reserving it at the application seam covers every
+    // creation path (port, web API, hub flows) so a live IN_PROGRESS task
+    // named "no-active-task" can never turn the no-active deny into an allow.
+    if (task.id === NO_ACTIVE_TASK_ID) {
+      throw new Error(`task id ${JSON.stringify(NO_ACTIVE_TASK_ID)} is reserved for the fail-closed active-task correlation`);
+    }
     this.#graph.addTask({ ...task, state: "BLOCKED" });
   }
 

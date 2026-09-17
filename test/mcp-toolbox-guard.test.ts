@@ -101,6 +101,11 @@ test("guardInputFromToolCall maps every host family to guard actions", () => {
   // OpenCode surface — edit/write must carry the content, never an empty payload
   assert.deepEqual(guardInputFromToolCall("edit", { filePath: "src/a.ts", newString: "let y = 2;" }), { action: "file_write", path: "src/a.ts", content: "let y = 2;" });
   assert.deepEqual(guardInputFromToolCall("write", { filePath: "src/b.ts", content: "export {};" }), { action: "file_write", path: "src/b.ts", content: "export {};" });
+  // Hub-implemented fs server — a delegated write hits the same write policy
+  assert.deepEqual(guardInputFromToolCall("fs/write_text_file", { path: "/repo/src/b.ts", content: "export {};" }, "/repo"), { action: "file_write", path: "/repo/src/b.ts", content: "export {};", workspaceRoot: "/repo" });
+  // Delegated reads are not guard-gated (the guard has no read action — the
+  // same as direct reads on every surface)
+  assert.equal(guardInputFromToolCall("fs/read_text_file", { path: "/repo/a.ts" }), undefined);
   assert.deepEqual(guardInputFromToolCall("apply_patch", { patchText: "*** Update File: x" }), { action: "file_write", patchText: "*** Update File: x" });
   assert.deepEqual(guardInputFromToolCall("bash", { command: "echo hi" }), { action: "shell", command: "echo hi" });
   // Network tools reach the guard with the target URL

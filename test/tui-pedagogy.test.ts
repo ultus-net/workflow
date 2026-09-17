@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { afterEach, test } from "node:test";
 import React from "react";
-import { render } from "ink-testing-library";
+import { cleanup, render } from "ink-testing-library";
 
 import {
   TaskGraph,
@@ -13,6 +13,11 @@ import {
   type DecisionBrief,
   type LearningOpportunity,
 } from "../src/index.js";
+
+// The monitor-mode TUI polls every second while mounted, so a view leaked by
+// a failing assertion would keep the test process alive past its results.
+// Unmount everything after each test; Ink's unmount is idempotent.
+afterEach(() => cleanup());
 
 function createApplication(): WorkflowApplication {
   return new WorkflowApplication(
@@ -72,11 +77,11 @@ test("TUI installs the pedagogy gate via onModeChange on mount and menu changes"
   view.stdin.write("/");
   await waitForFrame(view, /Workflow options/);
   view.stdin.write("1");
-  await waitForFrame(view, /\[Mode: Learn to Code/);
+  await waitForFrame(view, /Mode: Learn to Code/);
   view.stdin.write("/");
   await waitForFrame(view, /Workflow options/);
   view.stdin.write("1");
-  await waitForFrame(view, /\[Mode: Socratic Tutor/);
+  await waitForFrame(view, /Mode: Socratic Tutor/);
 
   assert.deepEqual(modes, ["autonomous", "learn-to-code", "socratic-tutor"]);
   view.unmount();
@@ -99,10 +104,11 @@ test("TUI / opens the Workflow options menu and 1-6 toggle options", async () =>
   assert.match(menu, /Inspect symbol/);
   assert.match(menu, /Workflow details/);
 
-  // Digit 1 cycles the mode and closes the menu.
+  // Digit 1 cycles the mode; the menu stays open so options can be toggled
+  // in place.
   view.stdin.write("1");
-  await waitForFrame(view, /\[Mode: Learn to Code/);
-  assert.doesNotMatch(view.lastFrame() ?? "", /Workflow options/);
+  await waitForFrame(view, /Mode: Learn to Code/);
+  assert.match(view.lastFrame() ?? "", /Workflow options/, "the menu must stay open while options cycle");
   view.unmount();
 });
 
@@ -121,14 +127,12 @@ test("TUI / menu digit selection runs the option and q closes", async () => {
   view.stdin.write("/");
   await waitForFrame(view, /Workflow options/);
 
-  // Digit 2 is Speech.
+  // Digit 2 is Speech; cycling keeps the menu open.
   view.stdin.write("2");
   await waitForFrame(view, /Speech: caveman|🪨/);
-  assert.doesNotMatch(view.lastFrame() ?? "", /Workflow options/);
+  assert.match(view.lastFrame() ?? "", /Workflow options/, "the menu must stay open while options cycle");
 
-  // Reopen, then q closes without changing anything.
-  view.stdin.write("/");
-  await waitForFrame(view, /Workflow options/);
+  // q closes without changing anything.
   view.stdin.write("q");
   await waitForFrame(view, /keys: \/ menu/);
   assert.match(view.lastFrame() ?? "", /keys: \/ menu/);
@@ -138,33 +142,33 @@ test("TUI / menu digit selection runs the option and q closes", async () => {
 test("TUI shows the autonomous mode by default and the menu cycles pedagogical modes", async () => {
   const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
 
-  assert.match(view.lastFrame() ?? "", /\[Mode: Autonomous\]/);
+  assert.match(view.lastFrame() ?? "", /Mode: Autonomous/);
 
   view.stdin.write("/");
   await waitForFrame(view, /Workflow options/);
   view.stdin.write("1");
-  await waitForFrame(view, /\[Mode: Learn to Code\]/);
-  assert.match(view.lastFrame() ?? "", /\[Mode: Learn to Code\]/);
+  await waitForFrame(view, /Mode: Learn to Code/);
+  assert.match(view.lastFrame() ?? "", /Mode: Learn to Code/);
 
   view.stdin.write("/");
   await waitForFrame(view, /Workflow options/);
   view.stdin.write("1");
-  await waitForFrame(view, /\[Mode: Socratic Tutor\]/);
-  assert.match(view.lastFrame() ?? "", /\[Mode: Socratic Tutor\]/);
+  await waitForFrame(view, /Mode: Socratic Tutor/);
+  assert.match(view.lastFrame() ?? "", /Mode: Socratic Tutor/);
 
   view.stdin.write("/");
   await waitForFrame(view, /Workflow options/);
   view.stdin.write("1");
-  await waitForFrame(view, /\[Mode: Co-Architect/);
+  await waitForFrame(view, /Mode: Co-Architect/);
   view.stdin.write("/");
   await waitForFrame(view, /Workflow options/);
   view.stdin.write("1");
-  await waitForFrame(view, /\[Mode: Walkthrough/);
+  await waitForFrame(view, /Mode: Walkthrough/);
   view.stdin.write("/");
   await waitForFrame(view, /Workflow options/);
   view.stdin.write("1");
-  await waitForFrame(view, /\[Mode: Autonomous/);
-  assert.match(view.lastFrame() ?? "", /\[Mode: Autonomous\]/);
+  await waitForFrame(view, /Mode: Autonomous/);
+  assert.match(view.lastFrame() ?? "", /Mode: Autonomous/);
   view.unmount();
 });
 

@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { resolveWorkflowHub } from "./hub-client.js";
+import { resolveWorkflowHub, terminateOwnedHub } from "./hub-client.js";
 import { preparePersistentMcpSettings, readUserMcpSettings } from "./mcp-settings.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 
@@ -13,14 +13,36 @@ const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const clineRoot = resolve(root, ".workflow-cline", "cline");
 
+// W044 resource hygiene: if THIS launch auto-spawns the hub, this launcher
+// owns that hub's lifecycle and must terminate it on session exit — a hub we
+// merely probed and reused is someone else's daemon and stays running.
+let ownedHub: ChildProcess | undefined;
+let clineChild: ChildProcess | undefined;
+const terminateOwned = () => {
+  terminateOwnedHub(ownedHub);
+  if (clineChild !== undefined && clineChild.exitCode === null && clineChild.signalCode === null) {
+    clineChild.kill("SIGTERM");
+  }
+};
+process.on("exit", terminateOwned);
+process.once("SIGTERM", () => {
+  terminateOwned();
+  process.exit(143);
+});
+process.once("SIGHUP", () => {
+  terminateOwned();
+  process.exit(129);
+});
+
 // The Workflow hub is the single authority for every Cline surface; the
 // launcher resolves it through the discovery file and fails closed when the
 // daemon is not running. See `docs/HUB.md`.
-const hub = await resolveWorkflowHub();
+const hub = await resolveWorkflowHub({ onSpawned: (child) => { ownedHub = child; } });
 const toolboxRoot = resolve(root, "mcp-toolbox");
 const mcpSettingsPath = prepareMcpSettings(toolboxRoot);
 process.on("SIGINT", () => {});
 const exitCode = await runClineTui(clineRoot, workspace, hub.url, hub.token, mcpSettingsPath);
+terminateOwned();
 process.exitCode = exitCode;
 
 /**
@@ -63,6 +85,7 @@ function runClineTui(clineRoot: string, cwd: string, bridgeUrl: string, bridgeTo
         },
       },
     );
+    clineChild = child;
     child.once("error", reject);
     child.once("exit", (code, signal) => {
       if (signal !== null) return reject(new Error(`Cline TUI terminated by ${signal}`));

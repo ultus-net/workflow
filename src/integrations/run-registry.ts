@@ -12,6 +12,8 @@ import type { HubReviewerResult } from "./hub-reviewer.js";
 export type RunReviewer = (input: {
   readonly runId: string;
   readonly workspace: string | undefined;
+  /** The ask the run was launched with, when declared — the reviewer binds it into its provenance fingerprint (W041). */
+  readonly taskPrompt?: string;
 }) => Promise<HubReviewerResult>;
 
 export type RunReviewerFactory = (controller: WorkflowRunController) => RunReviewer;
@@ -29,6 +31,21 @@ export type RunTestRunner = (input: {
 
 export function runTestSubject(runId: string, workspace: string | undefined): string {
   return `test:${workspace ?? runId}`;
+}
+
+/**
+ * W044 (open clause): hub-side per-session usage aggregation. A scheduled
+ * run's metering-proxy totals, recorded at turn end from the runtime's
+ * metrics so hub-attached monitors can render per-run cost without an agent
+ * process of their own. Plain records (the /snapshot payload is JSON).
+ */
+export interface RunUsageSummary {
+  readonly requests: number;
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly totalTokens: number;
+  readonly costUsd: number;
+  readonly recordedAt: string;
 }
 
 /**
@@ -82,10 +99,14 @@ export function createRunRegistry(
   recordBlockingReason(input: { readonly runId: string; readonly reason: string }): void;
   recordCompletionClaim(input: { readonly runId: string; readonly claim: string }): void;
   completionClaims(): ReadonlyMap<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }>;
+  /** W044 (open clause): per-run usage recorded from the runtime's metering-proxy metrics. */
+  recordRunUsage(input: { readonly runId: string; readonly usage: Omit<RunUsageSummary, "recordedAt"> }): void;
+  runUsage(): ReadonlyMap<string, RunUsageSummary>;
 } {
   const workspaceApplications = new Map<string, WorkflowApplication>();
   const runs = new Map<string, WorkflowApplication>();
   const runWorkspaces = new Map<string, string | undefined>();
+  const runPrompts = new Map<string, string>();
   const runTestSubjects = new Map<string, string>();
   const reviewOutcomes = new Map<string, HubReviewerResult>();
   const rememberReviewOutcome = (runId: string, result: HubReviewerResult): void => {
@@ -127,6 +148,17 @@ export function createRunRegistry(
       completionClaims.delete(oldest);
     }
   };
+  // W044 (open clause): per-run usage from the metering proxy, recorded at
+  // turn end. Same bounded-observability rule as the other gate maps.
+  const runUsage = new Map<string, RunUsageSummary>();
+  const rememberRunUsage = (runId: string, usage: Omit<RunUsageSummary, "recordedAt">): void => {
+    runUsage.set(runId, { ...usage, recordedAt: new Date().toISOString() });
+    while (runUsage.size > 64) {
+      const oldest = runUsage.keys().next().value;
+      if (oldest === undefined) break;
+      runUsage.delete(oldest);
+    }
+  };
 
   const workspaceApplication = (
     workspace: string | undefined,
@@ -165,9 +197,10 @@ export function createRunRegistry(
         reviewOutcomes,
         blockingReasons,
         completionClaims,
+        runUsage,
       };
     },
-    async begin({ runId, title, workspace, requiresReview }) {
+    async begin({ runId, title, workspace, requiresReview, taskPrompt }) {
       if (runId.trim().length === 0 || title.trim().length === 0) {
         throw new TypeError("run begin requires a non-empty runId and title");
       }
@@ -210,6 +243,7 @@ export function createRunRegistry(
       }
       runs.set(runId, application);
       runWorkspaces.set(runId, workspace);
+      if (typeof taskPrompt === "string" && taskPrompt.length > 0) runPrompts.set(runId, taskPrompt);
     },
     async review({ runId, reviewerRunId, verdict, summary }) {
       const application = runs.get(runId);
@@ -273,7 +307,12 @@ export function createRunRegistry(
           const reviewer = options.reviewer(controller);
           let result: HubReviewerResult;
           try {
-            result = await reviewer({ runId, workspace: runWorkspaces.get(runId) });
+            const taskPrompt = runPrompts.get(runId);
+            result = await reviewer({
+              runId,
+              workspace: runWorkspaces.get(runId),
+              ...(taskPrompt === undefined ? {} : { taskPrompt }),
+            });
           } catch (error) {
             const reason = `hub reviewer failed: ${error instanceof Error ? error.message : String(error)}`;
             rememberBlockingReason(runId, reason);
@@ -351,6 +390,7 @@ export function createRunRegistry(
       finishedRunTaskIds.add(runTaskId);
       runs.delete(runId);
       runWorkspaces.delete(runId);
+      runPrompts.delete(runId);
       runTestSubjects.delete(runId);
     },
   };
@@ -394,6 +434,12 @@ export function createRunRegistry(
     },
     completionClaims(): ReadonlyMap<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }> {
       return completionClaims;
+    },
+    recordRunUsage(input: { readonly runId: string; readonly usage: Omit<RunUsageSummary, "recordedAt"> }): void {
+      rememberRunUsage(input.runId, input.usage);
+    },
+    runUsage(): ReadonlyMap<string, RunUsageSummary> {
+      return runUsage;
     },
   };
 }

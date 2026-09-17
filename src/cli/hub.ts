@@ -100,8 +100,14 @@ const workspaceApplicationFor = (target: string): WorkflowApplication => {
 const containedShell = (writableWorkspace: boolean) => (command: string, cwd: string) =>
   shellExecutorFor(workspaceApplicationFor(cwd), undefined, writableWorkspace, guard)(command, cwd, undefined);
 
+// Review provenance (W041) journals every hub review decision in hub state —
+// never inside a reviewed workspace, where it would mutate the very
+// fingerprint the records are bound to. WORKFLOW_HUB_PROVENANCE overrides.
+const reviewProvenancePath = process.env.WORKFLOW_HUB_PROVENANCE ?? join(homedir(), ".workflow", "review-provenance.jsonl");
+
 const reviewerFactory = createReviewerFactory({
   shell: containedShell(false),
+  provenancePath: reviewProvenancePath,
   createRuntime: async ({ workspace: reviewerWorkspace }) => {
     const reviewerApplication = new WorkflowApplication(
       graph,
@@ -115,6 +121,9 @@ const reviewerFactory = createReviewerFactory({
     reviewerApplication.transition(reviewerTaskId, "IN_PROGRESS");
     reviewerApplication.selectActiveTask(reviewerTaskId);
     const runtime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerTaskId, undefined, guard);
+    // W045: record the reviewer runtime's budget mechanism like every other
+    // hub-composed runtime.
+    console.log(`hub reviewer session budget mechanism: ${runtime.budgetMechanism}`);
     return {
       submit: (prompt: string) => runtime.session.submit(prompt),
       snapshot: () => runtime.session.snapshot(),
@@ -151,6 +160,10 @@ const schedulerFactory = schedules.length === 0 ? undefined : (handles: Workflow
       const runTaskId: TaskId = taskId(`run:${runId}`);
       const turnWorkspace = workspace ?? process.cwd();
       const runtime = await createConfiguredAcpRuntime(runApplication, turnWorkspace, runTaskId, undefined, guard);
+      // W045: record which interactive budget enforcement mechanism this
+      // scheduled run's runtime carries (local guard vs the OpenRouter
+      // per-key backstop) alongside the schedule's own run budget.
+      console.log(`run ${runId} session budget mechanism: ${runtime.budgetMechanism}`);
       let budgetGuard: BudgetGuard | undefined;
       try {
         if (budget !== undefined) {
@@ -172,22 +185,48 @@ const schedulerFactory = schedules.length === 0 ? undefined : (handles: Workflow
           handles.recordCompletionClaim({ runId, claim: snapshot.result });
         }
       } finally {
+        // W044 (open clause): record the turn's metering-proxy totals for
+        // hub-attached monitors (per-session usage aggregation) BEFORE the
+        // runtime dies with its proxy.
+        const usage = runtime.metrics?.();
+        if (usage !== undefined) {
+          handles.recordRunUsage({
+            runId,
+            usage: {
+              requests: usage.requests,
+              promptTokens: usage.promptTokens,
+              completionTokens: usage.completionTokens,
+              totalTokens: usage.totalTokens,
+              costUsd: usage.costUsd,
+            },
+          });
+        }
         await runtime.dispose();
       }
     },
   });
 
-const hub = await createWorkflowHub(application, {
-  graph,
-  guard,
-  ...(teamTaskVerificationCommand === undefined ? {} : { teamTaskVerificationCommand }),
-  ...(testRunner === undefined ? {} : { testRunner }),
-  ...(schedulerFactory === undefined ? {} : { schedulerFactory }),
-  reviewerFactory,
-  ...(requestLogPath === undefined ? {} : {
-    observeRequest: (path) => appendFileSync(requestLogPath, `${path}\n`, { mode: 0o600 }),
-  }),
-});
+let hub: Awaited<ReturnType<typeof createWorkflowHub>>;
+try {
+  hub = await createWorkflowHub(application, {
+    graph,
+    guard,
+    ...(teamTaskVerificationCommand === undefined ? {} : { teamTaskVerificationCommand }),
+    ...(testRunner === undefined ? {} : { testRunner }),
+    ...(schedulerFactory === undefined ? {} : { schedulerFactory }),
+    reviewerFactory,
+    ...(requestLogPath === undefined ? {} : {
+      observeRequest: (path) => appendFileSync(requestLogPath, `${path}\n`, { mode: 0o600 }),
+    }),
+  });
+} catch (error) {
+  // W044 resource hygiene: the guard child starts BEFORE the hub composition,
+  // so a failed startup (e.g. losing the single-instance lock to an already
+  // running hub) must still reap its own guard — a lock-loser hub may never
+  // leave a guardless-spawned MCP child behind.
+  await guard.close();
+  throw error;
+}
 console.log(`Workflow hub listening at ${hub.url}`);
 console.log(`Discovery file: ${hub.discoveryPath}`);
 

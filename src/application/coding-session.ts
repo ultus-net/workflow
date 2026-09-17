@@ -24,6 +24,18 @@ export type CodingSessionEvent =
   | { readonly type: "tutor-checkpoint"; readonly opportunity: LearningOpportunity }
   | { readonly type: "diagnostic-lesson"; readonly lesson: DiagnosticLesson }
   | { readonly type: "log"; readonly level: "debug" | "info" | "warning" | "error"; readonly message: string; readonly source?: string }
+  | {
+      /**
+       * W047 (G7 context visibility): an agent-emitted context/usage signal
+       * the session record keeps for observability — standard kinds the
+       * driver doesn't otherwise project (e.g. `usage_update`) and
+       * agent-custom notification methods (e.g. goose's usage channel).
+       * Advisory only: context visibility is never upgraded to control.
+       */
+      readonly type: "agent-context";
+      readonly kind: string;
+      readonly payload: unknown;
+    }
   | { readonly type: "completed"; readonly result: string }
   | { readonly type: "failed"; readonly reason: string };
 
@@ -61,7 +73,22 @@ export class WorkflowCodingSession {
   // clears the queue — a cancelled turn never auto-continues.
   #queue: readonly { readonly prompt: string; readonly images: readonly CodingSessionImage[] }[] = [];
 
-  constructor(readonly driver: CodingSessionDriver) {}
+  constructor(
+    readonly driver: CodingSessionDriver,
+    options: {
+      /**
+       * W045 budget enforcement: consulted before every submit. A defined
+       * reason refuses the prompt — the turn never starts, the queue is
+       * never entered, and the reason surfaces as a failed event when the
+       * session state still accepts events. Never a silent truncation.
+       */
+      readonly refusalGate?: () => string | undefined;
+    } = {},
+  ) {
+    this.#refusalGate = options.refusalGate;
+  }
+
+  readonly #refusalGate: (() => string | undefined) | undefined;
 
   subscribe(listener: (event: CodingSessionEvent) => void): () => void {
     this.#listeners.add(listener);
@@ -73,6 +100,15 @@ export class WorkflowCodingSession {
   }
 
   async submit(prompt: string, images: readonly CodingSessionImage[] = []): Promise<void> {
+    const refusal = this.#refusalGate?.();
+    if (refusal !== undefined) {
+      // Refuse fail-closed: the prompt is neither run nor queued, and the
+      // reason is surfaced. (When the session is in the cancelled state the
+      // event is intentionally dropped — the sticky violation is still
+      // visible through the session-budget guard's own surface.)
+      this.#emit({ type: "failed", reason: refusal });
+      return;
+    }
     if (this.#state.state === "running") {
       this.#queue = [...this.#queue, { prompt, images }];
       return;

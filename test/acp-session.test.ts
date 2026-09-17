@@ -425,3 +425,24 @@ test("ACP session driver projects session_info_update as a typed session-info ti
     await cleanup(child);
   }
 });
+
+test("the hub fs server rejects relative paths fail-closed before authorization", async () => {
+  const seen: ProposedToolAction[] = [];
+  const { driver, child } = driverFor("fs-relative-write", (action) => {
+    seen.push(action);
+    return { kind: "allow" };
+  });
+  const session = new WorkflowCodingSession(driver);
+  const events: CodingSessionEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.submit("write the file");
+    const completed = events.find((event): event is Extract<CodingSessionEvent, { type: "completed" }> => event.type === "completed");
+    assert.ok(completed !== undefined, "the turn must complete with the fs rejection surfaced as the agent's report");
+    assert.match(completed.result, /must be absolute/, "the agent must see the fail-closed rejection");
+    assert.equal(seen.length, 0, "a relative-path delegation must never reach authorization");
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+});

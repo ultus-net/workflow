@@ -19,7 +19,12 @@ const KNOWN_READ_TOOLS: ReadonlySet<string> = new Set(["read", "read_file", "rea
 // permission requests of its own, so spawn is default-deny everywhere and
 // enforced surfaces must probe subagent visibility before claiming it.
 // Exported so the conformance probe classifies spawn-family tools identically.
-export const KNOWN_SPAWN_TOOLS: ReadonlySet<string> = new Set(["spawn_agent", "task", "subagent", "agent", "newtask"]);
+// `delegate` (goose's summon-extension delegation tool) entered on live W048
+// evidence (goose 1.50.1, 2026-09-17): the SUBAGENT probe showed it
+// projecting AND routing through `session/request_permission` under
+// approve mode — hub-gateable like OpenCode's `task`. Its sibling `load`
+// never projected and stays out until evidence.
+export const KNOWN_SPAWN_TOOLS: ReadonlySet<string> = new Set(["spawn_agent", "task", "subagent", "agent", "newtask", "delegate"]);
 
 export class AcpHostAdapter implements TranslatingHostAdapter<AcpCorrelatedPermission, { outcome: "reject_once"; reason: string }> {
   readonly capabilities;

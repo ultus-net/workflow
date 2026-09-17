@@ -69,9 +69,10 @@ logging in, run `loginctl enable-linger "$USER"` once.
 In the monitor TUI: `/` (or Ctrl+P) opens the Workflow options menu — digits
 1-6 toggle **mode** (pedagogical gating), **speech** (caveman), **build**
 (ponytail/YAGNI), **learner profile**, **symbol inspect**, and **workflow
-details**; `q`/Esc closes. Ctrl+W toggles workflow details directly. Ordinary
-letter and punctuation keys are left to the composer so prompts are never
-changed by hidden first-character shortcuts.
+details**. The menu stays open while digits toggle values in place, so modes
+can be cycled repeatedly; `q`/Esc closes. Ctrl+W toggles workflow details
+directly. Ordinary letter and punctuation keys are left to the composer so
+prompts are never changed by hidden first-character shortcuts.
 
 ## What you get
 

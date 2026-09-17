@@ -218,6 +218,12 @@ export class WebSessionManager {
         runtime.driver,
         runtime.usage?.bind(runtime),
         this.#permissionBroker,
+        // W045: the hub records the active budget mechanism (and the sticky
+        // violation once crossed) per runtime, served on /api/session.
+        {
+          mechanism: () => runtime.budgetMechanism,
+          ...(runtime.budgetViolation === undefined ? {} : { violation: () => runtime.budgetViolation?.() }),
+        },
       );
       // Eagerly establish the ACP session on every switch, not only on
       // resume: a fresh session's connect() captures the agent's advertised

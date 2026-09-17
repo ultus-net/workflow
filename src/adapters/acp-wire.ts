@@ -6,7 +6,10 @@ export type AcpSpikeMethod =
   | "session/new"
   | "session/prompt"
   | "session/cancel"
-  | "session/request_permission";
+  | "session/request_permission"
+  | "fs/read_text_file"
+  | "fs/write_text_file"
+  | "fs/list_directory";
 
 export type AcpNotificationMethod = "session/update";
 
@@ -32,6 +35,9 @@ const spikeMethods = new Set<AcpSpikeMethod>([
   "session/prompt",
   "session/cancel",
   "session/request_permission",
+  "fs/read_text_file",
+  "fs/write_text_file",
+  "fs/list_directory",
 ]);
 
 export function encodeAcpMessage(message: Record<string, unknown>): string {

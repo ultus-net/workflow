@@ -38,6 +38,14 @@ export function isSkillName(name: string): boolean {
 export function scanSkills(skillsDir: string): readonly SkillMeta[] {
   const skills: SkillMeta[] = [];
   for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+    // Directory entries only: symlinked skill directories are deliberately
+    // skipped — Dirent reports the link itself, not its target. The runtime
+    // binds the skills directory into containment by realpath, so a symlink
+    // pointing outside the bound set dangles inside the boundary; a skill
+    // that is listed but unreadable at delivery is a lie, so discovery fails
+    // closed. This also makes symlink-based installers (the skills.sh CLI's
+    // default method) invisible by design — copy skills in (the repo's
+    // vendor-skills script always copies).
     if (!entry.isDirectory() || !isSkillName(entry.name)) continue;
     // The directory name IS the skill name: read_skill resolves names to
     // directories, so a disagreeing frontmatter name must never fork identity.

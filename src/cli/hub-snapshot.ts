@@ -17,6 +17,11 @@ export interface HubGateObservability {
   readonly reviewOutcomes: Record<string, { readonly reviewerRunId: string; readonly verdict: string; readonly recorded: boolean; readonly summary: string; readonly parseFailure?: string }>;
   readonly blockingReasons: Record<string, string>;
   readonly completionClaims: Record<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }>;
+  /**
+   * W044 (open clause): per-run metering-proxy totals, recorded hub-side at
+   * run-turn end. Optional: hubs older than the aggregation omit the field.
+   */
+  readonly usage?: Record<string, { readonly requests: number; readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number; readonly costUsd: number; readonly recordedAt: string }>;
 }
 
 interface SnapshotResponse {

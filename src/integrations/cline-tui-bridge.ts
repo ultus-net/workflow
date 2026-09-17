@@ -25,7 +25,7 @@ export type WorkflowApplicationResolver = (
 ) => WorkflowApplication;
 
 export interface WorkflowRunController {
-  begin(input: { runId: string; title: string; workspace?: string; requiresReview?: boolean }): Promise<void>;
+  begin(input: { runId: string; title: string; workspace?: string; requiresReview?: boolean; taskPrompt?: string }): Promise<void>;
   finish(input: { runId: string; outcome: "verified" | "failed" }): Promise<void>;
   review(input: { runId: string; reviewerRunId: string; verdict: "approved" | "changes_requested" | "rejected"; summary: string }): Promise<{ recorded: boolean }>;
   hiddenSnapshotTaskIds(): readonly string[];
@@ -38,6 +38,8 @@ export interface WorkflowRunController {
     reviewOutcomes: ReadonlyMap<string, { readonly reviewerRunId: string; readonly verdict: string; readonly recorded: boolean; readonly summary: string; readonly parseFailure?: string }>;
     blockingReasons: ReadonlyMap<string, string>;
     completionClaims: ReadonlyMap<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }>;
+    /** W044 (open clause): per-run usage from the metering proxy (hub-side aggregation). */
+    runUsage?: ReadonlyMap<string, import("./run-registry.js").RunUsageSummary>;
   };
 }
 
@@ -117,6 +119,7 @@ async function handleRequest(
         title: body.title,
         ...(typeof body.workspace === "string" ? { workspace: body.workspace } : {}),
         ...(body.requiresReview === true ? { requiresReview: true } : {}),
+        ...(typeof body.taskPrompt === "string" ? { taskPrompt: body.taskPrompt } : {}),
       });
       return send(response, 200, {});
     }
@@ -155,6 +158,9 @@ async function handleRequest(
         reviewOutcomes: Object.fromEntries(gates.reviewOutcomes),
         blockingReasons: Object.fromEntries(gates.blockingReasons),
         completionClaims: Object.fromEntries(gates.completionClaims),
+        // W044 (open clause): per-run metering-proxy totals ride to
+        // hub-attached monitors (observation only, like the other gates).
+        ...(gates.runUsage === undefined ? {} : { usage: Object.fromEntries(gates.runUsage) }),
       };
       // Full WorkflowSnapshot shape so hub-attached monitors render the same
       // canonical projection as in-process surfaces.
