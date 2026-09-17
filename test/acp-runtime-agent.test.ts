@@ -40,8 +40,11 @@ test("acpAgentKind defaults to opencode and selects the cline fallback explicitl
   withEnv({ WORKFLOW_ACP_AGENT: "cline" }, () => {
     assert.equal(acpAgentKind(), "cline");
   });
+  withEnv({ WORKFLOW_ACP_AGENT: "goose" }, () => {
+    assert.equal(acpAgentKind(), "goose");
+  });
   withEnv({ WORKFLOW_ACP_AGENT: "claude" }, () => {
-    assert.throws(() => acpAgentKind(), /WORKFLOW_ACP_AGENT must be "opencode" or "cline"/);
+    assert.throws(() => acpAgentKind(), /WORKFLOW_ACP_AGENT must be "opencode", "cline", or "goose"/);
   });
 });
 
