@@ -16,7 +16,8 @@ the dogfood environment — same gap recorded for the W048 metered probe).
 (real model traffic). Goose 1.50.1, openrouter provider through the metering
 proxy (`openrouter/auto`), one contained runtime per cell, scratch workspaces
 under `/tmp`, logs preserved at `~/.dogfood-matrix.log` (first run) and
-`~/.dogfood-rerun{1..4}.log` (fix-verification runs).
+`~/.dogfood-rerun.log` plus `~/.dogfood-rerun{2..4}.log` (fix-verification
+runs).
 
 ## Matrix results (final state)
 

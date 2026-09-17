@@ -44,7 +44,7 @@ async function gooseRuntime(workspace: string, resumeFrom?: string): Promise<Dog
   process.env.WORKFLOW_ACP_AGENT = "goose";
   try {
     const seed: WorkflowTask = {
-      id: taskId("W049-DOGSFOOD"),
+      id: taskId("W049-DOGFOOD"),
       title: "goose dogfood session",
       state: "IN_PROGRESS",
       dependencies: [],
@@ -135,6 +135,7 @@ test("dogfood cell 3: MCP participation through the operator's real skills mount
   const answer = `${snapshot3.state === "completed" ? snapshot3.result : ""}\n${streamed3}`;
   console.log(JSON.stringify({ dogfood: "mcp-participation", state: snapshot3.state, result: snapshot3.state === "completed" ? snapshot3.result.slice(0, 400) : undefined, streamedChars: streamed3.length, eventHistogram: histogram }, null, 2));
   assert.ok(!answer.includes("NO_MCP_TOOLS"), "the skills-mcp mount must be live on the runtime path (a NO_MCP_TOOLS here is a real gap to record)");
+  assert.ok((histogram.tool ?? 0) >= 1, "the list_skills call must have been ATTEMPTED through the hub-visible tool surface (reviewer P3: /skills/i alone is satisfiable by the denial text)");
   assert.match(answer, /skills/i, "the skills server must participate through the runtime-composed mount");
 });
 
@@ -180,8 +181,7 @@ test("dogfood cell 4: resume across a full contained runtime restart (the runtim
 test("dogfood cell 5: a hub denial is honored end to end (the workspace boundary holds)", { skip: !runDogfood, timeout: 600_000 }, async (t) => {
   const workspace = mkdtempSync(join(tmpdir(), "wf-goose-dogfood-deny-"));
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
-  const outside = join(tmpdir(), "wf-goose-dogfood-outside-");
-  mkdirSync(outside, { recursive: true });
+  const outside = mkdtempSync(join(tmpdir(), "wf-goose-dogfood-outside-"));
   t.after(() => rmSync(outside, { recursive: true, force: true }));
 
   const runtime = await gooseRuntime(workspace);
