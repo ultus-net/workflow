@@ -179,7 +179,7 @@ export class WebSessionManager {
     this.#permissionBroker?.cancelPending("session switched away");
     await previous?.runtime.dispose();
     try {
-            const runtime = await this.#factory(resumeFrom);
+      const runtime = await this.#factory(resumeFrom);
       const channel = new SessionChannel(
         runtime.session,
         runtime.driver,

@@ -881,11 +881,21 @@ function GitRail({ status }: { readonly status: GitStatus | undefined }) {
   const openDiff = async (path: string): Promise<void> => {
     const request = ++diffRequestRef.current;
     setOpen({ path, diff: undefined });
-    const response = await fetch(`/api/git/diff?path=${encodeURIComponent(path)}`);
-    if (response.ok) {
-      const nextDiff = (await response.json() as { diff: string }).diff;
+    try {
+      const response = await fetch(`/api/git/diff?path=${encodeURIComponent(path)}`);
+      const nextDiff = response.ok
+        ? (await response.json() as { diff: string }).diff
+        : `Diff unavailable (HTTP ${response.status})`;
       if (request === diffRequestRef.current) setOpen({ path, diff: nextDiff });
+    } catch {
+      if (request === diffRequestRef.current) setOpen({ path, diff: "Diff unavailable (network error)" });
     }
+  };
+  // Closing invalidates any in-flight fetch so a late response cannot reopen
+  // the popout the operator just dismissed.
+  const closeDiff = (): void => {
+    diffRequestRef.current += 1;
+    setOpen(undefined);
   };
   return (
     <aside className="git-rail" aria-label="Repository changes">
@@ -896,14 +906,14 @@ function GitRail({ status }: { readonly status: GitStatus | undefined }) {
       <div className="git-changes">
         {status !== undefined && status.changes.length === 0 && <p className="muted">working tree clean</p>}
         {(status?.changes ?? []).map((change) => (
-          <button key={change.path} className="git-change" onClick={() => void openDiff(change.path)}>
+          <button key={change.path} className="git-change" aria-haspopup="dialog" onClick={() => void openDiff(change.path)}>
             <span className={`git-status git-status-${change.status}`}>{GIT_STATUS_MARK[change.status]}</span>
             <span className="git-path" title={change.path}>{change.path}</span>
           </button>
         ))}
       </div>
       {open !== undefined && (
-        <DiffDialog path={open.path} diff={open.diff} onClose={() => setOpen(undefined)} />
+        <DiffDialog path={open.path} diff={open.diff} onClose={closeDiff} />
       )}
     </aside>
   );

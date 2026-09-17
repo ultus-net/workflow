@@ -1205,8 +1205,6 @@ body {
 
 .config-star.config-starred { color: var(--accent); }
 
-.config-settings { position: relative; }
-
 .config-gear {
   display: inline-flex;
   align-items: center;
