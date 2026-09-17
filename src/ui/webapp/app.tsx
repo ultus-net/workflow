@@ -371,7 +371,7 @@ function UsageMeter() {
             : `Context ${contextUsed} of ${contextWindow} tokens used (${fillPct}%)`}
         >
           <span className="usage-context-bar" aria-hidden="true">
-            <span className="usage-context-fill" style={{ "--context-fill": `${fillPct ?? 0}%` } as React.CSSProperties} />
+            <span className="usage-context-fill" style={{ "--context-fill-scale": `${(fillPct ?? 0) / 100}` } as React.CSSProperties} />
           </span>
           Context {formatTokens(contextUsed)}
           {contextWindow !== undefined && <> / {formatTokens(contextWindow)}</>}
@@ -876,22 +876,15 @@ const GIT_STATUS_MARK: Record<GitChange["status"], string> = {
 };
 
 function GitRail({ status }: { readonly status: GitStatus | undefined }) {
-  const [selected, setSelected] = useState<string | undefined>(undefined);
-  const [diff, setDiff] = useState<string | undefined>(undefined);
+  const [open, setOpen] = useState<{ path: string; diff: string | undefined } | undefined>(undefined);
   const diffRequestRef = useRef(0);
-  const select = async (path: string): Promise<void> => {
+  const openDiff = async (path: string): Promise<void> => {
     const request = ++diffRequestRef.current;
-    if (selected === path) {
-      setSelected(undefined);
-      setDiff(undefined);
-      return;
-    }
-    setSelected(path);
-    setDiff(undefined);
+    setOpen({ path, diff: undefined });
     const response = await fetch(`/api/git/diff?path=${encodeURIComponent(path)}`);
     if (response.ok) {
       const nextDiff = (await response.json() as { diff: string }).diff;
-      if (request === diffRequestRef.current) setDiff(nextDiff);
+      if (request === diffRequestRef.current) setOpen({ path, diff: nextDiff });
     }
   };
   return (
@@ -903,18 +896,68 @@ function GitRail({ status }: { readonly status: GitStatus | undefined }) {
       <div className="git-changes">
         {status !== undefined && status.changes.length === 0 && <p className="muted">working tree clean</p>}
         {(status?.changes ?? []).map((change) => (
-          <div key={change.path} className={`git-change-wrap${selected === change.path ? " git-change-open" : ""}`}>
-            <button className="git-change" onClick={() => void select(change.path)} aria-expanded={selected === change.path}>
-              <span className={`git-status git-status-${change.status}`}>{GIT_STATUS_MARK[change.status]}</span>
-              <span className="git-path" title={change.path}>{change.path}</span>
-            </button>
-            {selected === change.path && (diff === undefined
-              ? <pre className="git-diff">loading diff…</pre>
-              : looksLikeDiff(diff) ? <DiffText text={diff} /> : <pre className="git-diff">{diff}</pre>)}
-          </div>
+          <button key={change.path} className="git-change" onClick={() => void openDiff(change.path)}>
+            <span className={`git-status git-status-${change.status}`}>{GIT_STATUS_MARK[change.status]}</span>
+            <span className="git-path" title={change.path}>{change.path}</span>
+          </button>
         ))}
       </div>
+      {open !== undefined && (
+        <DiffDialog path={open.path} diff={open.diff} onClose={() => setOpen(undefined)} />
+      )}
     </aside>
+  );
+}
+
+/** Full diff for one changed file in a proper popout — the sidebar is too
+ * narrow to read a diff inline. Shares the settings dialog's chrome. */
+function DiffDialog({ path, diff, onClose }: {
+  readonly path: string;
+  readonly diff: string | undefined;
+  readonly onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialogRef.current?.querySelector<HTMLElement>("button")?.focus();
+    return () => {
+      openerRef.current?.focus();
+    };
+  }, []);
+  return (
+    <div
+      className="settings-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="settings-dialog diff-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Diff for ${path}`}
+        ref={dialogRef}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            onClose();
+          }
+        }}
+      >
+        <header className="settings-head">
+          <h2 className="diff-dialog-title"><code>{path}</code></h2>
+          <button type="button" className="btn btn-ghost settings-close" aria-label="Close diff" onClick={onClose}>
+            ×
+          </button>
+        </header>
+        <div className="settings-body diff-dialog-body">
+          {diff === undefined
+            ? <p className="muted">loading diff…</p>
+            : looksLikeDiff(diff) ? <DiffText text={diff} /> : <pre className="git-diff">{diff}</pre>}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1118,7 +1161,6 @@ export function App() {
             <ThreadPrimitive.Viewport className="thread-viewport">
               <AuiIf condition={(state) => state.thread.isEmpty}>
                 <div className="welcome">
-                  <p className="welcome-wordmark">Workflow</p>
                   <p className="welcome-lede">Describe the work to perform. Every action the agent takes is proposed and authorized through Workflow.</p>
                   <div className="welcome-suggestions">
                     {SUGGESTED_PROMPTS.map((prompt) => (
