@@ -12,6 +12,7 @@ export * from "./adapters/opencode.js";
 export * from "./adapters/lsp.js";
 export * from "./application/workflow.js";
 export * from "./application/coding-session.js";
+export * from "./application/task-commands.js";
 export * from "./integrations/cline-session.js";
 export * from "./integrations/cline-runtime.js";
 export * from "./integrations/opencode-plugin.js";

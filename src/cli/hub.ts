@@ -121,6 +121,9 @@ const reviewerFactory = createReviewerFactory({
     reviewerApplication.transition(reviewerTaskId, "IN_PROGRESS");
     reviewerApplication.selectActiveTask(reviewerTaskId);
     const runtime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerTaskId, undefined, guard);
+    // W045: record the reviewer runtime's budget mechanism like every other
+    // hub-composed runtime.
+    console.log(`hub reviewer session budget mechanism: ${runtime.budgetMechanism}`);
     return {
       submit: (prompt: string) => runtime.session.submit(prompt),
       snapshot: () => runtime.session.snapshot(),
@@ -157,6 +160,10 @@ const schedulerFactory = schedules.length === 0 ? undefined : (handles: Workflow
       const runTaskId: TaskId = taskId(`run:${runId}`);
       const turnWorkspace = workspace ?? process.cwd();
       const runtime = await createConfiguredAcpRuntime(runApplication, turnWorkspace, runTaskId, undefined, guard);
+      // W045: record which interactive budget enforcement mechanism this
+      // scheduled run's runtime carries (local guard vs the OpenRouter
+      // per-key backstop) alongside the schedule's own run budget.
+      console.log(`run ${runId} session budget mechanism: ${runtime.budgetMechanism}`);
       let budgetGuard: BudgetGuard | undefined;
       try {
         if (budget !== undefined) {

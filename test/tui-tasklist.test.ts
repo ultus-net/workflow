@@ -221,6 +221,15 @@ test("the usage meter renders the per-turn delta alongside the cumulative line",
   view.unmount();
 });
 
+test("a crossed session budget renders its sticky violation in the header status line", async () => {
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    usage: () => ({ totalTokens: 1500, costUsd: 0.002, budgetViolation: "budget exceeded: total tokens 1500 > cap 1000" }),
+  }));
+  await waitForFrame(view, /1500 tokens · \$0\.0020 · ! budget exceeded: total tokens 1500 > cap 1000/);
+  view.unmount();
+});
+
 // ── Web parity: prompt history recall and markdown export ─────────────────
 
 test("Ctrl+Up recalls the last submitted prompt and Ctrl+Down returns to the draft", async () => {

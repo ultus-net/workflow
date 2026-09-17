@@ -103,5 +103,11 @@ silently rewritten.
    the hub-written per-runtime config, and the gated delivery probe
    (`test/acp-opencode-skills-delivery-probe.test.ts`, gate
    `WORKFLOW_ACP_OPENCODE_SKILLS`; no live verdict recorded yet). The G1
-   metrics/budget follow-up is likewise complete (note 2). Per-prompt task
-   decomposition remains open (W046).
+    metrics/budget follow-up is likewise complete (note 2). Per-prompt task
+    decomposition landed as W046: the task-command port
+    (`src/application/task-commands.ts`) drives canonical create/activate/
+    complete/retry through application commands, and the ACP driver
+    correlates proposals with the active eligible task (`activeTaskCorrelation`
+    — blocked work fails closed through the `no-active-task` sentinel). The
+    original follow-up line at :58 keeps its dated wording; this note
+    supersedes its decomposition clause.

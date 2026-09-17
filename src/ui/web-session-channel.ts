@@ -85,6 +85,7 @@ export class SessionChannel {
   readonly #images = new ImageStore(`img-${Math.random().toString(36).slice(2, 8)}-`);
   readonly #driver: ConfigCapableDriver | undefined;
   readonly #usage: (() => ModelUsageMetrics | undefined) | undefined;
+  readonly #budget: { readonly mechanism: () => string; readonly violation?: () => string | undefined } | undefined;
   readonly #broker: PermissionBroker | undefined;
   #agentTitle: string | undefined;
 
@@ -93,11 +94,23 @@ export class SessionChannel {
     driver?: ConfigCapableDriver,
     usage?: () => ModelUsageMetrics | undefined,
     broker?: PermissionBroker,
+    budget?: { readonly mechanism: () => string; readonly violation?: () => string | undefined },
   ) {
     this.#driver = driver;
     this.#usage = usage;
+    this.#budget = budget;
     this.#broker = broker;
     session.subscribe((event) => this.ingest(event));
+  }
+
+  /** W045: the budget enforcement mechanism active for this session's runtime. */
+  budgetMechanism(): string | undefined {
+    return this.#budget?.mechanism();
+  }
+
+  /** W045: the sticky session-budget violation, once crossed. */
+  budgetViolation(): string | undefined {
+    return this.#budget?.violation?.();
   }
 
   /** Agent-advertised configuration options (empty until the session exists / if none advertised). */

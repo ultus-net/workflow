@@ -5,6 +5,7 @@ import { render } from "ink";
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
+import { activeTaskCorrelation } from "../application/task-commands.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui, type SessionConfigOption } from "../ui/tui.js";
@@ -27,9 +28,11 @@ import { resolveTuiWorkspace } from "./tui-args.js";
  */
 const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
 
-// One canonical session task: every tool proposal the agent makes is
-// authorized against it. Per-prompt task decomposition lives in the hub
-// follow-up, not here.
+// One canonical session task anchors the session at boot. W046: the driver
+// correlates lazily with the application's active-task pointer, so an
+// operator (via the task command port) can activate decomposed canonical
+// tasks mid-session and every later proposal authorizes against the new
+// active task; with no task IN_PROGRESS the correlation fails closed.
 const sessionTask: WorkflowTask = {
   id: taskId("ACP-SESSION"),
   title: "Stock-ACP coding session",
@@ -44,8 +47,21 @@ const application = new WorkflowApplication(
   new Set(["read", "mutation", "process", "network"]),
   workspace,
 );
+// W046: the lazy correlation reads the application's ACTIVE-TASK pointer, so
+// the pointer must exist from boot — startInteractiveTask selects the single
+// IN_PROGRESS seed (idempotent; refuses to guess if more appear).
+application.startInteractiveTask();
 
-const runtime = await createConfiguredAcpRuntime(application, workspace, sessionTask.id);
+// W047 (G5): boot failures (agent binary missing, containment policy-only,
+// unwritable config, missing upstream key) surface as an actionable
+// blocking-reason-style cause instead of a raw stack trace.
+let runtime: Awaited<ReturnType<typeof createConfiguredAcpRuntime>>;
+try {
+  runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskCorrelation(application));
+} catch (error) {
+  console.error(`failed to start the contained session: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}
 
 // Terminal-derived composer tint (OSC 11): must run before Ink owns stdin.
 const composerBackground = await detectTerminalBackground();
@@ -61,7 +77,12 @@ const { waitUntilExit } = render(
     // W044 (G1 metric surfacing): cumulative tokens + cost from the metering
     // proxy; the per-turn delta is computed in the UI at turn boundaries and
     // rendered alongside the cumulative line in the header status box.
-    usage: () => usageViewFromMetrics(runtime.metrics?.()),
+    // W045: a crossed session budget renders its sticky violation there too.
+    usage: () => {
+      const view = usageViewFromMetrics(runtime.metrics?.());
+      const violation = runtime.budgetViolation?.();
+      return view === undefined && violation === undefined ? undefined : { ...(view ?? { totalTokens: 0, costUsd: 0 }), ...(violation === undefined ? {} : { budgetViolation: violation }) };
+    },
     ...(composerBackground === undefined ? {} : { composerBackground }),
   }),
 );

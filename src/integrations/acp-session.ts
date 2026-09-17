@@ -74,7 +74,10 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #adapter: AcpHostAdapter;
   #workspace: string;
   #workflowSessionId: string;
-  #taskId: TaskId;
+  // W046: a fixed id (hub runs, reviewer, web sessions) or a lazy getter
+  // (interactive surfaces read the application's active-task pointer at
+  // proposal time, mirroring the Cline adapter's correlation).
+  #taskId: TaskId | (() => TaskId);
   #resumeFrom: string | undefined;
   #guard: WorkflowGuardProvider | undefined;
   #onSkillRead: ((skill: string) => void) | undefined;
@@ -93,7 +96,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     authorize: WorkflowApplication | ((action: ProposedToolAction) => PolicyDecision | Promise<PolicyDecision>);
     workspace: string;
     workspaceSessionId: string;
-    taskId: TaskId;
+    taskId: TaskId | (() => TaskId);
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
@@ -172,7 +175,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     authorize: WorkflowApplication | ((action: ProposedToolAction) => PolicyDecision | Promise<PolicyDecision>);
     workspace: string;
     workspaceSessionId: string;
-    taskId: TaskId;
+    taskId: TaskId | (() => TaskId);
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
@@ -231,15 +234,44 @@ export class AcpSessionDriver implements CodingSessionDriver {
       { type: "text", text: prompt },
       ...(images ?? []).map((image) => ({ type: "image", data: image.data, mimeType: image.mediaType })),
     ];
-    const result = (await this.#client.prompt({ sessionId: agentSessionId, prompt: content })) as
-      { stopReason?: string } | undefined;
+    const result = (await this.#prompt(agentSessionId, content)) as
+      { stopReason?: string; failClosedReason?: string } | undefined;
     const stopReason = result?.stopReason;
     if (stopReason === "end_turn") {
       emit({ type: "completed", result: this.#assistant.join("") });
     } else if (stopReason === "cancelled") {
-      emit({ type: "failed", reason: "ACP turn cancelled by the agent" });
+      // W047 (G5): the wire carries the actionable cause — a fail-closed
+      // permission denial (the agent had no reject option for the hub's
+      // deny) reports WHY the turn died. Thread it; never discard it.
+      const failClosed = typeof result?.failClosedReason === "string" && result.failClosedReason.length > 0
+        ? ` (fail-closed: ${result.failClosedReason})`
+        : "";
+      emit({ type: "failed", reason: `ACP turn cancelled by the agent${failClosed}` });
     } else {
       emit({ type: "failed", reason: `ACP prompt returned unexpected stop reason: ${String(stopReason)}` });
+    }
+  }
+
+  /** Prompt with the optional W047 turn watchdog armed (env-gated, off by default). */
+  async #prompt(
+    sessionId: string,
+    content: readonly { readonly type: string; readonly text?: string; readonly data?: string; readonly mimeType?: string }[],
+  ): Promise<unknown> {
+    const timeoutMs = turnTimeoutMs();
+    if (timeoutMs === undefined) return this.#client.prompt({ sessionId, prompt: content });
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        this.#client.prompt({ sessionId, prompt: content }),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => {
+            reject(new Error(`ACP turn exceeded WORKFLOW_ACP_TURN_TIMEOUT_MS=${timeoutMs}ms — the agent neither finished nor died; cancel the turn or restart the session`));
+            void this.cancel().catch(() => undefined);
+          }, timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
     }
   }
 
@@ -359,7 +391,11 @@ export class AcpSessionDriver implements CodingSessionDriver {
       const title = update.update.title;
       return typeof title === "string" && title.length > 0 ? { type: "session-info", title } : undefined;
     }
-    return undefined;
+    // W047 (G7 context visibility): every other well-formed kind — standard
+    // ones this projection doesn't specialize (e.g. usage_update) and all
+    // agent-custom kinds — projects into the session record as advisory
+    // context. Visibility only; never upgraded to control.
+    return { type: "agent-context", kind, payload: update.update };
   }
 
   /** Tolerant ACP plan-entry parse: only well-formed entries survive. */
@@ -407,7 +443,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
       correlation: {
         sessionId: this.#workflowSessionId,
         agentSessionId: this.#agentSessionId,
-        taskId: this.#taskId,
+        taskId: this.#correlatedTaskId(),
         toolName,
         // OpenCode titles edit-permission requests with the target path, so
         // the title-derived name can be unrecognized; the ACP kind field (the
@@ -454,7 +490,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     }
     const proposal = this.#adapter.proposalFromBeforeTool({
       sessionId: this.#workflowSessionId,
-      taskId: this.#taskId,
+      taskId: this.#correlatedTaskId(),
       toolCall: {
         name: toolName,
         kind: mutating ? "edit" : "read",
@@ -507,6 +543,15 @@ export class AcpSessionDriver implements CodingSessionDriver {
     if (title === undefined) return "unknown";
     const name = /^[^\s:]+/.exec(title)?.[0];
     return name !== undefined && name.length > 0 ? name : "unknown";
+  }
+
+  /** W046: lazy correlation — interactive surfaces re-read the application's
+   * active-task pointer at proposal time. A getter that throws (no active
+   * task, or the active task left IN_PROGRESS) fails the correlation, which
+   * the resolver and fs path surface as a fail-closed denial — the same
+   * posture as the Cline adapter's lazy correlation. */
+  #correlatedTaskId(): TaskId {
+    return typeof this.#taskId === "function" ? this.#taskId() : this.#taskId;
   }
 
   /** Title classification is fail-closed: unknown tools map to the mutation
@@ -581,3 +626,20 @@ function rawWireText(value: unknown): string | undefined {
 
 /** Exposed for tests: the display projection of raw tool I/O. */
 export const displayRawToolText = rawWireText;
+
+/**
+ * W047 turn watchdog: an OPTIONAL, operator-armed liveness bound for agent
+ * turns (a hung agent — no exit, no response — is the one failure that
+ * produces no event at all). Off by default: a wrong timeout would abort
+ * legitimate long turns, so the operator arms it deliberately; a malformed
+ * value throws — a broken watchdog never degrades to a silent one.
+ */
+export function turnTimeoutMs(env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const raw = env.WORKFLOW_ACP_TURN_TIMEOUT_MS;
+  if (raw === undefined || raw.trim() === "") return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`WORKFLOW_ACP_TURN_TIMEOUT_MS must be a positive number of milliseconds (got ${JSON.stringify(raw)})`);
+  }
+  return value;
+}

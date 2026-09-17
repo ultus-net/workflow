@@ -968,7 +968,27 @@ function projectSessionEvent(event: CodingSessionEvent, assistantLabel: string):
     const done = event.entries.filter((entry) => entry.status === "completed").length;
     return { label: "[plan]", text: `${event.entries.length} steps, ${done} completed`, dim: true };
   }
+  if (event.type === "agent-context") {
+    // W047 (G7 context visibility): agent-emitted usage/context signals —
+    // standard kinds the projection doesn't specialize (usage_update) and
+    // agent-custom channels (goose) — render as dim advisory rows.
+    return { label: "[context]", text: describeAgentContext(event.kind, event.payload), dim: true };
+  }
   if (event.type === "session-info") return { label: "[session]", text: event.title, dim: true };
   if (event.type === "completed") return { label: "completed", text: event.result };
   return { label: "failed", text: (event as { type: "failed"; reason: string }).reason };
+}
+
+/** W047: a compact, honest one-line summary of an advisory context payload. */
+function describeAgentContext(kind: string, payload: unknown): string {
+  if (typeof payload === "object" && payload !== null) {
+    const record = payload as Record<string, unknown>;
+    const usageParts: string[] = [];
+    for (const key of ["totalTokens", "promptTokens", "completionTokens", "costUsd", "inputTokens", "outputTokens"]) {
+      const value = record[key];
+      if (typeof value === "number") usageParts.push(key === "costUsd" ? `$${value}` : `${key} ${value}`);
+    }
+    if (usageParts.length > 0) return `${kind}: ${usageParts.join(" · ")}`;
+  }
+  return kind;
 }
