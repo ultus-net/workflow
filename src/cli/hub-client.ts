@@ -115,6 +115,26 @@ export interface WorkflowHubResolveOptions {
   readonly spawnCandidates?: SpawnCandidate[];
   readonly timeoutMs?: number;
   readonly pollIntervalMs?: number;
+  /**
+   * W044 resource hygiene: when autohub SPAWNS a hub, the launcher that
+   * caused the spawn owns that hub's lifecycle. The child handle is handed
+   * to this callback so the launcher can terminate it on session exit
+   * (see terminateOwnedHub). A resolve that REUSES a probed hub never
+   * invokes it — reuse must not hand out a kill switch for someone else's
+   * daemon.
+   */
+  readonly onSpawned?: (child: ChildProcess) => void;
+}
+
+/**
+ * Terminate a hub this launcher auto-spawned. The hub's own SIGTERM handler
+ * performs the graceful close (removes discovery, verifier discovery, and the
+ * instance lock), so this is the same path `workflow-hub` itself uses on
+ * Ctrl+C. Idempotent and safe on an already-exited child.
+ */
+export function terminateOwnedHub(child: ChildProcess | undefined): void {
+  if (child === undefined || child.exitCode !== null || child.signalCode !== null) return;
+  child.kill("SIGTERM");
 }
 
 const NO_HUB_MESSAGE =
@@ -194,6 +214,7 @@ export async function resolveWorkflowHub(
       const child = spawnFn(candidate.cmd, candidate.args, { detached: true, stdio: ["ignore", "ignore", "ignore"] });
       child.on?.("error", () => undefined);
       child.unref?.();
+      options.onSpawned?.(child);
       const resolved = await waitForHub(discoveryPath, deadline, poll);
       if (resolved !== undefined) return resolved;
       rmSync(discoveryPath, { force: true });

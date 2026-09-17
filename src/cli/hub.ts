@@ -183,17 +183,27 @@ const schedulerFactory = schedules.length === 0 ? undefined : (handles: Workflow
     },
   });
 
-const hub = await createWorkflowHub(application, {
-  graph,
-  guard,
-  ...(teamTaskVerificationCommand === undefined ? {} : { teamTaskVerificationCommand }),
-  ...(testRunner === undefined ? {} : { testRunner }),
-  ...(schedulerFactory === undefined ? {} : { schedulerFactory }),
-  reviewerFactory,
-  ...(requestLogPath === undefined ? {} : {
-    observeRequest: (path) => appendFileSync(requestLogPath, `${path}\n`, { mode: 0o600 }),
-  }),
-});
+let hub: Awaited<ReturnType<typeof createWorkflowHub>>;
+try {
+  hub = await createWorkflowHub(application, {
+    graph,
+    guard,
+    ...(teamTaskVerificationCommand === undefined ? {} : { teamTaskVerificationCommand }),
+    ...(testRunner === undefined ? {} : { testRunner }),
+    ...(schedulerFactory === undefined ? {} : { schedulerFactory }),
+    reviewerFactory,
+    ...(requestLogPath === undefined ? {} : {
+      observeRequest: (path) => appendFileSync(requestLogPath, `${path}\n`, { mode: 0o600 }),
+    }),
+  });
+} catch (error) {
+  // W044 resource hygiene: the guard child starts BEFORE the hub composition,
+  // so a failed startup (e.g. losing the single-instance lock to an already
+  // running hub) must still reap its own guard — a lock-loser hub may never
+  // leave a guardless-spawned MCP child behind.
+  await guard.close();
+  throw error;
+}
 console.log(`Workflow hub listening at ${hub.url}`);
 console.log(`Discovery file: ${hub.discoveryPath}`);
 

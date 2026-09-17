@@ -8,6 +8,7 @@ import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui, type SessionConfigOption } from "../ui/tui.js";
+import { usageViewFromMetrics } from "../ui/usage.js";
 import { detectTerminalBackground } from "../ui/terminal-theme.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 
@@ -57,14 +58,10 @@ const { waitUntilExit } = render(
     onSetSessionConfig: async (id: string, value: string | boolean) => {
       await runtime.driver.setConfigOption(id, value);
     },
-    // Web-parity usage meter (Batch 2): live tokens + cost from the metering
-    // proxy in the composer footer.
-    usage: () => {
-      const metrics = runtime.metrics?.();
-      return metrics === undefined
-        ? undefined
-        : `${metrics.totalTokens} tokens · $${metrics.costUsd.toFixed(4)}`;
-    },
+    // W044 (G1 metric surfacing): cumulative tokens + cost from the metering
+    // proxy; the per-turn delta is computed in the UI at turn boundaries and
+    // rendered alongside the cumulative line in the header status box.
+    usage: () => usageViewFromMetrics(runtime.metrics?.()),
     ...(composerBackground === undefined ? {} : { composerBackground }),
   }),
 );

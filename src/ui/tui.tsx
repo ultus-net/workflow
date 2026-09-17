@@ -19,6 +19,7 @@ import {
   type PedagogicalMode,
 } from "../pedagogy/contracts.js";
 import { loadLearnerProfile } from "../pedagogy/learner-profile.js";
+import { UsageTurnTracker, formatUsageLine, type UsageSource } from "./usage.js";
 
 export const MODE_LABELS: Record<PedagogicalMode, string> = {
   "learn-to-code": "Learn to Code",
@@ -136,8 +137,12 @@ export function WorkflowTui({
   readonly onModeChange?: (mode: PedagogicalMode) => void;
   readonly reviewFollowUps?: readonly ReviewFollowUp[];
   readonly gateObservability?: () => HubGateObservability | undefined;
-  /** Web-parity usage meter (Batch 2): a live "tokens · cost" footer line. */
-  readonly usage?: () => string | undefined;
+  /**
+   * W044 (G1 metric surfacing): live cumulative + per-turn usage from the
+   * metering proxy's records, rendered in the header status line. The
+   * per-turn delta is computed here at turn boundaries (UsageTurnTracker).
+   */
+  readonly usage?: UsageSource;
   readonly connectionLabel?: string;
   /**
    * Terminal-derived composer tint (OSC 11 background detection, see
@@ -152,7 +157,11 @@ export function WorkflowTui({
   const { stdout } = useStdout();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot>(() => application.snapshot());
   const [gates, setGates] = useState<HubGateObservability | undefined>(() => gateObservability?.());
-  const [usageLine, setUsageLine] = useState<string | undefined>(() => usage?.());
+  const usageTracker = useRef(new UsageTurnTracker());
+  const [usageLine, setUsageLine] = useState<string | undefined>(() => {
+    const view = usage?.();
+    return view === undefined ? undefined : formatUsageLine(view);
+  });
   const [prompt, setPrompt] = useState("");
   // Web-parity prompt history recall (Tier 2): submitted prompts are
   // recalled with Ctrl+Up (older) / Ctrl+Down (newer); the live draft is
@@ -193,9 +202,14 @@ export function WorkflowTui({
   }, [sessionState?.state, stdout]);
   useEffect(() => {
     if (usage === undefined) return;
-    const timer = setInterval(() => setUsageLine(usage()), 1_000);
+    const refresh = () => {
+      const view = usageTracker.current.observe(sessionState?.state, usage());
+      setUsageLine(view === undefined ? undefined : formatUsageLine(view));
+    };
+    refresh();
+    const timer = setInterval(refresh, 1_000);
     return () => clearInterval(timer);
-  }, [usage]);
+  }, [usage, sessionState?.state]);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [showWorkflow, setShowWorkflow] = useState(false);
   const [mode, setMode] = useState<PedagogicalMode>("autonomous");
