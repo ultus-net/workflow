@@ -20,12 +20,15 @@ export interface SessionUsage {
   readonly latestPromptTokens?: number;
   readonly totalTokens: number;
   readonly costUsd: number;
+  /** Agent-reported context window size in tokens (ACP usage_update), when advertised. */
+  readonly contextWindowTokens?: number;
 }
 
 interface SessionEnvelope {
   readonly available: boolean;
   readonly id?: string;
   readonly title?: string;
+  readonly agent?: string;
   readonly state: { readonly state: string };
   readonly items: readonly OperatorSessionItem[];
   readonly usage?: SessionUsage;

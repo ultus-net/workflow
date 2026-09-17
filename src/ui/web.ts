@@ -8,6 +8,7 @@ import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { evidenceId, observationId, taskId, type TaskState } from "../kernel/contracts.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
 import { WebSessionManager, type SessionSwitchResult } from "./web-sessions.js";
+import { isWebAgentId, listWebAgents } from "./web-agents.js";
 import type { WebappBundle } from "./webapp/bundle.js";
 import { PWA_MANIFEST, renderIconPng, serviceWorkerSource } from "./webapp/pwa.js";
 
@@ -102,6 +103,28 @@ export function createWorkflowWebServer(
     if (request.method === "GET" && request.url === "/api/sessions") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       return json(response, 200, { sessions: manager.list() });
+    }
+    if (request.method === "GET" && request.url === "/api/agents") {
+      return json(response, 200, { agents: listWebAgents() });
+    }
+    if (request.method === "POST" && request.url === "/api/sessions/agent") {
+      if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const agent = (body as { agent?: unknown } | null)?.agent;
+        if (!isWebAgentId(agent)) return json(response, 400, { error: "unknown agent" });
+        const info = listWebAgents().find((entry) => entry.id === agent);
+        if (info !== undefined && !info.available) {
+          return json(response, 409, { error: `agent unavailable: ${info.reason ?? "prerequisites not met"}` });
+        }
+        return switchResult(response, await manager.setActiveAgent(agent), 200);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
     }
     if (request.method === "POST" && request.url === "/api/sessions") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
@@ -381,7 +404,7 @@ export function createWorkflowWebServer(
       const meta = manager?.activeMeta();
       return json(response, 200, {
         available: active !== undefined,
-        ...(meta === undefined ? {} : { id: meta.id, title: meta.title }),
+        ...(meta === undefined ? {} : { id: meta.id, title: meta.title, agent: meta.agent }),
         state: active?.state() ?? { state: "unavailable" },
         items: active?.items() ?? [],
         ...(active?.usage() !== undefined ? { usage: active.usage() } : {}),
@@ -555,4 +578,4 @@ function html(response: ServerResponse, body: string): void {
   response.end(body);
 }
 
-const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#14161a"><title>Workflow Control</title><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script src="/app.js"></script></body></html>`;
+const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#101216"><title>Workflow Control</title><link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/app.css"></head><body><div id="root"></div><script src="/app.js"></script></body></html>`;

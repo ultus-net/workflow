@@ -1,4 +1,8 @@
-/* Workflow Control — operator surface design system */
+/* Workflow Control — operator surface design system
+   Two typefaces, one job split: the operator chrome (panels, badges, composer,
+   paths, code) stays monospace; conversational prose reads in a humanist sans.
+   --accent is the text/outline-safe amber per theme; --accent-fill is the
+   constant amber used for fills (bubbles, buttons, toggles). */
 
 :root {
   --bg: #14161a;
@@ -10,18 +14,48 @@
   --text: #e6e8eb;
   --text-muted: #9aa4b0;
   --accent: #e8a33d;
+  --accent-fill: #e8a33d;
   --accent-ink: #14161a;
   --accent-soft: rgba(232, 163, 61, 0.16);
+  /* Deny is status text on its own 10% diff tint too — lightened so the
+     deletion lines pass AA, not just the bare surface pairs. */
   --ok: #4caf7d;
-  --deny: #e06c5c;
+  --deny: #ea8070;
   --fail: #ff7377;
-  --radius: 10px;
-  --radius-s: 6px;
+  --composer-focus: #262b33;
+  --code-bg: #0e1013;
+  --radius: 0;
+  --radius-s: 0;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
   --space-5: 1.25rem;
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  --font-sans: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color-scheme: dark;
+}
+
+/* Light theme: the same control-room grammar on paper-white surfaces. The
+   amber stays as fill; accent-as-text darkens so labels pass AA on light. */
+[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-deep: #f3f4f6;
+  --surface: #fbfbfd;
+  --surface-raised: #ffffff;
+  --border: #dcdfe4;
+  --border-strong: #c3c8d0;
+  --text: #22262c;
+  --text-muted: #5a6472;
+  --accent: #96590c;
+  --accent-ink: #14161a;
+  --accent-soft: rgba(150, 89, 12, 0.12);
+  /* Status text must pass AA on the 10% diff tints, not just bare surfaces. */
+  --ok: #17714a;
+  --deny: #b23b2e;
+  --fail: #c23340;
+  --composer-focus: #ffffff;
+  --code-bg: #f6f7f9;
+  color-scheme: light;
 }
 
 * { box-sizing: border-box; }
@@ -30,7 +64,7 @@ body {
   margin: 0;
   background: var(--bg-deep);
   color: var(--text);
-  font: 15px/1.55 ui-monospace, SFMono-Regular, Consolas, monospace;
+  font: 15px/1.55 var(--font-mono);
 }
 
 .shell {
@@ -43,15 +77,71 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  min-height: 3.25rem;
-  padding: 0.7rem clamp(1rem, 2.5vw, 2.25rem);
+  min-height: 3rem;
+  padding: 0.55rem clamp(0.9rem, 2vw, 1.75rem);
   border-bottom: 1px solid var(--border);
   background: var(--bg-deep);
 }
 
-.shell-header > strong {
-  font-size: 0.9rem;
+.shell-header-left {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+.shell-wordmark {
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  font-weight: 700;
   letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.shell-session-title {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-left: 1px solid var(--border);
+  padding-left: 0.7rem;
+  max-width: 34ch;
+}
+
+.shell-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Focus mode: hides both side panels so the thread centers (≥1101px only;
+   below that the layout is already a single stacked column). */
+.rail-toggle {
+  display: none;
+  align-items: center;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.rail-toggle:hover { color: var(--text); border-color: var(--border-strong); }
+
+.rail-toggle[aria-pressed="true"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.rail-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (min-width: 1101px) {
+  .rail-toggle { display: inline-flex; }
+  html[data-rails="off"] .sidebar,
+  html[data-rails="off"] .inspector { display: none; }
 }
 
 .shell-host {
@@ -90,39 +180,49 @@ body {
   letter-spacing: 0.04em;
 }
 
-.shell-main {
+.shell-body {
   flex: 1;
-  display: grid;
-  grid-template-columns: minmax(16rem, 1fr) minmax(0, 74ch) minmax(16rem, 1fr);
-  justify-content: center;
-  gap: 0;
-  width: 100%;
-  margin: 0 auto;
-  padding: 0 clamp(1rem, 2.5vw, 2.25rem);
+  display: flex;
   min-height: 0;
 }
 
+/* Left sidebar: sessions + repository changes (the operator's navigation). */
+.sidebar {
+  width: 17.5rem;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  padding: var(--space-4);
+}
+
+/* Repository changes sit below the session list, separated by a rule. */
+.sidebar > .git-rail {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+  margin-top: var(--space-3);
+}
+
 .chat-column {
+  flex: 1;
   display: flex;
   min-height: 0;
   min-width: 0;
   padding: var(--space-5) var(--space-5) var(--space-4);
 }
 
-.git-column {
-  min-width: 0;
-  min-height: 0;
-  padding: var(--space-5) var(--space-5) var(--space-5) 0;
-}
-
-.git-rail { height: 100%; overflow: auto; scrollbar-width: thin; }
+.git-rail { min-height: 0; overflow: visible; scrollbar-width: thin; }
 .git-rail-head { display: flex; align-items: center; gap: 0.55rem; padding-bottom: 0.65rem; }
 .git-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.78rem; color: var(--text-muted); }
 .git-count { margin-left: auto; color: var(--text-muted); font-size: 0.72rem; }
 .git-changes { border-top: 1px solid var(--border); padding-top: 0.45rem; }
 .git-changes > .muted { font-size: 0.75rem; }
-.git-change-wrap { border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); }
-.git-change { display: grid; grid-template-columns: 1rem minmax(0, 1fr); gap: 0.4rem; width: 100%; padding: 0.42rem 0.15rem; border: 0; background: transparent; color: var(--text); font: inherit; font-size: 0.75rem; text-align: left; cursor: pointer; }
+.git-change { display: grid; grid-template-columns: 1rem minmax(0, 1fr); gap: 0.4rem; width: 100%; padding: 0.42rem 0.15rem; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); background: transparent; color: var(--text); font: inherit; font-size: 0.75rem; text-align: left; cursor: pointer; }
 .git-change:hover { background: var(--surface); }
 .git-change:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .git-status { color: var(--text-muted); text-align: center; }
@@ -130,13 +230,23 @@ body {
 .git-status-deleted { color: var(--fail); }
 .git-status-modified, .git-status-renamed { color: var(--accent); }
 .git-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.git-diff { margin: 0 0 0.45rem; padding: 0.55rem; max-height: 18rem; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--bg-deep); color: var(--text-muted); font: 0.68rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre; }
+/* Same metrics as .diff-text so the rail never renders two text sizes for
+   the same content class (the fallback covers non-diff text only). */
+.git-diff { margin: 0 0 0.45rem; padding: 0.55rem; max-height: 16rem; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--bg-deep); color: var(--text-muted); font: 0.78rem/1.5 var(--font-mono); white-space: pre; }
 
-.inspector-column {
+/* Right inspector: supervision (usage, tasks, evidence, history). */
+.inspector {
+  width: 19.5rem;
+  flex: none;
   display: flex;
   min-height: 0;
   min-width: 0;
-  padding: var(--space-5) 0 var(--space-5) var(--space-5);
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  border-left: 1px solid var(--border);
+  background: var(--bg);
+  padding: var(--space-4);
 }
 
 .thread-root {
@@ -144,7 +254,7 @@ body {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  max-width: 74ch;
+  max-width: 76ch;
   width: 100%;
   margin: 0 auto;
 }
@@ -163,6 +273,47 @@ body {
   padding: 1.5rem;
   color: var(--text-muted);
   margin-top: 1rem;
+  font-family: var(--font-sans);
+}
+
+.welcome-lede { margin: 0; max-width: 60ch; }
+
+.welcome-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 1rem;
+}
+
+.welcome-chip {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-muted);
+  border-radius: 0;
+  padding: 0.3rem 0.75rem;
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: color 120ms ease-out, border-color 120ms ease-out;
+}
+
+.welcome-chip:hover { color: var(--text); border-color: var(--border-strong); }
+
+.welcome-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.welcome-hints {
+  margin: 1.1rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.welcome-hints kbd {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 0;
+  background: var(--surface);
+  padding: 0 0.3rem;
 }
 
 /* Messages */
@@ -174,7 +325,7 @@ body {
 
 .msg-user {
   margin-left: auto;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--accent-ink);
   border-radius: var(--radius-s);
   padding: 0.65rem 0.85rem;
@@ -319,11 +470,13 @@ body {
   color: var(--text-muted);
 }
 
-.composer-utilities {
+.composer-meta {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.6rem;
-  margin-left: auto;
+  margin-top: 0.45rem;
+  min-height: 0;
   font-size: 0.8rem;
   color: var(--text-muted);
 }
@@ -346,8 +499,13 @@ body {
   overflow-wrap: break-word;
 }
 
+/* Flex children must be allowed to shrink below their content size, or long
+   paths/tokens force the part to overflow its right boundary. */
+.part > * { min-width: 0; }
+
 .part code {
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .part-label {
@@ -358,7 +516,7 @@ body {
 }
 
 .part-action { border-left-color: var(--accent); }
-.part-subjects, .part-detail { color: var(--text-muted); }
+.part-subjects, .part-detail { color: var(--text-muted); min-width: 0; overflow-wrap: anywhere; }
 
 .part-outcome-succeeded { border-left-color: var(--ok); }
 .part-outcome-succeeded .part-label { color: var(--ok); }
@@ -384,6 +542,16 @@ body {
   flex-wrap: wrap;
 }
 
+/* Kind glyph (ACP tool_call.kind) — status color rides the card edge; the
+   icon inherits the muted head tone and never competes with status text. */
+.part-tool-icon {
+  display: inline-flex;
+  align-self: center;
+  color: var(--text-muted);
+}
+
+.part-tool-icon svg { display: block; }
+
 .part-tool-kind {
   font-size: 0.72rem;
   text-transform: uppercase;
@@ -394,7 +562,7 @@ body {
   padding: 0.05rem 0.4rem;
 }
 
-.part-tool-title { color: var(--text); }
+.part-tool-title { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
 
 .part-tool-status { font-size: 0.8rem; color: var(--text-muted); }
 
@@ -433,6 +601,29 @@ body {
   margin-top: 0.3rem;
 }
 
+/* Unified diffs (git rail + tool output): added/removed lines carry their own
+   tinted background, hunk headers get a raised strip. Color-only signal is
+   backed by the +/- glyph text itself, so the classes stay readable without
+   color vision. */
+.diff-text {
+  margin: 0.2rem 0 0.4rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font: 0.78rem/1.5 var(--font-mono);
+  max-height: 16rem;
+  overflow: auto;
+}
+
+.diff-text > span { display: block; white-space: pre; }
+
+.diff-add { color: var(--ok); background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.diff-del { color: var(--deny); background: color-mix(in srgb, var(--deny) 10%, transparent); }
+.diff-hunk { color: var(--text-muted); background: var(--surface-raised); }
+.diff-meta { color: var(--text-muted); }
+.diff-ctx { color: var(--text-muted); }
+
 /* Agent plan checklist */
 
 .part-plan { display: block; border-left-color: var(--accent); }
@@ -454,6 +645,16 @@ body {
 }
 
 .part-plan-entry { display: flex; gap: 0.5rem; align-items: baseline; font-size: 0.875rem; }
+
+/* Conversational prose inside typed parts reads in the sans face; markers,
+   labels, subjects, and code stay monospace (the operator chrome). */
+.part-prose {
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  line-height: 1.55;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 
 .part-plan-marker { width: 1rem; text-align: center; color: var(--text-muted); }
 .part-plan-in_progress .part-plan-marker { color: var(--accent); }
@@ -478,52 +679,55 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  font-size: 0.85rem;
+  line-height: 1.55;
   max-height: 14rem;
   overflow: auto;
   white-space: pre-wrap;
   color: var(--text-muted);
 }
 
-/* Session usage and current model-input context. */
+/* Session usage: one readout (composer meta row) — context-window fill bar,
+   cumulative tokens, and cost. */
 
 .usage-meter {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 0.75rem;
-  font-size: 0.8rem;
-  color: var(--text-muted);
-}
-
-.usage-meter-composer { justify-content: flex-end; margin-top: 0.4rem; }
-
-.usage-meter-inspector {
-  flex-wrap: wrap;
-  padding-bottom: var(--space-3);
-  border-bottom: 1px solid var(--border);
-}
-
-.usage-label {
-  margin-right: auto;
-  color: var(--text);
   font-size: 0.72rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  color: var(--text-muted);
+  min-width: 0;
 }
 
 .usage-context {
-  flex-basis: 100%;
-  display: flex;
-  justify-content: space-between;
-  gap: var(--space-4);
-  padding: var(--space-2) 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
   color: var(--text-muted);
-  border-top: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  white-space: nowrap;
 }
 
-.usage-context strong { color: var(--text); font-weight: 700; }
+.usage-context-bar {
+  display: inline-block;
+  width: 3.5rem;
+  height: 0.35rem;
+  border-radius: 0;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.usage-context-fill {
+  display: block;
+  height: 100%;
+  width: 100%;
+  border-radius: 0;
+  background: var(--accent-fill);
+  transform: scaleX(var(--context-fill-scale, 0));
+  transform-origin: left center;
+  transition: transform 300ms ease-out;
+}
+
 .usage-cost { color: var(--text); font-weight: 700; }
 
 /* In-thread permission prompt — the authorization boundary gets the loudest
@@ -598,20 +802,256 @@ body {
   background: var(--border);
 }
 
-/* Settings popover: approvals + capabilities */
+/* Settings dialog — the single surface for every operator preference. Same
+   token grammar as the popovers it replaces; sectioned rows, not cards. */
 
-.config-permissions {
-  display: grid;
-  gap: 0.35rem;
-  padding-top: 0.5rem;
-  margin-top: 0.5rem;
-  border-top: 1px solid var(--border);
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(0.75rem, 3vw, 2rem);
+  background: color-mix(in srgb, var(--bg-deep) 62%, transparent);
+  z-index: 40;
 }
 
-.config-reset-patterns {
-  justify-self: start;
+.settings-dialog {
+  width: min(34rem, 100%);
+  max-height: min(44rem, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.settings-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.85rem 1.1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-head h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+.settings-close {
+  padding: 0.2rem 0.6rem;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+.settings-body {
+  overflow-y: auto;
+  padding: 0.25rem 1.1rem 1rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* Diff popout (git changes): wider than the settings dialog, full-height
+ * scrollable diff. Shares the settings dialog chrome. */
+.diff-dialog {
+  width: min(56rem, 100%);
+  max-height: min(46rem, 100%);
+}
+
+.diff-dialog-title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-dialog-title code { color: var(--text); }
+
+.diff-dialog-body { padding: 0.5rem 1.1rem 1rem; }
+
+.diff-dialog-body .diff-text { max-height: none; }
+
+.diff-dialog-body .git-diff { max-height: none; }
+
+.settings-section {
+  padding: 0.65rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.settings-section:last-child { border-bottom: 0; }
+
+.settings-section h3 {
+  margin: 0.35rem 0 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.9rem;
+  padding: 0.45rem 0;
+}
+
+.settings-row-label {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: 0.85rem;
+}
+
+.settings-desc {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.settings-toggle { padding: 0.15rem 0; }
+
+/* Config fields (select or searchable combobox) inside settings rows. */
+.settings-field { display: inline-flex; }
+
+.settings-field select {
+  appearance: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  border-radius: var(--radius-s);
+  padding: 0.3rem 0.5rem;
+  max-width: 14rem;
+  cursor: pointer;
+}
+
+.settings-field select:hover { color: var(--accent); }
+
+.settings-field select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.settings-reset { justify-self: start; font-size: 0.8rem; }
+
+.settings-kbd-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.28rem 0;
   font-size: 0.8rem;
 }
+
+.settings-kbd {
+  display: flex;
+  gap: 0.25rem;
+  flex: none;
+  min-width: 7rem;
+}
+
+.settings-kbd kbd {
+  font: inherit;
+  font-size: 0.72rem;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 0;
+  background: var(--surface);
+  padding: 0 0.3rem;
+}
+
+.settings-kbd-desc { color: var(--text-muted); }
+
+/* Agent picker (settings): one radio row per composable agent, posture noted. */
+.agent-list { display: grid; gap: 0.3rem; }
+
+.agent-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.agent-row:hover { border-color: var(--border-strong); }
+
+.agent-row-current { border-color: var(--accent); background: var(--accent-soft); }
+
+.agent-row-unavailable { opacity: 0.55; cursor: default; }
+
+.agent-row input { accent-color: var(--accent-fill); }
+
+.agent-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.agent-row-name { font-size: 0.85rem; color: var(--text); }
+
+.agent-row-badge {
+  font-size: 0.68rem;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.settings-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  align-items: center;
+  padding: 0.35rem 0;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.settings-docs { padding-top: 0.2rem; }
+
+[data-theme="light"] .settings-dialog { box-shadow: 0 12px 40px rgba(16, 18, 22, 0.18); }
+
+@media (max-width: 600px) {
+  .settings-backdrop { padding: 0.5rem; }
+  .settings-row { flex-wrap: wrap; }
+}
+
+/* Color theme segmented control (System / Dark / Light), used in settings */
+
+.theme-choice {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.3rem;
+}
+
+.theme-option {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-s);
+  padding: 0.3rem 0;
+  font: inherit;
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.theme-option:hover { color: var(--text); border-color: var(--border-strong); }
+
+.theme-option-on {
+  color: var(--text);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.theme-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* Composer */
 
@@ -630,94 +1070,94 @@ body {
   background: var(--border);
 }
 
-.composer-toolbar {
-  display: flex;
-  align-items: stretch;
-  border: 1px solid var(--border);
-  border-top: 0;
-  border-radius: 0 0 var(--radius-s) var(--radius-s);
-  background: var(--surface);
-}
+/* Session configuration chips (model / effort / mode) inside the composer
+   card footer — the 2026 chat-UI pattern (ChatGPT/Claude/Cursor). */
 
-/* Session configuration controls (model / effort / mode pickers + settings) */
-
-.config-row {
+.composer-chips {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.1rem;
+  flex-wrap: nowrap;
   min-width: 0;
-  padding: 0.4rem 0.45rem;
+  overflow: hidden;
 }
 
-.config-pickers {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: stretch;
-  flex: 1;
-  gap: 1px;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-}
-
+/* Quiet ghost controls: the category glyph carries the meaning, so no
+   uppercase labels and no ovals. Value + hover surface is the whole affair.
+   Chips stay on one line; the longest value (the model) truncates first. */
 .config-picker {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
-  background: transparent;
-  padding: 0.15rem 0.5rem;
-  border-right: 1px solid var(--border);
-}
-
-.config-picker:nth-child(even) { border-right: 0; }
-
-.config-picker-label {
-  font-size: 0.72rem;
+  gap: 0.3rem;
   color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  white-space: nowrap;
-}
-
-.config-picker select,
-.config-field select {
-  appearance: none;
-  background-color: var(--surface);
-  border: 0;
-  color: var(--text);
-  font: inherit;
-  font-size: 0.8rem;
   border-radius: var(--radius-s);
-  padding: 0.2rem 0.35rem;
+  padding: 0.28rem 0.45rem;
   cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
+  flex: none;
+  min-width: 0;
 }
 
-.config-picker select:hover,
-.config-field select:hover { color: var(--accent); }
+.config-picker:hover,
+.config-picker:focus-within { background: var(--surface); color: var(--text); }
 
-.config-picker select:focus-visible,
-.config-field select:focus-visible {
+.config-picker > svg { flex: none; opacity: 0.75; }
+
+.config-picker select {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.1rem 0.1rem;
+  cursor: pointer;
+  max-width: 8rem;
+  overflow: hidden;
+}
+
+.config-picker select:hover { color: var(--accent); }
+
+.config-picker select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+  border-radius: var(--radius-s);
+}
+
+/* The model chip (combobox) is the one allowed to shrink so all chips stay
+   on one line; its value truncates with an ellipsis. */
+.config-picker:has(.config-combobox) { flex: 0 1 auto; }
+
+/* Chevron for native-select chips (the combobox draws its own). */
+.config-picker:has(> select)::after {
+  content: "";
+  width: 0.38rem;
+  height: 0.38rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-1px);
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 /* Searchable combobox (long choice lists, e.g. models) */
 
-.config-combobox { position: relative; display: inline-flex; }
+.config-combobox { position: relative; display: inline-flex; min-width: 0; }
 
 .config-combobox-button {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
-  background: var(--surface);
+  gap: 0.35rem;
+  background: transparent;
   border: 0;
-  color: var(--text-muted);
+  color: inherit;
   font: inherit;
-  font-size: 0.8rem;
+  font-size: 0.82rem;
   border-radius: var(--radius-s);
-  padding: 0.2rem 0.35rem;
+  padding: 0.1rem 0.1rem;
   cursor: pointer;
-  max-width: 16rem;
+  max-width: 9rem;
+  min-width: 0;
 }
 
 .config-combobox-button:hover { color: var(--accent); }
@@ -727,29 +1167,34 @@ body {
   outline-offset: 1px;
 }
 
-.config-combobox-button[aria-expanded="true"] { color: var(--accent); background: var(--surface-raised); }
+.config-combobox-button[aria-expanded="true"] { color: var(--accent); }
 
 .config-combobox-value {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text);
+  color: inherit;
+  min-width: 0;
 }
 
+/* Rendered in a portal to <body> and anchored with fixed viewport coordinates
+   (left/bottom set inline) so the list escapes ancestor `overflow: hidden`
+   (the composer chips row) — without this the upward-opening list is clipped. */
 .config-combobox-pop {
-  position: absolute;
-  bottom: calc(100% + 0.5rem);
-  left: 0;
+  position: fixed;
   display: flex;
   flex-direction: column;
   width: max-content;
   min-width: 16rem;
   max-width: min(22rem, 90vw);
+  max-height: min(20rem, 70vh);
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  z-index: 30;
+  /* Above the settings/diff modal backdrops (z-index 40) so the list is never
+     hidden behind a dialog it was opened from. */
+  z-index: 60;
   overflow: hidden;
 }
 
@@ -830,8 +1275,6 @@ body {
 
 .config-star.config-starred { color: var(--accent); }
 
-.config-settings { position: relative; }
-
 .config-gear {
   display: inline-flex;
   align-items: center;
@@ -839,36 +1282,6 @@ body {
 }
 
 .config-gear[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
-
-.config-popover {
-  position: absolute;
-  bottom: calc(100% + 0.5rem);
-  right: 0;
-  min-width: 15rem;
-  max-width: 20rem;
-  max-height: 60vh;
-  overflow-y: auto;
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 0.5rem;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-
-.config-field {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.6rem;
-  padding: 0.35rem 0.3rem;
-  font-size: 0.8rem;
-}
-
-.config-field-label { flex: 1; }
 
 .config-toggle {
   display: flex;
@@ -893,7 +1306,7 @@ body {
   flex: none;
   width: 1.75rem;
   height: 1rem;
-  border-radius: 999px;
+  border-radius: 0;
   background: var(--border);
   position: relative;
   margin-top: 0.1rem;
@@ -906,12 +1319,12 @@ body {
   left: 2px;
   width: 0.75rem;
   height: 0.75rem;
-  border-radius: 50%;
+  border-radius: 0;
   background: var(--text);
   transition: transform 120ms ease-out;
 }
 
-.config-toggle input:checked + .config-toggle-track { background: var(--accent); }
+.config-toggle input:checked + .config-toggle-track { background: var(--accent-fill); }
 .config-toggle input:checked + .config-toggle-track .config-toggle-thumb { transform: translateX(0.75rem); background: var(--accent-ink); }
 
 .config-toggle input:focus-visible + .config-toggle-track {
@@ -919,41 +1332,35 @@ body {
   outline-offset: 2px;
 }
 
-.config-toggle-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.config-toggle-desc {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-}
-
 @media (prefers-reduced-motion: reduce) {
   .config-toggle-track, .config-toggle-thumb { transition: none; }
 }
 
+/* The composer is the heart of the surface: a raised, rounded card with the
+   prompt on top and model/mode chips plus actions in a footer row. */
 .composer {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-s) var(--radius-s) 0 0;
-  padding: 0.55rem;
-  transition: border-color 120ms ease-out, background 120ms ease-out;
+  gap: 0.4rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 0.6rem 0.75rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+  transition: border-color 120ms ease-out, box-shadow 120ms ease-out;
 }
 
 .composer:focus-within {
   border-color: var(--accent);
-  background: #1e2127;
+  background: var(--composer-focus);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.32), 0 0 0 1px var(--accent-soft);
 }
 
-.composer-row {
+.composer-footer {
   display: flex;
-  gap: 0.6rem;
   align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
 }
 
 .composer-attachments:empty { display: none; }
@@ -990,12 +1397,6 @@ body {
 
 .attachment-remove:hover { color: var(--deny); }
 
-.btn-attach {
-  font-size: 1.15rem;
-  line-height: 1;
-  padding: 0.45rem 0.7rem;
-}
-
 .msg-attachment {
   display: block;
   max-width: 22rem;
@@ -1010,17 +1411,18 @@ body {
 }
 
 .composer-input {
-  flex: 1;
+  width: 100%;
   resize: none;
-  min-height: 2.3rem;
+  min-height: 2.6rem;
   max-height: 12rem;
   background: transparent;
   border: none;
   outline: none;
   color: var(--text);
   font: inherit;
+  font-size: 0.95rem;
   line-height: 1.5;
-  padding: 0.4rem 0.35rem;
+  padding: 0.2rem 0.1rem;
 }
 
 .composer-input::placeholder { color: var(--text-muted); }
@@ -1028,6 +1430,7 @@ body {
 .composer-actions {
   display: flex;
   gap: 0.4rem;
+  align-items: center;
 }
 
 .btn {
@@ -1043,17 +1446,53 @@ body {
 .btn:hover:not(:disabled) { border-color: var(--accent); }
 .btn:disabled { opacity: 0.45; cursor: default; }
 
-.btn-send {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-ink);
-  font-weight: 600;
+/* Composer action buttons: circular icon buttons (2026 chat-UI norm), not
+   blocky rectangles. Attach is a ghost paperclip, send an amber arrow-up,
+   cancel a ghost stop square. */
+.composer-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out, border-color 120ms ease-out;
 }
 
-.btn-cancel {
-  border-color: var(--deny);
+.composer-icon-btn:hover { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+
+.composer-icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.composer-send-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 0;
+  border: 0;
+  background: var(--accent-fill);
+  color: var(--accent-ink);
+  cursor: pointer;
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out;
+}
+
+.composer-send-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); }
+
+.composer-send-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.composer-send-btn:disabled { opacity: 0.45; cursor: default; transform: none; box-shadow: none; }
+
+.composer-stop-btn { color: var(--deny); border-color: var(--deny); }
+
+.composer-stop-btn:hover {
   color: var(--deny);
-  background: transparent;
+  border-color: var(--deny);
+  background: color-mix(in srgb, var(--deny) 12%, transparent);
 }
 
 .btn-ghost {
@@ -1063,8 +1502,8 @@ body {
 }
 
 /* Visible focus trail for keyboard operators — a distinct outline ring that
-   survives accent-bordered buttons (border-swap alone is invisible on
-   .btn-send, whose resting border is already the accent). */
+   survives accent-filled buttons (border-swap alone is invisible on the
+   send button, whose resting fill is already the accent). */
 .btn:focus-visible,
 .copy-button:focus-visible,
 .attachment-remove:focus-visible {
@@ -1078,7 +1517,7 @@ body {
   outline-offset: 2px;
 }
 
-/* Working indicator while a turn runs */
+/* Working indicator while a turn runs: current activity + elapsed time. */
 
 .working {
   display: flex;
@@ -1089,10 +1528,25 @@ body {
   padding: 0.5rem 0.25rem;
 }
 
+.working-activity {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.working-elapsed {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
 .working-dot {
   width: 0.55rem;
   height: 0.55rem;
-  border-radius: 50%;
+  flex: none;
+  border-radius: 0;
   background: var(--accent);
   animation: working-pulse 1.2s ease-in-out infinite;
 }
@@ -1104,6 +1558,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .working-dot { animation: none; opacity: 0.8; }
+  .welcome-chip { transition: none; }
 }
 
 /* Failure detail (collapsed raw error under the plain-language summary) */
@@ -1180,8 +1635,20 @@ body {
 .session-row:hover { border-color: var(--accent); }
 .session-active { border-color: var(--accent); background: var(--surface); box-shadow: inset 2px 0 0 var(--accent); }
 .session-pending { border-color: var(--accent); opacity: 0.75; }
+.session-heading { display: flex; align-items: center; gap: 0.35rem; min-width: 0; }
+.session-active-dot { flex: none; width: 0.4rem; height: 0.4rem; border-radius: 0; background: var(--accent); }
 .session-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-meta { display: flex; align-items: baseline; gap: 0.5rem; }
 .session-time { color: var(--text-muted); font-size: 0.72rem; }
+.session-agent {
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0 0.4rem;
+}
 
 .sessions-search,
 .session-rename input {
@@ -1247,7 +1714,7 @@ body {
 }
 
 .panels::-webkit-scrollbar { width: 6px; }
-.panels::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.panels::-webkit-scrollbar-thumb { background: var(--border); border-radius: 0; }
 
 /* Cap the sessions list so the tasks panel below always keeps usable room;
    both scroll independently when their content overflows. (vh, not % — the
@@ -1341,66 +1808,63 @@ body {
 .task-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 @media (max-width: 1100px) {
-  .shell-main {
-    grid-template-columns: 1fr;
+  /* Stack: chat first, then the sidebar (sessions/changes), then the
+     inspector. The body scrolls as one column. */
+  .shell-body {
+    flex-direction: column;
     overflow-y: auto;
-    padding: 0 1rem;
   }
-  .git-column {
+  .sidebar {
     order: 2;
-    padding: var(--space-4) 0;
+    width: auto;
+    border-right: 0;
     border-top: 1px solid var(--border);
+    padding: var(--space-4) var(--space-4);
   }
-  .git-rail { max-height: 22rem; }
-  /* Grow with content up to a cap instead of a fixed tall column, so short
-     threads do not leave a dead gap before the panels. */
-  .chat-column { min-height: 0; padding: var(--space-4) 0; }
+  .chat-column { min-height: 0; padding: var(--space-4) var(--space-4); }
   .thread-viewport { min-height: 30vh; max-height: 65vh; }
   .msg { max-width: 95%; }
-  .inspector-column {
+  .inspector {
     order: 3;
-    display: block;
+    width: auto;
     border-left: 0;
     border-top: 1px solid var(--border);
-    padding: var(--space-4) 0 var(--space-5);
+    padding: var(--space-4) var(--space-4) var(--space-5);
     background: transparent;
   }
   .panels { overflow: visible; padding: 0; }
   .sessions-list { max-height: 18rem; }
-  .composer-toolbar { flex-wrap: wrap; }
-  .config-row { flex: 1 1 100%; }
-  .composer-utilities {
-    width: 100%;
-    margin-left: 0;
-    padding: 0.35rem 0.45rem;
-    border-top: 1px solid var(--border);
-  }
-  .export-button { margin-left: auto; }
+  .composer-chips { flex-wrap: wrap; }
 }
 
 @media (max-width: 600px) {
   body { font-size: 14px; }
-  .shell-header { padding-inline: 1rem; }
+  .shell-header { padding-inline: 0.9rem; }
   .enforcement-badge { font-size: 0.65rem; }
-  .config-row { align-items: flex-start; }
-  .config-pickers { grid-template-columns: 1fr; }
-  .config-picker { justify-content: space-between; border-right: 0; padding: 0.2rem 0.35rem; }
-  .composer-row { gap: 0.35rem; }
-  .btn-attach { padding-inline: 0.55rem; }
-  .composer-utilities { flex-wrap: wrap; }
+  .composer-footer { flex-wrap: wrap; }
+  .composer-meta { flex-wrap: wrap; }
   .task-add, .evidence-add { display: grid; grid-template-columns: 1fr auto; }
   .task-add input:nth-child(2), .task-add button { grid-column: 1 / -1; }
 }
 
-/* Markdown rendering (assistant messages) */
+/* Markdown rendering (assistant messages). Prose reads in the humanist sans;
+   inline and fenced code stay monospace via the explicit rules below. */
 
-.aui-md { line-height: 1.6; }
+.aui-md {
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+  min-width: 0;
+}
 .aui-md > :first-child { margin-top: 0; }
 .aui-md > :last-child { margin-bottom: 0; }
 .aui-md p { margin: 0.55rem 0; }
 .aui-md h1, .aui-md h2, .aui-md h3, .aui-md h4 {
   margin: 1rem 0 0.4rem;
-  font-size: 1rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
   border-bottom: 1px solid var(--border);
   padding-bottom: 0.25rem;
 }
@@ -1415,7 +1879,7 @@ body {
   color: var(--text-muted);
 }
 .aui-md code {
-  font: 0.8rem ui-monospace, SFMono-Regular, Consolas, monospace;
+  font: 0.8rem var(--font-mono);
   background: var(--surface-raised);
   border: 1px solid var(--border);
   border-radius: var(--radius-s);
@@ -1424,7 +1888,7 @@ body {
 /* Fallback block chrome for language-less fences; highlighted blocks own
    their chrome via .code-block-pre, which this rule must not override. */
 .aui-md pre:not(.code-block-pre) {
-  background: #0e1013;
+  background: var(--code-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 0.8rem 1rem;
@@ -1452,3 +1916,27 @@ body {
 .aui-md hr { border: none; border-top: 1px solid var(--border); margin: 0.8rem 0; }
 /* diff fences: + / - lines carry their own signal */
 .aui-md pre code .line-added, .aui-md pre code .line-removed { display: block; }
+
+/* Light theme: the hljs token palette above is tuned for dark surfaces, so
+   light mode swaps in its light-surface equivalents (GitHub-light values). */
+[data-theme="light"] .hljs-comment, [data-theme="light"] .hljs-quote { color: #6a737d; font-style: italic; }
+[data-theme="light"] .hljs-keyword, [data-theme="light"] .hljs-selector-tag,
+[data-theme="light"] .hljs-literal, [data-theme="light"] .hljs-section,
+[data-theme="light"] .hljs-doctag, [data-theme="light"] .hljs-type,
+[data-theme="light"] .hljs-name, [data-theme="light"] .hljs-strong { color: #d73a49; }
+[data-theme="light"] .hljs-string, [data-theme="light"] .hljs-regexp,
+[data-theme="light"] .hljs-attribute, [data-theme="light"] .hljs-meta .hljs-string { color: #032f62; }
+[data-theme="light"] .hljs-number, [data-theme="light"] .hljs-symbol,
+[data-theme="light"] .hljs-bullet, [data-theme="light"] .hljs-variable,
+[data-theme="light"] .hljs-template-variable, [data-theme="light"] .hljs-selector-attr { color: #005cc5; }
+[data-theme="light"] .hljs-title, [data-theme="light"] .hljs-title.function_,
+[data-theme="light"] .hljs-built_in, [data-theme="light"] .hljs-class .hljs-title { color: #6f42c1; }
+[data-theme="light"] .hljs-attr, [data-theme="light"] .hljs-property,
+[data-theme="light"] .hljs-selector-class, [data-theme="light"] .hljs-selector-id { color: #e36209; }
+[data-theme="light"] .hljs-meta, [data-theme="light"] .hljs-punctuation, [data-theme="light"] .hljs-operator { color: #57606a; }
+[data-theme="light"] .hljs-addition { color: #22863a; }
+[data-theme="light"] .hljs-deletion { color: #b31d28; }
+
+/* Light theme: soften the dark-tuned elevation shadows. */
+[data-theme="light"] .config-combobox-pop { box-shadow: 0 8px 24px rgba(16, 18, 22, 0.12); }
+[data-theme="light"] .part-permission { box-shadow: 0 6px 18px rgba(16, 18, 22, 0.10); }

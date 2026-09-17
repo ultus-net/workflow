@@ -8,9 +8,15 @@ import {
 } from "@assistant-ui/react";
 
 import { ActionPart, AttentionPart, CompletionPart, OutcomePart, PlanPart, ThinkingPart, ToolPart } from "./message-parts.js";
+import { ConfigField } from "./config-field.js";
+import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
+import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } from "./presenters.js";
 import { useSessionState, useSessionUsage } from "./runtime.js";
+import { SettingsDialog } from "./settings-dialog.js";
+import { useTheme } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
+import type { WebConfigOption } from "../web-config-options.js";
 
 interface SnapshotTask {
   readonly id: string;
@@ -103,6 +109,48 @@ interface SessionMeta {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly active: boolean;
+  readonly agent: string;
+}
+
+interface AgentInfo {
+  readonly id: string;
+  readonly name: string;
+  readonly containment: "contained" | "advisory";
+  readonly available: boolean;
+  readonly reason?: string;
+}
+
+/** Polls the agents the server can compose (availability + posture). */
+function useAgents() {
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  useEffect(() => {
+    const load = async (): Promise<void> => {
+      try {
+        const response = await fetch("/api/agents");
+        if (response.ok) setAgents((await response.json() as { agents: AgentInfo[] }).agents);
+      } catch {
+        // Keep the last good list; the next poll retries.
+      }
+    };
+    void load();
+    const timer = setInterval(() => void load(), 5000);
+    return () => clearInterval(timer);
+  }, []);
+  return agents;
+}
+
+/** Switches the active session's agent server-side, then refreshes the registry. */
+function switchAgent(agent: string, refresh: () => Promise<void>): void {
+  void fetch("/api/sessions/agent", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agent }),
+  }).then((response) => {
+    // Refresh either way: on success the new agent shows; on 409/503 the list
+    // re-syncs to the agent the server actually kept, so the radio never lies.
+    if (!response.ok) console.warn(`agent switch rejected: ${response.status}`);
+    void refresh();
+  }).catch(() => {});
 }
 
 /** Polls the session registry; undefined when the server runs a single session. */
@@ -143,12 +191,6 @@ function clearUnusedSessions(refresh: () => Promise<void>): void {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ clearUnused: true }),
   }).then(() => refresh());
-}
-
-interface ConfigChoice {
-  readonly value: string;
-  readonly name: string;
-  readonly description?: string;
 }
 
 type PermissionDecision = "allow_once" | "allow_always" | "reject_once" | "reject_always";
@@ -242,503 +284,137 @@ function useCapabilities() {
   return { capabilities: state, setCapability };
 }
 
-interface ConfigOption {
-  readonly id: string;
-  readonly name: string;
-  readonly description?: string;
-  readonly category?: string;
-  readonly type: "select" | "boolean";
-  readonly currentValue: string | boolean;
-  readonly choices?: readonly ConfigChoice[];
+/** Polls the agent-advertised session configuration; empty when the agent offers none. */
+/** Last-used value per ACP option, persisted locally so the operator's choices
+ * survive reload and the agent reconnecting with its factory default. */
+const LAST_USED_KEY = "workflow.config-last-used";
+
+function readLastUsed(): Record<string, string | boolean> {
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(LAST_USED_KEY) ?? "{}");
+    return stored !== null && typeof stored === "object" && !Array.isArray(stored) ? stored as Record<string, string | boolean> : {};
+  } catch {
+    return {};
+  }
 }
 
-/** Polls the agent-advertised session configuration; empty when the agent offers none. */
+function writeLastUsed(id: string, value: string | boolean): void {
+  try {
+    localStorage.setItem(LAST_USED_KEY, JSON.stringify({ ...readLastUsed(), [id]: value }));
+  } catch {
+    // Private browsing or quota: persistence is best-effort.
+  }
+}
+
 function useConfigOptions() {
-  const [options, setOptions] = useState<ConfigOption[]>([]);
-  const load = useCallback(async (): Promise<void> => {
-    try {
-      const response = await fetch("/api/config-options");
-      if (response.ok) setOptions((await response.json() as { options: ConfigOption[] }).options);
-    } catch {
-      // Keep the last good list; the next poll retries.
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), PANEL_POLL_MS);
-    return () => clearInterval(timer);
-  }, [load]);
+  const [options, setOptions] = useState<WebConfigOption[]>([]);
+  // Option ids whose last-used value we already pushed to the agent this
+  // session, so a reconnect can't loop restore→default→restore.
+  const restoredRef = useRef<Set<string>>(new Set());
   const setOption = useCallback((id: string, value: string | boolean): void => {
     // Optimistic: reflect the choice now, reconcile with the server response.
+    writeLastUsed(id, value);
     setOptions((previous) => previous.map((option) => option.id === id ? { ...option, currentValue: value } : option));
     void fetch("/api/config-options", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id, value }),
     }).then(async (response) => {
-      if (response.ok) setOptions((await response.json() as { options: ConfigOption[] }).options);
-      else await load();
-    }).catch(() => load());
+      if (response.ok) setOptions((await response.json() as { options: WebConfigOption[] }).options);
+    }).catch(() => {});
+  }, []);
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/config-options");
+      if (!response.ok) return;
+      const fresh = (await response.json() as { options: WebConfigOption[] }).options;
+      // Restore the operator's last-used value wherever the agent reverted to
+      // its factory default. Each option is restored at most once per session,
+      // and the restored value is merged into the displayed list at once so
+      // there is no factory-default flash while the agent catches up.
+      const lastUsed = readLastUsed();
+      const toRestore = new Map<string, string | boolean>();
+      for (const option of fresh) {
+        const saved = lastUsed[option.id];
+        if (saved === undefined || restoredRef.current.has(option.id)) continue;
+        restoredRef.current.add(option.id);
+        if (String(option.currentValue) === String(saved)) continue;
+        if (option.type === "select" && option.choices !== undefined && !option.choices.some((choice) => choice.value === saved)) continue;
+        toRestore.set(option.id, saved);
+      }
+      if (toRestore.size > 0) {
+        setOptions(fresh.map((option) => toRestore.has(option.id) ? { ...option, currentValue: toRestore.get(option.id) as string | boolean } : option));
+        for (const [id, value] of toRestore) setOption(id, value);
+      } else {
+        setOptions(fresh);
+      }
+    } catch {
+      // Keep the last good list; the next poll retries.
+    }
+  }, [setOption]);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), PANEL_POLL_MS);
+    return () => clearInterval(timer);
   }, [load]);
   return { options, setOption };
 }
 
-/** Categories promoted to composer-adjacent pickers; everything else lives in the popover. */
-const COMPOSER_CATEGORIES: readonly string[] = ["model", "thought_level", "mode"];
-
 function GearIcon() {
   return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden="true">
-      <circle cx="8" cy="8" r="2.2" />
-      <path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M12.6 3.4l-1.3 1.3M4.7 11.3l-1.3 1.3" strokeLinecap="round" />
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="5.1" />
+      <circle cx="8" cy="8" r="2" />
+      <path d="M8 1.2v1.7M8 13.1v1.7M14.8 8h-1.7M2.9 8H1.2M12.7 3.3l-1.2 1.2M4.5 11.5l-1.2 1.2M12.7 12.7l-1.2-1.2M4.5 4.5L3.3 3.3" />
     </svg>
   );
 }
 
-/** Agents may report a current value outside the advertised choices; show it truthfully. */
-function withCurrentChoice(option: ConfigOption): ConfigChoice[] {
-  const choices = option.choices ?? [];
-  const current = String(option.currentValue);
-  return choices.some((choice) => choice.value === current)
-    ? [...choices]
-    : [{ value: current, name: current }, ...choices];
+/** Per-category glyph for the composer chips — the icon carries the category
+ * so the controls need no uppercase labels. One consistent 1.4 stroke. */
+function ChipIcon({ category }: { readonly category: string | undefined }) {
+  const stroke = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.4,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+  } as const;
+  const svg = (paths: React.ReactNode): React.ReactNode => (
+    <svg viewBox="0 0 16 16" width="13" height="13" {...stroke} aria-hidden="true">{paths}</svg>
+  );
+  switch (category) {
+    case "provider":
+      return svg(<><rect x="2.5" y="2.5" width="11" height="4.5" rx="1" /><rect x="2.5" y="9" width="11" height="4.5" rx="1" /><path d="M5 4.7h0.01M5 11.3h0.01" strokeWidth="2" /></>);
+    case "model":
+      return svg(<><path d="M8 2l1.1 3 3.1 1.1-3.1 1.1L8 10.2 6.9 7.2 3.8 6.1l3.1-1.1z" /><path d="M11.5 10.5l0.55 1.45L13.5 12.5l-1.45 0.55L11.5 14.5l-0.55-1.45L9.5 12.5l1.45-0.55z" /></>);
+    case "thought_level":
+      return svg(<path d="M8.8 1.5L3.5 9h3.3L6.2 14.5 12.5 6.5H9.2z" />);
+    case "mode":
+      return svg(<><path d="M8 2.5l5.5 3L8 8.5 2.5 5.5z" /><path d="M2.5 8.5l5.5 3 5.5-3" /><path d="M2.5 11.5l5.5 3 5.5-3" /></>);
+    default:
+      return svg(<><path d="M3 5h10M3 11h10" /><circle cx="6" cy="5" r="1.6" /><circle cx="10" cy="11" r="1.6" /></>);
+  }
 }
 
-function ConfigSelect({ option, setOption, labelledBy }: {
-  readonly option: ConfigOption;
+/** Composer-adjacent quick pickers (provider/model/effort/mode) rendered as
+ * quiet ghost controls in the composer card footer; the full surface lives in
+ * the SettingsDialog. Exported for the UI-surface regression pin. */
+export function ConfigChips({ options, setOption }: {
+  readonly options: readonly WebConfigOption[];
   readonly setOption: (id: string, value: string | boolean) => void;
-  readonly labelledBy?: string | undefined;
 }) {
-  const current = String(option.currentValue);
+  const pickers = options.filter((option) => option.type === "select");
+  if (pickers.length === 0) return null;
+
   return (
-    <select
-      value={current}
-      onChange={(event) => setOption(option.id, event.target.value)}
-      aria-label={labelledBy === undefined ? option.name : undefined}
-      aria-labelledby={labelledBy}
-      title={option.description}
-    >
-      {withCurrentChoice(option).map((choice) => (
-        <option value={choice.value} key={choice.value} title={choice.description}>{choice.name}</option>
+    <div className="composer-chips">
+      {pickers.map((option) => (
+        <span className="config-picker" key={option.id} title={option.description ?? option.name}>
+          <ChipIcon category={option.category} />
+          <ConfigField option={option} setOption={setOption} />
+        </span>
       ))}
-    </select>
-  );
-}
-
-/** Long lists get a searchable combobox; short lists keep the native select. */
-const COMBOBOX_MIN_CHOICES = 8;
-
-/** Per-option favourite choices, persisted locally (presentation-only; never sent to the agent). */
-function useFavourites(optionId: string): readonly [readonly string[], (value: string) => void] {
-  const key = `workflow.config-favourites.${optionId}`;
-  const [favourites, setFavourites] = useState<readonly string[]>(() => {
-    try {
-      const stored: unknown = JSON.parse(localStorage.getItem(key) ?? "[]");
-      return Array.isArray(stored) ? stored.filter((entry): entry is string => typeof entry === "string") : [];
-    } catch {
-      return [];
-    }
-  });
-  const toggle = useCallback((value: string): void => {
-    setFavourites((previous) => {
-      const next = previous.includes(value) ? previous.filter((entry) => entry !== value) : [...previous, value];
-      try {
-        localStorage.setItem(key, JSON.stringify(next));
-      } catch {
-        // Private browsing or quota: favourites stay session-local.
-      }
-      return next;
-    });
-  }, [key]);
-  return [favourites, toggle];
-}
-
-function ChevronIcon() {
-  return (
-    <svg viewBox="0 0 10 6" width="10" height="6" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
-      <path d="M1 1l4 4 4-4" />
-    </svg>
-  );
-}
-
-function ConfigCombobox({ option, setOption, labelledBy }: {
-  readonly option: ConfigOption;
-  readonly setOption: (id: string, value: string | boolean) => void;
-  readonly labelledBy?: string | undefined;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [activeIndex, setActiveIndex] = useState(0);
-  const rootRef = useRef<HTMLSpanElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const listRef = useRef<HTMLUListElement>(null);
-  const [favourites, toggleFavourite] = useFavourites(option.id);
-
-  const current = String(option.currentValue);
-  const all = withCurrentChoice(option);
-  const currentName = all.find((choice) => choice.value === current)?.name ?? current;
-  const needle = query.trim().toLowerCase();
-  const filtered = needle === ""
-    ? all
-    : all.filter((choice) => choice.name.toLowerCase().includes(needle) || choice.value.toLowerCase().includes(needle));
-  const favouriteMatches = filtered.filter((choice) => favourites.includes(choice.value));
-  const otherMatches = filtered.filter((choice) => !favourites.includes(choice.value));
-  const selectable = [...favouriteMatches, ...otherMatches];
-  const showGroups = favouriteMatches.length > 0 && otherMatches.length > 0;
-
-  const closeList = useCallback((focusButton: boolean): void => {
-    setOpen(false);
-    if (focusButton) buttonRef.current?.focus();
-  }, []);
-  const choose = useCallback((value: string): void => {
-    setOption(option.id, value);
-    closeList(true);
-  }, [option.id, setOption, closeList]);
-
-  useEffect(() => {
-    if (!open) return;
-    inputRef.current?.focus();
-    const onPointerDown = (event: MouseEvent): void => {
-      if (rootRef.current?.contains(event.target as Node) === false) closeList(false);
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [open, closeList]);
-
-  useEffect(() => {
-    if (!open) return;
-    listRef.current?.children[activeIndex]?.scrollIntoView({ block: "nearest" });
-  }, [open, activeIndex]);
-
-  const openList = (): void => {
-    setQuery("");
-    // Recompute the reset list from the unfiltered choices: a stale query
-    // must not leak into the reopened active index.
-    const nextSelectable = [
-      ...all.filter((choice) => favourites.includes(choice.value)),
-      ...all.filter((choice) => !favourites.includes(choice.value)),
-    ];
-    setActiveIndex(Math.max(0, nextSelectable.findIndex((choice) => choice.value === current)));
-    setOpen(true);
-  };
-
-  const onSearchKeyDown = (event: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      setActiveIndex((index) => Math.min(index + 1, selectable.length - 1));
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      setActiveIndex((index) => Math.max(index - 1, 0));
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      setActiveIndex(0);
-    } else if (event.key === "End") {
-      event.preventDefault();
-      setActiveIndex(Math.max(0, selectable.length - 1));
-    } else if (event.key === "Enter") {
-      event.preventDefault();
-      const choice = selectable[activeIndex];
-      if (choice !== undefined) choose(choice.value);
-    } else if (event.key === "Escape") {
-      event.preventDefault();
-      // This Escape closes the combobox only; the global shortcut handler
-      // must not read it as "cancel the running turn".
-      event.stopPropagation();
-      closeList(true);
-    }
-  };
-
-  const listId = `config-list-${option.id}`;
-  const renderChoice = (choice: ConfigChoice, index: number) => {
-    const starred = favourites.includes(choice.value);
-    return (
-      <li
-        key={choice.value}
-        id={`config-opt-${option.id}-${index}`}
-        role="option"
-        aria-selected={choice.value === current}
-        className={`config-combobox-option ${index === activeIndex ? "config-combobox-active" : ""}`}
-        onMouseDown={(event) => { event.preventDefault(); choose(choice.value); }}
-        onMouseEnter={() => setActiveIndex(index)}
-      >
-        <button
-          type="button"
-          className={`config-star ${starred ? "config-starred" : ""}`}
-          aria-label={starred ? `Remove ${choice.name} from favourites` : `Add ${choice.name} to favourites`}
-          aria-pressed={starred}
-          onMouseDown={(event) => { event.preventDefault(); event.stopPropagation(); }}
-          onClick={(event) => { event.stopPropagation(); toggleFavourite(choice.value); }}
-        >
-          {starred ? "★" : "☆"}
-        </button>
-        <span className="config-combobox-name" title={choice.description}>{choice.name}</span>
-        {choice.value === current && <span className="config-combobox-check" aria-hidden="true">✓</span>}
-      </li>
-    );
-  };
-
-  return (
-    <span className="config-combobox" ref={rootRef}>
-      <button
-        ref={buttonRef}
-        type="button"
-        className="config-combobox-button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={labelledBy === undefined ? option.name : undefined}
-        aria-labelledby={labelledBy}
-        title={option.description}
-        onClick={() => (open ? closeList(false) : openList())}
-      >
-        <span className="config-combobox-value">{currentName}</span>
-        <ChevronIcon />
-      </button>
-      {open && (
-        <span
-          className="config-combobox-pop"
-          onBlur={(event) => {
-            // Tab flows through the search input and star toggles; once focus
-            // leaves the popover entirely, close it.
-            if (event.currentTarget.contains(event.relatedTarget) === false) closeList(false);
-          }}
-        >
-          <input
-            ref={inputRef}
-            className="config-combobox-search"
-            value={query}
-            onChange={(event) => { setQuery(event.target.value); setActiveIndex(0); }}
-            onKeyDown={onSearchKeyDown}
-            placeholder={`Search ${option.name.toLowerCase()}…`}
-            role="combobox"
-            aria-expanded="true"
-            aria-controls={listId}
-            aria-activedescendant={selectable[activeIndex] === undefined ? undefined : `config-opt-${option.id}-${activeIndex}`}
-            aria-autocomplete="list"
-            aria-label={`Search ${option.name}`}
-          />
-          <ul className="config-combobox-list" role="listbox" id={listId} aria-label={option.name} ref={listRef}>
-            {selectable.length === 0 && <li className="config-combobox-empty">no matches</li>}
-            {showGroups && <li className="config-combobox-group" role="presentation">Favourites</li>}
-            {favouriteMatches.map((choice, index) => renderChoice(choice, index))}
-            {showGroups && <li className="config-combobox-group" role="presentation">All</li>}
-            {otherMatches.map((choice, index) => renderChoice(choice, favouriteMatches.length + index))}
-          </ul>
-        </span>
-      )}
-    </span>
-  );
-}
-
-function ConfigField({ option, setOption, labelledBy }: {
-  readonly option: ConfigOption;
-  readonly setOption: (id: string, value: string | boolean) => void;
-  readonly labelledBy?: string | undefined;
-}) {
-  return (option.choices?.length ?? 0) >= COMBOBOX_MIN_CHOICES
-    ? <ConfigCombobox option={option} setOption={setOption} labelledBy={labelledBy} />
-    : <ConfigSelect option={option} setOption={setOption} labelledBy={labelledBy} />;
-}
-
-function ConfigControls({ options, setOption, permissions, capabilities }: {
-  readonly options: readonly ConfigOption[];
-  readonly setOption: (id: string, value: string | boolean) => void;
-  readonly permissions: ReturnType<typeof usePermissions>;
-  readonly capabilities: ReturnType<typeof useCapabilities>;
-}) {
-  const [open, setOpen] = useState(false);
-  const gearRef = useRef<HTMLButtonElement>(null);
-  const popoverRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        // stopPropagation is defense-in-depth for the focused-control case;
-        // the global Escape handler's open-chrome DOM guard is the primary fix.
-        event.stopPropagation();
-        setOpen(false);
-        gearRef.current?.focus();
-      }
-    };
-    const onPointerDown = (event: MouseEvent): void => {
-      if (popoverRef.current?.contains(event.target as Node) === false && gearRef.current?.contains(event.target as Node) === false) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("mousedown", onPointerDown);
-    // Dialogs open with focus inside them, never stranded on the page body.
-    popoverRef.current?.querySelector<HTMLElement>("input, select, button")?.focus();
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onPointerDown);
-    };
-  }, [open]);
-
-  const pickers = options.filter((option) => option.type === "select" && option.category !== undefined && COMPOSER_CATEGORIES.includes(option.category));
-  const toggles = options.filter((option) => option.type === "boolean");
-  const popoverSelects = options.filter((option) => option.type === "select" && !pickers.includes(option));
-  const showSettings = permissions.available || toggles.length > 0 || popoverSelects.length > 0;
-  if (!showSettings) return null;
-
-  return (
-    <div className="config-row">
-      {pickers.length > 0 && (
-        <div className="config-pickers">
-          {pickers.map((option) => (
-            <span className="config-picker" key={option.id}>
-              <span className="config-picker-label" id={`config-label-${option.id}`}>{option.name}</span>
-              <ConfigField option={option} setOption={setOption} labelledBy={`config-label-${option.id}`} />
-            </span>
-          ))}
-        </div>
-      )}
-      <span className="config-settings">
-        <button
-          ref={gearRef}
-          className="btn btn-ghost config-gear"
-          aria-expanded={open}
-          aria-haspopup="dialog"
-          aria-label="Session settings"
-          onClick={() => setOpen((value) => !value)}
-        >
-          <GearIcon />
-        </button>
-        {open && (
-          <div className="config-popover" role="dialog" aria-label="Session settings" ref={popoverRef}>
-            {(popoverSelects.length > 0 || toggles.length > 0) && (
-              <span className="config-field-label">Agent options</span>
-            )}
-            {popoverSelects.map((option) => (
-              <label className="config-field" key={option.id}>
-                <span className="config-field-label">{option.name}</span>
-                <ConfigSelect option={option} setOption={setOption} />
-              </label>
-            ))}
-            {toggles.map((option) => (
-              <label className="config-toggle" key={option.id} title={option.description}>
-                <input
-                  type="checkbox"
-                  checked={option.currentValue === true}
-                  onChange={(event) => setOption(option.id, event.target.checked)}
-                />
-                <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
-                <span className="config-toggle-text">
-                  {option.name}
-                  {option.description !== undefined && <span className="config-toggle-desc">{option.description}</span>}
-                </span>
-              </label>
-            ))}
-            {permissions.available && (
-              <PermissionSettings permissions={permissions} capabilities={capabilities} />
-            )}
-            <GeneralSettings />
-          </div>
-        )}
-      </span>
-    </div>
-  );
-}
-
-/** Settings popover: transcript and notification preferences (persisted locally). */
-function GeneralSettings() {
-  const [notify, setNotify] = useNotifyOnCompletion();
-  const { showThinking, setShowThinking } = useSessionState();
-  return (
-    <div className="config-permissions">
-      <span className="config-field-label">Transcript</span>
-      <label className="config-toggle" title="Show agent reasoning blocks in the thread (collapsed by default when shown)">
-        <input type="checkbox" checked={showThinking} onChange={(event) => setShowThinking(event.target.checked)} />
-        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
-        <span className="config-toggle-text">
-          Show thinking blocks
-          <span className="config-toggle-desc">the agent still reasons; only the display changes</span>
-        </span>
-      </label>
-      <span className="config-field-label">Notifications</span>
-      <label className="config-toggle" title="Desktop notification and chime when a turn finishes while the tab is hidden">
-        <input type="checkbox" checked={notify} onChange={(event) => setNotify(event.target.checked)} />
-        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
-        <span className="config-toggle-text">
-          Notify on completion
-          <span className="config-toggle-desc">fires only while the tab is hidden</span>
-        </span>
-      </label>
-    </div>
-  );
-}
-
-const NOTIFY_KEY = "workflow.notify-completion";
-
-function useNotifyOnCompletion(): readonly [boolean, (enabled: boolean) => void] {
-  const [enabled, setEnabled] = useState(() => window.localStorage.getItem(NOTIFY_KEY) === "true");
-  const update = useCallback((value: boolean): void => {
-    window.localStorage.setItem(NOTIFY_KEY, String(value));
-    if (value && typeof Notification !== "undefined" && Notification.permission === "default") {
-      void Notification.requestPermission();
-    }
-    setEnabled(value);
-  }, []);
-  return [enabled, update];
-}
-
-/** Ask-mode and capability toggles inside the settings popover. */
-function PermissionSettings({ permissions, capabilities }: {
-  readonly permissions: ReturnType<typeof usePermissions>;
-  readonly capabilities: ReturnType<typeof useCapabilities>;
-}) {
-  const confinement = capabilities.capabilities?.workspaceConfinement ?? false;
-  const processEnabled = capabilities.capabilities?.capabilities.includes("process") ?? false;
-  const networkEnabled = capabilities.capabilities?.capabilities.includes("network") ?? false;
-  const remembered = permissions.patterns.alwaysAllow.length + permissions.patterns.alwaysReject.length;
-  return (
-    <div className="config-permissions">
-      <span className="config-field-label">Approvals</span>
-      <label className="config-toggle" title="Prompt in-thread before each gated tool the policy would allow">
-        <input
-          type="checkbox"
-          checked={permissions.mode === "ask"}
-          onChange={(event) => void permissions.update({ mode: event.target.checked ? "ask" : "auto" })}
-        />
-        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
-        <span className="config-toggle-text">
-          Ask before tool runs
-          <span className="config-toggle-desc">Hard policy denials never prompt</span>
-        </span>
-      </label>
-      <span className="config-field-label">Agent capabilities</span>
-      <label className="config-toggle" title="Shell command execution (run_commands)">
-        <input
-          type="checkbox"
-          checked={processEnabled}
-          disabled={!confinement}
-          onChange={(event) => void capabilities.setCapability("process", event.target.checked)}
-        />
-        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
-        <span className="config-toggle-text">
-          Shell commands
-          {!confinement && <span className="config-toggle-desc">requires workspace confinement</span>}
-        </span>
-      </label>
-      <label className="config-toggle" title="Web search and fetch tools">
-        <input
-          type="checkbox"
-          checked={networkEnabled}
-          disabled={!confinement}
-          onChange={(event) => void capabilities.setCapability("network", event.target.checked)}
-        />
-        <span className="config-toggle-track" aria-hidden="true"><span className="config-toggle-thumb" /></span>
-        <span className="config-toggle-text">
-          Web access
-          {!confinement && <span className="config-toggle-desc">requires workspace confinement</span>}
-        </span>
-      </label>
-      {remembered > 0 && (
-        <button className="btn btn-ghost config-reset-patterns" onClick={() => void permissions.update({ reset: true })}>
-          Forget {remembered} remembered decision{remembered === 1 ? "" : "s"}
-        </button>
-      )}
     </div>
   );
 }
@@ -784,15 +460,33 @@ function PermissionPrompt({ pending, answer, remembered }: {
   );
 }
 
-function UsageMeter({ placement = "composer" }: { readonly placement?: "composer" | "inspector" }) {
+/** The session's single usage readout (composer meta row): a context-window
+ * fill bar plus cumulative tokens and cost. Context fill needs both the
+ * latest context input (proxy) and the agent-reported window (ACP
+ * usage_update); without the window the used count still shows, honestly. */
+function UsageMeter() {
   const usage = useSessionUsage();
   if (usage === undefined) return null;
+  const contextUsed = usage.latestPromptTokens;
+  const contextWindow = usage.contextWindowTokens;
+  const fillPct = contextUsed !== undefined && contextWindow !== undefined && contextWindow > 0
+    ? Math.min(100, Math.round((contextUsed / contextWindow) * 100))
+    : undefined;
   return (
-    <div className={`usage-meter usage-meter-${placement}`} title={`${usage.requests} metered model request(s)`}>
-      {placement === "inspector" && <span className="usage-label">Session spend</span>}
-      {placement === "inspector" && (
-        <span className="usage-context" aria-label={usage.latestPromptTokens === undefined ? "Latest model context input unavailable" : `${usage.latestPromptTokens} tokens in the latest model context input`}>
-          Context now {usage.latestPromptTokens === undefined ? <strong>unavailable</strong> : <><strong>{formatTokens(usage.latestPromptTokens)}</strong> tokens</>}
+    <div className="usage-meter" title={`${usage.requests} metered model request(s)`}>
+      {contextUsed !== undefined && (
+        <span
+          className="usage-context"
+          aria-label={contextWindow === undefined
+            ? `${contextUsed} tokens in the latest model context input`
+            : `Context ${contextUsed} of ${contextWindow} tokens used (${fillPct}%)`}
+        >
+          <span className="usage-context-bar" aria-hidden="true">
+            <span className="usage-context-fill" style={{ "--context-fill-scale": `${(fillPct ?? 0) / 100}` } as React.CSSProperties} />
+          </span>
+          Context {formatTokens(contextUsed)}
+          {contextWindow !== undefined && <> / {formatTokens(contextWindow)}</>}
+          {fillPct !== undefined && <> · {fillPct}%</>}
         </span>
       )}
       <span className="usage-tokens" aria-label={`${usage.promptTokens} prompt tokens, ${usage.completionTokens} completion tokens`}>
@@ -803,11 +497,64 @@ function UsageMeter({ placement = "composer" }: { readonly placement?: "composer
   );
 }
 
-function formatTokens(count: number): string {
-  if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
-  return String(count);
+/** Header toggle: hides the git rail and inspector so the thread centers.
+ * The state lives in App so the settings dialog's Focus mode row and this
+ * button always read/write the same setting. */
+const RAILS_KEY = "workflow.rails";
+
+function RailsToggle({ off, onToggle }: {
+  readonly off: boolean;
+  readonly onToggle: (off: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="rail-toggle"
+      aria-pressed={off}
+      title={off ? "Show the git rail and inspector panels" : "Focus the conversation — hide the side panels"}
+      onClick={() => onToggle(!off)}
+    >
+      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+        <path d="M5.8 2.5v11M10.2 2.5v11" />
+      </svg>
+    </button>
+  );
 }
+
+/** Live activity while a turn runs: what the agent is doing plus elapsed time.
+ * The status reads the same projection the transcript renders — no extra
+ * server surface. */
+function WorkingStatus() {
+  const { items } = useSessionState();
+  const [elapsed, setElapsed] = useState(0);
+  const startedRef = useRef(0);
+  useEffect(() => {
+    startedRef.current = Date.now();
+    setElapsed(0);
+    const timer = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <div className="working" role="status" aria-live="polite">
+      <span className="working-dot" aria-hidden="true" />
+      <span className="working-activity">{describeActivity(items)}</span>
+      {/* The elapsed counter is a glance affordance; the live region carries
+          the activity text only, so screen readers are not re-announced
+          every second. */}
+      <span className="working-elapsed" aria-hidden="true">{formatElapsed(elapsed)}</span>
+    </div>
+  );
+}
+
+/** Empty-state suggestions; presentation-only — they fill the composer. */
+const SUGGESTED_PROMPTS: readonly string[] = [
+  "Explain what the failing tests in this repository cover",
+  "Draft a plan for the next change, then wait for my approval",
+  "Summarize the working-tree changes",
+];
 
 function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]; readonly refresh: () => Promise<void> }) {
   const [pending, setPending] = useState<string | undefined>(undefined);
@@ -886,8 +633,14 @@ function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]
                   aria-current={session.active}
                   disabled={pending !== undefined}
                 >
-                  <span className="session-title">{pending === session.id ? "loading…" : session.title}</span>
-                  <span className="session-time">{new Date(session.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                  <span className="session-heading">
+                    {session.active && <span className="session-active-dot" aria-hidden="true" />}
+                    <span className="session-title">{pending === session.id ? "loading…" : session.title}</span>
+                  </span>
+                  <span className="session-meta">
+                    <span className="session-time" title={new Date(session.updatedAt).toLocaleString()}>{formatRelativeTime(session.updatedAt)}</span>
+                    <span className="session-agent">{session.agent}</span>
+                  </span>
                 </button>
                 <button
                   className="session-dismiss session-rename-trigger"
@@ -1116,7 +869,10 @@ function downloadMarkdown(exported: { readonly name: string; readonly text: stri
   URL.revokeObjectURL(url);
 }
 
-function Composer() {
+function Composer({ options, setOption }: {
+  readonly options: readonly WebConfigOption[];
+  readonly setOption: (id: string, value: string | boolean) => void;
+}) {
   const { isRunning, queuePrompt } = useSessionState();
   return (
     <ComposerPrimitive.Root
@@ -1146,22 +902,34 @@ function Composer() {
           )}
         </ComposerPrimitive.Attachments>
       </div>
-      <div className="composer-row">
-        <ComposerPrimitive.AddAttachment className="btn btn-ghost btn-attach" aria-label="Attach image" multiple>
-          +
-        </ComposerPrimitive.AddAttachment>
-        <ComposerPrimitive.Input
-          className="composer-input"
-          placeholder={isRunning ? "Queue a follow-up — sends when the agent finishes" : "Describe the work to perform"}
-          submitMode="enter"
-          aria-label="Prompt"
-        />
+      <ComposerPrimitive.Input
+        className="composer-input"
+        placeholder={isRunning ? "Queue a follow-up — sends when the agent finishes" : "Describe the work to perform"}
+        submitMode="enter"
+        aria-label="Prompt"
+      />
+      <div className="composer-footer">
+        <ConfigChips options={options} setOption={setOption} />
         <div className="composer-actions">
+          <ComposerPrimitive.AddAttachment className="composer-icon-btn" aria-label="Attach image" multiple>
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true">
+              <path d="M8 3.5v9M3.5 8h9" />
+            </svg>
+          </ComposerPrimitive.AddAttachment>
           <AuiIf condition={(state) => state.thread.isRunning}>
-            <ComposerPrimitive.Cancel className="btn btn-cancel">Cancel</ComposerPrimitive.Cancel>
+            <ComposerPrimitive.Cancel className="composer-icon-btn composer-stop-btn" aria-label="Cancel the running turn">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <rect x="4" y="4" width="8" height="8" rx="1.5" />
+              </svg>
+            </ComposerPrimitive.Cancel>
           </AuiIf>
           <AuiIf condition={(state) => !state.thread.isRunning}>
-            <ComposerPrimitive.Send className="btn btn-send">Send</ComposerPrimitive.Send>
+            <ComposerPrimitive.Send className="composer-send-btn" aria-label="Send">
+              <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M8 12.5v-9" />
+                <path d="M4.5 7L8 3.5 11.5 7" />
+              </svg>
+            </ComposerPrimitive.Send>
           </AuiIf>
         </div>
       </div>
@@ -1169,21 +937,12 @@ function Composer() {
   );
 }
 
-function Panels({ snapshot, sessions, refresh, refreshSessions }: {
+function Panels({ snapshot, refresh }: {
   readonly snapshot: Snapshot | undefined;
-  readonly sessions: SessionMeta[] | undefined;
   readonly refresh: () => Promise<void>;
-  readonly refreshSessions: () => Promise<void>;
 }) {
   return (
     <aside className="panels">
-      <UsageMeter placement="inspector" />
-      {sessions !== undefined && (
-        <details className="panel-disclosure">
-          <summary><span>Sessions</span><span className="panel-summary-meta">{sessions.length}</span></summary>
-          <div className="panel-disclosure-body"><SessionsPanel sessions={sessions} refresh={refreshSessions} /></div>
-        </details>
-      )}
       <section>
         <h2>Tasks</h2>
         {(snapshot?.tasks ?? []).map((task) => (
@@ -1242,23 +1001,26 @@ const GIT_STATUS_MARK: Record<GitChange["status"], string> = {
 };
 
 function GitRail({ status }: { readonly status: GitStatus | undefined }) {
-  const [selected, setSelected] = useState<string | undefined>(undefined);
-  const [diff, setDiff] = useState<string | undefined>(undefined);
+  const [open, setOpen] = useState<{ path: string; diff: string | undefined } | undefined>(undefined);
   const diffRequestRef = useRef(0);
-  const select = async (path: string): Promise<void> => {
+  const openDiff = async (path: string): Promise<void> => {
     const request = ++diffRequestRef.current;
-    if (selected === path) {
-      setSelected(undefined);
-      setDiff(undefined);
-      return;
+    setOpen({ path, diff: undefined });
+    try {
+      const response = await fetch(`/api/git/diff?path=${encodeURIComponent(path)}`);
+      const nextDiff = response.ok
+        ? (await response.json() as { diff: string }).diff
+        : `Diff unavailable (HTTP ${response.status})`;
+      if (request === diffRequestRef.current) setOpen({ path, diff: nextDiff });
+    } catch {
+      if (request === diffRequestRef.current) setOpen({ path, diff: "Diff unavailable (network error)" });
     }
-    setSelected(path);
-    setDiff(undefined);
-    const response = await fetch(`/api/git/diff?path=${encodeURIComponent(path)}`);
-    if (response.ok) {
-      const nextDiff = (await response.json() as { diff: string }).diff;
-      if (request === diffRequestRef.current) setDiff(nextDiff);
-    }
+  };
+  // Closing invalidates any in-flight fetch so a late response cannot reopen
+  // the popout the operator just dismissed.
+  const closeDiff = (): void => {
+    diffRequestRef.current += 1;
+    setOpen(undefined);
   };
   return (
     <aside className="git-rail" aria-label="Repository changes">
@@ -1269,16 +1031,68 @@ function GitRail({ status }: { readonly status: GitStatus | undefined }) {
       <div className="git-changes">
         {status !== undefined && status.changes.length === 0 && <p className="muted">working tree clean</p>}
         {(status?.changes ?? []).map((change) => (
-          <div key={change.path} className={`git-change-wrap${selected === change.path ? " git-change-open" : ""}`}>
-            <button className="git-change" onClick={() => void select(change.path)} aria-expanded={selected === change.path}>
-              <span className={`git-status git-status-${change.status}`}>{GIT_STATUS_MARK[change.status]}</span>
-              <span className="git-path" title={change.path}>{change.path}</span>
-            </button>
-            {selected === change.path && <pre className="git-diff">{diff ?? "loading diff…"}</pre>}
-          </div>
+          <button key={change.path} className="git-change" aria-haspopup="dialog" onClick={() => void openDiff(change.path)}>
+            <span className={`git-status git-status-${change.status}`}>{GIT_STATUS_MARK[change.status]}</span>
+            <span className="git-path" title={change.path}>{change.path}</span>
+          </button>
         ))}
       </div>
+      {open !== undefined && (
+        <DiffDialog path={open.path} diff={open.diff} onClose={closeDiff} />
+      )}
     </aside>
+  );
+}
+
+/** Full diff for one changed file in a proper popout — the sidebar is too
+ * narrow to read a diff inline. Shares the settings dialog's chrome. */
+function DiffDialog({ path, diff, onClose }: {
+  readonly path: string;
+  readonly diff: string | undefined;
+  readonly onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialogRef.current?.querySelector<HTMLElement>("button")?.focus();
+    return () => {
+      openerRef.current?.focus();
+    };
+  }, []);
+  return (
+    <div
+      className="settings-backdrop"
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="settings-dialog diff-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Diff for ${path}`}
+        ref={dialogRef}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            onClose();
+          }
+        }}
+      >
+        <header className="settings-head">
+          <h2 className="diff-dialog-title"><code>{path}</code></h2>
+          <button type="button" className="btn btn-ghost settings-close" aria-label="Close diff" onClick={onClose}>
+            ×
+          </button>
+        </header>
+        <div className="settings-body diff-dialog-body">
+          {diff === undefined
+            ? <p className="muted">loading diff…</p>
+            : looksLikeDiff(diff) ? <DiffText text={diff} /> : <pre className="git-diff">{diff}</pre>}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1386,52 +1200,117 @@ export function App() {
   const { snapshot, refresh } = useSnapshot();
   const gitStatus = useGitStatus();
   const { sessions, refresh: refreshSessions } = useSessions();
+  const agents = useAgents();
+  // The registry leads with the default agent (OpenCode); fall back to it while
+  // the agents list is still loading so the switcher never marks the wrong one.
+  const currentAgent = sessions?.find((session) => session.active)?.agent ?? agents[0]?.id ?? "opencode";
   const { options, setOption } = useConfigOptions();
   const permissions = usePermissions();
   const capabilities = useCapabilities();
   const { isRunning } = useSessionState();
+  const theme = useTheme();
+  const usage = useSessionUsage();
   const enforcementCopy = snapshot === undefined ? undefined : ENFORCEMENT_COPY[snapshot.enforcementLevel];
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  // Focus mode state lives here so the header button and the settings dialog
+  // read and write one setting (pre-paint application happens in main.tsx).
+  const [railsOff, setRailsOff] = useState((): boolean => {
+    try {
+      return window.localStorage.getItem(RAILS_KEY) === "off";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    document.documentElement.dataset.rails = railsOff ? "off" : "on";
+    try {
+      window.localStorage.setItem(RAILS_KEY, railsOff ? "off" : "on");
+    } catch {
+      // Storage unavailable: the toggle applies for this session only.
+    }
+  }, [railsOff]);
 
   // Keyboard shortcuts: "/" focuses the composer, Escape cancels a running
-  // turn (when no popover/input has focus), Alt+N starts a new session.
+  // turn (when no popover/input has focus), Alt+N starts a new session,
+  // Ctrl/Cmd+, opens settings. While the settings dialog is open it owns the
+  // keyboard — focus never jumps out from behind the modal.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const active = document.activeElement;
       const typing = active instanceof HTMLElement &&
         (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable);
-      if (event.key === "/" && !typing) {
+      if (event.key === "/" && !typing && document.querySelector(".settings-dialog") === null) {
         event.preventDefault();
         document.querySelector<HTMLElement>(".composer-input")?.focus();
       } else if (
         event.key === "Escape" && isRunning && !typing &&
-        // Any open chrome (settings popover, model combobox) owns this Escape;
+        // Any open chrome (settings dialog, model combobox) owns this Escape;
         // cancelling a running turn must never ride along with closing it.
-        document.querySelector(".config-popover, .config-combobox-pop") === null
+        document.querySelector(".settings-dialog, .config-combobox-pop") === null
       ) {
         void fetch("/api/cancel", { method: "POST" });
-      } else if (event.altKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "n" && !typing) {
+      } else if (
+        event.altKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "n" && !typing &&
+        document.querySelector(".settings-dialog") === null
+      ) {
         event.preventDefault();
         createSession(refreshSessions);
+      } else if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key === ",") {
+        event.preventDefault();
+        setSettingsOpen(true);
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [isRunning, refreshSessions]);
 
+  const activeTitle = sessions?.find((session) => session.active)?.title;
+
   return (
     <div className="shell">
       <header className="shell-header">
-        <strong>Workflow Control</strong>
-        <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
+        <div className="shell-header-left">
+          <RailsToggle off={railsOff} onToggle={setRailsOff} />
+          <h1 className="shell-wordmark">Workflow</h1>
+          {activeTitle !== undefined && (
+            <span className="shell-session-title" title={activeTitle}>{activeTitle}</span>
+          )}
+        </div>
+        <div className="shell-header-actions">
+          <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
+          <button
+            type="button"
+            className="btn btn-ghost config-gear"
+            aria-expanded={settingsOpen}
+            aria-haspopup="dialog"
+            aria-label="Settings"
+            onClick={() => setSettingsOpen(true)}
+          >
+            <GearIcon />
+          </button>
+        </div>
       </header>
-      <main className="shell-main">
-        <div className="git-column"><GitRail status={gitStatus} /></div>
+      <div className="shell-body">
+        <aside className="sidebar" aria-label="Sessions and repository changes">
+          {sessions !== undefined && <SessionsPanel sessions={sessions} refresh={refreshSessions} />}
+          <GitRail status={gitStatus} />
+        </aside>
         <section className="chat-column">
           <ThreadPrimitive.Root className="thread-root">
             <ThreadPrimitive.Viewport className="thread-viewport">
               <AuiIf condition={(state) => state.thread.isEmpty}>
                 <div className="welcome">
-                  <p>Describe the work to perform. Every action the agent takes is proposed and authorized through Workflow.</p>
+                  <p className="welcome-lede">Describe the work to perform. Every action the agent takes is proposed and authorized through Workflow.</p>
+                  <div className="welcome-suggestions">
+                    {SUGGESTED_PROMPTS.map((prompt) => (
+                      <button type="button" className="welcome-chip" key={prompt} onClick={() => setComposerText(prompt)}>
+                        {prompt}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="welcome-hints">
+                    <kbd>/</kbd> focus · <kbd>Enter</kbd> send · <kbd>Esc</kbd> cancel · <kbd>Alt</kbd>+<kbd>N</kbd> new session · <kbd>Ctrl</kbd>+<kbd>,</kbd> settings
+                  </p>
                 </div>
               </AuiIf>
               <ThreadPrimitive.Messages>
@@ -1446,28 +1325,40 @@ export function App() {
               )}
               <RegenerateAction />
               <AuiIf condition={(state) => state.thread.isRunning}>
-                <div className="working" role="status" aria-live="polite">
-                  <span className="working-dot" aria-hidden="true" />
-                  agent is working…
-                </div>
+                <WorkingStatus />
               </AuiIf>
             </ThreadPrimitive.Viewport>
             <div className="composer-dock">
-              <Composer />
+              <Composer options={options} setOption={setOption} />
               <QueueIndicator />
-              <div className="composer-toolbar">
-                <ConfigControls options={options} setOption={setOption} permissions={permissions} capabilities={capabilities} />
-                <div className="composer-utilities">
-                  <ExportSessionButton />
-                </div>
+              <div className="composer-meta">
+                {usage !== undefined && <UsageMeter />}
+                <ExportSessionButton />
               </div>
             </div>
           </ThreadPrimitive.Root>
         </section>
-        <div className="inspector-column">
-          <Panels snapshot={snapshot} sessions={sessions} refresh={refresh} refreshSessions={refreshSessions} />
-        </div>
-      </main>
+        <aside className="inspector" aria-label="Workflow supervision">
+          <Panels snapshot={snapshot} refresh={refresh} />
+        </aside>
+      </div>
+      {settingsOpen && (
+        <SettingsDialog
+          onClose={() => setSettingsOpen(false)}
+          themeChoice={theme.choice}
+          onThemeChoice={theme.setChoice}
+          railsOff={railsOff}
+          onRailsToggle={setRailsOff}
+          options={options}
+          setOption={setOption}
+          permissions={permissions}
+          capabilities={capabilities}
+          enforcement={{ level: snapshot?.enforcementLevel, transport: snapshot?.transport, copy: enforcementCopy }}
+          agents={agents}
+          currentAgent={currentAgent}
+          onSwitchAgent={(agent) => switchAgent(agent, refreshSessions)}
+        />
+      )}
     </div>
   );
 }

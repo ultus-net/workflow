@@ -1,4 +1,7 @@
+import type { ReactNode } from "react";
+
 import { describeFailure } from "./failure-copy.js";
+import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { useSessionState } from "./runtime.js";
 
 interface ActionData {
@@ -50,6 +53,41 @@ const TOOL_STATUS_LABELS: Record<string, string> = {
   cancelled: "cancelled",
 };
 
+/** ACP suggests clients pick icons per tool kind; these are authored in one
+ * consistent 1.4 stroke weight rather than unicode stand-ins. */
+function toolIcon(kind: string): ReactNode {
+  const stroke = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.4,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+  } as const;
+  const svg = (paths: ReactNode): ReactNode => (
+    <svg viewBox="0 0 16 16" width="13" height="13" {...stroke} aria-hidden="true">{paths}</svg>
+  );
+  switch (kind) {
+    case "read":
+      return svg(<><path d="M3.5 2.5h6l3 3v8h-9z" /><path d="M9.5 2.5v3h3" /><path d="M5.5 8.5h5M5.5 10.5h3.5" /></>);
+    case "edit":
+      return svg(<><path d="M3 13l0.8-3.2L11.6 2 14 4.4 6.2 12.2 3 13z" /><path d="M10.3 3.3l1.9 1.9" /></>);
+    case "delete":
+      return svg(<><path d="M3 4.5h10" /><path d="M6 4.5V3h4v1.5" /><path d="M4.5 4.5l0.7 8.5h5.6l0.7-8.5" /><path d="M6.8 7v4M9.2 7v4" /></>);
+    case "move":
+      return svg(<><path d="M8 2.5v11" /><path d="M5.5 5L8 2.5 10.5 5" /><path d="M5.5 11L8 13.5 10.5 11" /><path d="M2.5 8h11" /></>);
+    case "search":
+      return svg(<><circle cx="7" cy="7" r="4" /><path d="M10.2 10.2L13.5 13.5" /></>);
+    case "execute":
+      return svg(<><path d="M2.5 4.5h11v7.5h-11z" /><path d="M5 10.5l2.4-2.3L5 6" /><path d="M8.7 10.5h2.3" /></>);
+    case "fetch":
+      return svg(<><circle cx="8" cy="8" r="5.5" /><path d="M2.5 8h11" /><path d="M8 2.5c1.9 2 2.9 3.6 2.9 5.5s-1 3.5-2.9 5.5c-1.9-2-2.9-3.6-2.9-5.5s1-3.5 2.9-5.5z" /></>);
+    case "think":
+      return svg(<><path d="M8 2l1.2 3.3L12.5 6.5l-3.3 1.2L8 11l-1.2-3.3L3.5 6.5l3.3-1.2z" /><path d="M12 11l0.6 1.6L14.2 13l-1.6 0.4L12 15l-0.6-1.6L9.8 13l1.6-0.4z" /></>);
+    default:
+      return svg(<><path d="M3 8.5a2.3 2.3 0 012.3-2.3c0.4-1.3 1.6-2.2 3-2.2s2.6 0.9 3 2.2A2.3 2.3 0 0112.6 10H4.8A2 2 0 013 8.5z" /><path d="M6 12.5v1.2M8.5 12v2M11 12.5v1.2" /></>);
+  }
+}
+
 interface ToolData {
   readonly kind: "tool";
   readonly callId: string;
@@ -67,6 +105,7 @@ export function ToolPart({ data }: { readonly data: ToolData }) {
   return (
     <div className={`part part-tool part-tool-${data.status}`}>
       <div className="part-tool-head">
+        <span className="part-tool-icon" aria-hidden="true">{toolIcon(data.toolKind)}</span>
         <span className="part-tool-kind" aria-hidden="true">{kindLabel}</span>
         <code className="part-tool-title">{data.title}</code>
         <span className={`part-tool-status part-tool-status-${data.status}`}>
@@ -88,7 +127,9 @@ export function ToolPart({ data }: { readonly data: ToolData }) {
           {data.rawOutput !== undefined && (
             <div className="part-tool-io-block">
               <span className="part-tool-io-label">output</span>
-              <pre>{data.rawOutput}</pre>
+              {looksLikeDiff(data.rawOutput)
+                ? <DiffText text={data.rawOutput} />
+                : <pre>{data.rawOutput}</pre>}
             </div>
           )}
         </details>
@@ -118,7 +159,7 @@ export function PlanPart({ data }: { readonly data: { readonly entries: readonly
             <span className="part-plan-marker" aria-hidden="true">
               {entry.status === "completed" ? "✓" : entry.status === "in_progress" ? "◐" : "○"}
             </span>
-            <span className={entry.status === "completed" ? "part-plan-done-text" : undefined}>{entry.content}</span>
+            <span className={`part-prose${entry.status === "completed" ? " part-plan-done-text" : ""}`}>{entry.content}</span>
           </li>
         ))}
       </ol>
@@ -158,7 +199,7 @@ export function AttentionPart({ data }: { readonly data: { readonly text: string
   return (
     <div className="part part-attention">
       <span className="part-label">checkpoint</span>
-      <span>{data.text}</span>
+      <span className="part-prose">{data.text}</span>
     </div>
   );
 }
@@ -185,7 +226,7 @@ export function CompletionPart({ data }: { readonly data: CompletionData }) {
   return (
     <div className="part part-completion part-completion-completed">
       <span className="part-label">completed</span>
-      {data.text.length > 0 && <span>{data.text}</span>}
+      {data.text.length > 0 && <span className="part-prose">{data.text}</span>}
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 
 import type { WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
 import type { PermissionBroker } from "./permission-broker.js";
+import { DEFAULT_WEB_AGENT, isWebAgentId, type WebAgentId } from "./web-agents.js";
 import { SessionChannel } from "./web-session-channel.js";
 
 export interface WebSessionMeta {
@@ -13,6 +14,8 @@ export interface WebSessionMeta {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly active: boolean;
+  /** The agent this session runs on (defaults to the server's lead agent). */
+  readonly agent: WebAgentId;
 }
 
 interface SessionRecord {
@@ -21,6 +24,7 @@ interface SessionRecord {
   title: string;
   createdAt: string;
   updatedAt: string;
+  agent?: WebAgentId;
 }
 
 interface ActiveSession {
@@ -45,7 +49,7 @@ const RESUME_LOAD_TIMEOUT_MS = 30_000;
  * history through ACP session/load when the registry knows the agent id.
  */
 export class WebSessionManager {
-  readonly #factory: (resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
+  readonly #factory: (agent: WebAgentId, resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
   readonly #registryPath: string;
   readonly #permissionBroker: PermissionBroker | undefined;
   #sessions: SessionRecord[];
@@ -65,7 +69,7 @@ export class WebSessionManager {
   }
 
   constructor(options: {
-    readonly factory: (resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
+    readonly factory: (agent: WebAgentId, resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
     readonly registryPath?: string;
     readonly permissionBroker?: PermissionBroker;
   }) {
@@ -100,8 +104,37 @@ export class WebSessionManager {
       title: "New session",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      // New sessions continue on the operator's current agent so switching
+      // agents and opening a fresh session compose without a surprise reset.
+      ...(this.#active?.record.agent !== undefined ? { agent: this.#active.record.agent } : {}),
     };
     return this.#enqueueSwitch(record, undefined);
+  }
+
+  /**
+   * Switches the active session's agent: the record keeps its identity, the
+   * old runtime is disposed, and a fresh runtime spawns for the new agent. A
+   * different agent owns a different session store, so the old agent session
+   * id cannot carry over — the switch starts a fresh agent session.
+   */
+  async setActiveAgent(agent: WebAgentId): Promise<SessionSwitchResult> {
+    if (this.#starting !== undefined) await this.#starting.catch(() => undefined);
+    const record = this.#active?.record;
+    if (record === undefined) return { kind: "failed", error: "no active session" };
+    const previousAgent = record.agent ?? DEFAULT_WEB_AGENT;
+    if (previousAgent === agent) return { kind: "ok", meta: this.#meta(record) };
+    const previousSessionId = record.agentSessionId;
+    record.agent = agent;
+    delete record.agentSessionId;
+    const result = await this.#enqueueSwitch(record, undefined);
+    if (result.kind === "failed") {
+      // A failed launch must not strand the record on the new agent: restore
+      // the old agent and its resume link so the session recovers where it was.
+      record.agent = previousAgent;
+      if (previousSessionId !== undefined) record.agentSessionId = previousSessionId;
+      this.#persist();
+    }
+    return result;
   }
 
   async activate(id: string): Promise<SessionSwitchResult> {
@@ -179,34 +212,36 @@ export class WebSessionManager {
     this.#permissionBroker?.cancelPending("session switched away");
     await previous?.runtime.dispose();
     try {
-      const runtime = await this.#factory(resumeFrom);
+      const runtime = await this.#factory(record.agent ?? DEFAULT_WEB_AGENT, resumeFrom);
       const channel = new SessionChannel(
         runtime.session,
         runtime.driver,
         runtime.usage?.bind(runtime),
         this.#permissionBroker,
       );
-      // Eagerly load the resumed session so its replayed history reaches the
-      // channel before the UI polls — otherwise the transcript looks empty
-      // until the first prompt. The subscription lasts only for the load.
-      if (resumeFrom !== undefined) {
-        const unsubscribe = runtime.driver.subscribe((event) => channel.ingest(event));
-        let timer: NodeJS.Timeout | undefined;
-        try {
-          // Bounded wait: a hung session/load must not pend the switch queue
-          // forever. The session stays usable; the replay simply never arrived.
-          // The timer is always cleared so it never outlives the load itself.
-          const loading = runtime.driver.connect();
-          await Promise.race([
-            loading,
-            new Promise<void>((resolve) => {
-              timer = setTimeout(resolve, RESUME_LOAD_TIMEOUT_MS);
-            }),
-          ]);
-        } finally {
-          if (timer !== undefined) clearTimeout(timer);
-          unsubscribe();
-        }
+      // Eagerly establish the ACP session on every switch, not only on
+      // resume: a fresh session's connect() captures the agent's advertised
+      // config (model/effort/mode options) so the pickers are populated
+      // before the first prompt instead of staying empty until then. On
+      // resume the same connect replays history into the channel through the
+      // load subscription. The subscription lasts only for the connect.
+      const unsubscribe = runtime.driver.subscribe((event) => channel.ingest(event));
+      let timer: NodeJS.Timeout | undefined;
+      try {
+        // Bounded wait: a hung session/new or session/load must not pend the
+        // switch queue forever. The session stays usable; the config/replay
+        // simply never arrived.
+        // The timer is always cleared so it never outlives the connect itself.
+        const loading = runtime.driver.connect();
+        await Promise.race([
+          loading,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, RESUME_LOAD_TIMEOUT_MS);
+          }),
+        ]);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+        unsubscribe();
       }
       this.#active = { record, runtime, channel };
       this.#persist();
@@ -279,6 +314,7 @@ export class WebSessionManager {
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
       active: this.#active?.record.id === record.id,
+      agent: record.agent ?? DEFAULT_WEB_AGENT,
     };
   }
 
@@ -295,7 +331,15 @@ function loadRegistry(path: string): SessionRecord[] {
   if (!existsSync(path)) return [];
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as { sessions?: SessionRecord[] };
-    return Array.isArray(parsed.sessions) ? parsed.sessions : [];
+    const sessions = Array.isArray(parsed.sessions) ? parsed.sessions : [];
+    // A corrupt agent value must not dispatch silently to the wrong runtime;
+    // drop it so the session falls back to the documented default.
+    return sessions.map((session) => {
+      if (isWebAgentId(session.agent)) return session;
+      const clone = { ...session };
+      delete clone.agent;
+      return clone;
+    });
   } catch {
     return [];
   }
