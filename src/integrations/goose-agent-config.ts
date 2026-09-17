@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
@@ -25,6 +26,27 @@ export function globalGooseBinary(): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * W049 dogfood finding (goose 1.50.1, 2026-09-17): goose's session store
+ * lives under `GOOSE_PATH_ROOT`, so a resume across a full runtime restart
+ * needs the SAME config root, not a fresh per-launch one (`Session not
+ * found: 20260917_1` came from a pid+uuid config dir dying with its
+ * launch). The runtime keys the dir by workspace instead: deterministic
+ * per absolute workspace path, stable across restarts, and shaped to ESCAPE
+ * the stale-runtime pruner (`config.<pid>...` requires a pid — a `ws-` tag
+ * never matches, so the session store is never swept mid-life).
+ *
+ * HONEST CONCURRENCY LIMIT: two simultaneous goose runtimes on the SAME
+ * workspace share this root. The config.yaml bytes are identical (same
+ * skills mount; the metering proxy is env-carried per launch, never in the
+ * file), and goose's store is per-session-id files, so the practical risk
+ * is bounded — but it is a shared directory, not an isolated one.
+ */
+export function gooseWorkspaceConfigTag(workspace: string): string {
+  const digest = createHash("sha256").update(workspace).digest("hex").slice(0, 12);
+  return `ws-${digest}`;
 }
 
 export interface GooseLaunch {
@@ -92,8 +114,15 @@ export function gooseLaunchEnvironment(options: {
     GOOSE_PATH_ROOT: options.configRoot,
     GOOSE_MODE: "approve",
     GOOSE_TELEMETRY_ENABLED: "false",
+    // Ambient PATH passes through deliberately — a deviation from the
+    // sanitized bwrap default PATH the cline/opencode launches use, because
+    // goose's shell-tool workload needs the operator's real toolchain. The
+    // passthrough is boundary-inert: PATH entries cannot resolve inside
+    // bwrap unless a bind mounts them, so this shapes what goose may
+    // EXECUTE, never what it can read or write. HOME is deliberately
+    // absent — launchContainedAcpAgent always overrides it with the scratch
+    // home ("HOME always wins"), so an ambient entry would be dead.
     PATH: options.env.PATH ?? "",
-    HOME: options.env.HOME ?? "",
   };
   // goose resolves its model at launch (GOOSE_MODEL — env > config). The
   // openrouter default matches the sibling metered paths (openrouter/auto,

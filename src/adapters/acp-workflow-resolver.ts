@@ -29,7 +29,18 @@ export function createWorkflowAcpPermissionResolver(
     const correlated = correlateAcpPermissionRequest(request, options.correlation);
     const validatedLocations = correlated.toolCall.locations.map((location) => ({ path: location.path as string }));
     if (isUnknownMutationTool(correlated.toolCall.name, correlated.toolCall.capability, correlated.toolCall.kind)) {
-      throw new TypeError(`unknown ACP mutation tool: ${correlated.toolCall.name}`);
+      // W049 dogfood finding (goose 1.50.1 `todo`, 2026-09-17): an unknown
+      // tool requesting a mutating capability is DENIED fail-closed — the
+      // tool never runs — but a well-formed permission request is a normal
+      // outcome, not a protocol violation: denying lets the agent adapt
+      // while the session survives. Throwing here used to tear down the
+      // whole session (#failAll), punishing the operator's session for the
+      // agent's unseen tool. Malformed requests (wrong shapes, recognized
+      // mutations without authorization subjects) still throw below.
+      return {
+        kind: "deny",
+        reason: `unknown ACP mutation tool '${correlated.toolCall.name}' denied (fail-closed classification: unrecognized tool requesting ${correlated.toolCall.capability ?? "mutation"})`,
+      };
     }
     const locations = authorizationLocations(correlated.toolCall.name, correlated.toolCall.rawInput, validatedLocations, correlated.toolCall.kind);
     const toolCall = {

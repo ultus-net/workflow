@@ -5,6 +5,7 @@ import {
   gooseConfigYaml,
   gooseLaunchEnvironment,
   gooseProviderKind,
+  gooseWorkspaceConfigTag,
   resolveGooseLaunch,
 } from "../src/integrations/goose-agent-config.js";
 
@@ -95,4 +96,12 @@ test("gooseConfigYaml: no mount without both skills surfaces; the documented map
   assert.match(configYaml, /cmd: "/);
   assert.match(configYaml, /args: \["\/toolbox\/server.js"\]/);
   assert.match(configYaml, /SKILLS_MCP_DIR/);
+});
+
+test("gooseWorkspaceConfigTag: stable per workspace, distinct across workspaces, pruner-escaping shape (W049)", () => {
+  const tag = gooseWorkspaceConfigTag("/home/hunter/Workflow");
+  assert.equal(tag, gooseWorkspaceConfigTag("/home/hunter/Workflow"), "the same workspace must compose the same config root across restarts (goose's session store lives under GOOSE_PATH_ROOT)");
+  assert.notEqual(tag, gooseWorkspaceConfigTag("/home/hunter/other-repo"), "different workspaces must not share a session store");
+  assert.match(tag, /^ws-[0-9a-f]{12}$/);
+  assert.doesNotMatch(tag, /^config\.\d+/, "the tag must escape the stale-runtime pruner's config.<pid> shape so a live session store is never swept");
 });

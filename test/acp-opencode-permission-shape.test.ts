@@ -122,7 +122,7 @@ test("an edit-kind mutation with no subject anywhere fails closed", async () => 
   assert.equal(seen.length, 0, "a subjectless mutation must never reach authorize");
 });
 
-test("an unrecognized title with no kind still fails closed as an unknown mutation tool", async () => {
+test("an unrecognized title with no kind is denied fail-closed and never reaches authorize", async () => {
   const seen: ProposedToolAction[] = [];
   const resolve = resolver({
     sessionId: "workflow-session",
@@ -142,6 +142,9 @@ test("an unrecognized title with no kind still fails closed as an unknown mutati
     },
     options,
   };
-  await assert.rejects(() => resolve(request), /unknown ACP mutation tool/);
+  // W049 dogfood semantics: deny-and-adapt, never session-fatal.
+  const decision = await resolve(request);
+  assert.equal(decision.kind, "deny");
+  assert.match(decision.kind === "deny" ? decision.reason : "", /unknown ACP mutation tool/);
   assert.equal(seen.length, 0);
 });

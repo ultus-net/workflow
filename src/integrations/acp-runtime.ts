@@ -17,6 +17,7 @@ import {
   gooseConfigYaml,
   gooseLaunchEnvironment,
   gooseProviderKind,
+  gooseWorkspaceConfigTag,
   resolveGooseLaunch,
 } from "./goose-agent-config.js";
 import {
@@ -374,9 +375,12 @@ async function createGooseRuntime(
 
   const provider = gooseProviderKind();
   // The `config.` prefix keeps prune parity: the stale-runtime pruner only
-  // matches `providers.`/`config.` entries.
+  // matches `providers.`/`config.` entries. W049 dogfood fix: the dir is
+  // keyed by WORKSPACE (not pid+uuid) so goose's session store — which
+  // lives under GOOSE_PATH_ROOT — survives restarts and cross-restart
+  // resume can find the session; the ws- tag escapes the pruner by shape.
   pruneStaleRuntimeArtifacts(scratchHome);
-  const configDir = join(scratchHome, `config.${process.pid}.${randomUUID()}`);
+  const configDir = join(scratchHome, `config.${gooseWorkspaceConfigTag(workspace)}`);
   // OpenRouter rides the hub-side metering proxy (the real key stays
   // proxy-side); azure_foundry runs direct with no local proxy.
   const proxy = provider === "openrouter"
@@ -466,13 +470,18 @@ async function createGooseRuntime(
             await proxy.close();
             console.log("goose metering proxy metrics:", JSON.stringify(proxy.metrics(), null, 2));
           }
-          rmSync(configDir, { recursive: true, force: true });
+          // W049: configDir is workspace-keyed PERSISTENT state (goose's
+          // session store lives under GOOSE_PATH_ROOT) — disposing a runtime
+          // must never delete it, or cross-restart resume loses the session.
+          // Stale dirs of dead pids stay bounded by the pruner; ws-tagged
+          // dirs are bounded by the number of workspaces ever used.
         }
       },
     };
   } catch (error) {
     if (proxy !== undefined) await proxy.close();
-    rmSync(configDir, { recursive: true, force: true });
+    // No rmSync here either: a failed launch must not destroy prior
+    // sessions in the workspace-keyed store (W049 resume requirement).
     throw error;
   }
 }
