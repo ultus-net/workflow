@@ -828,6 +828,8 @@ W048's live qualification ran 2026-09-17 against the operator-upgraded goose **1
 
 **Verification:** the removal diff plus the full suite and an independent five-axis review; the decision record cites the probe evidence and (where applicable) the operator's written accepted-risk record.
 
+**Status (2026-09-17, SDK-seam arm evidence):** the granted-spawn SUBAGENT-HOOKS probe (`test/acp-goose-subagent-hooks-probe.test.ts`, `WORKFLOW_ACP_GOOSE_SUBAGENT_HOOKS=1`) ran live twice against goose 1.50.1 and resolved the subagent-internal arm **NEGATIVE**: the delegated subagent's file-write fired NO PreToolUse record and produced NO ACP tool_call projection in both runs (the spy plugin logged exactly the top-level's todo_write ×2, the delegate spawn itself — PreToolUse DOES intercept the delegation — and one agent-attribution-ambiguous shell `cat` verify; the write-shaped classifier was tightened twice against the real payloads and re-validated offline against both preserved logs, `~/.subhooks-probe.log` + `~/.subhooks-probe2.log`). Combined with the never-emitted SubagentStart/Stop ACP updates, the seam's claimed subagent-internal visibility is now evidence-bounded on both surfaces — goose demonstrably lacks it, and the vendored-Cline seam never demonstrated it live either. Criterion 2's operator arm is evidence-backed: the remaining paths are a live Cline-side subagent-internal hooks proof, or the operator's explicit accepted-risk record in `docs/ACP_DECISION.md` (the evidence note is appended there); the takeover arm (criterion 1) still needs the operator's daily-driver period.
+
 ### Checkpoint D - Daily Driver Replaced
 
 - [ ] Fresh full verification (complete suite plus typecheck/lint/build) and an independent review pass on the final merged tree.
