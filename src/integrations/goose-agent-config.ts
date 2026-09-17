@@ -95,13 +95,27 @@ export function gooseLaunchEnvironment(options: {
     PATH: options.env.PATH ?? "",
     HOME: options.env.HOME ?? "",
   };
+  // goose resolves its model at launch (GOOSE_MODEL — env > config). The
+  // openrouter default matches the sibling metered paths (openrouter/auto,
+  // the same default the OpenCode runtime composes); azure_foundry requires
+  // AZURE_FOUNDRY_MODEL. Fail closed rather than letting goose guess.
+  const gooseModel = options.env.WORKFLOW_GOOSE_MODEL?.trim()
+    ?? options.env.GOOSE_MODEL?.trim()
+    ?? (options.provider === "openrouter" ? "openrouter/auto" : options.env.AZURE_FOUNDRY_MODEL?.trim() ?? "");
+  if (gooseModel === "") {
+    throw new Error("the goose profile requires a model: set WORKFLOW_GOOSE_MODEL (or GOOSE_MODEL; azure_foundry also honors AZURE_FOUNDRY_MODEL)");
+  }
+  environment.GOOSE_MODEL = gooseModel;
   if (options.provider === "openrouter") {
     if (options.proxyUrl === undefined) {
       throw new Error("the openrouter goose profile requires the loopback metering proxy");
     }
     // Plan line 21: OPENROUTER_HOST → proxy with a placeholder key (parity
-    // with the Cline/OpenCode metered paths). env > stored secrets.
-    environment.OPENROUTER_HOST = `${options.proxyUrl}/api/v1`;
+    // with the Cline/OpenCode metered paths — the key posture is identical).
+    // Live-run evidence (1.50.1): OPENROUTER_HOST is the provider ROOT —
+    // goose appends /api/v1/chat/completions itself, so composing the
+    // proxy's /api/v1 base here doubled the path (404). env > stored secrets.
+    environment.OPENROUTER_HOST = options.proxyUrl;
     environment.OPENROUTER_API_KEY = METERED_PLACEHOLDER_KEY;
     environment.GOOSE_PROVIDER = "openrouter";
   } else {
@@ -132,6 +146,16 @@ export function gooseLaunchEnvironment(options: {
  * skills-mcp stdio mount — no native `.agents/skills` in composed
  * workspaces.
  */
+/**
+ * The hub-written goose config.yaml for the per-runtime root, in the
+ * DOCUMENTED schema (goose-docs.ai/docs/guides/config-files — Extensions
+ * Configuration): `extensions` is a MAP keyed by extension name, each entry
+ * carrying type/name/enabled/cmd/args/envs/timeout. Skills arrive ONLY
+ * through the skills-mcp stdio mount — no native `.agents/skills` in
+ * composed workspaces. The first live MOUNT run (1.50.1) rejected the
+ * earlier list-shaped candidate with NO_MCP_TOOLS; the documented map
+ * shape is what the probe now verifies.
+ */
 export function gooseConfigYaml(options: {
   readonly skillsServerScript?: string | undefined;
   readonly skillsDir?: string | undefined;
@@ -139,15 +163,17 @@ export function gooseConfigYaml(options: {
   if (options.skillsServerScript === undefined || options.skillsDir === undefined) return undefined;
   return [
     "# Hub-composed per-runtime goose configuration (W048).",
-    "# Probe-pending: the config.yaml schema under GOOSE_PATH_ROOT is",
-    "# resolved by the gated MOUNT probe; a no-mount outcome is recorded",
-    "# as an honest negative finding.",
     "extensions:",
-    "  - type: stdio",
+    "  skills-mcp:",
+    "    type: stdio",
     "    name: skills-mcp",
-    `    cmd: ${JSON.stringify([process.execPath, options.skillsServerScript])}`,
+    "    enabled: true",
+    `    cmd: ${JSON.stringify(process.execPath)}`,
+    `    args: ${JSON.stringify([options.skillsServerScript])}`,
+    "    env_keys: []",
     "    envs:",
     `      SKILLS_MCP_DIR: ${JSON.stringify(options.skillsDir)}`,
+    "    timeout: 300",
     "",
   ].join("\n");
 }

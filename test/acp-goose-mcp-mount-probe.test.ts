@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { test } from "node:test";
 
 import { AcpSubprocessClient } from "../src/adapters/acp-subprocess.js";
@@ -27,7 +27,14 @@ test("goose MOUNT probe: hub-written GOOSE_PATH_ROOT config mounts the skills-mc
   const workspace = mkdtempSync(join(tmpdir(), "wf-goose-mount-"));
   const scratchHome = mkdtempSync(join(tmpdir(), "wf-goose-home-"));
   const skillsDir = mkdtempSync(join(tmpdir(), "wf-goose-skills-"));
-  writeFileSync(join(skillsDir, "probe-skill.md"), "# probe-skill\n\nThe verbatim probe skill body.\n", { encoding: "utf8" });
+  // The fixture shape skills-mcp discovers (the passing opencode-mount
+  // precedent): one directory per skill carrying a frontmatter SKILL.md.
+  mkdirSync(join(skillsDir, "probe-skill"), { recursive: true });
+  writeFileSync(
+    join(skillsDir, "probe-skill", "SKILL.md"),
+    "---\nname: probe-skill\ndescription: A mount probe fixture skill.\n---\n\n# Probe Skill\n\nMounted skills are visible.\n",
+    { encoding: "utf8" },
+  );
   t.after(() => { for (const dir of [workspace, scratchHome, skillsDir]) rmSync(dir, { recursive: true, force: true }); });
 
   const serverScript = join(process.cwd(), "mcp-toolbox", "apps", "skills-mcp", "dist", "server.js");
@@ -61,6 +68,21 @@ test("goose MOUNT probe: hub-written GOOSE_PATH_ROOT config mounts the skills-mc
     args: [...goose.args],
     workspace,
     home: scratchHome,
+    // Runtime-parity: goose spawns the skills server INSIDE the boundary —
+    // without the readablePaths the runtime composes, the extension spawn
+    // fails inside bwrap and goose drops the extension (a probe-composition
+    // bug, not a goose finding — fixed after the first NO_MCP_TOOLS runs).
+    ...(serverScript === undefined
+      ? {}
+      : {
+          readablePaths: [
+            dirname(serverScript),
+            resolve(dirname(serverScript), "..", "node_modules"),
+            resolve(dirname(serverScript), "..", "..", "..", "node_modules"),
+            skillsDir,
+            realpathSync(skillsDir),
+          ],
+        }),
     environment,
   });
   t.after(() => { if (child.exitCode === null && !child.killed) child.kill("SIGKILL"); });

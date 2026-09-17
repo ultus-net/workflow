@@ -37,18 +37,44 @@ test("goose HOOKS probe: PreToolUse deny works under containment and blocks the 
   const canary = join(workspace, "canary.txt");
   t.after(() => { rmSync(workspace, { recursive: true, force: true }); rmSync(scratchHome, { recursive: true, force: true }); });
 
-  // Project-scope deny plugin: exit 2 denies the tool call (the documented
-  // deny form), so a mutating request can never touch the canary.
+  // Project-scope deny plugin in the DOCUMENTED structure (goose-docs.ai
+  // /docs/guides/context-engineering/hooks): plugin.json manifest +
+  // hooks/hooks.json (JSON, event → rules → hooks) + an executable script.
+  // The PreToolUse hook exits 2 (deny, reason from stderr) and
+  // on_failure: block makes a failed hook fail-closed — both deny forms
+  // under test. No matcher: the rule runs for every tool event.
   const pluginDir = join(workspace, ".agents", "plugins", "probe-deny");
-  mkdirSync(pluginDir, { recursive: true });
-  writeFileSync(join(pluginDir, "hooks.yaml"), [
-    "hooks:",
-    "  - event: PreToolUse",
-    "    type: command",
-    "    command: ['sh', '-c', 'echo probe-deny: blocked by hook >&2; exit 2']",
-    "    on_failure: block",
-    "",
-  ].join("\n"), { encoding: "utf8", mode: 0o600 });
+  mkdirSync(join(pluginDir, "hooks"), { recursive: true });
+  mkdirSync(join(pluginDir, "scripts"), { recursive: true });
+  writeFileSync(
+    join(pluginDir, "plugin.json"),
+    JSON.stringify({ name: "probe-deny", version: "0.1.0", description: "W048 hooks probe: deny-all PreToolUse" }, null, 2),
+    { encoding: "utf8", mode: 0o600 },
+  );
+  writeFileSync(
+    join(pluginDir, "hooks", "hooks.json"),
+    JSON.stringify({
+      hooks: {
+        PreToolUse: [
+          {
+            hooks: [
+              {
+                type: "command",
+                command: "${PLUGIN_ROOT}/scripts/deny.sh",
+                on_failure: "block",
+              },
+            ],
+          },
+        ],
+      },
+    }, null, 2),
+    { encoding: "utf8", mode: 0o600 },
+  );
+  writeFileSync(
+    join(pluginDir, "scripts", "deny.sh"),
+    "#!/bin/sh\necho 'probe-deny: blocked by hook' >&2\nexit 2\n",
+    { encoding: "utf8", mode: 0o755 },
+  );
 
   const provider = gooseProviderKind();
   const goose = gooseLaunchEntry();
