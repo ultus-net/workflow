@@ -287,8 +287,36 @@ function GearIcon() {
   );
 }
 
-/** Composer-adjacent quick pickers (model/effort/mode) rendered as chips in
- * the composer card footer; the full surface lives in the SettingsDialog. */
+/** Per-category glyph for the composer chips — the icon carries the category
+ * so the controls need no uppercase labels. One consistent 1.4 stroke. */
+function ChipIcon({ category }: { readonly category: string | undefined }) {
+  const stroke = {
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.4,
+    strokeLinecap: "round",
+    strokeLinejoin: "round",
+  } as const;
+  const svg = (paths: React.ReactNode): React.ReactNode => (
+    <svg viewBox="0 0 16 16" width="13" height="13" {...stroke} aria-hidden="true">{paths}</svg>
+  );
+  switch (category) {
+    case "provider":
+      return svg(<><rect x="2.5" y="2.5" width="11" height="4.5" rx="1" /><rect x="2.5" y="9" width="11" height="4.5" rx="1" /><path d="M5 4.7h0.01M5 11.3h0.01" strokeWidth="2" /></>);
+    case "model":
+      return svg(<><path d="M8 2l1.1 3 3.1 1.1-3.1 1.1L8 10.2 6.9 7.2 3.8 6.1l3.1-1.1z" /><path d="M11.5 10.5l0.55 1.45L13.5 12.5l-1.45 0.55L11.5 14.5l-0.55-1.45L9.5 12.5l1.45-0.55z" /></>);
+    case "thought_level":
+      return svg(<path d="M8.8 1.5L3.5 9h3.3L6.2 14.5 12.5 6.5H9.2z" />);
+    case "mode":
+      return svg(<><path d="M8 2.5l5.5 3L8 8.5 2.5 5.5z" /><path d="M2.5 8.5l5.5 3 5.5-3" /><path d="M2.5 11.5l5.5 3 5.5-3" /></>);
+    default:
+      return svg(<><path d="M3 5h10M3 11h10" /><circle cx="6" cy="5" r="1.6" /><circle cx="10" cy="11" r="1.6" /></>);
+  }
+}
+
+/** Composer-adjacent quick pickers (provider/model/effort/mode) rendered as
+ * quiet ghost controls in the composer card footer; the full surface lives in
+ * the SettingsDialog. */
 function ConfigChips({ options, setOption }: {
   readonly options: readonly WebConfigOption[];
   readonly setOption: (id: string, value: string | boolean) => void;
@@ -299,9 +327,9 @@ function ConfigChips({ options, setOption }: {
   return (
     <div className="composer-chips">
       {pickers.map((option) => (
-        <span className="config-picker" key={option.id}>
-          <span className="config-picker-label" id={`config-label-${option.id}`}>{option.name}</span>
-          <ConfigField option={option} setOption={setOption} labelledBy={`config-label-${option.id}`} />
+        <span className="config-picker" key={option.id} title={option.description ?? option.name}>
+          <ChipIcon category={option.category} />
+          <ConfigField option={option} setOption={setOption} />
         </span>
       ))}
     </div>
@@ -797,14 +825,26 @@ function Composer({ options, setOption }: {
       <div className="composer-footer">
         <ConfigChips options={options} setOption={setOption} />
         <div className="composer-actions">
-          <ComposerPrimitive.AddAttachment className="btn btn-ghost btn-attach" aria-label="Attach image" multiple>
-            +
+          <ComposerPrimitive.AddAttachment className="composer-icon-btn" aria-label="Attach image" multiple>
+            <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M10.5 3.5l3 3L7 13H4v-3l6.5-6.5z" />
+              <path d="M12.5 5.5l-1.8-1.8" />
+            </svg>
           </ComposerPrimitive.AddAttachment>
           <AuiIf condition={(state) => state.thread.isRunning}>
-            <ComposerPrimitive.Cancel className="btn btn-cancel">Cancel</ComposerPrimitive.Cancel>
+            <ComposerPrimitive.Cancel className="composer-icon-btn composer-stop-btn" aria-label="Cancel the running turn">
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" aria-hidden="true">
+                <rect x="4" y="4" width="8" height="8" rx="1.5" />
+              </svg>
+            </ComposerPrimitive.Cancel>
           </AuiIf>
           <AuiIf condition={(state) => !state.thread.isRunning}>
-            <ComposerPrimitive.Send className="btn btn-send">Send</ComposerPrimitive.Send>
+            <ComposerPrimitive.Send className="composer-send-btn" aria-label="Send">
+              <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M8 12.5v-9" />
+                <path d="M4.5 7L8 3.5 11.5 7" />
+              </svg>
+            </ComposerPrimitive.Send>
           </AuiIf>
         </div>
       </div>

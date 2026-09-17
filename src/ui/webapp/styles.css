@@ -499,8 +499,13 @@ body {
   overflow-wrap: break-word;
 }
 
+/* Flex children must be allowed to shrink below their content size, or long
+   paths/tokens force the part to overflow its right boundary. */
+.part > * { min-width: 0; }
+
 .part code {
   color: var(--text);
+  overflow-wrap: anywhere;
 }
 
 .part-label {
@@ -511,7 +516,7 @@ body {
 }
 
 .part-action { border-left-color: var(--accent); }
-.part-subjects, .part-detail { color: var(--text-muted); }
+.part-subjects, .part-detail { color: var(--text-muted); min-width: 0; overflow-wrap: anywhere; }
 
 .part-outcome-succeeded { border-left-color: var(--ok); }
 .part-outcome-succeeded .part-label { color: var(--ok); }
@@ -557,7 +562,7 @@ body {
   padding: 0.05rem 0.4rem;
 }
 
-.part-tool-title { color: var(--text); }
+.part-tool-title { color: var(--text); min-width: 0; overflow-wrap: anywhere; }
 
 .part-tool-status { font-size: 0.8rem; color: var(--text-muted); }
 
@@ -647,7 +652,8 @@ body {
   font-family: var(--font-sans);
   font-size: 0.9rem;
   line-height: 1.55;
-  overflow-wrap: break-word;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .part-plan-marker { width: 1rem; text-align: center; color: var(--text-muted); }
@@ -1033,38 +1039,37 @@ body {
 .composer-chips {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.1rem;
   flex-wrap: wrap;
   min-width: 0;
 }
 
+/* Quiet ghost controls: the category glyph carries the meaning, so no
+   uppercase labels and no ovals. Value + hover surface is the whole affair. */
 .config-picker {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0.12rem 0.3rem 0.12rem 0.6rem;
+  gap: 0.3rem;
+  color: var(--text-muted);
+  border-radius: var(--radius-s);
+  padding: 0.28rem 0.45rem;
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out;
 }
 
-.config-picker-label {
-  font-size: 0.66rem;
-  color: var(--text-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  white-space: nowrap;
-}
+.config-picker:hover,
+.config-picker:focus-within { background: var(--surface); color: var(--text); }
+
+.config-picker > svg { flex: none; opacity: 0.75; }
 
 .config-picker select {
   appearance: none;
-  background-color: transparent;
+  background: transparent;
   border: 0;
-  color: var(--text);
+  color: inherit;
   font: inherit;
-  font-size: 0.78rem;
-  border-radius: var(--radius-s);
-  padding: 0.1rem 0.2rem;
+  font-size: 0.82rem;
+  padding: 0.1rem 0.1rem;
   cursor: pointer;
   max-width: 12rem;
 }
@@ -1074,6 +1079,19 @@ body {
 .config-picker select:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+  border-radius: var(--radius-s);
+}
+
+/* Chevron for native-select chips (the combobox draws its own). */
+.config-picker:has(> select)::after {
+  content: "";
+  width: 0.38rem;
+  height: 0.38rem;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translateY(-1px);
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 /* Searchable combobox (long choice lists, e.g. models) */
@@ -1083,14 +1101,14 @@ body {
 .config-combobox-button {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.35rem;
   background: transparent;
   border: 0;
-  color: var(--text-muted);
+  color: inherit;
   font: inherit;
-  font-size: 0.78rem;
+  font-size: 0.82rem;
   border-radius: var(--radius-s);
-  padding: 0.1rem 0.25rem;
+  padding: 0.1rem 0.1rem;
   cursor: pointer;
   max-width: 12rem;
 }
@@ -1102,13 +1120,13 @@ body {
   outline-offset: 1px;
 }
 
-.config-combobox-button[aria-expanded="true"] { color: var(--accent); background: var(--surface-raised); }
+.config-combobox-button[aria-expanded="true"] { color: var(--accent); }
 
 .config-combobox-value {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--text);
+  color: inherit;
 }
 
 .config-combobox-pop {
@@ -1327,12 +1345,6 @@ body {
 
 .attachment-remove:hover { color: var(--deny); }
 
-.btn-attach {
-  font-size: 1.15rem;
-  line-height: 1;
-  padding: 0.45rem 0.7rem;
-}
-
 .msg-attachment {
   display: block;
   max-width: 22rem;
@@ -1382,17 +1394,53 @@ body {
 .btn:hover:not(:disabled) { border-color: var(--accent); }
 .btn:disabled { opacity: 0.45; cursor: default; }
 
-.btn-send {
-  background: var(--accent-fill);
-  border-color: var(--accent-fill);
-  color: var(--accent-ink);
-  font-weight: 600;
+/* Composer action buttons: circular icon buttons (2026 chat-UI norm), not
+   blocky rectangles. Attach is a ghost paperclip, send an amber arrow-up,
+   cancel a ghost stop square. */
+.composer-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background 120ms ease-out, color 120ms ease-out, border-color 120ms ease-out;
 }
 
-.btn-cancel {
-  border-color: var(--deny);
+.composer-icon-btn:hover { background: var(--surface); color: var(--text); border-color: var(--border-strong); }
+
+.composer-icon-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.composer-send-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: 50%;
+  border: 0;
+  background: var(--accent-fill);
+  color: var(--accent-ink);
+  cursor: pointer;
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out;
+}
+
+.composer-send-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3); }
+
+.composer-send-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.composer-send-btn:disabled { opacity: 0.45; cursor: default; transform: none; box-shadow: none; }
+
+.composer-stop-btn { color: var(--deny); border-color: var(--deny); }
+
+.composer-stop-btn:hover {
   color: var(--deny);
-  background: transparent;
+  border-color: var(--deny);
+  background: color-mix(in srgb, var(--deny) 12%, transparent);
 }
 
 .btn-ghost {
@@ -1402,8 +1450,8 @@ body {
 }
 
 /* Visible focus trail for keyboard operators — a distinct outline ring that
-   survives accent-bordered buttons (border-swap alone is invisible on
-   .btn-send, whose resting border is already the accent). */
+   survives accent-filled buttons (border-swap alone is invisible on the
+   send button, whose resting fill is already the accent). */
 .btn:focus-visible,
 .copy-button:focus-visible,
 .attachment-remove:focus-visible {
@@ -1732,7 +1780,6 @@ body {
   .shell-header { padding-inline: 0.9rem; }
   .enforcement-badge { font-size: 0.65rem; }
   .composer-footer { flex-wrap: wrap; }
-  .btn-attach { padding-inline: 0.55rem; }
   .composer-meta { flex-wrap: wrap; }
   .task-add, .evidence-add { display: grid; grid-template-columns: 1fr auto; }
   .task-add input:nth-child(2), .task-add button { grid-column: 1 / -1; }
@@ -1745,6 +1792,8 @@ body {
   font-family: var(--font-sans);
   font-size: 0.95rem;
   line-height: 1.65;
+  overflow-wrap: break-word;
+  min-width: 0;
 }
 .aui-md > :first-child { margin-top: 0; }
 .aui-md > :last-child { margin-bottom: 0; }
