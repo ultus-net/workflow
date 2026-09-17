@@ -62,3 +62,46 @@ Gap dispositions from W036:
 - **Patched-SDK bridge as the base surface** — rejected as base (pinned patch must be re-applied and re-verified per Cline release; ambient filesystem stays visible to the agent process); retained as fallback.
 - ~~**OpenCode ACP** — rejected for enforcement: observed default mode mutates without permission requests; remains a viable advisory transport only.~~ Superseded by the 2026-09-16 pivot: the ask-configured mode is the launch mode this rejection asked for, and the conformance probes proved it.
 - **Wait for Cline `terminal/*` delegation** — rejected: unimplemented in 3.0.61 with no committed timeline; whole-agent containment already satisfies the enforcement requirement.
+
+## Supersession notes (2026-09-16, W043 documentation reconciliation)
+
+This decision record is amended in place with dated notes; nothing above is
+silently rewritten.
+
+1. **Wedge-chain review step (line 35).** The described review gate (5-axis
+   anti-rubber-stamp, `<3` axes rejected, distinct reviewer) was accurate when
+   written and is now strengthened: the hub-owned reviewer additionally
+   enforces the W039 deterministic coverage manifest with the fail-closed
+   `[COVERAGE]` approval gate, W040 risk-aware partitioning (per-unit
+   isolated reviewers, an integration review exactly when a scope spans more
+   than one unit), and W041 fingerprinted provenance journaling before every
+   record with exact-fingerprint resume — wired through the production
+   reviewer factory (`src/integrations/hub-run-gates.ts`,
+   `src/review/{manifest,partition,provenance}.ts`,
+   `src/integrations/review-provenance-store.ts`).
+2. **G1 remaining-work line (line 45).** "Surface the metrics in the
+   hub/session UI and add budget enforcement on top of the recorded usage" —
+   both shipped: the ACP TUI header carries the live usage meter
+   (`src/cli/acp-tui.tsx`), the hub session channel records usage
+   (`src/ui/web-sessions.ts`), and the scheduler enforces per-run token/cost
+   budget caps with the budget as the run's recorded blocking reason
+   (`src/integrations/hub-scheduler.ts`, `src/cli/hub.ts`).
+3. **Deferred conformance evidence (line 57).** "Its remaining conformance
+   evidence (fs/terminal delegation, auto-approve exposure, contained bypass
+   under bwrap) is deferred unless reconsidered" — corrected: fs delegation
+   is no longer deferred; this record's own Pivot section (line 33) plus the
+   implementation (`AcpFsServer` in `src/adapters/acp-subprocess.ts`, every
+   delegated write authorized through the application then the guard) and the
+   contained `--pure` turn probe (`test/acp-opencode-metered-probe.test.ts`)
+   prove it. Auto-approve (enforcement-altering config) exposure is guarded
+   fail-closed client-side (`src/integrations/acp-session.ts`). Genuinely
+   still deferred: `terminal/*` delegation (the hub client advertises no
+   terminal capability).
+4. **Follow-up ledger (line 58).** "Wire the skills-mcp mount into the
+   OpenCode runtime config (F1)" — done: skills mount + readablePaths
+   threading in `src/integrations/acp-runtime.ts`, the skills-mcp entry in
+   the hub-written per-runtime config, and the gated delivery probe
+   (`test/acp-opencode-skills-delivery-probe.test.ts`, gate
+   `WORKFLOW_ACP_OPENCODE_SKILLS`; no live verdict recorded yet). The G1
+   metrics/budget follow-up is likewise complete (note 2). Per-prompt task
+   decomposition remains open (W046).
