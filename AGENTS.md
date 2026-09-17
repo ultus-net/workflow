@@ -52,8 +52,10 @@ material claim bound to its verification: `docs/SECURITY_ASSURANCE.md`
 
 ## Git / PR conventions
 
-- The working trunk is `feat/opencode-conformance-probes` (not `main`, which
-  is far behind). Base every PR on the trunk.
+- The working trunk is `main`. Base every PR on `main` and merge it back to
+  `main` — never onto another feature branch. (The old
+  `feat/opencode-conformance-probes` integration branch was retired once main
+  caught up via PR #31; long-lived side trunks are how main fell behind.)
 - **Worktrees**: `git worktree add /var/home/hunter/worktrees/<name> -b <branch> <base>`
   from the main checkout; symlink `node_modules` and `.workflow-cline` into
   it (`.git/info/exclude` already covers them).
