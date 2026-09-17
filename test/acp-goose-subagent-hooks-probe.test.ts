@@ -38,7 +38,9 @@ import { loadGooseApiKey, gooseLaunchEntry } from "./goose-probe-helpers.js";
  * delegate, and NEITHER run produced a write-shaped PreToolUse record —
  * the four records were the top-level's own todo_write, the delegate
  * spawn itself (PreToolUse DOES intercept the delegation), a shell cat
- * verify (agent-attribution-ambiguous), and the top-level todo-complete.
+ * verify (agent-attribution-ambiguous), and a second todo__todo_write
+ * with completion-marked checkboxes (TASKS/ACP_DECISION wording:
+ * "todo_write ×2").
  * The sub-agent's file-write fired no hook AND projected no ACP
  * tool_call update. The classification was tightened twice against these
  * real payloads (a cat READ names the canary; the top-level's todo/delegate
@@ -179,7 +181,10 @@ test("goose SUBAGENT-HOOKS probe: granted spawn; PreToolUse coverage of subagent
     if (/"tool_name":\s*"(delegate|todo__[^"]*)"/.test(record)) return false;
     if (/"tool_name":\s*"(text_editor|write|edit|create|str_replace[^"]*)"/.test(record)) return true;
     const commandField = /"command":/.test(record);
-    return commandField && /(^|[^>])>>?\s*'?"?[^"\n]*sub-canary\.txt/.test(record);
+    // [^">;\n]* keeps the path segment contiguous: a compound like
+    // `echo x > run.log; cat sub-canary.txt` must NOT count as write-shaped
+    // (review P3 — the looser class matched across the `;`).
+    return commandField && /(^|[^>])>>?\s*'?"?[^">;\n]*sub-canary\.txt/.test(record);
   });
   const canaryWrittenViaHook = writeShaped.length > 0;
   const evidence = {
