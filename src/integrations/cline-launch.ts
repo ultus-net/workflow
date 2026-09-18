@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { join } from "node:path";
 
 /**
  * Resolves which Cline agent the ACP driver should launch.
@@ -11,10 +10,10 @@ import { join } from "node:path";
  *    `bin/cline` wrapper. Per the W050 operator scope decision the retained
  *    connector is stock-only; headless auth is the stock CLI's own
  *    `CLINE_API_KEY` / `CLINE_PROVIDER` path.
- * 3. DEPRECATED fallback: the vendored, Workflow-patched checkout's compiled
- *    binary (`.workflow-cline/cline/apps/cli/dist/cli-<os>-<arch>/bin/cline`).
- *    This branch exists only until W050 step 6 deletes the vendored checkout;
- *    do not build new behavior on it.
+ *
+ * The vendored `.workflow-cline` compiled-binary fallback was removed in W050
+ * step 6 together with the patched checkout; the connector now fails closed
+ * when neither an override nor an ambient `cline` is available.
  *
  * Compiled binaries are self-contained (Bun-embedded) and run directly as the
  * executable. The PATH entry keeps the historical launch shape: Node running
@@ -28,8 +27,6 @@ export interface ClineLaunchResolution {
 }
 
 export interface ClineLaunchInput {
-  /** Workflow repository root (contains `.workflow-cline`; deprecated fallback only). */
-  readonly workflowRoot: string;
   /** WORKFLOW_CLINE_BIN override; a compiled Cline binary path. */
   readonly envBinOverride?: string | undefined;
   /** Realpath-resolved global `cline` entry, or undefined when absent. */
@@ -43,17 +40,6 @@ export interface ClineLaunchInput {
 export function resolveClineLaunch(input: ClineLaunchInput): ClineLaunchResolution {
   const exists = input.exists ?? existsSync;
   const realpath = input.realpath ?? realpathSync;
-  const compiled = join(
-    input.workflowRoot,
-    ".workflow-cline",
-    "cline",
-    "apps",
-    "cli",
-    "dist",
-    clinePlatformDir(),
-    "bin",
-    process.platform === "win32" ? "cline.exe" : "cline",
-  );
   const override = input.envBinOverride?.trim();
 
   if (override !== undefined && override !== "") {
@@ -65,11 +51,6 @@ export function resolveClineLaunch(input: ClineLaunchInput): ClineLaunchResoluti
 
   if (input.clineOnPath !== undefined) {
     return { executable: process.execPath, script: input.clineOnPath };
-  }
-
-  // DEPRECATED (W050 step 6 removes the vendored checkout): last-resort fallback.
-  if (exists(compiled)) {
-    return { executable: realpath(compiled) };
   }
 
   throw new Error(
@@ -91,10 +72,4 @@ export function globalClineEntrypoint(): string | undefined {
   } catch {
     return undefined;
   }
-}
-
-/** Platform directory name Cline's build script uses for compiled binaries. */
-function clinePlatformDir(): string {
-  const os = process.platform === "win32" ? "windows" : process.platform;
-  return `cli-${os}-${process.arch}`;
 }
