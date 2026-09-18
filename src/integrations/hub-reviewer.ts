@@ -18,7 +18,7 @@ import {
   type ReviewProvenanceFingerprint,
 } from "../review/provenance.js";
 import type { ReviewProvenanceStore } from "./review-provenance-store.js";
-import type { WorkflowRunController } from "./cline-tui-bridge.js";
+import type { WorkflowRunController } from "./run-controller.js";
 
 /**
  * Hub-owned reviewer runner (plan Task A1). The hub produces the reviewer run

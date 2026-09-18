@@ -5,12 +5,8 @@ import { randomBytes } from "node:crypto";
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { TaskGraph } from "../kernel/task-graph.js";
-import {
-  createWorkflowClineTuiBridge,
-  type WorkflowApplicationResolver,
-  type WorkflowClineTuiBridge,
-  type WorkflowRunController,
-} from "./cline-tui-bridge.js";
+import { createWorkflowClineTuiBridge, type WorkflowClineTuiBridge } from "./cline-tui-bridge.js";
+import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { createRunRegistry, type RunReviewerFactory, type RunTestRunner } from "./run-registry.js";
 import type { HubScheduler } from "./hub-scheduler.js";

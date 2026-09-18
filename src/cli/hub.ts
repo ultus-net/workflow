@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
-import { shellExecutorFor } from "../integrations/cline-tui-bridge.js";
+import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
 import { createCredentialBroker } from "../integrations/credentials.js";
 import { createSecretServiceStore } from "../integrations/secret-service.js";

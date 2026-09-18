@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 
-import type { WorkflowRunController } from "./cline-tui-bridge.js";
+import type { WorkflowRunController } from "./run-controller.js";
 
 /**
  * Plan Tasks C1/C2: hub-native scheduled runs and per-run budget enforcement.
