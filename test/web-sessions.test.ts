@@ -74,7 +74,7 @@ test("session manager creates, lists, and activates sessions with resume ids", a
   const created = await manager.create();
   assert.equal(created.kind, "ok");
   assert.equal(spawned.length, 2);
-  assert.equal(spawned[0]?.disposed, true, "switching disposes the previous runtime");
+  assert.equal(spawned[0]?.disposed, false, "parallel sessions keep their runtimes alive");
 
   const sessions = manager.list();
   assert.equal(sessions.length, 2);
@@ -84,10 +84,10 @@ test("session manager creates, lists, and activates sessions with resume ids", a
 
   const back = await manager.activate(sessions[1]!.id);
   assert.equal(back.kind, "ok");
-  assert.deepEqual(resumes, [undefined, undefined, "agent-1"], "history resumes via the captured agent session id");
+  assert.deepEqual(resumes, [undefined, undefined], "a still-live session re-focuses without respawning");
 
   await manager.dispose();
-  assert.equal(spawned[2]?.disposed, true);
+  assert.equal(spawned[1]?.disposed, true, "every live runtime is disposed with the manager");
 });
 
 test("session manager lists registry order first when updatedAt timestamps tie", async (context) => {
@@ -127,27 +127,44 @@ test("session manager lists registry order first when updatedAt timestamps tie",
   }
 });
 
-test("session manager refuses to switch while a turn is running", async (context) => {
+test("parallel sessions run turns at the same time without interfering", async (context) => {
   const dir = registryDir();
   context.after(() => rmSync(dir, { recursive: true, force: true }));
-  let release!: () => void;
-  const pending = new Promise<void>((resolve) => { release = resolve; });
+  // Two long-running drivers: each session's turn stays in flight until its
+  // own release resolves.
+  const gates = [0, 1].map(() => {
+    let release: (() => void) | undefined;
+    const promise = new Promise<void>((resolve) => { release = resolve; });
+    return { promise, release: release as () => void };
+  });
+  let spawnIndex = 0;
   const manager = new WebSessionManager({
     registryPath: join(dir, "registry.json"),
-    factory: async () => fakeRuntime("agent-1", async () => pending).runtime,
+    factory: async () => fakeRuntime(`agent-${++spawnIndex}`, async (_prompt, emit) => {
+      const gate = gates[spawnIndex - 1];
+      if (gate === undefined) throw new Error("test bug: unexpected spawn");
+      await gate.promise;
+      emit({ type: "completed", result: "done" });
+    }).runtime,
   });
 
-  const channel = await manager.channel();
-  channel.submit("long work", []);
-  assert.equal((await manager.create()).kind, "busy");
-  release();
-  await pending;
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal((await manager.create()).kind, "ok");
+  const first = await manager.channel();
+  first.submit("first long turn", []);
+  const created = await manager.create();
+  assert.equal(created.kind, "ok", "focusing a new session never waits for another session's turn");
+  const second = await manager.channel();
+  second.submit("second turn in parallel", []);
+
+  // Both turns are in flight together; finishing one leaves the other running.
+  gates[1]!.release();
+  await settle(second);
+  assert.equal(first.busy(), true, "the first session's turn keeps running in the background");
+  gates[0]!.release();
+  await settle(first);
   await manager.dispose();
 });
 
-test("session manager serializes concurrent switches without leaking runtimes", async (context) => {
+test("concurrent creates each get their own live runtime without leaks", async (context) => {
   const dir = registryDir();
   context.after(() => rmSync(dir, { recursive: true, force: true }));
   const spawned: FakeRuntime[] = [];
@@ -164,12 +181,15 @@ test("session manager serializes concurrent switches without leaking runtimes", 
   const [first, second] = await Promise.all([manager.create(), manager.create()]);
   assert.equal(first.kind, "ok");
   assert.equal(second.kind, "ok");
-  assert.equal(spawned.length, 3, "initial runtime plus one per switch");
-  assert.equal(spawned[0]?.disposed, true, "the initial runtime is disposed by the first switch");
-  assert.equal(spawned[1]?.disposed, true, "the outgoing runtime is always disposed");
+  assert.equal(spawned.length, 3, "the boot runtime plus one per created record");
+  assert.equal(spawned[0]?.disposed, false, "parallel sessions never dispose each other");
+  assert.equal(spawned[1]?.disposed, false);
   assert.equal(spawned[2]?.disposed, false);
   assert.equal(manager.list().length, 3);
+  assert.equal(manager.list().filter((session) => session.active).length, 1, "exactly one focused session");
+  assert.equal(manager.list().every((session) => session.live), true, "every created session is live");
   await manager.dispose();
+  assert.equal(spawned.filter((fake) => fake.disposed).length, spawned.length, "dispose() releases every runtime");
 });
 
 test("session manager surfaces factory failure without a stuck active session", async (context) => {
@@ -247,18 +267,21 @@ test("session manager dismisses sessions and keeps the next one active", async (
   assert.equal((await manager.dismiss(previous!.id)).kind, "ok");
   assert.equal(manager.list().length, 1);
 
-  // With another record present, dismissing the active one must switch to the
-  // existing next record — resuming it by agent session id, never a new record.
+  // With another record present, dismissing the focused one must move focus to
+  // the existing next record — resumed by agent session id on the next
+  // channel use, never a new record.
   const second = await manager.create();
   assert.equal(second.kind, "ok");
   const remaining = manager.list().find((session) => !session.active)!;
-  const resumesBeforeDismiss = resumes.length;
   assert.equal((await manager.dismiss(second.kind === "ok" ? second.meta.id : "")).kind, "ok");
   assert.equal(manager.list().length, 1);
   assert.equal(manager.list()[0]?.id, remaining.id);
-  assert.equal(manager.list()[0]?.active, true);
-  assert.equal(resumes.length, resumesBeforeDismiss + 1);
-  assert.equal(resumes[resumes.length - 1], "agent-1", "the fallback switch resumes the next record's agent session");
+  assert.equal(manager.list()[0]?.active, true, "focus falls to the next record");
+  // Focus is metadata; the next record is still live from its create, so
+  // focusing it needs no respawn.
+  const resumesBeforeUse = resumes.length;
+  await manager.channel();
+  assert.equal(resumes.length, resumesBeforeUse, "a still-live session re-focuses without respawning");
 
   // With no records left, dismissing the active session creates a fresh one.
   assert.equal((await manager.dismiss(remaining.id)).kind, "ok");
@@ -319,51 +342,49 @@ test("session manager ingests replayed history when resuming a session", async (
   const dir = registryDir();
   context.after(() => rmSync(dir, { recursive: true, force: true }));
   type Listener = (event: CodingSessionEvent) => void;
-  const manager = new WebSessionManager({
-    registryPath: join(dir, "registry.json"),
-    factory: async (_agent, resumeFrom) => {
-      const listeners = new Set<Listener>();
-      const driver: CodingSessionDriver & { agentSessionId(): string; connect(): Promise<void>; subscribe(listener: Listener): () => void } = {
-        async start(_prompt, emit) {
-          emit({ type: "completed", result: "done" });
-        },
-        async cancel() {},
-        agentSessionId: () => "agent-1",
-        connect: async () => {
-          if (resumeFrom === undefined) return;
-          for (const listener of listeners) {
-            listener({ type: "user", text: "first question" });
-            listener({ type: "assistant", text: "first answer" });
-          }
-        },
-        subscribe: (listener: Listener) => {
-          listeners.add(listener);
-          return () => listeners.delete(listener);
-        },
-      };
-      return {
-        driver: driver as never,
-        session: new WorkflowCodingSession(driver),
-        async dispose() {},
-      };
-    },
-  });
+  const registryPath = join(dir, "registry.json");
+  const factory = async (_agent: string, resumeFrom: string | undefined) => {
+    const listeners = new Set<Listener>();
+    const driver: CodingSessionDriver & { agentSessionId(): string; connect(): Promise<void>; subscribe(listener: Listener): () => void } = {
+      async start(_prompt, emit) {
+        emit({ type: "completed", result: "done" });
+      },
+      async cancel() {},
+      agentSessionId: () => "agent-1",
+      connect: async () => {
+        if (resumeFrom === undefined) return;
+        for (const listener of listeners) {
+          listener({ type: "user", text: "first question" });
+          listener({ type: "assistant", text: "first answer" });
+        }
+      },
+      subscribe: (listener: Listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    };
+    return {
+      driver: driver as never,
+      session: new WorkflowCodingSession(driver),
+      async dispose() {},
+    };
+  };
 
-  const channel = await manager.channel();
+  const first = new WebSessionManager({ registryPath, factory });
+  const channel = await first.channel();
   channel.submit("first question", []);
   await settle(channel);
-  const created = await manager.create();
-  assert.equal(created.kind, "ok");
-  const first = manager.list().find((session) => !session.active);
-  const resumed = await manager.activate(first!.id);
-  assert.equal(resumed.kind, "ok");
+  await first.dispose();
 
-  const items = (await manager.channel()).items();
-  assert.deepEqual(items, [
+  // Restart: the reused record resumes through its captured agent session id,
+  // and session/load replays the history into the fresh channel.
+  const second = new WebSessionManager({ registryPath, factory });
+  const resumed = await second.channel();
+  assert.deepEqual(resumed.items(), [
     { kind: "user", text: "first question" },
     { kind: "assistant", text: "first answer" },
   ]);
-  await manager.dispose();
+  await second.dispose();
 });
 
 test("session manager syncs agent-provided titles and serves runtime usage", async (context) => {
@@ -452,7 +473,8 @@ test("session manager wires the permission broker: cancel and switch deny parked
   assert.deepEqual(channel.permissionPatterns(), { alwaysAllow: [], alwaysReject: [] });
 
   const action = {
-    sessionId: "ws",
+    // Real ACP permission requests carry the driver's ACP session id.
+    sessionId: "agent-1",
     taskId: taskId("HEADLINE-TASK"),
     tool: "run_commands",
     mutating: true,
@@ -478,17 +500,53 @@ test("session manager wires the permission broker: cancel and switch deny parked
   const cancelled = await parkedAgain;
   assert.equal(cancelled.kind, "deny", "cancel resolves the parked prompt as a denial");
 
-  // Switching sessions denies a parked prompt: it belongs to the outgoing turn.
+  // Focusing another session must NOT deny this session's parked prompt —
+  // parallel sessions keep their turns and prompts alive.
   broker.setMode("ask");
   const parkedOnSwitch = broker.intercept(action, () => ({ kind: "allow" }));
   await new Promise((resolve) => setImmediate(resolve));
   assert.ok(channel.pendingPermission() !== undefined);
   const created = await manager.create();
   assert.equal(created.kind, "ok");
-  const switched = await parkedOnSwitch;
-  assert.equal(switched.kind, "deny");
+  assert.equal(channel.pendingPermission() !== undefined, true, "the parked prompt survives a focus switch");
   assert.equal((await manager.channel()).permissionMode(), "ask", "broker state survives switches");
   await manager.dispose();
+  // Shutdown denies everything parked: the agent processes are going away.
+  assert.equal((await parkedOnSwitch).kind, "deny", "shutdown denies still-parked prompts");
+});
+
+test("parked permission prompts are scoped per parallel session", async () => {
+  const broker = new PermissionBroker();
+  broker.setMode("ask");
+  const actionFor = (sessionId: string) => ({
+    sessionId,
+    taskId: taskId("HEADLINE-TASK"),
+    tool: "run_commands",
+    mutating: true,
+    subjects: [],
+    input: { command: `ls ${sessionId}` },
+  });
+
+  const parkedA = broker.intercept(actionFor("acp-a"), () => ({ kind: "allow" }));
+  const parkedB = broker.intercept(actionFor("acp-b"), () => ({ kind: "allow" }));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const requestA = broker.pendingRequest("acp-a");
+  const requestB = broker.pendingRequest("acp-b");
+  assert.ok(requestA !== undefined && requestB !== undefined, "each session surfaces its own parked prompt");
+  assert.notEqual(requestA!.id, requestB!.id, "the two sessions park independent prompts");
+
+  // Answering A leaves B parked.
+  assert.equal(broker.answer(requestA!.id, "allow_once"), true);
+  await parkedA;
+  assert.ok(broker.pendingRequest("acp-a") === undefined);
+  assert.ok(broker.pendingRequest("acp-b") !== undefined, "B's parked prompt is untouched by A's answer");
+
+  // Cancelling B's session denies only B's prompt.
+  broker.cancelPending("session b disposed", "acp-b");
+  const cancelledB = await parkedB;
+  assert.equal(cancelledB.kind, "deny");
+  assert.equal(broker.pendingRequest("acp-b"), undefined);
 });
 
 test("switching the active agent re-launches the session on the new agent", async (context) => {

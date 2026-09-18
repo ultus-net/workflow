@@ -17,6 +17,8 @@ export interface PendingPermissionRequest {
 
 interface ParkedRequest {
   readonly request: PendingPermissionRequest;
+  /** The ACP session id the request arrived under; scopes cancel/filter. */
+  readonly sessionKey: string | undefined;
   readonly resolve: (decision: PolicyDecision) => void;
 }
 
@@ -26,12 +28,15 @@ interface ParkedRequest {
  * would otherwise ALLOW as an in-thread prompt card and waits for the
  * operator's answer. Hard policy denials (capability withheld, workspace
  * violations, task gates) never prompt — fail-closed stays fail-closed.
+ *
+ * Parked requests are keyed per ACP session so parallel agent runtimes each
+ * park their own prompts; mode and remembered patterns are operator-global.
  */
 export class PermissionBroker {
   #mode: PermissionMode = "auto";
   readonly #alwaysAllow = new Set<string>();
   readonly #alwaysReject = new Set<string>();
-  #parked: ParkedRequest | undefined;
+  #parked = new Map<string, ParkedRequest>();
 
   mode(): PermissionMode {
     return this.#mode;
@@ -39,48 +44,67 @@ export class PermissionBroker {
 
   setMode(mode: PermissionMode): void {
     this.#mode = mode;
-    // Switching back to auto must not leave a parked request dangling.
-    this.#resolveParked({ kind: "deny", code: "MODE_RESET", reason: "permission mode switched to auto" });
+    // Switching back to auto must not leave any parked request dangling.
+    this.cancelPending("permission mode switched to auto");
   }
 
   patterns(): { readonly alwaysAllow: readonly string[]; readonly alwaysReject: readonly string[] } {
     return { alwaysAllow: [...this.#alwaysAllow], alwaysReject: [...this.#alwaysReject] };
   }
 
-  pendingRequest(): PendingPermissionRequest | undefined {
-    return this.#parked?.request;
+  /** The parked request awaiting the operator for one session (or the oldest
+   * overall when no key is known — the legacy single-session shape). */
+  pendingRequest(sessionKey?: string): PendingPermissionRequest | undefined {
+    if (sessionKey === undefined) return this.#oldestParked()?.request;
+    return this.#parkedFor(sessionKey);
   }
 
   /** Resolves the parked request; false when the id is unknown or stale. */
   answer(id: string, choice: PermissionDecisionChoice): boolean {
-    if (this.#parked === undefined || this.#parked.request.id !== id) return false;
-    const tool = this.#parked.request.tool;
+    const parked = this.#parked.get(id);
+    if (parked === undefined) return false;
+    this.#parked.delete(id);
+    const tool = parked.request.tool;
     switch (choice) {
       case "allow_once":
-        this.#resolveParked({ kind: "allow" });
+        parked.resolve({ kind: "allow" });
         return true;
       case "allow_always":
         this.#alwaysAllow.add(tool);
         this.#alwaysReject.delete(tool);
-        this.#resolveParked({ kind: "allow" });
+        parked.resolve({ kind: "allow" });
         return true;
       case "reject_once":
-        this.#resolveParked({ kind: "deny", code: "OPERATOR_REJECTED", reason: "rejected by operator" });
+        parked.resolve({ kind: "deny", code: "OPERATOR_REJECTED", reason: "rejected by operator" });
         return true;
       case "reject_always":
         this.#alwaysReject.add(tool);
         this.#alwaysAllow.delete(tool);
-        this.#resolveParked({ kind: "deny", code: "OPERATOR_REJECTED", reason: "rejected by operator (always)" });
+        parked.resolve({ kind: "deny", code: "OPERATOR_REJECTED", reason: "rejected by operator (always)" });
         return true;
     }
   }
 
-  /** Denies a parked request (turn cancelled, runtime disposed, mode switch). */
-  cancelPending(reason: string): void {
-    this.#resolveParked({ kind: "deny", code: "PROMPT_CANCELLED", reason });
+  /** Denies parked requests (turn cancelled, runtime disposed, mode switch).
+   * With a session key only that session's prompts resolve; without, all. */
+  cancelPending(reason: string, sessionKey?: string): void {
+    if (sessionKey === undefined) {
+      const all = [...this.#parked.values()];
+      this.#parked.clear();
+      for (const parked of all) {
+        parked.resolve({ kind: "deny", code: "PROMPT_CANCELLED", reason });
+      }
+      return;
+    }
+    for (const [id, parked] of this.#parked) {
+      if (parked.sessionKey === sessionKey) {
+        this.#parked.delete(id);
+        parked.resolve({ kind: "deny", code: "PROMPT_CANCELLED", reason });
+      }
+    }
   }
 
-  /** Clears all stored decisions without touching a parked request. */
+  /** Clears all stored decisions without touching parked requests. */
   resetPatterns(): void {
     this.#alwaysAllow.clear();
     this.#alwaysReject.clear();
@@ -88,8 +112,9 @@ export class PermissionBroker {
 
   /**
    * Authorization overlay: policy first (fail-closed), then the operator's
-   * stored decisions, then — in ask mode — a parked prompt. Only one request
-   * can be parked at a time; a concurrent second request fails closed.
+   * stored decisions, then — in ask mode — a parked prompt. Each session
+   * parks its own prompts (parallel runtimes are independent); a burst from
+   * one session fails closed after two so a hot loop cannot park unbounded.
    */
   intercept(
     action: ProposedToolAction,
@@ -106,32 +131,38 @@ export class PermissionBroker {
     return (async (): Promise<PolicyDecision> => {
       const decision = await authorize(action);
       if (decision.kind === "deny") return decision;
-      if (this.#parked !== undefined) {
+      if (this.#parkedByActionSession(action.sessionId).length >= 2) {
         return {
           kind: "deny",
           code: "PROMPT_BUSY",
-          reason: "another permission prompt is already waiting for the operator",
+          reason: "two permission prompts from this session are already waiting for the operator",
         };
       }
       return new Promise<PolicyDecision>((resolve) => {
-        this.#parked = {
-          request: {
-            id: `perm-${randomBytes(6).toString("hex")}`,
-            tool: action.tool,
-            capability: action.capability,
-            subjects: [...action.subjects],
-            inputPreview: inputPreview(action.input),
-          },
-          resolve,
+        const request: PendingPermissionRequest = {
+          id: `perm-${randomBytes(6).toString("hex")}`,
+          tool: action.tool,
+          capability: action.capability,
+          subjects: [...action.subjects],
+          inputPreview: inputPreview(action.input),
         };
+        this.#parked.set(request.id, { request, sessionKey: action.sessionId, resolve });
       });
     })();
   }
 
-  #resolveParked(decision: PolicyDecision): void {
-    const parked = this.#parked;
-    this.#parked = undefined;
-    parked?.resolve(decision);
+  #parkedByActionSession(sessionId: string): ParkedRequest[] {
+    return [...this.#parked.values()].filter((parked) => parked.sessionKey === sessionId);
+  }
+
+  #parkedFor(sessionKey: string): PendingPermissionRequest | undefined {
+    return this.#parkedByActionSession(sessionKey)[0]?.request;
+  }
+
+  #oldestParked(): ParkedRequest | undefined {
+    // Maps iterate in insertion order; the first entry parked first.
+    const [entry] = this.#parked.values();
+    return entry;
   }
 }
 

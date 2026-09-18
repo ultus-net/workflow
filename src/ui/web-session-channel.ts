@@ -90,6 +90,9 @@ export class SessionChannel {
   readonly #driver: ConfigCapableDriver | undefined;
   readonly #usage: (() => ModelUsageMetrics | undefined) | undefined;
   readonly #broker: PermissionBroker | undefined;
+  /** Scopes parked permission prompts to this channel's ACP session once the
+   * driver knows its id (parallel runtimes park independently). */
+  readonly #permissionKey: (() => string | undefined) | undefined;
   #agentTitle: string | undefined;
 
   constructor(
@@ -97,10 +100,12 @@ export class SessionChannel {
     driver?: ConfigCapableDriver,
     usage?: () => ModelUsageMetrics | undefined,
     broker?: PermissionBroker,
+    permissionKey?: () => string | undefined,
   ) {
     this.#driver = driver;
     this.#usage = usage;
     this.#broker = broker;
+    this.#permissionKey = permissionKey;
     session.subscribe((event) => this.ingest(event));
   }
 
@@ -140,9 +145,9 @@ export class SessionChannel {
     return this.#broker !== undefined;
   }
 
-  /** The parked permission request awaiting the operator, if any. */
+  /** The parked permission request awaiting the operator for this session, if any. */
   pendingPermission(): PendingPermissionRequest | undefined {
-    return this.#broker?.pendingRequest();
+    return this.#broker?.pendingRequest(this.#permissionKey?.());
   }
 
   /** Stored always-allow/always-reject tool patterns. */
@@ -204,8 +209,9 @@ export class SessionChannel {
 
   async cancel(): Promise<void> {
     // A cancelled turn must not leave a permission prompt dangling: the
-    // agent stops waiting, so the parked request resolves as a denial.
-    this.#broker?.cancelPending("turn cancelled by operator");
+    // agent stops waiting, so the parked request resolves as a denial —
+    // only this session's prompts, never a parallel session's.
+    this.#broker?.cancelPending("turn cancelled by operator", this.#permissionKey?.());
     await this.session.cancel();
   }
 }

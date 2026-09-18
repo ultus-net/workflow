@@ -37,9 +37,16 @@ export function createWorkflowWebServer(
   const single = session !== undefined && !(session instanceof WebSessionManager) ? session : undefined;
   const singleChannel = single === undefined ? undefined : new SessionChannel(single);
 
-  async function channel(): Promise<SessionChannel | undefined> {
+  /** Session-scoped channel: `?session=<id>` selects a parallel live session;
+   * without the parameter the operator's focused session answers. */
+  function sessionId(url: string | undefined): string | undefined {
+    if (url === undefined) return undefined;
+    return new URL(url, "http://workflow.local").searchParams.get("session") ?? undefined;
+  }
+
+  async function sessionChannel(url: string | undefined): Promise<SessionChannel | undefined> {
     try {
-      if (manager !== undefined) return await manager.channel();
+      if (manager !== undefined) return await manager.channel(sessionId(url));
       return singleChannel;
     } catch {
       // A failed runtime factory must never reject the request listener:
@@ -117,11 +124,16 @@ export function createWorkflowWebServer(
         const body = await readJson(request);
         const agent = (body as { agent?: unknown } | null)?.agent;
         if (!isWebAgentId(agent)) return json(response, 400, { error: "unknown agent" });
+        // With a session id the agent switch targets that parallel session;
+        // without it the operator's focused session re-launches.
+        const target = typeof (body as { session?: unknown } | null)?.session === "string"
+          ? (body as { session: string }).session
+          : undefined;
         const info = listWebAgents().find((entry) => entry.id === agent);
         if (info !== undefined && !info.available) {
           return json(response, 409, { error: `agent unavailable: ${info.reason ?? "prerequisites not met"}` });
         }
-        return switchResult(response, await manager.setActiveAgent(agent), 200);
+        return switchResult(response, await manager.setActiveAgent(agent, target), 200);
       } catch {
         return json(response, 400, { error: "invalid request body" });
       }
@@ -266,12 +278,12 @@ export function createWorkflowWebServer(
       }
     }
     if (request.method === "GET" && request.url === "/api/config-options") {
-      const active = await channel();
+      const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       return json(response, 200, { options: active.configOptions() });
     }
     if (request.method === "POST" && request.url === "/api/config-options") {
-      const active = await channel();
+      const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -296,7 +308,7 @@ export function createWorkflowWebServer(
       }
     }
     if (request.method === "GET" && request.url === "/api/permission") {
-      const active = await channel();
+      const active = await sessionChannel(request.url);
       return json(response, 200, {
         available: active?.permissionAskingAvailable() ?? false,
         mode: active?.permissionMode() ?? "auto",
@@ -305,7 +317,7 @@ export function createWorkflowWebServer(
       });
     }
     if (request.method === "POST" && request.url === "/api/permission") {
-      const active = await channel();
+      const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -335,7 +347,7 @@ export function createWorkflowWebServer(
       }
     }
     if (request.method === "POST" && request.url === "/api/permission-mode") {
-      const active = await channel();
+      const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -393,15 +405,19 @@ export function createWorkflowWebServer(
       }
     }
     if (request.method === "GET" && request.url?.startsWith("/api/image/")) {
-      const active = await channel();
+      const active = await sessionChannel(request.url);
       const stored = active?.image(decodeURIComponent(request.url.slice("/api/image/".length)));
       if (stored === undefined) return json(response, 404, { error: "not found" });
       response.writeHead(200, { "content-type": stored.mediaType, "cache-control": "private, immutable" });
       return response.end(Buffer.from(stored.data, "base64"));
     }
     if (request.method === "GET" && request.url === "/api/session") {
-      const active = await channel();
-      const meta = manager?.activeMeta();
+      const active = await sessionChannel(request.url);
+      // The meta answers for the requested session; focused by default.
+      const requested = sessionId(request.url);
+      const meta = requested === undefined
+        ? manager?.activeMeta()
+        : manager?.list().find((entry) => entry.id === requested);
       return json(response, 200, {
         available: active !== undefined,
         ...(meta === undefined ? {} : { id: meta.id, title: meta.title, agent: meta.agent }),
@@ -411,7 +427,7 @@ export function createWorkflowWebServer(
       });
     }
     if (request.method === "POST" && request.url === "/api/prompt") {
-      const active = await channel();
+      const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -429,7 +445,7 @@ export function createWorkflowWebServer(
       }
     }
     if (request.method === "POST" && request.url === "/api/cancel") {
-      const active = await channel();
+      const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       await active.cancel();

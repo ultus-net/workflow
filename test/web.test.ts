@@ -554,7 +554,14 @@ test("web UI returns 503 instead of crashing when the runtime factory fails", as
 
   const session = await fetch(`http://127.0.0.1:${port}/api/session`);
   assert.equal(session.status, 200);
-  assert.deepEqual(await session.json(), { available: false, state: { state: "unavailable" }, items: [] });
+  // The registry record survives a failed launch; the runtime does not. The
+// payload states both facts honestly: the record meta plus availability.
+const failure = await session.json() as { available: boolean; title: string; agent: string; items: unknown[]; state: { state: string } };
+assert.equal(failure.available, false);
+assert.equal(failure.title, "New session");
+assert.equal(failure.agent, "opencode");
+assert.deepEqual(failure.state, { state: "unavailable" });
+assert.deepEqual(failure.items, []);
   const prompt = await fetch(`http://127.0.0.1:${port}/api/prompt`, {
     method: "POST",
     headers: { "content-type": "application/json" },
