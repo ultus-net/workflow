@@ -4,7 +4,6 @@ import type { WorkflowApplication } from "../application/workflow.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { createOpenCodeSessionClient } from "../integrations/opencode-client.js";
 import { OpenCodeSessionDriver } from "../integrations/opencode-session.js";
-import type { SessionStyle } from "../integrations/response-style.js";
 import type { SessionConfigOption } from "../ui/tui.js";
 import { usageViewFromMetrics, type UsageSource } from "../ui/usage.js";
 
@@ -16,7 +15,6 @@ export interface ComposedDriver {
   readonly session: WorkflowCodingSession;
   readonly sessionConfigOptions?: () => readonly SessionConfigOption[];
   readonly setSessionConfig?: (id: string, value: string | boolean) => Promise<void>;
-  readonly setSessionStyle?: (style: SessionStyle) => void;
   /** W044: metering-proxy usage when the driver's runtime records it (acp). */
   readonly usage?: UsageSource;
   dispose(): Promise<void>;

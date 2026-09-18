@@ -181,6 +181,8 @@ test("actions requiring process and credentials must be granted both capabilitie
   });
   assert.deepEqual(acpProposal.requiredCapabilities, ["process", "credentials"]);
   assert.equal(new WorkflowApplication(graph, acp.capabilities, [], new Set(["read", "mutation", "process"])).authorize(acpProposal).kind, "deny");
+  assert.equal(new WorkflowApplication(graph, acp.capabilities, [], new Set(["read", "mutation", "credentials"])).authorize(acpProposal).kind, "deny");
+  assert.equal(new WorkflowApplication(graph, acp.capabilities, [], new Set(["read", "mutation", "process", "credentials"])).authorize(acpProposal).kind, "allow");
 });
 
 test("required capability metadata cannot omit the primary capability", () => {

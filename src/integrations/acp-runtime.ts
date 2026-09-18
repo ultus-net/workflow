@@ -261,9 +261,7 @@ async function createClineRuntime(
   const scratchHome = resolve(homedir(), ".workflow", "acp-home");
   mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
 
-  const workflowRoot = resolve(fileURLToPath(import.meta.url), "..", "..", "..");
   const launchCline = resolveClineLaunch({
-    workflowRoot,
     envBinOverride: process.env.WORKFLOW_CLINE_BIN,
     clineOnPath: globalClineEntrypoint(),
   });

@@ -66,7 +66,7 @@ can't be authorized fail **closed** (hub denies rather than guessing).
 | Zen | direct hub client |
 | Connectors (Slack, Telegram, Discord, GChat, Linear, WhatsApp) | hub-side localRuntime hooks |
 | **Scheduled agents** | hub-side cron with workflow-authorize hooks |
-| Teams/desktop | hub-side localRuntime hooks |
+| ~~Teams/desktop~~ | **removed (W050, 2026-09-18)** — built on the retired vendored-Cline runtime |
 
 The browser operator UI (OpenCode lead) and the ACP terminal surfaces
 (`workflow-tui --driver acp|opencode`, goose) compose the application authority
@@ -109,12 +109,12 @@ Sandbox/isolation remains the same as the TUI router today.
 
 ## Out of scope (deliberate)
 
-- Self-service MCP manager persistence **(done — merged settings live at the
-  stable `~/.workflow/cline_mcp_settings.json`; stale toolbox entries are
-  pruned and self-service additions survive across runs)**
-- Desktop app integration **(done — the `cline-hub` desktop app injects
-  `createWorkflowHubHooks(workspace)` into every session's localRuntime, and
-  its scheduled runs inherit the hub-daemon hooks; both fail closed)**
+- Self-service MCP manager persistence — **superseded (W050 C3/C4, 2026-09-18)**:
+  the `~/.workflow/cline_mcp_settings.json` manager was retired with the
+  vendored-Cline runtime; current MCP toolbox mounts are static config.
+- Desktop app integration — **superseded (W050 step 6, 2026-09-18)**: the
+  `cline-hub` desktop app was built on the vendored-Cline runtime, which was
+  removed. The retained hub serves the browser operator UI and `workflow-tui`.
 
 ## Implementation sequence (suggested)
 
