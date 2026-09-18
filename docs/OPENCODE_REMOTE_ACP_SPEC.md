@@ -1,7 +1,8 @@
 # Remote ACP Bridge — Specification (OpenCode web/API → ACP)
 
-**Status:** DRAFT — design item. This spec authorizes no implementation by itself;
-code lands only on explicit operator direction and only after the probe plan in §10.
+**Status:** DRAFT — design + M1 scaffold. The M1 bridge landed on
+`feat/opencode-remote-acp-bridge` under operator direction, **advisory only**;
+enforcement and the remaining milestones wait on the probe plan in §10.
 **Date:** 2026-09-18
 **Targets:** (1) the server surface exposed by `opencode serve` (HTTP + SSE) as the
 first concrete target; (2) OpenWork `openwork-server` as a reference/adjacent surface.
