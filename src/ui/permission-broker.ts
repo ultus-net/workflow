@@ -113,8 +113,8 @@ export class PermissionBroker {
   /**
    * Authorization overlay: policy first (fail-closed), then the operator's
    * stored decisions, then — in ask mode — a parked prompt. Each session
-   * parks its own prompts (parallel runtimes are independent); a burst from
-   * one session fails closed after two so a hot loop cannot park unbounded.
+   * parks its own prompt (parallel runtimes are independent); a concurrent
+   * second request from the same session fails closed.
    */
   intercept(
     action: ProposedToolAction,
@@ -131,11 +131,14 @@ export class PermissionBroker {
     return (async (): Promise<PolicyDecision> => {
       const decision = await authorize(action);
       if (decision.kind === "deny") return decision;
-      if (this.#parkedByActionSession(action.sessionId).length >= 2) {
+      // One parked prompt per session (the original fail-closed posture,
+      // now scoped per session instead of globally): a concurrent second
+      // request from the same session denies rather than queueing.
+      if (this.#parkedByActionSession(action.sessionId).length >= 1) {
         return {
           kind: "deny",
           code: "PROMPT_BUSY",
-          reason: "two permission prompts from this session are already waiting for the operator",
+          reason: "a permission prompt from this session is already waiting for the operator",
         };
       }
       return new Promise<PolicyDecision>((resolve) => {
