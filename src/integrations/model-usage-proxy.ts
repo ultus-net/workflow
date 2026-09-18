@@ -77,6 +77,8 @@ export interface AutoLatestProxyOptions {
   readonly now?: () => number;
   /** Cache lifetime for resolved aliases. */
   readonly ttlMs?: number;
+  /** Backoff after a failed catalog fetch; defaults to 1 minute. */
+  readonly negativeTtlMs?: number;
 }
 
 /**
@@ -116,6 +118,7 @@ export async function createModelUsageProxy(options: {
           ...(autoLatest.fetch === undefined ? {} : { fetch: autoLatest.fetch }),
           ...(autoLatest.now === undefined ? {} : { now: autoLatest.now }),
           ...(autoLatest.ttlMs === undefined ? {} : { ttlMs: autoLatest.ttlMs }),
+          ...(autoLatest.negativeTtlMs === undefined ? {} : { negativeTtlMs: autoLatest.negativeTtlMs }),
         });
 
   const server = http.createServer((req, res) => {

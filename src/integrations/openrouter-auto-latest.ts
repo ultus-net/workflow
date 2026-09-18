@@ -138,8 +138,10 @@ export interface AliasResolverOptions {
   readonly fetch?: typeof fetch;
   /** Injectable clock for tests. */
   readonly now?: () => number;
-  /** Cache lifetime; defaults to 6 hours. */
+  /** Cache lifetime for a successful resolution; defaults to 6 hours. */
   readonly ttlMs?: number;
+  /** Backoff after a failed fetch so a cold catalog outage cannot refetch every request; defaults to 1 minute. */
+  readonly negativeTtlMs?: number;
 }
 
 export interface AliasResolver {
@@ -150,17 +152,21 @@ export interface AliasResolver {
 /**
  * Builds a cached `~...-latest` → concrete-slug resolver. Resolution failure
  * returns the last known pool (or `[]`) and never throws: model traffic must
- * not break because the catalog endpoint hiccuped.
+ * not break because the catalog endpoint hiccuped. A successful fetch caches
+ * its result for `ttlMs` even when no alias matched, and a failed fetch backs
+ * off for `negativeTtlMs`, so a cold or unhealthy catalog cannot refetch on
+ * every Auto Router request.
  */
 export function createAliasResolver(options: AliasResolverOptions): AliasResolver {
   const doFetch = options.fetch ?? fetch;
   const now = options.now ?? Date.now;
   const ttlMs = options.ttlMs ?? 6 * 60 * 60 * 1000;
-  let cached: { readonly at: number; readonly slugs: string[] } | undefined;
+  const negativeTtlMs = options.negativeTtlMs ?? 60 * 1000;
+  let cached: { readonly at: number; readonly slugs: string[]; readonly ttlMs: number } | undefined;
   let inflight: Promise<string[]> | undefined;
 
   function resolve(): Promise<string[]> {
-    if (cached !== undefined && now() - cached.at < ttlMs) return Promise.resolve(cached.slugs);
+    if (cached !== undefined && now() - cached.at < cached.ttlMs) return Promise.resolve(cached.slugs);
     if (inflight !== undefined) return inflight;
     inflight = (async () => {
       try {
@@ -170,10 +176,12 @@ export function createAliasResolver(options: AliasResolverOptions): AliasResolve
         const slugs = options.aliases
           .map((alias) => targets.get(alias))
           .filter((slug): slug is string => slug !== undefined);
-        if (slugs.length > 0) cached = { at: now(), slugs };
-        return cached?.slugs ?? [];
+        cached = { at: now(), slugs, ttlMs };
+        return slugs;
       } catch {
-        return cached?.slugs ?? [];
+        const slugs = cached?.slugs ?? [];
+        cached = { at: now(), slugs, ttlMs: negativeTtlMs };
+        return slugs;
       } finally {
         inflight = undefined;
       }

@@ -385,3 +385,35 @@ test("model usage proxy leaves openrouter/auto untouched when alias resolution i
     await upstream.close();
   }
 });
+
+test("model usage proxy honors the Auto Router failure backoff across requests", async () => {
+  const upstream = await fakeUpstream((req, _body, res) => {
+    if (req.url?.endsWith("/api/v1/models")) {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end("{}");
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [] }));
+  });
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    autoLatest: { aliases: ["~anthropic/claude-sonnet-latest"], negativeTtlMs: 60_000, now: () => 1_000 },
+  });
+  try {
+    for (let i = 0; i < 2; i += 1) {
+      const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "openrouter/auto", messages: [] }),
+      });
+      assert.equal(response.status, 200);
+    }
+    const modelFetches = upstream.seen.filter((entry) => entry.url === "/api/v1/models");
+    assert.equal(modelFetches.length, 1, "a failed catalog fetch must back off, not refetch per request");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});

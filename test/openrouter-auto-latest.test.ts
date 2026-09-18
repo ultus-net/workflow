@@ -145,6 +145,61 @@ test("createAliasResolver treats a non-2xx catalog response as failure", async (
   assert.deepEqual(await resolver.resolve(), []);
 });
 
+test("createAliasResolver caches a successful zero-match resolution within the ttl", async () => {
+  const counter = { calls: 0 };
+  const resolver = createAliasResolver({
+    modelsUrl: "https://openrouter.ai/api/v1/models",
+    aliases: ["~does-not-exist"],
+    fetch: catalogFetch(CATALOG, counter),
+    now: () => 1_000,
+    ttlMs: 60_000,
+  });
+  assert.deepEqual(await resolver.resolve(), []);
+  assert.deepEqual(await resolver.resolve(), []);
+  assert.equal(counter.calls, 1, "a zero-match result is a successful observation and must be cached");
+});
+
+test("createAliasResolver backs off after a cold failure instead of refetching every request", async () => {
+  const counter = { calls: 0 };
+  let now = 1_000;
+  const resolver = createAliasResolver({
+    modelsUrl: "https://openrouter.ai/api/v1/models",
+    aliases: ["~anthropic/claude-sonnet-latest"],
+    fetch: (async () => {
+      counter.calls += 1;
+      throw new Error("network down");
+    }) as unknown as typeof fetch,
+    now: () => now,
+    negativeTtlMs: 30_000,
+  });
+  assert.deepEqual(await resolver.resolve(), []);
+  now += 10_000;
+  assert.deepEqual(await resolver.resolve(), []);
+  assert.equal(counter.calls, 1, "within the backoff window the resolver must not refetch");
+});
+
+test("createAliasResolver recovers after the backoff window when the catalog returns", async () => {
+  const counter = { calls: 0 };
+  let now = 1_000;
+  let healthy = false;
+  const resolver = createAliasResolver({
+    modelsUrl: "https://openrouter.ai/api/v1/models",
+    aliases: ["~anthropic/claude-sonnet-latest"],
+    fetch: (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      counter.calls += 1;
+      if (!healthy) throw new Error("network down");
+      return catalogFetch(CATALOG)(input, init);
+    }) as unknown as typeof fetch,
+    now: () => now,
+    negativeTtlMs: 30_000,
+  });
+  assert.deepEqual(await resolver.resolve(), [], "cold failure yields an empty pool");
+  healthy = true;
+  now += 31_000;
+  assert.deepEqual(await resolver.resolve(), ["anthropic/claude-sonnet-5"], "a healthy catalog after backoff repopulates the pool");
+  assert.equal(counter.calls, 2);
+});
+
 test("autoLatestModelLabel gives friendly picker names, including derived fallbacks", () => {
   assert.equal(autoLatestModelLabel("~anthropic/claude-sonnet-latest"), "Claude Sonnet (latest)");
   assert.equal(autoLatestModelLabel("~openai/gpt-terra-latest"), "GPT Terra (latest)");
