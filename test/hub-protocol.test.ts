@@ -37,14 +37,14 @@ async function withHub(run: (hub: { url: string; discovery: Record<string, unkno
   }
 }
 
-async function beforeTool(url: string, token: string | undefined, toolName: string, input: unknown = {}) {
-  return fetch(`${url}/before-tool`, {
+async function postJson(url: string, token: string | undefined, path: string, body: unknown = {}) {
+  return fetch(`${url}${path}`, {
     method: "POST",
     headers: {
       ...(token !== undefined ? { authorization: `Bearer ${token}` } : {}),
       "content-type": "application/json",
     },
-    body: JSON.stringify({ toolCall: { toolName }, input }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -57,10 +57,13 @@ test("discovery file matches the documented schema", async () => {
   });
 });
 
-test("hub requires the bearer token on every endpoint", async () => {
+test("hub requires the bearer token before routing on every endpoint", async () => {
   await withHub(async ({ url }) => {
-    assert.equal((await beforeTool(url, undefined, "read_file")).status, 401);
-    assert.equal((await beforeTool(url, "wrong-token", "read_file")).status, 401);
+    assert.equal((await postJson(url, undefined, "/bash", {})).status, 401);
+    assert.equal((await postJson(url, "wrong-token", "/bash", {})).status, 401);
+    // Auth is enforced before route resolution: an unknown route with no token
+    // is 401, not 404.
+    assert.equal((await postJson(url, undefined, "/before-tool", {})).status, 401);
     const bash = await fetch(`${url}/bash`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     assert.equal(bash.status, 401);
   });

@@ -3,7 +3,6 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import { buildReviewRubric } from "../review/rubric.js";
-import type { TaskId } from "../kernel/contracts.js";
 import { shellExecutorFor, type WorkflowApplicationResolver, type WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 
@@ -11,11 +10,11 @@ import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
  * The hub's host-neutral loopback HTTP server and discovery bridge.
  *
  * This owns the shared hub protocol routes (`/health`, `/snapshot`,
- * `/run/begin|review|finish`, `/review/rubric`, `/bash`). Surface-specific
- * routes (e.g. the vendored-Cline SDK's `/before-tool` / `/team-task`) are
- * supplied through `HubBridgeExtension` so this module never depends on a
- * concrete agent SDK. Extracted from `cline-tui-bridge.ts` (W050 step 6
- * prerequisite) so removing the vendored-Cline SDK does not remove the hub.
+ * `/run/begin|review|finish`, `/review/rubric`, `/bash`). It was extracted
+ * from `cline-tui-bridge.ts` (W050 step 6 prerequisite) so removing the
+ * vendored-Cline SDK did not remove the hub; the surface-specific
+ * `HubBridgeExtension` seam was removed with the SDK once no producer
+ * remained.
  */
 
 export interface WorkflowHubBridge {
@@ -25,33 +24,12 @@ export interface WorkflowHubBridge {
   close(): Promise<void>;
 }
 
-/**
- * Optional surface-specific routes. The vendored-Cline SDK supplies these;
- * once it is removed the hub composes without an extension.
- */
-export interface HubBridgeExtension {
-  /** Handle a route the neutral protocol does not own; true when handled. */
-  handle(request: IncomingMessage, response: ServerResponse, body: unknown): boolean | Promise<boolean>;
-  /** Routes that require the verifier token (in addition to the run routes). */
-  readonly verifierOnlyPaths?: readonly string[];
-  /**
-   * Bind a contained `/bash` request to the surface's own task namespace.
-   * Returns the application (possibly re-resolved) and the bound task id.
-   */
-  bashBinding?(input: {
-    readonly application: WorkflowApplication;
-    readonly body: Record<string, unknown>;
-    readonly resolveApplication: WorkflowApplicationResolver;
-  }): { application: WorkflowApplication; taskId: TaskId | undefined };
-}
-
 interface HubRequestContext {
   readonly token: string;
   readonly verificationToken: string;
   readonly resolveApplication: WorkflowApplicationResolver;
   readonly runController: WorkflowRunController | undefined;
   readonly guard: WorkflowGuardProvider | undefined;
-  readonly extension: HubBridgeExtension | undefined;
 }
 
 export async function createWorkflowHubBridge(
@@ -63,11 +41,10 @@ export async function createWorkflowHubBridge(
   runController?: WorkflowRunController,
   observeRequest?: (path: string) => void,
   guard?: WorkflowGuardProvider,
-  extension?: HubBridgeExtension,
 ): Promise<WorkflowHubBridge> {
   const token = randomBytes(32).toString("hex");
   const verificationToken = randomBytes(32).toString("hex");
-  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, extension };
+  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard };
 
   const server = createServer((request, response) => {
     if (request.url !== undefined) observeRequest?.(new URL(request.url, "http://127.0.0.1").pathname);
@@ -100,10 +77,7 @@ async function handleRequest(
 ): Promise<void> {
   try {
     if (request.method !== "POST") return send(response, 401, { error: "unauthorized" });
-    const verifierOnly =
-      request.url === "/run/review" ||
-      request.url === "/run/finish" ||
-      (request.url !== undefined && (context.extension?.verifierOnlyPaths?.includes(request.url) ?? false));
+    const verifierOnly = request.url === "/run/review" || request.url === "/run/finish";
     const requiredToken = verifierOnly ? context.verificationToken : context.token;
     if (!authorized(request, requiredToken)) return send(response, 401, { error: "unauthorized" });
     if (request.url === "/health") return send(response, 200, { status: "ok" });
@@ -184,21 +158,14 @@ async function handleRequest(
         return send(response, 400, { error: "invalid bash request" });
       }
       const hasSurfaceTask = typeof body.teamTaskId === "string" && body.teamTaskId.length > 0;
-      let application = context.resolveApplication(
+      const application = context.resolveApplication(
         typeof body.workspace === "string" ? body.workspace : body.cwd,
         undefined,
         { activateInteractiveTask: !hasSurfaceTask },
       );
-      let boundTaskId: TaskId | undefined;
-      if (hasSurfaceTask && context.extension?.bashBinding !== undefined) {
-        const bound = context.extension.bashBinding({ application, body, resolveApplication: context.resolveApplication });
-        application = bound.application;
-        boundTaskId = bound.taskId;
-      }
-      const shellExecutor = shellExecutorFor(application, boundTaskId, true, context.guard);
+      const shellExecutor = shellExecutorFor(application, undefined, true, context.guard);
       return send(response, 200, { output: await shellExecutor(body.command as never, body.cwd, undefined) });
     }
-    if (context.extension !== undefined && await context.extension.handle(request, response, body)) return;
     send(response, 404, { error: "not found" });
   } catch (error) {
     send(response, 500, { error: error instanceof Error ? error.message : String(error) });

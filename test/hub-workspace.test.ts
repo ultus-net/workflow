@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -9,6 +9,7 @@ import { TaskGraph } from "../src/kernel/task-graph.js";
 import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createWorkflowHub } from "../src/integrations/workflow-hub.js";
+import { canonicalWorkspace } from "../src/integrations/run-registry.js";
 
 /**
  * Per-surface workspace binding: surfaces declare their workspace per request
@@ -57,6 +58,18 @@ test("hub fails closed on an invalid workspace declaration", async (t) => {
     workspace: join(tmpdir(), "wf-no-such-dir-" + Math.random().toString(16).slice(2)),
   });
   assert.notEqual(missing.status, 200);
+});
+
+test("canonicalWorkspace canonicalizes aliases to one real path", async (t) => {
+  const parent = mkdtempSync(join(tmpdir(), "wf-hub-canon-"));
+  const real = join(parent, "workspace");
+  const alias = join(parent, "alias");
+  mkdirSync(real);
+  symlinkSync(real, alias);
+  t.after(() => rmSync(parent, { recursive: true, force: true }));
+
+  assert.equal(canonicalWorkspace(alias), realpathSync(real));
+  assert.equal(canonicalWorkspace(real), canonicalWorkspace(alias));
 });
 
 test("hub protects and removes verifier discovery on shutdown", async (t) => {

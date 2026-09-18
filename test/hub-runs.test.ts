@@ -182,6 +182,44 @@ test("hub snapshot hides the redundant interactive seed task", async (t) => {
   assert.equal(projected.tasks.some(({ id }) => id === "interactive"), false);
 });
 
+test("hub snapshot hides finished scheduled runs without deleting canonical state", async (t) => {
+  const { graph, application, workspace } = setup();
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-runs-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const hub = await createWorkflowHub(application, { discoveryDir: dir, graph });
+  t.after(() => hub.close());
+  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
+
+  await post(hub.url, token, "/run/begin", { runId: "completed-run", title: "Completed scheduled run", workspace });
+  await post(hub.url, hub.verificationToken, "/run/finish", { runId: "completed-run", outcome: "verified" });
+  assert.equal(graph.get(taskId("run:completed-run")).state, "VERIFIED");
+
+  const snapshot = await post(hub.url, token, "/snapshot", { workspace });
+  assert.equal(snapshot.status, 200);
+  const projected = snapshot.body.snapshot as { tasks: Array<{ id: string }> };
+  assert.equal(projected.tasks.some(({ id }) => id === "run:completed-run"), false);
+});
+
+test("hub snapshot hides failed scheduled runs without deleting canonical state", async (t) => {
+  const { graph, application, workspace } = setup();
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-runs-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const hub = await createWorkflowHub(application, { discoveryDir: dir, graph });
+  t.after(() => hub.close());
+  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
+
+  await post(hub.url, token, "/run/begin", { runId: "failed-run", title: "Failed scheduled run", workspace });
+  await post(hub.url, hub.verificationToken, "/run/finish", { runId: "failed-run", outcome: "failed" });
+  assert.equal(graph.get(taskId("run:failed-run")).state, "FAILED");
+
+  const snapshot = await post(hub.url, token, "/snapshot", { workspace });
+  assert.equal(snapshot.status, 200);
+  const projected = snapshot.body.snapshot as { tasks: Array<{ id: string }> };
+  assert.equal(projected.tasks.some(({ id }) => id === "run:failed-run"), false);
+});
+
 // ── Task A2: automatic review trigger on run completion ─────────────────────
 
 const AXES_SUMMARY = "test integrity: real assertions. task completeness: done. cleanliness: no dead code.";

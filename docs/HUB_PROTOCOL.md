@@ -167,18 +167,19 @@ Workflow hub implementation, not as part of the v1 contract.
 Routes shell execution through Workflow containment (bubblewrap isolation,
 workspace limits).
 
-Request: `{ "command": "<string|argv record>", "cwd": "<absolute path>", "workspace": "<optional absolute path>", "teamTaskId": "<optional active Cline task id>" }`
+Request: `{ "command": "<string|argv record>", "cwd": "<absolute path>", "workspace": "<optional absolute path>", "teamTaskId": "<optional lifecycle hint>" }`
 
 `workspace` (optional) is the surface's workspace root and must be an absolute
 path to an existing directory; when present, authorization targets the declared
-workspace's application (defaults to `cwd`). `teamTaskId` is an ordinary-client lifecycle hint only. When present, Workflow
-does not start the generic interactive seed task. Workflow resolves the hint into
-its workspace-canonical task namespace and permits process authorization only when
-that already-observed task is `IN_PROGRESS`. A known task that is no longer in
-progress is treated as a stale lifecycle hint and shell execution falls back to
-ordinary interactive authorization; an unknown task still fails closed. The hint
-cannot select an evidence subject, record task evidence, or authorize a verification
-transition; the ordinary client has no verifier credential.
+workspace's application (defaults to `cwd`). `teamTaskId` is a vestigial
+ordinary-client lifecycle hint retained for back-compat: when present, Workflow
+does not start the generic interactive seed task. Since W050 step 6 removed the
+vendored-Cline bridge, no `HubBridgeExtension` is composed, so the hint no
+longer resolves into any task namespace and no longer restricts process
+authorization to an `IN_PROGRESS` task — `/bash` runs under ordinary process
+authorization for the resolved application. The hint cannot select an evidence
+subject, record task evidence, or authorize a verification transition; the
+ordinary client has no verifier credential.
 
 Response `200`: `{ "output": "<combined stdout/stderr>" }`.
 Non-zero exit codes surface as `500` with `{ "error": "<output>" }`.

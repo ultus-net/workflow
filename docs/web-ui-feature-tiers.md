@@ -100,7 +100,7 @@ projection drops the config summary (`src/ui/operator-session.ts:37-39`).
 - Search across sessions; session rename; share links (local-first design).
 - Thumbs feedback on messages.
 - Temporary/ephemeral chat (no registry persistence).
-- System-prompt presets (response-style exists TUI-side only).
+- System-prompt presets (response-style was TUI-side only; its TUI delivery was removed in W050 — no surface composes it now).
 
 ## Deliberately out of scope
 
