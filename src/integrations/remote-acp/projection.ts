@@ -92,6 +92,7 @@ export function projectSessionUpdate(
   if (part.type === "tool" && typeof part.callID === "string") {
     const state = part.state ?? {};
     const sessionUpdate = state.status === "pending" ? "tool_call" : "tool_call_update";
+    const locations = inputLocations(state.input);
     return {
       sessionId,
       update: {
@@ -101,7 +102,10 @@ export function projectSessionUpdate(
         kind: toolKind(part.tool),
         status: toolStatus(state.status),
         rawInput: state.input,
-        ...(typeof state.output === "string" ? { content: [{ type: "content", content: { type: "text", text: state.output } }] } : {}),
+        ...(typeof state.output === "string"
+          ? { rawOutput: state.output, content: [{ type: "content", content: { type: "text", text: state.output } }] }
+          : {}),
+        ...(locations.length > 0 ? { locations } : {}),
       },
     };
   }
@@ -132,6 +136,23 @@ function permissionLocations(metadata: Record<string, unknown>): readonly { path
     const path = (file as Record<string, unknown>).filePath;
     return typeof path === "string" && path.length > 0 ? [{ path }] : [];
   });
+}
+
+/** Best-effort file locations from a tool's raw input. */
+function inputLocations(input: unknown): readonly { path: string }[] {
+  if (typeof input !== "object" || input === null) return [];
+  const record = input as Record<string, unknown>;
+  const direct = record.path ?? record.filePath ?? record.file_path;
+  const locations: { path: string }[] = [];
+  if (typeof direct === "string" && direct.length > 0) locations.push({ path: direct });
+  if (Array.isArray(record.files)) {
+    for (const file of record.files) {
+      if (typeof file !== "object" || file === null) continue;
+      const path = (file as Record<string, unknown>).filePath;
+      if (typeof path === "string" && path.length > 0) locations.push({ path });
+    }
+  }
+  return locations;
 }
 
 /** Maps engine tool names to ACP tool kinds (conservative: unknown → other). */

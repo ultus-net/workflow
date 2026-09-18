@@ -102,11 +102,24 @@ test("tool part updates project pending/running/completed/error states", () => {
   assert.equal((running?.update as { sessionUpdate: string }).sessionUpdate, "tool_call_update");
   assert.equal((running?.update as { status: string }).status, "in_progress");
   assert.deepEqual((running?.update as { content: unknown }).content, [{ type: "content", content: { type: "text", text: "ok" } }]);
+  assert.equal((running?.update as { rawOutput: unknown }).rawOutput, "ok");
 
   const failed = projectSessionUpdate(event("message.part.updated", {
     part: { type: "tool", sessionID: "ses_1", callID: "call_1", tool: "bash", state: { status: "error" } },
   }));
   assert.equal((failed?.update as { status: string }).status, "failed");
+});
+
+test("tool projection carries file locations from the raw input", () => {
+  const single = projectSessionUpdate(event("message.part.updated", {
+    part: { type: "tool", sessionID: "ses_1", callID: "call_1", tool: "edit", state: { status: "running", input: { filePath: "src/a.ts" } } },
+  }));
+  assert.deepEqual((single?.update as { locations: unknown }).locations, [{ path: "src/a.ts" }]);
+
+  const many = projectSessionUpdate(event("message.part.updated", {
+    part: { type: "tool", sessionID: "ses_1", callID: "call_2", tool: "read", state: { status: "running", input: { files: [{ filePath: "src/a.ts" }, { filePath: "src/b.ts" }] } } },
+  }));
+  assert.deepEqual((many?.update as { locations: unknown }).locations, [{ path: "src/a.ts" }, { path: "src/b.ts" }]);
 });
 
 test("unmapped events project to nothing", () => {
