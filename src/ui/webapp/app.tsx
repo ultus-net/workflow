@@ -11,9 +11,10 @@ import { ActionPart, AttentionPart, CompletionPart, OutcomePart, PlanPart, Think
 import { ConfigField } from "./config-field.js";
 import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
-import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } from "./presenters.js";
-import { useSessionState, useSessionUsage } from "./runtime.js";
+import { describeActivity, formatElapsed, formatTokens } from "./presenters.js";
+import { useSessionState, useSessionUsage, useAgentIdentity, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog } from "./settings-dialog.js";
+import { SessionsView } from "./sessions-view.js";
 import { listPalettes } from "./theme/palettes.js";
 import { usePalette, useTheme } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
@@ -60,6 +61,34 @@ interface GitStatus {
   readonly changes: readonly GitChange[];
 }
 
+export interface GitWorktree {
+  readonly path: string;
+  readonly head?: string;
+  readonly branch: string | null;
+  readonly bare: boolean;
+  readonly detached: boolean;
+  readonly current: boolean;
+}
+
+/** Polls the repository's git worktree list; undefined when unavailable. */
+function useWorktrees() {
+  const [worktrees, setWorktrees] = useState<readonly GitWorktree[] | undefined>(undefined);
+  useEffect(() => {
+    const load = async (): Promise<void> => {
+      try {
+        const response = await fetch("/api/worktrees");
+        if (response.ok) setWorktrees((await response.json() as { worktrees: readonly GitWorktree[] }).worktrees);
+      } catch {
+        // Keep the last good list; the next poll retries.
+      }
+    };
+    void load();
+    const timer = setInterval(() => void load(), PANEL_POLL_MS);
+    return () => clearInterval(timer);
+  }, []);
+  return worktrees;
+}
+
 function useSnapshot() {
   const [snapshot, setSnapshot] = useState<Snapshot | undefined>(undefined);
   const load = useCallback(async (): Promise<void> => {
@@ -104,16 +133,22 @@ function advance(taskId: string, requested: string, refresh: () => Promise<void>
   }).then(() => refresh());
 }
 
-interface SessionMeta {
+export interface SessionMeta {
   readonly id: string;
   readonly title: string;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly active: boolean;
   readonly agent: string;
+  /** A live ACP runtime is spawned for this session (parallel sessions). */
+  readonly live?: boolean;
+  /** The live runtime's turn is in flight. */
+  readonly busy?: boolean;
+  /** The ACP handshake version, when this session's runtime reported one. */
+  readonly version?: string;
 }
 
-interface AgentInfo {
+export interface AgentInfo {
   readonly id: string;
   readonly name: string;
   readonly containment: "contained" | "advisory";
@@ -178,22 +213,6 @@ function createSession(refresh: () => Promise<void>): void {
   void fetch("/api/sessions", { method: "POST" }).then(() => refresh());
 }
 
-function dismissSession(id: string, refresh: () => Promise<void>): void {
-  void fetch("/api/sessions/dismiss", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ id }),
-  }).then(() => refresh());
-}
-
-function clearUnusedSessions(refresh: () => Promise<void>): void {
-  void fetch("/api/sessions/dismiss", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ clearUnused: true }),
-  }).then(() => refresh());
-}
-
 type PermissionDecision = "allow_once" | "allow_always" | "reject_once" | "reject_always";
 
 interface PendingPermission {
@@ -214,42 +233,43 @@ interface PermissionsState {
 const PERMISSION_POLL_MS = 1000;
 
 /** Polls operator permission-asking state; parked prompts need fast feedback. */
-function usePermissions() {
+function usePermissions(sessionId: string | undefined) {
   const [state, setState] = useState<PermissionsState>({
     available: false,
     mode: "auto",
     pending: null,
     patterns: { alwaysAllow: [], alwaysReject: [] },
   });
+  const sessionSuffix = sessionId === undefined ? "" : `?session=${encodeURIComponent(sessionId)}`;
   const load = useCallback(async (): Promise<void> => {
     try {
-      const response = await fetch("/api/permission");
+      const response = await fetch(`/api/permission${sessionSuffix}`);
       if (response.ok) setState(await response.json() as PermissionsState);
     } catch {
       // Keep the last good state; the next poll retries.
     }
-  }, []);
+  }, [sessionSuffix]);
   useEffect(() => {
     void load();
     const timer = setInterval(() => void load(), PERMISSION_POLL_MS);
     return () => clearInterval(timer);
   }, [load]);
   const answer = useCallback(async (id: string, decision: PermissionDecision): Promise<void> => {
-    await fetch("/api/permission", {
+    await fetch(`/api/permission${sessionSuffix}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id, decision }),
     });
     await load();
-  }, [load]);
+  }, [load, sessionSuffix]);
   const update = useCallback(async (body: { mode?: "auto" | "ask"; reset?: boolean }): Promise<void> => {
-    await fetch("/api/permission-mode", {
+    await fetch(`/api/permission-mode${sessionSuffix}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
     await load();
-  }, [load]);
+  }, [load, sessionSuffix]);
   return { ...state, answer, update };
 }
 
@@ -307,26 +327,27 @@ function writeLastUsed(id: string, value: string | boolean): void {
   }
 }
 
-function useConfigOptions() {
+function useConfigOptions(sessionId: string | undefined) {
   const [options, setOptions] = useState<WebConfigOption[]>([]);
   // Option ids whose last-used value we already pushed to the agent this
   // session, so a reconnect can't loop restore→default→restore.
   const restoredRef = useRef<Set<string>>(new Set());
+  const sessionSuffix = sessionId === undefined ? "" : `?session=${encodeURIComponent(sessionId)}`;
   const setOption = useCallback((id: string, value: string | boolean): void => {
     // Optimistic: reflect the choice now, reconcile with the server response.
     writeLastUsed(id, value);
     setOptions((previous) => previous.map((option) => option.id === id ? { ...option, currentValue: value } : option));
-    void fetch("/api/config-options", {
+    void fetch(`/api/config-options${sessionSuffix}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ id, value }),
     }).then(async (response) => {
       if (response.ok) setOptions((await response.json() as { options: WebConfigOption[] }).options);
     }).catch(() => {});
-  }, []);
+  }, [sessionSuffix]);
   const load = useCallback(async (): Promise<void> => {
     try {
-      const response = await fetch("/api/config-options");
+      const response = await fetch(`/api/config-options${sessionSuffix}`);
       if (!response.ok) return;
       const fresh = (await response.json() as { options: WebConfigOption[] }).options;
       // Restore the operator's last-used value wherever the agent reverted to
@@ -367,6 +388,26 @@ function GearIcon() {
       <circle cx="8" cy="8" r="5.1" />
       <circle cx="8" cy="8" r="2" />
       <path d="M8 1.2v1.7M8 13.1v1.7M14.8 8h-1.7M2.9 8H1.2M12.7 3.3l-1.2 1.2M4.5 11.5l-1.2 1.2M12.7 12.7l-1.2-1.2M4.5 4.5L3.3 3.3" />
+    </svg>
+  );
+}
+
+/** Nav slug glyphs — the icon sits over the label (icons over names). */
+function ChatIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.5 3.5h11v7h-5l-3 3v-3h-3z" />
+    </svg>
+  );
+}
+
+function SessionsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="11" height="4.2" />
+      <rect x="2.5" y="9.3" width="11" height="4.2" />
+      <circle cx="5" cy="4.6" r="0.7" fill="currentColor" stroke="none" />
+      <circle cx="5" cy="11.4" r="0.7" fill="currentColor" stroke="none" />
     </svg>
   );
 }
@@ -461,13 +502,11 @@ function PermissionPrompt({ pending, answer, remembered }: {
   );
 }
 
-/** The session's single usage readout (composer meta row): a context-window
- * fill bar plus cumulative tokens and cost. Context fill needs both the
- * latest context input (proxy) and the agent-reported window (ACP
- * usage_update); without the window the used count still shows, honestly. */
-function UsageMeter() {
-  const usage = useSessionUsage();
-  if (usage === undefined) return null;
+/** The session's usage readout, rendered inside the status bar (far left):
+ * a context-window fill bar plus cumulative tokens and cost. Context fill
+ * needs both the latest context input (proxy) and the agent-reported window
+ * (ACP usage_update); without the window the used count still shows, honestly. */
+function UsageMeter({ usage }: { readonly usage: SessionUsage }) {
   const contextUsed = usage.latestPromptTokens;
   const contextWindow = usage.contextWindowTokens;
   const fillPct = contextUsed !== undefined && contextWindow !== undefined && contextWindow > 0
@@ -495,6 +534,74 @@ function UsageMeter() {
       </span>
       <span className="usage-cost" aria-label={`${usage.costUsd} US dollars`}>${usage.costUsd.toFixed(4)}</span>
     </div>
+  );
+}
+
+/** The operator's chosen model: the current value of the model config option,
+ * shown by friendly name when the agent advertises choices. */
+function currentModelName(options: readonly WebConfigOption[]): string | undefined {
+  const model = options.find((option) => option.category === "model" || option.id === "model");
+  if (model === undefined) return undefined;
+  return model.choices?.find((choice) => choice.value === model.currentValue)?.name ?? String(model.currentValue);
+}
+
+/** Bottom status bar: context/tokens far left, model + branch in the middle,
+ * the agent's handshake version far right. Live facts only — a slot whose
+ * data is unknown renders nothing rather than a placeholder. */
+function StatusBar({ identity, model, branch, usage, isRunning }: {
+  readonly identity: { readonly agent?: string | undefined; readonly version?: string | undefined };
+  readonly model: string | undefined;
+  readonly branch: string | undefined;
+  readonly usage: SessionUsage | undefined;
+  readonly isRunning: boolean;
+}) {
+  return (
+    <footer className="status-bar" aria-label="Session status">
+      <div className="status-bar-group">
+        {usage !== undefined && <UsageMeter usage={usage} />}
+        {isRunning && <span className="status-bar-running" aria-hidden="true"><span className="working-dot" /></span>}
+      </div>
+      <div className="status-bar-group status-bar-middle">
+        {model !== undefined && <span className="status-bar-item status-bar-model" title={model}>{model}</span>}
+        {branch !== undefined && <span className="status-bar-item status-bar-branch" title={branch}>{branch}</span>}
+      </div>
+      <div className="status-bar-group status-bar-right">
+        {identity.agent !== undefined && (
+          <span className="status-bar-item status-bar-agent">
+            {identity.agent}
+            {identity.version !== undefined && <span className="status-bar-version"> {identity.version}</span>}
+          </span>
+        )}
+      </div>
+    </footer>
+  );
+}
+
+/** Collapsible git worktree list for the left rail: starts closed — the list
+ * is reference, not a control. The current worktree is marked; others are
+ * read-only facts (switching stays an operator git command). */
+function WorktreeRail({ worktrees }: { readonly worktrees: readonly GitWorktree[] | undefined }) {
+  const [open, setOpen] = useState(false);
+  if (worktrees === undefined || worktrees.length === 0) return null;
+  return (
+    <details className="worktree-rail panel-disclosure" open={open} onToggle={(event) => setOpen((event.target as HTMLDetailsElement).open)}>
+      <summary>
+        <span>Worktrees</span>
+        <span className="panel-summary-meta">{worktrees.length}</span>
+      </summary>
+      <div className="worktree-list">
+        {worktrees.map((worktree) => (
+          <span
+            key={worktree.path}
+            className={`worktree-row ${worktree.current ? "worktree-current" : ""}`}
+            title={worktree.path}
+          >
+            <span className="worktree-branch">{worktree.branch ?? (worktree.bare ? "bare" : "detached")}</span>
+            {worktree.current && <span className="worktree-here" aria-label="current worktree">here</span>}
+          </span>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -557,116 +664,6 @@ const SUGGESTED_PROMPTS: readonly string[] = [
   "Summarize the working-tree changes",
 ];
 
-function SessionsPanel({ sessions, refresh }: { readonly sessions: SessionMeta[]; readonly refresh: () => Promise<void> }) {
-  const [pending, setPending] = useState<string | undefined>(undefined);
-  const [query, setQuery] = useState("");
-  const [renaming, setRenaming] = useState<{ id: string; title: string } | undefined>(undefined);
-  const switchTo = (id: string): void => {
-    setPending(id);
-    void activate(id).finally(() => setPending(undefined));
-  };
-  const activate = async (id: string): Promise<void> => {
-    await fetch("/api/sessions/activate", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id }),
-    });
-    await refresh();
-  };
-  const commitRename = async (): Promise<void> => {
-    if (renaming === undefined) return;
-    await fetch("/api/sessions/rename", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ id: renaming.id, title: renaming.title }),
-    });
-    setRenaming(undefined);
-    await refresh();
-  };
-  const hasUnused = sessions.some((session) => !session.active && session.title === "New session");
-  // Title search over the registry (local-first): transcripts live in the
-  // agent process, so what the registry holds is what can be searched.
-  const needle = query.trim().toLowerCase();
-  const visible = needle === "" ? sessions : sessions.filter((session) => session.title.toLowerCase().includes(needle));
-  return (
-    <section className="sessions">
-      <h2>
-        Sessions
-        <span className="sessions-actions">
-          {hasUnused && (
-            <button className="btn btn-ghost sessions-clear" onClick={() => clearUnusedSessions(refresh)}>Clear</button>
-          )}
-          <button className="btn btn-ghost sessions-new" onClick={() => createSession(refresh)} aria-label="New session">+ New</button>
-        </span>
-      </h2>
-      <input
-        className="sessions-search"
-        type="search"
-        placeholder="Search sessions"
-        aria-label="Search sessions by title"
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-      />
-      <div className="sessions-list">
-        {visible.length === 0 && needle !== "" && <p className="muted sessions-none">no sessions match</p>}
-        {visible.map((session) => (
-          <div className={`session-row ${session.active ? "session-active" : ""} ${pending === session.id ? "session-pending" : ""}`} key={session.id}>
-            {renaming?.id === session.id ? (
-              <span className="session-rename">
-                <input
-                  aria-label={`New title for ${session.title}`}
-                  value={renaming.title}
-                  autoFocus
-                  onChange={(event) => setRenaming({ id: session.id, title: event.target.value })}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") void commitRename();
-                    if (event.key === "Escape") setRenaming(undefined);
-                  }}
-                />
-                <button className="btn btn-ghost session-rename-save" aria-label="Save title" onClick={() => void commitRename()} disabled={pending !== undefined}>✓</button>
-                <button className="btn btn-ghost session-rename-cancel" aria-label="Cancel rename" onClick={() => setRenaming(undefined)}>×</button>
-              </span>
-            ) : (
-              <>
-                <button
-                  className="session-activate"
-                  onClick={() => switchTo(session.id)}
-                  aria-current={session.active}
-                  disabled={pending !== undefined}
-                >
-                  <span className="session-heading">
-                    {session.active && <span className="session-active-dot" aria-hidden="true" />}
-                    <span className="session-title">{pending === session.id ? "loading…" : session.title}</span>
-                  </span>
-                  <span className="session-meta">
-                    <span className="session-time" title={new Date(session.updatedAt).toLocaleString()}>{formatRelativeTime(session.updatedAt)}</span>
-                    <span className="session-agent">{session.agent}</span>
-                  </span>
-                </button>
-                <button
-                  className="session-dismiss session-rename-trigger"
-                  onClick={() => setRenaming({ id: session.id, title: session.title })}
-                  aria-label={`Rename ${session.title}`}
-                  disabled={pending !== undefined}
-                >
-                  ✎
-                </button>
-                <button
-                  className="session-dismiss"
-                  onClick={() => dismissSession(session.id, refresh)}
-                  aria-label={`Dismiss ${session.title}`}
-                  disabled={pending !== undefined}
-                >
-                  ×
-                </button>
-              </>
-            )}
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
 
 /**
  * Collects a message's visible text (skips data parts) for copy/edit. User
@@ -1197,18 +1194,54 @@ function EnforcementBadge({ level, transport, copy }: {
   );
 }
 
+/** Top-bar views. Sessions is a page (nav slug); session history stays
+ * reachable from the composer via the /sessions command. */
+export type AppView = "chat" | "sessions";
+
 export function App() {
+  // The chat view focuses one parallel session at a time; undefined = the
+  // server's focused session. State lives above the runtime provider so the
+  // poll and every session-scoped fetch carry the same session id.
+  const [view, setView] = useState<AppView>("chat");
+  const [focusedSessionId, setFocusedSessionId] = useState<string | undefined>(undefined);
+  const handleCommand = useCallback((command: string): boolean => {
+    const name = command.split(/\s+/)[0]?.toLowerCase() ?? "";
+    if (name === "/sessions") {
+      setView("sessions");
+      return true;
+    }
+    if (name === "/chat") {
+      setView("chat");
+      return true;
+    }
+    return false;
+  }, []);
+  return (
+    <WorkflowRuntimeProvider sessionId={focusedSessionId} onCommandSession={handleCommand}>
+      <AppShell view={view} setView={setView} focusedSessionId={focusedSessionId} setFocusedSessionId={setFocusedSessionId} />
+    </WorkflowRuntimeProvider>
+  );
+}
+
+function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
+  readonly view: AppView;
+  readonly setView: (view: AppView) => void;
+  readonly focusedSessionId: string | undefined;
+  readonly setFocusedSessionId: (id: string | undefined) => void;
+}) {
   const { snapshot, refresh } = useSnapshot();
   const gitStatus = useGitStatus();
+  const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
   const agents = useAgents();
   // The registry leads with the default agent (OpenCode); fall back to it while
   // the agents list is still loading so the switcher never marks the wrong one.
   const currentAgent = sessions?.find((session) => session.active)?.agent ?? agents[0]?.id ?? "opencode";
-  const { options, setOption } = useConfigOptions();
-  const permissions = usePermissions();
+  const { options, setOption } = useConfigOptions(focusedSessionId);
+  const permissions = usePermissions(focusedSessionId);
   const capabilities = useCapabilities();
   const { isRunning } = useSessionState();
+  const identity = useAgentIdentity();
   const theme = useTheme();
   const { palette, setPalette } = usePalette();
   const palettes = useMemo(() => listPalettes(), []);
@@ -1269,13 +1302,64 @@ export function App() {
 
   const activeTitle = sessions?.find((session) => session.active)?.title;
 
+  const createSessionWithAgent = useCallback((agent: string): void => {
+    void fetch("/api/sessions", { method: "POST" }).then((created) => {
+      if (!created.ok) return;
+      void created.clone().json().then((meta) => {
+        const id = (meta as { id?: string }).id;
+        if (id === undefined) return;
+        return fetch("/api/sessions/agent", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ agent, session: id }),
+        }).then(() => {
+          setFocusedSessionId(id);
+          void refreshSessions();
+        });
+      }).catch(() => {});
+    }).then(() => refreshSessions());
+  }, [refreshSessions, setFocusedSessionId]);
+
+  const switchSession = useCallback((id: string): void => {
+    void fetch("/api/sessions/activate", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id }),
+    }).then(() => {
+      setFocusedSessionId(id);
+      void refreshSessions();
+    }).catch(() => {});
+  }, [refreshSessions, setFocusedSessionId]);
+
+  const runInSession = useCallback(async (id: string, action: () => Promise<Response>): Promise<void> => {
+    await action();
+    await refreshSessions();
+  }, [refreshSessions]);
+
   return (
     <div className="shell">
       <header className="shell-header">
         <div className="shell-header-left">
           <RailsToggle off={railsOff} onToggle={setRailsOff} />
           <h1 className="shell-wordmark">Workflow</h1>
-          {activeTitle !== undefined && (
+          <nav className="shell-nav" aria-label="Views">
+            {([
+              ["chat", "Chat", <ChatIcon key="c" />],
+              ["sessions", "Sessions", <SessionsIcon key="s" />],
+            ] as const).map(([slug, label, icon]) => (
+              <button
+                key={slug}
+                type="button"
+                className={`shell-nav-slug ${view === slug ? "shell-nav-slug-on" : ""}`}
+                aria-current={view === slug ? "page" : undefined}
+                onClick={() => setView(slug)}
+              >
+                {icon}
+                <span>{label}</span>
+              </button>
+            ))}
+          </nav>
+          {view === "chat" && activeTitle !== undefined && (
             <span className="shell-session-title" title={activeTitle}>{activeTitle}</span>
           )}
         </div>
@@ -1293,9 +1377,50 @@ export function App() {
           </button>
         </div>
       </header>
+      {view === "sessions" ? (
+        <SessionsView
+          sessions={sessions}
+          agents={agents}
+          currentAgent={currentAgent}
+          onActivate={(id) => switchSession(id)}
+          onCreate={(agent) => createSessionWithAgent(agent)}
+          onSwitchAgent={(id, agent) => {
+            void fetch("/api/sessions/agent", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ agent, session: id }),
+            }).then(() => refreshSessions());
+          }}
+          onRename={(id, title) => {
+            void fetch("/api/sessions/rename", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id, title }),
+            }).then(() => refreshSessions());
+          }}
+          onDismiss={(id) => {
+            void runInSession(id, () => fetch("/api/sessions/dismiss", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id }),
+            })).catch(() => {});
+          }}
+          onClearUnused={() => {
+            void fetch("/api/sessions/dismiss", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ clearUnused: true }),
+            }).then(() => refreshSessions());
+          }}
+          onOpenChat={(id) => {
+            switchSession(id);
+            setView("chat");
+          }}
+        />
+      ) : (
       <div className="shell-body">
-        <aside className="sidebar" aria-label="Sessions and repository changes">
-          {sessions !== undefined && <SessionsPanel sessions={sessions} refresh={refreshSessions} />}
+        <aside className="sidebar" aria-label="Repository changes">
+          <WorktreeRail worktrees={worktrees} />
           <GitRail status={gitStatus} />
         </aside>
         <section className="chat-column">
@@ -1335,7 +1460,6 @@ export function App() {
               <Composer options={options} setOption={setOption} />
               <QueueIndicator />
               <div className="composer-meta">
-                {usage !== undefined && <UsageMeter />}
                 <ExportSessionButton />
               </div>
             </div>
@@ -1345,6 +1469,14 @@ export function App() {
           <Panels snapshot={snapshot} refresh={refresh} />
         </aside>
       </div>
+      )}
+      <StatusBar
+        identity={identity}
+        model={currentModelName(options)}
+        branch={gitStatus?.branch}
+        usage={usage}
+        isRunning={isRunning}
+      />
       {settingsOpen && (
         <SettingsDialog
           onClose={() => setSettingsOpen(false)}

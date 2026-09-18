@@ -115,6 +115,42 @@ body {
   gap: 0.5rem;
 }
 
+/* Top-bar view navigation: slugs — icon over the name, square, mono. */
+.shell-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.2rem;
+  margin-left: 0.4rem;
+  border-left: 1px solid var(--border);
+  padding-left: 0.7rem;
+}
+
+.shell-nav-slug {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.05rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-s);
+  font: inherit;
+  font-size: 0.62rem;
+  letter-spacing: 0.04em;
+  padding: 0.16rem 0.5rem;
+  cursor: pointer;
+}
+
+.shell-nav-slug:hover { color: var(--text); border-color: var(--border); }
+
+.shell-nav-slug-on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.shell-nav-slug:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 /* Focus mode: hides both side panels so the thread centers (≥1101px only;
    below that the layout is already a single stacked column). */
 .rail-toggle {
@@ -485,6 +521,239 @@ body {
   font-size: 0.8rem;
   padding: 0.15rem 0.6rem;
 }
+
+/* Bottom status bar: usage far left, model + branch middle, agent version far
+   right. Dense control-room register; facts only, no placeholders. */
+.status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 1.75rem;
+  padding: 0.1rem clamp(0.9rem, 2vw, 1.75rem);
+  border-top: 1px solid var(--border);
+  background: var(--bg-deep);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.status-bar-group {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
+.status-bar-middle {
+  flex: 1;
+  justify-content: center;
+}
+
+.status-bar-right { justify-content: flex-end; }
+
+.status-bar-item {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.status-bar-model { color: var(--text-muted); }
+.status-bar-branch { color: var(--text-muted); }
+
+.status-bar-agent { color: var(--text); }
+
+.status-bar-version { color: var(--accent); }
+
+.status-bar-running .working-dot { display: inline-block; }
+
+/* The status bar hosts the usage meter — tighten it to bar scale. */
+.status-bar .usage-meter {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-size: 0.72rem;
+}
+
+/* Collapsible worktree list (left rail): reference data, starts closed. */
+.worktree-rail { border-bottom: 1px solid var(--border); }
+.worktree-rail summary { padding: 0.55rem var(--space-4); }
+
+.worktree-list {
+  display: flex;
+  flex-direction: column;
+  padding: 0.2rem var(--space-4) 0.6rem;
+}
+
+.worktree-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.16rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.worktree-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.worktree-current { color: var(--text); }
+
+.worktree-here {
+  flex: none;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  padding: 0 0.3rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+}
+
+/* Sessions page */
+.sessions-view {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5) clamp(0.9rem, 3vw, 2.5rem);
+}
+
+.sessions-view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  margin-bottom: var(--space-4);
+}
+
+.sessions-view-head h2 {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.sessions-view-new {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.sessions-agent-label { font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-muted); }
+
+.sessions-agent-picker,
+.session-agent-select {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-s);
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0.28rem 0.5rem;
+}
+
+.sessions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr));
+  gap: 0.7rem;
+}
+
+.session-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.8rem;
+}
+
+.session-card-focus { border-color: var(--accent); }
+
+.session-card-busy { border-left: 3px solid var(--accent); }
+
+.session-card-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.session-run-dot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+}
+
+.session-run-dot-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  animation: working-pulse 1.4s ease-in-out infinite;
+}
+
+.session-card-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.86rem;
+  color: var(--text);
+  min-width: 0;
+}
+
+.session-focus-tag {
+  flex: none;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.07em;
+  padding: 0 0.3rem;
+}
+
+.session-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+.session-agent-badge {
+  border: 1px solid var(--border-strong);
+  padding: 0 0.3rem;
+}
+
+.session-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+}
+
+.session-card-rename {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.session-card-rename input {
+  flex: 1;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  color: var(--text);
+  border-radius: var(--radius-s);
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.2rem 0.4rem;
+}
+
+.sessions-empty-note { font-family: var(--font-mono); font-size: 0.78rem; }
 
 /* Operator parts (actions, outcomes, attention, completion) */
 
@@ -1862,41 +2131,38 @@ body {
 .task-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 @media (max-width: 1100px) {
-  /* Stack: chat first, then the sidebar (sessions/changes), then the
-     inspector. The body scrolls as one column. */
+  /* Half-screen chat: the rails collapse away entirely and the thread +
+     composer own the screen. The rails' facts remain reachable at full
+     width, in the inspector's domain, or via settings — a half-screen
+     operator is chatting, not supervising. */
+  .sidebar, .inspector { display: none; }
   .shell-body {
     flex-direction: column;
-    overflow-y: auto;
+    overflow: hidden;
   }
-  .sidebar {
-    order: 2;
-    width: auto;
-    border-right: 0;
-    border-top: 1px solid var(--border);
-    padding: var(--space-4) var(--space-4);
-  }
-  .chat-column { min-height: 0; padding: var(--space-4) var(--space-4); }
-  .thread-viewport { min-height: 30vh; max-height: 65vh; }
-  .msg { max-width: 95%; }
-  .inspector {
-    order: 3;
-    width: auto;
-    border-left: 0;
-    border-top: 1px solid var(--border);
-    padding: var(--space-4) var(--space-4) var(--space-5);
-    background: transparent;
-  }
-  .panels { overflow: visible; padding: 0; }
-  .sessions-list { max-height: 18rem; }
-  .composer-chips { flex-wrap: wrap; }
+  .chat-column { border-inline: 0; padding: var(--space-3) clamp(0.6rem, 1.5vw, 1.25rem); }
+  .thread-viewport { min-height: 0; max-height: none; flex: 1; }
+  .msg { max-width: 96%; }
+  .composer-chips { overflow-x: auto; flex-wrap: nowrap; }
+  .shell-session-title { max-width: 14ch; }
+}
+
+@media (max-width: 900px) {
+  /* Compact status bar: usage left, version right; the middle cedes space. */
+  .status-bar-middle { display: none; }
+  .usage-context-bar { display: none; }
+  .usage-tokens { display: none; }
 }
 
 @media (max-width: 600px) {
   body { font-size: 14px; }
-  .shell-header { padding-inline: 0.9rem; }
+  .shell-header { padding-inline: 0.6rem; }
+  .shell-nav-slug span { display: none; }
   .enforcement-badge { font-size: 0.65rem; }
   .composer-footer { flex-wrap: wrap; }
   .composer-meta { flex-wrap: wrap; }
+  .composer-chips { overflow-x: auto; }
+  .usage-cost { display: none; }
   .task-add, .evidence-add { display: grid; grid-template-columns: 1fr auto; }
   .task-add input:nth-child(2), .task-add button { grid-column: 1 / -1; }
 }
