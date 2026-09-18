@@ -12,7 +12,7 @@
     }
   },
   "bin": {
-    "workflow": "dist/cli/tui.js",
+    "workflow": "dist/cli/web-launch.js",
     "workflow-tui": "dist/cli/universal-tui.js",
     "workflow-hub": "dist/cli/hub.js",
     "workflow-admin": "dist/cli/admin.js",
@@ -36,7 +36,6 @@
     "lint": "eslint src test",
     "hub": "tsx src/cli/hub.ts",
     "admin": "tsx src/cli/admin.ts",
-    "tui": "node scripts/build-cline-tui.mjs && tsx src/cli/tui.tsx",
     "tui:workflow": "tsx src/cli/ink-tui.tsx",
     "tui:acp": "tsx src/cli/acp-tui.tsx",
     "tui:universal": "tsx src/cli/universal-tui.tsx",
@@ -46,6 +45,7 @@
     "cline:bump": "node scripts/bump-cline-tag.mjs",
     "contained-shell": "tsx src/cli/contained-shell.ts",
     "web": "tsx src/cli/web.ts",
+    "web:launch": "tsx src/cli/web-launch.ts",
     "pretest": "node scripts/build-cline-tui.mjs",
     "setup": "node scripts/install.mjs",
     "test": "node --import tsx --test test/**/*.test.ts",

@@ -12,6 +12,8 @@ The spike proved an asymmetric field: OpenCode's default ACP mode edits files wi
 
 **GO.** Build the clean Workflow terminal surface over **stock-ACP Cline launched under whole-agent Bubblewrap containment** as the lead path. Patched Cline Ink (current `src/cli/tui.tsx` surface) remains the **fallback/migration surface**, not the base.
 
+> **Supersession note (2026-09-18):** the lead agent pivoted to stock-ACP **OpenCode** (`docs/ACP_DECISION.md` pivot section, 2026-09-16), and the `workflow` default bind has now moved from the patched-Cline TUI launcher to the browser operator UI over OpenCode ACP (`src/cli/web-launch.ts` → `src/cli/web-service.ts`). `src/cli/tui.tsx` is retired. The vendored-Cline ACP runtime remains a selectable fallback agent (`WORKFLOW_ACP_AGENT=cline`); its full retirement stays evidence-gated under W050. This note supersedes the "Patched Cline Ink … fallback/migration surface" clause above; the dated sentence is kept, not rewritten.
+
 **Headless-auth qualification (2026-09-16):** stock Cline (3.0.62 PATH) is account-cloud-only in ACP mode — no API-key auth method is advertised, and headless key sessions fail with `re-authenticate your Cline account` — so the stock surface cannot run headless; the vendored patched binary (`--acp --provider openrouter` plus `CLINE_API_KEY`) is the only headless Cline path, and gathering stock-ACP evidence requires an interactive account-cloud login (`docs/ACP_SURFACE.md` §4, `docs/ACP_RESEARCH.md`).
 
 ## Pivot (2026-09-16): the lead surface is now stock-ACP OpenCode
