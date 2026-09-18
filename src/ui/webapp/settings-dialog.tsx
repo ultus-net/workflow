@@ -4,6 +4,7 @@ import type { WebConfigOption } from "../web-config-options.js";
 import { ConfigField } from "./config-field.js";
 import { formatTokens } from "./presenters.js";
 import { useSessionState, useSessionUsage } from "./runtime.js";
+import type { PaletteSummary } from "./theme/palettes.js";
 import type { ThemeChoice } from "./theme.js";
 
 /** Structural slices of the app hooks the dialog needs; App passes its own. */
@@ -31,6 +32,9 @@ export interface SettingsDialogProps {
   readonly onClose: () => void;
   readonly themeChoice: ThemeChoice;
   readonly onThemeChoice: (choice: ThemeChoice) => void;
+  readonly palette: string | undefined;
+  readonly onPalette: (palette: string | undefined) => void;
+  readonly palettes: readonly PaletteSummary[];
   readonly railsOff: boolean;
   readonly onRailsToggle: (off: boolean) => void;
   readonly options: readonly WebConfigOption[];
@@ -135,14 +139,15 @@ function Section({ title, children }: { readonly title: string; readonly childre
   );
 }
 
-function Row({ label, description, control, title }: {
+function Row({ label, description, control, title, stacked }: {
   readonly label: string;
   readonly description?: string | undefined;
   readonly title?: string | undefined;
+  readonly stacked?: boolean | undefined;
   readonly control: ReactNode;
 }) {
   return (
-    <div className="settings-row" title={title}>
+    <div className={`settings-row ${stacked === true ? "settings-row-stacked" : ""}`} title={title}>
       <span className="settings-row-label">
         {label}
         {description !== undefined && <span className="settings-desc">{description}</span>}
@@ -175,9 +180,12 @@ function Toggle({ checked, disabled, onChange, ariaLabel, inputRef }: {
   );
 }
 
-function AppearanceSection({ themeChoice, onThemeChoice, railsOff, onRailsToggle }: {
+export function AppearanceSection({ themeChoice, onThemeChoice, palette, onPalette, palettes, railsOff, onRailsToggle }: {
   readonly themeChoice: ThemeChoice;
   readonly onThemeChoice: (choice: ThemeChoice) => void;
+  readonly palette: string | undefined;
+  readonly onPalette: (palette: string | undefined) => void;
+  readonly palettes: readonly PaletteSummary[];
   readonly railsOff: boolean;
   readonly onRailsToggle: (off: boolean) => void;
 }) {
@@ -198,6 +206,46 @@ function AppearanceSection({ themeChoice, onThemeChoice, railsOff, onRailsToggle
                 onClick={() => onThemeChoice(option)}
               >
                 {option === "system" ? "System" : option === "dark" ? "Dark" : "Light"}
+              </button>
+            ))}
+          </div>
+        }
+      />
+      <Row
+        stacked
+        label="Palette"
+        description="Catalog themes over the Workflow amber identity — the default when none is chosen"
+        control={
+          <div className="palette-choice" role="listbox" aria-label="Color palette">
+            <button
+              type="button"
+              role="option"
+              aria-selected={palette === undefined}
+              className={`palette-chip ${palette === undefined ? "palette-chip-on" : ""}`}
+              onClick={() => onPalette(undefined)}
+            >
+              <span className="palette-swatch" aria-hidden="true">
+                <span style={{ background: "#14161a" }} />
+                <span style={{ background: "#e8a33d" }} />
+                <span style={{ background: "#e6e8eb" }} />
+              </span>
+              Workflow amber
+            </button>
+            {palettes.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                role="option"
+                aria-selected={palette === entry.id}
+                className={`palette-chip ${palette === entry.id ? "palette-chip-on" : ""}`}
+                onClick={() => onPalette(entry.id)}
+              >
+                <span className="palette-swatch" aria-hidden="true">
+                  <span style={{ background: entry.swatch.bg }} />
+                  <span style={{ background: entry.swatch.accent }} />
+                  <span style={{ background: entry.swatch.text }} />
+                </span>
+                {entry.name}
               </button>
             ))}
           </div>

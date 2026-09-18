@@ -67,6 +67,9 @@ trip over.
 | Response/build styles (caveman speech, ponytail YAGNI build) | Complete | **model-advisory** — the model can ignore them; live switch through the `/` or Ctrl+P options menu; summaries kept by design |
 | ~~Style-savings measurement (`npm run style:eval`)~~ | **Removed (W050 step 6, 2026-09-18)** | `src/cli/style-eval.ts` and the `style:eval` script were removed with the vendored-Cline SDK runtime |
 | Browser projection | Partial | `src/ui/web.ts` demo; does not have the monitoring panels |
+| Browser operator UI (battlestation) | Partial | `src/ui/webapp` + `src/ui/web.ts`: Chat/Sessions/Usage pages (top-bar nav slugs), **parallel live ACP runtimes** (one per session, cap 6 with LRU eviction; per-session turns + parked permission prompts), composer config chips, status bar (context left · model+branch middle · agent handshake version right), collapsible worktree rail (starts closed), 37-theme opt-in palette catalog (AA-gated), OpenRouter spend page (Management-key analytics; honest setup state without it), `/sessions` · `/chat` · `/usage` commands; tested by a committed zero-dep browser e2e (`test/webui-e2e.test.ts`) + SSR/AA pins |
+| Local OpenRouter metering proxy | Complete | `src/integrations/model-usage-proxy.ts` — per-request usage accounting behind the hub; feeds the status bar |
+| OpenRouter analytics client (Usage page) | Partial | `src/integrations/openrouter-analytics.ts` — Management-key `/analytics/query` + `/meta` + `/credits`; metric availability gated by `/analytics/meta`, credits degrade to absent on scope errors; **requires `WORKFLOW_OPENROUTER_MANAGEMENT_KEY`** (server-side only) |
 
 ## MCP Toolbox (14 servers)
 
