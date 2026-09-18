@@ -38,7 +38,7 @@ This installs the five bins (`workflow`, `workflow-tui`, `workflow-hub`,
 | Command | What it is |
 |---|---|
 | `workflow-hub` | the authority daemon every surface needs (discovery + token) |
-| `workflow` | patched Cline TUI launcher; auto-spawns the hub when absent |
+| `workflow` | browser operator UI launcher; OpenCode in ACP mode by default, opened in your browser |
 | `workflow-tui` | universal interactive TUI with explicit `cline`, `opencode`, or `acp` driver selection; fallback surface |
 | `workflow-monitor` | Ink monitoring TUI over the hub's canonical snapshot; standalone local authority when the hub is unreachable |
 | `workflow-shell` | interactive contained shell |
@@ -46,7 +46,7 @@ This installs the five bins (`workflow`, `workflow-tui`, `workflow-hub`,
 ## Quickstart
 
 ```sh
-workflow --cwd /path/to/project   # self-starts the authority hub
+workflow --cwd /path/to/project   # browser UI (OpenCode/ACP); --no-browser or WORKFLOW_NO_BROWSER=1 to skip opening
 workflow-tui --driver acp --cwd /path/to/project  # universal fallback; standalone local authority
 workflow-monitor                  # monitoring TUI over the live hub
 workflow-shell                    # contained shell
