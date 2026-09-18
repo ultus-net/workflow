@@ -78,7 +78,7 @@ prompts are never changed by hidden first-character shortcuts.
 
 - **Universal authorization**: one hub gates every tool call on every surface; scheduled runs get their own task and evidence.
 - **Token economy**: lazy MCP tool discovery (schemas on demand), MCP result truncation, a compaction ↔ project-memory bridge, and optional terse styles. Streamed logs are UI-only and never reach the model.
-- **Current-model routing**: agents default to `openrouter/auto`, and the hub proxy resolves `~…-latest` aliases into the Auto Router's `allowed_models` (which does not understand aliases itself), so routing follows the newest frontier models without pinning versions or a client-side plugin.
+- **Current-model routing**: agents default to `openrouter/auto`, and the hub proxy resolves `~…-latest` aliases into the Auto Router's `allowed_models` (which does not understand aliases itself), so routing follows the newest frontier models without pinning versions or a client-side plugin. The same pool is selectable per-family from the ACP model picker.
 - **Monitoring**: always-on task and activity panels plus a log-enriched transcript; every MCP server emits leveled logs and progress.
 - **Pedagogy**: five modes from Learn-to-Code to Autonomous with checkpoint gating and a persistent learner profile.
 - **Containment**: bubblewrap-isolated process execution on Linux.

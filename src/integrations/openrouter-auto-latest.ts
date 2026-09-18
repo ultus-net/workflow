@@ -65,6 +65,55 @@ const AUTO_ROUTER_MODELS: Readonly<Record<string, string>> = {
 const OPENROUTER_HOSTS = new Set(["openrouter.ai", "eu.openrouter.ai", "us.openrouter.ai"]);
 const DISABLED_TOGGLES = new Set(["0", "false", "off", "disabled", "no"]);
 
+/** Human labels for the default pool (shown in the ACP model picker). */
+const AUTO_LATEST_LABELS: Readonly<Record<string, string>> = {
+  "~anthropic/claude-opus-latest": "Claude Opus (latest)",
+  "~anthropic/claude-sonnet-latest": "Claude Sonnet (latest)",
+  "~anthropic/claude-haiku-latest": "Claude Haiku (latest)",
+  "~anthropic/claude-fable-latest": "Claude Fable (latest)",
+  "~openai/gpt-astra-latest": "GPT Astra (latest)",
+  "~openai/gpt-sol-latest": "GPT Sol (latest)",
+  "~openai/gpt-terra-latest": "GPT Terra (latest)",
+  "~openai/gpt-luna-latest": "GPT Luna (latest)",
+  "~openai/gpt-mini-latest": "GPT Mini (latest)",
+  "~google/gemini-pro-latest": "Gemini Pro (latest)",
+  "~google/gemini-flash-latest": "Gemini Flash (latest)",
+  "~x-ai/grok-latest": "Grok (latest)",
+  "~deepseek/deepseek-pro-latest": "DeepSeek Pro (latest)",
+  "~deepseek/deepseek-flash-latest": "DeepSeek Flash (latest)",
+  "~deepseek/deepseek-v4-flash-latest": "DeepSeek V4 Flash (latest)",
+  "~z-ai/glm-latest": "GLM (latest)",
+  "~z-ai/glm-flash-latest": "GLM Flash (latest)",
+  "~moonshotai/kimi-latest": "Kimi (latest)",
+};
+
+const LABEL_ACRONYMS = new Set(["gpt", "glm", "ai", "llm", "vl", "tts", "stt", "mcp"]);
+const LABEL_STYLES: Readonly<Record<string, string>> = { deepseek: "DeepSeek", moonshotai: "MoonshotAI" };
+
+/** Friendly model-picker label for an alias, e.g. `~openai/gpt-terra-latest` -> `GPT Terra (latest)`. */
+export function autoLatestModelLabel(alias: string): string {
+  const explicit = AUTO_LATEST_LABELS[alias];
+  if (explicit !== undefined) return explicit;
+  const slug = alias.replace(/^~/, "").replace(/-latest$/, "");
+  const tail = slug.includes("/") ? slug.slice(slug.lastIndexOf("/") + 1) : slug;
+  const label = tail
+    .split(/[-_]+/)
+    .filter((word) => word.length > 0)
+    .map((word) => {
+      const lower = word.toLowerCase();
+      if (Object.hasOwn(LABEL_STYLES, lower)) return LABEL_STYLES[lower] ?? word;
+      if (LABEL_ACRONYMS.has(lower)) return lower.toUpperCase();
+      return lower.charAt(0).toUpperCase() + lower.slice(1);
+    })
+    .join(" ");
+  return `${label.length > 0 ? label : alias} (latest)`;
+}
+
+/** Model-picker catalog entries for the alias pool (`id -> { name }`). */
+export function autoLatestModelCatalog(aliases: readonly string[]): Record<string, { readonly name: string }> {
+  return Object.fromEntries(aliases.map((alias) => [alias, { name: autoLatestModelLabel(alias) }]));
+}
+
 /** Resolved Auto Router pool plus optional cost band. */
 export interface AutoLatestConfig {
   readonly aliases: readonly string[];

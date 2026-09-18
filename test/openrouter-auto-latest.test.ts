@@ -6,6 +6,8 @@ import {
   aliasTargets,
   applyAutoRouterPlugin,
   autoLatestConfigFromEnv,
+  autoLatestModelCatalog,
+  autoLatestModelLabel,
   autoRouterPluginId,
   createAliasResolver,
   isAutoRouterModel,
@@ -141,6 +143,29 @@ test("createAliasResolver treats a non-2xx catalog response as failure", async (
     fetch: (async () => new Response("nope", { status: 500 })) as unknown as typeof fetch,
   });
   assert.deepEqual(await resolver.resolve(), []);
+});
+
+test("autoLatestModelLabel gives friendly picker names, including derived fallbacks", () => {
+  assert.equal(autoLatestModelLabel("~anthropic/claude-sonnet-latest"), "Claude Sonnet (latest)");
+  assert.equal(autoLatestModelLabel("~openai/gpt-terra-latest"), "GPT Terra (latest)");
+  assert.equal(autoLatestModelLabel("~deepseek/deepseek-v4-flash-latest"), "DeepSeek V4 Flash (latest)");
+  assert.equal(autoLatestModelLabel("~acme/super-model-v9-latest"), "Super Model V9 (latest)");
+  assert.equal(autoLatestModelLabel("~acme/gpt-9000-latest"), "GPT 9000 (latest)");
+});
+
+test("autoLatestModelCatalog maps each alias to a picker name", () => {
+  assert.deepEqual(autoLatestModelCatalog(["~anthropic/claude-opus-latest", "~x-ai/grok-latest"]), {
+    "~anthropic/claude-opus-latest": { name: "Claude Opus (latest)" },
+    "~x-ai/grok-latest": { name: "Grok (latest)" },
+  });
+});
+
+test("DEFAULT_AUTO_LATEST_ALIASES all resolve to friendly labels", () => {
+  for (const alias of DEFAULT_AUTO_LATEST_ALIASES) {
+    const label = autoLatestModelLabel(alias);
+    assert.ok(label.length > 0, `${alias} must have a label`);
+    assert.match(label, /\(latest\)$/, `${alias} label should be marked latest`);
+  }
 });
 
 test("autoLatestConfigFromEnv defaults on for OpenRouter and off elsewhere", () => {

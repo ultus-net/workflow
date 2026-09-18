@@ -153,6 +153,7 @@ async function createOpencodeRuntime(
       JSON.stringify(meteredOpencodeConfig({
         proxyUrl: proxy.url,
         model: process.env.WORKFLOW_OPENCODE_MODEL,
+        ...(autoLatest === undefined ? {} : { autoLatest: { aliases: autoLatest.aliases } }),
         ...(skillsMount === undefined ? {} : { skills: skillsMount }),
       })),
       { encoding: "utf8", mode: 0o600 },
