@@ -11,7 +11,7 @@ actual system authority; host SDKs remain replaceable adapters onto it.
 ## Architecture
 
 ```
-Cline (any surface, any version)
+Agent surfaces (OpenCode lead, goose backup, Cline fallback)
   │  hub endpoint: ws://127.0.0.1:<hubPort>  (Workflow-controlled)
   ▼
 Workflow Hub (long-running daemon; npm bin `workflow-hub`)
@@ -19,12 +19,16 @@ Workflow Hub (long-running daemon; npm bin `workflow-hub`)
   ├ vendored toolbox MCP registrations (merged settings already exist)
   ├ containment / evidence authority over proposed actions
   ├ records task/evidence state in WorkflowApplication
-  └ endpoint discovery file for Cline's `readHubDiscovery(...)`
+  └ endpoint discovery file for hub clients (`readHubDiscovery(...)`)
 ```
 
-The Workflow Hub is the *only* hub on the machine for this install. Cline's
-`ensureCliHubServer` path is replaced: instead of spawning its own detached
-hub, consumers connect to the Workflow hub for everything.
+The Workflow Hub is the *only* hub on the machine for this install. The
+vendored Cline's `ensureCliHubServer` path is replaced: instead of spawning its
+own detached hub, consumers (Cline today; any hub client tomorrow) connect to
+the Workflow hub for everything. Note the current default surface — the browser
+operator UI over stock-ACP OpenCode — runs its own in-process application
+authority and does not require the hub daemon; the hub's dependent surfaces are
+the Cline family and every launcher that resolves it.
 
 ## Daemon protocol
 
@@ -62,28 +66,40 @@ can't be authorized fail **closed** (hub denies rather than guessing).
 | **Scheduled agents** | hub-side cron with workflow-authorize hooks |
 | Teams/desktop | hub-side localRuntime hooks |
 
+The browser operator UI (OpenCode lead) and the ACP terminal surfaces
+(`workflow-tui --driver acp|opencode`, goose) compose the application authority
+in-process (`WorkflowApplication` + `createConfiguredAcpRuntime`, whole-agent
+containment); they do not depend on the hub daemon. The hub remains the shared
+authority for the Cline family and for launchers that resolve it.
+
 ## Commands
 
 - `workflow-hub` — start the detached authority daemon (discovery + token).
-- `workflow` — still the TUI launcher; resolves against the global Workflow hub.
-- Launchers auto-spawn `workflow-hub` detached when the discovery file is
-  missing or stale, guarded by `~/.workflow/hub/discovery.json.spawn.lock`.
-  `WORKFLOW_AUTOHUB=0` restores strict fail-fast resolution.
+- `workflow` — the browser operator UI launcher (OpenCode in ACP mode by
+  default; opens the browser); `workflow-tui --driver acp|opencode` is the
+  terminal surface, with the agent kind chosen by `WORKFLOW_ACP_AGENT`
+  (`opencode` | `cline` | `goose`). Hub-resolving launchers (the Cline family)
+  still connect to the global Workflow hub.
+- Launchers that resolve the hub auto-spawn `workflow-hub` detached when the
+  discovery file is missing or stale, guarded by
+  `~/.workflow/hub/discovery.json.spawn.lock`. `WORKFLOW_AUTOHUB=0` restores
+  strict fail-fast resolution.
 
-For Cline team tasks, `WORKFLOW_TEAM_TASK_VERIFY_COMMAND` defaults to `"true"`
+For hub team tasks (the Cline `/team-task` flow and the `/team-task/verify`
+API), `WORKFLOW_TEAM_TASK_VERIFY_COMMAND` defaults to `"true"`
 on the Workflow hub daemon, so completed team tasks automatically promote to
-`VERIFIED` once reported by Cline. To enforce real project verification, set
+`VERIFIED` once reported by the hub client. To enforce real project verification, set
 `WORKFLOW_TEAM_TASK_VERIFY_COMMAND` to the project verification command (for
 example, `npm test`). Setting it to an empty string (`""`) disables automatic
 promotion and leaves completed tasks `VERIFYING` until verified via the
-`/team-task/verify` API with the verifier capability. Ordinary Cline `/bash`
-requests cannot produce this evidence.
+`/team-task/verify` API with the verifier capability. Ordinary hub-client
+`/bash` requests cannot produce this evidence.
 
 ## Operational semantics (fail-closed)
 
 | Condition | Behavior |
 |---|---|
-| workflow-hub not running | Cline cannot authorize — startup fails |
+| workflow-hub not running | hub-resolving surfaces (Cline family) cannot authorize — startup fails; the browser/OpenCode and goose ACP surfaces carry in-process authority and are unaffected |
 | authorization hook doesn't return `allow` | fails closed, task stays FAILED |
 | guard unavailable/offline | fails closed, not advisory-from-here |
 | obsolete hub discovery file | daemon in launcher's start transaction |
