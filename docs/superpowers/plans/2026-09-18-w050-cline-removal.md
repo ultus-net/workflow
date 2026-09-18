@@ -1,9 +1,11 @@
 # W050 execution plan — retire the vendored-Cline runtime
 
 **Status:** draft plan, 2026-09-18. **Gate:** do not execute until W050
-criterion 1 (backup-slot takeover) and criterion 2 (SDK-seam decision
-signature, `docs/ACP_DECISION.md` "W050 SDK-seam decision — PROPOSED") have
-resolved. This plan removes nothing by itself.
+criterion 1 (backup-slot takeover) and criterion 2 (SDK-seam decision) have
+resolved. The criterion-2 draft currently lives on branch
+`feat/w050-sdk-seam-decision` (PR #37) as `docs/ACP_DECISION.md` "W050 SDK-seam
+decision — PROPOSED"; it is not yet on `main`. This plan removes nothing by
+itself.
 
 ## Why a plan first
 
@@ -35,17 +37,22 @@ Delete:
 - Build/patch: `scripts/build-cline-tui.mjs`, `scripts/bump-cline-tag.mjs`,
   `patches/cline-cli-v3.0.61-workflow.patch`.
 - Vendored checkout: `.workflow-cline/` (untracked; remove the directory and
-  the `.gitignore` / `.git/info/exclude` entries).
-- Tests: `test/cline-adapter.test.ts`, `test/cline-launch.test.ts`,
+  the `.gitignore:4` / `.git/info/exclude:9` entries).
+- Cline-named tests: `test/cline-adapter.test.ts`, `test/cline-launch.test.ts`,
   `test/cline-plugin.test.ts`, `test/cline-session.test.ts`,
   `test/cline-tui-bridge.test.ts`, `test/cline-probe-helpers.ts`, and the
-  whole `test/acp-cline-*.test.ts` family (10 files:
-  contained, mcp-mount, metadata, metered, mutation, probe, resume, shell,
-  subagent, tool-matrix).
+  whole `test/acp-cline-*.test.ts` family (10 files: contained, mcp-mount,
+  metadata, metered, mutation, probe, resume, shell, subagent, tool-matrix).
 - Integration regressions: `test/integration/cline-coding-session.mjs`,
   `cline-plugin-fixture.mjs`, `cline-resume.mjs`, `cline-runtime.mjs`.
+- **Non-Cline-named tests that assert Cline behavior** — these must be edited,
+  not deleted outright: `test/driver-registry.test.ts:20-52` (the `cline`
+  driver cases), `test/web-agents.test.ts:14-38` (the cline registry entry),
+  `test/tui-cli.test.ts:9,19` (patched-Cline source checks),
+  `test/toolbox-mcp-settings.test.ts` (with C3),
+  `test/interactive-containment-cli.test.ts` (ClineHostAdapter wiring).
 
-## B. Removal set — the Cline agent kind
+## B. Removal set — the Cline agent kind and its live importers
 
 Edit (not delete):
 
@@ -56,7 +63,17 @@ Edit (not delete):
   cline composer, and the `createConfiguredClineRuntime` import.
 - `src/ui/web-agents.ts` — drop the `"cline"` `WebAgentId`, its `listWebAgents`
   entry, `clineApiKeyPresent`, and `isWebAgentId` membership.
-- `src/index.ts` — drop the four `cline-*` re-exports (lines 7, 8, 16, 17).
+- **Live importers of the Cline runtime/adapter beyond the driver registry**
+  (the reviewer surfaced these; grep after editing to confirm none remain):
+  `src/cli/ink-tui.tsx:7,136-138` and `src/cli/style-eval.ts:4,35` import
+  `createConfiguredClineRuntime`; `src/cli/contained-shell.ts:7,37` uses
+  `ClineHostAdapter` (real code, not a comment). Decide per file: re-point at
+  the OpenCode/goose runtime, or drop the Cline path.
+- `src/index.ts` — drop **five** re-exports:
+  `./adapters/cline.js` (line 9), `./integrations/cline-plugin.js` (7),
+  `./integrations/cline-shell-executor.js` (8), `./integrations/cline-session.js`
+  (16), `./integrations/cline-runtime.js` (17). This is the package's public
+  compatibility boundary.
 - `package.json` — remove scripts `tui:cline:build`, `build:cline-agent`,
   `cline:bump`, `test:cline-runtime`, `test:cline-coding-session`,
   `test:cline-resume`; replace `pretest` (currently the Cline build) with
@@ -67,21 +84,22 @@ Edit (not delete):
 
 ## C. Shared substrates — untangle before deleting
 
-These are load-bearing for the remaining ACP surfaces (OpenCode, goose); do
-each **before** the corresponding removal above.
+These are load-bearing for the remaining ACP surfaces (OpenCode, goose) or the
+hub; do each **before** the corresponding removal above.
 
-1. **Run-controller types live in `cline-tui-bridge.ts`.** General modules
-   import `WorkflowRunController` / `WorkflowApplicationResolver` from it
+1. **Shared types live in `cline-tui-bridge.ts`.** General modules import
+   `WorkflowRunController` / `WorkflowApplicationResolver` from it
    (`src/integrations/workflow-hub.ts:8-14`, `hub-scheduler.ts:4`,
-   `run-registry.ts:8`, `hub-reviewer.ts:21`). Relocate these types (and any
-   other non-Cline exports still consumed) to a neutral module
-   (e.g. `src/integrations/run-controller.ts`) and re-point the consumers
-   before deleting the bridge. Note `WorkflowClineTuiBridge`,
-   `recordClineTeamTaskEnvironmentEvidence`, and `shellExecutorFor` are
-   Cline-only and go with it.
+   `run-registry.ts:8`, `hub-reviewer.ts:21`), and **`shellExecutorFor` is not
+   Cline-only** — `src/cli/hub.ts:9,101` uses it. Relocate the still-consumed
+   exports (`WorkflowRunController`, `WorkflowApplicationResolver`,
+   `shellExecutorFor`, and any other non-Cline symbols) to a neutral module
+   (e.g. `src/integrations/run-controller.ts`) and re-point every consumer
+   before deleting the bridge. `WorkflowClineTuiBridge` and
+   `recordClineTeamTaskEnvironmentEvidence` are Cline-only and go with it.
 2. **`CLINE_API_KEY` / `~/.config/workflow/cline-api-key` is the shared
    upstream metering key for *all* ACP runtimes** (`acp-runtime.ts:461,609`);
-   goose availability even reports it (`web-agents.ts:39,103,110`). Do **not**
+   goose availability even reports it (`web-agents.ts:32-40,103,110`). Do **not**
    delete it with Cline. Introduce a canonical name (e.g.
    `WORKFLOW_UPSTREAM_KEY` + `~/.config/workflow/upstream-key`) with
    back-compat reads of the old names, update the proxy/agent modules, and
@@ -94,8 +112,8 @@ each **before** the corresponding removal above.
    surface still needs it). `test/toolbox-mcp-settings.test.ts` goes with it.
 4. **Genericize Cline-named comments/constants in shared modules** —
    `src/adapters/acp-contained-agent.ts:20`, `src/integrations/model-usage-proxy.ts:35`,
-   `src/containment/linux-bwrap.ts`, `src/cli/contained-shell.ts`, and the
-   `hub*.ts` comments (e.g. `src/cli/hub.ts:83`).
+   `src/containment/linux-bwrap.ts`, `src/integrations/goose-agent-config.ts:99,118,143`,
+   and the `hub*.ts` comments (e.g. `src/cli/hub.ts:83`).
 
 ## D. Reference updates (docs + configuration)
 
@@ -110,11 +128,13 @@ each **before** the corresponding removal above.
   `docs/GOOSE_RESEARCH.md`, `docs/GOOSE_DOGFOOD.md`,
   `docs/CHAT_UI_RESEARCH_2026.md`, `docs/TUTOR_AND_LEARNING_SPEC.md`.
 - **`docs/SECURITY_ASSURANCE.md` — machine-checked.** Every claim row citing a
-  `test/cline-*` or `test/acp-cline-*` file (S3, S4, S6, S12 and others) must be
-  removed or re-pointed at the surviving equivalent, and the Cline rows in the
-  S12 gated-probe catalog removed. **The checker enforces per-section citation
-  floors**, so a section that loses most of its rows must rebalance honestly
-  (re-point at OpenCode/goose evidence), not pad with unverified claims. Run
+  `test/cline-*` or `test/acp-cline-*` file must be removed or re-pointed at
+  the surviving equivalent, and the Cline rows in the S12 gated-probe catalog
+  removed. The affected sections are **S2, S3, S6, S7, and S12** (S4 cites no
+  Cline tests). **The checker enforces per-section citation floors**
+  (`test/security-assurance.test.ts:47,57,67`), so a section that loses most of
+  its rows must rebalance honestly (re-point at OpenCode/goose evidence), not
+  pad with unverified claims. Run
   `node --import tsx --test test/security-assurance.test.ts` after editing.
 - **Archive, do not silently drop:** the plugin-era findings and probe verdicts
   (the Cline ACP rows in `HOST_ADAPTERS.md`, the Cline residual risks,
@@ -138,11 +158,13 @@ each **before** the corresponding removal above.
 ## F. Sequencing
 
 1. Gate clears (A/B/C above).
-2. C1 relocate run-controller types → verify (no behavior change).
+2. C1 relocate shared types + `shellExecutorFor` → verify (no behavior change).
 3. C2 upstream-key canonicalization + back-compat → verify.
 4. C3/C4 retire mcp-settings + genericize comments → verify.
-5. B adjust the agent kind/driver/web registry + package scripts → verify.
-6. A delete files, tests, scripts, patch, checkout, excludes.
+5. B adjust live importers (runtime branch, driver/web registry, ink-tui,
+   style-eval, contained-shell, index, package scripts) → verify.
+6. A delete files, tests, scripts, patch, checkout, excludes; edit the
+   non-Cline-named tests that assert Cline behavior.
 7. D doc reconciliation (append-only for dated records) + E verification.
 8. Review + PR.
 
@@ -157,6 +179,6 @@ each **before** the corresponding removal above.
 - The upstream-key rename touches a live operator credential path; ship it with
   back-compat and a docs note before the old names are removed (they may be
   removed in a later, separately-gated step).
-- No external consumers of the Cline modules are known; `src/index.ts` is the
-  package's public export surface, so dropping those re-exports is the
-  compatibility boundary to check.
+- `src/index.ts` is the package's public export surface; dropping five Cline
+  re-exports is the compatibility boundary to check. No external consumers are
+  known.
