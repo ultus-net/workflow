@@ -4,8 +4,10 @@ import test from "node:test";
 import type { RemoteEngineEvent } from "../src/integrations/remote-acp/engine.js";
 import {
   REMOTE_PERMISSION_OPTIONS,
+  availableCommandsUpdate,
   availableModels,
   availableModes,
+  currentModeUpdate,
   isSessionIdle,
   permissionReplyFromOutcome,
   permissionToolCall,
@@ -189,4 +191,18 @@ test("sessionConfigOptions builds mode and model selects with current values", (
     { id: "model", name: "Model", type: "select", currentValue: "anthropic/claude", options: [{ value: "anthropic/claude", name: "Claude" }] },
   ]);
   assert.deepEqual(sessionConfigOptions({ modes: [], models: [] }), []);
+});
+
+test("availableCommandsUpdate and currentModeUpdate build the notification shapes", () => {
+  assert.deepEqual(availableCommandsUpdate("ses_1", [{ name: "test", description: "Run tests" }, { name: "init" }]), {
+    sessionId: "ses_1",
+    update: {
+      sessionUpdate: "available_commands_update",
+      availableCommands: [{ name: "test", description: "Run tests" }, { name: "init" }],
+    },
+  });
+  assert.deepEqual(currentModeUpdate("ses_1", "plan"), {
+    sessionId: "ses_1",
+    update: { sessionUpdate: "current_mode_update", currentModeId: "plan" },
+  });
 });

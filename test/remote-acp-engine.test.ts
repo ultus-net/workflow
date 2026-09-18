@@ -147,3 +147,12 @@ test("HttpRemoteEngine deleteSession issues a DELETE", async () => {
   await engine.deleteSession({ sessionId: "ses_1", cwd: "/w" });
   assert.equal(method, "DELETE");
 });
+
+test("HttpRemoteEngine parses slash commands", async () => {
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    fetch: async () => new Response(JSON.stringify([{ name: "test", description: "Run tests" }, { name: "init" }, { nope: true }]), { status: 200 }),
+  });
+  assert.deepEqual(await engine.commands({ cwd: "/w" }), [{ name: "test", description: "Run tests" }, { name: "init" }]);
+});

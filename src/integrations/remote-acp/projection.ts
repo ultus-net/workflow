@@ -6,7 +6,7 @@
  * the permission path is answered by Workflow through the ACP connection.
  */
 
-import type { RemoteAgent, RemoteEngineEvent, RemoteEnginePermissionRequest, RemoteEngineReply, RemoteMessage, RemoteProvider } from "./engine.js";
+import type { RemoteAgent, RemoteCommand, RemoteEngineEvent, RemoteEnginePermissionRequest, RemoteEngineReply, RemoteMessage, RemoteProvider } from "./engine.js";
 
 /** ACP permission options the bridge offering mirrors the native mapping. */
 export const REMOTE_PERMISSION_OPTIONS = [
@@ -254,4 +254,29 @@ export function sessionConfigOptions(input: {
     });
   }
   return options;
+}
+
+/** ACP `available_commands_update` notification for remote slash commands. */
+export function availableCommandsUpdate(
+  sessionId: string,
+  commands: readonly RemoteCommand[],
+): { readonly sessionId: string; readonly update: Record<string, unknown> } {
+  return {
+    sessionId,
+    update: {
+      sessionUpdate: "available_commands_update",
+      availableCommands: commands.map((command) => ({
+        name: command.name,
+        ...(command.description === undefined ? {} : { description: command.description }),
+      })),
+    },
+  };
+}
+
+/** ACP `current_mode_update` notification. */
+export function currentModeUpdate(
+  sessionId: string,
+  modeId: string,
+): { readonly sessionId: string; readonly update: Record<string, unknown> } {
+  return { sessionId, update: { sessionUpdate: "current_mode_update", currentModeId: modeId } };
 }

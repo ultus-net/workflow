@@ -11,8 +11,10 @@
 import { isPermissionAsked, type RemoteEngine, type RemoteEnginePermissionRequest } from "./engine.js";
 import {
   REMOTE_PERMISSION_OPTIONS,
+  availableCommandsUpdate,
   availableModes,
   availableModels,
+  currentModeUpdate,
   permissionReplyFromOutcome,
   permissionToolCall,
   projectReplay,
@@ -114,6 +116,20 @@ export function createRemoteAcpAgent(options: RemoteAcpAgentOptions): RemoteAcpA
       .catch((error: unknown) => options.onError?.(error));
   };
 
+  const emitCommands = async (sessionId: string, cwd: string): Promise<void> => {
+    const commands = await engine.commands({ cwd });
+    if (commands.length === 0) return;
+    await connection
+      .sessionUpdate(availableCommandsUpdate(sessionId, commands))
+      .catch((error: unknown) => options.onError?.(error));
+  };
+
+  const emitMode = async (sessionId: string, modeId: string): Promise<void> => {
+    await connection
+      .sessionUpdate(currentModeUpdate(sessionId, modeId))
+      .catch((error: unknown) => options.onError?.(error));
+  };
+
   async function runEventLoop(): Promise<void> {
     for await (const event of engine.events({ cwd: options.cwd, signal: abort.signal })) {
       if (abort.signal.aborted) return;
@@ -153,6 +169,7 @@ export function createRemoteAcpAgent(options: RemoteAcpAgentOptions): RemoteAcpA
     if (configId === "mode") {
       if (!catalog.modes.some((mode) => mode.id === value)) throw new TypeError(`unknown mode: ${value}`);
       state.modeId = value;
+      await emitMode(sessionId, value);
     } else if (configId === "model") {
       if (!catalog.models.some((model) => model.modelId === value)) throw new TypeError(`unknown model: ${value}`);
       state.modelId = value;
@@ -189,6 +206,7 @@ export function createRemoteAcpAgent(options: RemoteAcpAgentOptions): RemoteAcpA
         ...(catalog.models[0] === undefined ? {} : { modelId: catalog.models[0].modelId }),
       };
       sessions.set(session.id, state);
+      await emitCommands(session.id, cwd);
       return {
         sessionId: session.id,
         configOptions: configFor(state, catalog),
@@ -210,6 +228,7 @@ export function createRemoteAcpAgent(options: RemoteAcpAgentOptions): RemoteAcpA
         ...(catalog.models[0] === undefined ? {} : { modelId: catalog.models[0].modelId }),
       };
       sessions.set(params.sessionId, state);
+      await emitCommands(params.sessionId, cwd);
       return { configOptions: configFor(state, catalog) };
     },
     async resumeSession(params) {
@@ -246,6 +265,7 @@ export function createRemoteAcpAgent(options: RemoteAcpAgentOptions): RemoteAcpA
       const catalog = await catalogFor(state.cwd);
       if (!catalog.modes.some((mode) => mode.id === params.modeId)) throw new TypeError(`unknown mode: ${params.modeId}`);
       state.modeId = params.modeId;
+      await emitMode(params.sessionId, params.modeId);
     },
     async setSessionConfigOption(params) {
       const configOptions = await applyConfigOption(params.sessionId, params.configId, params.value);

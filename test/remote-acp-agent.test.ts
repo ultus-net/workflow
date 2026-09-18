@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createRemoteAcpAgent, type RemoteAcpConnection } from "../src/integrations/remote-acp/agent.js";
-import type { RemoteAgent, RemoteEngine, RemoteEngineEvent, RemoteEngineReply, RemoteMessage, RemoteProvider, RemoteSession } from "../src/integrations/remote-acp/engine.js";
+import type { RemoteAgent, RemoteCommand, RemoteEngine, RemoteEngineEvent, RemoteEngineReply, RemoteMessage, RemoteProvider, RemoteSession } from "../src/integrations/remote-acp/engine.js";
 
 class FakeEngine implements RemoteEngine {
   readonly creates: { cwd: string; title?: string }[] = [];
@@ -20,6 +20,7 @@ class FakeEngine implements RemoteEngine {
   ];
   messagesResult: readonly RemoteMessage[] = [];
   sessionsResult: readonly RemoteSession[] = [];
+  commandsResult: readonly RemoteCommand[] = [];
   #queue: RemoteEngineEvent[] = [];
   #waiters: ((event: RemoteEngineEvent | undefined) => void)[] = [];
   #closed = false;
@@ -67,6 +68,10 @@ class FakeEngine implements RemoteEngine {
 
   async providers(): Promise<readonly RemoteProvider[]> {
     return this.providersResult;
+  }
+
+  async commands(): Promise<readonly RemoteCommand[]> {
+    return this.commandsResult;
   }
 
   async prompt(input: { sessionId: string; cwd: string; text: string; agent?: string; model?: { providerID: string; modelID: string } }): Promise<void> {
@@ -278,5 +283,31 @@ test("listSessions maps remote sessions and closeSession deletes", async () => {
   assert.deepEqual(listed.sessions, [{ sessionId: "ses_9", cwd: "/w", title: "Old", updatedAt: 42 }]);
   await agent.closeSession({ sessionId: "ses_9" });
   assert.deepEqual(engine.deleted, ["ses_9"]);
+  agent.dispose();
+});
+
+test("newSession advertises remote slash commands", async () => {
+  const engine = new FakeEngine();
+  engine.commandsResult = [{ name: "test", description: "Run tests" }];
+  const connection = new FakeConnection();
+  const agent = createRemoteAcpAgent({ engine, cwd: "/w", connection });
+  await agent.newSession({ cwd: "/w" });
+  assert.deepEqual(connection.updates.at(-1), {
+    sessionId: "ses_1",
+    update: { sessionUpdate: "available_commands_update", availableCommands: [{ name: "test", description: "Run tests" }] },
+  });
+  agent.dispose();
+});
+
+test("setSessionMode emits a current_mode_update", async () => {
+  const engine = new FakeEngine();
+  const connection = new FakeConnection();
+  const agent = createRemoteAcpAgent({ engine, cwd: "/w", connection });
+  await agent.newSession({ cwd: "/w" });
+  await agent.setSessionMode({ sessionId: "ses_1", modeId: "plan" });
+  assert.deepEqual(connection.updates.at(-1), {
+    sessionId: "ses_1",
+    update: { sessionUpdate: "current_mode_update", currentModeId: "plan" },
+  });
   agent.dispose();
 });

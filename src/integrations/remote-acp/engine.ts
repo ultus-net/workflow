@@ -77,6 +77,11 @@ export interface RemoteProvider {
   readonly models: readonly RemoteModel[];
 }
 
+export interface RemoteCommand {
+  readonly name: string;
+  readonly description?: string;
+}
+
 export type RemoteEngineEvent =
   | { readonly type: "permission.asked"; readonly properties: RemoteEnginePermissionRequest }
   | { readonly type: "session.status"; readonly properties: { readonly sessionID: string; readonly status?: { readonly type?: string } } }
@@ -103,6 +108,7 @@ export interface RemoteEngine {
   messages(input: { readonly sessionId: string; readonly cwd: string }): Promise<readonly RemoteMessage[]>;
   agents(input: { readonly cwd: string }): Promise<readonly RemoteAgent[]>;
   providers(input: { readonly cwd: string }): Promise<readonly RemoteProvider[]>;
+  commands(input: { readonly cwd: string }): Promise<readonly RemoteCommand[]>;
   prompt(input: RemotePromptInput): Promise<void>;
   abort(input: { readonly sessionId: string; readonly cwd: string }): Promise<void>;
   replyPermission(input: {
@@ -213,6 +219,14 @@ export class HttpRemoteEngine implements RemoteEngine {
           })
         : [];
       return [{ id: entry.id, ...(typeof entry.name === "string" ? { name: entry.name } : {}), models }];
+    });
+  }
+
+  async commands(input: { cwd: string }): Promise<readonly RemoteCommand[]> {
+    const body = await this.#json("GET", "/command", { cwd: input.cwd });
+    return asArray(body).flatMap((entry) => {
+      if (!isRecord(entry) || typeof entry.name !== "string" || entry.name.length === 0) return [];
+      return [{ name: entry.name, ...(typeof entry.description === "string" ? { description: entry.description } : {}) }];
     });
   }
 
