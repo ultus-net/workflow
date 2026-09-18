@@ -28,6 +28,7 @@ import {
 import type { PermissionBroker } from "../ui/permission-broker.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { METERED_PLACEHOLDER_KEY, type ModelUsageMetrics, type ModelUsageProxy, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
+import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
 
 export interface WorkflowAcpRuntime {
   readonly driver: AcpSessionDriver;
@@ -127,7 +128,10 @@ async function createOpencodeRuntime(
 
   const apiKey = loadUpstreamApiKey();
   const upstream = process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai";
-  const proxy = await createModelUsageProxy({ upstream, apiKey });
+  // Hub-owned Auto Router pool (default on for OpenRouter upstreams): resolve
+  // `~...-latest` aliases in the proxy so agents never need a client plugin.
+  const autoLatest = autoLatestConfigFromEnv({ upstream });
+  const proxy = await createModelUsageProxy({ upstream, apiKey, ...(autoLatest === undefined ? {} : { autoLatest }) });
   // Each runtime owns a private config dir: the metering proxy port is
   // ephemeral and the config points the agent at it, so runtimes must never
   // share one config (a dead proxy port would strand later agents). Unique
@@ -264,7 +268,8 @@ async function createClineRuntime(
   const apiKey = loadUpstreamApiKey();
   const provider = process.env.CLINE_PROVIDER ?? "openrouter";
   const upstream = process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai";
-  const proxy = await createModelUsageProxy({ upstream, apiKey });
+  const autoLatest = autoLatestConfigFromEnv({ upstream });
+  const proxy = await createModelUsageProxy({ upstream, apiKey, ...(autoLatest === undefined ? {} : { autoLatest }) });
   // Each runtime owns a private provider-settings file: the metering proxy
   // port is ephemeral, so a shared providers.json let one runtime's agent
   // end up pointed at another runtime's (possibly dead) proxy. Cline writes
