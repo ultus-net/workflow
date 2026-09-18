@@ -7,7 +7,7 @@
  * `docs/OPENCODE_REMOTE_ACP_SPEC.md`.
  *
  * Usage:
- *   node --import tsx src/cli/acp-remote.ts --url http://[IP_ADDRESS]:4096 [--cwd DIR]
+ *   node --import tsx src/cli/acp-remote.ts --url http://127.0.0.1:4096 [--cwd DIR]
  *
  * Environment: OPENCODE_SERVER_URL, OPENCODE_SERVER_USERNAME,
  * OPENCODE_SERVER_PASSWORD. The password is never logged.

@@ -218,21 +218,30 @@ export function availableModes(agents: readonly RemoteAgent[]): readonly { reado
 }
 
 /** Selectable models from the remote providers, keyed `provider/model`. */
-export function availableModels(providers: readonly RemoteProvider[]): readonly { readonly modelId: string; readonly name: string }[] {
+export function availableModels(providers: readonly RemoteProvider[]): readonly RemoteAcpModel[] {
   return providers.flatMap((provider) =>
     provider.models.map((model) => ({
       modelId: `${provider.id}/${model.id}`,
       name: model.name === undefined ? `${provider.id}/${model.id}` : `${provider.name ?? provider.id}: ${model.name}`,
+      variants: model.variants,
     })),
   );
 }
 
-/** Builds ACP config options for the mode and model selectors. */
+/** A selectable model with its per-model variants (reasoning effort). */
+export interface RemoteAcpModel {
+  readonly modelId: string;
+  readonly name: string;
+  readonly variants: readonly { readonly id: string; readonly name?: string }[];
+}
+
+/** Builds ACP config options for the mode, model, and effort selectors. */
 export function sessionConfigOptions(input: {
   readonly modes: readonly { readonly id: string; readonly name: string }[];
-  readonly models: readonly { readonly modelId: string; readonly name: string }[];
+  readonly models: readonly RemoteAcpModel[];
   readonly currentModeId?: string | undefined;
   readonly currentModelId?: string | undefined;
+  readonly currentVariantId?: string | undefined;
 }): readonly RemoteSessionConfigOption[] {
   const options: RemoteSessionConfigOption[] = [];
   if (input.modes.length > 0) {
@@ -244,14 +253,25 @@ export function sessionConfigOptions(input: {
       options: input.modes.map((mode) => ({ value: mode.id, name: mode.name })),
     });
   }
-  if (input.models.length > 0) {
+  const currentModel = input.models.find((model) => model.modelId === input.currentModelId) ?? input.models[0];
+  if (currentModel !== undefined) {
     options.push({
       id: "model",
       name: "Model",
       type: "select",
-      currentValue: input.currentModelId ?? input.models[0]!.modelId,
+      currentValue: currentModel.modelId,
       options: input.models.map((model) => ({ value: model.modelId, name: model.name })),
     });
+    const variants = currentModel.variants;
+    if (variants.length > 0) {
+      options.push({
+        id: "effort",
+        name: "Effort",
+        type: "select",
+        currentValue: input.currentVariantId ?? variants[0]!.id,
+        options: variants.map((variant) => ({ value: variant.id, name: variant.name ?? variant.id })),
+      });
+    }
   }
   return options;
 }

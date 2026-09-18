@@ -16,7 +16,7 @@ class FakeEngine implements RemoteEngine {
     { id: "explore", mode: "subagent" },
   ];
   providersResult: readonly RemoteProvider[] = [
-    { id: "anthropic", name: "Anthropic", models: [{ id: "claude", name: "Claude" }] },
+    { id: "anthropic", name: "Anthropic", models: [{ id: "claude", name: "Claude", variants: [{ id: "high", name: "High" }, { id: "low" }] }] },
   ];
   messagesResult: readonly RemoteMessage[] = [];
   sessionsResult: readonly RemoteSession[] = [];
@@ -213,7 +213,7 @@ test("newSession exposes selectable modes (subagents excluded) and models as con
   const session = await agent.newSession({ cwd: "/w" });
   assert.deepEqual(session.availableModes.map((mode) => mode.id), ["build", "plan"]);
   assert.deepEqual(session.availableModels.map((model) => model.modelId), ["anthropic/claude"]);
-  assert.deepEqual(session.configOptions.map((option) => [option.id, option.currentValue]), [["mode", "build"], ["model", "anthropic/claude"]]);
+  assert.deepEqual(session.configOptions.map((option) => [option.id, option.currentValue]), [["mode", "build"], ["model", "anthropic/claude"], ["effort", "high"]]);
   agent.dispose();
 });
 
@@ -309,5 +309,21 @@ test("setSessionMode emits a current_mode_update", async () => {
     sessionId: "ses_1",
     update: { sessionUpdate: "current_mode_update", currentModeId: "plan" },
   });
+  agent.dispose();
+});
+
+test("effort config option validates against the model variants and threads into the prompt", async () => {
+  const engine = new FakeEngine();
+  const connection = new FakeConnection();
+  const agent = createRemoteAcpAgent({ engine, cwd: "/w", connection });
+  const session = await agent.newSession({ cwd: "/w" });
+  assert.equal(session.configOptions.find((option) => option.id === "effort")?.currentValue, "high");
+
+  const result = await agent.setSessionConfigOption({ sessionId: "ses_1", configId: "effort", value: "low" });
+  assert.equal(result.configOptions.find((option) => option.id === "effort")?.currentValue, "low");
+  await assert.rejects(() => agent.setSessionConfigOption({ sessionId: "ses_1", configId: "effort", value: "nope" }), /unknown effort/);
+
+  await agent.prompt({ sessionId: "ses_1", prompt: [{ type: "text", text: "go" }] });
+  assert.deepEqual(engine.prompts[0]?.model, { providerID: "anthropic", modelID: "claude", variant: "low" });
   agent.dispose();
 });

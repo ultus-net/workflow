@@ -66,9 +66,15 @@ export interface RemoteAgent {
   readonly hidden?: boolean;
 }
 
+export interface RemoteModelVariant {
+  readonly id: string;
+  readonly name?: string;
+}
+
 export interface RemoteModel {
   readonly id: string;
   readonly name?: string;
+  readonly variants: readonly RemoteModelVariant[];
 }
 
 export interface RemoteProvider {
@@ -96,7 +102,7 @@ export interface RemotePromptInput {
   /** Agent/mode to run the turn with, when the caller selected one. */
   readonly agent?: string;
   /** Model selection, when the caller selected one. */
-  readonly model?: { readonly providerID: string; readonly modelID: string };
+  readonly model?: { readonly providerID: string; readonly modelID: string; readonly variant?: string };
 }
 
 export interface RemoteEngine {
@@ -121,7 +127,7 @@ export interface RemoteEngine {
 }
 
 export interface HttpRemoteEngineOptions {
-  /** Base URL of the OpenCode server, e.g. `http://[IP_ADDRESS]:4096`. */
+  /** Base URL of the OpenCode server, e.g. `http://127.0.0.1:4096`. */
   readonly baseUrl: string;
   /** Workspace directory sent as the `directory` routing query. */
   readonly cwd: string;
@@ -215,7 +221,11 @@ export class HttpRemoteEngine implements RemoteEngine {
       const models = isRecord(entry.models)
         ? Object.values(entry.models).flatMap((model) => {
             if (!isRecord(model) || typeof model.id !== "string" || model.id.length === 0) return [];
-            return [{ id: model.id, ...(typeof model.name === "string" ? { name: model.name } : {}) }];
+            return [{
+              id: model.id,
+              ...(typeof model.name === "string" ? { name: model.name } : {}),
+              variants: parseVariants(model.variants),
+            }];
           })
         : [];
       return [{ id: entry.id, ...(typeof entry.name === "string" ? { name: entry.name } : {}), models }];
@@ -236,7 +246,13 @@ export class HttpRemoteEngine implements RemoteEngine {
       body: {
         parts: [{ type: "text", text: input.text }],
         ...(input.agent === undefined ? {} : { agent: input.agent }),
-        ...(input.model === undefined ? {} : { model: { providerID: input.model.providerID, modelID: input.model.modelID } }),
+        ...(input.model === undefined ? {} : {
+          model: {
+            providerID: input.model.providerID,
+            modelID: input.model.modelID,
+            ...(input.model.variant === undefined ? {} : { variant: input.model.variant }),
+          },
+        }),
       },
     });
   }
@@ -366,6 +382,14 @@ function parseSession(value: unknown): RemoteSession | undefined {
       },
     }),
   };
+}
+
+function parseVariants(value: unknown): readonly RemoteModelVariant[] {
+  const entries = Array.isArray(value) ? value : isRecord(value) ? Object.values(value) : [];
+  return entries.flatMap((variant) => {
+    if (!isRecord(variant) || typeof variant.id !== "string" || variant.id.length === 0) return [];
+    return [{ id: variant.id, ...(typeof variant.name === "string" ? { name: variant.name } : {}) }];
+  });
 }
 
 function asArray(value: unknown): readonly unknown[] {

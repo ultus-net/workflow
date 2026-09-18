@@ -171,25 +171,32 @@ test("availableModes excludes subagents and hidden agents", () => {
 test("availableModels flattens providers into provider/model entries", () => {
   assert.deepEqual(
     availableModels([
-      { id: "anthropic", name: "Anthropic", models: [{ id: "claude", name: "Claude" }, { id: "haiku" }] },
+      { id: "anthropic", name: "Anthropic", models: [{ id: "claude", name: "Claude", variants: [] }, { id: "haiku", variants: [] }] },
     ]),
     [
-      { modelId: "anthropic/claude", name: "Anthropic: Claude" },
-      { modelId: "anthropic/haiku", name: "anthropic/haiku" },
+      { modelId: "anthropic/claude", name: "Anthropic: Claude", variants: [] },
+      { modelId: "anthropic/haiku", name: "anthropic/haiku", variants: [] },
     ],
   );
 });
 
-test("sessionConfigOptions builds mode and model selects with current values", () => {
+test("sessionConfigOptions builds mode, model, and effort selects with current values", () => {
   const options = sessionConfigOptions({
     modes: [{ id: "build", name: "Build" }, { id: "plan", name: "Plan" }],
-    models: [{ modelId: "anthropic/claude", name: "Claude" }],
+    models: [{ modelId: "anthropic/claude", name: "Claude", variants: [{ id: "high", name: "High" }, { id: "low" }] }],
     currentModeId: "plan",
   });
   assert.deepEqual(options, [
     { id: "mode", name: "Mode", type: "select", currentValue: "plan", options: [{ value: "build", name: "Build" }, { value: "plan", name: "Plan" }] },
     { id: "model", name: "Model", type: "select", currentValue: "anthropic/claude", options: [{ value: "anthropic/claude", name: "Claude" }] },
+    { id: "effort", name: "Effort", type: "select", currentValue: "high", options: [{ value: "high", name: "High" }, { value: "low", name: "low" }] },
   ]);
+  const withVariant = sessionConfigOptions({
+    modes: [],
+    models: [{ modelId: "anthropic/claude", name: "Claude", variants: [{ id: "high" }, { id: "low" }] }],
+    currentVariantId: "low",
+  });
+  assert.equal(withVariant.find((option) => option.id === "effort")?.currentValue, "low");
   assert.deepEqual(sessionConfigOptions({ modes: [], models: [] }), []);
 });
 

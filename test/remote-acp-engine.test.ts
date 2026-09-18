@@ -113,7 +113,7 @@ test("HttpRemoteEngine parses sessions, messages, agents, and providers", async 
   assert.deepEqual(await engine.getSession({ sessionId: "ses_1", cwd: "/w" }), { id: "ses_1", title: "T" });
   assert.deepEqual(await engine.messages({ sessionId: "ses_1", cwd: "/w" }), [{ info: { id: "m1", role: "assistant" }, parts: [{ type: "text", text: "hi" }] }]);
   assert.deepEqual(await engine.agents({ cwd: "/w" }), [{ id: "build", mode: "primary" }]);
-  assert.deepEqual(await engine.providers({ cwd: "/w" }), [{ id: "anthropic", name: "Anthropic", models: [{ id: "claude", name: "Claude" }] }]);
+  assert.deepEqual(await engine.providers({ cwd: "/w" }), [{ id: "anthropic", name: "Anthropic", models: [{ id: "claude", name: "Claude", variants: [] }] }]);
 });
 
 test("HttpRemoteEngine posts the prompt with the selected agent and model", async () => {

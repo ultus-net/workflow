@@ -20,6 +20,7 @@ import {
   projectReplay,
   projectSessionUpdate,
   sessionConfigOptions,
+  type RemoteAcpModel,
   type RemoteSessionConfigOption,
 } from "./projection.js";
 
@@ -43,13 +44,14 @@ export interface RemoteAcpAgentOptions {
 
 export interface RemoteAcpCatalog {
   readonly modes: readonly { readonly id: string; readonly name: string; readonly description?: string }[];
-  readonly models: readonly { readonly modelId: string; readonly name: string }[];
+  readonly models: readonly RemoteAcpModel[];
 }
 
 interface SessionState {
   readonly cwd: string;
   modeId?: string;
   modelId?: string;
+  variantId?: string;
 }
 
 export interface RemoteAcpAgent {
@@ -108,6 +110,7 @@ export function createRemoteAcpAgent(options: RemoteAcpAgentOptions): RemoteAcpA
       models: catalog.models,
       currentModeId: state.modeId,
       currentModelId: state.modelId,
+      currentVariantId: state.variantId,
     });
 
   const emitConfigUpdate = async (sessionId: string, configOptions: readonly RemoteSessionConfigOption[]): Promise<void> => {
@@ -173,12 +176,22 @@ export function createRemoteAcpAgent(options: RemoteAcpAgentOptions): RemoteAcpA
     } else if (configId === "model") {
       if (!catalog.models.some((model) => model.modelId === value)) throw new TypeError(`unknown model: ${value}`);
       state.modelId = value;
+      if (state.variantId !== undefined && !variantsFor(catalog, value).some((variant) => variant.id === state.variantId)) {
+        delete state.variantId;
+      }
+    } else if (configId === "effort") {
+      if (!variantsFor(catalog, state.modelId).some((variant) => variant.id === value)) throw new TypeError(`unknown effort: ${value}`);
+      state.variantId = value;
     } else {
       throw new TypeError(`unsupported config option: ${configId}`);
     }
     const configOptions = configFor(state, catalog);
     await emitConfigUpdate(sessionId, configOptions);
     return configOptions;
+  }
+
+  function variantsFor(catalog: RemoteAcpCatalog, modelId: string | undefined): readonly { readonly id: string; readonly name?: string }[] {
+    return catalog.models.find((model) => model.modelId === modelId)?.variants ?? [];
   }
 
   return {
@@ -278,7 +291,8 @@ export function createRemoteAcpAgent(options: RemoteAcpAgentOptions): RemoteAcpA
         .filter((part) => part.type === "text" && typeof part.text === "string")
         .map((part) => part.text as string)
         .join("");
-      const model = parseModelId(state.modelId);
+      const selected = parseModelId(state.modelId);
+      const model = selected === undefined ? undefined : { ...selected, ...(state.variantId === undefined ? {} : { variant: state.variantId }) };
       await engine.prompt({
         sessionId: params.sessionId,
         cwd: state.cwd,
