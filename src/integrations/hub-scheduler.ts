@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 
-import type { WorkflowRunController } from "./cline-tui-bridge.js";
+import type { WorkflowRunController } from "./run-controller.js";
 
 /**
  * Plan Tasks C1/C2: hub-native scheduled runs and per-run budget enforcement.
@@ -276,6 +276,10 @@ export function createHubScheduler(options: {
         title: schedule.title,
         ...(schedule.workspace === undefined ? {} : { workspace: schedule.workspace }),
         ...(schedule.requiresReview === false ? { requiresReview: false } : { requiresReview: true }),
+        // W041: the schedule's prompt is the run's ask — the reviewer binds
+        // it into the provenance fingerprint so the same diff under a
+        // different ask never replays this run's approval.
+        taskPrompt: schedule.prompt,
       });
     } catch (error) {
       log(`scheduler '${schedule.id}': could not begin run: ${error instanceof Error ? error.message : String(error)}`);

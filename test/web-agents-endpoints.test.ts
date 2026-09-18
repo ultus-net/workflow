@@ -32,6 +32,7 @@ function fakeRuntime(agentId: string): WorkflowAcpRuntime {
   return {
     driver: driver as unknown as WorkflowAcpRuntime["driver"],
     session: new WorkflowCodingSession(driver as unknown as CodingSessionDriver),
+    budgetMechanism: "test: no local caps (fake runtime)",
     async dispose() {},
   };
 }
@@ -63,9 +64,10 @@ test("GET /api/agents lists the registered agents, default first", async (contex
   const response = await fetch(`http://127.0.0.1:${port}/api/agents`);
   assert.equal(response.status, 200);
   const body = await response.json() as { agents: { id: string; containment: string }[] };
-  assert.deepEqual(body.agents.map((agent) => agent.id), ["opencode", "cline"]);
+  assert.deepEqual(body.agents.map((agent) => agent.id), ["opencode", "goose", "cline"]);
   assert.equal(body.agents[0]?.containment, "advisory");
   assert.equal(body.agents[1]?.containment, "contained");
+  assert.equal(body.agents[2]?.containment, "contained");
 });
 
 test("POST /api/sessions/agent returns 503 when no session manager is wired", async (context) => {

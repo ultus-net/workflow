@@ -6,6 +6,11 @@ Result: qualified by the current Cline replacement matrix, subject to the final 
 
 ## Matrix
 
+> **Marker (2026-09-18, W050 step 6):** the `npm run test:cline-*` commands cited
+> in the rows below were removed with the vendored-Cline SDK runtime; the rows
+> preserve the historical 2026-09-11 results and are not current runnable
+> evidence (see the supersession notes at the end).
+
 | Scenario | Evidence | Result |
 | --- | --- | --- |
 | Clean repository inspect/edit/test/Git | `npm run test:cline-coding-session` starts from a committed fixture and drives a configured real Cline session | Pass |
@@ -25,3 +30,49 @@ Result: qualified by the current Cline replacement matrix, subject to the final 
 - No observed P2 daily-driver parity gap remains in this matrix. Direct Cline `apply_patch` uses the supported tool factory plus `localRuntime.extraTools`; Workflow does not implement a parallel model/tool loop.
 
 No P0/P1 safety, state-integrity, or data-loss defect is known from this matrix. The final full verification and independent review remain separate release gates before changing the operator's default harness.
+
+## Supersession notes (2026-09-16, W043 documentation reconciliation)
+
+This is a dated qualification record (2026-09-11); history is never
+rewritten — later facts land here.
+
+1. **Qualification of record.** This matrix qualified OpenCode *through the
+   Cline replacement matrix and the plugin/SDK-session-driver surfaces*.
+   The operative OpenCode qualification for the daily-driver replacement has
+   since moved to the ACP surface: the 2026-09-16 pivot
+   (`docs/ACP_DECISION.md`) made stock-ACP OpenCode the lead
+   `enforced`-eligible surface on live probe evidence (subagent Green,
+   ask-config, MCP mounts, resume — `docs/HOST_ADAPTERS.md`). This record
+   remains valid for the Cline-SDK/plugin-adapter surfaces it tested.
+2. **"Real OpenCode runtime E2E not yet claimed" (matrix row 21).** Still
+   true for the plugin/SDK-session-driver surface this matrix tests — only
+   contract tests exist there. Real OpenCode runtime evidence now exists on
+   the ACP surface (six gated probes exist; four live verdicts are recorded
+   2026-09-16 in `docs/HOST_ADAPTERS.md` — subagent, ask-config, MCP mounts,
+   resume; the metered probe's evidence is recorded in `docs/ACP_DECISION.md`
+   G1, and the skills-delivery probe has no live verdict yet), so this row
+   must not be read as "no real
+   OpenCode runtime evidence at all."
+3. **Terminology (matrix row 19).** "Cline `McpToolProvider`" is the
+   vendored patch's test-double name
+   (`patches/cline-cli-v3.0.61-workflow.patch`); the repo integration seam
+   this record exercised is the public `createMcpTools` factory.
+
+## Supersession note (2026-09-18, pivot executed)
+
+The pivot is no longer only a decision: the default `workflow` bind now launches
+the browser operator UI over stock-ACP OpenCode (`src/cli/web-launch.ts` →
+`src/cli/web-service.ts`), and the patched-Cline TUI launcher (`src/cli/tui.tsx`,
+deleted) is retired. goose (AAIF) is the qualified general-purpose/backup ACP
+agent (W048; selected with `WORKFLOW_ACP_AGENT=goose`, with a browser-switcher
+entry added by the goose-web-agent change, PR #35).
+The vendored-Cline runtime has since been removed: W050 step 6 (2026-09-18)
+deleted the SDK adapter/integration modules, the `.workflow-cline/` checkout, and
+the Workflow patch. The retained Cline connector is a thin stock-ACP connector
+(`src/integrations/cline-launch.ts` resolves ambient `cline --acp`),
+probe-PENDING on stock 3.0.62. The Cline-SDK/plugin matrix above stays valid as
+the record of the surfaces it tested — every `test:cline-coding-session`,
+`test:cline-resume`, `test:cline-runtime`, and `src/adapters/cline.ts` reference
+in it is historical and those scripts/files no longer exist; it is no longer the
+qualification of record for the operator's default harness.
+

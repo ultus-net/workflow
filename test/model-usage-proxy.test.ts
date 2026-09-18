@@ -301,3 +301,119 @@ test("model usage proxy fails closed on construction and on malformed completion
     await upstream.close();
   }
 });
+
+test("model usage proxy injects the resolved Auto Router pool for openrouter/auto only", async () => {
+  const catalog = {
+    data: [
+      { id: "~anthropic/claude-sonnet-latest", alias_target: { slug: "anthropic/claude-sonnet-5" } },
+      { id: "~openai/gpt-terra-latest", alias_target: { slug: "openai/gpt-5.6-terra" } },
+    ],
+  };
+  const upstream = await fakeUpstream((req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    if (req.url?.endsWith("/api/v1/models")) {
+      res.end(JSON.stringify(catalog));
+      return;
+    }
+    res.end(JSON.stringify({ choices: [], usage: { total_tokens: 1 } }));
+  });
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    autoLatest: {
+      aliases: ["~anthropic/claude-sonnet-latest", "~openai/gpt-terra-latest"],
+      costTier: "high",
+    },
+  });
+  try {
+    const chatRequests = () => upstream.seen.filter((entry) => entry.url === "/api/v1/chat/completions");
+
+    const auto = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "openrouter/auto", messages: [] }),
+    });
+    assert.equal(auto.status, 200);
+    const sent = JSON.parse(chatRequests()[0]?.body ?? "{}") as { model?: string; plugins?: unknown; usage?: unknown };
+    assert.deepEqual(sent.plugins, [
+      { id: "auto-router", allowed_models: ["anthropic/claude-sonnet-5", "openai/gpt-5.6-terra"], cost_tier: "high" },
+    ]);
+    assert.deepEqual(sent.usage, { include: true }, "Auto Router injection must not disable usage accounting");
+    assert.equal(sent.model, "openrouter/auto");
+
+    await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "openai/gpt-5.1", messages: [] }),
+    });
+    const sentOther = JSON.parse(chatRequests()[1]?.body ?? "{}") as { plugins?: unknown };
+    assert.equal(sentOther.plugins, undefined, "non-auto models must pass through without plugins");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("model usage proxy leaves openrouter/auto untouched when alias resolution is unavailable", async () => {
+  const upstream = await fakeUpstream((req, _body, res) => {
+    if (req.url?.endsWith("/api/v1/models")) {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end("{}");
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [] }));
+  });
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    autoLatest: { aliases: ["~anthropic/claude-sonnet-latest"] },
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "openrouter/auto", messages: [] }),
+    });
+    assert.equal(response.status, 200, "a catalog failure must not fail the model request");
+    const chat = upstream.seen.find((entry) => entry.url === "/api/v1/chat/completions");
+    const sent = JSON.parse(chat?.body ?? "{}") as { plugins?: unknown; usage?: unknown };
+    assert.equal(sent.plugins, undefined, "fail open: forward without plugins");
+    assert.deepEqual(sent.usage, { include: true });
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("model usage proxy honors the Auto Router failure backoff across requests", async () => {
+  const upstream = await fakeUpstream((req, _body, res) => {
+    if (req.url?.endsWith("/api/v1/models")) {
+      res.writeHead(500, { "content-type": "application/json" });
+      res.end("{}");
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [] }));
+  });
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    autoLatest: { aliases: ["~anthropic/claude-sonnet-latest"], negativeTtlMs: 60_000, now: () => 1_000 },
+  });
+  try {
+    for (let i = 0; i < 2; i += 1) {
+      const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "openrouter/auto", messages: [] }),
+      });
+      assert.equal(response.status, 200);
+    }
+    const modelFetches = upstream.seen.filter((entry) => entry.url === "/api/v1/models");
+    assert.equal(modelFetches.length, 1, "a failed catalog fetch must back off, not refetch per request");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 
 import { gateSkills, isSkillName, loadSkillsLevelMap, readSkillContent, scanSkills, skillReadableAt } from "../src/skills.js";
@@ -109,4 +112,29 @@ test("skillReadableAt enforces the level gate at read time", () => {
   assert.equal(skillReadableAt(map, "learn-to-code", "advanced-refactoring").allowed, false, "locked skills stay locked even by name");
   assert.equal(skillReadableAt(map, "unknown-mode", "test-driven-development").allowed, false, "a closed level denies all reads");
   assert.deepEqual(skillReadableAt(map, undefined, "anything"), { allowed: true }, "no level configured means no read gating");
+});
+
+test("scanSkills deliberately skips symlinked skill directories (fail-closed discovery)", (t) => {
+  // Containment binds the skills directory by realpath: a symlink pointing
+  // outside the bound set dangles inside the boundary, so a symlinked skill
+  // would be listed but undeliverable — a delivery lie. Discovery skips it
+  // instead; pinned here so a future "follow symlinks" change must argue
+  // with this decision (and with the runtime's realpath binds).
+  const dir = mkdtempSync(path.join(tmpdir(), "skills-symlink-"));
+  const outside = mkdtempSync(path.join(tmpdir(), "skills-symlink-outside-"));
+  t.after(() => {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  });
+  mkdirSync(path.join(dir, "real-skill"));
+  writeFileSync(path.join(dir, "real-skill", "SKILL.md"), "---\nname: real-skill\ndescription: visible\n---\n");
+  mkdirSync(path.join(outside, "linked-skill"));
+  writeFileSync(path.join(outside, "linked-skill", "SKILL.md"), "---\nname: linked-skill\ndescription: behind a symlink\n---\n");
+  symlinkSync(path.join(outside, "linked-skill"), path.join(dir, "linked-skill"));
+
+  assert.deepEqual(
+    scanSkills(dir).map((skill) => skill.name),
+    ["real-skill"],
+    "the symlinked entry must not appear in discovery",
+  );
 });

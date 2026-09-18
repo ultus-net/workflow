@@ -34,10 +34,20 @@ test("resolveClineLaunch fails closed when the override binary is missing", () =
   );
 });
 
-test("resolveClineLaunch prefers the vendored patched binary when built", () => {
+test("resolveClineLaunch prefers the ambient cline over the deprecated vendored binary", () => {
   const resolution = resolveClineLaunch({
     workflowRoot: root,
     clineOnPath: globalCline,
+    exists: (path) => path === compiledBinary,
+    realpath: identity,
+  });
+  assert.equal(resolution.executable, process.execPath);
+  assert.equal(resolution.script, globalCline);
+});
+
+test("resolveClineLaunch falls back to the deprecated vendored binary when no ambient cline", () => {
+  const resolution = resolveClineLaunch({
+    workflowRoot: root,
     exists: (path) => path === compiledBinary,
     realpath: identity,
   });
@@ -55,7 +65,7 @@ test("resolveClineLaunch falls back to Node + the global cline wrapper", () => {
   assert.equal(resolution.script, globalCline);
 });
 
-test("resolveClineLaunch fails closed with no override, no vendored build, and no global cline", () => {
+test("resolveClineLaunch fails closed with no override, no ambient cline, and no vendored build", () => {
   assert.throws(
     () =>
       resolveClineLaunch({
@@ -66,7 +76,7 @@ test("resolveClineLaunch fails closed with no override, no vendored build, and n
   );
 });
 
-test("resolveClineLaunch ignores a blank override", () => {
+test("resolveClineLaunch ignores a blank override and uses the ambient cline", () => {
   const resolution = resolveClineLaunch({
     workflowRoot: root,
     envBinOverride: "   ",
@@ -74,5 +84,6 @@ test("resolveClineLaunch ignores a blank override", () => {
     exists: (path) => path === compiledBinary,
     realpath: identity,
   });
-  assert.equal(resolution.executable, compiledBinary);
+  assert.equal(resolution.executable, process.execPath);
+  assert.equal(resolution.script, globalCline);
 });

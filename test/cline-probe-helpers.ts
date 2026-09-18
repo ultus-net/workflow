@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { globalClineEntrypoint, resolveClineLaunch } from "../src/integrations/cline-launch.js";
+import { readUpstreamKeyFile, upstreamKeyFromEnv, upstreamKeyFilePath } from "../src/integrations/upstream-key.js";
 
 /**
  * Shared helpers for the gated Cline probe suites. This module is imported by
@@ -13,17 +13,26 @@ import { globalClineEntrypoint, resolveClineLaunch } from "../src/integrations/c
 const workflowRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 export function defaultClineKeyFile(): string {
-  return process.env.CLINE_API_KEY_FILE ?? path.join(homedir(), ".config", "workflow", "cline-api-key");
+  return process.env.CLINE_API_KEY_FILE ?? upstreamKeyFilePath();
 }
 
 /**
- * Resolves the Cline credential from the environment or the default key file,
+ * Resolves the Cline credential from the environment or the shared key file,
  * throwing when unavailable so a gated probe fails rather than guessing.
+ * Canonical (`WORKFLOW_UPSTREAM_KEY` / `~/.config/workflow/upstream-key`) wins,
+ * then the legacy `CLINE_API_KEY` / `~/.config/workflow/cline-api-key`.
  */
 export async function loadClineApiKey(purpose = "Cline probe"): Promise<string> {
-  if (process.env.CLINE_API_KEY) return process.env.CLINE_API_KEY;
-  const key = (await readFile(defaultClineKeyFile(), "utf8")).trim();
-  if (!key) throw new Error(`${purpose} requires CLINE_API_KEY or CLINE_API_KEY_FILE`);
+  const env = upstreamKeyFromEnv();
+  if (env) return env;
+  const explicit = process.env.CLINE_API_KEY_FILE;
+  if (explicit !== undefined) {
+    const key = (await readFile(explicit, "utf8")).trim();
+    if (key) return key;
+    throw new Error(`${purpose} requires a non-empty CLINE_API_KEY_FILE (${explicit})`);
+  }
+  const key = readUpstreamKeyFile();
+  if (!key) throw new Error(`${purpose} requires WORKFLOW_UPSTREAM_KEY or ~/.config/workflow/upstream-key (legacy CLINE_API_KEY accepted)`);
   return key;
 }
 

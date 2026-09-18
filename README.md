@@ -27,7 +27,7 @@ Requires Node 22+, pnpm (for mcp-toolbox), and (for containment) Linux with
 bubblewrap.
 
 ```sh
-npm run setup   # npm install -> build -> toolbox -> vendored cline -> npm i -g .
+npm run setup   # npm install -> build -> toolbox -> npm i -g .
 ```
 
 This installs the five bins (`workflow`, `workflow-tui`, `workflow-hub`,
@@ -38,7 +38,7 @@ This installs the five bins (`workflow`, `workflow-tui`, `workflow-hub`,
 | Command | What it is |
 |---|---|
 | `workflow-hub` | the authority daemon every surface needs (discovery + token) |
-| `workflow` | patched Cline TUI launcher; auto-spawns the hub when absent |
+| `workflow` | browser operator UI launcher; OpenCode in ACP mode by default, opened in your browser |
 | `workflow-tui` | universal interactive TUI with explicit `cline`, `opencode`, or `acp` driver selection; fallback surface |
 | `workflow-monitor` | Ink monitoring TUI over the hub's canonical snapshot; standalone local authority when the hub is unreachable |
 | `workflow-shell` | interactive contained shell |
@@ -46,7 +46,7 @@ This installs the five bins (`workflow`, `workflow-tui`, `workflow-hub`,
 ## Quickstart
 
 ```sh
-workflow --cwd /path/to/project   # self-starts the authority hub
+workflow --cwd /path/to/project   # browser UI (OpenCode/ACP); --no-browser or WORKFLOW_NO_BROWSER=1 to skip opening
 workflow-tui --driver acp --cwd /path/to/project  # universal fallback; standalone local authority
 workflow-monitor                  # monitoring TUI over the live hub
 workflow-shell                    # contained shell
@@ -69,14 +69,16 @@ logging in, run `loginctl enable-linger "$USER"` once.
 In the monitor TUI: `/` (or Ctrl+P) opens the Workflow options menu — digits
 1-6 toggle **mode** (pedagogical gating), **speech** (caveman), **build**
 (ponytail/YAGNI), **learner profile**, **symbol inspect**, and **workflow
-details**; `q`/Esc closes. Ctrl+W toggles workflow details directly. Ordinary
-letter and punctuation keys are left to the composer so prompts are never
-changed by hidden first-character shortcuts.
+details**. The menu stays open while digits toggle values in place, so modes
+can be cycled repeatedly; `q`/Esc closes. Ctrl+W toggles workflow details
+directly. Ordinary letter and punctuation keys are left to the composer so
+prompts are never changed by hidden first-character shortcuts.
 
 ## What you get
 
 - **Universal authorization**: one hub gates every tool call on every surface; scheduled runs get their own task and evidence.
 - **Token economy**: lazy MCP tool discovery (schemas on demand), MCP result truncation, a compaction ↔ project-memory bridge, and optional terse styles. Streamed logs are UI-only and never reach the model.
+- **Current-model routing**: agents default to `openrouter/auto`, and the hub proxy resolves `~…-latest` aliases into the Auto Router's `allowed_models` (which does not understand aliases itself), so routing follows the newest frontier models without pinning versions or a client-side plugin. The same pool is selectable per-family from the ACP model picker.
 - **Monitoring**: always-on task and activity panels plus a log-enriched transcript; every MCP server emits leveled logs and progress.
 - **Pedagogy**: five modes from Learn-to-Code to Autonomous with checkpoint gating and a persistent learner profile.
 - **Containment**: bubblewrap-isolated process execution on Linux.
@@ -87,9 +89,10 @@ changed by hidden first-character shortcuts.
 — command/query boundary (`WorkflowApplication`). `src/integrations/` — hub,
 bridge, memory, styles. `src/pedagogy/` — tutor engine. `src/adapters/` —
 host translations. `src/ui/` — Ink/browser projections. `mcp-toolbox/` — 12
-vendored MCP servers. The vendored Cline lives in `.workflow-cline/` and is
-managed via `patches/cline-cli-v3.0.61-workflow.patch` (see
-`scripts/build-cline-tui.mjs`).
+vendored MCP servers. Cline is reached only through the retained thin stock-ACP
+connector (`src/integrations/cline-launch.ts` resolves the ambient `cline --acp`);
+the vendored `.workflow-cline/` checkout and its Workflow patch were removed in
+W050 step 6 (2026-09-18), and the connector is probe-PENDING on stock 3.0.62.
 
 Security notes: Workflow policy is not itself a sandbox — containment is the
 separate process boundary. `enforced` means authoritative pre-mutation

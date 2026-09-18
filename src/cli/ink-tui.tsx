@@ -4,7 +4,8 @@ import { render } from "ink";
 
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
-import { createConfiguredClineRuntime } from "../integrations/cline-runtime.js";
+import { activeTaskCorrelation } from "../application/task-commands.js";
+import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { createReviewFollowUpsClient, type ReviewFollowUp } from "../integrations/review-followups.js";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -13,10 +14,12 @@ import { resolve } from "node:path";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui } from "../ui/tui.js";
+import { detectTerminalBackground } from "../ui/terminal-theme.js";
 import { createCheckpointLedger } from "../pedagogy/checkpoints.js";
 import { applySkillGating, resolveSkillsLevelMap } from "../pedagogy/skill-gating.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
-import { resolveWorkflowHub } from "./hub-client.js";
+import { resolveWorkflowHub, terminateOwnedHub } from "./hub-client.js";
+import type { ChildProcess } from "node:child_process";
 import { createHubSnapshotSource } from "./hub-snapshot.js";
 
 /**
@@ -37,7 +40,21 @@ const followUpsClient = existsSync(reviewServer)
   : undefined;
 const reviewFollowUps: readonly ReviewFollowUp[] = followUpsClient === undefined ? [] : await followUpsClient.openFollowUps(8).catch(() => []);
 
-const hub = await resolveWorkflowHub().catch(() => undefined);
+// W044 resource hygiene: a monitor launch that auto-spawns the hub owns that
+// hub and must terminate it on exit; a probed-and-reused hub stays running.
+let ownedHub: ChildProcess | undefined;
+const terminateOwned = () => terminateOwnedHub(ownedHub);
+process.on("exit", terminateOwned);
+process.once("SIGTERM", () => {
+  terminateOwned();
+  process.exit(143);
+});
+process.once("SIGHUP", () => {
+  terminateOwned();
+  process.exit(129);
+});
+
+const hub = await resolveWorkflowHub({ onSpawned: (child) => { ownedHub = child; } }).catch(() => undefined);
 
 if (hub !== undefined) {
   const source = createHubSnapshotSource(hub, workspace);
@@ -115,15 +132,16 @@ if (hub !== undefined) {
     workspace,
   );
 
-  // Lazy MCP tool loading: schemas enter the model context on demand via
-  // discover/call meta-tools instead of up-front for every server.
-  process.env.CLINE_LAZY_MCP_TOOLS ??= "1";
-
-  const runtime = await createConfiguredClineRuntime(application, workspace);
+  // Standalone (no hub): compose the host-neutral ACP runtime, the same
+  // authority path the hub-hosted surfaces use.
+  const runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskCorrelation(application));
 
   // Plan Task F2 surface wiring: same operator levels.json as skills-mcp; a
   // malformed map refuses startup (fail-closed) rather than running ungated.
   const skillsLevelMap = resolveSkillsLevelMap(process.env.SKILLS_MCP_DIR, homedir());
+
+  // Terminal-derived composer tint (OSC 11): must run before Ink owns stdin.
+  const composerBackground = await detectTerminalBackground();
 
   const { waitUntilExit } = render(
     React.createElement(WorkflowTui, {
@@ -131,7 +149,6 @@ if (hub !== undefined) {
       session: runtime.session,
       reviewFollowUps,
       connectionLabel: "standalone (no hub)",
-      onStyleChange: (style) => runtime.setSessionStyle(style),
       // The mode bar installs the pedagogy gate on the application; changing mode
       // re-creates the checkpoint ledger for the new mode AND re-binds the mode's
       // required-skill set to the active task. Leaves no gate when the mode itself
@@ -140,6 +157,7 @@ if (hub !== undefined) {
         application.setPedagogyGate(createCheckpointLedger(mode));
         applySkillGating(application, mode, skillsLevelMap);
       },
+      ...(composerBackground === undefined ? {} : { composerBackground }),
     }),
   );
   await waitUntilExit();

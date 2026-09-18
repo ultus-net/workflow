@@ -298,3 +298,54 @@ stdio Bus:
 45. `https://github.com/stdiobus/stdiobus` — repo (19★, 24 commits, Apache-2.0 at fetch time) **[D]**
 
 Repo-internal references: `DESIGN.md`, `docs/HUB.md`, `docs/HUB_PROTOCOL.md`, `docs/HOST_ADAPTERS.md`, `docs/UI_INTEGRATION.md`, `docs/FEATURES.md`, `THREAT_MODEL.md`, `src/adapters/acp.ts`, `test/acp-adapter.test.ts`, `TASKS.md` (W005, W027–W031).
+
+## Supersession notes (2026-09-16, W043 documentation reconciliation)
+
+This is a dated research record (snapshot 2026-09-14, self-declared
+time-sensitive in §12); history is never rewritten — later facts land here.
+
+1. **§11 verification snapshot (line 186).** "Latest full verification … 339
+   tests, 7 gated real-agent probes" was the 2026-09-14 snapshot. The suite
+   has since grown substantially (review control plane W039-W041, skills
+   delivery, the W042 assurance case and its checker; ~17 gated probe files
+   now). The current verification of record is `docs/SECURITY_ASSURANCE.md`
+   and its executable citation checker, not this snapshot.
+2. **§11 `opencode acp` row (line 194).** "Not authoritative pre-mutation
+   interception … must remain advisory unless a stricter launch/configuration
+   proves complete permission coverage" — superseded: the stricter
+   configuration was found and probed (the ask-config G1 probe,
+   `test/acp-opencode-ask-probe.test.ts`: edit/bash `ask`, requests emitted,
+   denials honored), and production pins
+   `permission: { edit: "ask", bash: "ask", task: "ask" }`
+   (`src/integrations/opencode-agent-config.ts`). Version of record moved
+   1.18.30 → 1.18.31 (`docs/HOST_ADAPTERS.md`).
+3. **§10 recommendation (line 199).** "Cline is therefore the leading ACP
+   enforcement candidate" — superseded 2026-09-16 by the pivot recorded in
+   `docs/ACP_DECISION.md`: stock-ACP OpenCode is the lead
+   `enforced`-eligible surface; the vendored Cline runtime is fallback
+   insurance, advisory-capped/spawn-denied for spawn-inclusive workflows per
+   the live Red verdict (`docs/HOST_ADAPTERS.md`).
+4. **§4/§8 A/B framing (lines 71, 150).** "The vendored pin (3.0.61) is also
+   the ACP-registry version — the same agent version can be run both routes"
+   was the operative comparison when written; it is no longer the operative
+   question after the stock-3.0.62 account-cloud-only correction (line 197)
+   and the OpenCode lead pivot. The patched-vs-stock A/B remains a historical
+   observation, not a live decision axis.
+5. **§11 F1/G3 deferral (line 218).** "The F1/G3 mounts stay deferred" for
+   the Cline surface remains true, but F1 has since landed on the OpenCode
+   lead runtime: skills mount + readablePaths threading
+   (`src/integrations/acp-runtime.ts`), the skills-mcp entry in the
+   hub-written per-runtime config (`src/integrations/opencode-agent-config.ts`),
+   and the gated delivery probe
+   (`test/acp-opencode-skills-delivery-probe.test.ts`; wired and env-gated —
+   no live verdict recorded yet). The deferral is
+   Cline-surface-specific, not general.
+
+**Supersession note (2026-09-18, W050 step 6).** The vendored-Cline SDK runtime,
+its `.workflow-cline/` checkout, and its Workflow patch were removed on branch
+`feat/w050-cline-removal` (not yet merged), together with the hub's
+Cline-specific `/before-tool` and `/team-task` routes. The thin stock-ACP
+connector is retained (`src/integrations/cline-launch.ts` resolves ambient
+`cline --acp`; the `cline` agent kind composes the generic ACP runtime) and is
+probe-PENDING on stock 3.0.62. Prior statements in this research record about
+the patched/vendored surface and its routes are historical.

@@ -11,7 +11,7 @@ actual system authority; host SDKs remain replaceable adapters onto it.
 ## Architecture
 
 ```
-Cline (any surface, any version)
+Agent surfaces (OpenCode lead, goose backup, Cline fallback)
   │  hub endpoint: ws://127.0.0.1:<hubPort>  (Workflow-controlled)
   ▼
 Workflow Hub (long-running daemon; npm bin `workflow-hub`)
@@ -19,12 +19,15 @@ Workflow Hub (long-running daemon; npm bin `workflow-hub`)
   ├ vendored toolbox MCP registrations (merged settings already exist)
   ├ containment / evidence authority over proposed actions
   ├ records task/evidence state in WorkflowApplication
-  └ endpoint discovery file for Cline's `readHubDiscovery(...)`
+  └ endpoint discovery file for hub clients (`readHubDiscovery(...)`)
 ```
 
-The Workflow Hub is the *only* hub on the machine for this install. Cline's
-`ensureCliHubServer` path is replaced: instead of spawning its own detached
-hub, consumers connect to the Workflow hub for everything.
+The Workflow Hub is the *only* hub on the machine for this install. Its HTTP
+server is host-neutral (`src/integrations/hub-http.ts`); any hub client connects
+to the Workflow hub for authorization and containment. Note the current default
+surface — the browser operator UI over stock-ACP OpenCode — runs its own
+in-process application authority and does not require the hub daemon; the hub's
+dependent surfaces are every launcher that resolves it.
 
 ## Daemon protocol
 
@@ -32,20 +35,23 @@ hub, consumers connect to the Workflow hub for everything.
   token issued at hub start and written to the discovery file.
 - **Discovery file**: `<data-dir>/hub/discovery.json` created atomically —
   `{ hubId, endpoint, authToken }` so `readHubDiscovery` finds it.
-- **Hook protocol**: same shape as today's workflow bridge — `POST /before-tool`
-  for hook gating, `POST /bash` for executor routing. Specified as a
-  versioned, SDK-neutral contract in `docs/HUB_PROTOCOL.md` (conformance:
-  `test/hub-protocol.test.ts`).
+- **Routes**: `POST /health`, `/snapshot`, `/run/begin|review|finish`,
+  `/review/rubric`, and `/bash` (contained shell). Specified as a versioned,
+  SDK-neutral contract in `docs/HUB_PROTOCOL.md` (implementation:
+  `src/integrations/hub-http.ts`; conformance: `test/hub-protocol.test.ts`).
+  The Cline-specific `/before-tool` and `/team-task` routes were removed with
+  the vendored SDK runtime in W050 step 6 (2026-09-18).
 - **Authority migration**: today's per-TUI-loopback bridge is promoted into
   the hub daemon; interactive/headless/zen/connectors keep working, cron
   starts covering too.
 
-## Hook ↔ authority mapping
+## Route ↔ authority mapping
 
-| Hook invoked hub-side | Workflow hub does |
+| Route invoked hub-side | Workflow hub does |
 |---|---|
-| `beforeTool` | Workflow kernel authorize; consult `workflow-guard-mcp` for safety |
-| `bash` executor | WorkflowContainedProcess (bubblewrap isolation, workspace limits) |
+| `/run/*`, `/review/rubric` | Open/review/finish gated runs; hand out the 5-axis review rubric |
+| `/bash` executor | WorkflowContainedProcess (bubblewrap isolation, workspace limits) |
+| `/snapshot` | Project canonical task + run-gate state for monitoring surfaces |
 | every ClientContribution | Registered and validated by the hub daemon, with audit history |
 
 All authority uses `WorkflowApplication` task/evidence state. Actions that
@@ -62,28 +68,39 @@ can't be authorized fail **closed** (hub denies rather than guessing).
 | **Scheduled agents** | hub-side cron with workflow-authorize hooks |
 | Teams/desktop | hub-side localRuntime hooks |
 
+The browser operator UI (OpenCode lead) and the ACP terminal surfaces
+(`workflow-tui --driver acp|opencode`, goose) compose the application authority
+in-process (`WorkflowApplication` + `createConfiguredAcpRuntime`, whole-agent
+containment); they do not depend on the hub daemon. The hub remains the shared
+authority for the retained `cline` connector and for launchers that resolve it.
+
 ## Commands
 
 - `workflow-hub` — start the detached authority daemon (discovery + token).
-- `workflow` — still the TUI launcher; resolves against the global Workflow hub.
-- Launchers auto-spawn `workflow-hub` detached when the discovery file is
-  missing or stale, guarded by `~/.workflow/hub/discovery.json.spawn.lock`.
-  `WORKFLOW_AUTOHUB=0` restores strict fail-fast resolution.
+- `workflow` — the browser operator UI launcher (OpenCode in ACP mode by
+  default; opens the browser); `workflow-tui --driver acp|opencode` is the
+  terminal surface, with the agent kind chosen by `WORKFLOW_ACP_AGENT`
+  (`opencode` | `cline` | `goose`). Hub-resolving launchers (the Cline family)
+  still connect to the global Workflow hub.
+- Launchers that resolve the hub auto-spawn `workflow-hub` detached when the
+  discovery file is missing or stale, guarded by
+  `~/.workflow/hub/discovery.json.spawn.lock`. `WORKFLOW_AUTOHUB=0` restores
+  strict fail-fast resolution.
 
-For Cline team tasks, `WORKFLOW_TEAM_TASK_VERIFY_COMMAND` defaults to `"true"`
-on the Workflow hub daemon, so completed team tasks automatically promote to
-`VERIFIED` once reported by Cline. To enforce real project verification, set
-`WORKFLOW_TEAM_TASK_VERIFY_COMMAND` to the project verification command (for
-example, `npm test`). Setting it to an empty string (`""`) disables automatic
-promotion and leaves completed tasks `VERIFYING` until verified via the
-`/team-task/verify` API with the verifier capability. Ordinary Cline `/bash`
-requests cannot produce this evidence.
+For hub-run test evidence, `WORKFLOW_TEAM_TASK_VERIFY_COMMAND` is the run test
+command: when set to a real command (for example, `npm test`), review-gated runs
+also declare fresh passing `test:<workspace>` environment evidence and the verify
+flow runs it. The default `"true"` — and an unset or empty value — declares no
+test requirement, so those runs gate on the reviewer alone (plain runs gate on
+the finish call). Ordinary hub-client `/bash` requests cannot produce this
+evidence. The Cline-specific `/team-task` and `/team-task/verify` routes were
+removed with the vendored SDK runtime in W050 step 6 (2026-09-18).
 
 ## Operational semantics (fail-closed)
 
 | Condition | Behavior |
 |---|---|
-| workflow-hub not running | Cline cannot authorize — startup fails |
+| workflow-hub not running | hub-resolving surfaces (the retained `cline` connector and other launchers) cannot authorize — startup fails; the browser/OpenCode and goose ACP surfaces carry in-process authority and are unaffected |
 | authorization hook doesn't return `allow` | fails closed, task stays FAILED |
 | guard unavailable/offline | fails closed, not advisory-from-here |
 | obsolete hub discovery file | daemon in launcher's start transaction |
@@ -114,7 +131,8 @@ Sandbox/isolation remains the same as the TUI router today.
    hub without launcher plumbing)**
 
 Acceptance for this milestone: a fresh session is *guarded by the hub* for
-every surface, even scheduled mode, and the patch only remains responsible for
-presentational overrides (art/view), not hook logic.
+every surface, even scheduled mode. (The old Cline patch previously carried only
+presentational overrides, not hook logic; it and the vendored runtime were
+removed in W050 step 6, 2026-09-18.)
 
 Drafting the implementation is next stop.

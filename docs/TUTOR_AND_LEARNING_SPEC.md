@@ -258,9 +258,9 @@ model proposes -> Workflow authorizes -> tool acts -> environment supplies evide
 3. **LSP Port (`src/adapters/lsp.ts`):**
    - Implements a host-neutral JSON-RPC client over stdio.
    - Normalizes diagnostics into pedagogy-oriented diagnostic objects (`DiagnosticInput`). **Epoch-bound `Evidence` normalization is not implemented** (see W032).
-4. **TUI Presentation (`src/ui/tui.tsx`):**
-    - Status bar shows current mode: `[Mode: Socratic Tutor]`, with `^P menu` as the options hint.
-   - Dedicated interactive panel displays Decision Briefs, Socratic Questions, and LSP Diagnostic Explanations.
+ 4. **TUI Presentation (`src/ui/tui.tsx`):**
+    - Header frame shows the current mode as `Mode: Socratic Tutor`, with `keys: / menu …` as the options hint.
+    - Dedicated interactive panel displays Decision Briefs, Socratic Questions, and LSP Diagnostic Explanations.
     - `/` or Ctrl+P opens the Workflow options menu for mode, learner profile, symbol inspect, and style controls; ordinary prompt characters are never treated as hidden shortcuts.
     - Ctrl+W toggles Workflow details directly.
 
@@ -292,3 +292,12 @@ model proposes -> Workflow authorizes -> tool acts -> environment supplies evide
 - Add mode switching (`m`) and status indicator to the Ink TUI.
 - Add interactive Decision Brief & Socratic Question drawers with keyboard navigation.
 - Add Learner Profile mastery view.
+
+**Supersession note (2026-09-18, W050 step 6).** The vendored-Cline SDK runtime,
+its `.workflow-cline/` checkout, and its Workflow patch were removed on branch
+`feat/w050-cline-removal` (not yet merged), together with the hub's
+Cline-specific `/before-tool` and `/team-task` routes. The thin stock-ACP
+connector is retained (`src/integrations/cline-launch.ts` resolves ambient
+`cline --acp`; the `cline` agent kind composes the generic ACP runtime) and is
+probe-PENDING on stock 3.0.62. Prior statements in this spec that reference
+`ClineHostAdapter` or a vendored Cline runtime are historical.

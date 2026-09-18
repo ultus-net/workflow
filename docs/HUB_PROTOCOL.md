@@ -6,6 +6,12 @@ integrates against; it is deliberately SDK-neutral. Conformance is enforced
 by `test/hub-protocol.test.ts`, which exercises the hub using only this
 document (plain HTTP + the discovery file, no Cline-derived code).
 
+> Note: the default surface — the browser operator UI over stock-ACP OpenCode,
+> and the terminal ACP surfaces including goose — composes the `WorkflowApplication`
+> authority in-process and does **not** use this hub contract. The hub is the
+> shared authority for the Cline family (its `localRuntime` hooks) and for any
+> launcher that resolves it.
+
 ## 1. Discovery
 
 The hub publishes its identity at a well-known path:
@@ -27,10 +33,10 @@ Written atomically (temp file + rename) with mode `0600`:
 
 | Field | Type | Meaning |
 |---|---|---|
-| `protocol` | number | Contract version. Clients must check `protocol === 1`. |
+| `protocol` | number | Contract version. Clients should treat any `protocol` value other than `1` as unknown and fail closed. (Note: the hub writes `protocol: 1`; the repo's reference client currently validates `hubId`/`endpoint`/`token` shape rather than asserting the protocol number — treat this field as reserved for future contract versioning.) |
 | `hubId` | string | 16 hex chars; unique per hub instance. |
 | `endpoint` | string | Loopback HTTP base URL (`http://127.0.0.1:<port>`). |
-| `token` | string | 64 hex chars; ordinary Cline bearer capability. Verifier-only endpoints use a separate capability. |
+| `token` | string | 64 hex chars; ordinary surface/hub-client bearer capability. Verifier-only endpoints use a separate capability. |
 
 Client requirements:
 
@@ -45,9 +51,9 @@ Client requirements:
 
 ## 2. Authentication
 
-Ordinary Cline requests carry the discovery token. Verifier-only endpoints
-(`/team-task/verify`, `/run/review`, and `/run/finish`) require the separate
-verifier capability described below:
+Ordinary hub-client requests carry the discovery token. Verifier-only endpoints
+(`/run/review` and `/run/finish`) require the separate verifier capability
+described below:
 
 ```
 Authorization: Bearer <token>
@@ -70,10 +76,19 @@ Registers a scheduled/attended run as its own Workflow task, so the run's
 tool calls authorize against an `IN_PROGRESS` task and the run records its
 own evidence (instead of sharing the interactive task).
 
-Request: `{ "runId": "schedule:<uuid>", "title": "Nightly audit", "workspace": "/abs/dir", "requiresReview": true }`
-(`workspace` and `requiresReview` optional; workspace validated as in
-`/before-tool`. `requiresReview` makes the run task require `reviewer`
-evidence before it can reach `VERIFIED` — the review gate.)
+Request: `{ "runId": "schedule:<uuid>", "title": "Nightly audit", "workspace": "/abs/dir", "requiresReview": true, "taskPrompt": "the ask the run was launched with" }`
+(`workspace`, `requiresReview`, and `taskPrompt` optional; workspace must be an
+absolute path to an existing directory, validated as in `/bash`. `requiresReview` makes the run task require `reviewer`
+evidence before it can reach `VERIFIED` — the review gate — and, when the
+hub is configured with a real `WORKFLOW_TEAM_TASK_VERIFY_COMMAND` (never the
+`"true"` default), it also declares fresh passing `environment` evidence for
+the workspace's own tests at subject `test:<workspace>`; `begin()` stales
+that subject so a later run cannot verify on a predecessor's green tests.
+`taskPrompt`
+(additive, W041) declares the run's ask: the hub-owned reviewer binds it into
+its provenance fingerprint, so the same diff under a different ask is
+reviewed fresh and never replays a prior approval; the scheduler always
+declares its schedule's prompt.)
 
 Response `200`: `{}`. Duplicate `runId` → authority error (fail closed).
 
@@ -107,108 +122,56 @@ Request: `{ "runId": "schedule:<uuid>", "outcome": "verified" | "failed" }`
 
 Requires the verifier capability. The ordinary discovery token cannot submit
 environment evidence or finish a run. For `verified`, the hub records **no**
-mutation and **no** fabricated evidence — a finish call only reports that the
-session ended. Promotion to `VERIFIED` is decided by the kernel on the run
-task's declared `requiredEvidence`: plain runs (empty requirements, the
-default) advance on that explicit policy alone, while `requiresReview` runs
-advance only on fresh reviewer evidence recorded through `/run/review`. For
-`failed`, it records a mutation and fresh failed environment evidence before
-transitioning the run task to `FAILED`. Unknown `runId` → authority error
-(fail closed).
+fabricated evidence — promotion is decided by the kernel on the run task's
+declared `requiredEvidence`: plain runs (empty requirements, the default)
+advance on the finish call alone, while `requiresReview` runs advance only
+on fresh reviewer evidence (and, when a real verify command is configured,
+fresh passing `test:<workspace>` evidence) — reviewer evidence first, then
+test evidence, then `VERIFIED`. When the hub owns a reviewer (production
+wiring wires a reviewer factory unconditionally), a finishing review-gated
+run that is still missing reviewer evidence auto-launches the contained
+hub-owned reviewer inside the finish call — that reviewer's approval IS a
+mutation and IS recorded through the same `/run/review` machinery (a
+finish call can therefore take minutes: reviewer turn plus, when
+configured, the workspace test command). A fail-closed reviewer outcome or
+failing/crashing tests leave the run `VERIFYING` with a surfaced blocking
+reason — never a silent pass. For `failed`, it records a mutation and fresh
+failed environment evidence before transitioning the run task to `FAILED`.
+Unknown `runId` → authority error (fail closed).
 
-### `POST /team-task/verify` — verify a Cline team task from external evidence
+### Removed routes (W050 step 6, 2026-09-18)
 
-Request: `{ "taskId": "task_0001", "workspace": "/abs/dir", "evidence": { ... } }`
-(`workspace` is optional and follows the same validation rules as `/before-tool`.)
+The Cline-specific `/team-task` and `/team-task/verify` endpoints and the
+`/before-tool` authorization gate were removed together with the vendored-Cline
+SDK runtime. The retained generic paths are `/bash` (contained shell) plus the
+run routes; ACP surfaces resolve tool permissions in-process through
+`WorkflowApplication.authorize` via the ACP adapter, not through a hub route.
+Prior statements in this contract about those routes are historical.
 
-Cline `team_task complete` moves its canonical task to `VERIFYING`; it may then
-advance in-process only when Workflow already holds fresh passing environment evidence
-from a trusted source. Without such evidence it remains `VERIFYING`. For a
-workspace-scoped hub application, that task is namespaced as
-`cline-team:<encoded-workspace>:<taskId>` so Cline task IDs cannot collide
-across workspaces in the shared graph. A bridge without a workspace root uses
-the legacy-local `cline-team:<taskId>` form.
-A verifier supplies a full Workflow evidence observation to this endpoint.
-This endpoint requires a separate verifier capability token generated by the
-bridge and returned only to the trusted hub creator; it is not written to hub
-discovery, and the ordinary hub token exposed to Cline is rejected. The daemon
-also provisions the verifier capability in `hub/verifier.json` (mode `0600`),
-separate from Cline's `hub/discovery.json`, for trusted local verification
-workers. The evidence must have
-`authority: "environment"`, `subject` equal to that canonical task ID, and satisfy the
-kernel's normal passing/freshness/mutation-epoch checks. Only an already
-`VERIFYING` task can advance to `VERIFIED`. Unknown tasks, mismatched evidence,
-and failed or stale evidence fail closed.
+### Workflow-internal endpoint (not part of the SDK contract)
 
-### Workflow-internal endpoints (not part of the SDK contract)
-
-The hub also serves two Workflow-internal endpoints used by its own UI/bridge
-machinery. SDK clients integrating per §5 must not depend on them; they are
-listed here so the running surface is fully observable:
+The hub also serves one Workflow-internal endpoint used by its own UI
+machinery. SDK clients integrating per §5 must not depend on it; it is listed
+here so the running surface is fully observable:
 
 - `POST /snapshot` — returns the projected task snapshot of the resolved
   application for a surface-declared `workspace`. Finished scheduled-run tasks
   and the hub's hidden interactive seed task are excluded from the projection.
   Used by the Workflow monitoring surfaces.
-- `POST /team-task` — projects a Cline `team_task` create/claim/complete/block
-  update into Workflow's canonical task namespace (before any verifier
-  advances it). Completion only moves the task to `VERIFYING`; promotion to
-  `VERIFIED` requires Workflow-owned verification. This endpoint answers
-  Cline's all-in-one team-task sync, not SDK integration.
 
-Both are ordinary-token endpoints and are versioned informally alongside the
-Workflow bridge implementation, not as part of the v1 contract.
-
-### `POST /before-tool` — authorization gate
-
-Called before **every** tool execution.
-
-Request:
-
-```json
-{
-  "toolCall": { "toolName": "read_file", "toolCallId": "optional-id" },
-  "input": { "...": "tool-specific payload" },
-  "workspace": "/absolute/path/to/surface-workspace",
-  "runId": "schedule:<uuid>"
-}
-```
-
-`runId` (optional, additive in v1): binds the tool call to a run opened via
-`/run/begin`; authorization then targets the run's task. Unknown `runId` →
-authority error (fail closed).
-
-`workspace` (optional, additive in v1): the surface's own workspace root. When
-present, the hub authorizes path subjects against the declared workspace
-instead of the hub daemon's cwd — this is what makes one hub correct for many
-concurrent surfaces in different projects. Requirements:
-
-- Must be an absolute path to an existing directory, otherwise the hub
-  responds with an authority error (clients fail closed per §4).
-- When omitted, authorization falls back to the hub daemon's own workspace.
-- Clients must send their real workspace (the agent cannot influence what the
-  trusted client shim sends; the bearer token remains the capability).
-
-Response `200`:
-
-- `{}` (or no `stop` field) — the tool is **allowed**.
-- `{ "stop": true, "reason": "..." }` — the tool is **denied**; the reason is
-  human-readable and safe to surface to the operator.
-
-Error responses:
-
-- `401` — bad/missing token.
-- `5xx` — the authority itself failed (e.g. malformed request, internal
-  error). Clients must treat any non-200 as a denial (fail closed).
+It is an ordinary-token endpoint and is versioned informally alongside the
+Workflow hub implementation, not as part of the v1 contract.
 
 ### `POST /bash` — contained shell execution
 
 Routes shell execution through Workflow containment (bubblewrap isolation,
 workspace limits).
 
-Request: `{ "command": "<string|argv record>", "cwd": "<absolute path>", "teamTaskId": "<optional active Cline task id>" }`
+Request: `{ "command": "<string|argv record>", "cwd": "<absolute path>", "workspace": "<optional absolute path>", "teamTaskId": "<optional active Cline task id>" }`
 
-`teamTaskId` is an ordinary-client lifecycle hint only. When present, Workflow
+`workspace` (optional) is the surface's workspace root and must be an absolute
+path to an existing directory; when present, authorization targets the declared
+workspace's application (defaults to `cwd`). `teamTaskId` is an ordinary-client lifecycle hint only. When present, Workflow
 does not start the generic interactive seed task. Workflow resolves the hint into
 its workspace-canonical task namespace and permits process authorization only when
 that already-observed task is `IN_PROGRESS`. A known task that is no longer in
@@ -226,22 +189,28 @@ Non-zero exit codes surface as `500` with `{ "error": "<output>" }`.
 |---|---|
 | No discovery file | Do not execute tools; surface "hub not running". |
 | Stale discovery (401/unreachable) | Delete the file; fail closed. |
-| `/before-tool` non-200 or network error | Deny the tool. |
-| `/before-tool` unreachable mid-session | Deny until the authority returns. |
+| `/bash` non-200 or network error | Treat the shell call as failed/denied (fail closed). |
+| `/bash` unreachable mid-session | Deny until the authority returns. |
 
 A client that "fails open" on any of these is non-conformant.
 
 ## 5. Integrating a new SDK
 
 1. Read the discovery file (per §1, per call).
-2. Before each tool execution, POST `/before-tool`; honor `stop`.
-3. If the SDK shells out, route it via `/bash` to inherit containment.
+2. Route shell execution via `/bash`; treat any non-200 as a denial (per §4).
+3. Use `/run/begin`, `/run/review`, and `/run/finish` for run-scoped work, and
+   `/review/rubric` for the 5-axis reviewer prompt. `/run/review` and
+   `/run/finish` require the verifier capability; the rest are ordinary-token.
 4. Never execute when the authority is unavailable (per §4).
+5. Tool-level authorization for ACP surfaces is resolved in-process via
+   `WorkflowApplication.authorize` in the ACP adapter — there is no generic
+   hub pre-tool route since the Cline-specific `/before-tool` was removed.
 
-Reference implementations (Cline): `apps/cli/src/utils/workflow-bridge.ts`
-(launcher surfaces) and `sdk/packages/core/src/hub/daemon/workflow-hooks.ts`
-(hub-side sessions) in the vendored checkout, derived from
-`patches/cline-cli-v3.0.61-workflow.patch`.
+Reference implementations: the host-neutral hub server is
+`src/integrations/hub-http.ts`; the retained thin stock-ACP Cline connector is
+`src/integrations/cline-launch.ts` (resolves ambient `cline --acp`). The former
+vendored-checkout bridge and `patches/cline-cli-v3.0.61-workflow.patch` were
+removed in W050 step 6 (2026-09-18).
 
 ## 6. Versioning
 

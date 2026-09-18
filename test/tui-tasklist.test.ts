@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import { afterEach, test } from "node:test";
 import React from "react";
-import { render } from "ink-testing-library";
+import { cleanup, render } from "ink-testing-library";
 
 import {
   TaskGraph,
@@ -16,6 +16,11 @@ import {
   type CodingSessionDriver,
   type WorkflowTask,
 } from "../src/index.js";
+
+// The monitor-mode TUI polls every second while mounted, so a view leaked by
+// a failing assertion would keep the test process alive past its results.
+// Unmount everything after each test; Ink's unmount is idempotent.
+afterEach(() => cleanup());
 
 function createApplication(): WorkflowApplication {
   const tasks: WorkflowTask[] = [
@@ -160,6 +165,33 @@ test("TUI activity panel surfaces blocking reasons, verdicts, and unverified cla
   view.unmount();
 });
 
+test("TUI activity panel renders hub-recorded per-run usage (W044)", async () => {
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    gateObservability: () => ({
+      reviewOutcomes: {},
+      blockingReasons: {},
+      completionClaims: {},
+      usage: {
+        "schedule:nightly:abc": {
+          requests: 8,
+          promptTokens: 32594,
+          completionTokens: 353,
+          totalTokens: 32947,
+          costUsd: 0.003752536,
+          recordedAt: "2026-09-17T00:00:00.000Z",
+        },
+      },
+    }),
+  }));
+  await waitForFrame(view, /run usage \(hub metering/);
+  const frame = view.lastFrame() ?? "";
+  assert.match(frame, /32947 tokens/);
+  assert.match(frame, /\$0\.0038/);
+  assert.match(frame, /8 requests/);
+  view.unmount();
+});
+
 test("TUI activity panel stays quiet with empty hub gate observability", async () => {
   // The real hub-mode quiet case: the monitor attaches with gate
   // observability present but empty (no blocked runs, no verdicts, no
@@ -198,12 +230,30 @@ test("thinking chunks render as dim [thinking] transcript rows", async () => {
   view.unmount();
 });
 
-test("the usage meter renders in the composer footer line", async () => {
+test("the usage meter renders cumulative tokens and cost in the header status line", async () => {
   const view = render(React.createElement(WorkflowTui, {
     application: createApplication(),
-    usage: () => "8668 tokens · $0.0132",
+    usage: () => ({ totalTokens: 8668, costUsd: 0.0132 }),
   }));
   await waitForFrame(view, /8668 tokens · \$0\.0132/);
+  view.unmount();
+});
+
+test("the usage meter renders the per-turn delta alongside the cumulative line", async () => {
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    usage: () => ({ totalTokens: 8668, costUsd: 0.0132, perTurnTokens: 120, perTurnCostUsd: 0.0011 }),
+  }));
+  await waitForFrame(view, /8668 tokens · \$0\.0132 · \+120 this turn · \$0\.0011/);
+  view.unmount();
+});
+
+test("a crossed session budget renders its sticky violation in the header status line", async () => {
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    usage: () => ({ totalTokens: 1500, costUsd: 0.002, budgetViolation: "budget exceeded: total tokens 1500 > cap 1000" }),
+  }));
+  await waitForFrame(view, /1500 tokens · \$0\.0020 · ! budget exceeded: total tokens 1500 > cap 1000/);
   view.unmount();
 });
 

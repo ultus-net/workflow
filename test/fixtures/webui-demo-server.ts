@@ -160,6 +160,7 @@ export async function startWebuiDemoServer(): Promise<WebuiDemoServer> {
       return {
         driver: driver as unknown as WorkflowAcpRuntime["driver"],
         session: new WorkflowCodingSession(driver),
+      budgetMechanism: "test: no local caps (fake runtime)",
         usage: () => DEMO_USAGE,
         async dispose() {},
       };

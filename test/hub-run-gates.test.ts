@@ -74,25 +74,41 @@ test("createReviewerFactory drives a full registry review through the runtime se
   const prompts: string[] = [];
   let disposed = 0;
   const factory = createReviewerFactory({
-    shell: async () => "diff --git a/x b/x",
+    // The production shell executes the real command; this stub answers both
+    // the diff and the W039 status sourcing through the same seam.
+    shell: async (command) => (command.startsWith("git status") ? "M  src/thing.ts\0" : "diff --git a/x b/x"),
     createRuntime: async () => ({
       async submit(prompt: string) {
         prompts.push(prompt);
       },
-      snapshot: () => ({ state: "completed", result: `[APPROVE]\n${AXES_SUMMARY}` }),
+      snapshot: () => ({
+        state: "completed",
+        result: `[APPROVE]\n${AXES_SUMMARY}\n[COVERAGE] src/thing.ts`,
+      }),
       async dispose() {
         disposed += 1;
       },
     }),
   });
   const registry = createRunRegistry(base.application, base.graph, { reviewer: factory });
-  await registry.controller.begin({ runId: "author-4", title: "Author run", workspace: base.workspace, requiresReview: true });
+  await registry.controller.begin({
+    runId: "author-4",
+    title: "Author run",
+    workspace: base.workspace,
+    requiresReview: true,
+    taskPrompt: "the scheduled ask",
+  });
 
   await registry.controller.finish({ runId: "author-4", outcome: "verified" });
 
   assert.equal(prompts.length, 1);
   assert.ok(prompts[0]!.includes("# Secondary Review Agent Quality Gate"));
   assert.ok(prompts[0]!.includes("diff --git a/x b/x"));
+  assert.ok(prompts[0]!.includes("### Review Coverage Manifest (deterministic scope):"));
+  assert.ok(prompts[0]!.includes("- src/thing.ts - modified [obligations: general]"));
+  // W041: the run's declared ask flows registry -> reviewer into the rubric,
+  // so the provenance fingerprint binds a real prompt, not always the empty one.
+  assert.ok(prompts[0]!.includes("the scheduled ask"));
   assert.equal(disposed, 1);
   const runTask = base.application.snapshot().tasks.find((task) => task.title === "Author run");
   assert.equal(runTask?.state, "VERIFIED");
@@ -102,7 +118,7 @@ test("createReviewerFactory surfaces reviewer runtime failures fail-closed", asy
   const base = setup();
   t.after(() => rmSync(base.workspace, { recursive: true, force: true }));
   const factory = createReviewerFactory({
-    shell: async () => "diff --git a/x b/x",
+    shell: async (command) => (command.startsWith("git status") ? "" : "diff --git a/x b/x"),
     createRuntime: async () => ({
       async submit() {},
       snapshot: () => ({ state: "failed", reason: "agent crashed" }),

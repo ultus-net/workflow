@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import type { WorkflowApplication } from "../application/workflow.js";
@@ -11,26 +10,23 @@ import {
   type WorkflowAcpRuntime,
 } from "../integrations/acp-runtime.js";
 import { globalClineEntrypoint } from "../integrations/cline-launch.js";
+import { globalGooseBinary, gooseProviderKind } from "../integrations/goose-agent-config.js";
+import { upstreamKeyPresent } from "../integrations/upstream-key.js";
 import type { PermissionBroker } from "./permission-broker.js";
 
-export type WebAgentId = "cline" | "opencode";
+export type WebAgentId = "cline" | "opencode" | "goose";
 
 export interface WebAgentInfo {
   readonly id: WebAgentId;
   readonly name: string;
   /**
-   * Launch-time posture, stated honestly: Cline launches inside an enforced
-   * containment boundary; OpenCode's ACP mode is advisory transport (no
-   * pre-mutation interception). The two must never render as equivalent.
+   * Launch-time posture, stated honestly: Cline and goose launch inside an
+   * enforced containment boundary; OpenCode's ACP mode is advisory transport
+   * (no pre-mutation interception). The two must never render as equivalent.
    */
   readonly containment: "contained" | "advisory";
   readonly available: boolean;
   readonly reason?: string;
-}
-
-function clineApiKeyPresent(): boolean {
-  if (process.env.CLINE_API_KEY !== undefined) return true;
-  return existsSync(resolve(homedir(), ".config", "workflow", "cline-api-key"));
 }
 
 function opencodeBinaryPresent(): boolean {
@@ -42,6 +38,31 @@ function opencodeBinaryPresent(): boolean {
   return false;
 }
 
+function gooseBinaryPresent(): boolean {
+  const override = process.env.WORKFLOW_GOOSE_BIN;
+  if (override !== undefined) return existsSync(override);
+  return globalGooseBinary() !== undefined;
+}
+
+/** Goose's provider credentials for the selected workload: the loopback
+ * proxy's upstream key for openrouter, or the Foundry endpoint+key+model for
+ * azure (the runtime composes the same pieces and fails closed without them). */
+function gooseCredentialsPresent(): boolean {
+  let provider: ReturnType<typeof gooseProviderKind>;
+  try {
+    provider = gooseProviderKind();
+  } catch {
+    return false;
+  }
+  if (provider === "azure_foundry") {
+    const model = (process.env.WORKFLOW_GOOSE_MODEL ?? process.env.GOOSE_MODEL ?? process.env.AZURE_FOUNDRY_MODEL ?? "").trim();
+    return (process.env.AZURE_FOUNDRY_ENDPOINT ?? "").trim().length > 0
+      && (process.env.AZURE_FOUNDRY_API_KEY ?? "").trim().length > 0
+      && model.length > 0;
+  }
+  return upstreamKeyPresent();
+}
+
 /** The lead agent the battlestation drives by default: OpenCode (the
  * operator's primary, backed by their OpenRouter/auth store). Cline stays
  * reachable through the switcher — the universal-remote surface drives any
@@ -49,10 +70,12 @@ function opencodeBinaryPresent(): boolean {
 export const DEFAULT_WEB_AGENT: WebAgentId = "opencode";
 
 /** Agents the web surface can compose, with truthful availability + posture.
- * The default agent (OpenCode) leads the list. */
+ * The default agent (OpenCode) leads the list; goose (the contained
+ * general-purpose/backup agent, W048) precedes the vendored-Cline fallback. */
 export function listWebAgents(): WebAgentInfo[] {
-  const clineAvailable = globalClineEntrypoint() !== undefined && clineApiKeyPresent();
+  const clineAvailable = globalClineEntrypoint() !== undefined && upstreamKeyPresent();
   const opencodeAvailable = opencodeBinaryPresent() && existsSync(opencodeAuthPath());
+  const gooseAvailable = gooseBinaryPresent() && gooseCredentialsPresent();
   return [
     {
       id: "opencode",
@@ -60,6 +83,13 @@ export function listWebAgents(): WebAgentInfo[] {
       containment: "advisory",
       available: opencodeAvailable,
       ...(opencodeAvailable ? {} : { reason: "needs the opencode binary and ~/.local/share/opencode/auth.json" }),
+    },
+    {
+      id: "goose",
+      name: "Goose",
+      containment: "contained",
+      available: gooseAvailable,
+      ...(gooseAvailable ? {} : { reason: "needs the goose binary (aaif-goose/goose or WORKFLOW_GOOSE_BIN) and provider credentials (OpenRouter upstream key CLINE_API_KEY or ~/.config/workflow/cline-api-key, or AZURE_FOUNDRY_ENDPOINT + AZURE_FOUNDRY_API_KEY)" }),
     },
     {
       id: "cline",
@@ -72,7 +102,7 @@ export function listWebAgents(): WebAgentInfo[] {
 }
 
 export function isWebAgentId(value: unknown): value is WebAgentId {
-  return value === "cline" || value === "opencode";
+  return value === "cline" || value === "opencode" || value === "goose";
 }
 
 /** Compose a runtime for one agent; the caller owns disposal. */
@@ -86,6 +116,9 @@ export async function createAgentRuntime(
 ): Promise<WorkflowAcpRuntime> {
   if (agent === "opencode") {
     return createConfiguredOpencodeAcpRuntime(application, workspace, taskId, resumeFrom, options);
+  }
+  if (agent === "goose") {
+    return createConfiguredAcpRuntime(application, workspace, taskId, resumeFrom, undefined, { ...options, agent: "goose" });
   }
   return createConfiguredAcpRuntime(application, workspace, taskId, resumeFrom, undefined, options);
 }

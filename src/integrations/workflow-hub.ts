@@ -5,12 +5,8 @@ import { randomBytes } from "node:crypto";
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { TaskGraph } from "../kernel/task-graph.js";
-import {
-  createWorkflowClineTuiBridge,
-  type WorkflowApplicationResolver,
-  type WorkflowClineTuiBridge,
-  type WorkflowRunController,
-} from "./cline-tui-bridge.js";
+import { createWorkflowHubBridge, type WorkflowHubBridge } from "./hub-http.js";
+import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { createRunRegistry, type RunReviewerFactory, type RunTestRunner } from "./run-registry.js";
 import type { HubScheduler } from "./hub-scheduler.js";
@@ -43,6 +39,8 @@ export interface WorkflowHubSchedulerHandles {
   recordBlockingReason: (input: { readonly runId: string; readonly reason: string }) => void;
   /** Plan Task G5: journal a scheduled run's completion claim (observability-only). */
   recordCompletionClaim: (input: { readonly runId: string; readonly claim: string }) => void;
+  /** W044 (open clause): record a run turn's metering-proxy totals for the monitor. */
+  recordRunUsage: (input: { readonly runId: string; readonly usage: { readonly requests: number; readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number; readonly costUsd: number } }) => void;
 }
 
 export async function createWorkflowHub(
@@ -65,7 +63,7 @@ export async function createWorkflowHub(
   const lockDir = join(dir, "hub", "lock");
   const temporaryPath = `${discoveryPath}.${process.pid}.tmp`;
   const verifierTemporaryPath = `${verifierDiscoveryPath}.${process.pid}.tmp`;
-  let bridge: WorkflowClineTuiBridge | undefined;
+  let bridge: WorkflowHubBridge | undefined;
   let discoveryPublished = false;
   acquireInstanceLock(lockDir);
   try {
@@ -79,14 +77,14 @@ export async function createWorkflowHub(
         controller: runs.controller,
         recordBlockingReason: runs.recordBlockingReason,
         recordCompletionClaim: runs.recordCompletionClaim,
+        recordRunUsage: runs.recordRunUsage,
       })
       : undefined;
-    bridge = await createWorkflowClineTuiBridge(
+    bridge = await createWorkflowHubBridge(
       application,
       runs?.resolve,
       runs?.controller,
       options.observeRequest,
-      options.teamTaskVerificationCommand,
       options.guard,
     );
     options.observeBridgeStarted?.(bridge.url);

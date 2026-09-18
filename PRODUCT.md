@@ -20,24 +20,24 @@ Workflow separates the coding host from workflow authority, the way infrastructu
 
 ## Operating Context
 
-The primary interface is a standalone terminal coding UI used inside a local project. The operator converses with a coding agent, observes tool activity, can cancel active work, and needs blocking reasons, enforcement level, containment-relevant policy state, and verification outcomes to remain diagnosable without displacing the coding conversation.
+The primary interface is the browser operator UI launched by `workflow` (OpenCode in ACP mode by default), with terminal surfaces (`workflow-tui --driver acp|opencode`) and the retained vendored-Cline fallback. The operator converses with a coding agent, observes tool activity, can cancel active work, and needs blocking reasons, enforcement level, containment-relevant policy state, and verification outcomes to remain diagnosable without displacing the coding conversation.
 
 ## Capabilities and Constraints
 
 - Canonical invariant: `model proposes -> Workflow authorizes -> tool acts -> environment supplies evidence -> Workflow validates -> state may advance`.
 - UI state is projection and presentation state only; kernel/application state remains authoritative.
 - `advisory` enforcement must never appear equivalent to `enforced` enforcement.
-- The TUI must not depend on semantic foreground or background colors; it inherits the terminal theme and communicates through text, markers, emphasis, and layout.
+- The TUI must never override the terminal's theme: foreground accents pull only the themeable ANSI-slot names (remapped by the user's terminal), the sole background is the OSC 11-sampled composer tint, and the interface degrades to plain text under `NO_COLOR`. Semantics stay readable through text, markers, emphasis, and layout alone (decision 2026-09-16, `docs/TUI_INTEGRATION.md`).
 - Workflow supports interactive development and bounded autonomy. Safety semantics must not be weakened for UI or SDK convenience.
-- Cline is the current runtime used by the standalone TUI. OpenCode integration is separately contract-qualified.
+- Stock-ACP OpenCode is the lead runtime (browser default; `WORKFLOW_ACP_AGENT=opencode`). Goose (AAIF) is the qualified general-purpose/backup agent (`WORKFLOW_ACP_AGENT=goose`). The vendored patched Cline runtime remains a selectable fallback; its full retirement is evidence-gated (W050), never date-gated.
 
 ## Brand Commitments
 
-The product name is Workflow. For the coding TUI, Cline's usable terminal interaction is the primary familiar reference; OpenCode and Crush are secondary interaction references. Familiar coding-agent ergonomics should be preserved rather than replaced with a workflow-dashboard interaction model.
+The product name is Workflow. Across surfaces, ordinary coding-agent interaction (conversational prompts, streamed tool activity, cancellation, model/mode switching) is the familiar reference; Workflow supervision stays contextual rather than replacing it with a workflow-dashboard interaction model.
 
 ## Evidence on Hand
 
-The repository contains the Workflow application/kernel contracts, Cline runtime integration, a working but rejected diagnostic Ink TUI, browser projection, operator documentation, and automated TUI/runtime tests. No claims beyond those implemented and documented capabilities should be fabricated in the interface.
+The repository contains the Workflow application/kernel contracts, the OpenCode and goose ACP runtime integrations plus the retained vendored-Cline fallback, the browser operator UI, terminal surfaces, a working but rejected diagnostic Ink TUI, operator documentation, and automated surface/runtime tests. No claims beyond those implemented and documented capabilities should be fabricated in the interface.
 
 ## Product Principles
 

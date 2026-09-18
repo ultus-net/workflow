@@ -314,6 +314,12 @@ export class WebSessionManager {
         // Parked prompts key on the workflow permission-correlation id the
         // resolver puts on ProposedToolAction.sessionId — never the ACP id.
         () => driverPermissionKey(runtime.driver),
+        // W045: the hub records the active budget mechanism (and the sticky
+        // violation once crossed) per runtime, served on /api/session.
+        {
+          mechanism: () => runtime.budgetMechanism,
+          ...(runtime.budgetViolation === undefined ? {} : { violation: () => runtime.budgetViolation?.() }),
+        },
       );
       // Eagerly establish the ACP session on every spawn, not only on resume:
       // a fresh session's connect() captures the agent's advertised config

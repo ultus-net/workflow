@@ -98,7 +98,9 @@ test(
     // is the G4 contract (see the header comment — it currently fails
     // deterministically because loadSession does not restore model context).
     const chunkText = (updates: AcpSessionUpdate[], kind: string) =>
-      JSON.stringify(updates.filter((update) => update.update.sessionUpdate === kind));
+      updates.flatMap((update) =>
+        update.update.sessionUpdate === kind ? [(update.update.content as { text?: string }).text ?? ""] : [],
+      ).join("");
     const userPromptReplayed = chunkText(replayed, "user_message_chunk").includes("Reply with exactly this token");
     const keywordReplayed = chunkText(replayed, "agent_message_chunk").includes(keyword);
     const keywordRecalled = chunkText(continuationUpdates, "agent_message_chunk").includes(keyword);
@@ -117,6 +119,6 @@ test(
     assert.ok(userPromptReplayed, "user chunks must carry the original prompt");
     assert.ok(keywordReplayed, "agent replay chunks must carry the keyword answer");
     assert.ok(keywordRecalled, "continuation agent chunks must recall the keyword (restored context)");
-    assert.deepEqual(continuation, { stopReason: "end_turn" }, "continuation turn must complete after reload");
+    assert.equal((continuation as { stopReason?: string }).stopReason, "end_turn", "continuation turn must complete after reload");
   },
 );

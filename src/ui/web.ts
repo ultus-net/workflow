@@ -493,6 +493,10 @@ export function createWorkflowWebServer(
         state: active?.state() ?? { state: "unavailable" },
         items: active?.items() ?? [],
         ...(active?.usage() !== undefined ? { usage: active.usage() } : {}),
+        ...(active?.budgetMechanism() === undefined ? {} : {
+          budgetMechanism: active.budgetMechanism(),
+          ...(active?.budgetViolation() === undefined ? {} : { budgetViolation: active.budgetViolation() }),
+        }),
       });
     }
     if (request.method === "POST" && pathname === "/api/prompt") {

@@ -12,6 +12,26 @@ export interface AcpInitializeResult {
   readonly agentInfo?: { readonly name: string; readonly version?: string };
 }
 
+/**
+ * Capabilities the hub advertises to every ACP agent on `initialize`.
+ *
+ * `session.configOptions` unlocks agent-advertised model/mode pickers.
+ * `_meta.goose.customNotifications` is the opt-in goose source-gates its
+ * custom `_goose/unstable/session/update` channel (usage_update,
+ * status_message, …) on, read from `clientCapabilities._meta.goose` (Rust
+ * field `meta`; `_meta` is ACP's reserved extension key —
+ * `crates/goose/src/acp/server.rs`). W048 already observed usage projection on
+ * 1.50.1; advertising the capability makes the channel explicit rather than
+ * incidental. Other agents ignore the extension, and the driver already
+ * projects unknown well-formed notifications (W047).
+ */
+export function acpClientCapabilities(): Record<string, unknown> {
+  return {
+    session: { configOptions: { boolean: {} } },
+    _meta: { goose: { customNotifications: true } },
+  };
+}
+
 export interface AcpSessionUpdate {
   readonly sessionId: string;
   readonly update: { readonly sessionUpdate: string; readonly [key: string]: unknown };
@@ -38,9 +58,26 @@ interface PendingRequest {
 
 export type AcpPermissionDecision = { readonly kind: "allow" } | { readonly kind: "deny"; readonly reason: string };
 
+/**
+ * The ACP fs server: agents that delegate file operations to the client
+ * (OpenCode's `--pure` ACP mode titles its edit-permission requests with the
+ * target path and then calls `fs/write_text_file` for the write) send these
+ * inbound requests. The hub implements them so every delegated file
+ * operation crosses hub authorization before touching the filesystem.
+ * Handler rejections (authorization denials, guard denials, invalid params)
+ * surface to the agent as JSON-RPC errors — normal outcomes, not protocol
+ * failures.
+ */
+export interface AcpFsServer {
+  readTextFile(params: Record<string, unknown>): Promise<unknown>;
+  writeTextFile(params: Record<string, unknown>): Promise<unknown>;
+  listDirectory(params: Record<string, unknown>): Promise<unknown>;
+}
+
 interface AcpSubprocessClientOptions {
   readonly child: ChildProcessWithoutNullStreams;
   readonly resolvePermission?: (request: AcpPermissionRequestParams) => Promise<AcpPermissionDecision> | AcpPermissionDecision;
+  readonly fsServer?: AcpFsServer | undefined;
 }
 
 export class AcpSubprocessClient {
@@ -53,10 +90,12 @@ export class AcpSubprocessClient {
   #updates: AcpSessionUpdate[] = [];
   #closed = false;
   #resolvePermission: NonNullable<AcpSubprocessClientOptions["resolvePermission"]>;
+  #fsServer: AcpFsServer | undefined;
 
   constructor(options: AcpSubprocessClientOptions) {
     this.#child = options.child;
     this.#resolvePermission = options.resolvePermission ?? (() => ({ kind: "deny", reason: "no ACP permission resolver configured" }));
+    this.#fsServer = options.fsServer;
     this.#child.stdout.on("data", (chunk: Buffer) => this.#read(this.#utf8.write(chunk)));
     this.#child.on("exit", (code, signal) => this.#failAll(new Error(`ACP agent exited (${code ?? signal ?? "unknown"})`)));
     this.#child.on("error", (error) => this.#failAll(error));
@@ -69,7 +108,7 @@ export class AcpSubprocessClient {
   async initialize(): Promise<AcpInitializeResult> {
     const result = await this.#request(methods.agent.initialize, {
       protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: { session: { configOptions: { boolean: {} } } },
+      clientCapabilities: acpClientCapabilities(),
       clientInfo: { name: "workflow-hub-acp-spike", version: "0.0.0" },
     });
     const record = requireRecord(result, "invalid ACP initialize result");
@@ -211,6 +250,32 @@ export class AcpSubprocessClient {
           void this.#answerPermission(id, message);
           continue;
         }
+        if (typeof message.method === "string" && message.method.startsWith("fs/")) {
+          if (typeof id !== "number" && typeof id !== "string") throw new TypeError("invalid ACP fs request id");
+          void this.#answerFs(id, message.method, message.params);
+          continue;
+        }
+        if (typeof message.method === "string" && !("id" in message)) {
+          // W047: an agent-custom notification (validateInboundEnvelope
+          // tolerates methods without ids). A well-formed nested
+          // `update` record (goose's usage channel carries
+          // `_goose/unstable/session/update` with the standard update
+          // payload) flows through the same projection pipeline as a
+          // `session/update`; anything else projects as a raw
+          // agent-context notification named by its method. Projection
+          // only — never authorization input.
+          const params = isRecord(message.params) ? message.params : {};
+          const nested = isRecord(params.update) && typeof (params.update as Record<string, unknown>).sessionUpdate === "string"
+            ? (params.update as { sessionUpdate: string } & Record<string, unknown>)
+            : undefined;
+          const sessionId = typeof params.sessionId === "string" ? params.sessionId : "agent";
+          const projected = nested !== undefined
+            ? ({ sessionId, update: nested } as AcpSessionUpdate)
+            : { sessionId, update: { sessionUpdate: "agent_custom", method: message.method, params } };
+          this.#updates.push(projected);
+          for (const listener of this.#updateListeners) listener(projected);
+          continue;
+        }
         if (typeof message.id === "number") {
           const pending = this.#pending.get(message.id);
           if (!pending) continue;
@@ -246,6 +311,30 @@ export class AcpSubprocessClient {
     }
   }
 
+  /**
+   * Answers an inbound fs-server request. Handler failures — authorization
+   * denials, guard denials, invalid params, a missing fs server — surface to
+   * the agent as JSON-RPC errors (the agent adapts, like a denied permission);
+   * they are normal outcomes and never tear down the connection.
+   */
+  async #answerFs(id: number | string, method: string, params: unknown): Promise<void> {
+    try {
+      if (this.#fsServer === undefined) {
+        throw new Error(`no fs server composed for ${method}`);
+      }
+      const record = requireRecord(params, `invalid ACP ${method} request`);
+      let result: unknown;
+      if (method === "fs/read_text_file") result = await this.#fsServer.readTextFile(record);
+      else if (method === "fs/write_text_file") result = await this.#fsServer.writeTextFile(record);
+      else if (method === "fs/list_directory") result = await this.#fsServer.listDirectory(record);
+      else throw new TypeError(`unsupported ACP fs method: ${method}`);
+      this.#send({ jsonrpc: "2.0", id, result: result ?? {} });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.#send({ jsonrpc: "2.0", id, error: { code: -32000, message } });
+    }
+  }
+
   #failAll(error: Error): void {
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
@@ -272,15 +361,25 @@ function requireRecord(value: unknown, message: string): Record<string, unknown>
   return value;
 }
 
+const inboundFsMethods = new Set(["fs/read_text_file", "fs/write_text_file", "fs/list_directory"]);
+
 function validateInboundEnvelope(message: Record<string, unknown>): void {
   if (message.jsonrpc !== "2.0") throw new TypeError("invalid ACP JSON-RPC version");
   if ("method" in message) {
     if (typeof message.method !== "string") throw new TypeError("invalid ACP method");
-    if (message.method !== "session/update" && message.method !== "session/request_permission") {
-      throw new TypeError(`unsupported ACP method: ${message.method}`);
+    const isFsRequest = inboundFsMethods.has(message.method);
+    const isKnown = message.method === "session/update" || message.method === "session/request_permission" || isFsRequest;
+    if (!isKnown) {
+      // W047 (G7 context visibility): agent-custom NOTIFICATION methods
+      // (e.g. goose's `_goose/unstable/session/update` usage channel) are
+      // tolerated as context carriers — they are UX projection only, never
+      // authorization input. Requests (with an id) stay fail-closed: the
+      // client cannot answer a method it doesn't implement.
+      if ("id" in message) throw new TypeError(`unsupported ACP method: ${message.method}`);
+      return;
     }
     if (message.method === "session/update" && "id" in message) throw new TypeError("invalid ACP notification");
-    if (message.method === "session/request_permission" && typeof message.id !== "number" && typeof message.id !== "string") {
+    if ((message.method === "session/request_permission" || isFsRequest) && typeof message.id !== "number" && typeof message.id !== "string") {
       throw new TypeError("invalid ACP permission request id");
     }
     return;
