@@ -115,6 +115,7 @@ export interface RemoteEngine {
   agents(input: { readonly cwd: string }): Promise<readonly RemoteAgent[]>;
   providers(input: { readonly cwd: string }): Promise<readonly RemoteProvider[]>;
   commands(input: { readonly cwd: string }): Promise<readonly RemoteCommand[]>;
+  config(input: { readonly cwd: string }): Promise<Record<string, unknown> | undefined>;
   prompt(input: RemotePromptInput): Promise<void>;
   abort(input: { readonly sessionId: string; readonly cwd: string }): Promise<void>;
   replyPermission(input: {
@@ -238,6 +239,11 @@ export class HttpRemoteEngine implements RemoteEngine {
       if (!isRecord(entry) || typeof entry.name !== "string" || entry.name.length === 0) return [];
       return [{ name: entry.name, ...(typeof entry.description === "string" ? { description: entry.description } : {}) }];
     });
+  }
+
+  async config(input: { cwd: string }): Promise<Record<string, unknown> | undefined> {
+    const body = await this.#json("GET", "/config", { cwd: input.cwd });
+    return isRecord(body) ? body : undefined;
   }
 
   async prompt(input: RemotePromptInput): Promise<void> {

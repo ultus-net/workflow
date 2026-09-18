@@ -156,3 +156,12 @@ test("HttpRemoteEngine parses slash commands", async () => {
   });
   assert.deepEqual(await engine.commands({ cwd: "/w" }), [{ name: "test", description: "Run tests" }, { name: "init" }]);
 });
+
+test("HttpRemoteEngine reads the effective config", async () => {
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    fetch: async () => new Response(JSON.stringify({ permission: { edit: "ask" } }), { status: 200 }),
+  });
+  assert.deepEqual(await engine.config({ cwd: "/w" }), { permission: { edit: "ask" } });
+});

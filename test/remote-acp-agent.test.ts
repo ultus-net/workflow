@@ -74,6 +74,10 @@ class FakeEngine implements RemoteEngine {
     return this.commandsResult;
   }
 
+  async config(): Promise<Record<string, unknown> | undefined> {
+    return undefined;
+  }
+
   async prompt(input: { sessionId: string; cwd: string; text: string; agent?: string; model?: { providerID: string; modelID: string } }): Promise<void> {
     this.prompts.push(input);
   }

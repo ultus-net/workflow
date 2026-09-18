@@ -315,6 +315,13 @@ green, the row is **`advisory`**.
 - **M3:** option A upstream `--attach` if desired; optional OpenWork target B.
 - **M4:** containment launch path + probe 7 iff `enforced` containment is claimed.
 
+**Coverage notes (M1):** ACP `fs/*` are agent→client delegation requests; the bridge
+is the agent side and the remote server owns its own filesystem, so the bridge does
+not implement an fs server. Metering: a remote server holds its own provider
+credentials and Workflow's loopback proxy cannot terminate remote traffic, so the
+bridge forwards authentication only; the in-process runtime proxy still applies to a
+locally-attached server. Both are honest scope boundaries, not gaps to paper over.
+
 ---
 
 ## 13. Open questions
