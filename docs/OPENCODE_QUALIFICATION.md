@@ -6,6 +6,11 @@ Result: qualified by the current Cline replacement matrix, subject to the final 
 
 ## Matrix
 
+> **Marker (2026-09-18, W050 step 6):** the `npm run test:cline-*` commands cited
+> in the rows below were removed with the vendored-Cline SDK runtime; the rows
+> preserve the historical 2026-09-11 results and are not current runnable
+> evidence (see the supersession notes at the end).
+
 | Scenario | Evidence | Result |
 | --- | --- | --- |
 | Clean repository inspect/edit/test/Git | `npm run test:cline-coding-session` starts from a committed fixture and drives a configured real Cline session | Pass |
@@ -61,8 +66,13 @@ the browser operator UI over stock-ACP OpenCode (`src/cli/web-launch.ts` →
 deleted) is retired. goose (AAIF) is the qualified general-purpose/backup ACP
 agent (W048; selected with `WORKFLOW_ACP_AGENT=goose`, with a browser-switcher
 entry added by the goose-web-agent change, PR #35).
-The vendored-Cline runtime remains a selectable fallback; its full retirement is
-the evidence-gated W050, not this note. The Cline-SDK/plugin matrix above stays
-valid as the record of the surfaces it tested; it is no longer the qualification
-of record for the operator's default harness.
+The vendored-Cline runtime has since been removed: W050 step 6 (2026-09-18)
+deleted the SDK adapter/integration modules, the `.workflow-cline/` checkout, and
+the Workflow patch. The retained Cline connector is a thin stock-ACP connector
+(`src/integrations/cline-launch.ts` resolves ambient `cline --acp`),
+probe-PENDING on stock 3.0.62. The Cline-SDK/plugin matrix above stays valid as
+the record of the surfaces it tested — every `test:cline-coding-session`,
+`test:cline-resume`, `test:cline-runtime`, and `src/adapters/cline.ts` reference
+in it is historical and those scripts/files no longer exist; it is no longer the
+qualification of record for the operator's default harness.
 

@@ -7,6 +7,8 @@ draft currently lives on branch `feat/w050-sdk-seam-decision` (PR #37) as
 `docs/ACP_DECISION.md` "W050 SDK-seam decision — PROPOSED"; it is not yet on
 `main`. This plan removes nothing by itself.
 
+**Execution status (2026-09-18):** steps C1-C4, 5, and 6 executed on branch `feat/w050-cline-removal`; docs step 7 in progress; operator gate criteria 1-2 still open.
+
 ## Operator scope decision (2026-09-18)
 
 **Retain the Cline ACP connector; remove only the vendored SDK/plugin runtime

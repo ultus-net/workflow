@@ -24,10 +24,12 @@ agent selected with `WORKFLOW_ACP_AGENT=goose`. The terminal surface is
 `workflow-tui --driver acp` (or `--driver opencode`), with the agent kind chosen
 by `WORKFLOW_ACP_AGENT` (valid kinds: `opencode`, `cline`, `goose`). These
 compose the `WorkflowApplication` authority
-**in-process** — the hub is the shared authority for the Cline family and
-hub-resolving launchers. The patched-Cline TUI launcher is retired; the
-vendored-Cline runtime remains a selectable fallback pending the evidence-gated
-W050 retirement.
+**in-process** — the hub is the shared authority for hub-resolving launchers.
+The patched-Cline TUI launcher is retired; the vendored-Cline SDK runtime,
+its `.workflow-cline/` checkout, and the Workflow patch were removed in W050
+step 6 (2026-09-18). The `cline` agent kind remains only as a thin stock-ACP
+connector (`src/integrations/cline-launch.ts` resolves ambient `cline --acp`),
+probe-PENDING on stock 3.0.62.
 
 ## Architecture layers (and the kernel-purity rule)
 
@@ -35,7 +37,7 @@ W050 retirement.
 |---|---|---|
 | Kernel | `src/kernel/` | deterministic task state, transitions, evidence freshness, mutation epochs. **Purity rule: no LLM, IO, UI, or SDK imports** — the kernel is pure contracts and can never depend on a host surface |
 | Application | `src/application/` | the single authorization authority (`src/application/workflow.ts`): capability withholding, workspace confinement, task-list gating |
-| Adapters | `src/adapters/` | translate host events into kernel-neutral proposals (Cline, OpenCode, ACP wire/subprocess); fail closed on malformed recognized safety metadata |
+| Adapters | `src/adapters/` | translate host events into kernel-neutral proposals (OpenCode, ACP wire/subprocess); fail closed on malformed recognized safety metadata |
 | Integrations | `src/integrations/` | composition: hub, run registry, scheduler, guard dispatch, credential custody, metering proxy, review control plane (`src/review/` + `src/integrations/hub-reviewer.ts`) |
 | Containment | `src/containment/` | Linux Bubblewrap backend; `enforced` vs `policy-only` isolation is a type-level distinction |
 | Surfaces | `src/cli/`, `src/ui/`, `src/pedagogy/` | TUIs, hub CLI, web projection; presentation never owns canonical state |
@@ -68,8 +70,8 @@ material claim bound to its verification: `docs/SECURITY_ASSURANCE.md`
   `feat/opencode-conformance-probes` integration branch was retired once main
   caught up via PR #31; long-lived side trunks are how main fell behind.)
 - **Worktrees**: `git worktree add /var/home/hunter/worktrees/<name> -b <branch> <base>`
-  from the main checkout; symlink `node_modules` and `.workflow-cline` into
-  it (`.git/info/exclude` already covers them).
+  from the main checkout; symlink `node_modules` into it (`.git/info/exclude`
+  already covers it).
 - **Stacked PRs strand.** A PR merged into its stacked base branch does not
   reach the trunk — that happened twice (PRs #15/#17, #19) and needed sync
   PRs (#20, #23) to repair. Fold shared content into one branch when two PRs
@@ -112,7 +114,11 @@ from fingerprinted provenance, never from stale approvals
   `docs/HUB_PROTOCOL.md`; adapter matrix and probe verdicts
   `docs/HOST_ADAPTERS.md`; honest feature status `docs/FEATURES.md`;
   goose's full ACP implementation map `docs/GOOSE_ACP_IMPLEMENTATION.md`
-- Vendored Cline pin and patch: `patches/cline-cli-v3.0.61-workflow.patch`
-  (built via `npm run tui:cline:build`; stock PATH Cline is account-cloud-only
-  in ACP mode — only the vendored build authenticates headlessly)
+- Cline connector: the thin stock-ACP connector
+  (`src/integrations/cline-launch.ts` resolves the ambient `cline --acp`; the
+  `cline` driver/agent kind composes the generic ACP runtime). The vendored
+  pin/patch, `.workflow-cline/` checkout, and `npm run tui:cline:build` were
+  removed in W050 step 6; the connector is probe-PENDING on stock 3.0.62
+  (stock's `CLINE_API_KEY`/`CLINE_PROVIDER` headless path is source-inferred,
+  not yet live-verified — `docs/HOST_ADAPTERS.md`)
 - Containment guarantees: `docs/RUNTIME_CONTAINMENT.md`

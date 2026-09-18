@@ -124,7 +124,7 @@ The metering proxy is the only mandatory model-egress point: the real key never 
 | The proxy fails closed on construction and malformed completion bodies | `src/integrations/model-usage-proxy.ts:73` | test/model-usage-proxy.test.ts#"model usage proxy fails closed on construction and on malformed completion bodies" |
 | The loopback bind and https-or-loopback upstream rule hold | `src/integrations/model-usage-proxy.ts:73` | test/model-usage-proxy.test.ts#"model usage proxy passes non-completion traffic through untouched" |
 | Live proof (gated): contained Cline and OpenCode turns complete with only the placeholder inside the boundary while the proxy records usage | `src/integrations/acp-runtime.ts:95` | gated[WORKFLOW_ACP_OPENCODE_METERED]: test/acp-opencode-metered-probe.test.ts#"OpenCode ACP metered proxy proves key-free agent env, working turns, and per-session usage metrics" |
-| Live proof (gated): the same posture on the vendored Cline path | `src/integrations/acp-runtime.ts:236` | gated[WORKFLOW_ACP_CLINE_METERED]: test/acp-cline-metered-probe.test.ts#"Cline ACP metered proxy proves key-free agent env, working turns, and per-session usage metrics" |
+| Live proof (gated): the same posture on the retained stock-ACP Cline connector | `src/integrations/acp-runtime.ts:236` | gated[WORKFLOW_ACP_CLINE_METERED]: test/acp-cline-metered-probe.test.ts#"Cline ACP metered proxy proves key-free agent env, working turns, and per-session usage metrics" |
 
 ## S7 — Persistence and recovery
 
