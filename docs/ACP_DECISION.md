@@ -115,3 +115,54 @@ silently rewritten.
     — blocked work fails closed through the `no-active-task` sentinel). The
     original follow-up line at :58 keeps its dated wording; this note
     supersedes its decomposition clause.
+
+## W050 SDK-seam decision — PROPOSED, awaiting operator signature (2026-09-18)
+
+**Decision required (TASKS W050 criterion 2):** whether the vendored-Cline SDK
+seam is retained for its unique capability — host-hook visibility into
+**subagent-internal** tool calls — or the operator records an explicit
+accepted-risk that this visibility is not required.
+
+**Evidence on record (no new runs):**
+
+- The goose granted-spawn SUBAGENT-HOOKS probe
+  (`test/acp-goose-subagent-hooks-probe.test.ts`, gate
+  `WORKFLOW_ACP_GOOSE_SUBAGENT_HOOKS=1`) ran live twice against goose 1.50.1 and
+  resolved **NEGATIVE**: the delegated subagent's file-write fired **no**
+  PreToolUse record and projected **no** ACP tool_call update — only the
+  top-level session's calls and the `delegate` spawn itself intercept
+  (`docs/HOST_ADAPTERS.md` goose row; `TASKS.md` W050 status).
+- The vendored-Cline seam has **never** demonstrated subagent-internal hook
+  firing either: the Cline ACP subagent probe is **Red** (the spawn itself is
+  invisible to the hub — `spawnToolCallObserved: false`), and
+  `SubagentStart`/`Stop` ACP updates are not emitted.
+- Where spawns are projected, the **spawn call** remains gateable (OpenCode
+  `task` Green, goose `delegate` Green-denied). What no surface demonstrates is
+  visibility into the work *inside* a granted spawn.
+
+**Drafted decision (operator to confirm or reject):** record the explicit
+accepted-risk that the seam's unique subagent-internal visibility is **not** a
+required capability, so the seam is not retained on that ground. Rationale: the
+capability is undemonstrated live on both candidate surfaces; the vendored-Cline
+patch is load-bearing for auth as well as interception (a recurring tax);
+spawn-level gateability — the operationally relevant control — is preserved on
+the lead surfaces; and whole-agent containment plus per-mutation permission
+interception remain the enforcement backstops.
+
+**Residual risk this records (stated, not hidden):** tool activity *inside a
+granted subagent spawn* is neither hook-intercepted nor projected on any current
+surface, so a subagent can act within the boundary without a per-internal-call
+authorization decision. Spawns remain default-denied on `enforced` surfaces, so
+this is reachable only through an operator-granted spawn.
+
+**Scope:** this resolves W050 criterion 2 only. The backup-slot takeover
+(criterion 1) still depends on the operator's W049 daily-driver period, and the
+vendored-Cline removal (criterion 3) proceeds only once criterion 1 holds.
+
+**Status:** PROPOSED — the seam is not retired by silence or by this draft.
+Operator signature below closes criterion 2; absent it, the seam stays retained.
+
+- Operator decision: [ ] accept the accepted-risk (seam not required) —
+  [ ] reject (retain the seam; commission a live Cline-side subagent-internal
+  proof)
+- Signed: __________ Date: __________
