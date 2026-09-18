@@ -101,6 +101,46 @@ test("web UI exposes repository branch, changed paths, and constrained diffs", a
   assert.equal(outside.status, 404);
 });
 
+test('web UI lists git worktrees with the current one marked', async (context) => {
+  const workspace = mkdtempSync(join(tmpdir(), 'workflow-web-worktree-'));
+  context.after(() => rmSync(workspace, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-b', 'trunk'], { cwd: workspace });
+  execFileSync('git', ['config', 'user.email', 'test@workflow.local'], { cwd: workspace });
+  execFileSync('git', ['config', 'user.name', 'Workflow Test'], { cwd: workspace });
+  writeFileSync(join(workspace, 'seed.txt'), 'seed\n');
+  execFileSync('git', ['add', 'seed.txt'], { cwd: workspace });
+  execFileSync('git', ['commit', '-m', 'initial'], { cwd: workspace });
+  // A second worktree on a feature branch — the shape the left rail lists.
+  const linked = join(workspace, 'linked');
+  execFileSync('git', ['worktree', 'add', '-b', 'feature/linked', linked], { cwd: workspace });
+
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: 'acp', authoritativePreMutation: false }),
+    [],
+    new Set(['read']),
+    workspace,
+  );
+  const server = createWorkflowWebServer(application);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+
+  const response = await fetch(`http://127.0.0.1:${port}` + '/api/worktrees');
+  assert.equal(response.status, 200);
+  const { worktrees } = await response.json() as { worktrees: { path: string; branch: string | null; head?: string; bare: boolean; detached: boolean; current: boolean }[] };
+  assert.equal(worktrees.length, 2);
+  const main = worktrees.find((entry) => entry.current);
+  const other = worktrees.find((entry) => !entry.current);
+  assert.ok(main !== undefined && other !== undefined, 'exactly one current worktree');
+  assert.equal(main.branch, 'trunk');
+  assert.equal(main.detached, false);
+  assert.ok(main.head !== undefined, 'the current worktree reports its HEAD');
+  assert.equal(other.branch, 'feature/linked');
+  assert.equal(other.current, false);
+  assert.ok(other.path.endsWith('linked'), 'the linked worktree path is reported');
+});
+
 test("web UI diffs staged changes before a repository has HEAD", async (context) => {
   const workspace = mkdtempSync(join(tmpdir(), "workflow-web-git-unborn-"));
   context.after(() => rmSync(workspace, { recursive: true, force: true }));

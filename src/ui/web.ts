@@ -107,6 +107,15 @@ export function createWorkflowWebServer(
         return json(response, 503, { error: "git diff unavailable" });
       }
     }
+    if (request.method === "GET" && request.url === "/api/worktrees") {
+      const workspace = application.workspaceRoot;
+      if (workspace === undefined) return json(response, 503, { error: "workspace unavailable" });
+      try {
+        return json(response, 200, { worktrees: await gitWorktrees(workspace) });
+      } catch {
+        return json(response, 503, { error: "git worktrees unavailable" });
+      }
+    }
     if (request.method === "GET" && request.url === "/api/sessions") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       return json(response, 200, { sessions: manager.list() });
@@ -478,6 +487,56 @@ export function createWorkflowWebServer(
     }
     return json(response, 404, { error: "not found" });
   });
+}
+
+export interface GitWorktree {
+  readonly path: string;
+  readonly head?: string;
+  /** Short branch name; null for bare/detached entries. */
+  readonly branch: string | null;
+  readonly bare: boolean;
+  readonly detached: boolean;
+  /** The worktree the web server's workspace lives in. */
+  readonly current: boolean;
+}
+
+/** `git worktree list --porcelain`, parsed; the source for the collapsible
+ * left-rail list. Read-only — switching worktrees stays an operator command. */
+async function gitWorktrees(workspace: string): Promise<readonly GitWorktree[]> {
+  const { stdout } = await execGit("git", ["worktree", "list", "--porcelain"], {
+    cwd: workspace,
+    maxBuffer: 1024 * 1024,
+  });
+  const worktrees: GitWorktree[] = [];
+  let current: { path?: string; head?: string; branch?: string; bare?: boolean; detached?: boolean } = {};
+  const flush = (): void => {
+    if (current.path === undefined) return;
+    worktrees.push({
+      path: current.path,
+      ...(current.head === undefined ? {} : { head: current.head }),
+      branch: current.branch ?? null,
+      bare: current.bare === true,
+      detached: current.detached === true,
+      current: current.path === workspace,
+    });
+    current = {};
+  };
+  for (const line of stdout.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      flush();
+      current.path = line.slice("worktree ".length);
+    } else if (line.startsWith("HEAD ")) {
+      current.head = line.slice("HEAD ".length);
+    } else if (line.startsWith("branch ")) {
+      current.branch = line.slice("branch ".length).replace(/^refs\/heads\//, "");
+    } else if (line === "bare") {
+      current.bare = true;
+    } else if (line === "detached") {
+      current.detached = true;
+    }
+  }
+  flush();
+  return worktrees;
 }
 
 async function gitStatus(workspace: string): Promise<{ branch: string; changes: GitChange[] }> {
