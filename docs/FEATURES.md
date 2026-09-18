@@ -64,7 +64,7 @@ trip over.
 | `workflow-monitor` (Ink monitoring TUI) | Complete | task panel, activity panel, log-enriched transcript; `npm run tui:workflow` |
 | Pedagogical modes (5 modes, checkpoints, learner profile, PRIMM) | Complete | `src/pedagogy/`; profile at `~/.local/share/workflow/learner-profile.json` |
 | Learner-level skill gating (F2 surface wiring) | Complete | the TUI mode bar binds the mode's required-skill set (`levels.json` shared with skills-mcp, `SKILLS_MCP_DIR` override) to the active task's mutation precondition; switching modes re-binds, no-required-skill modes clear it, malformed maps refuse startup (`applySkillGating` in `src/pedagogy/skill-gating.ts`) |
-| Response/build styles (caveman speech, ponytail YAGNI build) | Complete | **model-advisory** — the model can ignore them; live switch through the `/` or Ctrl+P options menu; summaries kept by design |
+| Response/build styles (caveman speech, ponytail YAGNI build) | **Disabled (W050 follow-up, 2026-09-18)** | **model-advisory** pure-function addenda (`stylePromptAddendum`) retained in `src/integrations/response-style.ts`, but no surface composes them: the TUI toggles/status were removed when the vendored-Cline runtime (their only delivery path) was retired. Re-wiring an ACP prompt-addendum seam is a design item needing its own spec |
 | ~~Style-savings measurement (`npm run style:eval`)~~ | **Removed (W050 step 6, 2026-09-18)** | `src/cli/style-eval.ts` and the `style:eval` script were removed with the vendored-Cline SDK runtime |
 | Browser projection | Partial | `src/ui/web.ts` demo; does not have the monitoring panels |
 

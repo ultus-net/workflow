@@ -304,12 +304,12 @@ test("the `/` menu cycles agent config on the active session", async () => {
     },
   }));
 
-  const hintRegex = /1-7 toggles/;
+  const hintRegex = /1-5 toggles/;
   view.stdin.write("/");
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.match(view.lastFrame() ?? "", hintRegex, "model item must tell the menu has seven entries");
+  assert.match(view.lastFrame() ?? "", hintRegex, "model item must tell the menu has five entries");
   assert.match(view.lastFrame() ?? "", /Model: Model One/);
-  view.stdin.write("7"); // 7th menu item -> Model; the menu stays open
+  view.stdin.write("5"); // 5th menu item -> Model; the menu stays open
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.match(view.lastFrame() ?? "", /Workflow options/, "the menu must stay open while options cycle");
   assert.match(view.lastFrame() ?? "", /Model: Model Two/);
