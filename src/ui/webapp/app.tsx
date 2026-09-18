@@ -334,6 +334,11 @@ function useConfigOptions(sessionId: string | undefined) {
   // session, so a reconnect can't loop restore→default→restore.
   const restoredRef = useRef<Set<string>>(new Set());
   const sessionSuffix = sessionId === undefined ? "" : `?session=${encodeURIComponent(sessionId)}`;
+  // A different session is a fresh restore scope: its agent may have reverted
+  // to factory defaults and deserves the operator's last-used values again.
+  useEffect(() => {
+    restoredRef.current = new Set();
+  }, [sessionSuffix]);
   const setOption = useCallback((id: string, value: string | boolean): void => {
     // Optimistic: reflect the choice now, reconcile with the server response.
     writeLastUsed(id, value);
@@ -1299,7 +1304,10 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         // cancelling a running turn must never ride along with closing it.
         document.querySelector(".settings-dialog, .config-combobox-pop") === null
       ) {
-        void fetch("/api/cancel", { method: "POST" });
+        // Escape cancels the session the operator is viewing, not whichever
+        // session the server happens to have focused.
+        const cancelUrl = focusedSessionId === undefined ? "/api/cancel" : `/api/cancel?session=${encodeURIComponent(focusedSessionId)}`;
+        void fetch(cancelUrl, { method: "POST" });
       } else if (
         event.altKey && !event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "n" && !typing &&
         document.querySelector(".settings-dialog") === null
@@ -1313,7 +1321,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [isRunning, refreshSessions]);
+  }, [isRunning, refreshSessions, focusedSessionId]);
 
   const activeTitle = sessions?.find((session) => session.active)?.title;
 

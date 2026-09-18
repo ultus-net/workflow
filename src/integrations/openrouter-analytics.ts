@@ -56,7 +56,12 @@ export function createOpenRouterAnalytics(options: {
   };
 
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    const response = await doFetch(`${base}${path}`, init);
+    // Every call authenticates: meta/credits are GETs with no body, and
+    // OpenRouter rejects unauthenticated analytics requests with 401/403.
+    const response = await doFetch(`${base}${path}`, {
+      ...init,
+      headers: { ...headers, ...(init?.headers ?? {}) },
+    });
     if (!response.ok) {
       const detail = await response.json().catch(() => undefined) as { error?: { message?: string } } | undefined;
       throw new Error(detail?.error?.message ?? `OpenRouter ${path} failed: ${response.status}`);

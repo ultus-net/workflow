@@ -78,6 +78,18 @@ export interface ConfigCapableDriver {
   acpUsageSnapshot?(): { readonly used?: number; readonly size?: number; readonly costUsd?: number };
   /** The ACP handshake's agent identity (name + version), once connected. */
   agentInfo?(): { readonly name: string; readonly version?: string } | undefined;
+  /** The workflow permission-correlation session id (the key parked prompts
+   * carry) — distinct from the ACP agent session id. */
+  permissionSessionKey?(): string | undefined;
+  /** The ACP agent session id, when connected. */
+  agentSessionId?(): string | undefined;
+}
+
+/** One stable permission key per driver: the workflow correlation id the
+ * broker parks under, falling back to the agent session id for fakes. */
+export function driverPermissionKey(driver: unknown): string | undefined {
+  const candidate = driver as { permissionSessionKey?(): string | undefined; agentSessionId?(): string | undefined };
+  return candidate.permissionSessionKey?.() ?? candidate.agentSessionId?.();
 }
 
 /**

@@ -49,9 +49,13 @@ test("operator UI boots, streams a turn, and stays console-clean in real Chromiu
     t.skip("no Chrome/Chromium executable found (set WORKFLOW_CHROME to enable)");
     return;
   }
-  const demo = await startWebuiDemoServer();
-  const browser = await launchChrome();
+  // Resources are tracked so a throw anywhere (including startup) still
+  // tears down the demo server, the browser, and its temp profile.
+  let demo: Awaited<ReturnType<typeof startWebuiDemoServer>> | undefined;
+  let browser: Awaited<ReturnType<typeof launchChrome>> | undefined;
   try {
+    demo = await startWebuiDemoServer();
+    browser = await launchChrome();
     const cdp = await connectCdp(browser.wsUrl, demo.url);
 
     // 1. The app boots: header wordmark populated, enforcement badge resolved.
@@ -132,8 +136,10 @@ test("operator UI boots, streams a turn, and stays console-clean in real Chromiu
 
     await cdp.close();
   } finally {
-    browser.child.kill();
-    try { rmSync(browser.dataDir, { recursive: true, force: true }); } catch { /* temp dir best effort */ }
-    demo.close();
+    browser?.child.kill();
+    if (browser !== undefined) {
+      try { rmSync(browser.dataDir, { recursive: true, force: true }); } catch { /* temp dir best effort */ }
+    }
+    demo?.close();
   }
 });

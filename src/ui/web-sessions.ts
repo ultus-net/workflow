@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import type { WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
 import type { PermissionBroker } from "./permission-broker.js";
 import { DEFAULT_WEB_AGENT, isWebAgentId, type WebAgentId } from "./web-agents.js";
-import { SessionChannel } from "./web-session-channel.js";
+import { SessionChannel, driverPermissionKey } from "./web-session-channel.js";
 
 export interface WebSessionMeta {
   readonly id: string;
@@ -105,6 +105,11 @@ export class WebSessionManager {
     if (this.#boot !== undefined) await this.#boot.catch(() => undefined);
     const target = await this.#ensureSession(id);
     return target.channel;
+  }
+
+  /** Whether the registry knows this session id (routes 404 on stale ids). */
+  knowsSession(id: string): boolean {
+    return this.#sessions.some((entry) => entry.id === id);
   }
 
   activeMeta(): WebSessionMeta | undefined {
@@ -227,11 +232,16 @@ export class WebSessionManager {
     return { kind: "ok", meta: this.#meta(record) };
   }
 
-  /** Removes every unused ("New session"-titled, unfocused) record; returns how many. */
+  /** Removes every unused ("New session"-titled, unfocused, idle) record;
+   * returns how many. A record with a turn in flight keeps its runtime and its
+   * registry entry — the derived title can still read "New session" mid-turn. */
   async clearUnused(): Promise<number> {
     if (this.#boot !== undefined) await this.#boot.catch(() => undefined);
     const before = this.#sessions.length;
-    const keep = this.#sessions.filter((entry) => entry.title !== "New session" || entry.id === this.#focusId);
+    const isBusy = (id: string): boolean => this.#live.get(id)?.channel.busy() === true;
+    const keep = this.#sessions.filter((entry) =>
+      entry.title !== "New session" || entry.id === this.#focusId || isBusy(entry.id)
+    );
     const removed = this.#sessions.filter((entry) => !keep.includes(entry));
     this.#sessions = keep;
     for (const record of removed) {
@@ -301,8 +311,9 @@ export class WebSessionManager {
         runtime.driver,
         runtime.usage?.bind(runtime),
         this.#permissionBroker,
-        // Parked prompts key on the ACP session id once the driver knows it.
-        () => runtime.driver.agentSessionId(),
+        // Parked prompts key on the workflow permission-correlation id the
+        // resolver puts on ProposedToolAction.sessionId — never the ACP id.
+        () => driverPermissionKey(runtime.driver),
       );
       // Eagerly establish the ACP session on every spawn, not only on resume:
       // a fresh session's connect() captures the agent's advertised config
@@ -347,8 +358,8 @@ export class WebSessionManager {
     this.#persist();
     this.#live.delete(record.id);
     if (live !== undefined) {
-      const acpSessionId = record.agentSessionId ?? live.runtime.driver.agentSessionId();
-      this.#permissionBroker?.cancelPending("session agent switched", acpSessionId);
+      const permissionKey = driverPermissionKey(live.runtime.driver);
+      this.#permissionBroker?.cancelPending("session agent switched", permissionKey);
       await live.runtime.dispose();
     }
     await this.#ensure(record);
@@ -370,8 +381,8 @@ export class WebSessionManager {
     this.#capture(active.record, active);
     this.#persist();
     this.#live.delete(victim);
-    const acpSessionId = active.record.agentSessionId ?? active.runtime.driver.agentSessionId();
-    this.#permissionBroker?.cancelPending("runtime evicted", acpSessionId);
+    const permissionKey = driverPermissionKey(active.runtime.driver);
+    this.#permissionBroker?.cancelPending("runtime evicted", permissionKey);
     await active.runtime.dispose();
   }
 
@@ -450,8 +461,8 @@ export class WebSessionManager {
   async #disposeLive(id: string, live: ActiveSession | undefined, reason: string): Promise<void> {
     if (live === undefined) return;
     this.#live.delete(id);
-    const acpSessionId = live.record.agentSessionId ?? live.runtime.driver.agentSessionId();
-    this.#permissionBroker?.cancelPending(reason, acpSessionId);
+    const permissionKey = driverPermissionKey(live.runtime.driver);
+    this.#permissionBroker?.cancelPending(reason, permissionKey);
     await live.runtime.dispose();
   }
 

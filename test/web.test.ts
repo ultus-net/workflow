@@ -633,6 +633,76 @@ test('the usage route reports its setup state without a management key and serve
   assert.match((await failed.json() as { error: string }).error, /management key/i);
 });
 
+test('session-scoped routes accept ?session=<id> and 404 unknown ids', async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), 'web-session-scope-'));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const manager = new WebSessionManager({
+    registryPath: join(dir, 'registry.json'),
+    factory: async () => {
+      const driver: CodingSessionDriver = {
+        async start(_prompt, emit) { emit({ type: 'completed', result: 'done' }); },
+        async cancel() {},
+      };
+      return {
+        driver: {
+          ...driver,
+          agentSessionId: () => 'agent-x',
+          connect: async () => {},
+          subscribe: () => () => {},
+          config: () => ({ configOptions: [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'a', options: [{ value: 'a' }] }] }),
+          setConfigOption: async () => ({ configOptions: [] }),
+        } as never,
+        session: new WorkflowCodingSession(driver),
+        async dispose() {},
+      };
+    },
+  });
+  context.after(() => manager.dispose());
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: 'acp', authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, manager);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const port = (server.address() as AddressInfo).port;
+
+  const created = await fetch(`http://127.0.0.1:${port}` + '/api/sessions', { method: 'POST' });
+  assert.equal(created.status, 201);
+  const id = ((await created.json()) as { id: string }).id;
+
+  // Every session-scoped route the browser uses must accept the query suffix —
+  // the client appends ?session= on all of them once a session is focused.
+  const scoped = [
+    ['GET', '/api/session'],
+    ['GET', '/api/config-options'],
+    ['GET', '/api/permission'],
+    ['POST', '/api/prompt'],
+    ['POST', '/api/cancel'],
+  ] as const;
+  for (const [method, path] of scoped) {
+    const response = await fetch(`${`http://127.0.0.1:${port}`}${path}?session=${encodeURIComponent(id)}`, method === 'POST'
+      ? { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'hello' }) }
+      : { method });
+    assert.notEqual(response.status, 404, `${method} ${path}?session= must resolve the focused session (got ${response.status})`);
+  }
+
+  const meta = await fetch(`${`http://127.0.0.1:${port}`}/api/session?session=${encodeURIComponent(id)}`).then((r) => r.json()) as { id?: string };
+  assert.equal(meta.id, id, 'the meta answers for the requested session');
+
+  // A stale/dismissed id must 404, never silently answer as another session.
+  const unknown = await fetch(`${`http://127.0.0.1:${port}`}/api/session?session=web-does-not-exist`);
+  assert.equal(unknown.status, 404);
+  const unknownPermission = await fetch(`${`http://127.0.0.1:${port}`}/api/permission?session=web-does-not-exist`);
+  assert.equal(unknownPermission.status, 404);
+  const unknownPrompt = await fetch(`${`http://127.0.0.1:${port}`}/api/prompt?session=web-does-not-exist`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ prompt: 'hello' }),
+  });
+  assert.equal(unknownPrompt.status, 404);
+});
+
 test("the ACP handshake version rides /api/session and /api/agents, never fabricated", async (context) => {
   const dir = mkdtempSync(join(tmpdir(), "web-version-test-"));
   context.after(() => rmSync(dir, { recursive: true, force: true }));

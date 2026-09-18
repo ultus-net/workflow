@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 
-import { applyPalette, storePalette } from "./theme/palettes.js";
+import { applyPalette, readStoredPalette, storePalette } from "./theme/palettes.js";
 
 export type ThemeChoice = "system" | "dark" | "light";
 export type ResolvedTheme = "dark" | "light";
@@ -81,12 +81,9 @@ export function usePalette(): {
   readonly setPalette: (palette: string | undefined) => void;
 } {
   const [palette, setPaletteState] = useState<string | undefined>(() => {
-    try {
-      const stored = window.localStorage.getItem("workflow.palette");
-      return stored === null || stored.length === 0 ? undefined : stored;
-    } catch {
-      return undefined;
-    }
+    // Validate against the catalog: a stale id must not leave a data-palette
+    // attribute with no CSS behind it (that reads as a broken theme).
+    return readStoredPalette();
   });
 
   useEffect(() => {

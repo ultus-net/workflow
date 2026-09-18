@@ -473,7 +473,8 @@ test("session manager wires the permission broker: cancel and switch deny parked
   assert.deepEqual(channel.permissionPatterns(), { alwaysAllow: [], alwaysReject: [] });
 
   const action = {
-    // Real ACP permission requests carry the driver's ACP session id.
+    // The broker parks under ProposedToolAction.sessionId — the workflow
+    // permission-correlation id (driverPermissionKey), never the ACP agent id.
     sessionId: "agent-1",
     taskId: taskId("HEADLINE-TASK"),
     tool: "run_commands",
@@ -547,6 +548,47 @@ test("parked permission prompts are scoped per parallel session", async () => {
   const cancelledB = await parkedB;
   assert.equal(cancelledB.kind, "deny");
   assert.equal(broker.pendingRequest("acp-b"), undefined);
+});
+
+test("parked prompts key on the workflow correlation id, not the ACP agent id", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const broker = new PermissionBroker();
+  broker.setMode("ask");
+  // The real driver's two ids differ: the broker parks under the workflow
+  // workspace session id while the ACP agent session id is another namespace.
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    permissionBroker: broker,
+    factory: async () => {
+      const driver = {
+        async start(_prompt: string, emit: (event: { type: "completed"; result: string }) => void) { emit({ type: "completed", result: "done" }); },
+        async cancel() {},
+        agentSessionId: () => "agent-acp-9",
+        permissionSessionKey: () => "acp-workspace-1",
+        connect: async () => {},
+        subscribe: () => () => {},
+      };
+      return { driver: driver as unknown as WorkflowAcpRuntime["driver"], session: new WorkflowCodingSession(driver), async dispose() {} };
+    },
+  });
+
+  const channel = await manager.channel();
+  const parked = broker.intercept({
+    sessionId: "acp-workspace-1",
+    taskId: taskId("HEADLINE-TASK"),
+    tool: "run_commands",
+    mutating: true,
+    subjects: [],
+    input: { command: "ls" },
+  }, () => ({ kind: "allow" }));
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.ok(channel.pendingPermission() !== undefined, "the channel finds a prompt parked under the workspace key");
+  assert.equal(broker.pendingRequest("agent-acp-9"), undefined, "the ACP agent id never matches the parked key");
+  await channel.cancel();
+  assert.equal((await parked).kind, "deny", "channel cancel resolves the prompt parked under the workspace key");
+  await manager.dispose();
 });
 
 test("switching the active agent re-launches the session on the new agent", async (context) => {

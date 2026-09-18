@@ -54,6 +54,13 @@ export function createWorkflowWebServer(
     return new URL(url, "http://workflow.local").searchParams.get("session") ?? undefined;
   }
 
+  /** A session id that is present but unknown must 404, never silently
+   * answer as the focused session (stale/dismissed ids). */
+  function unknownSession(url: string | undefined): boolean {
+    const id = sessionId(url);
+    return id !== undefined && manager !== undefined && !manager.knowsSession(id);
+  }
+
   async function sessionChannel(url: string | undefined): Promise<SessionChannel | undefined> {
     try {
       if (manager !== undefined) return await manager.channel(sessionId(url));
@@ -93,8 +100,8 @@ export function createWorkflowWebServer(
     if (request.method === "GET" && pathname === "/icon-512.png") {
       return asset(response, "image/png", renderIconPng(512));
     }
-    if (request.method === "GET" && request.url === "/api/snapshot") return json(response, 200, application.snapshot());
-    if (request.method === "GET" && request.url === "/api/git") {
+    if (request.method === "GET" && pathname === "/api/snapshot") return json(response, 200, application.snapshot());
+    if (request.method === "GET" && pathname === "/api/git") {
       const workspace = application.workspaceRoot;
       if (workspace === undefined) return json(response, 503, { error: "workspace unavailable" });
       try {
@@ -107,11 +114,11 @@ export function createWorkflowWebServer(
         return json(response, 503, { error: "git repository unavailable" });
       }
     }
-    if (request.method === "GET" && request.url?.startsWith("/api/git/diff?")) {
+    if (request.method === "GET" && pathname === "/api/git/diff") {
       const workspace = application.workspaceRoot;
       if (workspace === undefined) return json(response, 503, { error: "workspace unavailable" });
       try {
-        const path = new URL(request.url, "http://workflow.local").searchParams.get("path");
+        const path = new URL(request.url ?? "/", "http://workflow.local").searchParams.get("path");
         const status = await gitStatus(workspace);
         const change = status.changes.find((entry) => entry.path === path);
         if (change === undefined) return json(response, 404, { error: "changed path not found" });
@@ -120,7 +127,7 @@ export function createWorkflowWebServer(
         return json(response, 503, { error: "git diff unavailable" });
       }
     }
-    if (request.method === "GET" && request.url === "/api/worktrees") {
+    if (request.method === "GET" && pathname === "/api/worktrees") {
       const workspace = application.workspaceRoot;
       if (workspace === undefined) return json(response, 503, { error: "workspace unavailable" });
       try {
@@ -129,7 +136,7 @@ export function createWorkflowWebServer(
         return json(response, 503, { error: "git worktrees unavailable" });
       }
     }
-    if (request.method === "GET" && request.url?.startsWith("/api/usage")) {
+    if (request.method === "GET" && pathname === "/api/usage") {
       const analytics = analyticsFactory();
       if (analytics === undefined) {
         return json(response, 200, {
@@ -137,7 +144,7 @@ export function createWorkflowWebServer(
           reason: "OpenRouter analytics need a Management key — set WORKFLOW_OPENROUTER_MANAGEMENT_KEY (server-side only; it never reaches the browser)",
         });
       }
-      const requestedDays = new URL(request.url, "http://workflow.local").searchParams.get("days");
+      const requestedDays = new URL(request.url ?? "/", "http://workflow.local").searchParams.get("days");
       const days = requestedDays === "30" ? 30 : requestedDays === "1" ? 1 : 7;
       const { startIso, endIso } = usageTimeRange(days);
       try {
@@ -151,11 +158,11 @@ export function createWorkflowWebServer(
         return json(response, 503, { error: error instanceof Error ? error.message : "OpenRouter analytics unavailable" });
       }
     }
-    if (request.method === "GET" && request.url === "/api/sessions") {
+    if (request.method === "GET" && pathname === "/api/sessions") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       return json(response, 200, { sessions: manager.list() });
     }
-    if (request.method === "GET" && request.url === "/api/agents") {
+    if (request.method === "GET" && pathname === "/api/agents") {
       // Annotate each agent with the handshake version any live session's
       // runtime reported — absent (never fabricated) when unknown.
       const versions = manager?.liveAgentVersions() ?? new Map();
@@ -166,7 +173,7 @@ export function createWorkflowWebServer(
         }),
       });
     }
-    if (request.method === "POST" && request.url === "/api/sessions/agent") {
+    if (request.method === "POST" && pathname === "/api/sessions/agent") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -190,12 +197,12 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/sessions") {
+    if (request.method === "POST" && pathname === "/api/sessions") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       return switchResult(response, await manager.create(), 201);
     }
-    if (request.method === "POST" && request.url === "/api/sessions/activate") {
+    if (request.method === "POST" && pathname === "/api/sessions/activate") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -210,7 +217,7 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/sessions/dismiss") {
+    if (request.method === "POST" && pathname === "/api/sessions/dismiss") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -227,7 +234,7 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/sessions/rename") {
+    if (request.method === "POST" && pathname === "/api/sessions/rename") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -244,7 +251,7 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/tasks/retry") {
+    if (request.method === "POST" && pathname === "/api/tasks/retry") {
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
         return json(response, 415, { error: "content-type must be application/json" });
@@ -261,7 +268,7 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/tasks") {
+    if (request.method === "POST" && pathname === "/api/tasks") {
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
         return json(response, 415, { error: "content-type must be application/json" });
@@ -300,7 +307,7 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/evidence") {
+    if (request.method === "POST" && pathname === "/api/evidence") {
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
         return json(response, 415, { error: "content-type must be application/json" });
@@ -329,12 +336,14 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "GET" && request.url === "/api/config-options") {
+    if (request.method === "GET" && pathname === "/api/config-options") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
       const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       return json(response, 200, { options: active.configOptions() });
     }
-    if (request.method === "POST" && request.url === "/api/config-options") {
+    if (request.method === "POST" && pathname === "/api/config-options") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
       const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
@@ -359,7 +368,8 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "GET" && request.url === "/api/permission") {
+    if (request.method === "GET" && pathname === "/api/permission") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
       const active = await sessionChannel(request.url);
       return json(response, 200, {
         available: active?.permissionAskingAvailable() ?? false,
@@ -368,7 +378,8 @@ export function createWorkflowWebServer(
         patterns: active?.permissionPatterns() ?? { alwaysAllow: [], alwaysReject: [] },
       });
     }
-    if (request.method === "POST" && request.url === "/api/permission") {
+    if (request.method === "POST" && pathname === "/api/permission") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
       const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
@@ -398,7 +409,8 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/permission-mode") {
+    if (request.method === "POST" && pathname === "/api/permission-mode") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
       const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
@@ -425,7 +437,7 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "GET" && request.url === "/api/capabilities") {
+    if (request.method === "GET" && pathname === "/api/capabilities") {
       return json(response, 200, {
         capabilities: [...application.allowedCapabilities],
         // Process/network can only be enabled when workspace confinement is
@@ -433,7 +445,7 @@ export function createWorkflowWebServer(
         workspaceConfinement: application.workspaceRoot !== undefined,
       });
     }
-    if (request.method === "POST" && request.url === "/api/capabilities") {
+    if (request.method === "POST" && pathname === "/api/capabilities") {
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
         return json(response, 415, { error: "content-type must be application/json" });
@@ -456,14 +468,16 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "GET" && request.url?.startsWith("/api/image/")) {
+    if (request.method === "GET" && pathname.startsWith("/api/image/")) {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
       const active = await sessionChannel(request.url);
-      const stored = active?.image(decodeURIComponent(request.url.slice("/api/image/".length)));
+      const stored = active?.image(decodeURIComponent(pathname.slice("/api/image/".length)));
       if (stored === undefined) return json(response, 404, { error: "not found" });
       response.writeHead(200, { "content-type": stored.mediaType, "cache-control": "private, immutable" });
       return response.end(Buffer.from(stored.data, "base64"));
     }
-    if (request.method === "GET" && request.url === "/api/session") {
+    if (request.method === "GET" && pathname === "/api/session") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
       const active = await sessionChannel(request.url);
       // The meta answers for the requested session; focused by default.
       const requested = sessionId(request.url);
@@ -481,7 +495,8 @@ export function createWorkflowWebServer(
         ...(active?.usage() !== undefined ? { usage: active.usage() } : {}),
       });
     }
-    if (request.method === "POST" && request.url === "/api/prompt") {
+    if (request.method === "POST" && pathname === "/api/prompt") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
       const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
@@ -499,14 +514,15 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/cancel") {
+    if (request.method === "POST" && pathname === "/api/cancel") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
       const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       await active.cancel();
       return json(response, 200, { cancelled: true });
     }
-    if (request.method === "POST" && request.url === "/api/transition") {
+    if (request.method === "POST" && pathname === "/api/transition") {
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
         return json(response, 415, { error: "content-type must be application/json" });

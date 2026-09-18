@@ -93,3 +93,21 @@ test("errors carry OpenRouter's message, not a bare status", async () => {
   const analytics = createOpenRouterAnalytics({ key: "plain-key", fetchImpl: failing, baseUrl: "https://openrouter.test/api/v1" });
   await assert.rejects(analytics.meta(), /management key/i);
 });
+
+test("every call authenticates — meta and credits included", async () => {
+  const { fetchImpl, calls } = fakeFetch(new Map([
+    ["/analytics/meta", { data: META }],
+    ["/analytics/query", { data: { data: [], metadata: {} } }],
+    ["/credits", { data: { total_credits: 100, total_usage: 5 } }],
+  ]));
+  const analytics = createOpenRouterAnalytics({ key: "mgmt-key", fetchImpl, baseUrl: "https://openrouter.test/api/v1" });
+  await analytics.meta();
+  await analytics.queryDaily("2026-09-11T00:00:00.000Z", "2026-09-18T00:00:00.000Z");
+  await analytics.credits();
+  // meta + (meta + query for daily) + credits = four authenticated calls.
+  assert.equal(calls.length, 4);
+  for (const call of calls) {
+    const headers = new Headers(call.init?.headers);
+    assert.equal(headers.get("authorization"), "Bearer mgmt-key", `unauthenticated call: ${call.url}`);
+  }
+});

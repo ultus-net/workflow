@@ -282,6 +282,15 @@ export class AcpSessionDriver implements CodingSessionDriver {
     return this.#contextWindowTokens;
   }
 
+  /** The key the workflow permission resolver correlates on — this runtime's
+   * workspace session id. Parked permission prompts are keyed by exactly this
+   * value (`ProposedToolAction.sessionId`), so the web surface must use it for
+   * per-session pending/cancel lookups; the ACP agent session id is a
+   * different namespace. */
+  permissionSessionKey(): string {
+    return this.#workflowSessionId;
+  }
+
   /** Latest agent-reported ACP usage (context used, window size, cost) for
    * runtimes without a metering proxy (e.g. OpenCode, which manages its own
    * provider auth). */
