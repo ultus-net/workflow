@@ -1,9 +1,9 @@
-import { ClineHostAdapter } from "../adapters/cline.js";
+import { hostCapabilities } from "../application/host.js";
 import type { WorkflowApplication } from "../application/workflow.js";
 import { WorkflowContainedProcess } from "../containment/workflow-process.js";
 import { selectContainment } from "../containment/platform.js";
 import type { TaskId } from "../kernel/contracts.js";
-import { createWorkflowClineShellExecutor, type WorkflowClineShellExecutor } from "./cline-shell-executor.js";
+import { createContainedShellExecutor, type WorkflowContainedShellExecutor } from "./contained-shell-executor.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 
 /**
@@ -40,32 +40,26 @@ export interface WorkflowRunController {
   };
 }
 
-export function adapterFor(application: WorkflowApplication, fixedTaskId?: TaskId): ClineHostAdapter {
-  return new ClineHostAdapter({
-    sessionId: "workflow-tui",
-    taskId: () => fixedTaskId ?? application.activeTaskId(),
-    isMutatingTool: () => false,
-    authoritativePreMutation: true,
-  });
-}
-
 /**
  * Contained shell executor for a workspace-bound application. The hub-owned
  * run gates use this for git-diff sourcing (read-only) and test execution
  * (writable); it composes application authorization with the containment
- * backend, exactly like the bridge `/bash` route.
+ * backend, exactly like the hub `/bash` route.
  */
 export function shellExecutorFor(
   application: WorkflowApplication,
   fixedTaskId?: TaskId,
   writableWorkspace = true,
   guard?: WorkflowGuardProvider,
-): WorkflowClineShellExecutor {
-  return createWorkflowClineShellExecutor(
+): WorkflowContainedShellExecutor {
+  return createContainedShellExecutor(
     new WorkflowContainedProcess(application, selectContainment(), guard),
-    adapterFor(application, fixedTaskId),
-    (exitCode, output) => Object.assign(new Error(output), { exitCode }),
-    undefined,
-    writableWorkspace,
+    {
+      capabilities: hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+      sessionId: "workflow-tui",
+      taskId: fixedTaskId ?? (() => application.activeTaskId()),
+      commandExitError: (exitCode, output) => Object.assign(new Error(output), { exitCode }),
+      writableWorkspace,
+    },
   );
 }

@@ -2,7 +2,6 @@ import { WorkflowCodingSession } from "../application/coding-session.js";
 import { activeTaskCorrelation } from "../application/task-commands.js";
 import type { WorkflowApplication } from "../application/workflow.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
-import { createConfiguredClineRuntime } from "../integrations/cline-runtime.js";
 import { createOpenCodeSessionClient } from "../integrations/opencode-client.js";
 import { OpenCodeSessionDriver } from "../integrations/opencode-session.js";
 import type { SessionStyle } from "../integrations/response-style.js";
@@ -62,15 +61,6 @@ export async function composeDriver(
   application.startInteractiveTask();
   const override = options.composers?.[name];
   if (override !== undefined) return override(application, workspace);
-  if (name === "cline") {
-    const runtime = await createConfiguredClineRuntime(application, workspace);
-    return {
-      label: "cline",
-      session: runtime.session,
-      setSessionStyle: (style) => runtime.setSessionStyle(style),
-      dispose: () => runtime.dispose(),
-    };
-  }
   if (name === "opencode") {
     return {
       label: "opencode",
@@ -78,9 +68,18 @@ export async function composeDriver(
       dispose: async () => undefined,
     };
   }
-  const runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskCorrelation(application));
+  // Both "acp" and the retained "cline" connector compose the host-neutral ACP
+  // runtime; the connector is just the `cline` agent kind (stock `cline --acp`).
+  const runtime = await createConfiguredAcpRuntime(
+    application,
+    workspace,
+    activeTaskCorrelation(application),
+    undefined,
+    undefined,
+    name === "cline" ? { agent: "cline" } : {},
+  );
   return {
-    label: "acp",
+    label: name,
     session: runtime.session,
     sessionConfigOptions: () => (runtime.driver.config()?.configOptions ?? []) as readonly SessionConfigOption[],
     setSessionConfig: async (id, value) => { await runtime.driver.setConfigOption(id, value); },
