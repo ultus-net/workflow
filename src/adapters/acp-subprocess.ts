@@ -12,6 +12,24 @@ export interface AcpInitializeResult {
   readonly agentInfo?: { readonly name: string; readonly version?: string };
 }
 
+/**
+ * Capabilities the hub advertises to every ACP agent on `initialize`.
+ *
+ * `session.configOptions` unlocks agent-advertised model/mode pickers.
+ * `_meta.goose.customNotifications` opts into goose's custom
+ * `_goose/unstable/session/update` channel (usage_update, status_message, …);
+ * goose reads it from `clientCapabilities._meta.goose.customNotifications`
+ * (`crates/goose/src/acp/server.rs`, W048). Other agents ignore the `_meta`
+ * extension, and the driver already projects unknown well-formed
+ * notifications (W047).
+ */
+export function acpClientCapabilities(): Record<string, unknown> {
+  return {
+    session: { configOptions: { boolean: {} } },
+    _meta: { goose: { customNotifications: true } },
+  };
+}
+
 export interface AcpSessionUpdate {
   readonly sessionId: string;
   readonly update: { readonly sessionUpdate: string; readonly [key: string]: unknown };
@@ -88,7 +106,7 @@ export class AcpSubprocessClient {
   async initialize(): Promise<AcpInitializeResult> {
     const result = await this.#request(methods.agent.initialize, {
       protocolVersion: PROTOCOL_VERSION,
-      clientCapabilities: { session: { configOptions: { boolean: {} } } },
+      clientCapabilities: acpClientCapabilities(),
       clientInfo: { name: "workflow-hub-acp-spike", version: "0.0.0" },
     });
     const record = requireRecord(result, "invalid ACP initialize result");

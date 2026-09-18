@@ -71,9 +71,9 @@ export async function createConfiguredAcpRuntime(
   taskId: TaskId | (() => TaskId),
   resumeFrom?: string,
   guard?: WorkflowGuardProvider,
-  options: { readonly permissionBroker?: PermissionBroker | undefined } = {},
+  options: { readonly permissionBroker?: PermissionBroker | undefined; readonly agent?: AcpAgentKind | undefined } = {},
 ): Promise<WorkflowAcpRuntime> {
-  const kind = acpAgentKind();
+  const kind = options.agent ?? acpAgentKind();
   return kind === "opencode"
     ? createOpencodeRuntime(application, workspace, taskId, resumeFrom, guard, options)
     : kind === "cline"

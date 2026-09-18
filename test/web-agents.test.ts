@@ -11,11 +11,13 @@ describe("web agent registry", () => {
   it("declares the composable agents with their containment posture, default first", () => {
     const agents = listWebAgents();
     const ids = agents.map((agent) => agent.id);
-    assert.deepEqual(ids, ["opencode", "cline"]);
+    assert.deepEqual(ids, ["opencode", "goose", "cline"]);
     assert.equal(agents.find((a) => a.id === "cline")?.containment, "contained");
     assert.equal(agents.find((a) => a.id === "opencode")?.containment, "advisory");
+    assert.equal(agents.find((a) => a.id === "goose")?.containment, "contained");
     assert.equal(agents.find((a) => a.id === "cline")?.name, "Cline");
     assert.equal(agents.find((a) => a.id === "opencode")?.name, "OpenCode");
+    assert.equal(agents.find((a) => a.id === "goose")?.name, "Goose");
   });
 
   it("defaults to OpenCode, the documented coding lead", () => {
@@ -35,6 +37,7 @@ describe("web agent registry", () => {
   it("accepts declared ids and rejects everything else", () => {
     assert.equal(isWebAgentId("cline"), true);
     assert.equal(isWebAgentId("opencode"), true);
+    assert.equal(isWebAgentId("goose"), true);
     assert.equal(isWebAgentId("unknown-agent"), false);
     assert.equal(isWebAgentId(""), false);
   });
