@@ -7,13 +7,18 @@ import { join } from "node:path";
  *
  * Precedence:
  * 1. WORKFLOW_CLINE_BIN env override (a compiled Cline binary path).
- * 2. The vendored, Workflow-patched Cline checkout's compiled binary
- *    (`.workflow-cline/cline/apps/cli/dist/cli-<os>-<arch>/bin/cline`).
- * 3. The globally installed `cline` CLI (Node + its `bin/cline` wrapper).
+ * 2. The ambient `cline` on PATH — stock `cline --acp` run through Node and its
+ *    `bin/cline` wrapper. Per the W050 operator scope decision the retained
+ *    connector is stock-only; headless auth is the stock CLI's own
+ *    `CLINE_API_KEY` / `CLINE_PROVIDER` path.
+ * 3. DEPRECATED fallback: the vendored, Workflow-patched checkout's compiled
+ *    binary (`.workflow-cline/cline/apps/cli/dist/cli-<os>-<arch>/bin/cline`).
+ *    This branch exists only until W050 step 6 deletes the vendored checkout;
+ *    do not build new behavior on it.
  *
- * Compiled binaries are self-contained (Bun-embedded) and run directly as
- * the executable. The global fallback keeps the historical launch shape:
- * Node running the wrapper script, which resolves its own platform binary.
+ * Compiled binaries are self-contained (Bun-embedded) and run directly as the
+ * executable. The PATH entry keeps the historical launch shape: Node running
+ * the wrapper script, which resolves its own platform binary.
  */
 export interface ClineLaunchResolution {
   /** Agent executable: the Node binary or a self-contained compiled agent. */
@@ -23,7 +28,7 @@ export interface ClineLaunchResolution {
 }
 
 export interface ClineLaunchInput {
-  /** Workflow repository root (contains `.workflow-cline`). */
+  /** Workflow repository root (contains `.workflow-cline`; deprecated fallback only). */
   readonly workflowRoot: string;
   /** WORKFLOW_CLINE_BIN override; a compiled Cline binary path. */
   readonly envBinOverride?: string | undefined;
@@ -58,16 +63,18 @@ export function resolveClineLaunch(input: ClineLaunchInput): ClineLaunchResoluti
     return { executable: realpath(override) };
   }
 
+  if (input.clineOnPath !== undefined) {
+    return { executable: process.execPath, script: input.clineOnPath };
+  }
+
+  // DEPRECATED (W050 step 6 removes the vendored checkout): last-resort fallback.
   if (exists(compiled)) {
     return { executable: realpath(compiled) };
   }
 
-  if (input.clineOnPath === undefined) {
-    throw new Error(
-      "No Cline agent available: run `npm run build:cline-agent` or install the cline CLI globally",
-    );
-  }
-  return { executable: process.execPath, script: input.clineOnPath };
+  throw new Error(
+    "No Cline agent available: install the cline CLI globally (stock `cline --acp`) or set WORKFLOW_CLINE_BIN to a compiled binary",
+  );
 }
 
 /** Realpath-resolved global `cline` entry, or undefined when not installed. */
