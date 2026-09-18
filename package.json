@@ -44,7 +44,6 @@
     "web:launch": "tsx src/cli/web-launch.ts",
     "setup": "node scripts/install.mjs",
     "test": "node --import tsx --test test/**/*.test.ts",
-    "test:webui": "node --import tsx --test test/webui-e2e.test.ts",
     "test:containment-runtime": "node --import tsx --test test/containment.test.ts",
     "test:e2e": "npm run build && node test/integration/workflow-e2e.mjs",
     "toolbox:install": "pnpm --dir mcp-toolbox install",

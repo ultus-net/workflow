@@ -127,7 +127,7 @@ single-user operator tool; those belong to multi-tenant products.
   `test/web-sessions.test.ts`, route guard tests in `test/web.test.ts`
   (403/415/404/200), UI verified via CDP smoke scripts.
   - **Extended 2026-09-18:** a committed zero-dependency browser e2e
-    (`npm run test:webui`, `test/webui-e2e.test.ts` + `test/fixtures/
+    (`test/webui-e2e.test.ts` — runs under the standard test glob + `test/fixtures/
     {webui-demo-server.ts,cdp-client.mjs}`) is the UI regression net; palette
     AA is gated in `test/webapp-palettes.test.ts` and the usage data path in
     `test/openrouter-analytics.test.ts`.
