@@ -76,6 +76,7 @@ export async function connectCdp(browserWsUrl, url) {
     exceptions,
     evaluate,
     waitFor,
+    send,
     async close() {
       await send("Target.closeTarget", { targetId: target.targetId }).catch(() => {});
       ws.close();

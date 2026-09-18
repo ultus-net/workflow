@@ -559,18 +559,18 @@ function currentModelName(options: readonly WebConfigOption[]): string | undefin
 /** Bottom status bar: context/tokens far left, model + branch in the middle,
  * the agent's handshake version far right. Live facts only — a slot whose
  * data is unknown renders nothing rather than a placeholder. */
-function StatusBar({ identity, model, branch, usage, isRunning }: {
+function StatusBar({ identity, model, branch, usage }: {
   readonly identity: { readonly agent?: string | undefined; readonly version?: string | undefined };
   readonly model: string | undefined;
   readonly branch: string | undefined;
   readonly usage: SessionUsage | undefined;
-  readonly isRunning: boolean;
 }) {
   return (
     <footer className="status-bar" aria-label="Session status">
       <div className="status-bar-group">
         {usage !== undefined && <UsageMeter usage={usage} />}
-        {isRunning && <span className="status-bar-running" aria-hidden="true"><span className="working-dot" /></span>}
+        {/* Running is already unmistakable in the composer (stop control) and
+            the thread (live activity line); the bar stays factual. */}
       </div>
       <div className="status-bar-group status-bar-middle">
         {model !== undefined && <span className="status-bar-item status-bar-model" title={model}>{model}</span>}
@@ -1397,7 +1397,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         <SessionsView
           sessions={sessions}
           agents={agents}
-          currentAgent={currentAgent}
           onActivate={(id) => switchSession(id)}
           onCreate={(agent) => createSessionWithAgent(agent)}
           onSwitchAgent={(id, agent) => {
@@ -1493,7 +1492,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         model={currentModelName(options)}
         branch={gitStatus?.branch}
         usage={usage}
-        isRunning={isRunning}
       />
       {settingsOpen && (
         <SettingsDialog

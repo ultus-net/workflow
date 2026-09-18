@@ -3,16 +3,33 @@ import { useEffect, useState } from "react";
 import { formatRelativeTime } from "./presenters.js";
 import type { AgentInfo, SessionMeta } from "./app.js";
 
+/** Card glyphs — same 1.4 stroke as the nav slugs, no text-glyph stand-ins. */
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 13l1-3.5L10.5 3l2.5 2.5L6.5 12z" />
+      <path d="M9.5 4L12 6.5" />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" aria-hidden="true">
+      <path d="M4 4l8 8M12 4l-8 8" />
+    </svg>
+  );
+}
+
 /**
  * The Sessions page: every session record with its live facts (running? live
  * runtime? which agent), the agent picker for new sessions, and switch /
  * rename / dismiss. Session history lives here and behind /sessions — never
  * in a sidebar panel.
  */
-export function SessionsView({ sessions, agents, currentAgent, onActivate, onCreate, onSwitchAgent, onRename, onDismiss, onClearUnused, onOpenChat }: {
+export function SessionsView({ sessions, agents, onActivate, onCreate, onSwitchAgent, onRename, onDismiss, onClearUnused, onOpenChat }: {
   readonly sessions: readonly SessionMeta[] | undefined;
   readonly agents: readonly AgentInfo[];
-  readonly currentAgent: string;
   readonly onActivate: (id: string) => void;
   readonly onCreate: (agent: string) => void;
   readonly onSwitchAgent: (id: string, agent: string) => void;
@@ -82,11 +99,6 @@ export function SessionsView({ sessions, agents, currentAgent, onActivate, onCre
             <div className="session-card-actions">
               {!session.active && <button type="button" className="btn btn-ghost" onClick={() => onActivate(session.id)}>Focus</button>}
               {session.active && <button type="button" className="btn btn-ghost" onClick={() => onOpenChat(session.id)}>Open chat</button>}
-              {session.active && session.agent !== currentAgent && (
-                <button type="button" className="btn btn-ghost" onClick={() => onSwitchAgent(session.id, currentAgent === session.agent ? session.agent : currentAgent)}>
-                  Switch to {currentAgent}
-                </button>
-              )}
               {session.active && (
                 <select
                   aria-label={`Agent for ${session.title}`}
@@ -101,13 +113,20 @@ export function SessionsView({ sessions, agents, currentAgent, onActivate, onCre
               )}
               <button
                 type="button"
-                className="btn btn-ghost"
+                className="btn btn-ghost session-icon-button"
                 aria-label={`Rename ${session.title}`}
                 onClick={() => setRenaming({ id: session.id, title: session.title })}
               >
-                ✎
+                <PencilIcon />
               </button>
-              <button type="button" className="btn btn-ghost session-dismiss" aria-label={`Dismiss ${session.title}`} onClick={() => onDismiss(session.id)}>×</button>
+              <button
+                type="button"
+                className="btn btn-ghost session-icon-button session-dismiss"
+                aria-label={`Dismiss ${session.title}`}
+                onClick={() => onDismiss(session.id)}
+              >
+                <CloseIcon />
+              </button>
             </div>
             {renaming !== undefined && renaming.id === session.id && (
               <div className="session-card-rename">

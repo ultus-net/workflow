@@ -123,7 +123,9 @@ export function resolveVariant(variant: ThemeVariant, isDark: boolean): PaletteT
   const diffAdd = generateScale(seeds.diffAdd ?? shift(seeds.success, { c: isDark ? 0.7 : 0.55, l: isDark ? -0.18 : 0.14 }), isDark);
   const diffDelete = generateScale(seeds.diffDelete ?? shift(seeds.error, { c: isDark ? 0.82 : 0.7, l: isDark ? -0.08 : 0.08 }), isDark);
 
-  const composerFocus = isDark ? neutral[2]! : "#ffffff" as HexColor;
+  // Composer focus tint: one neutral step off the panel, never a saturated
+  // accent wash — a loud input reads as a validation state, not focus.
+  const composerFocus = isDark ? neutral[1]! : "#ffffff" as HexColor;
   const codeBg = isDark ? shift(bg, { l: -0.012, c: 0.92 }) : neutral[1]!;
 
   // Syntax roles from the theme's own hues (comment stays quiet; the rest are

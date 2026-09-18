@@ -66,28 +66,31 @@ export function createWorkflowWebServer(
   }
 
   return createServer(async (request, response) => {
-    if (request.method === "GET" && request.url === "/") return html(response, PAGE);
-    if (request.method === "GET" && request.url === "/app.js") {
+    // Static routes match on pathname so query strings (cache-busting,
+    // iframe params) never turn the app shell into a 404.
+    const pathname = request.url === undefined ? "/" : new URL(request.url, "http://workflow.local").pathname;
+    if (request.method === "GET" && pathname === "/") return html(response, PAGE);
+    if (request.method === "GET" && pathname === "/app.js") {
       if (webapp === undefined) return json(response, 503, { error: "webapp bundle not built" });
       return asset(response, "text/javascript; charset=utf-8", webapp.js);
     }
-    if (request.method === "GET" && request.url === "/app.css") {
+    if (request.method === "GET" && pathname === "/app.css") {
       if (webapp === undefined) return json(response, 503, { error: "webapp bundle not built" });
       return asset(response, "text/css; charset=utf-8", webapp.css);
     }
-    if (request.method === "GET" && request.url === "/manifest.webmanifest") {
+    if (request.method === "GET" && pathname === "/manifest.webmanifest") {
       return json(response, 200, PWA_MANIFEST);
     }
-    if (request.method === "GET" && request.url === "/sw.js") {
+    if (request.method === "GET" && pathname === "/sw.js") {
       const version = webapp === undefined
         ? "unbuilt"
         : createHash("sha256").update(webapp.js).update(webapp.css).digest("hex").slice(0, 12);
       return asset(response, "text/javascript; charset=utf-8", serviceWorkerSource(version));
     }
-    if (request.method === "GET" && request.url === "/icon-192.png") {
+    if (request.method === "GET" && pathname === "/icon-192.png") {
       return asset(response, "image/png", renderIconPng(192));
     }
-    if (request.method === "GET" && request.url === "/icon-512.png") {
+    if (request.method === "GET" && pathname === "/icon-512.png") {
       return asset(response, "image/png", renderIconPng(512));
     }
     if (request.method === "GET" && request.url === "/api/snapshot") return json(response, 200, application.snapshot());

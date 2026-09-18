@@ -509,7 +509,7 @@ body {
 .composer-meta {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 0.6rem;
   margin-top: 0.45rem;
   min-height: 0;
@@ -700,9 +700,19 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 0.86rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
   color: var(--text);
   min-width: 0;
+}
+
+.session-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.6rem;
+  min-height: 1.4rem;
+  padding: 0.15rem 0.3rem;
 }
 
 .session-focus-tag {
@@ -753,7 +763,16 @@ body {
   padding: 0.2rem 0.4rem;
 }
 
-.sessions-empty-note { font-family: var(--font-mono); font-size: 0.78rem; }
+.sessions-empty-note {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-left: 3px solid var(--border-strong);
+  padding: 0.7rem 0.9rem;
+  max-width: 60ch;
+}
 
 /* Usage page: OpenRouter spend/usage breakdown. Control-room table register:
    mono numerals, square everything, accent only on the credit facts. */
@@ -789,6 +808,16 @@ body {
   font-family: var(--font-mono);
   font-size: 0.8rem;
   max-width: 72ch;
+}
+
+/* Composed empty/setup state: a bordered panel in the register rather than a
+   bare paragraph floating in the void. */
+.usage-setup {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-left: 3px solid var(--accent);
+  padding: 0.7rem 0.9rem;
+  color: var(--text-muted);
 }
 
 .usage-credits {
@@ -1296,6 +1325,15 @@ body {
   padding: 0.45rem 0;
 }
 
+/* Stacked rows give the control the full dialog width (long catalogs). */
+.settings-row-stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.45rem;
+}
+
+.settings-row-stacked .settings-row-label { align-self: flex-start; }
+
 .settings-row-label {
   display: flex;
   flex-direction: column;
@@ -1453,6 +1491,10 @@ body {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
   gap: 0.3rem;
+  /* The catalog is long: a bounded, multi-column scroll grid keeps it
+     scannable instead of a 37-row single-column list. */
+  flex: 1 1 22rem;
+  max-width: 100%;
   max-height: 13rem;
   overflow-y: auto;
   padding: 0.1rem;

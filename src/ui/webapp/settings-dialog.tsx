@@ -139,14 +139,15 @@ function Section({ title, children }: { readonly title: string; readonly childre
   );
 }
 
-function Row({ label, description, control, title }: {
+function Row({ label, description, control, title, stacked }: {
   readonly label: string;
   readonly description?: string | undefined;
   readonly title?: string | undefined;
+  readonly stacked?: boolean | undefined;
   readonly control: ReactNode;
 }) {
   return (
-    <div className="settings-row" title={title}>
+    <div className={`settings-row ${stacked === true ? "settings-row-stacked" : ""}`} title={title}>
       <span className="settings-row-label">
         {label}
         {description !== undefined && <span className="settings-desc">{description}</span>}
@@ -211,6 +212,7 @@ export function AppearanceSection({ themeChoice, onThemeChoice, palette, onPalet
         }
       />
       <Row
+        stacked
         label="Palette"
         description="Catalog themes over the Workflow amber identity — the default when none is chosen"
         control={
