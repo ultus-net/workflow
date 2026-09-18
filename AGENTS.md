@@ -18,6 +18,17 @@ model proposes -> Workflow authorizes -> tool acts -> environment supplies evide
 Nothing mutates without authorization; nothing advances without fresh
 evidence; authorization fails **closed** (no hub, no mutations).
 
+**Default surfaces (post-2026-09-16 pivot):** `workflow` launches the browser
+operator UI over stock-ACP OpenCode; goose is the qualified general-purpose/backup
+agent selected with `WORKFLOW_ACP_AGENT=goose`. The terminal surface is
+`workflow-tui --driver acp` (or `--driver opencode`), with the agent kind chosen
+by `WORKFLOW_ACP_AGENT` (valid kinds: `opencode`, `cline`, `goose`). These
+compose the `WorkflowApplication` authority
+**in-process** — the hub is the shared authority for the Cline family and
+hub-resolving launchers. The patched-Cline TUI launcher is retired; the
+vendored-Cline runtime remains a selectable fallback pending the evidence-gated
+W050 retirement.
+
 ## Architecture layers (and the kernel-purity rule)
 
 | Layer | Path | Rule |
@@ -99,7 +110,8 @@ from fingerprinted provenance, never from stale approvals
   criteria; Phase 11 = daily-driver replacement qualification, W043-W050)
 - Hub design `docs/HUB.md`; versioned SDK-neutral contract
   `docs/HUB_PROTOCOL.md`; adapter matrix and probe verdicts
-  `docs/HOST_ADAPTERS.md`; honest feature status `docs/FEATURES.md`
+  `docs/HOST_ADAPTERS.md`; honest feature status `docs/FEATURES.md`;
+  goose's full ACP implementation map `docs/GOOSE_ACP_IMPLEMENTATION.md`
 - Vendored Cline pin and patch: `patches/cline-cli-v3.0.61-workflow.patch`
   (built via `npm run tui:cline:build`; stock PATH Cline is account-cloud-only
   in ACP mode — only the vendored build authenticates headlessly)

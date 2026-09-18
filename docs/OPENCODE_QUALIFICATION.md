@@ -52,3 +52,17 @@ rewritten — later facts land here.
    vendored patch's test-double name
    (`patches/cline-cli-v3.0.61-workflow.patch`); the repo integration seam
    this record exercised is the public `createMcpTools` factory.
+
+## Supersession note (2026-09-18, pivot executed)
+
+The pivot is no longer only a decision: the default `workflow` bind now launches
+the browser operator UI over stock-ACP OpenCode (`src/cli/web-launch.ts` →
+`src/cli/web-service.ts`), and the patched-Cline TUI launcher (`src/cli/tui.tsx`,
+deleted) is retired. goose (AAIF) is the qualified general-purpose/backup ACP
+agent (W048; selected with `WORKFLOW_ACP_AGENT=goose`, with a browser-switcher
+entry added by the goose-web-agent change, PR #35).
+The vendored-Cline runtime remains a selectable fallback; its full retirement is
+the evidence-gated W050, not this note. The Cline-SDK/plugin matrix above stays
+valid as the record of the surfaces it tested; it is no longer the qualification
+of record for the operator's default harness.
+
