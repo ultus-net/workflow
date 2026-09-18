@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
+import { createOpenRouterAnalytics, usageTimeRange, type OpenRouterAnalytics } from "../integrations/openrouter-analytics.js";
 import { evidenceId, observationId, taskId, type TaskState } from "../kernel/contracts.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
 import { WebSessionManager, type SessionSwitchResult } from "./web-sessions.js";
@@ -32,10 +33,19 @@ export function createWorkflowWebServer(
   application: WorkflowApplication,
   session?: WorkflowCodingSession | WebSessionManager,
   webapp?: WebappBundle,
+  options?: {
+    /** The OpenRouter management-key analytics client factory; undefined (or
+     * returning undefined) means the Usage page reports its setup state. */
+    readonly analytics?: () => OpenRouterAnalytics | undefined;
+  },
 ) {
   const manager = session instanceof WebSessionManager ? session : undefined;
   const single = session !== undefined && !(session instanceof WebSessionManager) ? session : undefined;
   const singleChannel = single === undefined ? undefined : new SessionChannel(single);
+  const analyticsFactory = options?.analytics ?? ((): OpenRouterAnalytics | undefined => {
+    const key = process.env.WORKFLOW_OPENROUTER_MANAGEMENT_KEY;
+    return key === undefined || key.length === 0 ? undefined : createOpenRouterAnalytics({ key });
+  });
 
   /** Session-scoped channel: `?session=<id>` selects a parallel live session;
    * without the parameter the operator's focused session answers. */
@@ -114,6 +124,28 @@ export function createWorkflowWebServer(
         return json(response, 200, { worktrees: await gitWorktrees(workspace) });
       } catch {
         return json(response, 503, { error: "git worktrees unavailable" });
+      }
+    }
+    if (request.method === "GET" && request.url?.startsWith("/api/usage")) {
+      const analytics = analyticsFactory();
+      if (analytics === undefined) {
+        return json(response, 200, {
+          available: false,
+          reason: "OpenRouter analytics need a Management key — set WORKFLOW_OPENROUTER_MANAGEMENT_KEY (server-side only; it never reaches the browser)",
+        });
+      }
+      const requestedDays = new URL(request.url, "http://workflow.local").searchParams.get("days");
+      const days = requestedDays === "30" ? 30 : requestedDays === "1" ? 1 : 7;
+      const { startIso, endIso } = usageTimeRange(days);
+      try {
+        const [byModel, byDay, credits] = await Promise.all([
+          analytics.queryByModel(startIso, endIso),
+          analytics.queryDaily(startIso, endIso),
+          analytics.credits(),
+        ]);
+        return json(response, 200, { available: true, days, credits, byModel, byDay });
+      } catch (error) {
+        return json(response, 503, { error: error instanceof Error ? error.message : "OpenRouter analytics unavailable" });
       }
     }
     if (request.method === "GET" && request.url === "/api/sessions") {

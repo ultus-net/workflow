@@ -575,6 +575,64 @@ test("web UI manages sessions through guarded routes", async (context) => {
   assert.equal((await toggleUpdated.json() as { options: { id: string; currentValue: unknown }[] }).options.find((option) => option.id === "web-search")?.currentValue, true);
 });
 
+test('the usage route reports its setup state without a management key and serves analytics with one', async (context) => {
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: 'acp', authoritativePreMutation: false }),
+  );
+
+  // Without a management key the page gets an honest setup state, not a 503.
+  const bare = createWorkflowWebServer(application, undefined, undefined, { analytics: () => undefined });
+  await new Promise<void>((resolve) => bare.listen(0, "127.0.0.1", resolve));
+  context.after(() => bare.close());
+  const barePort = (bare.address() as AddressInfo).port;
+  const setup = await fetch(`http://127.0.0.1:${barePort}/api/usage`);
+  assert.equal(setup.status, 200);
+  const setupBody = await setup.json() as { available: boolean; reason?: string };
+  assert.equal(setupBody.available, false);
+  assert.match(setupBody.reason ?? '', /management key/i);
+
+  // With an analytics client the route composes the three calls.
+  const row = { model: 'deepseek/deepseek-v4.1-flash', provider: 'Together', request_count: 12, prompt_tokens: 310352, completion_tokens: 206, cost: 0.00217 };
+  const calls: string[] = [];
+  const fakeAnalytics = {
+    async meta() { return { metrics: [], dimensions: [], granularities: [] }; },
+    async queryByModel() { calls.push('byModel'); return { rows: [row], truncated: false }; },
+    async queryDaily() { calls.push('byDay'); return { rows: [{ date__day: '2026-09-18T00:00:00.000Z', cost: 0.00217 }], truncated: false }; },
+    async credits() { calls.push('credits'); return { totalCredits: 100, totalUsage: 12.5 }; },
+  };
+  const server = createWorkflowWebServer(application, undefined, undefined, { analytics: () => fakeAnalytics });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const port = (server.address() as AddressInfo).port;
+
+  const usage = await fetch(`http://127.0.0.1:${port}/api/usage` + '?days=30');
+  assert.equal(usage.status, 200);
+  const body = await usage.json() as { available: boolean; days: number; credits?: { totalCredits: number }; byModel?: { rows: unknown[] }; byDay?: { rows: unknown[] } };
+  assert.equal(body.available, true);
+  assert.equal(body.days, 30);
+  assert.equal(body.credits?.totalCredits, 100);
+  assert.equal(body.byModel?.rows.length, 1);
+  assert.equal(body.byDay?.rows.length, 1);
+  assert.deepEqual(calls.sort(), ['byDay', 'byModel', 'credits']);
+
+  // An upstream failure surfaces as a 503 with the upstream message.
+  const failing = createWorkflowWebServer(application, undefined, undefined, {
+    analytics: () => ({
+      async meta() { return { metrics: [], dimensions: [], granularities: [] }; },
+      async queryByModel() { throw new Error('Only management keys can perform this operation'); },
+      async queryDaily() { return { rows: [], truncated: false }; },
+      async credits() { return undefined; },
+    }),
+  });
+  await new Promise<void>((resolve) => failing.listen(0, "127.0.0.1", resolve));
+  context.after(() => failing.close());
+  const failingPort = (failing.address() as AddressInfo).port;
+  const failed = await fetch(`http://127.0.0.1:${failingPort}/api/usage`);
+  assert.equal(failed.status, 503);
+  assert.match((await failed.json() as { error: string }).error, /management key/i);
+});
+
 test("the ACP handshake version rides /api/session and /api/agents, never fabricated", async (context) => {
   const dir = mkdtempSync(join(tmpdir(), "web-version-test-"));
   context.after(() => rmSync(dir, { recursive: true, force: true }));

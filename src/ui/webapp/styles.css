@@ -755,6 +755,131 @@ body {
 
 .sessions-empty-note { font-family: var(--font-mono); font-size: 0.78rem; }
 
+/* Usage page: OpenRouter spend/usage breakdown. Control-room table register:
+   mono numerals, square everything, accent only on the credit facts. */
+.usage-view {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-5) clamp(0.9rem, 3vw, 2.5rem);
+}
+
+.usage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.usage-head h2 {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.usage-ranges { display: flex; gap: 0.3rem; }
+.usage-ranges .theme-option { padding: 0.3rem 0.7rem; }
+
+.usage-setup, .usage-empty-note, .usage-note, .usage-strip-empty {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  max-width: 72ch;
+}
+
+.usage-credits {
+  display: flex;
+  align-items: baseline;
+  gap: 1.4rem;
+  margin-bottom: var(--space-4);
+}
+
+.usage-credit-item {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 0.45rem 0.7rem;
+}
+
+.usage-credit-label {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.usage-credit-value {
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  color: var(--accent);
+}
+
+.usage-strip {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.2rem;
+  height: 4.5rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-4);
+}
+
+.usage-strip-day {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+}
+
+.usage-strip-fill {
+  width: 100%;
+  background: var(--accent-fill);
+  opacity: 0.85;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.usage-table th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-strong);
+  padding: 0.4rem 0.5rem;
+}
+
+.usage-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.42rem 0.5rem;
+  font-family: var(--font-mono);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 34ch;
+}
+
+.usage-table tbody tr:hover { background: var(--surface-raised); }
+
+.usage-num { text-align: right; }
+.usage-table th.usage-num { text-align: right; }
+
 /* Operator parts (actions, outcomes, attention, completion) */
 
 .part {

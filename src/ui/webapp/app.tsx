@@ -15,6 +15,7 @@ import { describeActivity, formatElapsed, formatTokens } from "./presenters.js";
 import { useSessionState, useSessionUsage, useAgentIdentity, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog } from "./settings-dialog.js";
 import { SessionsView } from "./sessions-view.js";
+import { UsageView } from "./usage-view.js";
 import { listPalettes } from "./theme/palettes.js";
 import { usePalette, useTheme } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
@@ -401,6 +402,16 @@ function ChatIcon() {
   );
 }
 
+/** Coin-stack glyph for the Usage slug. */
+function UsageIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <ellipse cx="8" cy="4.2" rx="5" ry="2.2" />
+      <path d="M3 4.2v3.6c0 1.2 2.24 2.2 5 2.2s5-1 5-2.2V4.2" />
+      <path d="M3 7.8v3.6c0 1.2 2.24 2.2 5 2.2s5-1 5-2.2V7.8" />
+    </svg>
+  );
+}
 function SessionsIcon() {
   return (
     <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1196,7 +1207,7 @@ function EnforcementBadge({ level, transport, copy }: {
 
 /** Top-bar views. Sessions is a page (nav slug); session history stays
  * reachable from the composer via the /sessions command. */
-export type AppView = "chat" | "sessions";
+export type AppView = "chat" | "sessions" | "usage";
 
 export function App() {
   // The chat view focuses one parallel session at a time; undefined = the
@@ -1208,6 +1219,10 @@ export function App() {
     const name = command.split(/\s+/)[0]?.toLowerCase() ?? "";
     if (name === "/sessions") {
       setView("sessions");
+      return true;
+    }
+    if (name === "/usage") {
+      setView("usage");
       return true;
     }
     if (name === "/chat") {
@@ -1346,6 +1361,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
             {([
               ["chat", "Chat", <ChatIcon key="c" />],
               ["sessions", "Sessions", <SessionsIcon key="s" />],
+              ["usage", "Usage", <UsageIcon key="u" />],
             ] as const).map(([slug, label, icon]) => (
               <button
                 key={slug}
@@ -1417,6 +1433,8 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
             setView("chat");
           }}
         />
+      ) : view === "usage" ? (
+        <UsageView />
       ) : (
       <div className="shell-body">
         <aside className="sidebar" aria-label="Repository changes">
