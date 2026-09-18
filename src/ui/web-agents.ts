@@ -56,8 +56,8 @@ function gooseBinaryPresent(): boolean {
 }
 
 /** Goose's provider credentials for the selected workload: the loopback
- * proxy's upstream key for openrouter, or the Foundry endpoint+key for azure
- * (the runtime composes the same pieces and fails closed without them). */
+ * proxy's upstream key for openrouter, or the Foundry endpoint+key+model for
+ * azure (the runtime composes the same pieces and fails closed without them). */
 function gooseCredentialsPresent(): boolean {
   let provider: ReturnType<typeof gooseProviderKind>;
   try {
@@ -66,8 +66,10 @@ function gooseCredentialsPresent(): boolean {
     return false;
   }
   if (provider === "azure_foundry") {
+    const model = (process.env.WORKFLOW_GOOSE_MODEL ?? process.env.GOOSE_MODEL ?? process.env.AZURE_FOUNDRY_MODEL ?? "").trim();
     return (process.env.AZURE_FOUNDRY_ENDPOINT ?? "").trim().length > 0
-      && (process.env.AZURE_FOUNDRY_API_KEY ?? "").trim().length > 0;
+      && (process.env.AZURE_FOUNDRY_API_KEY ?? "").trim().length > 0
+      && model.length > 0;
   }
   return upstreamKeyPresent();
 }

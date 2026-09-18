@@ -16,12 +16,14 @@ export interface AcpInitializeResult {
  * Capabilities the hub advertises to every ACP agent on `initialize`.
  *
  * `session.configOptions` unlocks agent-advertised model/mode pickers.
- * `_meta.goose.customNotifications` opts into goose's custom
- * `_goose/unstable/session/update` channel (usage_update, status_message, …);
- * goose reads it from `clientCapabilities._meta.goose.customNotifications`
- * (`crates/goose/src/acp/server.rs`, W048). Other agents ignore the `_meta`
- * extension, and the driver already projects unknown well-formed
- * notifications (W047).
+ * `_meta.goose.customNotifications` is the opt-in goose source-gates its
+ * custom `_goose/unstable/session/update` channel (usage_update,
+ * status_message, …) on, read from `clientCapabilities._meta.goose` (Rust
+ * field `meta`; `_meta` is ACP's reserved extension key —
+ * `crates/goose/src/acp/server.rs`). W048 already observed usage projection on
+ * 1.50.1; advertising the capability makes the channel explicit rather than
+ * incidental. Other agents ignore the extension, and the driver already
+ * projects unknown well-formed notifications (W047).
  */
 export function acpClientCapabilities(): Record<string, unknown> {
   return {
