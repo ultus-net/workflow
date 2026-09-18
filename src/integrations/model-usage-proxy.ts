@@ -1,6 +1,13 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 
+import {
+  applyAutoRouterPlugin,
+  createAliasResolver,
+  isAutoRouterModel,
+  type AliasResolver,
+} from "./openrouter-auto-latest.js";
+
 export interface ModelUsageMetrics {
   readonly requests: number;
   readonly usageEvents: number;
@@ -57,6 +64,23 @@ interface MutableMetrics {
   latestPromptTokens: number | undefined;
 }
 
+export interface AutoLatestProxyOptions {
+  /** `~...-latest` aliases to resolve into the Auto Router pool. */
+  readonly aliases: readonly string[];
+  /** Optional Auto Router cost band (`low`..`max`). */
+  readonly costTier?: string;
+  /** Model catalog URL; defaults to `<upstream>/api/v1/models`. */
+  readonly modelsUrl?: string;
+  /** Injectable for tests. */
+  readonly fetch?: typeof fetch;
+  /** Injectable for tests. */
+  readonly now?: () => number;
+  /** Cache lifetime for resolved aliases. */
+  readonly ttlMs?: number;
+  /** Backoff after a failed catalog fetch; defaults to 1 minute. */
+  readonly negativeTtlMs?: number;
+}
+
 /**
  * Hub-owned metering proxy for model traffic. The upstream provider key lives
  * ONLY here: agents receive a placeholder key and a baseUrl pointing at this
@@ -69,6 +93,12 @@ export async function createModelUsageProxy(options: {
   readonly upstream: string;
   readonly apiKey: string;
   readonly onUsage?: (usage: Record<string, unknown>) => void;
+  /**
+   * When set, chat completions targeting `openrouter/auto` have the resolved
+   * `~...-latest` pool injected as the Auto Router `allowed_models` before
+   * forwarding. Absent leaves traffic untouched.
+   */
+  readonly autoLatest?: AutoLatestProxyOptions | undefined;
 }): Promise<ModelUsageProxy> {
   if (typeof options.apiKey !== "string" || options.apiKey.trim().length === 0) {
     throw new TypeError("model usage proxy requires a non-empty upstream API key");
@@ -78,6 +108,18 @@ export async function createModelUsageProxy(options: {
     throw new TypeError("model usage proxy upstream must be https (or loopback for tests)");
   }
   const metrics: MutableMetrics = { requests: 0, usageEvents: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0, latestPromptTokens: undefined };
+  const autoLatest = options.autoLatest;
+  const aliasResolver: AliasResolver | undefined =
+    autoLatest === undefined
+      ? undefined
+      : createAliasResolver({
+          modelsUrl: autoLatest.modelsUrl ?? new URL("/api/v1/models", upstream).toString(),
+          aliases: autoLatest.aliases,
+          ...(autoLatest.fetch === undefined ? {} : { fetch: autoLatest.fetch }),
+          ...(autoLatest.now === undefined ? {} : { now: autoLatest.now }),
+          ...(autoLatest.ttlMs === undefined ? {} : { ttlMs: autoLatest.ttlMs }),
+          ...(autoLatest.negativeTtlMs === undefined ? {} : { negativeTtlMs: autoLatest.negativeTtlMs }),
+        });
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((error) => {
@@ -109,9 +151,20 @@ export async function createModelUsageProxy(options: {
         res.end(JSON.stringify({ error: "model usage proxy received non-object chat completion body" }));
         return;
       }
-      const existing = isRecord(parsed.usage) ? parsed.usage : {};
+      // Hub-owned Auto Router pool: resolve `~...-latest` aliases to concrete
+      // slugs and inject them so the router's `allowed_models` (which does not
+      // understand aliases) actually has candidates. Fail open on resolution
+      // failure so traffic is never blocked by a catalog hiccup.
+      let routed = parsed;
+      if (aliasResolver !== undefined && isAutoRouterModel(parsed.model)) {
+        const allowedModels = await aliasResolver.resolve();
+        if (allowedModels.length > 0) {
+          routed = applyAutoRouterPlugin(parsed, parsed.model, allowedModels, autoLatest?.costTier);
+        }
+      }
+      const existing = isRecord(routed.usage) ? routed.usage : {};
       // Ask the provider for usage accounting so usage arrives even in streams.
-      outboundBody = Buffer.from(JSON.stringify({ ...parsed, usage: { ...existing, include: true } }), "utf8");
+      outboundBody = Buffer.from(JSON.stringify({ ...routed, usage: { ...existing, include: true } }), "utf8");
     }
 
     // P1: reject absolute-form request-targets — RFC 7230 allows
@@ -193,6 +246,10 @@ export async function createModelUsageProxy(options: {
     }
     options.onUsage?.(usage);
   }
+
+  // Warm the alias cache so the first Auto Router request does not wait on the
+  // catalog fetch. Fire-and-forget: failure is handled inside the resolver.
+  if (aliasResolver !== undefined) void aliasResolver.resolve();
 
   const started = await new Promise<AddressInfo>((resolveServer, rejectServer) => {
     server.once("error", rejectServer);

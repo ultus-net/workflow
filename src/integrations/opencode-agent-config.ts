@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 
 import { METERED_PLACEHOLDER_KEY } from "./model-usage-proxy.js";
+import { autoLatestModelCatalog } from "./openrouter-auto-latest.js";
 
 /**
  * Hub-written OpenCode launch configuration. The hub owns the agent's config
@@ -21,6 +22,11 @@ export function meteredOpencodeConfig(options: {
   readonly proxyUrl: string;
   readonly model?: string | undefined;
   /**
+   * When set, the `~...-latest` alias pool is exposed as additional selectable
+   * models in the ACP model picker (the Auto Router stays the default).
+   */
+  readonly autoLatest?: { readonly aliases: readonly string[] } | undefined;
+  /**
    * Plan Task F1: the skills-mcp delivery mount. When provided, the agent
    * mounts the hub-owned skills server (list_skills/read_skill) — the single
    * delivery path the application's skill precondition journals against (the
@@ -31,6 +37,14 @@ export function meteredOpencodeConfig(options: {
   readonly skills?: { readonly serverScript: string; readonly skillsDir: string } | undefined;
 }): Record<string, unknown> {
   const model = options.model ?? DEFAULT_OPENCODE_MODEL;
+  // Expose the Auto Router plus the alias pool as selectable models so the ACP
+  // model picker can switch to a specific family's latest without pinning a
+  // version. The Auto Router stays the default selection.
+  const models: Record<string, { name: string }> = {
+    [DEFAULT_OPENCODE_MODEL]: { name: "Auto Router" },
+    ...autoLatestModelCatalog(options.autoLatest?.aliases ?? []),
+  };
+  if (!(model in models)) models[model] = { name: model };
   return {
     $schema: "https://opencode.ai/config.json",
     provider: {
@@ -47,7 +61,7 @@ export function meteredOpencodeConfig(options: {
           // plain string here, not an env reference — verified live.)
           apiKey: METERED_PLACEHOLDER_KEY,
         },
-        models: { [model]: { name: model } },
+        models,
       },
     },
     model: `${OPENCODE_METERED_PROVIDER_ID}/${model}`,

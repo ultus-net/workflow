@@ -71,6 +71,32 @@ test("meteredOpencodeConfig honors an explicit model override", () => {
   assert.ok("anthropic/claude-sonnet-4" in (provider.models as Record<string, unknown>));
 });
 
+test("meteredOpencodeConfig exposes the alias pool as selectable models with the Auto Router default", () => {
+  const config = meteredOpencodeConfig({
+    proxyUrl: "http://localhost:61003",
+    autoLatest: { aliases: ["~anthropic/claude-sonnet-latest", "~openai/gpt-terra-latest"] },
+  });
+  const provider = (config.provider as Record<string, Record<string, unknown>>)[OPENCODE_METERED_PROVIDER_ID]!;
+  const models = provider.models as Record<string, { name: string }>;
+  assert.equal(config.model, `${OPENCODE_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`);
+  assert.deepEqual(models[DEFAULT_OPENCODE_MODEL], { name: "Auto Router" });
+  assert.deepEqual(models["~anthropic/claude-sonnet-latest"], { name: "Claude Sonnet (latest)" });
+  assert.deepEqual(models["~openai/gpt-terra-latest"], { name: "GPT Terra (latest)" });
+});
+
+test("meteredOpencodeConfig keeps an explicit non-pool model selectable alongside the pool", () => {
+  const config = meteredOpencodeConfig({
+    proxyUrl: "http://localhost:61004",
+    model: "anthropic/claude-sonnet-4",
+    autoLatest: { aliases: ["~anthropic/claude-sonnet-latest"] },
+  });
+  const provider = (config.provider as Record<string, Record<string, unknown>>)[OPENCODE_METERED_PROVIDER_ID]!;
+  const models = provider.models as Record<string, { name: string }>;
+  assert.equal(config.model, `${OPENCODE_METERED_PROVIDER_ID}/anthropic/claude-sonnet-4`);
+  assert.deepEqual(models["anthropic/claude-sonnet-4"], { name: "anthropic/claude-sonnet-4" });
+  assert.ok("~anthropic/claude-sonnet-latest" in models, "the pool is exposed even with a custom default");
+});
+
 test("meteredOpencodeConfig mounts the skills delivery path only when composed", () => {
   const withoutSkills = meteredOpencodeConfig({ proxyUrl: "http://127.0.0.1:61002" });
   assert.equal("mcp" in withoutSkills, false, "no skills mount means no mcp block");
