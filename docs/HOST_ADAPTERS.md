@@ -62,6 +62,8 @@ For Cline SDK hosts, `createWorkflowClinePlugin(application, adapter)` returns t
 
 **2026-09-18 (W050 step 6 — vendored runtime removed):** the vendored-Cline SDK runtime, its `.workflow-cline/` checkout, and the Workflow patch were removed on branch `feat/w050-cline-removal` (not yet merged), along with the hub's Cline-specific `/before-tool` and `/team-task` routes. The retained connector is the thin stock-ACP launch described above; it remains probe-PENDING on stock 3.0.62. Body references below to `src/adapters/cline.ts`, the Cline plugin factory, the `test:cline-*` scripts, and the vendored pinned entry are historical.
 
+**2026-09-18 (W050 follow-up — merged; launch fallback removed):** steps C1-C7 merged to `main` via PR #40. `resolveClineLaunch` no longer carries the deprecated `.workflow-cline` compiled-binary branch (the step-5 "PATH → vendored fallback" precedence above is superseded): it resolves `WORKFLOW_CLINE_BIN` → ambient PATH `cline`, else fails closed. The connector remains **probe-PENDING on stock 3.0.62** — no live stock probe run has been recorded.
+
 For OpenCode hosts, `createWorkflowOpenCodePlugin(application, adapter)` registers a `tool.execute.before` hook: the adapter returns its typed `{ kind: "deny", reason }` control for a Workflow denial and the plugin throws it, so the host aborts the tool before execution. The factory likewise rejects advisory adapters.
 
 ## Current adapter files
