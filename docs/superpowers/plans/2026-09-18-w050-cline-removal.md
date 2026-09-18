@@ -190,6 +190,18 @@ Read-only pass over a fresh clone (`github.com/cline/cline`, HEAD `8872d81`,
   `docs/HUB_PROTOCOL.md`, `README.md`, `AGENTS.md`,
   `docs/GUARD_CORPUS_MAP.md`, `docs/OPENCODE_QUALIFICATION.md`,
   `docs/UI_INTEGRATION.md`.
+  - **AGENTS.md stale clause (must correct):** `AGENTS.md:116` still says
+    "stock PATH Cline is account-cloud-only in ACP mode — only the vendored
+    build authenticates headlessly". That is contradicted by section D's
+    stock-3.0.62 finding (`acpAgent.ts:151` accepts `CLINE_API_KEY` without
+    `authenticate`), and removing the vendored build/patch makes the claim
+    load-bearing rather than incidental. Correct it in place as a living doc
+    (AGENTS.md also drops the "built via `npm run tui:cline:build`" patch
+    bullet in section B); if the headless-auth path has not been re-verified
+    live by then, state it as probe-pending, not as fact. The dated records
+    carrying the same 2026-09-16 claim (`docs/ACP_DECISION.md:17`,
+    `docs/ACP_RESEARCH.md:197,216,218`, `docs/ACP_SURFACE.md:56`) keep the old
+    wording and get dated supersession notes instead.
 - **Append-only dated records — supersession notes, never rewrite:**
   `docs/ACP_DECISION.md`, `docs/ACP_RESEARCH.md`, `docs/ACP_SURFACE.md`,
   `docs/HOST_ADAPTERS.md` (keep the Cline ACP rows, mark the connector dormant /
