@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AttachmentPrimitive,
   AuiIf,
@@ -14,7 +14,8 @@ import { MarkdownText } from "./markdown-text.js";
 import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } from "./presenters.js";
 import { useSessionState, useSessionUsage } from "./runtime.js";
 import { SettingsDialog } from "./settings-dialog.js";
-import { useTheme } from "./theme.js";
+import { listPalettes } from "./theme/palettes.js";
+import { usePalette, useTheme } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
 import type { WebConfigOption } from "../web-config-options.js";
 
@@ -1209,6 +1210,8 @@ export function App() {
   const capabilities = useCapabilities();
   const { isRunning } = useSessionState();
   const theme = useTheme();
+  const { palette, setPalette } = usePalette();
+  const palettes = useMemo(() => listPalettes(), []);
   const usage = useSessionUsage();
   const enforcementCopy = snapshot === undefined ? undefined : ENFORCEMENT_COPY[snapshot.enforcementLevel];
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1347,6 +1350,9 @@ export function App() {
           onClose={() => setSettingsOpen(false)}
           themeChoice={theme.choice}
           onThemeChoice={theme.setChoice}
+          palette={palette}
+          onPalette={setPalette}
+          palettes={palettes}
           railsOff={railsOff}
           onRailsToggle={setRailsOff}
           options={options}

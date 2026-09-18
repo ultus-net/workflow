@@ -1053,6 +1053,60 @@ body {
 
 .theme-option:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+/* Palette catalog (settings Appearance). Square chips with a three-tone
+   swatch from the theme's own dark variant. */
+.palette-choice {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+  gap: 0.3rem;
+  max-height: 13rem;
+  overflow-y: auto;
+  padding: 0.1rem;
+}
+
+.palette-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-s);
+  padding: 0.28rem 0.4rem;
+  font: inherit;
+  font-size: 0.74rem;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.palette-chip:hover { color: var(--text); border-color: var(--border-strong); }
+
+.palette-chip-on {
+  color: var(--text);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.palette-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.palette-swatch {
+  display: inline-flex;
+  flex: none;
+}
+
+.palette-swatch > span {
+  display: inline-block;
+  width: 0.55rem;
+  height: 0.8rem;
+  border: 1px solid var(--border);
+  margin-right: -1px;
+}
+
+.palette-chip:last-child .palette-swatch > span { margin-right: 0; }
+
 /* Composer */
 
 .composer-dock {
