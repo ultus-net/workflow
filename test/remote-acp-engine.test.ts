@@ -93,3 +93,57 @@ test("HttpRemoteEngine fails loudly on a non-OK response", async () => {
   });
   await assert.rejects(() => engine.createSession({ cwd: "/w" }), /failed \(401\)/);
 });
+
+test("HttpRemoteEngine parses sessions, messages, agents, and providers", async () => {
+  const json = (body: unknown): Response => new Response(JSON.stringify(body), { status: 200 });
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    fetch: async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === "/session") return json([{ id: "ses_1", title: "T", time: { updated: 5 } }]);
+      if (path === "/session/ses_1") return json({ id: "ses_1", title: "T" });
+      if (path === "/session/ses_1/message") return json([{ info: { id: "m1", role: "assistant" }, parts: [{ type: "text", text: "hi" }] }]);
+      if (path === "/agent") return json([{ id: "build", mode: "primary" }]);
+      if (path === "/config/providers") return json({ providers: [{ id: "anthropic", name: "Anthropic", models: { claude: { id: "claude", name: "Claude" } } }] });
+      return new Response(null, { status: 204 });
+    },
+  });
+  assert.deepEqual(await engine.listSessions({ cwd: "/w" }), [{ id: "ses_1", title: "T", time: { updated: 5 } }]);
+  assert.deepEqual(await engine.getSession({ sessionId: "ses_1", cwd: "/w" }), { id: "ses_1", title: "T" });
+  assert.deepEqual(await engine.messages({ sessionId: "ses_1", cwd: "/w" }), [{ info: { id: "m1", role: "assistant" }, parts: [{ type: "text", text: "hi" }] }]);
+  assert.deepEqual(await engine.agents({ cwd: "/w" }), [{ id: "build", mode: "primary" }]);
+  assert.deepEqual(await engine.providers({ cwd: "/w" }), [{ id: "anthropic", name: "Anthropic", models: [{ id: "claude", name: "Claude" }] }]);
+});
+
+test("HttpRemoteEngine posts the prompt with the selected agent and model", async () => {
+  const bodies: unknown[] = [];
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    fetch: async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 204 });
+    },
+  });
+  await engine.prompt({ sessionId: "ses_1", cwd: "/w", text: "go", agent: "plan", model: { providerID: "anthropic", modelID: "claude" } });
+  assert.deepEqual(bodies[0], {
+    parts: [{ type: "text", text: "go" }],
+    agent: "plan",
+    model: { providerID: "anthropic", modelID: "claude" },
+  });
+});
+
+test("HttpRemoteEngine deleteSession issues a DELETE", async () => {
+  let method = "";
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    fetch: async (_url, init) => {
+      method = init?.method ?? "";
+      return new Response(null, { status: 204 });
+    },
+  });
+  await engine.deleteSession({ sessionId: "ses_1", cwd: "/w" });
+  assert.equal(method, "DELETE");
+});

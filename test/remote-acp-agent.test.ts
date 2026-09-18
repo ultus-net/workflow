@@ -2,13 +2,24 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createRemoteAcpAgent, type RemoteAcpConnection } from "../src/integrations/remote-acp/agent.js";
-import type { RemoteEngine, RemoteEngineEvent, RemoteEngineReply } from "../src/integrations/remote-acp/engine.js";
+import type { RemoteAgent, RemoteEngine, RemoteEngineEvent, RemoteEngineReply, RemoteMessage, RemoteProvider, RemoteSession } from "../src/integrations/remote-acp/engine.js";
 
 class FakeEngine implements RemoteEngine {
   readonly creates: { cwd: string; title?: string }[] = [];
-  readonly prompts: { sessionId: string; cwd: string; text: string }[] = [];
+  readonly prompts: { sessionId: string; cwd: string; text: string; agent?: string; model?: { providerID: string; modelID: string } }[] = [];
   readonly aborts: { sessionId: string; cwd: string }[] = [];
   readonly replies: { sessionId: string; requestId: string; reply: RemoteEngineReply; cwd: string }[] = [];
+  readonly deleted: string[] = [];
+  agentsResult: readonly RemoteAgent[] = [
+    { id: "build", name: "Build", mode: "primary" },
+    { id: "plan", name: "Plan", mode: "primary" },
+    { id: "explore", mode: "subagent" },
+  ];
+  providersResult: readonly RemoteProvider[] = [
+    { id: "anthropic", name: "Anthropic", models: [{ id: "claude", name: "Claude" }] },
+  ];
+  messagesResult: readonly RemoteMessage[] = [];
+  sessionsResult: readonly RemoteSession[] = [];
   #queue: RemoteEngineEvent[] = [];
   #waiters: ((event: RemoteEngineEvent | undefined) => void)[] = [];
   #closed = false;
@@ -34,7 +45,31 @@ class FakeEngine implements RemoteEngine {
     return { id: "ses_1" };
   }
 
-  async prompt(input: { sessionId: string; cwd: string; text: string }): Promise<void> {
+  async getSession(): Promise<RemoteSession | undefined> {
+    return undefined;
+  }
+
+  async listSessions(): Promise<readonly RemoteSession[]> {
+    return this.sessionsResult;
+  }
+
+  async deleteSession(input: { sessionId: string }): Promise<void> {
+    this.deleted.push(input.sessionId);
+  }
+
+  async messages(): Promise<readonly RemoteMessage[]> {
+    return this.messagesResult;
+  }
+
+  async agents(): Promise<readonly RemoteAgent[]> {
+    return this.agentsResult;
+  }
+
+  async providers(): Promise<readonly RemoteProvider[]> {
+    return this.providersResult;
+  }
+
+  async prompt(input: { sessionId: string; cwd: string; text: string; agent?: string; model?: { providerID: string; modelID: string } }): Promise<void> {
     this.prompts.push(input);
   }
 
@@ -94,7 +129,7 @@ test("newSession and prompt drive the engine with the joined prompt text", async
 
   const response = await agent.prompt({ sessionId: session.sessionId, prompt: [{ type: "text", text: "a" }, { type: "text", text: "b" }] });
   assert.equal(response.stopReason, "end_turn");
-  assert.deepEqual(engine.prompts, [{ sessionId: "ses_1", cwd: "/w", text: "ab" }]);
+  assert.deepEqual(engine.prompts, [{ sessionId: "ses_1", cwd: "/w", text: "ab", agent: "build", model: { providerID: "anthropic", modelID: "claude" } }]);
   agent.dispose();
 });
 
@@ -164,5 +199,84 @@ test("cancel aborts the engine session", async () => {
   await agent.newSession({ cwd: "/w" });
   await agent.cancel({ sessionId: "ses_1" });
   assert.deepEqual(engine.aborts, [{ sessionId: "ses_1", cwd: "/w" }]);
+  agent.dispose();
+});
+
+test("newSession exposes selectable modes (subagents excluded) and models as config options", async () => {
+  const engine = new FakeEngine();
+  const agent = createRemoteAcpAgent({ engine, cwd: "/w", connection: new FakeConnection() });
+  const session = await agent.newSession({ cwd: "/w" });
+  assert.deepEqual(session.availableModes.map((mode) => mode.id), ["build", "plan"]);
+  assert.deepEqual(session.availableModels.map((model) => model.modelId), ["anthropic/claude"]);
+  assert.deepEqual(session.configOptions.map((option) => [option.id, option.currentValue]), [["mode", "build"], ["model", "anthropic/claude"]]);
+  agent.dispose();
+});
+
+test("setSessionConfigOption validates and emits a config_option_update", async () => {
+  const engine = new FakeEngine();
+  const connection = new FakeConnection();
+  const agent = createRemoteAcpAgent({ engine, cwd: "/w", connection });
+  await agent.newSession({ cwd: "/w" });
+  const result = await agent.setSessionConfigOption({ sessionId: "ses_1", configId: "model", value: "anthropic/claude" });
+  assert.equal(result.configOptions.find((option) => option.id === "model")?.currentValue, "anthropic/claude");
+  assert.deepEqual(connection.updates.at(-1), {
+    sessionId: "ses_1",
+    update: { sessionUpdate: "config_option_update", configOptions: result.configOptions },
+  });
+  await assert.rejects(() => agent.setSessionConfigOption({ sessionId: "ses_1", configId: "model", value: "nope/nope" }), /unknown model/);
+  await assert.rejects(() => agent.setSessionConfigOption({ sessionId: "ses_1", configId: "mode", value: "explore" }), /unknown mode/);
+  agent.dispose();
+});
+
+test("setSessionMode validates against the remote catalog", async () => {
+  const engine = new FakeEngine();
+  const agent = createRemoteAcpAgent({ engine, cwd: "/w", connection: new FakeConnection() });
+  await agent.newSession({ cwd: "/w" });
+  await agent.setSessionMode({ sessionId: "ses_1", modeId: "plan" });
+  await assert.rejects(() => agent.setSessionMode({ sessionId: "ses_1", modeId: "ghost" }), /unknown mode/);
+  agent.dispose();
+});
+
+test("prompt forwards the selected mode and parsed model to the engine", async () => {
+  const engine = new FakeEngine();
+  const agent = createRemoteAcpAgent({ engine, cwd: "/w", connection: new FakeConnection() });
+  await agent.newSession({ cwd: "/w" });
+  await agent.setSessionMode({ sessionId: "ses_1", modeId: "plan" });
+  await agent.prompt({ sessionId: "ses_1", prompt: [{ type: "text", text: "go" }] });
+  assert.deepEqual(engine.prompts[0], {
+    sessionId: "ses_1",
+    cwd: "/w",
+    text: "go",
+    agent: "plan",
+    model: { providerID: "anthropic", modelID: "claude" },
+  });
+  agent.dispose();
+});
+
+test("loadSession replays assistant messages as session updates", async () => {
+  const engine = new FakeEngine();
+  engine.messagesResult = [
+    { info: { role: "user" }, parts: [{ type: "text", text: "ignore me" }] },
+    { info: { role: "assistant" }, parts: [{ type: "text", sessionID: "ses_1", text: "recalled" }] },
+  ];
+  const connection = new FakeConnection();
+  const agent = createRemoteAcpAgent({ engine, cwd: "/w", connection });
+  await agent.loadSession({ sessionId: "ses_1", cwd: "/w" });
+  await waitFor(() => connection.updates.length === 1, "replay update");
+  assert.deepEqual(connection.updates[0], {
+    sessionId: "ses_1",
+    update: { sessionUpdate: "agent_message_chunk", messageId: undefined, content: { type: "text", text: "recalled" } },
+  });
+  agent.dispose();
+});
+
+test("listSessions maps remote sessions and closeSession deletes", async () => {
+  const engine = new FakeEngine();
+  engine.sessionsResult = [{ id: "ses_9", title: "Old", time: { updated: 42 } }];
+  const agent = createRemoteAcpAgent({ engine, cwd: "/w", connection: new FakeConnection() });
+  const listed = await agent.listSessions({ cwd: "/w" });
+  assert.deepEqual(listed.sessions, [{ sessionId: "ses_9", cwd: "/w", title: "Old", updatedAt: 42 }]);
+  await agent.closeSession({ sessionId: "ses_9" });
+  assert.deepEqual(engine.deleted, ["ses_9"]);
   agent.dispose();
 });

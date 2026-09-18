@@ -6,7 +6,7 @@
  * the permission path is answered by Workflow through the ACP connection.
  */
 
-import type { RemoteEngineEvent, RemoteEnginePermissionRequest, RemoteEngineReply } from "./engine.js";
+import type { RemoteAgent, RemoteEngineEvent, RemoteEnginePermissionRequest, RemoteEngineReply, RemoteMessage, RemoteProvider } from "./engine.js";
 
 /** ACP permission options the bridge offering mirrors the native mapping. */
 export const REMOTE_PERMISSION_OPTIONS = [
@@ -180,4 +180,78 @@ export function toolStatus(status: unknown): string {
     default:
       return "in_progress";
   }
+}
+
+/** ACP `SessionConfigOption` (select form) as Workflow's surfaces consume it. */
+export interface RemoteSessionConfigOption {
+  readonly id: string;
+  readonly name: string;
+  readonly type: "select";
+  readonly currentValue: string;
+  readonly options: readonly { readonly value: string; readonly name: string }[];
+}
+
+/** Replays a session's assistant messages as ACP `session/update` chunks. */
+export function projectReplay(
+  messages: readonly RemoteMessage[],
+): { readonly sessionId: string; readonly update: Record<string, unknown> }[] {
+  const updates: { sessionId: string; update: Record<string, unknown> }[] = [];
+  for (const message of messages) {
+    if (message.info?.role === "user") continue;
+    for (const part of message.parts ?? []) {
+      const projected = projectSessionUpdate({ type: "message.part.updated", properties: { part } });
+      if (projected !== undefined) updates.push(projected);
+    }
+  }
+  return updates;
+}
+
+/** Selectable modes from the remote agents (subagents and hidden agents excluded). */
+export function availableModes(agents: readonly RemoteAgent[]): readonly { readonly id: string; readonly name: string; readonly description?: string }[] {
+  return agents
+    .filter((agent) => agent.mode !== "subagent" && agent.hidden !== true)
+    .map((agent) => ({
+      id: agent.id,
+      name: agent.name ?? agent.id,
+      ...(agent.description === undefined ? {} : { description: agent.description }),
+    }));
+}
+
+/** Selectable models from the remote providers, keyed `provider/model`. */
+export function availableModels(providers: readonly RemoteProvider[]): readonly { readonly modelId: string; readonly name: string }[] {
+  return providers.flatMap((provider) =>
+    provider.models.map((model) => ({
+      modelId: `${provider.id}/${model.id}`,
+      name: model.name === undefined ? `${provider.id}/${model.id}` : `${provider.name ?? provider.id}: ${model.name}`,
+    })),
+  );
+}
+
+/** Builds ACP config options for the mode and model selectors. */
+export function sessionConfigOptions(input: {
+  readonly modes: readonly { readonly id: string; readonly name: string }[];
+  readonly models: readonly { readonly modelId: string; readonly name: string }[];
+  readonly currentModeId?: string | undefined;
+  readonly currentModelId?: string | undefined;
+}): readonly RemoteSessionConfigOption[] {
+  const options: RemoteSessionConfigOption[] = [];
+  if (input.modes.length > 0) {
+    options.push({
+      id: "mode",
+      name: "Mode",
+      type: "select",
+      currentValue: input.currentModeId ?? input.modes[0]!.id,
+      options: input.modes.map((mode) => ({ value: mode.id, name: mode.name })),
+    });
+  }
+  if (input.models.length > 0) {
+    options.push({
+      id: "model",
+      name: "Model",
+      type: "select",
+      currentValue: input.currentModelId ?? input.models[0]!.modelId,
+      options: input.models.map((model) => ({ value: model.modelId, name: model.name })),
+    });
+  }
+  return options;
 }

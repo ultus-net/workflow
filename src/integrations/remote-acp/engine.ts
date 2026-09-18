@@ -42,6 +42,41 @@ export interface RemotePart {
   readonly state?: RemotePartState;
 }
 
+export interface RemoteMessage {
+  readonly info?: {
+    readonly id?: string;
+    readonly role?: string;
+    readonly sessionID?: string;
+  };
+  readonly parts?: readonly RemotePart[];
+}
+
+export interface RemoteSession {
+  readonly id: string;
+  readonly title?: string;
+  readonly parentID?: string;
+  readonly time?: { readonly updated?: number; readonly created?: number };
+}
+
+export interface RemoteAgent {
+  readonly id: string;
+  readonly name?: string;
+  readonly description?: string;
+  readonly mode?: string;
+  readonly hidden?: boolean;
+}
+
+export interface RemoteModel {
+  readonly id: string;
+  readonly name?: string;
+}
+
+export interface RemoteProvider {
+  readonly id: string;
+  readonly name?: string;
+  readonly models: readonly RemoteModel[];
+}
+
 export type RemoteEngineEvent =
   | { readonly type: "permission.asked"; readonly properties: RemoteEnginePermissionRequest }
   | { readonly type: "session.status"; readonly properties: { readonly sessionID: string; readonly status?: { readonly type?: string } } }
@@ -49,10 +84,26 @@ export type RemoteEngineEvent =
   | { readonly type: "message.part.delta"; readonly properties: { readonly sessionID: string; readonly messageID?: string; readonly partID?: string; readonly field?: string; readonly delta?: string } }
   | { readonly type: string; readonly properties: Record<string, unknown> };
 
+export interface RemotePromptInput {
+  readonly sessionId: string;
+  readonly cwd: string;
+  readonly text: string;
+  /** Agent/mode to run the turn with, when the caller selected one. */
+  readonly agent?: string;
+  /** Model selection, when the caller selected one. */
+  readonly model?: { readonly providerID: string; readonly modelID: string };
+}
+
 export interface RemoteEngine {
   health(): Promise<{ readonly healthy: boolean; readonly version?: string }>;
   createSession(input: { readonly cwd: string; readonly title?: string }): Promise<{ readonly id: string }>;
-  prompt(input: { readonly sessionId: string; readonly cwd: string; readonly text: string }): Promise<void>;
+  getSession(input: { readonly sessionId: string; readonly cwd: string }): Promise<RemoteSession | undefined>;
+  listSessions(input: { readonly cwd: string }): Promise<readonly RemoteSession[]>;
+  deleteSession(input: { readonly sessionId: string; readonly cwd: string }): Promise<void>;
+  messages(input: { readonly sessionId: string; readonly cwd: string }): Promise<readonly RemoteMessage[]>;
+  agents(input: { readonly cwd: string }): Promise<readonly RemoteAgent[]>;
+  providers(input: { readonly cwd: string }): Promise<readonly RemoteProvider[]>;
+  prompt(input: RemotePromptInput): Promise<void>;
   abort(input: { readonly sessionId: string; readonly cwd: string }): Promise<void>;
   replyPermission(input: {
     readonly sessionId: string;
@@ -64,7 +115,7 @@ export interface RemoteEngine {
 }
 
 export interface HttpRemoteEngineOptions {
-  /** Base URL of the OpenCode server, e.g. `http://127.0.0.1:4096`. */
+  /** Base URL of the OpenCode server, e.g. `http://[IP_ADDRESS]:4096`. */
   readonly baseUrl: string;
   /** Workspace directory sent as the `directory` routing query. */
   readonly cwd: string;
@@ -110,10 +161,69 @@ export class HttpRemoteEngine implements RemoteEngine {
     return { id: body.id };
   }
 
-  async prompt(input: { sessionId: string; cwd: string; text: string }): Promise<void> {
+  async getSession(input: { sessionId: string; cwd: string }): Promise<RemoteSession | undefined> {
+    const body = await this.#json("GET", `/session/${encodeURIComponent(input.sessionId)}`, { cwd: input.cwd });
+    return parseSession(body);
+  }
+
+  async listSessions(input: { cwd: string }): Promise<readonly RemoteSession[]> {
+    const body = await this.#json("GET", "/session", { cwd: input.cwd });
+    return asArray(body).flatMap((entry) => {
+      const session = parseSession(entry);
+      return session === undefined ? [] : [session];
+    });
+  }
+
+  async deleteSession(input: { sessionId: string; cwd: string }): Promise<void> {
+    await this.#json("DELETE", `/session/${encodeURIComponent(input.sessionId)}`, { cwd: input.cwd });
+  }
+
+  async messages(input: { sessionId: string; cwd: string }): Promise<readonly RemoteMessage[]> {
+    const body = await this.#json("GET", `/session/${encodeURIComponent(input.sessionId)}/message`, { cwd: input.cwd });
+    return asArray(body).flatMap((entry) => {
+      if (!isRecord(entry)) return [];
+      const parts = asArray(entry.parts).flatMap((part) => (isRecord(part) ? [part as RemotePart] : []));
+      return [{ ...(isRecord(entry.info) ? { info: entry.info } : {}), parts }];
+    });
+  }
+
+  async agents(input: { cwd: string }): Promise<readonly RemoteAgent[]> {
+    const body = await this.#json("GET", "/agent", { cwd: input.cwd });
+    return asArray(body).flatMap((entry) => {
+      if (!isRecord(entry) || typeof entry.id !== "string" || entry.id.length === 0) return [];
+      return [{
+        id: entry.id,
+        ...(typeof entry.name === "string" ? { name: entry.name } : {}),
+        ...(typeof entry.description === "string" ? { description: entry.description } : {}),
+        ...(typeof entry.mode === "string" ? { mode: entry.mode } : {}),
+        ...(typeof entry.hidden === "boolean" ? { hidden: entry.hidden } : {}),
+      }];
+    });
+  }
+
+  async providers(input: { cwd: string }): Promise<readonly RemoteProvider[]> {
+    const body = await this.#json("GET", "/config/providers", { cwd: input.cwd });
+    if (!isRecord(body)) return [];
+    return asArray(body.providers).flatMap((entry) => {
+      if (!isRecord(entry) || typeof entry.id !== "string" || entry.id.length === 0) return [];
+      const models = isRecord(entry.models)
+        ? Object.values(entry.models).flatMap((model) => {
+            if (!isRecord(model) || typeof model.id !== "string" || model.id.length === 0) return [];
+            return [{ id: model.id, ...(typeof model.name === "string" ? { name: model.name } : {}) }];
+          })
+        : [];
+      return [{ id: entry.id, ...(typeof entry.name === "string" ? { name: entry.name } : {}), models }];
+    });
+  }
+
+  async prompt(input: RemotePromptInput): Promise<void> {
     await this.#json("POST", `/session/${encodeURIComponent(input.sessionId)}/message`, {
       cwd: input.cwd,
-      body: { parts: [{ type: "text", text: input.text }] },
+      body: {
+        parts: [{ type: "text", text: input.text }],
+        ...(input.agent === undefined ? {} : { agent: input.agent }),
+        ...(input.model === undefined ? {} : { model: { providerID: input.model.providerID, modelID: input.model.modelID } }),
+      },
     });
   }
 
@@ -226,6 +336,28 @@ export function isPermissionAsked(
   event: RemoteEngineEvent,
 ): event is { readonly type: "permission.asked"; readonly properties: RemoteEnginePermissionRequest } {
   return event.type === "permission.asked";
+}
+
+function parseSession(value: unknown): RemoteSession | undefined {
+  if (!isRecord(value) || typeof value.id !== "string" || value.id.length === 0) return undefined;
+  const time = isRecord(value.time) ? value.time : undefined;
+  return {
+    id: value.id,
+    ...(typeof value.title === "string" ? { title: value.title } : {}),
+    ...(typeof value.parentID === "string" ? { parentID: value.parentID } : {}),
+    ...(time === undefined ? {} : {
+      time: {
+        ...(typeof time.created === "number" ? { created: time.created } : {}),
+        ...(typeof time.updated === "number" ? { updated: time.updated } : {}),
+      },
+    }),
+  };
+}
+
+function asArray(value: unknown): readonly unknown[] {
+  if (Array.isArray(value)) return value;
+  if (isRecord(value) && Array.isArray(value.data)) return value.data;
+  return [];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

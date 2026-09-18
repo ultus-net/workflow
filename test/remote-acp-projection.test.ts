@@ -4,10 +4,14 @@ import test from "node:test";
 import type { RemoteEngineEvent } from "../src/integrations/remote-acp/engine.js";
 import {
   REMOTE_PERMISSION_OPTIONS,
+  availableModels,
+  availableModes,
   isSessionIdle,
   permissionReplyFromOutcome,
   permissionToolCall,
+  projectReplay,
   projectSessionUpdate,
+  sessionConfigOptions,
   toolKind,
   toolStatus,
 } from "../src/integrations/remote-acp/projection.js";
@@ -129,4 +133,60 @@ test("tool kinds and statuses map conservatively", () => {
   assert.equal(toolStatus("completed"), "completed");
   assert.equal(toolStatus("error"), "failed");
   assert.equal(toolStatus(undefined), "in_progress");
+});
+
+test("projectReplay replays assistant parts and skips user messages", () => {
+  const updates = projectReplay([
+    { info: { role: "user" }, parts: [{ type: "text", sessionID: "ses_1", text: "skip" }] },
+    { info: { role: "assistant" }, parts: [
+      { type: "reasoning", sessionID: "ses_1", id: "p1", text: "think" },
+      { type: "text", sessionID: "ses_1", text: "answer" },
+      { type: "tool", sessionID: "ses_1", callID: "c1", tool: "bash", state: { status: "completed" } },
+    ] },
+  ]);
+  assert.deepEqual(updates.map((entry) => (entry.update as { sessionUpdate: string }).sessionUpdate), [
+    "agent_thought_chunk",
+    "agent_message_chunk",
+    "tool_call_update",
+  ]);
+});
+
+test("availableModes excludes subagents and hidden agents", () => {
+  assert.deepEqual(
+    availableModes([
+      { id: "build", name: "Build", mode: "primary" },
+      { id: "explore", mode: "subagent" },
+      { id: "secret", mode: "primary", hidden: true },
+      { id: "plan", mode: "all", description: "Plan work" },
+    ]),
+    [
+      { id: "build", name: "Build" },
+      { id: "plan", name: "plan", description: "Plan work" },
+    ],
+  );
+});
+
+test("availableModels flattens providers into provider/model entries", () => {
+  assert.deepEqual(
+    availableModels([
+      { id: "anthropic", name: "Anthropic", models: [{ id: "claude", name: "Claude" }, { id: "haiku" }] },
+    ]),
+    [
+      { modelId: "anthropic/claude", name: "Anthropic: Claude" },
+      { modelId: "anthropic/haiku", name: "anthropic/haiku" },
+    ],
+  );
+});
+
+test("sessionConfigOptions builds mode and model selects with current values", () => {
+  const options = sessionConfigOptions({
+    modes: [{ id: "build", name: "Build" }, { id: "plan", name: "Plan" }],
+    models: [{ modelId: "anthropic/claude", name: "Claude" }],
+    currentModeId: "plan",
+  });
+  assert.deepEqual(options, [
+    { id: "mode", name: "Mode", type: "select", currentValue: "plan", options: [{ value: "build", name: "Build" }, { value: "plan", name: "Plan" }] },
+    { id: "model", name: "Model", type: "select", currentValue: "anthropic/claude", options: [{ value: "anthropic/claude", name: "Claude" }] },
+  ]);
+  assert.deepEqual(sessionConfigOptions({ modes: [], models: [] }), []);
 });

@@ -3,11 +3,11 @@
  * Remote ACP bridge entry point.
  *
  * Runs an ACP agent over stdio (what Workflow drives) backed by a remote or
- * attached OpenCode server's HTTP/SSE API. Advisory posture for M1; see
+ * attached OpenCode server's HTTP/SSE API. Advisory posture; see
  * `docs/OPENCODE_REMOTE_ACP_SPEC.md`.
  *
  * Usage:
- *   node --import tsx src/cli/acp-remote.ts --url http://127.0.0.1:4096 [--cwd DIR]
+ *   node --import tsx src/cli/acp-remote.ts --url http://[IP_ADDRESS]:4096 [--cwd DIR]
  *
  * Environment: OPENCODE_SERVER_URL, OPENCODE_SERVER_USERNAME,
  * OPENCODE_SERVER_PASSWORD. The password is never logged.
@@ -18,8 +18,19 @@ import {
   ndJsonStream,
   type Agent,
   type CancelNotification,
+  type CloseSessionRequest,
+  type ListSessionsRequest,
+  type ListSessionsResponse,
+  type LoadSessionRequest,
+  type LoadSessionResponse,
   type NewSessionRequest,
+  type NewSessionResponse,
   type PromptRequest,
+  type ResumeSessionRequest,
+  type ResumeSessionResponse,
+  type SetSessionConfigOptionRequest,
+  type SetSessionConfigOptionResponse,
+  type SetSessionModeRequest,
 } from "@agentclientprotocol/sdk";
 
 import { createRemoteAcpAgent } from "../integrations/remote-acp/agent.js";
@@ -63,6 +74,8 @@ export function parseArgs(argv: readonly string[]): CliArgs {
   }
   return { ...out, help: false };
 }
+
+const cwdParam = (cwd: string | null | undefined): { readonly cwd?: string } => (cwd === undefined || cwd === null ? {} : { cwd });
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   const args = parseArgs(argv);
@@ -112,7 +125,32 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       authenticate: async () => {
         await agent.authenticate();
       },
-      newSession: async (params: NewSessionRequest) => agent.newSession({ cwd: params.cwd }),
+      newSession: async (params: NewSessionRequest) => {
+        const result = await agent.newSession(cwdParam(params.cwd));
+        return { sessionId: result.sessionId, configOptions: result.configOptions } as unknown as NewSessionResponse;
+      },
+      loadSession: async (params: LoadSessionRequest) => {
+        const result = await agent.loadSession({ sessionId: params.sessionId, ...cwdParam(params.cwd) });
+        return { configOptions: result.configOptions } as unknown as LoadSessionResponse;
+      },
+      resumeSession: async (params: ResumeSessionRequest) => {
+        const result = await agent.resumeSession({ sessionId: params.sessionId, ...cwdParam(params.cwd) });
+        return { configOptions: result.configOptions } as unknown as ResumeSessionResponse;
+      },
+      listSessions: async (params: ListSessionsRequest) => {
+        const result = await agent.listSessions(cwdParam(params.cwd));
+        return { sessions: result.sessions } as unknown as ListSessionsResponse;
+      },
+      closeSession: async (params: CloseSessionRequest) => {
+        await agent.closeSession({ sessionId: params.sessionId });
+      },
+      setSessionMode: async (params: SetSessionModeRequest) => {
+        await agent.setSessionMode({ sessionId: params.sessionId, modeId: params.modeId });
+      },
+      setSessionConfigOption: async (params: SetSessionConfigOptionRequest) => {
+        const result = await agent.setSessionConfigOption({ sessionId: params.sessionId, configId: params.configId, value: params.value });
+        return { configOptions: result.configOptions } as unknown as SetSessionConfigOptionResponse;
+      },
       prompt: async (params: PromptRequest) => {
         await agent.prompt({ sessionId: params.sessionId, prompt: params.prompt });
         return { stopReason: "end_turn" as const };

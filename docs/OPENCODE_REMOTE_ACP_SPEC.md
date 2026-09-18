@@ -303,8 +303,13 @@ green, the row is **`advisory`**.
 ## 12. Milestones (proposed, operator-gated)
 
 - **M0 (this spec):** design + investigation. No code.
-- **M1:** bridge (option B) with `advisory` posture only; probes 5–6; HOST_ADAPTERS row
-  `advisory`.
+- **M1 (landed, advisory):** bridge (option B) with `advisory` posture only. ACP
+  surface: `initialize` (loadSession + session list/resume/close capabilities),
+  `newSession`, `loadSession` (assistant replay), `resumeSession`, `listSessions`,
+  `closeSession`, `setSessionMode`, `setSessionConfigOption`, `prompt` (threads the
+  selected mode/model), `cancel`, and permission interception. Gated probe stubs:
+  SSE/turn (`WORKFLOW_ACP_REMOTE_SSE`) and basic auth (`WORKFLOW_ACP_REMOTE_AUTH`),
+  both skipping by default. HOST_ADAPTERS row `advisory`.
 - **M2:** probes 1–4 (PERMISSION, BYPASS, RULE-CONFIG, SUBAGENT). Promote to `enforced`
   only on green evidence.
 - **M3:** option A upstream `--attach` if desired; optional OpenWork target B.
