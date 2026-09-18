@@ -157,12 +157,15 @@ this is reachable only through an operator-granted spawn.
 
 **Scope:** this resolves W050 criterion 2 only. The backup-slot takeover
 (criterion 1) still depends on the operator's W049 daily-driver period, and the
-vendored-Cline removal (criterion 3) proceeds only once criterion 1 holds.
+vendored-Cline removal (criterion 3) proceeds only once criterion 1 holds and
+this criterion-2 signature is recorded.
 
 **Status:** PROPOSED — the seam is not retired by silence or by this draft.
 Operator signature below closes criterion 2; absent it, the seam stays retained.
 
-- Operator decision: [ ] accept the accepted-risk (seam not required) —
-  [ ] reject (retain the seam; commission a live Cline-side subagent-internal
-  proof)
-- Signed: __________ Date: __________
+Operator decision:
+
+- [ ] accept the accepted-risk (the seam is not required)
+- [ ] reject (retain the seam; commission a live Cline-side subagent-internal proof)
+
+Signed: __________ Date: __________
