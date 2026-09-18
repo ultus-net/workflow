@@ -535,6 +535,48 @@ test("web UI manages sessions through guarded routes", async (context) => {
   assert.equal((await toggleUpdated.json() as { options: { id: string; currentValue: unknown }[] }).options.find((option) => option.id === "web-search")?.currentValue, true);
 });
 
+test("the ACP handshake version rides /api/session and /api/agents, never fabricated", async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), "web-version-test-"));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => {
+      const driver: CodingSessionDriver = {
+        async start(_prompt, emit) { emit({ type: "completed", result: "done" }); },
+        async cancel() {},
+      };
+      return {
+        driver: {
+          ...driver,
+          agentSessionId: () => "agent-x",
+          connect: async () => {},
+          subscribe: () => () => {},
+          // The real AcpSessionDriver surfaces this from the initialize handshake.
+          agentInfo: () => ({ name: "OpenCode", version: "1.42.0" }),
+        } as never,
+        session: new WorkflowCodingSession(driver),
+        async dispose() {},
+      };
+    },
+  });
+  context.after(() => manager.dispose());
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, manager);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+
+  const session = await fetch(`http://127.0.0.1:${port}/api/session`).then((response) => response.json()) as { agentVersion?: string };
+  assert.equal(session.agentVersion, "1.42.0", "the focused session's handshake version rides /api/session");
+
+  const agents = await fetch(`http://127.0.0.1:${port}/api/agents`).then((response) => response.json()) as { agents: { id: string; version?: string }[] };
+  assert.equal(agents.agents.find((agent) => agent.id === "opencode")?.version, "1.42.0", "the live runtime's version annotates its agent entry");
+  assert.equal(agents.agents.find((agent) => agent.id === "cline")?.version, undefined, "agents with no live handshake report no version");
+});
+
 test("web UI returns 503 instead of crashing when the runtime factory fails", async (context) => {
   const dir = mkdtempSync(join(tmpdir(), "web-failure-test-"));
   context.after(() => rmSync(dir, { recursive: true, force: true }));

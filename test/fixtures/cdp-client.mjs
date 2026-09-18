@@ -4,7 +4,7 @@
  * no puppeteer — the repo's webapp tests must run with `npm ci` alone.
  *
  * Usage:
- *   const cdp = await connectCdp(browserWsUrl, "http://[IP_ADDRESS]:4173/");
+ *   const cdp = await connectCdp(browserWsUrl, "http://127.0.0.1:4173/");
  *   await cdp.evaluate("document.title");
  */
 import { accessSync, readdirSync, constants } from "node:fs";

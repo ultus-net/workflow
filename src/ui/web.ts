@@ -112,7 +112,15 @@ export function createWorkflowWebServer(
       return json(response, 200, { sessions: manager.list() });
     }
     if (request.method === "GET" && request.url === "/api/agents") {
-      return json(response, 200, { agents: listWebAgents() });
+      // Annotate each agent with the handshake version any live session's
+      // runtime reported — absent (never fabricated) when unknown.
+      const versions = manager?.liveAgentVersions() ?? new Map();
+      return json(response, 200, {
+        agents: listWebAgents().map((agent) => {
+          const version = versions.get(agent.id);
+          return version === undefined ? agent : { ...agent, version };
+        }),
+      });
     }
     if (request.method === "POST" && request.url === "/api/sessions/agent") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
@@ -418,9 +426,12 @@ export function createWorkflowWebServer(
       const meta = requested === undefined
         ? manager?.activeMeta()
         : manager?.list().find((entry) => entry.id === requested);
+      // The live handshake's version for the requested session, when known.
+      const agentVersion = manager?.agentVersion(requested);
       return json(response, 200, {
         available: active !== undefined,
         ...(meta === undefined ? {} : { id: meta.id, title: meta.title, agent: meta.agent }),
+        ...(agentVersion === undefined ? {} : { agentVersion }),
         state: active?.state() ?? { state: "unavailable" },
         items: active?.items() ?? [],
         ...(active?.usage() !== undefined ? { usage: active.usage() } : {}),

@@ -112,6 +112,27 @@ export class WebSessionManager {
     return focused === undefined ? undefined : this.#meta(focused);
   }
 
+  /** Handshake version of one session's live runtime (or the focused one).
+   * undefined is honest: not connected, or the agent did not report a version. */
+  agentVersion(id?: string): string | undefined {
+    const record = (id === undefined ? undefined : this.#sessions.find((entry) => entry.id === id))
+      ?? this.#focusedSession()?.record
+      ?? this.#sessions[0];
+    if (record === undefined) return undefined;
+    return this.#live.get(record.id)?.channel.agentInfo()?.version;
+  }
+
+  /** Handshake versions by agent id, from every live runtime that reported one. */
+  liveAgentVersions(): ReadonlyMap<WebAgentId, string> {
+    const versions = new Map<WebAgentId, string>();
+    for (const active of this.#live.values()) {
+      const version = active.channel.agentInfo()?.version;
+      if (version === undefined) continue;
+      versions.set(active.record.agent ?? DEFAULT_WEB_AGENT, version);
+    }
+    return versions;
+  }
+
   async create(): Promise<SessionSwitchResult> {
     if (this.#boot !== undefined) await this.#boot.catch(() => undefined);
     const focused = this.#focusedSession();

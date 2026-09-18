@@ -76,6 +76,8 @@ export interface ConfigCapableDriver {
   contextWindowTokens?(): number | undefined;
   /** Agent-reported ACP usage (used/size/cost) for runtimes with no metering proxy. */
   acpUsageSnapshot?(): { readonly used?: number; readonly size?: number; readonly costUsd?: number };
+  /** The ACP handshake's agent identity (name + version), once connected. */
+  agentInfo?(): { readonly name: string; readonly version?: string } | undefined;
 }
 
 /**
@@ -123,6 +125,12 @@ export class SessionChannel {
   /** Latest agent-provided session title (session_info_update), if any. */
   agentTitle(): string | undefined {
     return this.#agentTitle;
+  }
+
+  /** The live ACP handshake's agent identity (name + handshake version), or
+   * undefined when the session has not connected / does not report one. */
+  agentInfo(): { readonly name: string; readonly version?: string } | undefined {
+    return this.#driver?.agentInfo?.();
   }
 
   /** Cumulative metering-proxy metrics for the session's runtime, when metered.
