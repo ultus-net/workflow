@@ -115,6 +115,19 @@ single-user operator tool; those belong to multi-tenant products.
   guards; ACP permission decisions stay routed through the Workflow resolver.
 - One agent process at a time (multiplexed-driver latency fix is a separate
   follow-up).
+  - **Superseded 2026-09-18 (operator decision, branch
+    `feat/web-ui-battlestation`):** parallel live ACP runtimes are now the
+    contract. `WebSessionManager` keeps a Map of live runtimes (one per
+    session) with a bounded cap (6) and LRU eviction of idle, unfocused
+    sessions; focusing a session never disposes another; parked permission
+    prompts are scoped per ACP session id; session-scoped routes accept
+    `?session=<id>`. The line above is kept as history — the "one process"
+    latency trade-off was rejected in favour of true side-by-side agents.
 - Tests mirror existing patterns: manager-level tests in
   `test/web-sessions.test.ts`, route guard tests in `test/web.test.ts`
   (403/415/404/200), UI verified via CDP smoke scripts.
+  - **Extended 2026-09-18:** a committed zero-dependency browser e2e
+    (`npm run test:webui`, `test/webui-e2e.test.ts` + `test/fixtures/
+    {webui-demo-server.ts,cdp-client.mjs}`) is the UI regression net; palette
+    AA is gated in `test/webapp-palettes.test.ts` and the usage data path in
+    `test/openrouter-analytics.test.ts`.
