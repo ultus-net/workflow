@@ -414,6 +414,10 @@ export async function createConfiguredOpencodeAcpRuntime(
   return {
     driver,
     session: new WorkflowCodingSession(driver),
+    // Direct OpenCode path: no loopback metering proxy, so no locally recorded
+    // usage — the provider's own spend management is the budget surface,
+    // stated honestly (the metering-proxy per-key backstop is proxy-only).
+    budgetMechanism: "server-side: provider account spend/credit limits (no local metering proxy on the direct OpenCode path); no local interactive caps",
     async dispose() {
       try {
         await driver.dispose();

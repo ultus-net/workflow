@@ -32,6 +32,7 @@ function fakeRuntime(agentId: string): WorkflowAcpRuntime {
   return {
     driver: driver as unknown as WorkflowAcpRuntime["driver"],
     session: new WorkflowCodingSession(driver as unknown as CodingSessionDriver),
+    budgetMechanism: "test: no local caps (fake runtime)",
     async dispose() {},
   };
 }
