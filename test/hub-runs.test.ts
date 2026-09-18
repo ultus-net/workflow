@@ -58,16 +58,6 @@ test("a scheduled run needs verifier authority to finish successfully", async (t
   });
   assert.equal(begin.status, 200);
 
-  // Mutating tool calls are authorized against the run's IN_PROGRESS task.
-  const authorized = await post(hub.url, token, "/before-tool", {
-    toolCall: { toolName: "write_to_file" },
-    input: { path: join(workspace, "report.md") },
-    workspace,
-    runId: "cron-2026-09-12-nightly",
-  });
-  assert.equal(authorized.status, 200);
-  assert.deepEqual(authorized.body, {});
-
   const ordinaryFinish = await post(hub.url, token, "/run/finish", {
     runId: "cron-2026-09-12-nightly",
     outcome: "verified",
@@ -162,24 +152,6 @@ test("a failed run is recorded as FAILED with failed evidence", async (t) => {
   const snapshot = application.snapshot();
   assert.equal(snapshot.tasks.find((task) => task.title === "Broken run")?.state, "FAILED");
   assert.equal(snapshot.evidence.find((entry) => entry.subject === "cron-broken")?.result, "failed");
-});
-
-test("tool calls for an unknown run fail closed", async (t) => {
-  const { graph, application, workspace } = setup();
-  const dir = mkdtempSync(join(tmpdir(), "wf-hub-runs-"));
-  t.after(() => rmSync(dir, { recursive: true, force: true }));
-  t.after(() => rmSync(workspace, { recursive: true, force: true }));
-  const hub = await createWorkflowHub(application, { discoveryDir: dir, graph });
-  t.after(() => hub.close());
-  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
-
-  const response = await post(hub.url, token, "/before-tool", {
-    toolCall: { toolName: "read_file" },
-    input: {},
-    workspace,
-    runId: "cron-never-began",
-  });
-  assert.notEqual(response.status, 200);
 });
 
 test("finishing an unknown run fails closed", async (t) => {

@@ -17,9 +17,6 @@ After=default.target
 [Service]
 Type=simple
 WorkingDirectory=%h/Workflow
-# Ensures the contained Cline checkout is present, patched, and built; fast
-# no-op once ready.
-ExecStartPre=%h/.local/share/pi-node/node-v22.22.3-linux-x64/bin/node --import tsx scripts/build-cline-tui.mjs
 ExecStart=%h/.local/share/pi-node/node-v22.22.3-linux-x64/bin/node --import tsx src/cli/web.ts
 Restart=on-failure
 RestartSec=2

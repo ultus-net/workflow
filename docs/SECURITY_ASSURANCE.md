@@ -43,19 +43,16 @@ The hub owns run lifecycle, review gating, verifier-token separation, and worksp
 | A review-gated run cannot reach VERIFIED without reviewer evidence | `src/integrations/run-registry.ts:196` | test/hub-runs.test.ts#"a review-gated run cannot finish until an independent review is recorded" |
 | A run cannot review itself (anti-rubber-stamp) | `src/integrations/run-registry.ts:224` | test/hub-review.test.ts#"a review from the same run is rejected (anti-rubber-stamp)" |
 | Approvals naming fewer than three review axes are rejected | `src/integrations/run-registry.ts:225` | test/hub-review.test.ts#"a review referencing fewer than three axes is rejected" |
-| Verifier-only routes reject the ordinary bearer token | `src/integrations/cline-tui-bridge.ts:94` | test/cline-tui-bridge.test.ts#"Cline team tasks require explicit task-bound evidence before verification" |
-| Verifier and ordinary tokens are separate random values, with verifier authority kept out of the ordinary discovery document (constant-time comparison is an implementation property of `src/integrations/cline-tui-bridge.ts:432`, not separately test-verified) | `src/integrations/cline-tui-bridge.ts:94` | test/hub-workspace.test.ts#"hub namespaces Cline team tasks by workspace and keeps verifier authority out of discovery" |
+| Verifier-only routes reject the ordinary bearer token | `src/integrations/hub-http.ts:103` | test/hub-runs.test.ts#"a scheduled run needs verifier authority to finish successfully" |
+| Verifier discovery is a separate protected file (0600) removed on shutdown, so verifier authority never rides the ordinary discovery document (constant-time token comparison is an implementation property of `src/integrations/hub-http.ts:212`, not separately test-verified) | `src/integrations/workflow-hub.ts:96` + `src/integrations/hub-http.ts:212` | test/hub-workspace.test.ts#"hub protects and removes verifier discovery on shutdown" |
 | Run begin stales the workspace test subject — a later run cannot verify on a predecessor's green tests | `src/integrations/run-registry.ts:207` | test/hub-runs.test.ts#"a later run in the same workspace cannot verify on a predecessor's test evidence" |
 | A fail-closed reviewer outcome leaves the run VERIFYING with a surfaced blocking reason — never a silent pass | `src/integrations/run-registry.ts:287` | test/hub-runs.test.ts#"a fail-closed reviewer outcome leaves the run VERIFYING with a surfaced blocking reason" |
 | Reviewer infrastructure failure surfaces as a blocking reason and never fabricates evidence | `src/integrations/run-registry.ts:270` | test/hub-runs.test.ts#"reviewer infrastructure failure leaves the run VERIFYING with a surfaced blocking reason" |
 | Review-gated runs also require hub-run test evidence; failing or crashing tests block verification | `src/integrations/run-registry.ts:303` | test/hub-runs.test.ts#"a review-gated run also requires hub-run test evidence: failing tests block verification" |
-| The hub authorizes tool proposals through WorkflowApplication.authorize (/before-tool, /bash) | `src/integrations/cline-tui-bridge.ts:192` | test/hub-protocol.test.ts#"hub authorizes an allowed tool and denies a withheld capability with a reason" |
 | The hub fails closed on an invalid workspace declaration; aliases canonicalize before task identity | `src/integrations/run-registry.ts:44` | test/hub-workspace.test.ts#"hub fails closed on an invalid workspace declaration" |
-| Verifier discovery is 0600, protected, and removed on shutdown | `src/integrations/workflow-hub.ts:96` | test/hub-workspace.test.ts#"hub protects and removes verifier discovery on shutdown" |
 | A second hub instance refuses to start; stale locks from dead processes are reclaimed | `src/integrations/workflow-hub.ts:144` | test/hub-lifecycle.test.ts#"a second hub refuses to start while the first is alive" |
-| Malformed and oversized hub requests fail closed; every endpoint requires the bearer token | `src/integrations/cline-tui-bridge.ts:98` | test/hub-protocol.test.ts#"hub rejects malformed and unknown requests" |
+| Malformed and oversized hub requests fail closed; every endpoint requires the bearer token | `src/integrations/hub-http.ts:215` | test/hub-protocol.test.ts#"hub rejects malformed and unknown requests" |
 | Completion claims are journaled observability-only and never satisfy kernel evidence | `src/integrations/run-registry.ts:115` | test/g5-observability.test.ts#"completion claims journal the claim with kernel verification state, observability-only" |
-| Team-task verification requires task-bound environment evidence; the ordinary token cannot verify | `src/integrations/cline-tui-bridge.ts:281` | test/cline-tui-bridge.test.ts#"Cline team tasks require explicit task-bound evidence before verification" |
 
 ## S3 — Host adapters fail closed
 
@@ -63,10 +60,6 @@ Adapters translate host events into the generic contract; malformed or downgrade
 
 | Claim | Implementation | Verification |
 | --- | --- | --- |
-| Cline normalizes beforeTool input and fails closed on malformed input | `src/adapters/cline.ts:27` | test/cline-adapter.test.ts#"Cline adapter fails closed on a malformed lazy call_tool payload" |
-| Cline exposes every batched read and apply_patch target path to policy | `src/adapters/cline.ts:90` | test/cline-adapter.test.ts#"Cline adapter exposes every batched read path to Workflow policy" |
-| Cline conservatively classifies editor, patch, and shell tools as mutating; only extension tools may carry explicit least-privilege metadata | `src/adapters/cline.ts:57` | test/cline-adapter.test.ts#"Cline adapter conservatively classifies editor, patch, and shell tools as mutating" |
-| Workflow denial maps to native host stop control | `src/adapters/cline.ts:52` | test/cline-adapter.test.ts#"Cline adapter maps Workflow denial to beforeTool stop control" |
 | The ACP adapter is advisory unless the bridge guarantees mutation permission interception | `src/adapters/acp.ts:6` | test/acp-adapter.test.ts#"ACP adapter is advisory unless the bridge guarantees mutation permission interception" |
 | ACP host metadata cannot downgrade a write into a non-mutating read | `src/adapters/acp.ts:42` | test/acp-adapter.test.ts#"ACP host metadata cannot downgrade a write into a non-mutating read" |
 | ACP non-mutating classification requires kind and tool name to agree | `src/adapters/acp.ts:16` | test/acp-adapter.test.ts#"ACP non-mutating requires kind and tool name to agree on read" |
@@ -131,7 +124,7 @@ The metering proxy is the only mandatory model-egress point: the real key never 
 | The proxy fails closed on construction and malformed completion bodies | `src/integrations/model-usage-proxy.ts:73` | test/model-usage-proxy.test.ts#"model usage proxy fails closed on construction and on malformed completion bodies" |
 | The loopback bind and https-or-loopback upstream rule hold | `src/integrations/model-usage-proxy.ts:73` | test/model-usage-proxy.test.ts#"model usage proxy passes non-completion traffic through untouched" |
 | Live proof (gated): contained Cline and OpenCode turns complete with only the placeholder inside the boundary while the proxy records usage | `src/integrations/acp-runtime.ts:95` | gated[WORKFLOW_ACP_OPENCODE_METERED]: test/acp-opencode-metered-probe.test.ts#"OpenCode ACP metered proxy proves key-free agent env, working turns, and per-session usage metrics" |
-| Live proof (gated): the same posture on the vendored Cline path | `src/integrations/acp-runtime.ts:236` | gated[WORKFLOW_ACP_CLINE_METERED]: test/acp-cline-metered-probe.test.ts#"Cline ACP metered proxy proves key-free agent env, working turns, and per-session usage metrics" |
+| Live proof (gated): the same posture on the retained stock-ACP Cline connector | `src/integrations/acp-runtime.ts:236` | gated[WORKFLOW_ACP_CLINE_METERED]: test/acp-cline-metered-probe.test.ts#"Cline ACP metered proxy proves key-free agent env, working turns, and per-session usage metrics" |
 
 ## S7 — Persistence and recovery
 
@@ -147,11 +140,7 @@ Persisted state is authority only after validation; recovery is deterministic; r
 | Restart restores workspace confinement and capability withholding | `src/application/workflow.ts:279` | test/persistence.test.ts#"restart restores workspace confinement and capability withholding" |
 | Persisted state retains only opaque SDK session correlation — conversation history is never canonical authority | `src/application/workflow.ts:80` | test/persistence.test.ts#"persisted Workflow state retains only opaque SDK session correlation" |
 | A leftover writer lock fails closed | `src/application/persistence.ts:85` | test/persistence.test.ts#"leftover writer lock fails closed" |
-| Session resume fails closed when correlated SDK history is unavailable | `src/integrations/cline-session.ts` | test/cline-session.test.ts#"Cline session resume fails closed when correlated SDK history is unavailable" |
-| Live proof (manual): restart-through-completion against a real Cline CLI requires fresh post-restart environment evidence | `test/integration/cline-resume.mjs` | manual[npm run test:cline-resume] |
-| Live proof (manual): a real Cline plugin runtime loads and runs the host integration end to end | `test/integration/cline-runtime.mjs` | manual[npm run test:cline-runtime] |
 | Live proof (manual): the W020 composed E2E runs the built package through authorize, bwrap, evidence, and VERIFIED | `test/integration/workflow-e2e.mjs` | manual[npm run test:e2e] |
-| Live proof (manual): a real Cline runtime coding session independently checks the resulting repository state | `test/integration/cline-coding-session.mjs` | manual[npm run test:cline-coding-session] |
 
 ## S8 — Review control plane (W039-W041)
 
@@ -197,7 +186,7 @@ The vendored guard corpus stays alive hub-side; credentials are a separate custo
 
 | Claim | Implementation | Verification |
 | --- | --- | --- |
-| The hub intercepts destructive commands and protected paths on every surface | `src/integrations/mcp-toolbox-guard.ts:130` | test/hub-guard-interception.test.ts#"Workflow hub with guard intercepts destructive commands and protected paths" |
+| The hub intercepts destructive commands in the contained shell | `src/integrations/mcp-toolbox-guard.ts:130` | test/hub-guard-interception.test.ts#"Workflow hub with guard intercepts destructive commands in the contained shell" |
 | The hub refuses to start guardless — the startup awaits the guard provider, and a guard that cannot start fails the hub itself rather than running permissive | `src/cli/hub.ts:69` | test/hub-guardless-startup.test.ts#"the guard provider composition fails closed when the guard server cannot start" |
 | The guard child receives only explicitly brokered credential environment bindings | `src/integrations/mcp-toolbox-guard.ts:57` | test/credential-mcp.test.ts#"MCP environment contains only explicitly brokered credential bindings" |
 | The broker materializes a secret only for an allowed consumer and workspace | `src/integrations/credentials.ts` | test/credentials.test.ts#"credential broker materializes a secret only for an allowed consumer and workspace" |

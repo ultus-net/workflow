@@ -66,30 +66,15 @@ test("hub requires the bearer token on every endpoint", async () => {
   });
 });
 
-test("hub authorizes an allowed tool and denies a withheld capability with a reason", async () => {
-  await withHub(async ({ url, discovery }) => {
-    const token = discovery.token as string;
-    const allowed = await beforeTool(url, token, "read_file", { path: "README.md" });
-    assert.equal(allowed.status, 200);
-    assert.deepEqual(await allowed.json(), {});
-
-    const denied = await beforeTool(url, token, "fetch_web_content", { url: "https://example.com" });
-    assert.equal(denied.status, 200);
-    const decision = (await denied.json()) as { stop?: boolean; reason?: string };
-    assert.equal(decision.stop, true);
-    assert.match(decision.reason ?? "", /network/);
-  });
-});
-
 test("hub rejects malformed and unknown requests", async () => {
   await withHub(async ({ url, discovery }) => {
     const token = discovery.token as string;
-    const malformed = await fetch(`${url}/before-tool`, {
+    const malformed = await fetch(`${url}/bash`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({ nope: true }),
+      body: JSON.stringify({}),
     });
-    assert.equal(malformed.status, 500); // invalid before-tool request surfaces as an authority error
+    assert.equal(malformed.status, 400); // a /bash request without cwd/command fails closed
 
     const unknown = await fetch(`${url}/does-not-exist`, {
       method: "POST",

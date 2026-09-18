@@ -35,7 +35,7 @@ async function post(url: string, token: string, path: string, body: unknown) {
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 
-test("Workflow hub with guard intercepts destructive commands and protected paths", async (t) => {
+test("Workflow hub with guard intercepts destructive commands in the contained shell", async (t) => {
   const { graph, application, workspace } = setup();
   const dir = mkdtempSync(join(tmpdir(), "wf-hub-guard-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -48,36 +48,7 @@ test("Workflow hub with guard intercepts destructive commands and protected path
   t.after(() => hub.close());
   const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
 
-  // 1. Safe command in beforeTool is allowed
-  const safeBefore = await post(hub.url, token, "/before-tool", {
-    workspace,
-    input: { command: "git status" },
-    toolCall: { toolName: "execute_command" },
-  });
-  assert.equal(safeBefore.status, 200);
-  assert.notEqual(safeBefore.body.stop, true);
-
-  // 2. Destructive command in beforeTool is stopped by guard
-  const destructiveBefore = await post(hub.url, token, "/before-tool", {
-    workspace,
-    input: { command: "npm install -g evil-tool" },
-    toolCall: { toolName: "execute_command" },
-  });
-  assert.equal(destructiveBefore.status, 200);
-  assert.equal(destructiveBefore.body.stop, true);
-  assert.match(String(destructiveBefore.body.reason), /guard policy/);
-
-  // 3. Write to secret credential path (.env inside workspace) in beforeTool is stopped by guard
-  const protectedWrite = await post(hub.url, token, "/before-tool", {
-    workspace,
-    input: { path: join(workspace, ".env"), content: "SECRET=123" },
-    toolCall: { toolName: "write_to_file" },
-  });
-  assert.equal(protectedWrite.status, 200);
-  assert.equal(protectedWrite.body.stop, true);
-  assert.match(String(protectedWrite.body.reason), /guard policy/);
-
-  // 4. In bash executor, guard intercepts destructive command
+  // 1. In bash executor, guard intercepts destructive command
   const bashDenied = await post(hub.url, token, "/bash", {
     workspace,
     cwd: workspace,

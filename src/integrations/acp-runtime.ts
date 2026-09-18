@@ -29,6 +29,7 @@ import type { PermissionBroker } from "../ui/permission-broker.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { METERED_PLACEHOLDER_KEY, type ModelUsageMetrics, type ModelUsageProxy, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
+import { loadUpstreamApiKey } from "./upstream-key.js";
 
 export interface WorkflowAcpRuntime {
   readonly driver: AcpSessionDriver;
@@ -452,18 +453,10 @@ function pruneStaleOpencodeHomes(acpHome: string): void {
 /**
  * The upstream (OpenRouter) key for the hub-side metering proxy. This key
  * never enters the agent's environment or config files: the proxy holds it
- * and injects it upstream. Env override first, then the key file shared
- * with the gated probes. An empty or whitespace-only env value falls
- * through to the key file (the pre-pivot Cline path would have passed the
- * whitespace through; treating it as unset is the deliberate tightening).
+ * and injects it upstream. Resolution lives in `./upstream-key.ts`:
+ * `WORKFLOW_UPSTREAM_KEY` / `~/.config/workflow/upstream-key` are canonical,
+ * with back-compat reads of `CLINE_API_KEY` / `~/.config/workflow/cline-api-key`.
  */
-function loadUpstreamApiKey(): string {
-  const apiKey = process.env.CLINE_API_KEY?.trim() || readKeyFile();
-  if (!apiKey) {
-    throw new Error("ACP driver requires CLINE_API_KEY or ~/.config/workflow/cline-api-key (the upstream key for the metering proxy)");
-  }
-  return apiKey;
-}
 
 /**
  * W048: the goose (AAIF) runtime — the third `WORKFLOW_ACP_AGENT` kind and
@@ -601,14 +594,6 @@ async function createGooseRuntime(
     // No rmSync here either: a failed launch must not destroy prior
     // sessions in the workspace-keyed store (W049 resume requirement).
     throw error;
-  }
-}
-
-function readKeyFile(): string | undefined {
-  try {
-    return readFileSync(resolve(homedir(), ".config", "workflow", "cline-api-key"), "utf8").trim();
-  } catch {
-    return undefined;
   }
 }
 

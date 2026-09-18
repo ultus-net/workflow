@@ -246,3 +246,13 @@ Flags: ChatGPT/Claude/Grok consumer UIs verified via help centers
 not re-verified in current docs; typography/radii/spacing specs are
 unpublished by every vendor — visual claims above are limited to what
 official sources state; Zed default-theme specifics unverified.
+
+**Supersession note (2026-09-18, W050 step 6).** The vendored-Cline SDK runtime,
+its `.workflow-cline/` checkout, and its Workflow patch were removed on branch
+`feat/w050-cline-removal` (not yet merged), together with the hub's
+Cline-specific `/before-tool` and `/team-task` routes. The thin stock-ACP
+connector is retained (`src/integrations/cline-launch.ts` resolves ambient
+`cline --acp`; the `cline` agent kind composes the generic ACP runtime) and is
+probe-PENDING on stock 3.0.62. Prior statements in this record that treat the
+patched Cline TUI as the runnable product surface are historical; the browser
+operator UI over stock-ACP OpenCode is the default surface.

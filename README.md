@@ -27,7 +27,7 @@ Requires Node 22+, pnpm (for mcp-toolbox), and (for containment) Linux with
 bubblewrap.
 
 ```sh
-npm run setup   # npm install -> build -> toolbox -> vendored cline -> npm i -g .
+npm run setup   # npm install -> build -> toolbox -> npm i -g .
 ```
 
 This installs the five bins (`workflow`, `workflow-tui`, `workflow-hub`,
@@ -89,9 +89,10 @@ prompts are never changed by hidden first-character shortcuts.
 — command/query boundary (`WorkflowApplication`). `src/integrations/` — hub,
 bridge, memory, styles. `src/pedagogy/` — tutor engine. `src/adapters/` —
 host translations. `src/ui/` — Ink/browser projections. `mcp-toolbox/` — 12
-vendored MCP servers. The vendored Cline lives in `.workflow-cline/` and is
-managed via `patches/cline-cli-v3.0.61-workflow.patch` (see
-`scripts/build-cline-tui.mjs`).
+vendored MCP servers. Cline is reached only through the retained thin stock-ACP
+connector (`src/integrations/cline-launch.ts` resolves the ambient `cline --acp`);
+the vendored `.workflow-cline/` checkout and its Workflow patch were removed in
+W050 step 6 (2026-09-18), and the connector is probe-PENDING on stock 3.0.62.
 
 Security notes: Workflow policy is not itself a sandbox — containment is the
 separate process boundary. `enforced` means authoritative pre-mutation

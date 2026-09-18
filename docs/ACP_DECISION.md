@@ -169,3 +169,12 @@ Operator decision:
 - [ ] reject (retain the seam; commission a live Cline-side subagent-internal proof)
 
 Signed: __________ Date: __________
+
+**Supersession note (2026-09-18, W050 step 6).** The vendored-Cline SDK runtime,
+its `.workflow-cline/` checkout, and its Workflow patch were removed on branch
+`feat/w050-cline-removal` (not yet merged), together with the hub's
+Cline-specific `/before-tool` and `/team-task` routes. The thin stock-ACP
+connector is retained (`src/integrations/cline-launch.ts` resolves ambient
+`cline --acp`; the `cline` agent kind composes the generic ACP runtime) and is
+probe-PENDING on stock 3.0.62. Prior statements in this decision record about
+the retained SDK seam are historical.
