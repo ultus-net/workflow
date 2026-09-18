@@ -34,6 +34,38 @@ describe("web agent registry", () => {
     }
   });
 
+  it("names the azure model requirement in the goose availability reason", () => {
+    const keys = [
+      "WORKFLOW_GOOSE_BIN",
+      "WORKFLOW_GOOSE_PROVIDER",
+      "AZURE_FOUNDRY_ENDPOINT",
+      "AZURE_FOUNDRY_API_KEY",
+      "WORKFLOW_GOOSE_MODEL",
+      "GOOSE_MODEL",
+      "AZURE_FOUNDRY_MODEL",
+    ] as const;
+    const saved = new Map(keys.map((key) => [key, process.env[key]]));
+    try {
+      // Force goose unavailable so its reason is surfaced, and configure the
+      // azure provider WITHOUT a model: the code requires the model, so the
+      // reason must name it (otherwise it understates the real requirement).
+      process.env.WORKFLOW_GOOSE_BIN = "/nonexistent/goose-binary";
+      process.env.WORKFLOW_GOOSE_PROVIDER = "azure_foundry";
+      process.env.AZURE_FOUNDRY_ENDPOINT = "https://example.invalid";
+      process.env.AZURE_FOUNDRY_API_KEY = "test-key";
+      for (const key of ["WORKFLOW_GOOSE_MODEL", "GOOSE_MODEL", "AZURE_FOUNDRY_MODEL"] as const) delete process.env[key];
+      const goose = listWebAgents().find((agent) => agent.id === "goose");
+      assert.equal(goose?.available, false);
+      assert.match(goose?.reason ?? "", /WORKFLOW_GOOSE_MODEL/);
+    } finally {
+      for (const key of keys) {
+        const value = saved.get(key);
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
   it("accepts declared ids and rejects everything else", () => {
     assert.equal(isWebAgentId("cline"), true);
     assert.equal(isWebAgentId("opencode"), true);

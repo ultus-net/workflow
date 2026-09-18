@@ -99,7 +99,7 @@ export function listWebAgents(): WebAgentInfo[] {
       name: "Goose",
       containment: "contained",
       available: gooseAvailable,
-      ...(gooseAvailable ? {} : { reason: "needs the goose binary (aaif-goose/goose or WORKFLOW_GOOSE_BIN) and provider credentials (OpenRouter upstream key CLINE_API_KEY or ~/.config/workflow/cline-api-key, or AZURE_FOUNDRY_ENDPOINT + AZURE_FOUNDRY_API_KEY)" }),
+      ...(gooseAvailable ? {} : { reason: "needs the goose binary (aaif-goose/goose or WORKFLOW_GOOSE_BIN) and provider credentials (OpenRouter upstream key CLINE_API_KEY or ~/.config/workflow/cline-api-key, or AZURE_FOUNDRY_ENDPOINT + AZURE_FOUNDRY_API_KEY + model via WORKFLOW_GOOSE_MODEL/GOOSE_MODEL/AZURE_FOUNDRY_MODEL)" }),
     },
     {
       id: "cline",
