@@ -1,0 +1,49 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "git-intelligence-mcp",
+  "version": "0.1.0",
+  "description": "Structured local Git change and history intelligence for coding agents over MCP.",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "working_tree_status",
+      "description": "Return bounded structured local Git working-tree status.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "local_diff",
+      "description": "Return bounded structured local Git changes for either the index or working tree.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "file_history",
+      "description": "Return bounded local commit history for one confined workspace-relative file.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "file_blame",
+      "description": "Return bounded committed HEAD line provenance for one confined workspace-relative file.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 4923,
+    "toolIndexBytes": 637
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}

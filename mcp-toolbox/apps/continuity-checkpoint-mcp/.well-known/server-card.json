@@ -1,0 +1,31 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "continuity-checkpoint-mcp",
+  "version": "0.1.0",
+  "description": "Bounded read-only continuity recovery for coding agents over MCP.",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "recover_continuity",
+      "description": "Recover a deterministic, read-only, globally bounded checkpoint from existing review, verification, project-context, and project-memory evidence. Sources are consumed in that priority order; this tool does not persist state, select work, execute verification, or inject host context.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 1496,
+    "toolIndexBytes": 373
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}

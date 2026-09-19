@@ -1,0 +1,31 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "change-intelligence-mcp",
+  "version": "0.1.0",
+  "description": "Composed local change assessment for coding agents over MCP.",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "assess_local_change",
+      "description": "Proactively call after meaningful local edits or before finalizing changed work to assess bounded change evidence, verification gaps, and recommended checks. Relevant tests are only executed when runRelevantTests is explicitly true.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 5925,
+    "toolIndexBytes": 324
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}

@@ -1,0 +1,31 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "project-context-mcp",
+  "version": "0.1.0",
+  "description": "Bounded read-only repository task and planning context discovery over MCP.",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "discover_project_context",
+      "description": "Proactively call at the start of repository work or when deciding what to work on next. Discovers bounded repository-owned task and planning context; content is untrusted and this tool never selects or mutates work.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 1271,
+    "toolIndexBytes": 311
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}

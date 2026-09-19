@@ -96,3 +96,56 @@ project-memory recall yet, so attestation currently runs on demand via the
 operator CLI (`npm run durable-state:attest`) rather than at a live session
 boundary. Treat a clean attestation as "no
 structural anomaly detected", never as "this durable state is safe to trust".
+
+## Residual Risk: Egress Is a Capability Grant, Not a Destination Filter (W052, 2026-09-19)
+
+`docs/AI_LANDSCAPE_RESEARCH.md` §3.1 records the approved-domain incident:
+Cowork's egress allowlist permitted `api.anthropic.com`, and a malicious
+workspace file made Claude upload files through the attacker's own API key.
+The lesson, stated verbatim there, is that an allowlist "may be better
+conceptualized as a **capability grant**. Every function reachable through any
+domain on an allowlist is now an attack surface." This section records the
+capability-grant posture and its residuals; it does not change any
+`advisory`/`enforced` status and does not replace the C3 residual above.
+
+**What is now enforced (proxy boundary only).** The metering proxy
+(`createModelUsageProxy`) and each W070a open-model vendor proxy apply
+`checkEgressCredential` (`src/integrations/egress-credential.ts`) before
+forwarding: a request may carry the hub-provisioned placeholder
+(`workflow-metered`) or no credential (the proxy injects the real key), but a
+`foreign` credential in `authorization`, `x-api-key`, `api-key`, or
+`x-goog-api-key` is rejected `403` (`policy: "egress-credential"`) and never
+reaches the upstream. This blocks the specific Cowork pattern — routing an
+attacker-supplied key off the machine through an approved domain — for
+traffic that actually passes through a proxy. The destination/function
+inventory and the full bypass note are in
+`docs/EGRESS_CAPABILITY_AUDIT.md`.
+
+**Residuals, stated plainly.**
+
+1. **Direct egress bypasses every proxy.** The contained agent runs with
+   `network=host` for model egress, so an agent that opens a connection
+   straight to a host is not blocked at any Workflow-controlled boundary.
+   Token binding is blocking only at an interposed proxy and detection only
+   where a proxy (or another reporter) observes the traffic. There is no
+   network-layer egress control today, and none is claimed.
+2. **The placeholder is a value discipline, not an identity proof.** The check
+   matches a shared constant; it does not cryptographically prove the
+   credential was hub-provisioned. A process able to present that constant
+   passes.
+3. **Payloads are not inspected.** The proxy meters volume and usage; it does
+   not read or filter request/response content. Token binding prevents key
+   substitution, not content exfiltration under the hub token — the C3
+   residual above remains the binding statement on that risk.
+4. **The function surface is broad by construction.** The proxy forwards any
+   origin-form path on the upstream origin; the grant is function-broad even
+   though the code only constructs chat-completion and model-catalog paths.
+5. **`egress-audit-mcp` is advisory evidence.** It records reaches reported to
+   it (`append_egress_reach`) and computes anomaly flags; it cannot block,
+   never enforces, and is not yet wired to proxy events automatically. Its
+   coverage is therefore whatever callers feed it.
+6. **No live vendor verification was run.** Token binding is verified by
+   loopback tests; the env-gated `test/open-model-probe.test.ts`
+   (`WORKFLOW_OPEN_MODEL_LIVE=1` plus a vendor key) exercises the same
+   placeholder discipline but was not run here because no vendor key was
+   available.

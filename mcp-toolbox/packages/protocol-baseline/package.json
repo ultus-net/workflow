@@ -1,0 +1,35 @@
+{
+  "name": "@agent-tools/protocol-baseline",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MCP 2026-07-28 protocol baseline: SDK feature survey, server cards, progressive-discovery metrics, and conformance smoke.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "protocol-baseline": "./dist/cli.js"
+  },
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "pnpm run build && node --test dist/*.test.js",
+    "verify": "pnpm run typecheck && pnpm run test",
+    "cards:generate": "node dist/cli.js generate-cards",
+    "cards:check": "node dist/cli.js check-cards",
+    "measure": "node dist/cli.js measure",
+    "conformance": "node dist/cli.js conformance"
+  },
+  "engines": { "node": ">=22" },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0"
+  }
+}

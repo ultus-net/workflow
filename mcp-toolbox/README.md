@@ -19,6 +19,7 @@ publishable.
 - `browser-verification-mcp` - bounded evidence-producing browser verification over CDP (navigate/act/assert, screenshots, debug captures).
 - `learning-mcp` - adaptive pedagogy engine (learner profile, stage progression, intervention budgeting, Socratic checkpoints).
 - `continuity-checkpoint-mcp` - bounded read-only continuity recovery for coding agents.
+- `egress-audit-mcp` - append-only bounded egress-reach ledger with anomaly flags (advisory evidence).
 
 Several lifecycle-oriented tools advertise model-visible guidance about when they are
 useful so different MCP clients can use them proactively without a custom harness.
