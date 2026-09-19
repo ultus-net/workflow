@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 export interface PolicyFailureInput {
   readonly sessionId: string;
   readonly tool: string;
@@ -5,6 +7,7 @@ export interface PolicyFailureInput {
 }
 
 export interface PolicyFailureState {
+  readonly signature: string;
   readonly consecutive: number;
 }
 
@@ -19,9 +22,10 @@ export class PolicyFailureTracker {
   }
 
   recordFailure(input: PolicyFailureInput): number {
+    const signature = createHash("sha256").update(`${input.tool}\0${input.reason}`).digest("hex");
     const previous = this.#failures.get(input.sessionId);
-    const consecutive = (previous?.consecutive ?? 0) + 1;
-    this.#failures.set(input.sessionId, { consecutive });
+    const consecutive = previous?.signature === signature ? previous.consecutive + 1 : 1;
+    this.#failures.set(input.sessionId, { signature, consecutive });
     return consecutive;
   }
 
