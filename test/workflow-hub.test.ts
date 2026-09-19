@@ -38,10 +38,10 @@ test("workflow-hub daemon writes a discovery file and serves authorization", asy
   assert.equal(discovery.token?.length, 64);
   assert.match(discovery.endpoint, /^http:\/\/127\.0\.0\.1:\d+$/);
 
-  const request = await fetch(`${discovery.endpoint}/before-tool`, {
+  const request = await fetch(`${discovery.endpoint}/snapshot`, {
     method: "POST",
     headers: { authorization: `Bearer ${discovery.token}`, "content-type": "application/json" },
-    body: JSON.stringify({ toolCall: { toolName: "execute_command" }, input: {} }),
+    body: JSON.stringify({}),
   });
   assert.equal(request.status, 200);
 });
@@ -97,14 +97,6 @@ test("workflow-hub CLI hides its inactive interactive seed and serves authorizat
   assert.equal(response.status, 200);
   const body = (await response.json()) as { snapshot: { tasks: Array<{ state: string }> } };
   assert.deepEqual(body.snapshot.tasks, []);
-
-  const authorization = await fetch(`${discovery.endpoint}/before-tool`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${discovery.token}`, "content-type": "application/json" },
-    body: JSON.stringify({ workspace: process.cwd(), toolCall: { toolName: "read_file" }, input: { path: "README.md" } }),
-  });
-  assert.equal(authorization.status, 200);
-  assert.deepEqual(await authorization.json(), {});
 });
 
 test("resolveHubDiscoveryPath uses the provided data dir", () => {

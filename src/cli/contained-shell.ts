@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline/promises";
 
-import { ClineHostAdapter } from "../adapters/cline.js";
+import { hostCapabilities, type ProposedToolAction } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { selectContainment } from "../containment/platform.js";
 import { WorkflowContainedProcess } from "../containment/workflow-process.js";
@@ -34,12 +34,7 @@ try {
     }
     commandNumber += 1;
     const id = taskId(`interactive-contained-command-${commandNumber}`);
-    const adapter = new ClineHostAdapter({
-      sessionId: "interactive-session",
-      taskId: id,
-      isMutatingTool: () => true,
-      authoritativePreMutation: true,
-    });
+    const capabilities = hostCapabilities({ transport: "native", authoritativePreMutation: true });
     const application = new WorkflowApplication(
       new TaskGraph([{
         id,
@@ -48,15 +43,21 @@ try {
         dependencies: [],
         requiredEvidence: [{ authority: "environment", subject: "command" }],
       }]),
-      adapter.capabilities,
+      capabilities,
       [],
       new Set(["read", "mutation", "process"]),
     );
     application.transition(id, "IN_PROGRESS");
-    const proposal = adapter.proposalFromBeforeTool({
-      tool: { name: "execute_command" },
+    const proposal: ProposedToolAction = {
+      sessionId: "interactive-session",
+      taskId: id,
+      tool: "execute_command",
+      capability: "process",
+      requiredCapabilities: ["process"],
+      mutating: true,
+      subjects: [],
       input: { executable: "/bin/sh", args: ["-c", command] },
-    });
+    };
     const decision = application.authorize(proposal);
     if (decision.kind === "deny") {
       console.log(`Policy: DENY (${decision.code}: ${decision.reason})`);

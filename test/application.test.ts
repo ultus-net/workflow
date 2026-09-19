@@ -7,7 +7,6 @@ import test from "node:test";
 import {
   TaskGraph,
   WorkflowApplication,
-  ClineHostAdapter,
   AcpHostAdapter,
   nextInteractiveState,
   hostCapabilities,
@@ -133,12 +132,6 @@ test("high-blast-radius capabilities are withheld independently of task state an
 test("real host adapters cannot disguise process execution as ordinary mutation", () => {
   const graph = new TaskGraph([task("A")]);
   graph.transition(taskId("A"), "IN_PROGRESS");
-  const cline = new ClineHostAdapter({ sessionId: "session", taskId: taskId("A"), isMutatingTool: () => true });
-  const clineApplication = new WorkflowApplication(graph, cline.capabilities);
-  const clineProposal = cline.proposalFromBeforeTool({ tool: { name: "run_commands" }, input: { command: "status" } });
-  assert.equal(clineProposal.capability, "process");
-  assert.equal(clineApplication.authorize(clineProposal).kind, "deny");
-
   const acp = new AcpHostAdapter({ authoritativePermissions: true });
   const acpApplication = new WorkflowApplication(graph, acp.capabilities);
   const acpProposal = acp.proposalFromBeforeTool({
@@ -153,17 +146,6 @@ test("real host adapters cannot disguise process execution as ordinary mutation"
 test("real host adapters can classify and withhold credential access", () => {
   const graph = new TaskGraph([task("A")]);
   graph.transition(taskId("A"), "IN_PROGRESS");
-  const cline = new ClineHostAdapter({
-    sessionId: "session",
-    taskId: taskId("A"),
-    isMutatingTool: () => false,
-    capabilityForTool: (tool) => (tool === "secret_store" ? "credentials" : "read"),
-  });
-  const clineApplication = new WorkflowApplication(graph, cline.capabilities);
-  const clineProposal = cline.proposalFromBeforeTool({ tool: { name: "secret_store" }, input: {} });
-  assert.equal(clineProposal.capability, "credentials");
-  assert.equal(clineApplication.authorize(clineProposal).kind, "deny");
-
   const acp = new AcpHostAdapter({ authoritativePermissions: true });
   const acpApplication = new WorkflowApplication(graph, acp.capabilities);
   const acpProposal = acp.proposalFromBeforeTool({
@@ -178,16 +160,6 @@ test("real host adapters can classify and withhold credential access", () => {
 test("host metadata cannot downgrade known process tools", () => {
   const graph = new TaskGraph([task("A")]);
   graph.transition(taskId("A"), "IN_PROGRESS");
-  const cline = new ClineHostAdapter({
-    sessionId: "session",
-    taskId: taskId("A"),
-    isMutatingTool: () => true,
-    capabilityForTool: () => "read",
-  });
-  const clineProposal = cline.proposalFromBeforeTool({ tool: { name: "run_commands" }, input: {} });
-  assert.equal(clineProposal.capability, "process");
-  assert.equal(new WorkflowApplication(graph, cline.capabilities).authorize(clineProposal).kind, "deny");
-
   const acp = new AcpHostAdapter({ authoritativePermissions: true });
   const acpProposal = acp.proposalFromBeforeTool({
     sessionId: "session",
@@ -201,18 +173,6 @@ test("host metadata cannot downgrade known process tools", () => {
 test("actions requiring process and credentials must be granted both capabilities", () => {
   const graph = new TaskGraph([task("A")]);
   graph.transition(taskId("A"), "IN_PROGRESS");
-  const cline = new ClineHostAdapter({
-    sessionId: "session",
-    taskId: taskId("A"),
-    isMutatingTool: () => true,
-    capabilityForTool: () => "credentials",
-  });
-  const proposal = cline.proposalFromBeforeTool({ tool: { name: "run_command" }, input: {} });
-  assert.deepEqual(proposal.requiredCapabilities, ["process", "credentials"]);
-  assert.equal(new WorkflowApplication(graph, cline.capabilities, [], new Set(["read", "mutation", "process"])).authorize(proposal).kind, "deny");
-  assert.equal(new WorkflowApplication(graph, cline.capabilities, [], new Set(["read", "mutation", "credentials"])).authorize(proposal).kind, "deny");
-  assert.equal(new WorkflowApplication(graph, cline.capabilities, [], new Set(["read", "mutation", "process", "credentials"])).authorize(proposal).kind, "allow");
-
   const acp = new AcpHostAdapter({ authoritativePermissions: true });
   const acpProposal = acp.proposalFromBeforeTool({
     sessionId: "session",
@@ -221,6 +181,8 @@ test("actions requiring process and credentials must be granted both capabilitie
   });
   assert.deepEqual(acpProposal.requiredCapabilities, ["process", "credentials"]);
   assert.equal(new WorkflowApplication(graph, acp.capabilities, [], new Set(["read", "mutation", "process"])).authorize(acpProposal).kind, "deny");
+  assert.equal(new WorkflowApplication(graph, acp.capabilities, [], new Set(["read", "mutation", "credentials"])).authorize(acpProposal).kind, "deny");
+  assert.equal(new WorkflowApplication(graph, acp.capabilities, [], new Set(["read", "mutation", "process", "credentials"])).authorize(acpProposal).kind, "allow");
 });
 
 test("required capability metadata cannot omit the primary capability", () => {

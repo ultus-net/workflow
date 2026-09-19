@@ -4,7 +4,8 @@ import { render } from "ink";
 
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
-import { createConfiguredClineRuntime } from "../integrations/cline-runtime.js";
+import { activeTaskCorrelation } from "../application/task-commands.js";
+import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { createReviewFollowUpsClient, type ReviewFollowUp } from "../integrations/review-followups.js";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -131,11 +132,9 @@ if (hub !== undefined) {
     workspace,
   );
 
-  // Lazy MCP tool loading: schemas enter the model context on demand via
-  // discover/call meta-tools instead of up-front for every server.
-  process.env.CLINE_LAZY_MCP_TOOLS ??= "1";
-
-  const runtime = await createConfiguredClineRuntime(application, workspace);
+  // Standalone (no hub): compose the host-neutral ACP runtime, the same
+  // authority path the hub-hosted surfaces use.
+  const runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskCorrelation(application));
 
   // Plan Task F2 surface wiring: same operator levels.json as skills-mcp; a
   // malformed map refuses startup (fail-closed) rather than running ungated.
@@ -150,7 +149,6 @@ if (hub !== undefined) {
       session: runtime.session,
       reviewFollowUps,
       connectionLabel: "standalone (no hub)",
-      onStyleChange: (style) => runtime.setSessionStyle(style),
       // The mode bar installs the pedagogy gate on the application; changing mode
       // re-creates the checkpoint ledger for the new mode AND re-binds the mode's
       // required-skill set to the active task. Leaves no gate when the mode itself

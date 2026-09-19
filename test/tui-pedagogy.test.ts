@@ -33,40 +33,6 @@ async function waitForFrame(view: { lastFrame(): string | undefined }, expected:
   }
 }
 
-test("TUI menu cycles speech and build styles in the mode bar", async () => {
-  const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
-
-  view.stdin.write("/");
-  await waitForFrame(view, /Workflow options/);
-  view.stdin.write("2");
-  await waitForFrame(view, /🪨/);
-  assert.match(view.lastFrame() ?? "", /🪨/);
-
-  view.stdin.write("/");
-  await waitForFrame(view, /Workflow options/);
-  view.stdin.write("3");
-  await waitForFrame(view, /pt·lite/);
-  assert.match(view.lastFrame() ?? "", /pt·lite/);
-
-  view.unmount();
-});
-
-test("TUI style changes propagate to onStyleChange for live session restyling", async () => {
-  const styles: unknown[] = [];
-  const view = render(React.createElement(WorkflowTui, {
-    application: createApplication(),
-    onStyleChange: (style) => styles.push(style),
-  }));
-
-  view.stdin.write("/");
-  await waitForFrame(view, /Workflow options/);
-  view.stdin.write("2");
-  await waitForFrame(view, /caveman/);
-  assert.deepEqual(styles.at(-1), { speech: "caveman", build: "normal" });
-  view.unmount();
-});
-
-
 test("TUI installs the pedagogy gate via onModeChange on mount and menu changes", async () => {
   const modes: string[] = [];
   const view = render(React.createElement(WorkflowTui, {
@@ -88,7 +54,7 @@ test("TUI installs the pedagogy gate via onModeChange on mount and menu changes"
 });
 
 
-test("TUI / opens the Workflow options menu and 1-6 toggle options", async () => {
+test("TUI / opens the Workflow options menu and digits toggle options", async () => {
   const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
 
   // Empty composer shows the labeled keys hint.
@@ -98,8 +64,6 @@ test("TUI / opens the Workflow options menu and 1-6 toggle options", async () =>
   await waitForFrame(view, /Workflow options/);
   const menu = view.lastFrame() ?? "";
   assert.match(menu, /Mode: Autonomous/);
-  assert.match(menu, /Speech: normal/);
-  assert.match(menu, /Build: normal/);
   assert.match(menu, /Learner profile/);
   assert.match(menu, /Inspect symbol/);
   assert.match(menu, /Workflow details/);
@@ -127,9 +91,9 @@ test("TUI / menu digit selection runs the option and q closes", async () => {
   view.stdin.write("/");
   await waitForFrame(view, /Workflow options/);
 
-  // Digit 2 is Speech; cycling keeps the menu open.
-  view.stdin.write("2");
-  await waitForFrame(view, /Speech: caveman|🪨/);
+  // Digit 1 cycles the pedagogical mode; cycling keeps the menu open.
+  view.stdin.write("1");
+  await waitForFrame(view, /Mode: Learn to Code/);
   assert.match(view.lastFrame() ?? "", /Workflow options/, "the menu must stay open while options cycle");
 
   // q closes without changing anything.
@@ -189,7 +153,7 @@ test("TUI menu toggles a learner profile panel rendering concept stages", async 
   assert.doesNotMatch(view.lastFrame() ?? "", /Learner Profile/);
   view.stdin.write("/");
   await waitForFrame(view, /Workflow options/);
-  view.stdin.write("4");
+  view.stdin.write("2");
   await waitForFrame(view, /Learner Profile/);
   assert.match(view.lastFrame() ?? "", /Learner Profile/);
   assert.match(view.lastFrame() ?? "", /closures\s+developing/);
@@ -197,7 +161,7 @@ test("TUI menu toggles a learner profile panel rendering concept stages", async 
 
   view.stdin.write("/");
   await waitForFrame(view, /Workflow options/);
-  view.stdin.write("4");
+  view.stdin.write("2");
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.doesNotMatch(view.lastFrame() ?? "", /Learner Profile/);
   view.unmount();
@@ -214,7 +178,7 @@ test("TUI menu shows a symbol inspect hint panel that invokes onInspectSymbol", 
 
   view.stdin.write("/");
   await waitForFrame(view, /Workflow options/);
-  view.stdin.write("5");
+  view.stdin.write("3");
   await waitForFrame(view, /Symbol Inspect/);
   assert.match(view.lastFrame() ?? "", /Symbol Inspect/);
   view.stdin.write("reduce");

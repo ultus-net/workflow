@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
   AcpHostAdapter,
-  ClineHostAdapter,
   OpenCodeHostAdapter,
   TaskGraph,
   WorkflowApplication,
@@ -21,26 +20,6 @@ interface ConformanceHarness {
 }
 
 const harnesses: readonly ConformanceHarness[] = [
-  {
-    name: "Cline",
-    proposal(kind) {
-      const adapter = new ClineHostAdapter({
-        sessionId: "conformance-session",
-        taskId: taskId("A"),
-        isMutatingTool: () => true,
-        authoritativePreMutation: true,
-      });
-      return adapter.proposalFromBeforeTool({
-        tool: { name: kind === "process" ? "run_commands" : "write_file" },
-        input: { path: "src/example.ts" },
-      });
-    },
-    control(decision) {
-      return new ClineHostAdapter({
-        sessionId: "s", taskId: taskId("A"), isMutatingTool: () => true, authoritativePreMutation: true,
-      }).beforeToolControl(decision);
-    },
-  },
   {
     name: "ACP",
     proposal(kind) {

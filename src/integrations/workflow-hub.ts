@@ -5,12 +5,8 @@ import { randomBytes } from "node:crypto";
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { TaskGraph } from "../kernel/task-graph.js";
-import {
-  createWorkflowClineTuiBridge,
-  type WorkflowApplicationResolver,
-  type WorkflowClineTuiBridge,
-  type WorkflowRunController,
-} from "./cline-tui-bridge.js";
+import { createWorkflowHubBridge, type WorkflowHubBridge } from "./hub-http.js";
+import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { createRunRegistry, type RunReviewerFactory, type RunTestRunner } from "./run-registry.js";
 import type { HubScheduler } from "./hub-scheduler.js";
@@ -67,7 +63,7 @@ export async function createWorkflowHub(
   const lockDir = join(dir, "hub", "lock");
   const temporaryPath = `${discoveryPath}.${process.pid}.tmp`;
   const verifierTemporaryPath = `${verifierDiscoveryPath}.${process.pid}.tmp`;
-  let bridge: WorkflowClineTuiBridge | undefined;
+  let bridge: WorkflowHubBridge | undefined;
   let discoveryPublished = false;
   acquireInstanceLock(lockDir);
   try {
@@ -84,12 +80,11 @@ export async function createWorkflowHub(
         recordRunUsage: runs.recordRunUsage,
       })
       : undefined;
-    bridge = await createWorkflowClineTuiBridge(
+    bridge = await createWorkflowHubBridge(
       application,
       runs?.resolve,
       runs?.controller,
       options.observeRequest,
-      options.teamTaskVerificationCommand,
       options.guard,
     );
     options.observeBridgeStarted?.(bridge.url);

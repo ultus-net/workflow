@@ -66,7 +66,6 @@ try {
       application.setPedagogyGate(createCheckpointLedger(mode));
       applySkillGating(application, mode, skillsLevelMap);
     },
-    ...(composed.setSessionStyle ? { onStyleChange: composed.setSessionStyle } : {}),
     ...(composed.sessionConfigOptions ? { sessionConfigOptions: composed.sessionConfigOptions } : {}),
     ...(composed.setSessionConfig ? { onSetSessionConfig: composed.setSessionConfig } : {}),
     // W044: metering-proxy usage surfaces on every driver that records it.

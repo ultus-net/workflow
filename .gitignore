@@ -1,7 +1,6 @@
 node_modules/
 dist/
 coverage/
-.workflow-cline/
 .env
 .env.*
 !.env.example

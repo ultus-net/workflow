@@ -246,3 +246,47 @@ Flags: ChatGPT/Claude/Grok consumer UIs verified via help centers
 not re-verified in current docs; typography/radii/spacing specs are
 unpublished by every vendor — visual claims above are limited to what
 official sources state; Zed default-theme specifics unverified.
+
+**Supersession note (2026-09-18, W050 step 6).** The vendored-Cline SDK runtime,
+its `.workflow-cline/` checkout, and its Workflow patch were removed on branch
+`feat/w050-cline-removal` (not yet merged), together with the hub's
+Cline-specific `/before-tool` and `/team-task` routes. The thin stock-ACP
+connector is retained (`src/integrations/cline-launch.ts` resolves ambient
+`cline --acp`; the `cline` agent kind composes the generic ACP runtime) and is
+probe-PENDING on stock 3.0.62. Prior statements in this record that treat the
+patched Cline TUI as the runnable product surface are historical; the browser
+operator UI over stock-ACP OpenCode is the default surface.
+
+## Addendum — 2026-09-18 battlestation pass (branch `feat/web-ui-battlestation`)
+
+Dated continuation of this research record; the sections above are kept as
+history. Sources fetched this pass: openrouter.ai OpenAPI docs
+(`/analytics/meta`, `/analytics/query`, `/credits` — fetched 2026-09-18) and
+the OpenCode source checkout for the theme engine (github.com/sst/opencode,
+MIT: `packages/ui/src/theme/{color,resolve,loader}.ts`, 37 desktop theme
+JSONs vendored to `src/ui/webapp/themes/`).
+
+- **Theme catalog (item 2 of §2 becomes concrete).** OpenCode's desktop
+  web theme model is one JSON per theme with `light`/`dark` variants over a
+  seed palette; the Workflow port restores the published OKLab matrices,
+  maps seeds onto Workflow's existing 17 tokens, and adds an AA correction
+  (`ensureAA`) so every catalog theme passes the operator contrast bar in
+  both modes — mechanically gated in `test/webapp-palettes.test.ts`.
+- **Parallel sessions replace the one-process invariant.** Multiple live
+  ACP runtimes behind one browser surface, per-session turns and parked
+  permission prompts, bounded by a live cap with LRU eviction; see the
+  2026-09-18 supersession note in `docs/web-ui-feature-tiers.md`. This
+  closes the "multiplexed driver" follow-up the earlier tiers doc deferred.
+- **OpenRouter spend page (new).** OpenRouter exposes no public
+  generations-list endpoint for plain API keys; analytics and credits
+  require a Management key (docs/guides/overview/auth/management-api-keys).
+  The Usage page therefore runs on `/analytics/query` + `/analytics/meta` +
+  `/credits` with a server-held management key, composes the table
+  server-side, and renders an honest setup state when the key is absent
+  (the key never reaches the browser). The meta endpoint gates which
+  metrics/dimensions are queried — nothing is fabricated.
+- **Anti-slop audit.** The taste pass ran against 12 real Chromium states
+  (dark/light/Dracula × 1440/945/768) and fixed what the captures showed:
+  pathname-matched static routes (query strings no longer 404 the shell),
+  a bounded multi-column palette grid, authored SVG card glyphs, composed
+  empty/setup panels, and a neutral palette composer-focus tint.
