@@ -57,6 +57,42 @@ dependent surfaces are every launcher that resolves it.
 All authority uses `WorkflowApplication` task/evidence state. Actions that
 can't be authorized fail **closed** (hub denies rather than guessing).
 
+## Model routing (open-source pool)
+
+The default model pool is open-source-only. Direct vendor endpoints are
+preferred; OpenRouter is the uniform fallback, and closed models remain
+available through an explicit operator override (they are not deleted).
+
+| Pool id | Vendor | OpenAI base URL | Anthropic base URL | Fallback (OpenRouter) |
+|---|---|---|---|---|
+| `deepseek-flash` | DeepSeek V4.1-Flash | `https://api.deepseek.com` | `https://api.deepseek.com/anthropic` | `deepseek/deepseek-v4.1-flash` |
+| `glm-5.3` | GLM-5.3 | `https://api.z.ai/api/paas/v4` | `https://api.z.ai/api/anthropic` | `z-ai/glm-5.3` |
+| `glm-5.3-flash` | GLM-5.3-Flash | `https://api.z.ai/api/paas/v4` | `https://api.z.ai/api/anthropic` | `z-ai/glm-5.3-flash` |
+| `kimi-k3` | Kimi K3 | `https://api.moonshot.ai/v1` | `https://api.moonshot.ai/anthropic` | `moonshotai/kimi-k3` |
+
+- **Composition.** Each keyed vendor gets its own loopback metering proxy. The
+  agent config carries the placeholder credential and the proxy URL; the real
+  vendor key lives only proxy-side (`loadOpenModelKeys`: env override first,
+  then `~/.config/workflow/<family>-api-key`). The OpenAI chat wire is used for
+  all three vendors — one wire discipline for the pool.
+- **Request shaping.** `ModelProfile` (`src/integrations/model-profile.ts`)
+  centralizes per-vendor params and `shapeRequestBody` applies them to
+  chat-completion bodies at the vendor proxy: `reasoning_effort`
+  `low`/`high`/`max` with task-class defaults (coding `high` for DeepSeek,
+  `max` for GLM/K3; batch `low`), and the invariant that GLM/K3 are never sent
+  `thinking.type: "disabled"` (GLM-5.3 rejects it).
+- **Off-peak scheduling.** Batch/CI schedules may declare `offPeak`
+  (`deepseek` | `glm`) and defer to the discounted window (GLM peak is
+  Mon–Fri 14:00–18:00 SGT; DeepSeek's window is operator-supplied via
+  `WORKFLOW_OFF_PEAK_DEEPSEEK_PEAK_UTC`). An unknown window fails open and is
+  logged.
+- **Closed-model override.** Set `WORKFLOW_OPENCODE_MODEL` to any model id
+  (e.g. `openrouter/auto` or a closed frontier slug); the override rides the
+  legacy metered provider and the open-source pool stays selectable.
+  `WORKFLOW_OPEN_MODEL_POOL` selects an ordered subset of the pool by id.
+- Live-verification evidence for every id/endpoint:
+  `docs/superpowers/specs/2026-09-19-w070a-routing-live-verification.md`.
+
 ## Related surfaces (post-hub)
 
 | Surface | Enforced via |

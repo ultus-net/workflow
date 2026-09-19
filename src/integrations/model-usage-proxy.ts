@@ -7,6 +7,7 @@ import {
   isAutoRouterModel,
   type AliasResolver,
 } from "./openrouter-auto-latest.js";
+import { enforceReplayPolicy } from "./model-replay-policy.js";
 
 export interface ModelUsageMetrics {
   readonly requests: number;
@@ -96,6 +97,14 @@ export async function createModelUsageProxy(options: {
   readonly apiKey: string;
   readonly onUsage?: (usage: Record<string, unknown>) => void;
   /**
+   * W070a: optional pure transform applied to a parsed chat-completion body
+   * before forwarding. The open-source pool uses it to apply `ModelProfile`
+   * request shaping at the vendor boundary. A non-object return is ignored so
+   * a misbehaving transform cannot corrupt the request. Absent leaves the body
+   * untouched.
+   */
+  readonly transformBody?: ((body: Record<string, unknown>) => Record<string, unknown>) | undefined;
+  /**
    * When set, chat completions targeting `openrouter/auto` have the resolved
    * `~...-latest` pool injected as the Auto Router `allowed_models` before
    * forwarding. Absent leaves traffic untouched.
@@ -153,6 +162,22 @@ export async function createModelUsageProxy(options: {
         res.end(JSON.stringify({ error: "model usage proxy received non-object chat completion body" }));
         return;
       }
+      // W070b slice 1: enforce the model's assistant-message replay policy at
+      // the wire boundary. K3 is rejected on a stripped replay; DeepSeek
+      // synthesized tool-call turns are diverted to the Anthropic path. This
+      // is harness correctness — it rejects malformed replays, it does not
+      // guarantee model behavior.
+      const replay = enforceReplayPolicy(parsed);
+      if (replay.action === "reject") {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: replay.reason, policy: replay.policy.family, violations: replay.violations }));
+        return;
+      }
+      if (replay.action === "route-anthropic") {
+        res.writeHead(409, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: replay.reason, policy: replay.policy.family, violations: replay.violations }));
+        return;
+      }
       // Hub-owned Auto Router pool: resolve `~...-latest` aliases to concrete
       // slugs and inject them so the router's `allowed_models` (which does not
       // understand aliases) actually has candidates. Fail open on resolution
@@ -163,6 +188,10 @@ export async function createModelUsageProxy(options: {
         if (allowedModels.length > 0) {
           routed = applyAutoRouterPlugin(parsed, parsed.model, allowedModels, autoLatest?.costTier);
         }
+      }
+      if (options.transformBody !== undefined) {
+        const shaped = options.transformBody(routed);
+        if (isRecord(shaped)) routed = shaped;
       }
       const existing = isRecord(routed.usage) ? routed.usage : {};
       // Ask the provider for usage accounting so usage arrives even in streams.

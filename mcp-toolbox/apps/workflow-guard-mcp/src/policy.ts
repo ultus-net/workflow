@@ -5,6 +5,7 @@ import { checkInterpreterPolicy } from "./interpreter-policy.js";
 import { checkBoundaryPolicy, isPathOutsideWorkspace, shellHasFileMutation } from "./boundary-policy.js";
 import { mcpMutationTarget } from "./mcp-policy.js";
 import { checkPrCreatePreflight } from "./pr-policy.js";
+import { redirectGuidance } from "./redirect.js";
 
 export type GuardAction = "shell" | "file_write" | "git" | "network" | "mcp";
 
@@ -52,13 +53,15 @@ export function extractPatchPaths(patchText: string): string[] {
 
 export function checkPolicy(input: GuardCheckInput): GuardDecision {
   const result = evaluatePolicy(input);
-  if (result.decision === "deny" && typeof input.failureCount === "number" && input.failureCount >= 2) {
-    return {
-      ...result,
-      reason: result.reason + CIRCUIT_BREAKER_GUIDANCE,
-    };
+  if (result.decision !== "deny") return result;
+  // W070b slice 4a: every denial carries a short, imperative redirect naming
+  // the expected tool class; the circuit breaker stays appended on repeat
+  // failures. Denial UX only — the decision is unchanged.
+  let reason = `${result.reason} ${redirectGuidance(result.policy)}`;
+  if (typeof input.failureCount === "number" && input.failureCount >= 2) {
+    reason += CIRCUIT_BREAKER_GUIDANCE;
   }
-  return result;
+  return { ...result, reason };
 }
 
 function evaluatePolicy(input: GuardCheckInput): GuardDecision {

@@ -29,6 +29,10 @@ import type { PermissionBroker } from "../ui/permission-broker.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { METERED_PLACEHOLDER_KEY, type ModelUsageMetrics, type ModelUsageProxy, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
+import { loadOpenModelKeys } from "./open-model-keys.js";
+import { createOpenModelMeteringPool, type OpenModelMeteringPool } from "./open-model-proxy.js";
+import { findOpenModel, openSourcePoolFromEnv } from "./open-source-pool.js";
+import { DEFAULT_OPENCODE_MODEL, OPENCODE_METERED_PROVIDER_ID, type MeteredVendorProvider } from "./opencode-agent-config.js";
 import { loadUpstreamApiKey } from "./upstream-key.js";
 
 export interface WorkflowAcpRuntime {
@@ -133,6 +137,20 @@ async function createOpencodeRuntime(
   // `~...-latest` aliases in the proxy so agents never need a client plugin.
   const autoLatest = autoLatestConfigFromEnv({ upstream });
   const proxy = await createModelUsageProxy({ upstream, apiKey, ...(autoLatest === undefined ? {} : { autoLatest }) });
+  // W070a: compose the open-source vendors through their own loopback proxies
+  // when their keys are present. With no vendor keys the pool stays empty and
+  // the agent keeps the existing OpenRouter/Auto-Router surface unchanged
+  // (the closed-model operator override path is untouched).
+  const openKeys = loadOpenModelKeys();
+  let openPool: OpenModelMeteringPool | undefined;
+  try {
+    openPool = Object.keys(openKeys.keys).length > 0 ? await createOpenModelMeteringPool({ pool: openSourcePoolFromEnv(), keys: openKeys.keys }) : undefined;
+  } catch (error) {
+    // A misconfigured pool (unknown WORKFLOW_OPEN_MODEL_POOL id) must not leak
+    // the already-started OpenRouter proxy listener.
+    await proxy.close();
+    throw error;
+  }
   // Each runtime owns a private config dir: the metering proxy port is
   // ephemeral and the config points the agent at it, so runtimes must never
   // share one config (a dead proxy port would strand later agents). Unique
@@ -149,12 +167,24 @@ async function createOpencodeRuntime(
     // against; absent server or directory means no delivery to mount (levels
     // gating composes to no-ops without the dir, matching the TUI surfaces).
     const skillsMount = resolveSkillsMount();
+    const openSelection = openPool === undefined ? undefined : openSourceConfig(openPool);
+    // An operator override that names a live open-source pool model is handled
+    // by the open-source provider itself (defaultModel); any other override
+    // (including a closed model) keeps riding the legacy provider unchanged.
+    const envModel = process.env.WORKFLOW_OPENCODE_MODEL?.trim();
+    const envModelDef = envModel === undefined || envModel === "" ? undefined : findOpenModel(envModel);
+    const envModelProvider = envModelDef === undefined || openPool === undefined ? undefined : openPool.byFamily.get(envModelDef.family);
+    const configModel =
+      envModel !== undefined && envModel !== "" && envModelProvider !== undefined && envModelProvider.models.includes(envModel)
+        ? undefined
+        : process.env.WORKFLOW_OPENCODE_MODEL;
     writeFileSync(
       join(configDir, "opencode", "opencode.json"),
       JSON.stringify(meteredOpencodeConfig({
         proxyUrl: proxy.url,
-        model: process.env.WORKFLOW_OPENCODE_MODEL,
+        model: configModel,
         ...(autoLatest === undefined ? {} : { autoLatest: { aliases: autoLatest.aliases } }),
+        ...(openSelection === undefined ? {} : { openSource: openSelection }),
         ...(skillsMount === undefined ? {} : { skills: skillsMount }),
       })),
       { encoding: "utf8", mode: 0o600 },
@@ -235,8 +265,9 @@ async function createOpencodeRuntime(
           await driver.dispose();
         } finally {
           await proxy.close();
+          await openPool?.close();
           rmSync(configDir, { recursive: true, force: true });
-          console.log("metering proxy metrics:", JSON.stringify(proxy.metrics(), null, 2));
+          console.log("metering proxy metrics:", JSON.stringify({ openRouter: proxy.metrics(), openSource: openPool?.metrics() }, null, 2));
         }
       },
     };
@@ -245,9 +276,38 @@ async function createOpencodeRuntime(
     // config dir, or a containment failure must not leak the proxy listener
     // or the per-runtime config dir — mirror the Cline path's cleanup.
     await proxy.close();
+    await openPool?.close();
     rmSync(configDir, { recursive: true, force: true });
     throw error;
   }
+}
+
+/**
+ * W070a: builds the agent-visible provider entries for the composed
+ * open-source pool. Labels come from the pool definitions; the default model
+ * is the first available vendor's first model unless the operator explicitly
+ * selected another live pool model.
+ */
+function openSourceConfig(openPool: OpenModelMeteringPool): {
+  readonly providers: readonly MeteredVendorProvider[];
+  readonly defaultModel: string;
+} {
+  const providers = openPool.providers.map((provider) => ({
+    id: provider.providerId,
+    name: `Workflow metered (${provider.family})`,
+    baseURL: provider.baseUrl,
+    models: Object.fromEntries(provider.models.map((id) => [id, { name: findOpenModel(id)?.label ?? id }])),
+  }));
+  const first = openPool.providers[0];
+  const firstModel = first?.models[0];
+  let defaultModel = first === undefined || firstModel === undefined ? `${OPENCODE_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}` : `${first.providerId}/${firstModel}`;
+  const envModel = process.env.WORKFLOW_OPENCODE_MODEL?.trim();
+  const envModelDef = envModel === undefined || envModel === "" ? undefined : findOpenModel(envModel);
+  const envModelProvider = envModelDef === undefined ? undefined : openPool.byFamily.get(envModelDef.family);
+  if (envModel !== undefined && envModel !== "" && envModelProvider !== undefined && envModelProvider.models.includes(envModel)) {
+    defaultModel = `${envModelProvider.providerId}/${envModel}`;
+  }
+  return { providers, defaultModel };
 }
 
 async function createClineRuntime(
