@@ -53,7 +53,13 @@ test("the assurance case cites its verification comprehensively across all surfa
   assert.ok(citations.length >= 100, `expected at least 100 automated/gated citations, found ${citations.length}`);
   const gated = citations.filter((citation) => citation.gate !== undefined);
   assert.ok(gated.length >= 8, `expected at least 8 gated probe citations, found ${gated.length}`);
-  assert.ok([...doc.matchAll(MANUAL)].length >= 6, "expected at least 6 manual verification citations");
+  // The W050 vendored-Cline SDK retirement removed the three cline manual
+  // commands (test:cline-resume / test:cline-runtime /
+  // test:cline-coding-session); exactly three manual commands survive
+  // (test:containment-runtime, test:e2e, toolbox:verify), so the floor tracks
+  // the real surviving manual verification. Raising it higher would only force
+  // padding.
+  assert.ok([...doc.matchAll(MANUAL)].length >= 3, "expected at least 3 manual verification citations");
   // Per-section floor: split the doc at section headers and require every
   // surface to keep at least 5 verification citations of any kind.
   const sectionBodies = doc.split(/\n(?=## S\d+ )/);

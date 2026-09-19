@@ -15,4 +15,3 @@ function step(name, command, args) {
 }
 
 step("toolbox", "pnpm", ["--dir", resolve(root, "mcp-toolbox"), "run", "build"]);
-step("cline-tui", "node", [resolve(root, "scripts", "build-cline-tui.mjs")]);

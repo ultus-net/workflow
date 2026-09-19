@@ -101,6 +101,46 @@ test("web UI exposes repository branch, changed paths, and constrained diffs", a
   assert.equal(outside.status, 404);
 });
 
+test('web UI lists git worktrees with the current one marked', async (context) => {
+  const workspace = mkdtempSync(join(tmpdir(), 'workflow-web-worktree-'));
+  context.after(() => rmSync(workspace, { recursive: true, force: true }));
+  execFileSync('git', ['init', '-b', 'trunk'], { cwd: workspace });
+  execFileSync('git', ['config', 'user.email', 'test@workflow.local'], { cwd: workspace });
+  execFileSync('git', ['config', 'user.name', 'Workflow Test'], { cwd: workspace });
+  writeFileSync(join(workspace, 'seed.txt'), 'seed\n');
+  execFileSync('git', ['add', 'seed.txt'], { cwd: workspace });
+  execFileSync('git', ['commit', '-m', 'initial'], { cwd: workspace });
+  // A second worktree on a feature branch — the shape the left rail lists.
+  const linked = join(workspace, 'linked');
+  execFileSync('git', ['worktree', 'add', '-b', 'feature/linked', linked], { cwd: workspace });
+
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: 'acp', authoritativePreMutation: false }),
+    [],
+    new Set(['read']),
+    workspace,
+  );
+  const server = createWorkflowWebServer(application);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+
+  const response = await fetch(`http://127.0.0.1:${port}` + '/api/worktrees');
+  assert.equal(response.status, 200);
+  const { worktrees } = await response.json() as { worktrees: { path: string; branch: string | null; head?: string; bare: boolean; detached: boolean; current: boolean }[] };
+  assert.equal(worktrees.length, 2);
+  const main = worktrees.find((entry) => entry.current);
+  const other = worktrees.find((entry) => !entry.current);
+  assert.ok(main !== undefined && other !== undefined, 'exactly one current worktree');
+  assert.equal(main.branch, 'trunk');
+  assert.equal(main.detached, false);
+  assert.ok(main.head !== undefined, 'the current worktree reports its HEAD');
+  assert.equal(other.branch, 'feature/linked');
+  assert.equal(other.current, false);
+  assert.ok(other.path.endsWith('linked'), 'the linked worktree path is reported');
+});
+
 test("web UI diffs staged changes before a repository has HEAD", async (context) => {
   const workspace = mkdtempSync(join(tmpdir(), "workflow-web-git-unborn-"));
   context.after(() => rmSync(workspace, { recursive: true, force: true }));
@@ -536,6 +576,178 @@ test("web UI manages sessions through guarded routes", async (context) => {
   assert.equal((await toggleUpdated.json() as { options: { id: string; currentValue: unknown }[] }).options.find((option) => option.id === "web-search")?.currentValue, true);
 });
 
+test('the usage route reports its setup state without a management key and serves analytics with one', async (context) => {
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: 'acp', authoritativePreMutation: false }),
+  );
+
+  // Without a management key the page gets an honest setup state, not a 503.
+  const bare = createWorkflowWebServer(application, undefined, undefined, { analytics: () => undefined });
+  await new Promise<void>((resolve) => bare.listen(0, "127.0.0.1", resolve));
+  context.after(() => bare.close());
+  const barePort = (bare.address() as AddressInfo).port;
+  const setup = await fetch(`http://127.0.0.1:${barePort}/api/usage`);
+  assert.equal(setup.status, 200);
+  const setupBody = await setup.json() as { available: boolean; reason?: string };
+  assert.equal(setupBody.available, false);
+  assert.match(setupBody.reason ?? '', /management key/i);
+
+  // With an analytics client the route composes the three calls.
+  const row = { model: 'deepseek/deepseek-v4.1-flash', provider: 'Together', request_count: 12, prompt_tokens: 310352, completion_tokens: 206, cost: 0.00217 };
+  const calls: string[] = [];
+  const fakeAnalytics = {
+    async meta() { return { metrics: [], dimensions: [], granularities: [] }; },
+    async queryByModel() { calls.push('byModel'); return { rows: [row], truncated: false }; },
+    async queryDaily() { calls.push('byDay'); return { rows: [{ date__day: '2026-09-18T00:00:00.000Z', cost: 0.00217 }], truncated: false }; },
+    async credits() { calls.push('credits'); return { totalCredits: 100, totalUsage: 12.5 }; },
+  };
+  const server = createWorkflowWebServer(application, undefined, undefined, { analytics: () => fakeAnalytics });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const port = (server.address() as AddressInfo).port;
+
+  const usage = await fetch(`http://127.0.0.1:${port}/api/usage` + '?days=30');
+  assert.equal(usage.status, 200);
+  const body = await usage.json() as { available: boolean; days: number; credits?: { totalCredits: number }; byModel?: { rows: unknown[] }; byDay?: { rows: unknown[] } };
+  assert.equal(body.available, true);
+  assert.equal(body.days, 30);
+  assert.equal(body.credits?.totalCredits, 100);
+  assert.equal(body.byModel?.rows.length, 1);
+  assert.equal(body.byDay?.rows.length, 1);
+  assert.deepEqual(calls.sort(), ['byDay', 'byModel', 'credits']);
+
+  // An upstream failure surfaces as a 503 with the upstream message.
+  const failing = createWorkflowWebServer(application, undefined, undefined, {
+    analytics: () => ({
+      async meta() { return { metrics: [], dimensions: [], granularities: [] }; },
+      async queryByModel() { throw new Error('Only management keys can perform this operation'); },
+      async queryDaily() { return { rows: [], truncated: false }; },
+      async credits() { return undefined; },
+    }),
+  });
+  await new Promise<void>((resolve) => failing.listen(0, "127.0.0.1", resolve));
+  context.after(() => failing.close());
+  const failingPort = (failing.address() as AddressInfo).port;
+  const failed = await fetch(`http://127.0.0.1:${failingPort}/api/usage`);
+  assert.equal(failed.status, 503);
+  assert.match((await failed.json() as { error: string }).error, /management key/i);
+});
+
+test('session-scoped routes accept ?session=<id> and 404 unknown ids', async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), 'web-session-scope-'));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const manager = new WebSessionManager({
+    registryPath: join(dir, 'registry.json'),
+    factory: async () => {
+      const driver: CodingSessionDriver = {
+        async start(_prompt, emit) { emit({ type: 'completed', result: 'done' }); },
+        async cancel() {},
+      };
+      return {
+        driver: {
+          ...driver,
+          agentSessionId: () => 'agent-x',
+          connect: async () => {},
+          subscribe: () => () => {},
+          config: () => ({ configOptions: [{ id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'a', options: [{ value: 'a' }] }] }),
+          setConfigOption: async () => ({ configOptions: [] }),
+        } as never,
+        session: new WorkflowCodingSession(driver),
+      budgetMechanism: "test: no local caps (fake runtime)",
+        async dispose() {},
+      };
+    },
+  });
+  context.after(() => manager.dispose());
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: 'acp', authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, manager);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const port = (server.address() as AddressInfo).port;
+
+  const created = await fetch(`http://127.0.0.1:${port}` + '/api/sessions', { method: 'POST' });
+  assert.equal(created.status, 201);
+  const id = ((await created.json()) as { id: string }).id;
+
+  // Every session-scoped route the browser uses must accept the query suffix —
+  // the client appends ?session= on all of them once a session is focused.
+  const scoped = [
+    ['GET', '/api/session'],
+    ['GET', '/api/config-options'],
+    ['GET', '/api/permission'],
+    ['POST', '/api/prompt'],
+    ['POST', '/api/cancel'],
+  ] as const;
+  for (const [method, path] of scoped) {
+    const response = await fetch(`${`http://127.0.0.1:${port}`}${path}?session=${encodeURIComponent(id)}`, method === 'POST'
+      ? { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'hello' }) }
+      : { method });
+    assert.notEqual(response.status, 404, `${method} ${path}?session= must resolve the focused session (got ${response.status})`);
+  }
+
+  const meta = await fetch(`${`http://127.0.0.1:${port}`}/api/session?session=${encodeURIComponent(id)}`).then((r) => r.json()) as { id?: string };
+  assert.equal(meta.id, id, 'the meta answers for the requested session');
+
+  // A stale/dismissed id must 404, never silently answer as another session.
+  const unknown = await fetch(`${`http://127.0.0.1:${port}`}/api/session?session=web-does-not-exist`);
+  assert.equal(unknown.status, 404);
+  const unknownPermission = await fetch(`${`http://127.0.0.1:${port}`}/api/permission?session=web-does-not-exist`);
+  assert.equal(unknownPermission.status, 404);
+  const unknownPrompt = await fetch(`${`http://127.0.0.1:${port}`}/api/prompt?session=web-does-not-exist`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ prompt: 'hello' }),
+  });
+  assert.equal(unknownPrompt.status, 404);
+});
+
+test("the ACP handshake version rides /api/session and /api/agents, never fabricated", async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), "web-version-test-"));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => {
+      const driver: CodingSessionDriver = {
+        async start(_prompt, emit) { emit({ type: "completed", result: "done" }); },
+        async cancel() {},
+      };
+      return {
+        driver: {
+          ...driver,
+          agentSessionId: () => "agent-x",
+          connect: async () => {},
+          subscribe: () => () => {},
+          // The real AcpSessionDriver surfaces this from the initialize handshake.
+          agentInfo: () => ({ name: "OpenCode", version: "1.42.0" }),
+        } as never,
+        session: new WorkflowCodingSession(driver),
+      budgetMechanism: "test: no local caps (fake runtime)",
+        async dispose() {},
+      };
+    },
+  });
+  context.after(() => manager.dispose());
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, manager);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+
+  const session = await fetch(`http://127.0.0.1:${port}/api/session`).then((response) => response.json()) as { agentVersion?: string };
+  assert.equal(session.agentVersion, "1.42.0", "the focused session's handshake version rides /api/session");
+
+  const agents = await fetch(`http://127.0.0.1:${port}/api/agents`).then((response) => response.json()) as { agents: { id: string; version?: string }[] };
+  assert.equal(agents.agents.find((agent) => agent.id === "opencode")?.version, "1.42.0", "the live runtime's version annotates its agent entry");
+  assert.equal(agents.agents.find((agent) => agent.id === "cline")?.version, undefined, "agents with no live handshake report no version");
+});
+
 test("web UI returns 503 instead of crashing when the runtime factory fails", async (context) => {
   const dir = mkdtempSync(join(tmpdir(), "web-failure-test-"));
   context.after(() => rmSync(dir, { recursive: true, force: true }));
@@ -555,7 +767,14 @@ test("web UI returns 503 instead of crashing when the runtime factory fails", as
 
   const session = await fetch(`http://127.0.0.1:${port}/api/session`);
   assert.equal(session.status, 200);
-  assert.deepEqual(await session.json(), { available: false, state: { state: "unavailable" }, items: [] });
+  // The registry record survives a failed launch; the runtime does not. The
+// payload states both facts honestly: the record meta plus availability.
+const failure = await session.json() as { available: boolean; title: string; agent: string; items: unknown[]; state: { state: string } };
+assert.equal(failure.available, false);
+assert.equal(failure.title, "New session");
+assert.equal(failure.agent, "opencode");
+assert.deepEqual(failure.state, { state: "unavailable" });
+assert.deepEqual(failure.items, []);
   const prompt = await fetch(`http://127.0.0.1:${port}/api/prompt`, {
     method: "POST",
     headers: { "content-type": "application/json" },

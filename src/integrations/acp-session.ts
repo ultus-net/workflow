@@ -83,6 +83,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #onSkillRead: ((skill: string) => void) | undefined;
   #initialized = false;
   #canLoadSession = false;
+  #agentInfo?: { readonly name: string; readonly version?: string } | undefined;
   #agentSessionId?: string;
   #sessionConfig?: AcpSessionConfig;
   #contextWindowTokens?: number;
@@ -210,6 +211,9 @@ export class AcpSessionDriver implements CodingSessionDriver {
     if (!this.#initialized) {
       const initialized = await this.#client.initialize();
       this.#canLoadSession = initialized.agentCapabilities.loadSession === true;
+      // The handshake's agentInfo is the authoritative agent identity — the
+      // version string the operator surface displays as "opencode vX".
+      this.#agentInfo = initialized.agentInfo;
       this.#initialized = true;
     }
     if (this.#agentSessionId === undefined) {
@@ -310,9 +314,24 @@ export class AcpSessionDriver implements CodingSessionDriver {
     return this.#sessionConfig;
   }
 
+  /** The ACP handshake's agent identity (name + version), available once the
+   * session exists. undefined until connect — honest when unknown. */
+  agentInfo(): { readonly name: string; readonly version?: string } | undefined {
+    return this.#agentInfo === undefined ? undefined : { ...this.#agentInfo };
+  }
+
   /** Latest agent-reported context window size in tokens (ACP usage_update); undefined when the agent does not report it. */
   contextWindowTokens(): number | undefined {
     return this.#contextWindowTokens;
+  }
+
+  /** The key the workflow permission resolver correlates on — this runtime's
+   * workspace session id. Parked permission prompts are keyed by exactly this
+   * value (`ProposedToolAction.sessionId`), so the web surface must use it for
+   * per-session pending/cancel lookups; the ACP agent session id is a
+   * different namespace. */
+  permissionSessionKey(): string {
+    return this.#workflowSessionId;
   }
 
   /** Latest agent-reported ACP usage (context used, window size, cost) for

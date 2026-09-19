@@ -19,7 +19,6 @@ step("npm install", "npm", ["install"]);
 step("build", "npm", ["run", "build"]);
 step("toolbox install", "pnpm", ["--dir", "mcp-toolbox", "install"]);
 step("toolbox build", "pnpm", ["--dir", "mcp-toolbox", "run", "build"]);
-step("cline tui build", "node", ["scripts/build-cline-tui.mjs"]);
 step("global install", "npm", ["install", "-g", "."]);
 
 console.log("\nInstalled bins: workflow, workflow-tui, workflow-hub, workflow-monitor, workflow-shell");

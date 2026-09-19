@@ -29,11 +29,13 @@ export interface ModelUsageProxy {
 export const METERED_PLACEHOLDER_KEY = "workflow-metered";
 
 /**
- * Cline `providers.json` content pointing a provider at the metering proxy.
- * Verified against Cline's StoredProviderSettings schema: `settings.baseUrl`
- * wins over provider defaults (explicit > apiLine > default), while the env
- * `CLINE_API_KEY` placeholder satisfies ACP `isSessionReady` — the real key
- * never enters the agent's environment or config files.
+ * The Cline connector's `providers.json` content pointing its provider at the
+ * metering proxy (a Cline-specific shape; OpenCode and goose are configured by
+ * their own launch config). Verified against Cline's StoredProviderSettings
+ * schema: `settings.baseUrl` wins over provider defaults (explicit > apiLine >
+ * default), while the env `CLINE_API_KEY` placeholder satisfies ACP
+ * `isSessionReady` — the real key never enters the agent's environment or
+ * config files.
  */
 export function meteredProviderSettings(proxyUrl: string, providerId = "openrouter"): Record<string, unknown> {
   return {

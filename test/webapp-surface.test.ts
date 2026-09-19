@@ -7,7 +7,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { ConfigChips } from "../src/ui/webapp/app.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
-import { AgentOptionsSection, AgentSection } from "../src/ui/webapp/settings-dialog.js";
+import { AgentOptionsSection, AgentSection, AppearanceSection } from "../src/ui/webapp/settings-dialog.js";
+import { listPalettes } from "../src/ui/webapp/theme/palettes.js";
 import { DEFAULT_WEB_AGENT, listWebAgents } from "../src/ui/web-agents.js";
 import type { WebConfigOption } from "../src/ui/web-config-options.js";
 
@@ -92,4 +93,24 @@ test("sharp square edges: no nonzero border-radius survives in the design system
   const declarations = [...css.matchAll(/border-radius:\s*([^;]+);/g)].map((match) => match[1]?.trim() ?? "");
   const offenders = declarations.filter((value) => !isSquare(value));
   assert.deepEqual(offenders, [], `nonzero border-radius reintroduced: ${offenders.join(", ")}`);
+});
+
+test("the settings Appearance section exposes the full palette catalog plus the amber default", () => {
+  const palettes = listPalettes();
+  const markup = renderToStaticMarkup(createElement(AppearanceSection, {
+    themeChoice: "system",
+    onThemeChoice: noop,
+    palette: undefined,
+    onPalette: noop,
+    palettes,
+    railsOff: false,
+    onRailsToggle: noop,
+  }));
+  assert.ok(markup.includes("Workflow amber"), "the default identity must be selectable");
+  const unescaped = markup.replace(/&#x27;/g, "'").replace(/&amp;/g, "&");
+  for (const entry of palettes) {
+    assert.ok(unescaped.includes(entry.name), `palette picker is missing "${entry.name}" (${entry.id})`);
+  }
+  assert.ok(markup.includes('class="palette-swatch"'), "every palette chip must carry a swatch preview");
+  assert.equal(count(markup, 'role="option"'), palettes.length + 1, "one chip per catalog theme plus the amber default");
 });

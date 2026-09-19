@@ -6,16 +6,21 @@ import { dirname, join } from "node:path";
 import type { WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
 import type { PermissionBroker } from "./permission-broker.js";
 import { DEFAULT_WEB_AGENT, isWebAgentId, type WebAgentId } from "./web-agents.js";
-import { SessionChannel } from "./web-session-channel.js";
+import { SessionChannel, driverPermissionKey } from "./web-session-channel.js";
 
 export interface WebSessionMeta {
   readonly id: string;
   readonly title: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** The session the operator UI is currently viewing (the focused one). */
   readonly active: boolean;
   /** The agent this session runs on (defaults to the server's lead agent). */
   readonly agent: WebAgentId;
+  /** A live ACP runtime is spawned for this session right now. */
+  readonly live: boolean;
+  /** The live runtime's turn is in flight (parallel sessions run their own). */
+  readonly busy: boolean;
 }
 
 interface SessionRecord {
@@ -39,34 +44,38 @@ export type SessionSwitchResult =
   | { readonly kind: "unknown" }
   | { readonly kind: "failed"; readonly error: string };
 
-/** session/load gets this long to replay before the switch proceeds without it. */
+/** session/load gets this long to replay before the session proceeds without it. */
 const RESUME_LOAD_TIMEOUT_MS = 30_000;
 
 /**
- * Owns the session registry (persisted metadata) and the single live ACP
- * runtime behind the browser UI. One agent process runs at a time: switching
- * or creating disposes the current runtime and spawns the next one, resuming
- * history through ACP session/load when the registry knows the agent id.
+ * Bound on simultaneously live agent runtimes. Beyond it, the least recently
+ * focused idle (non-busy, unfocused) runtime is disposed first; a refusal is
+ * the honest fallback when every live session is busy or focused.
+ */
+const MAX_LIVE_RUNTIMES = 6;
+
+/**
+ * Owns the session registry (persisted metadata) and the parallel live ACP
+ * runtimes behind the browser UI. Multiple agent processes may run at once —
+ * one per live session, each with its own turn serialization and parked
+ * permission prompts. Focusing a session never disposes another; runtimes are
+ * disposed on dismiss, agent switch, and live-cap eviction. History resumes
+ * through ACP session/load when the registry knows the agent id.
  */
 export class WebSessionManager {
   readonly #factory: (agent: WebAgentId, resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
   readonly #registryPath: string;
   readonly #permissionBroker: PermissionBroker | undefined;
   #sessions: SessionRecord[];
-  #active: ActiveSession | undefined;
-  #starting: Promise<ActiveSession> | undefined;
-  #switchQueue: Promise<unknown> = Promise.resolve();
-
-  /**
-   * Serializes switches so concurrent create/activate calls can never spawn
-   * two runtimes at once — without it the losing runtime (agent process and
-   * metering proxy) would leak undisposed.
-   */
-  #enqueueSwitch(record: SessionRecord, resumeFrom: string | undefined): Promise<SessionSwitchResult> {
-    const run = this.#switchQueue.then(() => this.#switchTo(record, resumeFrom));
-    this.#switchQueue = run.then(() => undefined, () => undefined);
-    return run;
-  }
+  /** Live runtimes by record id — parallel sessions, not one global. */
+  readonly #live = new Map<string, ActiveSession>();
+  /** Per-record in-flight spawns so concurrent callers share one runtime. */
+  readonly #spawning = new Map<string, Promise<ActiveSession>>();
+  /** The session the operator UI is viewing. */
+  #focusId: string | undefined;
+  /** Boot: the initial spawn (resume most recent, or create the first). */
+  #boot: Promise<ActiveSession> | undefined;
+  #lastTouchPersist = 0;
 
   constructor(options: {
     readonly factory: (agent: WebAgentId, resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
@@ -77,6 +86,9 @@ export class WebSessionManager {
     this.#permissionBroker = options.permissionBroker;
     this.#registryPath = options.registryPath ?? join(homedir(), ".workflow", "web-sessions.json");
     this.#sessions = loadRegistry(this.#registryPath);
+    // Focus continuity across restarts: the most recent record is the one the
+    // operator was viewing when the service stopped.
+    this.#focusId = this.#sessions[0]?.id;
   }
 
   list(): WebSessionMeta[] {
@@ -87,18 +99,48 @@ export class WebSessionManager {
       .map(([, record]) => this.#meta(record));
   }
 
-  /** Active channel, lazily creating the first session on demand. */
-  async channel(): Promise<SessionChannel> {
-    if (this.#starting !== undefined) await this.#starting.catch(() => undefined);
-    return (await this.#ensureActive()).channel;
+  /** Focused channel, lazily creating the first session on demand. With an id,
+   * that session's live channel (spawned on demand — parallel sessions). */
+  async channel(id?: string): Promise<SessionChannel> {
+    if (this.#boot !== undefined) await this.#boot.catch(() => undefined);
+    const target = await this.#ensureSession(id);
+    return target.channel;
+  }
+
+  /** Whether the registry knows this session id (routes 404 on stale ids). */
+  knowsSession(id: string): boolean {
+    return this.#sessions.some((entry) => entry.id === id);
   }
 
   activeMeta(): WebSessionMeta | undefined {
-    return this.#active === undefined ? undefined : this.#meta(this.#active.record);
+    const focused = this.#focusId === undefined ? undefined : this.#sessions.find((entry) => entry.id === this.#focusId);
+    return focused === undefined ? undefined : this.#meta(focused);
+  }
+
+  /** Handshake version of one session's live runtime (or the focused one).
+   * undefined is honest: not connected, or the agent did not report a version. */
+  agentVersion(id?: string): string | undefined {
+    const record = (id === undefined ? undefined : this.#sessions.find((entry) => entry.id === id))
+      ?? this.#focusedSession()?.record
+      ?? this.#sessions[0];
+    if (record === undefined) return undefined;
+    return this.#live.get(record.id)?.channel.agentInfo()?.version;
+  }
+
+  /** Handshake versions by agent id, from every live runtime that reported one. */
+  liveAgentVersions(): ReadonlyMap<WebAgentId, string> {
+    const versions = new Map<WebAgentId, string>();
+    for (const active of this.#live.values()) {
+      const version = active.channel.agentInfo()?.version;
+      if (version === undefined) continue;
+      versions.set(active.record.agent ?? DEFAULT_WEB_AGENT, version);
+    }
+    return versions;
   }
 
   async create(): Promise<SessionSwitchResult> {
-    if (this.#starting !== undefined) await this.#starting.catch(() => undefined);
+    if (this.#boot !== undefined) await this.#boot.catch(() => undefined);
+    const focused = this.#focusedSession();
     const record: SessionRecord = {
       id: `web-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
       title: "New session",
@@ -106,74 +148,110 @@ export class WebSessionManager {
       updatedAt: new Date().toISOString(),
       // New sessions continue on the operator's current agent so switching
       // agents and opening a fresh session compose without a surprise reset.
-      ...(this.#active?.record.agent !== undefined ? { agent: this.#active.record.agent } : {}),
+      ...(focused?.record.agent !== undefined ? { agent: focused.record.agent } : {}),
     };
-    return this.#enqueueSwitch(record, undefined);
+    this.#sessions = [record, ...this.#sessions];
+    this.#captureFocused();
+    this.#focusId = record.id;
+    this.#persist();
+    try {
+      await this.#ensure(record);
+    } catch (error) {
+      return { kind: "failed", error: error instanceof Error ? error.message : "session start failed" };
+    }
+    return { kind: "ok", meta: this.#meta(record) };
   }
 
   /**
-   * Switches the active session's agent: the record keeps its identity, the
-   * old runtime is disposed, and a fresh runtime spawns for the new agent. A
-   * different agent owns a different session store, so the old agent session
-   * id cannot carry over — the switch starts a fresh agent session.
+   * Switches a session's agent: the record keeps its identity, its live
+   * runtime (if any) is disposed, and a fresh runtime spawns for the new
+   * agent. A different agent owns a different session store, so the old agent
+   * session id cannot carry over — the relaunch starts a fresh agent session.
    */
-  async setActiveAgent(agent: WebAgentId): Promise<SessionSwitchResult> {
-    if (this.#starting !== undefined) await this.#starting.catch(() => undefined);
-    const record = this.#active?.record;
-    if (record === undefined) return { kind: "failed", error: "no active session" };
-    const previousAgent = record.agent ?? DEFAULT_WEB_AGENT;
-    if (previousAgent === agent) return { kind: "ok", meta: this.#meta(record) };
-    const previousSessionId = record.agentSessionId;
-    record.agent = agent;
-    delete record.agentSessionId;
-    const result = await this.#enqueueSwitch(record, undefined);
-    if (result.kind === "failed") {
+  async setActiveAgent(agent: WebAgentId, id?: string): Promise<SessionSwitchResult> {
+    if (this.#boot !== undefined) await this.#boot.catch(() => undefined);
+    const target = id === undefined ? this.#focusedSession()?.record : this.#sessions.find((entry) => entry.id === id);
+    if (target === undefined) return { kind: "failed", error: "no active session" };
+    const previousAgent = target.agent ?? DEFAULT_WEB_AGENT;
+    if (previousAgent === agent) return { kind: "ok", meta: this.#meta(target) };
+    const previousSessionId = target.agentSessionId;
+    target.agent = agent;
+    delete target.agentSessionId;
+    try {
+      await this.#relaunch(target);
+    } catch (error) {
       // A failed launch must not strand the record on the new agent: restore
       // the old agent and its resume link so the session recovers where it was.
-      record.agent = previousAgent;
-      if (previousSessionId !== undefined) record.agentSessionId = previousSessionId;
+      target.agent = previousAgent;
+      if (previousSessionId !== undefined) target.agentSessionId = previousSessionId;
       this.#persist();
+      return { kind: "failed", error: error instanceof Error ? error.message : "session relaunch failed" };
     }
-    return result;
+    return { kind: "ok", meta: this.#meta(target) };
   }
 
+  /** Focuses a session (and makes sure its runtime is live). Focusing never
+   * disposes or interrupts any other session — parallel sessions keep running. */
   async activate(id: string): Promise<SessionSwitchResult> {
-    if (this.#starting !== undefined) await this.#starting.catch(() => undefined);
+    if (this.#boot !== undefined) await this.#boot.catch(() => undefined);
     const record = this.#sessions.find((entry) => entry.id === id);
     if (record === undefined) return { kind: "unknown" };
-    if (this.#active?.record.id === id) return { kind: "ok", meta: this.#meta(record) };
-    return this.#enqueueSwitch(record, record.agentSessionId);
+    if (this.#focusId === id && this.#live.has(id)) return { kind: "ok", meta: this.#meta(record) };
+    this.#captureFocused();
+    this.#focusId = id;
+    record.updatedAt = new Date().toISOString();
+    this.#sessions = [record, ...this.#sessions.filter((entry) => entry.id !== record.id)];
+    this.#persist();
+    try {
+      await this.#ensure(record);
+    } catch (error) {
+      return { kind: "failed", error: error instanceof Error ? error.message : "session start failed" };
+    }
+    return { kind: "ok", meta: this.#meta(record) };
   }
 
   /**
-   * Removes a session from the registry. Dismissing the active session moves
-   * to the next most recent one (or creates a fresh one when none remain).
-   * The agent's own session store is untouched; Workflow simply forgets the link.
+   * Removes a session from the registry. Its live runtime is disposed and its
+   * parked permission prompts denied — the agent process is going away.
+   * Dismissing the focused session moves focus to the next most recent one.
    */
   async dismiss(id: string): Promise<SessionSwitchResult> {
-    if (this.#starting !== undefined) await this.#starting.catch(() => undefined);
-    if (this.#active?.record.id === id && this.#active.channel.busy()) return { kind: "busy" };
+    if (this.#boot !== undefined) await this.#boot.catch(() => undefined);
+    const live = this.#live.get(id);
+    if (live !== undefined && live.channel.busy()) return { kind: "busy" };
     const record = this.#sessions.find((entry) => entry.id === id);
     if (record === undefined) return { kind: "unknown" };
-    const wasActive = this.#active?.record.id === id;
     this.#sessions = this.#sessions.filter((entry) => entry.id !== id);
     this.#persist();
-    if (!wasActive) return { kind: "ok", meta: { ...this.#meta(record), active: false } };
+    await this.#disposeLive(id, live, "session dismissed");
+    if (this.#focusId !== id) return { kind: "ok", meta: { ...this.#meta(record), active: false, live: false, busy: false } };
     const next = this.#sessions[0];
     if (next === undefined) return this.create();
-    return this.#enqueueSwitch(next, next.agentSessionId);
+    this.#focusId = next.id;
+    this.#persist();
+    return { kind: "ok", meta: this.#meta(record) };
   }
 
-  /** Removes every unused ("New session"-titled) non-active record; returns how many. */
+  /** Removes every unused ("New session"-titled, unfocused, idle) record;
+   * returns how many. A record with a turn in flight keeps its runtime and its
+   * registry entry — the derived title can still read "New session" mid-turn. */
   async clearUnused(): Promise<number> {
-    if (this.#starting !== undefined) await this.#starting.catch(() => undefined);
+    if (this.#boot !== undefined) await this.#boot.catch(() => undefined);
     const before = this.#sessions.length;
-    this.#sessions = this.#sessions.filter((entry) => entry.title !== "New session" || this.#active?.record.id === entry.id);
-    if (this.#sessions.length !== before) this.#persist();
+    const isBusy = (id: string): boolean => this.#live.get(id)?.channel.busy() === true;
+    const keep = this.#sessions.filter((entry) =>
+      entry.title !== "New session" || entry.id === this.#focusId || isBusy(entry.id)
+    );
+    const removed = this.#sessions.filter((entry) => !keep.includes(entry));
+    this.#sessions = keep;
+    for (const record of removed) {
+      await this.#disposeLive(record.id, this.#live.get(record.id), "unused session cleared");
+    }
+    if (removed.length > 0) this.#persist();
     return before - this.#sessions.length;
   }
 
-  /** Operator rename; persists immediately and never triggers a runtime switch. */
+  /** Operator rename; persists immediately and never touches runtimes. */
   rename(id: string, title: string): SessionSwitchResult {
     const record = this.#sessions.find((entry) => entry.id === id);
     if (record === undefined) return { kind: "unknown" };
@@ -185,39 +263,57 @@ export class WebSessionManager {
   }
 
   async dispose(): Promise<void> {
-    this.#captureActive();
+    this.#captureAll();
     this.#persist();
-    const active = this.#active;
-    this.#active = undefined;
-    await active?.runtime.dispose();
+    const live = [...this.#live.values()];
+    this.#live.clear();
+    this.#spawning.clear();
+    this.#focusId = undefined;
+    // Deny every parked prompt: every agent process is going away.
+    this.#permissionBroker?.cancelPending("service shutting down");
+    await Promise.all(live.map((active) => active.runtime.dispose()));
   }
 
-  async #switchTo(record: SessionRecord, resumeFrom: string | undefined): Promise<SessionSwitchResult> {
-    // Busy-check and capture the outgoing session without spawning a runtime
-    // when nothing is active yet.
-    if (this.#active !== undefined) {
-      if (this.#active.channel.busy()) return { kind: "busy" };
-      this.#captureActive();
+  /** The live (or about-to-be) channel for a record id, focused by default.
+   * Spawns the runtime on demand — parallel sessions run side by side. */
+  async #ensureSession(id?: string): Promise<ActiveSession> {
+    const record = (id === undefined ? undefined : this.#sessions.find((entry) => entry.id === id))
+      ?? this.#focusedSession()?.record
+      ?? this.#sessions[0];
+    if (record === undefined) return await this.#bootFirst();
+    return await this.#ensure(record);
+  }
+
+  /** One shared spawn per record; concurrent callers await the same promise. */
+  async #ensure(record: SessionRecord): Promise<ActiveSession> {
+    const existing = this.#live.get(record.id);
+    if (existing !== undefined) {
+      this.#touch(record);
+      return existing;
     }
-    // Stamp the incoming record after the outgoing capture so the activated
-    // session is never older than the one it replaces — the capture above can
-    // otherwise land on a later millisecond and flip the recency sort.
-    record.updatedAt = new Date().toISOString();
-    this.#sessions = [record, ...this.#sessions.filter((entry) => entry.id !== record.id)];
-    const previous = this.#active;
-    this.#active = undefined;
-    // A parked permission prompt belongs to the outgoing runtime's turn;
-    // switching away must answer it (denied) instead of leaving the old
-    // agent process waiting on a response it will never receive.
-    this.#permissionBroker?.cancelPending("session switched away");
-    await previous?.runtime.dispose();
+    const inFlight = this.#spawning.get(record.id);
+    if (inFlight !== undefined) return inFlight;
+    const spawned = this.#spawn(record);
+    this.#spawning.set(record.id, spawned);
     try {
-      const runtime = await this.#factory(record.agent ?? DEFAULT_WEB_AGENT, resumeFrom);
+      return await spawned;
+    } finally {
+      this.#spawning.delete(record.id);
+    }
+  }
+
+  async #spawn(record: SessionRecord): Promise<ActiveSession> {
+    await this.#enforceLiveCap(record.id);
+    try {
+      const runtime = await this.#factory(record.agent ?? DEFAULT_WEB_AGENT, record.agentSessionId);
       const channel = new SessionChannel(
         runtime.session,
         runtime.driver,
         runtime.usage?.bind(runtime),
         this.#permissionBroker,
+        // Parked prompts key on the workflow permission-correlation id the
+        // resolver puts on ProposedToolAction.sessionId — never the ACP id.
+        () => driverPermissionKey(runtime.driver),
         // W045: the hub records the active budget mechanism (and the sticky
         // violation once crossed) per runtime, served on /api/session.
         {
@@ -225,19 +321,18 @@ export class WebSessionManager {
           ...(runtime.budgetViolation === undefined ? {} : { violation: () => runtime.budgetViolation?.() }),
         },
       );
-      // Eagerly establish the ACP session on every switch, not only on
-      // resume: a fresh session's connect() captures the agent's advertised
-      // config (model/effort/mode options) so the pickers are populated
-      // before the first prompt instead of staying empty until then. On
-      // resume the same connect replays history into the channel through the
-      // load subscription. The subscription lasts only for the connect.
+      // Eagerly establish the ACP session on every spawn, not only on resume:
+      // a fresh session's connect() captures the agent's advertised config
+      // (model/effort/mode options) so the pickers are populated before the
+      // first prompt. On resume the same connect replays history into the
+      // channel through the load subscription. The subscription lasts only
+      // for the connect.
       const unsubscribe = runtime.driver.subscribe((event) => channel.ingest(event));
       let timer: NodeJS.Timeout | undefined;
       try {
         // Bounded wait: a hung session/new or session/load must not pend the
-        // switch queue forever. The session stays usable; the config/replay
-        // simply never arrived.
-        // The timer is always cleared so it never outlives the connect itself.
+        // spawn forever. The session stays usable; the config/replay simply
+        // never arrived. The timer is always cleared.
         const loading = runtime.driver.connect();
         await Promise.race([
           loading,
@@ -249,82 +344,150 @@ export class WebSessionManager {
         if (timer !== undefined) clearTimeout(timer);
         unsubscribe();
       }
-      this.#active = { record, runtime, channel };
+      const active: ActiveSession = { record, runtime, channel };
+      this.#live.set(record.id, active);
       this.#persist();
-      return { kind: "ok", meta: this.#meta(record) };
+      return active;
     } catch (error) {
       this.#persist();
-      return { kind: "failed", error: error instanceof Error ? error.message : "session start failed" };
+      throw error instanceof Error ? error : new Error("session start failed");
     }
   }
 
-  async #ensureActive(): Promise<ActiveSession> {
-    if (this.#active !== undefined) {
-      this.#touchActive();
-      return this.#active;
+  /** Disposes a session's runtime and re-spawns it for the record's (new)
+   * agent. The session's parked prompts resolve as denials — its agent is
+   * going away. Busy sessions refuse up front (their turn is in flight). */
+  async #relaunch(record: SessionRecord): Promise<void> {
+    const live = this.#live.get(record.id);
+    if (live !== undefined && live.channel.busy()) throw new Error("turn in flight");
+    this.#capture(record, live);
+    this.#persist();
+    this.#live.delete(record.id);
+    if (live !== undefined) {
+      const permissionKey = driverPermissionKey(live.runtime.driver);
+      this.#permissionBroker?.cancelPending("session agent switched", permissionKey);
+      await live.runtime.dispose();
     }
-    this.#starting ??= (async () => {
+    await this.#ensure(record);
+  }
+
+  /** Keeps the live-runtime bound honest: dispose the least recently focused
+   * idle runtime when over the cap. Focused and busy sessions never evict. */
+  async #enforceLiveCap(incomingId: string): Promise<void> {
+    if (this.#live.size < MAX_LIVE_RUNTIMES) return;
+    const evictable = [...this.#live.keys()]
+      .filter((id) => id !== incomingId && id !== this.#focusId && !this.#live.get(id)?.channel.busy())
+      .sort((a, b) => (this.#live.get(a)?.record.updatedAt ?? "").localeCompare(this.#live.get(b)?.record.updatedAt ?? ""));
+    const victim = evictable[0];
+    if (victim === undefined) {
+      throw new Error(`live runtime limit (${MAX_LIVE_RUNTIMES}) reached: all sessions busy or focused`);
+    }
+    const active = this.#live.get(victim);
+    if (active === undefined) return;
+    this.#capture(active.record, active);
+    this.#persist();
+    this.#live.delete(victim);
+    const permissionKey = driverPermissionKey(active.runtime.driver);
+    this.#permissionBroker?.cancelPending("runtime evicted", permissionKey);
+    await active.runtime.dispose();
+  }
+
+  #bootFirst(): Promise<ActiveSession> {
+    this.#boot ??= (async () => {
       // Restart continuity: resume the most recent session instead of
       // accumulating an empty "New session" record on every service start.
       const existing = this.#sessions[0];
       if (existing !== undefined) {
-        const resumed = await this.#switchTo(existing, existing.agentSessionId);
-        if (resumed.kind === "ok" && this.#active !== undefined) return this.#active;
+        try {
+          return await this.#ensure(existing);
+        } catch { /* fall through to a fresh record */ }
       }
-      const created = await this.#switchTo({
+      const record: SessionRecord = {
         id: `web-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
         title: "New session",
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      }, undefined);
-      if (created.kind !== "ok" || this.#active === undefined) {
-        throw new Error(created.kind === "failed" ? created.error : "session start failed");
-      }
-      return this.#active;
+      };
+      this.#sessions = [record, ...this.#sessions];
+      this.#focusId = record.id;
+      this.#persist();
+      return this.#ensure(record);
     })();
-    try {
-      return await this.#starting;
-    } finally {
-      this.#starting = undefined;
-    }
+    return this.#boot.finally(() => {
+      this.#boot = undefined;
+    });
   }
 
-  /** Copies volatile facts (agent session id, agent/derived title) into the record. */
-  #captureActive(): void {
-    if (this.#active === undefined) return;
-    const agentId = this.#active.runtime.driver.agentSessionId();
-    if (agentId !== undefined) this.#active.record.agentSessionId = agentId;
+  #focusedSession(): ActiveSession | undefined {
+    return this.#focusId === undefined ? undefined : this.#live.get(this.#focusId);
+  }
+
+  /** Copies volatile facts (agent session id, agent/derived title) into a record. */
+  #capture(record: SessionRecord, active: ActiveSession | undefined): void {
+    if (active === undefined) return;
+    const agentId = active.runtime.driver.agentSessionId();
+    if (agentId !== undefined) record.agentSessionId = agentId;
     // An agent-provided title (session_info_update) is the most accurate
     // label and outranks both the placeholder and the derived-from-prompt title.
-    const agentTitle = this.#active.channel.agentTitle();
+    const agentTitle = active.channel.agentTitle();
     if (agentTitle !== undefined) {
-      this.#active.record.title = agentTitle.length > 60 ? `${agentTitle.slice(0, 60)}…` : agentTitle;
-    } else if (this.#active.record.title === "New session") {
-      const firstUser = this.#active.channel.items().find((item) => item.kind === "user");
+      record.title = agentTitle.length > 60 ? `${agentTitle.slice(0, 60)}…` : agentTitle;
+    } else if (record.title === "New session") {
+      const firstUser = active.channel.items().find((item) => item.kind === "user");
       if (firstUser !== undefined && firstUser.kind === "user") {
-        this.#active.record.title = firstUser.text.length > 60 ? `${firstUser.text.slice(0, 60)}…` : firstUser.text;
+        record.title = firstUser.text.length > 60 ? `${firstUser.text.slice(0, 60)}…` : firstUser.text;
       }
     }
-    this.#active.record.updatedAt = new Date().toISOString();
+    record.updatedAt = new Date().toISOString();
   }
 
-  #touchActive(): void {
-    this.#captureActive();
+  #captureFocused(): void {
+    const focused = this.#focusedSession();
+    if (focused === undefined) return;
+    this.#capture(focused.record, focused);
     this.#persist();
   }
 
+  #captureAll(): void {
+    for (const active of this.#live.values()) this.#capture(active.record, active);
+  }
+
+  /** Polls touch a session; persistence is throttled so the 1s poll does not
+   * rewrite the registry file every second. */
+  #touch(record: SessionRecord): void {
+    const active = this.#live.get(record.id);
+    if (active === undefined) return;
+    this.#capture(record, active);
+    const now = Date.now();
+    if (now - this.#lastTouchPersist < 5_000) return;
+    this.#lastTouchPersist = now;
+    this.#persist();
+  }
+
+  async #disposeLive(id: string, live: ActiveSession | undefined, reason: string): Promise<void> {
+    if (live === undefined) return;
+    this.#live.delete(id);
+    const permissionKey = driverPermissionKey(live.runtime.driver);
+    this.#permissionBroker?.cancelPending(reason, permissionKey);
+    await live.runtime.dispose();
+  }
+
   #meta(record: SessionRecord): WebSessionMeta {
+    const live = this.#live.get(record.id);
     return {
       id: record.id,
       title: record.title,
       createdAt: record.createdAt,
       updatedAt: record.updatedAt,
-      active: this.#active?.record.id === record.id,
+      active: this.#focusId === record.id,
       agent: record.agent ?? DEFAULT_WEB_AGENT,
+      live: live !== undefined,
+      busy: live?.channel.busy() ?? false,
     };
   }
 
   #persist(): void {
+    this.#captureAll();
     mkdirSync(dirname(this.#registryPath), { recursive: true, mode: 0o700 });
     const payload = JSON.stringify({ version: 1, sessions: this.#sessions }, null, 2);
     const temporary = `${this.#registryPath}.tmp`;
