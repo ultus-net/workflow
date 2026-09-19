@@ -133,7 +133,17 @@ export class WorkflowApplication {
     this.#skillReads.set(skill, target);
   }
 
+  /** Public authority boundary: every denial feeds the application-owned
+   * circuit breaker, matching the plugin's repeated-failure behavior. */
   authorize(action: ProposedToolAction): PolicyDecision {
+    const decision = this.#authorize(action);
+    if (decision.kind === "deny" && decision.code !== "POLICY_CIRCUIT_BREAKER") {
+      this.#policyFailures.recordFailure({ sessionId: action.sessionId, tool: action.tool, reason: `${decision.code}:${decision.reason}` });
+    }
+    return decision;
+  }
+
+  #authorize(action: ProposedToolAction): PolicyDecision {
     if (this.#policyFailures.isOpen(action.sessionId)) {
       return {
         kind: "deny",
