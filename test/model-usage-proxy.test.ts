@@ -3,7 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 
-import { createModelUsageProxy } from "../src/integrations/model-usage-proxy.js";
+import { createModelUsageProxy, METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
 
 interface FakeUpstream {
   readonly url: string;
@@ -47,7 +47,7 @@ test("model usage proxy injects the real key, forces usage accounting, and meter
   try {
     const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: "Bearer PLACEHOLDER" },
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
       body: JSON.stringify({ model: "test-model", messages: [], stream: false }),
     });
     assert.equal(response.status, 200);
@@ -412,6 +412,54 @@ test("model usage proxy honors the Auto Router failure backoff across requests",
     }
     const modelFetches = upstream.seen.filter((entry) => entry.url === "/api/v1/models");
     assert.equal(modelFetches.length, 1, "a failed catalog fetch must back off, not refetch per request");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("model usage proxy rejects a foreign credential at the boundary and never forwards it (W052)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer sk-attacker-controlled" },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 403);
+    const body = (await response.json()) as { policy?: string; error?: string };
+    assert.equal(body.policy, "egress-credential");
+    assert.match(body.error ?? "", /authorization/);
+    assert.equal(upstream.seen.length, 0, "a foreign credential must never reach the upstream");
+
+    const keyResponse = await fetch(`${proxy.url}/api/v1/models`, {
+      headers: { "x-api-key": "sk-attacker-controlled" },
+    });
+    assert.equal(keyResponse.status, 403);
+    assert.equal(upstream.seen.length, 0, "a foreign x-api-key must never reach the upstream");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("model usage proxy still forwards the session placeholder and absent credentials (W052)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    const placeholder = await fetch(`${proxy.url}/api/v1/models`, { headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` } });
+    assert.equal(placeholder.status, 200);
+    const absent = await fetch(`${proxy.url}/api/v1/models`);
+    assert.equal(absent.status, 200);
+    assert.equal(upstream.seen.length, 2);
+    assert.ok(upstream.seen.every((entry) => entry.authorization === "Bearer REAL_KEY"));
   } finally {
     await proxy.close();
     await upstream.close();

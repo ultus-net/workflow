@@ -7,7 +7,10 @@ import {
   isAutoRouterModel,
   type AliasResolver,
 } from "./openrouter-auto-latest.js";
+import { checkEgressCredential, METERED_PLACEHOLDER_KEY } from "./egress-credential.js";
 import { enforceReplayPolicy } from "./model-replay-policy.js";
+
+export { METERED_PLACEHOLDER_KEY };
 
 export interface ModelUsageMetrics {
   readonly requests: number;
@@ -25,9 +28,6 @@ export interface ModelUsageProxy {
   readonly metrics: () => ModelUsageMetrics;
   readonly close: () => Promise<void>;
 }
-
-/** Placeholder credential agents receive; the proxy ignores it upstream. */
-export const METERED_PLACEHOLDER_KEY = "workflow-metered";
 
 /**
  * The Cline connector's `providers.json` content pointing its provider at the
@@ -145,6 +145,21 @@ export async function createModelUsageProxy(options: {
 
   async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     metrics.requests += 1;
+    // W052: token-bound egress at the enforced boundary. Requests may carry the
+    // hub-provisioned session placeholder (or no credential at all — the proxy
+    // injects the real key), but a foreign credential smuggled through
+    // agent-controlled content is rejected here rather than forwarded. This is
+    // enforceable only for traffic that routes through this proxy; see
+    // docs/EGRESS_CAPABILITY_AUDIT.md for the bypass note.
+    const credential = checkEgressCredential(req.headers);
+    if (!credential.allowed) {
+      res.writeHead(403, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        error: `model usage proxy rejected a non-session credential in ${credential.header ?? "request headers"}`,
+        policy: "egress-credential",
+      }));
+      return;
+    }
     const inbound = await readAll(req);
     const isCompletions = req.method === "POST" && typeof req.url === "string" && /\/chat\/completions$/.test(req.url);
     let outboundBody = inbound;
