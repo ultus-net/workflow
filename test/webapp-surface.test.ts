@@ -5,7 +5,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CommandPalette, ConfigChips } from "../src/ui/webapp/app.js";
+import { CommandPalette, ConfigChips, StatusBar, UsageMeter } from "../src/ui/webapp/app.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection } from "../src/ui/webapp/settings-dialog.js";
 import { listPalettes } from "../src/ui/webapp/theme/palettes.js";
@@ -164,5 +164,39 @@ test("command palette lists commands with keybinds and session switches (the ctr
   assert.ok(markup.includes("Alt+N") && markup.includes("Ctrl+,"), "keybind chips must show on command rows");
   assert.ok(markup.includes("Switch to: Testing"), "session switches must be listed");
   assert.ok(markup.includes("Commands") && markup.includes("Sessions"), "group headers must separate commands from sessions");
+});
+
+test("status bar carries the OpenCode-mined footer facts: agent + version, model, usage, branch, keybinds", () => {
+  const markup = renderToStaticMarkup(createElement(StatusBar, {
+    agent: { name: "OpenCode", containment: "advisory" as const, version: "1.18.31" },
+    model: "Kimi Latest",
+    usage: { source: "agent" as const, latestPromptTokens: 42000, costUsd: 0.149, contextWindowTokens: 200000 },
+    branch: "feat/web-ui-chat-parity",
+    isRunning: true,
+  }));
+  assert.ok(markup.includes("status-bar"), "the status bar must render");
+  assert.ok(markup.includes("OpenCode") && markup.includes("1.18.31"), "agent name + handshake version must show");
+  assert.ok(markup.includes("Kimi Latest"), "the current model must show");
+  assert.ok(markup.includes("usage-meter") && markup.includes("21%"), "the usage readout lives in the status bar (TUI arrangement)");
+  assert.ok(markup.includes("feat/web-ui-chat-parity"), "the repository branch must show");
+  assert.ok(markup.includes("Esc") && markup.includes("settings"), "the reach-for keybinds must show");
+});
+
+test("usage readout: metered runtimes show tokens, unmetered show ACP context + cost without false zeros", () => {
+  const metered = renderToStaticMarkup(createElement(UsageMeter, {
+    usage: { source: "metered" as const, requests: 3, usageEvents: 3, promptTokens: 84500, completionTokens: 1200, latestPromptTokens: 42000, totalTokens: 85700, costUsd: 0.149, contextWindowTokens: 200000 },
+  }));
+  assert.ok(metered.includes("usage-meter"), "the usage readout must render");
+  assert.ok(metered.includes("21%"), "the context-window fill percentage must show");
+  assert.ok(metered.includes("84.5k") && metered.includes("1.2k"), "metered token counters must show");
+  assert.ok(metered.includes("$0.1490"), "cost must show");
+  // Unmetered (OpenCode): only ACP usage_update fields — context and cost, no
+  // invented token counters.
+  const unmetered = renderToStaticMarkup(createElement(UsageMeter, {
+    usage: { source: "agent" as const, latestPromptTokens: 42000, costUsd: 0.149, contextWindowTokens: 200000 },
+  }));
+  assert.ok(unmetered.includes("21%"), "agent-reported context fill must show");
+  assert.ok(unmetered.includes("$0.1490"), "agent-reported cost must show");
+  assert.ok(!unmetered.includes("usage-tokens"), "token counters must stay hidden when the agent does not report them");
 });
 

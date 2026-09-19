@@ -12,7 +12,7 @@ import { ConfigField } from "./config-field.js";
 import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
 import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } from "./presenters.js";
-import { useSessionState, useSessionUsage, useAgentIdentity, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
+import { useSessionState, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog } from "./settings-dialog.js";
 import { SessionsView } from "./sessions-view.js";
 import { UsageView } from "./usage-view.js";
@@ -156,6 +156,8 @@ export interface AgentInfo {
   readonly containment: "contained" | "advisory";
   readonly available: boolean;
   readonly reason?: string;
+  /** The live ACP handshake version, when the server has one (never fabricated). */
+  readonly version?: string;
 }
 
 /** Polls the agents the server can compose (availability + posture). */
@@ -641,18 +643,27 @@ function PermissionPrompt({ pending, answer, remembered }: {
   );
 }
 
-/** The session's usage readout, rendered inside the status bar (far left):
- * a context-window fill bar plus cumulative tokens and cost. Context fill
- * needs both the latest context input (proxy) and the agent-reported window
- * (ACP usage_update); without the window the used count still shows, honestly. */
-function UsageMeter({ usage }: { readonly usage: SessionUsage }) {
+/** The session's single usage readout (status bar): a context-window
+ * fill bar plus cost, with cumulative token counters when the runtime meters
+ * them (Cline). Unmetered runtimes (OpenCode) show the ACP-reported context
+ * and cost only — unknown counters stay hidden rather than reading as zero.
+ * Exported for the UI-surface regression pin. */
+export function UsageMeter({ usage }: { readonly usage: SessionUsage }) {
   const contextUsed = usage.latestPromptTokens;
   const contextWindow = usage.contextWindowTokens;
   const fillPct = contextUsed !== undefined && contextWindow !== undefined && contextWindow > 0
     ? Math.min(100, Math.round((contextUsed / contextWindow) * 100))
     : undefined;
+  const metered = usage.promptTokens !== undefined && usage.completionTokens !== undefined;
+  // Provenance is keyed off the source marker, never the presence of counters:
+  // agent-sourced readouts now carry a token split too.
+  const title = usage.source === "metered"
+    ? `${usage.requests ?? 0} metered model request(s)`
+    : usage.requests !== undefined
+      ? `${usage.requests} agent turn(s), ACP-reported`
+      : "agent-reported usage (ACP usage_update)";
   return (
-    <div className="usage-meter" title={`${usage.requests} metered model request(s)`}>
+    <div className="usage-meter" title={title}>
       {contextUsed !== undefined && (
         <span
           className="usage-context"
@@ -668,10 +679,14 @@ function UsageMeter({ usage }: { readonly usage: SessionUsage }) {
           {fillPct !== undefined && <> · {fillPct}%</>}
         </span>
       )}
-      <span className="usage-tokens" aria-label={`${usage.promptTokens} prompt tokens, ${usage.completionTokens} completion tokens`}>
-        ↑{formatTokens(usage.promptTokens)} ↓{formatTokens(usage.completionTokens)} tokens
-      </span>
-      <span className="usage-cost" aria-label={`${usage.costUsd} US dollars`}>${usage.costUsd.toFixed(4)}</span>
+      {metered && (
+        <span className="usage-tokens" aria-label={`${usage.promptTokens} prompt tokens, ${usage.completionTokens} completion tokens`}>
+          ↑{formatTokens(usage.promptTokens)} ↓{formatTokens(usage.completionTokens)} tokens
+        </span>
+      )}
+      {usage.costUsd !== undefined && (
+        <span className="usage-cost" aria-label={`${usage.costUsd} US dollars`}>${usage.costUsd.toFixed(4)}</span>
+      )}
     </div>
   );
 }
@@ -684,33 +699,43 @@ function currentModelName(options: readonly WebConfigOption[]): string | undefin
   return model.choices?.find((choice) => choice.value === model.currentValue)?.name ?? String(model.currentValue);
 }
 
-/** Bottom status bar: context/tokens far left, model + branch in the middle,
- * the agent's handshake version far right. Live facts only — a slot whose
- * data is unknown renders nothing rather than a placeholder. */
-function StatusBar({ identity, model, branch, usage }: {
-  readonly identity: { readonly agent?: string | undefined; readonly version?: string | undefined };
+/** Bottom status bar, mined from the OpenCode TUI's footer: the left cluster
+ * states who is driving (agent + handshake version, current model); the right
+ * cluster carries the session's usage readout (context fill, tokens, cost),
+ * the repository branch, and the keybinds an operator reaches for mid-turn.
+ * All of it is live fact from the polling hooks; nothing renders when its
+ * data is unknown. */
+export function StatusBar({ agent, model, usage, branch, isRunning }: {
+  readonly agent: (Pick<AgentInfo, "name" | "containment"> & { readonly version?: string }) | undefined;
   readonly model: string | undefined;
-  readonly branch: string | undefined;
   readonly usage: SessionUsage | undefined;
+  readonly branch: string | undefined;
+  readonly isRunning: boolean;
 }) {
   return (
     <footer className="status-bar" aria-label="Session status">
       <div className="status-bar-group">
-        {usage !== undefined && <UsageMeter usage={usage} />}
-        {/* Running is already unmistakable in the composer (stop control) and
-            the thread (live activity line); the bar stays factual. */}
-      </div>
-      <div className="status-bar-group status-bar-middle">
-        {model !== undefined && <span className="status-bar-item status-bar-model" title={model}>{model}</span>}
-        {branch !== undefined && <span className="status-bar-item status-bar-branch" title={branch}>{branch}</span>}
-      </div>
-      <div className="status-bar-group status-bar-right">
-        {identity.agent !== undefined && (
-          <span className="status-bar-item status-bar-agent">
-            {identity.agent}
-            {identity.version !== undefined && <span className="status-bar-version"> {identity.version}</span>}
+        {agent !== undefined && (
+          <span className="status-bar-item status-bar-agent" title={`${agent.name} (${agent.containment === "contained" ? "contained launch" : "advisory transport"})`}>
+            {agent.name}
+            {agent.version !== undefined && <span className="status-bar-version"> {agent.version}</span>}
           </span>
         )}
+        {model !== undefined && (
+          <span className="status-bar-item status-bar-model" title={model}>{model}</span>
+        )}
+      </div>
+      <div className="status-bar-group status-bar-right">
+        {usage !== undefined && <UsageMeter usage={usage} />}
+        {branch !== undefined && (
+          <span className="status-bar-item status-bar-branch" title={branch}>{branch}</span>
+        )}
+        <span className="status-bar-item status-bar-keys">
+          {isRunning && <><kbd>Esc</kbd> cancel</>}
+          <kbd>Ctrl</kbd>+<kbd>P</kbd> commands
+          <kbd>/</kbd> focus
+          <kbd>Ctrl</kbd>+<kbd>,</kbd> settings
+        </span>
       </div>
     </footer>
   );
@@ -1609,7 +1634,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const capabilities = useCapabilities();
   const mcp = useMcpSettings();
   const { isRunning, items } = useSessionState();
-  const identity = useAgentIdentity();
   const theme = useTheme();
   const { palette, setPalette } = usePalette();
   const palettes = useMemo(() => listPalettes(), []);
@@ -1888,10 +1912,11 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
       </div>
       )}
       <StatusBar
-        identity={identity}
+        agent={agents.find((entry) => entry.id === currentAgent)}
         model={currentModelName(options)}
         branch={gitStatus?.branch}
         usage={usage}
+        isRunning={isRunning}
       />
       {paletteOpen && (
         <CommandPalette commands={paletteCommands} onClose={() => setPaletteOpen(false)} />

@@ -11,15 +11,19 @@ import { convertOperatorItem } from "./messages.js";
 
 const POLL_MS = 1000;
 
-/** Cumulative metering metrics from the hub-side proxy (undefined when unmetered). */
+/** Cumulative usage for the readout: full counters when metered (the loopback
+ * usage proxy), only ACP-reported fields when unmetered (OpenCode). Unknown
+ * counters stay absent — never zero-filled. */
 export interface SessionUsage {
-  readonly requests: number;
-  readonly usageEvents: number;
-  readonly promptTokens: number;
-  readonly completionTokens: number;
+  /** Provenance: the loopback proxy (`metered`) or the agent's ACP usage_update (`agent`). */
+  readonly source?: "metered" | "agent";
+  readonly requests?: number;
+  readonly usageEvents?: number;
+  readonly promptTokens?: number;
+  readonly completionTokens?: number;
   readonly latestPromptTokens?: number;
-  readonly totalTokens: number;
-  readonly costUsd: number;
+  readonly totalTokens?: number;
+  readonly costUsd?: number;
   /** Agent-reported context window size in tokens (ACP usage_update), when advertised. */
   readonly contextWindowTokens?: number;
 }

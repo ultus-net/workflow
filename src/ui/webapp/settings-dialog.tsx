@@ -793,8 +793,9 @@ function SessionSection({ enforcement }: {
           </span>
         )}
         {usage !== undefined && (
-          <span title={`${usage.requests} metered model request(s)`}>
-            ↑{formatTokens(usage.promptTokens)} ↓{formatTokens(usage.completionTokens)} tokens · ${usage.costUsd.toFixed(4)}
+          <span title={usage.source === "metered" ? `${usage.requests ?? 0} metered model request(s)` : "agent-reported usage (ACP usage_update)"}>
+            {usage.promptTokens !== undefined && usage.completionTokens !== undefined && <>↑{formatTokens(usage.promptTokens)} ↓{formatTokens(usage.completionTokens)} tokens</>}
+            {usage.costUsd !== undefined && <> · ${usage.costUsd.toFixed(4)}</>}
             {usage.latestPromptTokens !== undefined && <> · context {formatTokens(usage.latestPromptTokens)}</>}
           </span>
         )}
