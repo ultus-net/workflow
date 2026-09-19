@@ -5,7 +5,7 @@ import { OpenCodeV2CircuitBreaker } from "../src/integrations/opencode-v2-circui
 
 const stats = (failed: number) => ({ sessions: 1, subagents: 0, prompts: 1, steps: 1, cost: 0, tools: { calls: failed + 1, succeeded: 1, failed, unfinished: 0 } });
 
-test("v2 circuit breaker counts policy failures by durable session/task/step identity", () => {
+test("v2 circuit breaker counts policy failures by durable session identity", () => {
   const breaker = new OpenCodeV2CircuitBreaker();
   const identity = { sessionId: "ses-1", taskId: "task-1", stepId: "step-1" };
   assert.equal(breaker.recordFailure(identity, "policy_denial", "bash"), 1);

@@ -12,6 +12,9 @@ export interface OpenCodeV2ObservedEvent {
 
 export interface WorkflowExecutionEvent extends OpenCodeV2ObservedEvent {
   readonly logId: string;
+  /** Normalized Workflow kind; sourced from the OpenCode event type. */
+  readonly kind: string;
+  readonly mutationEpoch?: number;
   readonly inputDigest?: string;
   readonly outputDigest?: string;
   readonly taskId?: string;
@@ -42,7 +45,7 @@ export class OpenCodeV2EventLog {
       ? createHash("sha256").update(`${event.sessionId}\0${event.type}\0${event.observedAt}\0${body}`).digest("hex")
       : `${event.sessionId}:${event.id}`;
     if (this.#ids.has(logId)) return undefined;
-    const entry: WorkflowExecutionEvent = { ...event, ...metadata, logId };
+    const entry: WorkflowExecutionEvent = { ...event, ...metadata, logId, kind: event.type };
     this.#ids.add(logId);
     this.#entries.push(entry);
     return entry;

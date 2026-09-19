@@ -17,8 +17,7 @@ describe("OpenCode v2 route qualification: server identity and session stats", a
   assert.equal(typeof infoBody, "object");
 
   const stats = await fetch(`${baseUrl}/api/experimental/session/stats`, { headers });
-  assert.ok(stats.status === 200 || stats.status === 400 || stats.status === 401,
-    `session.stats returned an undocumented status ${stats.status}`);
+  assert.equal(stats.status, 200, `authenticated session.stats returned ${stats.status}`);
   if (stats.status === 200) {
     const body = await stats.json() as Record<string, unknown>;
     assert.equal(typeof body.data, "object", "session.stats must return a data object");
