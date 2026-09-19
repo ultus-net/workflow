@@ -72,7 +72,26 @@ lifecycle routes is a qualification failure unless the route is explicitly class
 its evidence/authority boundary is tested. Gateway tests must cover route classes, not only the known
 permission reply route.
 
-## 2.3 Route qualification matrix (initial)
+## 2.3 Observed v2.0.10 qualification snapshot
+
+A temporary loopback `opencode serve` probe on 2026-09-20 observed:
+
+- `/api/info` → `200`, `version: "2.0.10"`, loopback URL and process identity;
+- `/api/session` → `200`, session records include `id`, `parentID`, model, cost, token counters,
+  timestamps, project/location metadata;
+- `/api/experimental/session/stats` → `200`, envelope `{ data: { range, sessions, subagents,
+  prompts, steps, tokens, cost, tools.totals, activeDays, activity, models } }`; tool totals include
+  `calls`, `succeeded`, `failed`, and `unfinished`;
+- `/event` → `200` but returned `text/html` in this probe, not an accepted event-stream response.
+  Event routing/identity is therefore **not qualified** and remains a probe blocker;
+- unauthenticated requests returned `401`; the probe used a temporary server password and did not
+  persist it.
+
+The normalized stats contract is pinned by `src/integrations/opencode-v2-stats.ts` and
+`test/opencode-v2-stats.test.ts`. This snapshot is evidence of one local build only, not an enforced
+per-version verdict.
+
+## 2.4 Route qualification matrix (initial)
 
 | Route class | Individual mutation operations | Default v2 target | Qualification evidence |
 |---|---|---|---|
