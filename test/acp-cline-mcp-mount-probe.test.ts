@@ -13,9 +13,8 @@ import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
  * Plan Task F1/G3-Step2 mount probe: does the vendored pinned Cline ACP
  * agent pick up MCP servers from the scratch-home config? This is the
  * load-bearing assumption behind "the hub owns agent MCP config" —
- * skills-mcp (F1) and workflow-fs-exec-mcp (G3) are only enforceable
- * single-delivery-path / single-mutation-path if the agent actually mounts
- * them from the config the hub writes into the scratch home. The vendored
+ * skills-mcp (F1) is only enforceable as a single-delivery path if the agent
+ * actually mounts it from the config the hub writes into the scratch home. The vendored
  * patch used ~/.workflow/cline_mcp_settings.json; this probe writes every
  * known candidate path and reports evidence for which (if any) the agent
  * honored — the input the acp-runtime wiring needs.

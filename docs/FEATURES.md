@@ -74,11 +74,11 @@ trip over.
 | OpenRouter analytics client (Usage page) | Partial | `src/integrations/openrouter-analytics.ts` — Management-key `/analytics/query` + `/meta` + `/credits`; metric availability gated by `/analytics/meta`, credits degrade to absent on scope errors; **requires `WORKFLOW_OPENROUTER_MANAGEMENT_KEY`** (server-side only) |
 | Standard-TUI server surface (W071) | Partial | `workflow-opencode-server` (daemon) + `workflow-opencode` (launcher): a Workflow-owned, contained `opencode serve` behind a credential-split authority gateway; the operator keeps the **stock `opencode attach`** TUI; the broker answers `permission.asked` through `WorkflowApplication.authorize` (+ guard), with `auto-resolve`/`ask-me` operator modes, a `WORKFLOW_OPENCODE_ENFORCEMENT=enforced` posture (startup ruleset verification + bypass alarm), a session-budget watcher, skill-delivery journaling, and observed-mutation recording. **Advisory**: the live PERMISSION/RULE-CONFIG/BYPASS probes have not run (need a model key), so no `enforced` claim; `docs/OPENCODE_SERVER_AUTHORITY.md`, `docs/superpowers/plans/2026-09-19-standard-tui-background-authority.md` |
 
-## MCP Toolbox (14 servers)
+## MCP Toolbox (15 servers)
 
 | Feature | Status | Notes |
 |---|---|---|
-| Log + progress emission on every server | Complete | leveled `notifications/message` on every server; `notifications/progress` with progressToken on all except `workflow-fs-exec-mcp` (logging-only — it emits leveled log messages per tool but no progressToken progress) |
+| Log + progress emission on every server | Complete | leveled `notifications/message` on every current server; `notifications/progress` with progressToken on all applicable servers |
 | Learner profile as subscribable resource | Complete | learning-mcp only: `workflow://learner-profile` |
 | ~~Notification forwarding into agent UI~~ | **Removed (W050 step 6, 2026-09-18)** | was a vendored-Cline patch (`MCP notifications → tool-update surface`); with the patch gone no equivalent is claimed — ACP surfaces project agent-custom notifications as advisory `agent-context` events (W047) |
 | ~~Lazy tool discovery (`CLINE_LAZY_MCP_TOOLS=1`)~~ | **Removed (W050 step 6, 2026-09-18)** | the discover/call meta-tool layer lived in the vendored-Cline SDK runtime |

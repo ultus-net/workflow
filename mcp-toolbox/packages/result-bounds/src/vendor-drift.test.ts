@@ -24,7 +24,6 @@ const vendoredApps = [
   resolve(here, "..", "..", "..", "apps", "code-intelligence-mcp", "src", "vendor", "result-bounds.ts"),
   resolve(here, "..", "..", "..", "apps", "test-intelligence-mcp", "src", "vendor", "result-bounds.ts"),
   resolve(here, "..", "..", "..", "apps", "skills-mcp", "src", "vendor", "result-bounds.ts"),
-  resolve(here, "..", "..", "..", "apps", "workflow-fs-exec-mcp", "src", "vendor", "result-bounds.ts"),
   resolve(here, "..", "..", "..", "apps", "browser-verification-mcp", "src", "vendor", "result-bounds.ts"),
 ];
 

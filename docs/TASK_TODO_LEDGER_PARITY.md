@@ -179,7 +179,7 @@ it belongs to, so attribution survives restart, replay, and handoff.
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ Enforcement Seats (mcp-toolbox & Host Shims)                           │
 │ - workflow-guard-mcp: evaluates guardCheck, shell-safety, evasion       │
-│ - workflow-fs-exec-mcp: G3 substitution for non-cooperative agents      │
+│ - Native ACP fs authorization: G3 substitution for non-cooperative agents │
 │ - review-accountability-mcp: 5-axis review anti-cheating audit          │
 │ - LinuxBubblewrapContainment: OS-level containment boundary             │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -227,7 +227,7 @@ In accordance with Phase G of `docs/superpowers/plans/2026-09-15-hub-owned-enfor
 - Even if an agent bypasses or disables the client-side plugin, the hub rejects unauthorized mutations when steps are open.
 
 ### Stage 3: Workflow MCP Task/Step Tool (Host-Agnostic Target)
-- A portable MCP tool (`step_create`, `step_complete`, `step_list`) is published via `workflow-fs-exec-mcp` or a dedicated `workflow-task-mcp`.
+- A portable MCP tool (`step_create`, `step_complete`, `step_list`) is published via a dedicated `workflow-task-mcp` (not the retired `workflow-fs-exec-mcp`) or another explicitly approved task-state boundary.
 - Any host (OpenCode, goose, Claude Code, custom ACP clients) interacts with the same canonical ledger over standard MCP.
 - OpenCode's native `todowrite` becomes a secondary presentation projection.
 
