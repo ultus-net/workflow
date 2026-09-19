@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import type { WorkflowApplication } from "../application/workflow.js";
@@ -6,6 +6,7 @@ import type { TaskId } from "../kernel/contracts.js";
 import {
   createConfiguredAcpRuntime,
   createConfiguredOpencodeAcpRuntime,
+  openrouterAuthKeyFromAuth,
   opencodeAuthPath,
   type WorkflowAcpRuntime,
 } from "../integrations/acp-runtime.js";
@@ -36,6 +37,14 @@ function opencodeBinaryPresent(): boolean {
     if (dir.length > 0 && existsSync(resolve(dir, "opencode"))) return true;
   }
   return false;
+}
+
+function opencodeAuthKeyPresent(): boolean {
+  try {
+    return openrouterAuthKeyFromAuth(JSON.parse(readFileSync(opencodeAuthPath(), "utf8"))) !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 function gooseBinaryPresent(): boolean {
@@ -74,7 +83,7 @@ export const DEFAULT_WEB_AGENT: WebAgentId = "opencode";
  * general-purpose/backup agent, W048) precedes the vendored-Cline fallback. */
 export function listWebAgents(): WebAgentInfo[] {
   const clineAvailable = globalClineEntrypoint() !== undefined && upstreamKeyPresent();
-  const opencodeAvailable = opencodeBinaryPresent() && existsSync(opencodeAuthPath());
+  const opencodeAvailable = opencodeBinaryPresent() && (upstreamKeyPresent() || opencodeAuthKeyPresent());
   const gooseAvailable = gooseBinaryPresent() && gooseCredentialsPresent();
   return [
     {
@@ -82,7 +91,7 @@ export function listWebAgents(): WebAgentInfo[] {
       name: "OpenCode",
       containment: "advisory",
       available: opencodeAvailable,
-      ...(opencodeAvailable ? {} : { reason: "needs the opencode binary and ~/.local/share/opencode/auth.json" }),
+      ...(opencodeAvailable ? {} : { reason: "needs the opencode binary and an OpenRouter key (CLINE_API_KEY, ~/.config/workflow/cline-api-key, or ~/.local/share/opencode/auth.json)" }),
     },
     {
       id: "goose",
