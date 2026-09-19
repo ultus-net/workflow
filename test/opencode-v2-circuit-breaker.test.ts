@@ -10,9 +10,9 @@ test("v2 circuit breaker counts policy failures by durable session identity", ()
   const identity = { sessionId: "ses-1", taskId: "task-1", stepId: "step-1" };
   assert.equal(breaker.recordFailure(identity, "policy_denial", "bash"), 1);
   assert.equal(breaker.recordFailure(identity, "policy_denial", "bash"), 2);
-  assert.equal(breaker.isOpen("ses-1"), true);
-  breaker.recordSuccess("ses-1");
-  assert.equal(breaker.isOpen("ses-1"), false);
+  assert.equal(breaker.isOpen("ses-1", "task-1", "step-1"), true);
+  breaker.recordSuccess("ses-1", "task-1", "step-1");
+  assert.equal(breaker.isOpen("ses-1", "task-1", "step-1"), false);
 });
 
 test("v2 circuit breaker observes stats deltas without making stats authoritative", () => {

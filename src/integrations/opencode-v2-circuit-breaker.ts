@@ -25,14 +25,14 @@ export class OpenCodeV2CircuitBreaker {
 
   recordFailure(identity: V2CircuitIdentity, kind: V2FailureKind, classifier: string): number {
     return this.#tracker.recordFailure({
-      sessionId: identity.sessionId,
+      sessionId: this.#key(identity),
       tool: classifier,
       reason: kind,
     });
   }
 
-  recordSuccess(sessionId: string): void {
-    this.#tracker.recordSuccess(sessionId);
+  recordSuccess(sessionId: string, taskId?: string, stepId?: string): void {
+    this.#tracker.recordSuccess(this.#key({ sessionId, ...(taskId === undefined ? {} : { taskId }), ...(stepId === undefined ? {} : { stepId }) }));
   }
 
   observeStats(sessionId: string, stats: OpenCodeV2SessionStats): { readonly failedDelta: number; readonly totalFailed: number } {
@@ -42,7 +42,11 @@ export class OpenCodeV2CircuitBreaker {
     return { failedDelta, totalFailed: stats.tools.failed };
   }
 
-  isOpen(sessionId: string): boolean { return this.#tracker.isOpen(sessionId); }
-  count(sessionId: string): number { return this.#tracker.count(sessionId); }
-  clear(sessionId: string): void { this.#tracker.clear(sessionId); }
+  #key(identity: V2CircuitIdentity): string {
+    return [identity.sessionId, identity.taskId ?? "-", identity.stepId ?? "-"].join(":");
+  }
+
+  isOpen(sessionId: string, taskId?: string, stepId?: string): boolean { return this.#tracker.isOpen(this.#key({ sessionId, ...(taskId === undefined ? {} : { taskId }), ...(stepId === undefined ? {} : { stepId }) })); }
+  count(sessionId: string, taskId?: string, stepId?: string): number { return this.#tracker.count(this.#key({ sessionId, ...(taskId === undefined ? {} : { taskId }), ...(stepId === undefined ? {} : { stepId }) })); }
+  clear(sessionId: string, taskId?: string, stepId?: string): void { this.#tracker.clear(this.#key({ sessionId, ...(taskId === undefined ? {} : { taskId }), ...(stepId === undefined ? {} : { stepId }) })); }
 }
