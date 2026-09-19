@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -127,7 +127,7 @@ async function createOpencodeRuntime(
   const scratchHome = resolve(homedir(), ".workflow", "acp-home");
   mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
 
-  const apiKey = loadUpstreamApiKey();
+  const apiKey = loadOpencodeUpstreamApiKey();
   const upstream = process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai";
   // Hub-owned Auto Router pool (default on for OpenRouter upstreams): resolve
   // `~...-latest` aliases in the proxy so agents never need a client plugin.
@@ -372,6 +372,21 @@ export function openrouterAuthKeyFromAuth(auth: unknown): string | undefined {
   if (typeof openrouter !== "object" || openrouter === null || Array.isArray(openrouter)) return undefined;
   const key = (openrouter as Record<string, unknown>).key;
   return typeof key === "string" && key.trim().length > 0 ? key.trim() : undefined;
+}
+
+function loadOpencodeUpstreamApiKey(): string {
+  try {
+    return loadUpstreamApiKey();
+  } catch (error) {
+    try {
+      const auth = JSON.parse(readFileSync(opencodeAuthPath(), "utf8"));
+      const key = openrouterAuthKeyFromAuth(auth);
+      if (key !== undefined) return key;
+    } catch {
+      // Fall through to the canonical upstream-key error.
+    }
+    throw error;
+  }
 }
 
 /**
