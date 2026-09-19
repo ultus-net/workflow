@@ -200,6 +200,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     throw new Error("No OpenCode client available: install the opencode CLI globally or set WORKFLOW_OPENCODE_BIN");
   }
   const child = nodeSpawn(binary, [...opencodeAttachArgs(discovery)], {
+    detached: true,
     stdio: "inherit",
     // The client credential rides the child env, never argv (review P3l:
     // argv is readable by any host user; env is same-user-only).
@@ -209,9 +210,19 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     child.once("error", reject);
     child.once("exit", (code) => {
       process.exitCode = code ?? 1;
+      terminateProcessGroup(child.pid);
       resolveExit();
     });
   });
+}
+
+export function terminateProcessGroup(pid: number | undefined): void {
+  if (pid === undefined || pid <= 0 || process.platform === "win32") return;
+  try {
+    process.kill(-pid, "SIGTERM");
+  } catch {
+    void 0;
+  }
 }
 
 const invokedDirectly = process.argv[1] !== undefined && /opencode-attach\.[cm]?[jt]s$/.test(process.argv[1]);

@@ -11,6 +11,7 @@ import {
   opencodeAttachArgs,
   parseAttachArgs,
   resolveDaemonSpawnCandidates,
+  terminateProcessGroup,
 } from "../src/cli/opencode-attach.js";
 import {
   opencodeServerDiscoveryPath,
@@ -123,6 +124,8 @@ test("W071 launcher: discovery is only trusted for a loopback gateway (review P3
 
 test("W071 launcher: no candidates fails closed", () => {
   assert.deepEqual(resolveDaemonSpawnCandidates({ PATH: "/nonexistent" }, "/nonexistent-root"), []);
+  terminateProcessGroup(undefined);
+  terminateProcessGroup(-1);
 });
 
 test("W071 launcher: ensureDiscovery fails closed without a live daemon", async () => {
