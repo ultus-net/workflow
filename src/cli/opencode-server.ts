@@ -11,6 +11,7 @@ import {
   type OpencodeAuthorityEnforcement,
   type OpencodeAuthorityMode,
 } from "../integrations/opencode-server-authority.js";
+import { createOpencodeServerBudget } from "../integrations/opencode-server-budget.js";
 import { createOpencodeServerGateway, newTuiPassword } from "../integrations/opencode-server-gateway.js";
 import {
   opencodeServerDiscoveryPath,
@@ -19,6 +20,7 @@ import {
 } from "../integrations/opencode-server-discovery.js";
 import { createOpencodeServerRuntime } from "../integrations/opencode-server-runtime.js";
 import { HttpRemoteEngine } from "../integrations/remote-acp/engine.js";
+import { sessionBudgetFromEnv } from "../integrations/session-budget.js";
 
 export function authorityModeFromEnv(env: NodeJS.ProcessEnv): OpencodeAuthorityMode {
   const raw = env.WORKFLOW_OPENCODE_AUTHORITY_MODE?.trim();
@@ -104,6 +106,23 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     assertAskRuleset(await engine.config({ cwd: workspace }));
   }
   console.log(`[authority] mode=${mode} enforcement=${enforcement} workspace=${workspace}`);
+  // Session budget (M4): the W045 caps, adapted to the server path. Crossing a
+  // cap aborts active turns and the broker denies every later mutation.
+  const budget = sessionBudgetFromEnv();
+  const sessionIds = new Set<string>();
+  const budgetWatcher = budget === undefined ? undefined : createOpencodeServerBudget({
+    budget,
+    usage: () => runtime.usage(),
+    abort: async (sessionId) => {
+      await engine.abort({ sessionId, cwd: workspace });
+    },
+    knownSessions: () => [...sessionIds],
+    onViolation: (reason) => {
+      console.error(`[budget] ${reason} — active turns aborted; further mutations denied`);
+    },
+  });
+  budgetWatcher?.start();
+  console.log(`[authority] budget mechanism: ${budget === undefined ? "server-side: provider account spend/credit limits (no local caps)" : "local session-budget watcher on metering-proxy usage"}`);
   const shutdownRequested = { requested: false };
   let requestShutdown: () => void = () => undefined;
   const shutdown = new Promise<void>((resolveShutdown) => {
@@ -120,10 +139,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     mode,
     enforcement,
     onDecision: (decision) => {
+      sessionIds.add(decision.sessionId);
       // Bounded log (review P3h): reasons can carry path/command fragments.
       const reason = (decision.reason ?? "policy allow").slice(0, 160);
       console.log(`[authority] ${decision.decision} ${decision.tool} session=${decision.sessionId} delivered=${decision.delivered ?? true} reason=${reason}`);
     },
+    budgetViolation: budgetWatcher === undefined ? undefined : () => budgetWatcher.violation(),
     // Authority loss must tear the surface down, never keep advertising a
     // daemon whose policy point is dead (review P2-1).
     onAuthorityLost: () => {
@@ -175,6 +196,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   process.on("uncaughtException", (error) => {
     console.error(`[daemon] uncaught exception: ${error.message}`);
     void (async () => {
+      budgetWatcher?.stop();
       await authority.stop();
       if (gateway !== undefined) await gateway.close();
       await runtime.dispose();
@@ -186,10 +208,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   process.once("SIGINT", requestShutdown);
   process.once("SIGTERM", requestShutdown);
   await shutdown;
+  budgetWatcher?.stop();
   await authority.stop();
   await gateway.close();
   await runtime.dispose();
   removeOpencodeServerDiscovery(discoveryPath);
+  console.log("[metering]", JSON.stringify(runtime.usage()));
 }
 
 const invokedDirectly = process.argv[1] !== undefined && /opencode-server\.[cm]?[jt]s$/.test(process.argv[1]);

@@ -36,6 +36,16 @@ Focused gates green (typecheck, lint, 36 unit tests, gated live probe, build).
 Posture stays `advisory` until the live PERMISSION/RULE-CONFIG probes run.
 Detail in `docs/OPENCODE_SERVER_AUTHORITY.md` §10.
 
+**M4 implemented (2026-09-19):** server-path evidence/metering/budget/skills —
+`recordMutation` on observed completed mutations, skill delivery journaled on
+observed completion (`recordSkillRead` bound to the session task; adapter
+`KNOWN_READ_TOOLS` extended), the session-budget watcher
+(`opencode-server-budget.ts`, W045 caps → abort + sticky violation → mutation
+denials), and shutdown metering totals. Focused gates green (typecheck, lint,
+43 unit tests, gated live probe, build). The verify-command run gate stays
+hub-owned (recorded boundary). Posture stays `advisory` until the live probes
+run. Detail in `docs/OPENCODE_SERVER_AUTHORITY.md` §11.
+
 **Work item:** W071 (reserved).
 **Operator decisions (2026-09-19, this planning session):**
 1. **Topology:** the operator keeps the **stock `opencode` TUI** as the

@@ -278,3 +278,46 @@ the enforced-gateway-requires-hook construction check.
 rest of the probe family (needs a model key), a real contained launch with a
 key, the literal interactive TUI operator smoke, the `HOST_ADAPTERS.md` verdict
 row, and the final five-axis review pass on the completed milestones.
+
+---
+
+## 11. M4 — evidence, metering, budget, skills on the server path (2026-09-19)
+
+**Status:** implemented; focused gates green (typecheck, lint, **43 unit
+tests**, gated live probe, build). **Posture remains `advisory`.**
+
+**Evidence (M4.2):** the broker's tool-activity observer now closes the loop
+with canonical state — a mutation is recorded (`application.recordMutation`)
+only when it is *observed completed* on the server's SSE with a prior Workflow
+decision, which is the epoch-advancing freshness signal; a decided-but-not-
+completed mutation advances nothing. On the enforced path the same observer
+runs the bypass alarm for undecided mutating activity (M3.3).
+
+**Skills delivery (M4.4):** journaled on *observed delivery*, never on an
+unanswered ask: a completed `read_skill`-shaped tool part extracts the skill
+name from the tool input and journals `application.recordSkillRead(skill,
+sessionTask)` — the server-path equivalent of the ACP driver's `onSkillRead`,
+bound explicitly to the session task (the broker also moves the active-task
+pointer to the event's session, W046 parity). To make the delivery
+authorizable at all, `read_skill`/`skills-mcp__read_skill` entered the ACP
+adapter's `KNOWN_READ_TOOLS` and the broker carries a `read` kind when its
+classifier says read (the adapter's non-mutating verdict needs both; `toolKind`
+would have called the unknown MCP tool "other", and an unsubjected mutation
+must fail closed). This is a shared-file classification update in
+`src/adapters/acp.ts` — flagged here because another stream is active nearby.
+
+**Budget (M4.1):** `src/integrations/opencode-server-budget.ts` — the W045
+caps (`WORKFLOW_SESSION_BUDGET_{INPUT,OUTPUT,TOTAL}_TOKENS`, `_COST_USD`)
+adapted to the server path: the watcher polls metering-proxy usage, aborts
+every active server turn on crossing (`engine.abort`), sets a sticky
+violation, and the broker consults it before every mutating proposal
+(`session budget violated: …` denials; reads stay allowed). The daemon logs
+which mechanism is active (local watcher vs provider-side spend limits) and
+prints final metering totals at shutdown.
+
+**Honest boundary (M4.3):** the project verify-command run gate stays
+hub-owned (`createRunTestRunner` + contained shell, already proven there) and
+will be reused when the server surface is promoted to hub authority — a
+daemon-side duplicate would be speculative until live sessions exercise the
+completion flow. The budget watcher's abort path is exercised against the
+fake engine; live abort semantics land with the operator's probe runs.

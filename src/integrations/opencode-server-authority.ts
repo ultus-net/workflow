@@ -65,6 +65,11 @@ export interface OpencodeServerAuthorityOptions {
   readonly onAuthorityLost?: (() => void) | undefined;
   /** Fired when a mutating tool activity is observed with no prior decision. */
   readonly onBypass?: ((input: { readonly sessionId: string; readonly tool: string; readonly callId?: string; readonly reason: string }) => void) | undefined;
+  /**
+   * Session-budget violation gate (M4): when this returns a reason, mutating
+   * proposals are denied fail-closed before authorization.
+   */
+  readonly budgetViolation?: (() => string | undefined) | undefined;
   /** Injectable clock (tests). */
   readonly now?: (() => number) | undefined;
 }
@@ -116,6 +121,14 @@ export function ensureOpencodeSessionTask(application: WorkflowApplication, sess
   } catch {
     // Already IN_PROGRESS or terminal; authorize() decides.
   }
+  try {
+    // Correlation parity with the interactive surfaces (W046): the active-task
+    // pointer moves to the session the event belongs to, so application-side
+    // projections (and any later operator surface) read the same target.
+    application.selectActiveTask(id);
+  } catch {
+    // The pointer stays put when selection is not allowed; authorize() decides.
+  }
   return id;
 }
 
@@ -152,6 +165,8 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
   const answeredCallIds = new Set<string>();
   /** Mutating activity covered by a decision without a callID (session+tool). */
   const answeredTools = new Set<string>();
+  /** Subjects of decided mutations, for completion-observation recording (M4). */
+  const decidedSubjects = new Map<string, readonly string[]>();
 
   const record = (decision: OpencodeAuthorityDecision): void => {
     journal.push(decision);
@@ -162,9 +177,10 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
     const sessionId = request.sessionID;
     const base = { sessionId, requestId: request.id, observedAt: now() };
     let proposal: ProposedToolAction;
+    let sessionTask: TaskId | undefined;
     try {
-      const taskId = ensureOpencodeSessionTask(options.application, sessionId);
-      proposal = proposalFromPermission(adapter, request, taskId);
+      sessionTask = ensureOpencodeSessionTask(options.application, sessionId);
+      proposal = proposalFromPermission(adapter, request, sessionTask);
     } catch (error) {
       // Malformed/unmappable safety metadata fails closed.
       return {
@@ -176,6 +192,23 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
         reason: `unmappable permission request (fail closed): ${error instanceof Error ? error.message : String(error)}`,
       };
     }
+    // Session-budget gate (M4): a crossed cap denies every further mutation.
+    if (proposal.mutating && options.budgetViolation !== undefined) {
+      const violation = options.budgetViolation();
+      if (violation !== undefined) {
+        return {
+          ...base,
+          tool: proposal.tool,
+          ...(proposal.capability === undefined ? {} : { capability: proposal.capability }),
+          subjects: proposal.subjects,
+          decision: "deny",
+          reply: "reject",
+          reason: `session budget violated: ${violation}`,
+        };
+      }
+    }
+    // Skill delivery journaling happens in the completion observer (M4): the
+    // precondition is satisfied by delivery, never by an unanswered ask.
     const policy = options.application.authorize(proposal);
     if (policy.kind !== "allow") {
       return {
@@ -254,7 +287,7 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
 
   const answer = async (request: RemoteEnginePermissionRequest): Promise<void> => {
     const decision = await decide(request);
-    rememberAnswered(request);
+    rememberAnswered(request, decision.subjects);
     if (mode === "ask-me" && decision.decision === "allow") {
       // Policy allows but the operator holds the pen (M3): their reply can
       // only tighten it. Timeout fails closed.
@@ -287,10 +320,26 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
     });
   };
 
-  function rememberAnswered(request: RemoteEnginePermissionRequest): void {
+  function rememberAnswered(request: RemoteEnginePermissionRequest, subjects: readonly string[]): void {
     const callId = typeof request.tool?.callID === "string" ? request.tool.callID : undefined;
-    if (callId !== undefined) answeredCallIds.add(callId);
-    answeredTools.add(`${request.sessionID}\u0000${permissionToolName(request)}`);
+    const tool = permissionToolName(request);
+    if (callId !== undefined) {
+      answeredCallIds.add(callId);
+      decidedSubjects.set(callId, subjects);
+    }
+    const sessionKey = `${request.sessionID}\u0000${tool}`;
+    answeredTools.add(sessionKey);
+    decidedSubjects.set(sessionKey, subjects);
+  }
+
+  /** Extracts the skill name from a read_skill-shaped tool input (M4). */
+  function skillNameFrom(input: unknown): string | undefined {
+    if (!isRecord(input)) return undefined;
+    for (const key of ["skill", "name", "skillName", "skill_name", "pattern"]) {
+      const value = input[key];
+      if (typeof value === "string" && value.length > 0) return value;
+    }
+    return undefined;
   }
 
   const alarm = (sessionId: string, tool: string, callId: string | undefined, reason: string): void => {
@@ -314,6 +363,61 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
     options.onAuthorityLost?.();
   };
 
+  /**
+   * Tool-activity observer (M4):
+   *  - a completed read_skill delivery journals the skill against the session
+   *    task (the server-path onSkillRead equivalent — the precondition is
+   *    satisfied by delivery, never by narration);
+   *  - a completed mutation with a prior decision advances canonical freshness
+   *    (`recordMutation`); the journal already holds the decision;
+   *  - in enforced posture, undecided mutating activity is a bypass alarm.
+   */
+  const observeToolPart = (event: RemoteEngineEvent): void => {
+    if (event.type !== "message.part.updated") return;
+    const properties: { readonly sessionID?: unknown; readonly part?: unknown } = event.properties;
+    const part = isRecord(properties.part) ? properties.part : undefined;
+    if (part === undefined || part.type !== "tool") return;
+    const tool = typeof part.tool === "string" ? part.tool : undefined;
+    if (tool === undefined) return;
+    const sessionId = typeof properties.sessionID === "string" ? properties.sessionID : undefined;
+    if (sessionId === undefined) return;
+    const callId = typeof part.callID === "string" ? part.callID : undefined;
+    const status = isRecord(part.state) && typeof part.state.status === "string" ? part.state.status : undefined;
+    const sessionKey = `${sessionId}\u0000${tool}`;
+
+    if (/read_skill/i.test(tool)) {
+      // Skill delivery (M4): journaled when the content actually arrived.
+      if (status !== "completed") return;
+      const skill = skillNameFrom(isRecord(part.state) ? part.state.input : undefined) ?? skillNameFrom(part.metadata);
+      if (skill !== undefined) {
+        try {
+          options.application.recordSkillRead(skill, opencodeSessionTaskId(sessionId));
+        } catch {
+          // Nothing to journal against this task; authorization still applies.
+        }
+      }
+      return;
+    }
+
+    const capability = opencodePermissionCapability(tool);
+    if (capability === undefined || capability === "read") return;
+    const subjects =
+      (callId !== undefined ? decidedSubjects.get(callId) : undefined) ?? decidedSubjects.get(sessionKey);
+    if (subjects === undefined) {
+      if (enforcement === "enforced") {
+        alarm(sessionId, tool, callId, `mutating tool '${tool}' ran with no prior Workflow decision (bypass alarm, enforced posture)`);
+      }
+      return;
+    }
+    if (status !== "completed") return;
+    try {
+      options.application.recordMutation(subjects);
+    } catch {
+      // Recording a mutation must never break the session stream; the journal
+      // still holds the decision, and freshness stays conservative.
+    }
+  };
+
   return {
     get authorityLost() {
       return lost;
@@ -333,7 +437,7 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
             await answer(event.properties);
             continue;
           }
-          if (enforcement === "enforced") checkBypass(event, alarm, answeredCallIds, answeredTools);
+          observeToolPart(event);
         }
         markLost();
       } catch (error) {
@@ -387,38 +491,6 @@ function permissionToolName(request: RemoteEnginePermissionRequest): string {
   return typeof metadata.toolName === "string" && metadata.toolName.length > 0 ? metadata.toolName : request.action;
 }
 
-/**
- * Bypass alarm (plan M3.3, enforced posture): a mutating tool activity that
- * never produced a decision is a bypass — the ruleset was supposed to ask.
- * Matched by callID when present, otherwise by (session, tool).
- */
-function checkBypass(
-  event: RemoteEngineEvent,
-  alarm: (sessionId: string, tool: string, callId: string | undefined, reason: string) => void,
-  answeredCallIds: ReadonlySet<string>,
-  answeredTools: ReadonlySet<string>,
-): void {
-  if (event.type !== "message.part.updated") return;
-  const part = isRecord(event.properties) && isRecord(event.properties.part) ? event.properties.part : undefined;
-  if (part === undefined) return;
-  if (part.type !== "tool") return;
-  const tool = typeof part.tool === "string" ? part.tool : undefined;
-  if (tool === undefined) return;
-  const capability = opencodePermissionCapability(tool);
-  if (capability === undefined || capability === "read") return;
-  const sessionId = typeof event.properties.sessionID === "string" ? event.properties.sessionID : undefined;
-  if (sessionId === undefined) return;
-  const callId = typeof part.callID === "string" ? part.callID : undefined;
-  const sessionKey = `${sessionId}\u0000${tool}`;
-  if ((callId !== undefined && answeredCallIds.has(callId)) || answeredTools.has(sessionKey)) return;
-  alarm(
-    sessionId,
-    tool,
-    callId,
-    `mutating tool '${tool}' ran with no prior Workflow decision (bypass alarm, enforced posture)`,
-  );
-}
-
 function proposalFromPermission(
   adapter: AcpHostAdapter,
   request: RemoteEnginePermissionRequest,
@@ -426,7 +498,12 @@ function proposalFromPermission(
 ): ProposedToolAction {
   const projected = permissionToolCall(request);
   const name = permissionToolName(request);
-  const kind = typeof projected.kind === "string" ? projected.kind : undefined;
+  // When the classifier says read (e.g. the skills-mcp delivery), carry a read
+  // kind too: the adapter's non-mutating verdict needs BOTH a read kind and a
+  // known-read name, and toolKind() would call this unknown MCP tool "other".
+  const kind = opencodePermissionCapability(name) === "read"
+    ? "read"
+    : (typeof projected.kind === "string" ? projected.kind : undefined);
   const capability = opencodePermissionCapability(name);
   const locations = Array.isArray(projected.locations)
     ? projected.locations.flatMap((location) => (isRecord(location) && typeof location.path === "string" ? [{ path: location.path }] : []))
@@ -454,6 +531,7 @@ export function opencodePermissionCapability(tool: string): ToolCapability | und
   if (tool === "webfetch" || tool === "fetch") return "network";
   if (tool === "task" || tool === "agent" || tool === "subagent") return "spawn";
   if (tool === "read" || tool === "glob" || tool === "grep" || tool === "list") return "read";
+  if (/read_skill/i.test(tool)) return "read";
   if (tool === "edit" || tool === "write" || tool === "patch" || tool === "apply_patch" || tool === "multiedit") return "mutation";
   return undefined;
 }

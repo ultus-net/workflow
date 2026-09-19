@@ -58,10 +58,10 @@ function permission(id: string, action: string, metadata: Record<string, unknown
   return { type: "permission.asked", properties: request };
 }
 
-function toolPart(callId: string, tool: string): RemoteEngineEvent {
+function toolPart(callId: string, tool: string, status: string = "pending", input?: unknown): RemoteEngineEvent {
   return {
     type: "message.part.updated",
-    properties: { sessionID: "s1", part: { type: "tool", callID: callId, tool, state: {} } },
+    properties: { sessionID: "s1", part: { type: "tool", callID: callId, tool, state: { status, input } } },
   };
 }
 
@@ -301,4 +301,66 @@ test("W071 broker: session task correlation is stable and additive", () => {
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }
+});
+
+test("W071 broker (M4): a crossed session budget denies mutations, reads stay allowed", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-budget-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const fake = fakeEngine([permission("r1", "edit", { filePath: join(workspace, "src", "a.ts") }), permission("r2", "grep", {})]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    budgetViolation: () => "total tokens 90000 exceeded the session budget cap 50000",
+  });
+  await authority.start();
+  assert.equal(authority.decisions()[0]?.decision, "deny");
+  assert.match(authority.decisions()[0]?.reason ?? "", /session budget violated/);
+  assert.equal(authority.decisions()[1]?.decision, "allow", "a read is not a mutation; the budget gate must not block it");
+});
+
+test("W071 broker (M4): a required skill must be delivered before mutations run", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-skill-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const app = application(workspace, ["read", "mutation", "process"]);
+  const taskId = ensureOpencodeSessionTask(app, "s1");
+  app.setTaskRequiredSkills(taskId, ["superpowers"]);
+  const withoutDelivery = fakeEngine([permission("r1", "edit", { filePath: join(workspace, "src", "a.ts") }, "c1")]);
+  const authority1 = createOpencodeServerAuthority({ engine: withoutDelivery.engine, application: app, workspace });
+  await authority1.start();
+  assert.equal(authority1.decisions()[0]?.decision, "deny");
+  assert.match(authority1.decisions()[0]?.reason ?? "", /SKILL_DELIVERY_REQUIRED|requires skill delivery/i);
+
+  // With the read_skill ask first, the delivery is journaled against the
+  // session task and the mutation is allowed.
+  const withDelivery = fakeEngine([
+    permission("r2", "skills-mcp__read_skill", { skill: "superpowers" }, "c2"),
+    toolPart("c2", "skills-mcp__read_skill", "completed", { skill: "superpowers" }),
+    permission("r3", "edit", { filePath: join(workspace, "src", "a.ts") }, "c3"),
+  ]);
+  const authority2 = createOpencodeServerAuthority({ engine: withDelivery.engine, application: app, workspace });
+  await authority2.start();
+  assert.equal(authority2.decisions()[0]?.decision, "allow", "a read_skill ask is a read, not a mutation");
+  assert.equal(authority2.decisions()[1]?.decision, "allow", "the journaled skill delivery must satisfy the precondition");
+});
+
+test("W071 broker (M4): a completed decided mutation advances the mutation epoch", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-mutation-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const beforeEpoch = application(workspace, ["read", "mutation", "process"]).snapshot().mutationEpoch;
+  const decidedOnly = fakeEngine([permission("r1", "edit", { filePath: join(workspace, "src", "a.ts") }, "c1")]);
+  const app1 = application(workspace, ["read", "mutation", "process"]);
+  const authority1 = createOpencodeServerAuthority({ engine: decidedOnly.engine, application: app1, workspace });
+  await authority1.start();
+  const epochAfterDecision = app1.snapshot().mutationEpoch;
+  assert.equal(epochAfterDecision, beforeEpoch, "a decided-but-not-completed mutation must not advance the epoch yet");
+
+  const app2 = application(workspace, ["read", "mutation", "process"]);
+  const observed = fakeEngine([
+    permission("r1", "edit", { filePath: join(workspace, "src", "a.ts") }, "c1"),
+    toolPart("c1", "edit", "completed"),
+  ]);
+  const authority2 = createOpencodeServerAuthority({ engine: observed.engine, application: app2, workspace });
+  await authority2.start();
+  assert.ok(app2.snapshot().mutationEpoch > epochAfterDecision, "an observed completed mutation must advance the epoch");
 });

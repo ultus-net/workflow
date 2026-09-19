@@ -958,8 +958,17 @@ operator can tighten but never loosen; enforcement mode
 startup (`assertAskRuleset`, fail closed), makes the gateway construction
 refuse to exist without the broker hook, and arms the bypass alarm — a
 mutating tool activity with no prior Workflow decision is journaled, fires
-`onBypass`, and tears the surface down. Focused gates green: typecheck, lint,
-36 unit tests, gated live probe, build. **Still open:** the live
+`onBypass`, and tears the surface down. **M4 implemented:** server-path
+evidence/metering/budget/skills — `recordMutation` on observed completed
+mutations (a decided-but-not-completed mutation advances nothing); skill
+delivery journaled on observed completion (`recordSkillRead` bound to the
+session task; `read_skill` entered the ACP adapter's `KNOWN_READ_TOOLS` and
+the broker carries a read kind so the delivery is authorizable); the
+session-budget watcher (`opencode-server-budget.ts`, W045 caps → abort active
+turns + sticky violation → mutating asks denied fail-closed); the daemon logs
+the active budget mechanism and final metering totals. Focused gates green:
+typecheck, lint, 43 unit tests, gated live probe, build. The verify-command
+run gate stays hub-owned (recorded boundary). **Still open:** the live
 `permission.asked` → authorize → reply probe and the rest of the probe family
 (RULE-CONFIG/BYPASS/SUBAGENT/AUTH/METERED/CONTAINMENT — need a model key), a
 real contained launch with a key, the literal interactive TUI operator smoke,
