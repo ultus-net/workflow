@@ -96,6 +96,9 @@ export class TaskGraph {
       if (!graph.#tasks.has(step.taskId)) throw new TypeError(`persisted step ${step.id} references unknown task ${step.taskId}`);
       if (step.requiredEvidence.length === 0) throw new TypeError(`persisted step ${step.id} lacks a done-condition`);
       if (graph.#steps.has(step.id)) throw new TypeError(`duplicate step: ${step.id}`);
+      if (step.state === "IN_PROGRESS" && graph.activeStepId(step.taskId) !== undefined) {
+        throw new TypeError(`persisted task ${step.taskId} has multiple active steps`);
+      }
       graph.#steps.set(step.id, { ...step, requiredEvidence: [...step.requiredEvidence] });
     }
     for (const step of graph.#steps.values()) {

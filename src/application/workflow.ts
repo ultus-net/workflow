@@ -75,7 +75,7 @@ export class WorkflowApplication {
   /** Records a completed tool outcome so a session's failure breaker resets. */
   recordToolOutcome(sessionId: string, outcome: "succeeded" | "failed" | "denied", tool = "unknown", reason = ""): void {
     if (outcome === "succeeded") this.#policyFailures.recordSuccess(sessionId);
-    else if (outcome === "denied") this.#policyFailures.recordFailure({ sessionId, tool, reason });
+    else this.#policyFailures.recordFailure({ sessionId, tool, reason });
   }
 
   policyFailureCount(sessionId: string): number {
