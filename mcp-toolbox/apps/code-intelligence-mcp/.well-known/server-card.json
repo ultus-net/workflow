@@ -1,0 +1,55 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "code-intelligence-mcp",
+  "version": "0.1.0",
+  "description": "Structured semantic code navigation for coding agents over MCP.",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "diagnostics",
+      "description": "Return bounded normalized syntactic and semantic diagnostics for a TypeScript document.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "document_symbols",
+      "description": "List bounded semantic declarations in source order for a TypeScript document.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "workspace_symbols",
+      "description": "Search bounded semantic declarations across a TypeScript workspace.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "find_definition",
+      "description": "Find exact semantic definitions at a 1-based source position in a TypeScript project.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "find_references",
+      "description": "Find bounded semantic references at a 1-based source position in a TypeScript project.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 6032,
+    "toolIndexBytes": 832
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}

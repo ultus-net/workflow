@@ -7,7 +7,13 @@
     "workflow-guard-mcp": "./dist/server.js",
     "workflow-guard-claude-hook": "./dist/claude-hook.js"
   },
-  "files": ["dist/", "docs/", "README.md", "LICENSE"],
+  "files": [
+    "dist/",
+    "docs/",
+    "README.md",
+    "LICENSE",
+    ".well-known/"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "postbuild": "node -e \"require('node:fs').chmodSync('dist/claude-hook.js', 0o755)\"",
@@ -15,7 +21,9 @@
     "test": "pnpm run build && node --test --import tsx test/*.test.ts",
     "verify": "pnpm run typecheck && pnpm run test"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",

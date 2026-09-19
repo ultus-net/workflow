@@ -1,0 +1,43 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "test-intelligence-mcp",
+  "version": "0.1.0",
+  "description": "Structured test discovery and execution for coding agents over MCP.",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "discover_tests",
+      "description": "Discover bounded Node test-runner files without executing repository code.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "find_relevant_tests",
+      "description": "Rank bounded Node test files structurally relevant to a workspace file without executing repository code.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "run_tests",
+      "description": "Execute explicit discovered Node test IDs with bounded diagnostics, timeout, and cancellation cleanup.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 3898,
+    "toolIndexBytes": 538
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}

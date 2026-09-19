@@ -1,0 +1,59 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "learning-mcp",
+  "version": "0.1.0",
+  "description": "Adaptive pedagogy engine (learner profile, stage progression, intervention budgeting, Socratic checkpoints) over MCP.",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "resources": {
+      "subscribe": true,
+      "listChanged": true
+    },
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "learning_checkpoint",
+      "description": "Consult the pedagogy engine before interrupting the learner with a Socratic checkpoint. Enforces per-mode gating: autonomous never interrupts; socratic-tutor enforces the session intervention budget (default 3); mastered concepts are suppressed unless marked needs-reinforcement; concepts whose prerequisites need reinforcement are suppressed. When interrupt is true, exposed evidence is recorded in the learner profile.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "record_learning_evidence",
+      "description": "Record observed learning evidence for a concept. Stage progression is monotonic: evidence never regresses a concept to an earlier stage; needs-reinforcement flags the concept for review without lowering its stage.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "decision_checkpoint",
+      "description": "Record a decision brief before committing to an architectural approach (co-architect mode). The brief is stored in the session ledger and always requires human approval before mutation proceeds.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "resolve_decision_checkpoint",
+      "description": "Resolve a pending decision brief with a human approval or rejection. Unknown brief ids are a tool error.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "learner_profile",
+      "description": "Read the persisted learner profile: every tracked concept with its current monotonic stage and recent evidence.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 10159,
+    "toolIndexBytes": 1506
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}

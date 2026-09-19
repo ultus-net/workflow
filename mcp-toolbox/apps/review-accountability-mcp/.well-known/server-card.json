@@ -1,0 +1,43 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "review-accountability-mcp",
+  "version": "0.1.0",
+  "description": "Subject-bound review attestations and durable follow-up debt over MCP.",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "record_review",
+      "description": "Call after an actual secondary review to persist its bounded attestation against an explicit content-sensitive subject; P2/P3 findings become durable follow-ups. This tool records a review but does not perform one.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "list_reviews",
+      "description": "Proactively call before finalizing or handing off changed work to recover review state and unresolved follow-up debt. Lists bounded review attestations; freshness is unknown unless a comparable current subject is supplied.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "resolve_followup",
+      "description": "Call after the underlying P2/P3 issue has been fixed and verified to resolve its durable follow-up without rewriting the originating review attestation.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 10380,
+    "toolIndexBytes": 845
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}
