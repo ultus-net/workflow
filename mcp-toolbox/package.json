@@ -6,7 +6,12 @@
     "build": "pnpm -r --if-present run build",
     "typecheck": "pnpm -r --if-present run typecheck",
     "test": "pnpm run build && pnpm -r --workspace-concurrency=1 --if-present run test",
-    "verify": "pnpm run typecheck && pnpm run test"
+    "verify": "pnpm run typecheck && pnpm run test",
+    "cards:generate": "pnpm --filter @agent-tools/protocol-baseline run cards:generate",
+    "cards:check": "pnpm --filter @agent-tools/protocol-baseline run cards:check",
+    "protocol:conformance": "pnpm --filter @agent-tools/protocol-baseline run conformance",
+    "protocol:measure": "pnpm --filter @agent-tools/protocol-baseline run measure",
+    "protocol:survey": "pnpm --filter @agent-tools/protocol-baseline exec node dist/cli.js survey"
   },
   "engines": { "node": ">=22" }
 }

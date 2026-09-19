@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { InMemoryTaskStore } from "@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js";
 import { z } from "zod";
 
 import { createAuthorityPorts } from "./authority-ports.js";
@@ -8,7 +9,13 @@ import { defaultDataRoot, VerificationStore, type RecordVerificationInput } from
 
 const server = new McpServer(
   { name: "verification-accountability-mcp", version: "0.1.0" },
-  { capabilities: { logging: {} } },
+  {
+    capabilities: {
+      logging: {},
+      tasks: { requests: { tools: { call: {} } }, list: {}, cancel: {} },
+    },
+    taskStore: new InMemoryTaskStore(),
+  },
 );
 
 // Stream leveled MCP log notifications (and progress when the caller supplies
@@ -73,6 +80,66 @@ server.registerTool("list_verifications", {
 }, async (input, extra) => {
   const result = await store.listVerifications(input, extra.signal); const structuredContent = result;
   return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };
+});
+
+const asyncVerificationInputSchema = {
+  workspaceRoot: z.string().min(1).max(4096),
+  request: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("local_test"), testIds: z.array(z.string().min(1).max(1000)).min(1).max(500), timeoutMs: z.number().int().min(100).max(120_000).optional() }),
+    z.object({ kind: z.literal("ci_run"), runId: z.string().regex(/^github:[1-9]\d*$/), revision: z.string().regex(/^[0-9a-fA-F]{40}$/).optional() }),
+  ]),
+};
+
+// Long-running verification as a Tasks-extension tool (MCP 2026-07-28,
+// SEP-2663). The bounded authority-backed observation is obtained
+// out-of-band; hosts poll tasks/get, observe task status transitions, and see
+// the same leveled log notifications as the synchronous tools. Cancellation
+// follows the request AbortSignal.
+server.experimental.tasks.registerToolTask("run_verification_async", {
+  description: "Long-running variant of record_verification for Tasks-capable hosts. Creates a task, obtains bounded authority-backed verification evidence out-of-band, and reports status through tasks/get plus the existing leveled log conventions. Caller-supplied result claims are not accepted.",
+  inputSchema: asyncVerificationInputSchema,
+  outputSchema: { observation },
+  annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
+}, {
+  async createTask(input, extra) {
+    const options = extra.taskRequestedTtl === undefined
+      ? { pollInterval: 1000 }
+      : { ttl: extra.taskRequestedTtl, pollInterval: 1000 };
+    const task = await extra.taskStore.createTask(options);
+    void (async () => {
+      const log = async (level: "debug" | "info" | "error", phase: string, message?: string) => {
+        await server.server.sendLoggingMessage({
+          level,
+          logger: "verification-accountability-mcp",
+          data: { tool: "run_verification_async", phase, taskId: task.taskId, ...(message === undefined ? {} : { message }) },
+        });
+      };
+      try {
+        await log("debug", "start");
+        const recorded = await store.recordVerification(input as RecordVerificationInput, extra.signal);
+        const structuredContent = { observation: recorded };
+        await extra.taskStore.storeTaskResult(task.taskId, "completed", {
+          content: [{ type: "text", text: JSON.stringify(structuredContent) }],
+          structuredContent,
+        } as never);
+        await log("info", "done");
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await extra.taskStore.storeTaskResult(task.taskId, "failed", {
+          content: [{ type: "text", text: message }],
+          isError: true,
+        } as never);
+        await log("error", "error", message);
+      }
+    })();
+    return { task };
+  },
+  async getTask(_input, extra) {
+    return extra.taskStore.getTask(extra.taskId);
+  },
+  async getTaskResult(_input, extra) {
+    return (await extra.taskStore.getTaskResult(extra.taskId)) as never;
+  },
 });
 
 process.once("SIGTERM", () => { void authorities.close().finally(() => process.exit(0)); });
