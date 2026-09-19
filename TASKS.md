@@ -974,3 +974,51 @@ run gate stays hub-owned (recorded boundary). **Still open:** the live
 real contained launch with a key, the literal interactive TUI operator smoke,
 the `HOST_ADAPTERS.md` verdict row, and the final five-axis review pass. The
 surface remains **`advisory`** — no `enforced` claim until the probes run.
+
+## Phase 14: Roadmap Compliance & Plugin-Retirement Parity (2026-09-19)
+
+### W072 - Three-level decomposition ledger + strict-compliance register
+
+**Objective:** Make the agent's decomposition a **deterministic, operator-gated ledger** —
+roadmap/plan → canonical tasks → canonical steps/todos — so a task cannot be marked done while its
+steps are open, and so goals/work cannot drift from the plan without operator approval. This is the
+capability the operator's "evidence + ledger" requires and the precondition for retiring
+`opencode-workflow-guard` (Checkpoint D).
+
+**Depends on:** W046 (task-command port), W050 (hub-http seam), W071 (standard-TUI authority), and
+Phase G of `docs/superpowers/plans/2026-09-15-hub-owned-enforcement.md`.
+
+**Spec:** `docs/TASK_TODO_LEDGER_PARITY.md` — invariants I-1…I-5, kernel child nodes, evidence-bound
+checkoff, staged bridge→MCP migration, Phase-G retirement parity.
+**Register:** `docs/COMPLIANCE_REGISTER.md` — DRIFT-001…015 obligations (strict compliance; no prose
+promotions).
+**Baseline:** `docs/PLAN_VS_REALITY_AUDIT.md`.
+
+**Acceptance criteria:**
+- [ ] **I-1** Mutations deny without an active canonical step on an `IN_PROGRESS` task (`NO_ACTIVE_STEP`),
+      enforced at the application gate and mirrored in `workflow-guard-mcp`; test proves the deny.
+- [ ] **I-2** Active steps cannot be silently deleted/omitted; test proves the block.
+- [ ] **I-3** Step completion requires fresh typed evidence bound to the step (subject `step:<id>`);
+      an agent cannot complete a step without an intervening authorized/observed action; test proves it.
+- [ ] **I-4** A task/run cannot leave `IN_PROGRESS`/reach `VERIFIED` while any required step is open;
+      a canonical `isRunComplete` predicate refuses completion with any required node open; tests prove both.
+- [ ] **I-5** Secondary review audits the ledger against the diff/evidence; a checked step with no
+      corresponding work yields a P0/P1 and `REQUEST_CHANGES`; pinned by a review test.
+- [ ] Stage 1 native-`todowrite` bridge keeps the agent's DX while the plugin remains the enforcement
+      seat (per Phase G); Stage 2 hub-owned enforcement; Stage 3 portable MCP step tool; Stage 4 G6 corpus.
+- [ ] Drift obligations closed with linked evidence: in particular **DRIFT-003** (GUARD_CORPUS_MAP
+      "Ported (superset)" overclaim), **DRIFT-004** (`workflow-fs-exec-mcp` dead `/before-tool` route),
+      **DRIFT-008/009** (empty `requiredEvidence` escape, missing run-completion predicate),
+      **DRIFT-001/002** (W050/Cline reconciliation, Checkpoint C evidence).
+- [ ] Ledger checks folded into the G6 adversarial corpus; `opencode-workflow-guard` retirement only
+      after the per-pinned-version criteria (a)/(b)/(c) pass — never date-gated.
+- [ ] Focused gates pass (`npm run lint`, `npm run typecheck`, focused tests) and an independent
+      five-axis review is recorded.
+
+**Verification:** kernel/application tests for I-1…I-4, the `isRunComplete` test, the review-audit test,
+the G6 corpus run for the pinned agent version, and the closed `docs/COMPLIANCE_REGISTER.md` rows with
+their linking artifacts.
+
+**Status (2026-09-19, Proposed — not started):** the spec, audit, and compliance register are written;
+kernel step nodes and the enforcement gates are not yet implemented. Tracked by this item until the
+operator reviews the spec (`docs/TASK_TODO_LEDGER_PARITY.md`).

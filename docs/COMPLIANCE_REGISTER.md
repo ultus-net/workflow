@@ -1,0 +1,78 @@
+# Compliance Register — Roadmap Goal & Drift Obligations
+
+**Status:** Active register — 2026-09-19  
+**Owner:** Operator (strict compliance)  
+**Governing principle:** *"The model proposes. The harness validates. The environment provides evidence. Only validated evidence advances state."* (`llm-enhancements.md:211-218`)
+
+This register exists because **goals and work drifted from the plan without operator approval**
+(`docs/PLAN_VS_REALITY_AUDIT.md`). It turns that audit into tracked, closable obligations. A claim is
+not "complete" until a deterministic check (a passing test, a probe verdict, or an operator sign-off)
+pins it. Prose assertions do not close an obligation.
+
+---
+
+## 1. Roadmap goal (the compliance target)
+
+Retire `opencode-workflow-guard` from daily use and run the **Workflow control plane + MCP servers**
+instead, at full parity, by realizing the three-level decomposition ledger:
+
+```text
+ROADMAP / PLAN  →  CANONICAL TASKS  →  CANONICAL STEPS / TODOS
+durable context     kernel TaskGraph     kernel child nodes (new)
+```
+
+Spec: `docs/TASK_TODO_LEDGER_PARITY.md`. Retirement criteria: `docs/superpowers/plans/2026-09-15-hub-owned-enforcement.md:639-643`
+(per pinned agent version: (a) enforcement path/substitution live, (b) G6 corpus green, (c) remaining surface ported or explicitly accepted).
+
+**Non-negotiables (invariants — compliance gates):**
+- **I-1** No mutation without an active canonical step on an `IN_PROGRESS` task (`NO_ACTIVE_STEP`).
+- **I-2** No silent deletion/omission of active steps.
+- **I-3** Step completion requires fresh typed evidence bound to the step (no self-certification).
+- **I-4** A task/run cannot complete while any required step/task is open (`isRunComplete`).
+- **I-5** Secondary review audits the ledger against the diff/evidence; mismatch ⇒ `REQUEST_CHANGES`.
+
+---
+
+## 2. Drift obligations
+
+Status legend: **OPEN** (drifted, not closed) · **CLOSED** (evidence recorded) · **ACCEPTED** (operator-recorded residual).  
+Severity: P0 (blocks retirement/authority) · P1 (major) · P2 (minor) · P3 (docs/nits).
+
+| ID | Sev | Drift | Current evidence | Required evidence to close |
+|---|---|---|---|---|
+| DRIFT-001 | P1 | Cline/W050 truth-source contradiction (TASKS says branch-pending; FEATURES/QUALIFICATION say merged; HOST_ADAPTERS cites removed files) | `TASKS.md:817-833`; `docs/FEATURES.md:50-51,64`; `docs/OPENCODE_QUALIFICATION.md:61-77`; `docs/HOST_ADAPTERS.md:63-65` | One reconciled statement across all four docs + a passing current verification path |
+| DRIFT-002 | P1 | Checkpoint C "Complete" via deleted `npm run test:cline-coding-session` | `TASKS.md:448-456` | Replacement ACP/OpenCode verification command, executed and recorded |
+| DRIFT-003 | P0 | `GUARD_CORPUS_MAP.md:25` "Task-list gating … Ported (superset)" overclaim: no pre-mutation step gate, no silent-deletion gate, no all-done gate | `docs/GUARD_CORPUS_MAP.md:25` vs `src/application/workflow.ts:151-181` | Either the ledger gates land (I-1/I-2/I-4) and the corpus passes, or the row is downgraded to Partial + recorded gap |
+| DRIFT-004 | P0 | `workflow-fs-exec-mcp` posts removed `/before-tool` route → 404 → permanent denial; G3 substitution not actually live | `mcp-toolbox/apps/workflow-fs-exec-mcp/src/hub-client.ts:81-97`; `docs/HUB_PROTOCOL.md:142-149`; `src/integrations/hub-http.ts:83-168` | Repoint to the live authorization route (or retire the server) + a passing integration test |
+| DRIFT-005 | P2 | W048 prose reads "Qualified/live" with an unchecked six-probe acceptance box | `TASKS.md:794`; `docs/FEATURES.md:57`; `docs/HOST_ADAPTERS.md:109` | Probe verdicts recorded, or wording capped to the proven OpenRouter mode |
+| DRIFT-006 | P2 | W044–W047 "Complete" while live/dogfood verification deferred to open W049 | `TASKS.md:722-784`, `:802-815` | Distinguish "implemented" from "daily-driver verified"; close W049 or state the gap |
+| DRIFT-007 | P3 | Roadmap numbering gaps (W052–W053, W055–W056, W058–W062, W065–W069, base W070) | `TASKS.md:845-871` | Define or explicitly retire each missing number |
+| DRIFT-008 | P0 | Weak completion evidence defaults: session/interactive/plain-run tasks created with `requiredEvidence: []` ⇒ zero-evidence `VERIFIED` legal | `src/cli/hub.ts:40`; `src/cli/web-service.ts:43,50`; `src/integrations/opencode-server-authority.ts:111`; `src/integrations/run-registry.ts:227-232` | Evidence requirements enforced on work tasks (I-3/I-4); test proves zero-evidence completion is rejected |
+| DRIFT-009 | P0 | No run/plan completion predicate (`isRunComplete`) — "done" is claimed, not graph-derived | `src/kernel/task-graph.ts:245-257`; `src/integrations/run-registry.ts:274-389` | Canonical predicate + test: refuses completion with any required node open |
+| DRIFT-010 | P0 | No canonical step/todo child level exists (spec only) | `src/kernel/contracts.ts:8-13,36-42`; `docs/TASK_TODO_LEDGER_PARITY.md` | Kernel step nodes + evidence-bound checkoff + gates (I-1…I-4) landed with tests |
+| DRIFT-011 | P2 | Stranded MCP clients: `project-memory-mcp`, `review-accountability-mcp`, `verification-accountability-mcp` built but unwired; `egress-audit-mcp` unwired | `src/integrations/project-memory.ts:47-90`; `src/integrations/review-followups.ts:26-56` | Wire into the session/verify/review path, or record explicitly as unwired |
+| DRIFT-012 | P2 | Web UI lacks documented Tier 3/monitoring; `agent-context` (W047) not rendered web-side | `docs/web-ui-feature-tiers.md:98-104`; `docs/FEATURES.md:56,70,100` | Implement or downgrade the rows honestly |
+| DRIFT-013 | P3 | `DESIGN.md` still Cline-CLI-centric over newer web design | `DESIGN.md:3-12` | Reconcile or mark superseded |
+| DRIFT-014 | P1 | W071 stock-TUI surface `advisory`; live PERMISSION/RULE-CONFIG/BYPASS probes unrun | `docs/OPENCODE_SERVER_AUTHORITY.md:331-334`; `docs/FEATURES.md:74` | Probe family executed with per-probe verdicts; `enforced` only on green |
+| DRIFT-015 | P1 | W054 durable-state attestation not wired to any production injection boundary | `TASKS.md:849-851`; `src/integrations/durable-state-attestation.ts:5-17` | Call at the first post-W050 memory-injection boundary + runtime test |
+
+---
+
+## 3. Compliance rules (strict)
+
+1. **No prose promotions.** A row moves from Partial/Planned to Complete/Ported only with a linked,
+   passing deterministic check (test, probe verdict, or operator sign-off).
+2. **Every "Ported/Complete" is a failing-when-false obligation.** Convert high-risk claims into pinned
+   tests; a claim without a test is capped at Partial.
+3. **Drift closure is evidence-linked.** Each DRIFT-## row records the closing artifact (commit/test/probe)
+   in this register before it is marked CLOSED.
+4. **Plan changes are operator-approved.** Scope/goal changes to the roadmap require an operator decision
+   recorded here; model- or agent-proposed changes are advisory until confirmed.
+5. **Retirement is probe-gated, never date-gated** (`docs/superpowers/plans/2026-09-15-hub-owned-enforcement.md:629-643`).
+
+---
+
+## 4. Provenance
+
+Derived from `docs/PLAN_VS_REALITY_AUDIT.md` (four-pass read-only scan) and `docs/TASK_TODO_LEDGER_PARITY.md`.
+Tracking item: `TASKS.md` **W072**. Review cadence: re-scan before any Checkpoint D sign-off.
