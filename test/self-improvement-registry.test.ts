@@ -154,6 +154,24 @@ test("a stop with an unrelated reason stays stopped even when a cancel was reque
   assert.equal(registry.get(started.id)?.state, "stopped", "the record never claims a cancellation that did not happen");
 });
 
+test("a stop whose reason merely mentions cancel (failed cancel check) stays stopped", async () => {
+  const gate = deferred<void>();
+  const registry = createSelfImprovementRegistry({
+    runLoop: async (_spec: SelfImprovementSpec, controls: LoopRunControls) => {
+      await gate.promise;
+      void controls.isCancelled();
+      // A substring match would mislabel this as an operator cancel; only the
+      // loop's exact cancel outcome ("cancelled by operator") counts.
+      return outcome("stopped", "cancellation check failed (fail closed): probe exploded");
+    },
+  });
+  const started = registry.start(spec());
+  registry.cancel({ id: started.id });
+  gate.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(registry.get(started.id)?.state, "stopped");
+});
+
 test("a crashed runner is recorded as stopped with the error surfaced", async () => {
   const registry = createSelfImprovementRegistry({
     runLoop: async () => {

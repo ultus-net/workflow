@@ -256,7 +256,27 @@ export function createWorkflowWebServer(
         ) {
           return json(response, 400, { error: "invalid schedule save request" });
         }
-        const result = await hubPost("/schedule/save", body);
+        // Forward only known schedule fields: the browser payload carries the
+        // server-computed `nextRunAt` and may carry arbitrary extras, and the
+        // hub persists whatever it is given. The proxy strips to the table
+        // schema so nothing client-supplied beyond it is ever persisted.
+        const source = body as Record<string, unknown>;
+        const schedule: ScheduleDefinition = {
+          id: source.id as string,
+          title: source.title as string,
+          cron: source.cron as string,
+          prompt: source.prompt as string,
+          ...(typeof source.workspace === "string" ? { workspace: source.workspace } : {}),
+          ...(typeof source.requiresReview === "boolean" ? { requiresReview: source.requiresReview } : {}),
+          ...(typeof source.enabled === "boolean" ? { enabled: source.enabled } : {}),
+          ...(source.budget !== undefined && typeof source.budget === "object" && source.budget !== null
+            ? { budget: source.budget as NonNullable<ScheduleDefinition["budget"]> }
+            : {}),
+          ...(typeof source.taskClass === "string" ? { taskClass: source.taskClass as NonNullable<ScheduleDefinition["taskClass"]> } : {}),
+          ...(source.offPeak !== undefined && typeof source.offPeak === "string" ? { offPeak: source.offPeak as NonNullable<ScheduleDefinition["offPeak"]> } : {}),
+          ...(typeof source.offPeakRequired === "boolean" ? { offPeakRequired: source.offPeakRequired } : {}),
+        };
+        const result = await hubPost("/schedule/save", schedule);
         return json(response, result.status, result.payload);
       } catch {
         return json(response, 400, { error: "invalid request body" });

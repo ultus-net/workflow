@@ -88,11 +88,16 @@ test("the web service proxies the hub schedule table and loop registry", async (
   const saved = await fetch(`${base}/api/schedules/save`, {
     method: "POST",
     headers: { "content-type": "application/json", origin: base },
-    body: JSON.stringify({ id: "nightly", title: "Nightly audit", cron: "0 9 * * *", prompt: "audit", workspace: ws, enabled: false }),
+    // The browser payload carries the server-computed nextRunAt and an
+    // arbitrary extra key; the proxy strips to the schedule schema so neither
+    // is ever persisted by the hub.
+    body: JSON.stringify({ id: "nightly", title: "Nightly audit", cron: "0 9 * * *", prompt: "audit", workspace: ws, enabled: false, nextRunAt: "2030-01-01T00:00:00.000Z", injected: true }),
   });
   assert.equal(saved.status, 200);
-  const paused = await fetch(`${base}/api/schedules`).then((r) => r.json() as Promise<{ schedules: Array<{ enabled?: boolean }> }>);
+  const paused = await fetch(`${base}/api/schedules`).then((r) => r.json() as Promise<{ schedules: Array<{ enabled?: boolean; nextRunAt?: unknown; injected?: unknown }> }>);
   assert.equal(paused.schedules[0]?.enabled, false);
+  assert.notEqual(paused.schedules[0]?.nextRunAt, "2030-01-01T00:00:00.000Z", "nextRunAt is recomputed, never persisted from the client");
+  assert.equal(paused.schedules[0]?.injected, undefined, "unknown client keys are stripped before the hub persists them");
 
   // Guards mirror the other mutation endpoints.
   const crossOrigin = await fetch(`${base}/api/schedules/delete`, {
