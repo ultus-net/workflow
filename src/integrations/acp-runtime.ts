@@ -131,7 +131,7 @@ async function createOpencodeRuntime(
   const scratchHome = resolve(homedir(), ".workflow", "acp-home");
   mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
 
-  const apiKey = loadUpstreamApiKey();
+  const apiKey = loadOpencodeUpstreamApiKey();
   const upstream = process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai";
   // Hub-owned Auto Router pool (default on for OpenRouter upstreams): resolve
   // `~...-latest` aliases in the proxy so agents never need a client plugin.
@@ -396,30 +396,17 @@ async function createClineRuntime(
   }
 }
 
-/** Resolves the self-contained `opencode` binary (env override, else PATH). */
-function resolveOpencodeExecutable(): string {
-  const override = process.env.WORKFLOW_OPENCODE_BIN;
-  if (override !== undefined) return realpathSync(override);
-  for (const dir of (process.env.PATH ?? "").split(":")) {
-    if (dir.length === 0) continue;
-    const candidate = join(dir, "opencode");
-    if (existsSync(candidate)) return realpathSync(candidate);
-  }
-  throw new Error("opencode binary not found on PATH (set WORKFLOW_OPENCODE_BIN)");
-}
-
 /** Path to the operator's OpenCode credential store, when present. */
 export function opencodeAuthPath(): string {
   return resolve(homedir(), ".local", "share", "opencode", "auth.json");
 }
 
 /**
- * OpenCode over ACP, launched contained like Cline. OpenCode manages its own
- * provider auth (no metering proxy), so the runtime carries no usage meter;
- * the surface falls back to the driver's ACP usage_update for context/cost.
- * Its credential store and a minimal, plugin-free config are bound into a
- * private scratch HOME so the contained agent never sees the operator's real
- * home, session database, or guard plugin.
+ * OpenCode over ACP, launched contained like Cline. The runtime uses the
+ * hub-owned metering proxy so Auto Router settings apply without a client plugin.
+ * The private scratch HOME receives only the proxy config and placeholder
+ * credential, so the contained agent never sees the operator's real credentials,
+ * session database, or guard plugin.
  */
 export async function createConfiguredOpencodeAcpRuntime(
   application: WorkflowApplication,
@@ -428,84 +415,7 @@ export async function createConfiguredOpencodeAcpRuntime(
   resumeFrom?: string,
   options: { readonly permissionBroker?: PermissionBroker | undefined } = {},
 ): Promise<WorkflowAcpRuntime> {
-  const executable = resolveOpencodeExecutable();
-  const authSource = opencodeAuthPath();
-  if (!existsSync(authSource)) {
-    throw new Error("OpenCode credentials not found (~/.local/share/opencode/auth.json)");
-  }
-  // Sweep homes left by crashed processes before writing a fresh credential
-  // copy — a live credential must never linger in a dead runtime's scratch.
-  const acpHome = resolve(homedir(), ".workflow", "acp-home");
-  pruneStaleOpencodeHomes(acpHome);
-  // The home name encodes the pid so the sweep can distinguish live owners.
-  const home = join(acpHome, `opencode-${process.pid}-${randomUUID()}`);
-  mkdirSync(join(home, ".local", "share", "opencode"), { recursive: true, mode: 0o700 });
-  writeFileSync(join(home, ".local", "share", "opencode", "auth.json"), readFileSync(authSource), { mode: 0o600 });
-  mkdirSync(join(home, ".config", "opencode"), { recursive: true, mode: 0o700 });
-  writeFileSync(join(home, ".config", "opencode", "opencode.json"), "{}\n", { encoding: "utf8", mode: 0o600 });
-
-  const resume = resumeFrom ?? process.env.WORKFLOW_ACP_RESUME;
-  const driver = AcpSessionDriver.contained({
-    containment: new LinuxBubblewrapContainment(),
-    launch: {
-      executable,
-      args: ["acp"],
-      workspace,
-      home,
-      environment: { PATH: process.env.PATH ?? "" },
-    },
-    authorize: options.permissionBroker === undefined
-      ? application
-      : (action: ProposedToolAction) =>
-        options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
-    workspace,
-    workspaceSessionId: `acp-opencode-${randomBytes(4).toString("hex")}`,
-    taskId,
-    ...(resume !== undefined ? { resumeFrom: resume } : {}),
-    onSkillRead: (skill) => {
-      try {
-        application.recordSkillRead(skill);
-      } catch {
-        // No active task yet: nothing to journal.
-      }
-    },
-  });
-  return {
-    driver,
-    session: new WorkflowCodingSession(driver),
-    // Direct OpenCode path: no loopback metering proxy, so no locally recorded
-    // usage — the provider's own spend management is the budget surface,
-    // stated honestly (the metering-proxy per-key backstop is proxy-only).
-    budgetMechanism: "server-side: provider account spend/credit limits (no local metering proxy on the direct OpenCode path); no local interactive caps",
-    async dispose() {
-      try {
-        await driver.dispose();
-      } finally {
-        // The scratch HOME holds a copy of the credential store; never leave it.
-        rmSync(home, { recursive: true, force: true });
-      }
-    },
-  };
-}
-
-/**
- * Removes opencode scratch homes whose owning process is gone, so a crashed
- * runtime cannot leave a live credential copy behind. Homes belonging to live
- * processes (a concurrent web service or TUI) are preserved.
- */
-function pruneStaleOpencodeHomes(acpHome: string): void {
-  if (!existsSync(acpHome)) return;
-  for (const entry of readdirSync(acpHome)) {
-    const match = /^opencode-(\d+)-/.exec(entry);
-    if (match === null) continue;
-    const pid = Number(match[1]);
-    if (pid === process.pid) continue;
-    try {
-      process.kill(pid, 0);
-    } catch {
-      rmSync(join(acpHome, entry), { recursive: true, force: true });
-    }
-  }
+  return createOpencodeRuntime(application, workspace, taskId, resumeFrom, undefined, options);
 }
 
 /**
@@ -515,6 +425,29 @@ function pruneStaleOpencodeHomes(acpHome: string): void {
  * `WORKFLOW_UPSTREAM_KEY` / `~/.config/workflow/upstream-key` are canonical,
  * with back-compat reads of `CLINE_API_KEY` / `~/.config/workflow/cline-api-key`.
  */
+
+export function openrouterAuthKeyFromAuth(auth: unknown): string | undefined {
+  if (typeof auth !== "object" || auth === null || Array.isArray(auth)) return undefined;
+  const openrouter = (auth as Record<string, unknown>).openrouter;
+  if (typeof openrouter !== "object" || openrouter === null || Array.isArray(openrouter)) return undefined;
+  const key = (openrouter as Record<string, unknown>).key;
+  return typeof key === "string" && key.trim().length > 0 ? key.trim() : undefined;
+}
+
+function loadOpencodeUpstreamApiKey(): string {
+  try {
+    return loadUpstreamApiKey();
+  } catch (error) {
+    try {
+      const auth = JSON.parse(readFileSync(opencodeAuthPath(), "utf8"));
+      const key = openrouterAuthKeyFromAuth(auth);
+      if (key !== undefined) return key;
+    } catch {
+      // Fall through to the canonical upstream-key error.
+    }
+    throw error;
+  }
+}
 
 /**
  * W048: the goose (AAIF) runtime — the third `WORKFLOW_ACP_AGENT` kind and
