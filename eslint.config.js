@@ -8,7 +8,7 @@ export default tseslint.config(
   {
     files: ["test/fixtures/**/*.mjs"],
     languageOptions: {
-      globals: { Buffer: "readonly", process: "readonly", console: "readonly", setTimeout: "readonly" },
+      globals: { Buffer: "readonly", process: "readonly", console: "readonly", setTimeout: "readonly", WebSocket: "readonly" },
     },
   },
 );

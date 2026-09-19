@@ -4,7 +4,6 @@ import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 
 import type { CodingSessionEvent, CodingSessionState } from "../application/coding-session.js";
-import { formatStyleStatus, nextBuildStyle, nextSpeechStyle, resolveStyleFromEnv, type SessionStyle } from "../integrations/response-style.js";
 import type { ReviewFollowUp } from "../integrations/review-followups.js";
 import type { HubGateObservability } from "../cli/hub-snapshot.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
@@ -116,8 +115,6 @@ export function WorkflowTui({
   profile,
   profilePath,
   onInspectSymbol,
-  style: initialStyle,
-  onStyleChange,
   onModeChange,
   reviewFollowUps,
   gateObservability,
@@ -134,8 +131,6 @@ export function WorkflowTui({
   readonly profile?: LearnerProfile;
   readonly profilePath?: string;
   readonly onInspectSymbol?: (symbol: string) => void;
-  readonly style?: SessionStyle;
-  readonly onStyleChange?: (style: SessionStyle) => void;
   readonly onModeChange?: (mode: PedagogicalMode) => void;
   readonly reviewFollowUps?: readonly ReviewFollowUp[];
   readonly gateObservability?: () => HubGateObservability | undefined;
@@ -246,7 +241,6 @@ export function WorkflowTui({
   const [scrollOffset, setScrollOffset] = useState(0);
   const [showWorkflow, setShowWorkflow] = useState(false);
   const [mode, setMode] = useState<PedagogicalMode>("autonomous");
-  const [style, setStyle] = useState<SessionStyle>(() => initialStyle ?? resolveStyleFromEnv(process.env));
   const [showProfile, setShowProfile] = useState(false);
   const [learnerProfile, setLearnerProfile] = useState<LearnerProfile | undefined>(profile);
   const [showHint, setShowHint] = useState(false);
@@ -335,20 +329,6 @@ export function WorkflowTui({
       return !value;
     });
   };
-  const cycleSpeech = (): void => {
-    setStyle((current) => {
-      const next = { ...current, speech: nextSpeechStyle(current.speech) };
-      onStyleChange?.(next);
-      return next;
-    });
-  };
-  const cycleBuild = (): void => {
-    setStyle((current) => {
-      const next = { ...current, build: nextBuildStyle(current.build) };
-      onStyleChange?.(next);
-      return next;
-    });
-  };
   const openInspect = (): void => setShowHint(true);
   const toggleWorkflow = (): void => setShowWorkflow((value) => !value);
   const agentConfigOptions = (sessionConfigOptions?.() ?? []).filter(isInteractiveConfigOption);
@@ -368,8 +348,6 @@ export function WorkflowTui({
   // need the keyboard (symbol inspect) close it.
   const menuItems = [
     { label: `Mode: ${MODE_LABELS[mode]}`, run: cycleMode, closes: false },
-    { label: `Speech: ${style.speech}`, run: cycleSpeech, closes: false },
-    { label: `Build: ${style.build}`, run: cycleBuild, closes: false },
     { label: "Learner profile", run: toggleProfile, closes: false },
     { label: "Inspect symbol", run: openInspect, closes: true },
     { label: "Workflow details", run: toggleWorkflow, closes: false },
@@ -696,7 +674,6 @@ export function WorkflowTui({
   const visibleTranscript = transcript.slice(Math.max(0, end - transcriptRows), end);
   const taskSummary = summarizeTasks(snapshot);
   const enforcement = snapshot.enforcementLevel.toUpperCase();
-  const styleStatus = formatStyleStatus(style);
 
   return (
     <Box flexDirection="column" alignItems="center">
@@ -712,7 +689,6 @@ export function WorkflowTui({
           <Box justifyContent="space-between">
             <Text>
               <Text bold>Mode: {MODE_LABELS[mode]}</Text>
-              {styleStatus.length > 0 ? <Text dimColor> {styleStatus}</Text> : null}
               {connectionLabel !== undefined ? <Text dimColor> · {connectionLabel}</Text> : null}
             </Text>
           </Box>

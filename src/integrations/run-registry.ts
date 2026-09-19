@@ -5,7 +5,7 @@ import { WorkflowApplication } from "../application/workflow.js";
 import { evidenceId, observationId, taskId, type TaskId } from "../kernel/contracts.js";
 import type { TaskGraph } from "../kernel/task-graph.js";
 import { countReferencedAxes, MIN_REFERENCED_AXES } from "../review/rubric.js";
-import type { WorkflowApplicationResolver, WorkflowRunController } from "./cline-tui-bridge.js";
+import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-controller.js";
 import type { HubReviewerResult } from "./hub-reviewer.js";
 
 /** Launches the hub-owned reviewer for a run (plan Task A2). */

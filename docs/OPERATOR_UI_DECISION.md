@@ -20,7 +20,7 @@ Current upstream documentation was evaluated for AI SDK 7 and assistant-ui:
   cards, reasoning sections, scrolling, and approval prompts.
 - AI SDK tool approvals are part of its agent/tool execution lifecycle. Using
   that lifecycle as Workflow's approval authority would duplicate the hub's
-  `/before-tool` authorization and `/bash` containment boundaries.
+  `/bash` authorization and containment boundaries.
 - assistant-ui supports React web and React Ink surfaces with shared primitives.
   Its custom-runtime documentation explicitly supports externally owned message
   state and custom backends. `ExternalStoreRuntime` is intended for applications

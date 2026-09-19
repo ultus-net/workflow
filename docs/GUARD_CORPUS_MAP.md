@@ -14,14 +14,14 @@ the hub layer today; documented honestly.
 
 | Corpus family (plugin cases) | Hub-side home | Status |
 |---|---|---|
-| Cline adapter fail-closed on malformed commands/reads/patches (empty batches, ambiguous fields, unmapped tools) | `src/adapters/cline.ts` + `test/cline-adapter.test.ts`, `test/adapter-conformance.test.ts` | **Ported** |
+| ~~Cline adapter fail-closed on malformed commands/reads/patches (empty batches, ambiguous fields, unmapped tools)~~ | was `src/adapters/cline.ts` + `test/cline-adapter.test.ts`, `test/adapter-conformance.test.ts` | **Removed (W050 step 6, 2026-09-18)** — the Cline SDK adapter went with the vendored runtime; the shared conformance trace now covers OpenCode and ACP |
 | ACP adapter fail-closed (malformed permission events, locations, subjects) + spawn classification | `src/adapters/acp.ts` + `test/acp-adapter.test.ts`, `test/acp-permission.test.ts` | **Ported** |
 | Destructive-command policy (rm, force push, base64 pipes, script laundering, compound shell) | `guardCheck` in the vendored `workflow-guard-mcp` enforced by the hub on hub surfaces and by the hub guard dispatcher on the in-process ACP surfaces (plan G2) + `test/hub-guard-interception.test.ts` | **Ported** (hub denies on policy; guard dispatcher owns the verb/matcher corpus) |
-| Shell matching evasion: wrapper/brace wrappers, chained commands (`true && git push`), cluster-CLI option smuggling, pager detection | `workflow-guard-mcp`'s shell-safety/destructive policies, evaluated at `/before-tool`, `/bash`, and the ACP resolver | **Ported** (the matchers live in the vendored guard server — the corpus's evasion cases are its tests, kept alive in the toolbox) |
+| Shell matching evasion: wrapper/brace wrappers, chained commands (`true && git push`), cluster-CLI option smuggling, pager detection | `workflow-guard-mcp`'s shell-safety/destructive policies, evaluated at `/bash` and in the ACP resolver (`src/adapters/acp-workflow-resolver.ts`) | **Ported** (the matchers live in the vendored guard server — the corpus's evasion cases are its tests, kept alive in the toolbox) |
 | Symlink path bypasses (ancestor resolution, dangling symlinks, symlinked worktree exclusions) | Hub workspace confinement (`pathWithinWorkspace`, canonical-existing-path) + `workflow-fs-exec-mcp` `resolveWithinWorkspace` with lstat-based ancestor walk and full-final-symlink resolution (`mcp-toolbox/apps/workflow-fs-exec-mcp/test/hub-client.test.ts` fs-bounds, incl. the dangling-final-symlink regression — caught as a live P0 by review on 2026-09-15 and fixed the same day; kernel-side symlink denial covered by `test/application.test.ts`) | **Ported** |
-| Git write boundaries (external repos, protected branches, `git -C` escapes) | Guard `git` policy at `/before-tool` + `/bash` containment; worktree tools exist hub-side | **Probe** (needs gated real-agent runs to claim enforced parity per agent) |
+| Git write boundaries (external repos, protected branches, `git -C` escapes) | Guard `git` policy at `/bash` containment + the ACP resolver; worktree tools exist hub-side | **Probe** (needs gated real-agent runs to claim enforced parity per agent) |
 | Settings tamper (`allow-live` escape, settings file writes) | Hub owns all settings; the agent never sees the real key (metering proxy) and its HOME is the scratch jail | **Ported by architecture** (the escape surface no longer exists on contained runs) |
-| Secrets/credential policy | `credentials` capability default-deny; guard secrets policy at `/before-tool`; contained processes start with an empty environment | **Ported** |
+| Secrets/credential policy | `credentials` capability default-deny; guard secrets policy in the ACP resolver / `/bash`; contained processes start with an empty environment | **Ported** |
 | Task-list gating (no silent deletion, single/parent task focus, all-done verification) | Kernel task graph + `TASK_NOT_IN_PROGRESS` denies; `SKILL_DELIVERY_REQUIRED`; evidence freshness | **Ported** (superset: the kernel enforces transitions the plugin could only check) |
 | Stale evidence / mutation freshness (parent-child sessions) | Kernel mutation epochs + per-task skill-read freshness | **Ported** |
 | Compaction hooks (`experimental.session.compacting` bridge) | **Hole** — no ACP equivalent (plan G7 documented regression); the compaction ↔ memory bridge stays on the plugin surface until ACP compaction signaling stabilizes. W047 mitigation pairing: restart discipline, resume-backed (session-id projection + `WORKFLOW_ACP_RESUME` + probe-proven `session/load`), and context/usage signals (incl. compaction kinds once stable) project into the session record as advisory `agent-context` events — visibility, never control | **Hole** |
@@ -73,6 +73,10 @@ verdict: the `task` spawn projected and permission-gated at the hub;
 `test/acp-opencode-mcp-mount-probe.test.ts` — positive on both hub-written
 config surfaces, `list_skills` returned the fixture skill, F1/G3 unblocked
 on OpenCode; `test/acp-opencode-resume-probe.test.ts` — model context
-restored across restart, exact keyword recalled); tool-matrix probes
-re-run per pinned Cline bump. All probes skip without their env gate;
-evidence and verdicts live in the docs referenced above.
+restored across restart, exact keyword recalled). The vendored-Cline tool-matrix
+probes were pinned to the now-removed checkout, so their Red/negative verdicts
+apply to the retired surface; the Cline connector must be re-probed against
+stock `cline --acp` (probe-PENDING on 3.0.62). The vendored-Cline SDK runtime,
+`.workflow-cline/` checkout, and Workflow patch were removed in W050 step 6
+(2026-09-18). All probes skip without their env gate; evidence and verdicts live
+in the docs referenced above.
