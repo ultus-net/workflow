@@ -82,8 +82,9 @@ A temporary loopback `opencode serve` probe on 2026-09-20 observed:
 - `/api/experimental/session/stats` → `200`, envelope `{ data: { range, sessions, subagents,
   prompts, steps, tokens, cost, tools.totals, activeDays, activity, models } }`; tool totals include
   `calls`, `succeeded`, `failed`, and `unfinished`;
-- `/event` → `200` but returned `text/html` in this probe, not an accepted event-stream response.
-  Event routing/identity is therefore **not qualified** and remains a probe blocker;
+- `/event` and `/global/event` → `200` but returned `text/html`; `/api/event` → `200` with
+  `text/event-stream` when authenticated. The v2 qualification route is therefore `/api/event`;
+  event identity and replay semantics remain unqualified until the stream is consumed and inspected;
 - unauthenticated requests returned `401`; the probe used a temporary server password and did not
   persist it.
 
