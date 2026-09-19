@@ -247,8 +247,9 @@ async function createOpencodeRuntime(
          ? application
          : (action: ProposedToolAction) =>
            options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
-       onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
-       workspace,
+        onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
+        onTodoUpdate: (entries) => application.mirrorNativeTodos(entries),
+        workspace,
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
@@ -371,8 +372,9 @@ async function createClineRuntime(
          ? application
          : (action: ProposedToolAction) =>
            options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
-       onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
-       workspace,
+        onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
+        onTodoUpdate: (entries) => application.mirrorNativeTodos(entries),
+        workspace,
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
@@ -564,8 +566,9 @@ async function createGooseRuntime(
          ? application
          : (action: ProposedToolAction) =>
            options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
-       onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
-       workspace,
+        onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
+        onTodoUpdate: (entries) => application.mirrorNativeTodos(entries),
+        workspace,
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),

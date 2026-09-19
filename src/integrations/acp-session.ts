@@ -228,7 +228,8 @@ export class AcpSessionDriver implements CodingSessionDriver {
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
      onSkillRead?: (skill: string) => void;
-     onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
+      onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
+      onTodoUpdate?: (entries: readonly { readonly id?: string; readonly content: string; readonly status: "pending" | "in_progress" | "completed" | "cancelled" }[]) => void;
    }): AcpSessionDriver {
     const child = launchContainedAcpAgent(options.containment, options.launch);
     return new AcpSessionDriver({ ...options, child });
@@ -473,7 +474,11 @@ export class AcpSessionDriver implements CodingSessionDriver {
       const rawInput = rawWireText(update.update.rawInput);
       this.#toolTitles.set(callId, title);
       this.#toolCalls.set(callId, { title, toolKind, subjects, ...(rawInput !== undefined ? { rawInput } : {}) });
-      this.#projectTodoUpdate(title, rawInput);
+      try {
+        this.#projectTodoUpdate(title, rawInput);
+      } catch (error) {
+        return { type: "status", status: `todo ledger update rejected: ${error instanceof Error ? error.message : String(error)}` };
+      }
       return {
         type: "tool",
         callId,
