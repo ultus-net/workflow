@@ -15,6 +15,7 @@ import type {
 } from "../kernel/contracts.js";
 import { TaskGraph, isRunComplete, type StepTransitionResult } from "../kernel/task-graph.js";
 import { mutationGate, verifyingGate, type CheckpointLedger } from "../pedagogy/checkpoints.js";
+import { PolicyFailureTracker } from "./policy-failure-tracker.js";
 
 export interface WorkflowTaskProjection {
   readonly id: TaskId;
@@ -46,6 +47,7 @@ export class WorkflowApplication {
   // new task must re-read its required skills.
   readonly #taskRequiredSkills = new Map<TaskId, readonly string[]>();
   readonly #skillReads = new Map<string, TaskId>();
+  readonly #policyFailures = new PolicyFailureTracker();
 
   constructor(
     graph: TaskGraph,
@@ -66,6 +68,16 @@ export class WorkflowApplication {
 
   get allowedCapabilities(): ReadonlySet<ToolCapability> {
     return this.#capabilities;
+  }
+
+  /** Records a completed tool outcome so a session's failure breaker resets. */
+  recordToolOutcome(sessionId: string, outcome: "succeeded" | "failed" | "denied", tool = "unknown", reason = ""): void {
+    if (outcome === "succeeded") this.#policyFailures.recordSuccess(sessionId);
+    else if (outcome === "denied") this.#policyFailures.recordFailure({ sessionId, tool, reason });
+  }
+
+  policyFailureCount(sessionId: string): number {
+    return this.#policyFailures.count(sessionId);
   }
 
   /**
@@ -122,6 +134,13 @@ export class WorkflowApplication {
   }
 
   authorize(action: ProposedToolAction): PolicyDecision {
+    if (this.#policyFailures.isOpen(action.sessionId)) {
+      return {
+        kind: "deny",
+        code: "POLICY_CIRCUIT_BREAKER",
+        reason: `session ${action.sessionId} has repeated policy failures; operator intervention is required`,
+      };
+    }
     const capability = action.capability ?? (action.mutating ? "mutation" : "read");
     const requiredCapabilities = new Set([capability, ...(action.requiredCapabilities ?? [])]);
     const withheld = [...requiredCapabilities].find((required) => !this.allowedCapabilities.has(required));
