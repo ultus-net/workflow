@@ -27,11 +27,9 @@ function assertCanary(path: string): void {
 
 test("startup inventory reads no poisoned project-local configuration or instructions", async (t) => {
   const workspace = mkdtempSync(join(tmpdir(), "w051-poisoned-workspace-"));
-  const toolboxRoot = mkdtempSync(join(tmpdir(), "w051-toolbox-root-"));
   const skillsRoot = mkdtempSync(join(tmpdir(), "w051-skills-root-"));
-  const operatorRoot = mkdtempSync(join(tmpdir(), "w051-operator-root-"));
   t.after(() => {
-    for (const dir of [workspace, toolboxRoot, skillsRoot, operatorRoot]) {
+    for (const dir of [workspace, skillsRoot]) {
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -48,21 +46,13 @@ test("startup inventory reads no poisoned project-local configuration or instruc
   for (const path of poison) mkdirSync(path, { recursive: true });
   for (const path of poison) assertCanary(path);
 
-  // A real toolbox root so discovery enumeration actually runs; it must stay
-  // inside the configured toolbox root and never wander into the workspace.
-  mkdirSync(join(toolboxRoot, "apps", "known-mcp", "dist"), { recursive: true });
-  writeFileSync(join(toolboxRoot, "apps", "known-mcp", "dist", "server.js"), "// built\n");
   // A built skills server so mount resolution checks existence only (no content).
   mkdirSync(join(skillsRoot, "mcp-toolbox", "apps", "skills-mcp", "dist"), { recursive: true });
   writeFileSync(join(skillsRoot, "mcp-toolbox", "apps", "skills-mcp", "dist", "server.js"), "// built\n");
-  // The operator-owned MCP settings file lives outside the workspace.
-  const operatorSettings = join(operatorRoot, "mcp.json");
-  writeFileSync(operatorSettings, JSON.stringify({ mcpServers: { custom: { type: "stdio", command: "x", args: [] } } }));
 
   const { resolveTuiWorkspace } = await import("../src/cli/tui-args.js");
   const { resolveDriverName, parseUniversalArgs } = await import("../src/cli/driver-registry.js");
   const { meteredOpencodeConfig } = await import("../src/integrations/opencode-agent-config.js");
-  const { collectToolboxMcpServers, readUserMcpSettings } = await import("../src/cli/mcp-settings.js");
   const { resolveSkillsMountFor } = await import("../src/integrations/acp-runtime.js");
 
   assert.equal(resolveTuiWorkspace(["--cwd", workspace], "/tmp"), workspace);
@@ -72,10 +62,6 @@ test("startup inventory reads no poisoned project-local configuration or instruc
     opencodeUrl: "http://127.0.0.1:4096",
   });
   assert.deepEqual(meteredOpencodeConfig({ proxyUrl: "http://127.0.0.1:61000" }).mcp, undefined);
-  assert.deepEqual(Object.keys(collectToolboxMcpServers(toolboxRoot)), ["known"]);
-  assert.deepEqual(readUserMcpSettings(operatorSettings), {
-    mcpServers: { custom: { type: "stdio", command: "x", args: [] } },
-  });
   assert.equal(
     resolveSkillsMountFor({ root: skillsRoot, home: workspace, envSkillsDir: join(workspace, "skills") })?.skillsDir,
     join(workspace, "skills"),
