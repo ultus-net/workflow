@@ -13,4 +13,21 @@ server.registerTool("list_ci_runs", {
   if (process.env.CI_GITHUB_REPOSITORY !== "owner/repo") throw new Error("CI repository configuration was not forwarded");
   return { content: [{ type: "text", text: "ci evidence" }], structuredContent: { runs: [{ id: "github:42", revision: revision ?? "d".repeat(40), state: "completed", conclusion: "success" }], truncated: false } };
 });
+server.registerTool("run_verification", {
+  inputSchema: { url: z.string(), actions: z.array(z.unknown()).optional(), assertions: z.array(z.unknown()).optional(), screenshot: z.boolean().optional() },
+}, async ({ url, assertions }) => {
+  const passed = Array.isArray(assertions) ? assertions.length : 0;
+  return {
+    content: [{ type: "text", text: "browser evidence" }],
+    structuredContent: {
+      evidence: {
+        id: "0f9c1f3a-1111-4222-8333-444455556666",
+        hash: "f".repeat(64),
+        recordedAt: 1_700_000_000_000,
+        subject: { kind: "browser_page", url, origin: new URL(url).origin, pageHash: "e".repeat(64) },
+        result: { outcome: "passed", assertions: { passed, failed: 0 }, truncated: false },
+      },
+    },
+  };
+});
 await server.connect(new StdioServerTransport());

@@ -11,7 +11,7 @@ async function fixture() {
   const workspace = await mkdtemp(join(tmpdir(), "verification-mcp-workspace-")); const dataRoot = await mkdtemp(join(tmpdir(), "verification-mcp-data-"));
   const client = new Client({ name: "verification-black-box-test", version: "1.0.0" });
   const authority = join(process.cwd(), "test", "fake-authority.mjs");
-  await client.connect(new StdioClientTransport({ command: process.execPath, args: ["dist/server.js"], cwd: process.cwd(), stderr: "pipe", env: { VERIFICATION_ACCOUNTABILITY_DATA_DIR: dataRoot, VERIFICATION_ACCOUNTABILITY_TEST_COMMAND: process.execPath, VERIFICATION_ACCOUNTABILITY_TEST_ARGS: JSON.stringify([authority]), VERIFICATION_ACCOUNTABILITY_CI_COMMAND: process.execPath, VERIFICATION_ACCOUNTABILITY_CI_ARGS: JSON.stringify([authority]), CI_GITHUB_REPOSITORY: "owner/repo" } }));
+  await client.connect(new StdioClientTransport({ command: process.execPath, args: ["dist/server.js"], cwd: process.cwd(), stderr: "pipe", env: { VERIFICATION_ACCOUNTABILITY_DATA_DIR: dataRoot, VERIFICATION_ACCOUNTABILITY_TEST_COMMAND: process.execPath, VERIFICATION_ACCOUNTABILITY_TEST_ARGS: JSON.stringify([authority]), VERIFICATION_ACCOUNTABILITY_CI_COMMAND: process.execPath, VERIFICATION_ACCOUNTABILITY_CI_ARGS: JSON.stringify([authority]), VERIFICATION_ACCOUNTABILITY_BROWSER_COMMAND: process.execPath, VERIFICATION_ACCOUNTABILITY_BROWSER_ARGS: JSON.stringify([authority]), CI_GITHUB_REPOSITORY: "owner/repo" } }));
   return { workspace, dataRoot, client };
 }
 
@@ -49,4 +49,20 @@ test("emits MCP log and progress notifications for tool calls", async () => {
   assert.equal(progress[0]?.message, "start");
   await client.close();
   await Promise.all([rm(workspace, { recursive: true, force: true }), rm(dataRoot, { recursive: true, force: true })]);
+});
+
+test("compiled MCP admits browser verification evidence from the browser authority", async (t) => {
+  const { workspace, dataRoot, client } = await fixture(); t.after(async () => { await client.close(); await Promise.all([rm(workspace, { recursive: true, force: true }), rm(dataRoot, { recursive: true, force: true })]); });
+  const recorded = await client.callTool({ name: "record_verification", arguments: { workspaceRoot: workspace, request: { kind: "browser_verification", url: "https://app.test/", assertions: [{ kind: "element_exists", selector: "#output" }] } } });
+  assert.equal(recorded.isError, undefined);
+  const observation = (recorded.structuredContent as { observation: { source: { kind: string; capability: string; evidenceHash: string }; subject: { kind: string; url: string }; result: { outcome: string; passed: number } } }).observation;
+  assert.equal(observation.source.kind, "browser_verification");
+  assert.equal(observation.source.capability, "browser-verification-mcp/run_verification");
+  assert.equal(observation.source.evidenceHash, "f".repeat(64));
+  assert.equal(observation.subject.kind, "browser_page");
+  assert.equal(observation.subject.url, "https://app.test/");
+  assert.equal(observation.result.outcome, "passed");
+  assert.equal(observation.result.passed, 1);
+  const listed = await client.callTool({ name: "list_verifications", arguments: { workspaceRoot: workspace, currentSubject: { kind: "browser_page", url: "https://app.test/", pageHash: "e".repeat(64) } } });
+  assert.equal(((listed.structuredContent as { observations: Array<{ freshness: string }> }).observations[0]?.freshness), "fresh");
 });
