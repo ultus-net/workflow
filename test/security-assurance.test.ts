@@ -158,3 +158,31 @@ test("the honesty rules stay pinned: advisory is never upgraded, residuals stay 
   assert.ok(doc.includes("discipline honest clients only"), "the same-user honesty limit must stay stated");
   assert.ok(!/\bTODO\b|\bTBD\b/.test(doc), "the assurance case must not carry placeholder claims");
 });
+
+test("the external-standards citations stay pinned and dated (W064)", () => {
+  // Dated, append-only external-standards tracking. Each entry says what
+  // Workflow claims and does not claim relative to the standard; the
+  // no-certification disclaimer keeps the section from reading as conformance.
+  assert.ok(doc.includes("External standards and guidance tracking (W064, appended 2026-09-19)"), "the dated standards section must stay stated");
+  const standards = [
+    "NIST AI agent identity/authorization project",
+    "ACSC/CISA/UK-NCSC six-agency agentic-AI guidance",
+    "ISO/IEC 42001",
+    "Anthropic Model Hardware Standard research preview",
+    "OpenAI model misalignment reporting framework",
+    'Google DeepMind "Three Layers of Agent Security"',
+  ];
+  for (const standard of standards) {
+    assert.ok(doc.includes(standard), `external-standards tracking must keep citing ${standard}`);
+    assert.ok(doc.includes(`— ${standard}`), `each standard must keep a dated entry heading: ${standard}`);
+    // Anchor the not-claim to this entry, not just to the section: removing a
+    // pinned entry's not-claim fails even when another entry still has one.
+    const entry = doc.slice(doc.indexOf(`— ${standard}`)).split("\n### ")[0] ?? "";
+    assert.ok(entry.includes("**What Workflow does not claim:**"), `each pinned standard must keep an explicit not-claim: ${standard}`);
+  }
+  assert.ok(doc.includes("None of these entries asserts certification, conformance, or endorsement"), "the no-certification disclaimer must stay pinned");
+  // Append-only growth is allowed (at least one not-claim per pinned entry);
+  // removal of a pinned entry is caught by the per-standard assertions above.
+  const notClaims = [...doc.matchAll(/\*\*What Workflow does not claim:\*\*/g)].length;
+  assert.ok(notClaims >= standards.length, `every standards entry must keep an explicit not-claim (found ${notClaims}, expected at least ${standards.length})`);
+});
