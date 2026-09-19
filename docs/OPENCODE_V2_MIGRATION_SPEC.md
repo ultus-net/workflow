@@ -3,6 +3,7 @@
 **Status:** Proposed — 2026-09-20  
 **Version identity:** The `/v2/` documentation namespace is an API-generation label, not yet a pinned OpenCode release/version claim. A release/version must be recorded by the qualification probe before any `enforced` claim.  
 **Input:** OpenCode v2 HTTP API (`https://opencode.ai/v2/docs/api`), `llm-enhancements.md`,
+`lherron/agent-control-plane` (external architecture reference; not a dependency),
 `docs/TASK_TODO_LEDGER_PARITY.md`, `docs/superpowers/plans/2026-09-15-hub-owned-enforcement.md`,
 `docs/superpowers/plans/2026-09-19-standard-tui-background-authority.md`  
 **Decision:** Pause deeper C/D ACP integration until this boundary is approved.
@@ -85,6 +86,17 @@ permission reply route.
 Any operation not classified in this matrix is **not qualified** for Workflow integration. The matrix
 must be updated when the pinned OpenCode API adds an operation; an undocumented route is a qualification
 failure, not an implicit read-only route.
+
+## 2.4 External architecture reference: `lherron/agent-control-plane`
+
+The external `agent-control-plane` repository is a useful architecture reference, not a dependency.
+Its current spec separates durable ACP session/input/job/interface stores, an API/control-plane facade,
+HRC/agent execution, a wrkf-backed authoritative workflow engine, and normalized webhook events with
+idempotent replay.
+
+Workflow should borrow the separation and idempotency patterns where useful while preserving its own
+kernel/application/guard authority. The external ACP facade must not become canonical task/step truth,
+and Workflow must not delegate evidence, authorization, or plugin-retirement decisions to it.
 
 ## 3. Immutable ledger integration
 
