@@ -7,6 +7,7 @@ import {
   isAutoRouterModel,
   type AliasResolver,
 } from "./openrouter-auto-latest.js";
+import { enforceReplayPolicy } from "./model-replay-policy.js";
 
 export interface ModelUsageMetrics {
   readonly requests: number;
@@ -149,6 +150,22 @@ export async function createModelUsageProxy(options: {
       if (!isRecord(parsed)) {
         res.writeHead(400, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: "model usage proxy received non-object chat completion body" }));
+        return;
+      }
+      // W070b slice 1: enforce the model's assistant-message replay policy at
+      // the wire boundary. K3 is rejected on a stripped replay; DeepSeek
+      // synthesized tool-call turns are diverted to the Anthropic path. This
+      // is harness correctness — it rejects malformed replays, it does not
+      // guarantee model behavior.
+      const replay = enforceReplayPolicy(parsed);
+      if (replay.action === "reject") {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: replay.reason, policy: replay.policy.family, violations: replay.violations }));
+        return;
+      }
+      if (replay.action === "route-anthropic") {
+        res.writeHead(409, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: replay.reason, policy: replay.policy.family, violations: replay.violations }));
         return;
       }
       // Hub-owned Auto Router pool: resolve `~...-latest` aliases to concrete

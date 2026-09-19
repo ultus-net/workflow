@@ -58,11 +58,13 @@ test("returns structured allow and deny policy decisions", async () => {
     arguments: { action: "file_write", path: ".env" },
   });
   assert.equal(denied.isError, undefined);
-  assert.deepEqual(denied.structuredContent, {
-    decision: "deny",
-    policy: "protected-path",
-    reason: "secret credential path",
-  });
+  const deniedContent = denied.structuredContent as { decision: string; policy: string; reason: string };
+  assert.equal(deniedContent.decision, "deny");
+  assert.equal(deniedContent.policy, "protected-path");
+  // W070b slice 4a: the denial carries a short imperative redirect naming the
+  // expected tool class after the base reason.
+  assert.match(deniedContent.reason, /^secret credential path Expected: /);
+  assert.match(deniedContent.reason, /file-write tool/);
 });
 
 test("reports advisory status through the public tool", async () => {

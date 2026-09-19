@@ -1,4 +1,9 @@
 import type { DecisionBrief, DiagnosticLesson, LearningOpportunity } from "../pedagogy/contracts.js";
+import {
+  createToolExpectedTurnSteering,
+  type ToolExpectedTurnScope,
+  type ToolExpectedTurnStats,
+} from "./tool-expected-turn.js";
 
 export type CodingSessionEvent =
   | { readonly type: "user"; readonly text: string }
@@ -65,6 +70,13 @@ export interface CodingSessionDriver {
   usageSnapshot?(): { inputTokens: number; outputTokens: number };
 }
 
+export interface ToolExpectedTurnPolicyOptions {
+  readonly scope: () => ToolExpectedTurnScope;
+  readonly expectedToolClass?: string;
+  readonly maxRetries?: number;
+  readonly onEscalate?: (info: { readonly message: string; readonly stats: ToolExpectedTurnStats }) => void;
+}
+
 export class WorkflowCodingSession {
   readonly #listeners = new Set<(event: CodingSessionEvent) => void>();
   #state: CodingSessionState = { state: "idle" };
@@ -72,6 +84,8 @@ export class WorkflowCodingSession {
   // running are queued and submitted in order when the turn ends. Cancellation
   // clears the queue — a cancelled turn never auto-continues.
   #queue: readonly { readonly prompt: string; readonly images: readonly CodingSessionImage[] }[] = [];
+  readonly #toolExpectedTurn: ReturnType<typeof createToolExpectedTurnSteering> | undefined;
+  readonly #toolExpectedPolicy: ToolExpectedTurnPolicyOptions | undefined;
 
   constructor(
     readonly driver: CodingSessionDriver,
@@ -83,12 +97,33 @@ export class WorkflowCodingSession {
        * session state still accepts events. Never a silent truncation.
        */
       readonly refusalGate?: () => string | undefined;
+      /**
+       * W070b slice 4b: bounded tool-expected-turn steering. When supplied,
+       * a no-tool turn on a mutation-scoped in-progress task gets at most
+       * `maxRetries` corrective re-prompts before escalating to the
+       * operator. Opt-in; absent means no steering.
+       */
+      readonly toolExpectedTurn?: ToolExpectedTurnPolicyOptions;
     } = {},
   ) {
     this.#refusalGate = options.refusalGate;
+    this.#toolExpectedPolicy = options.toolExpectedTurn;
+    this.#toolExpectedTurn =
+      options.toolExpectedTurn === undefined
+        ? undefined
+        : createToolExpectedTurnSteering({
+            scope: options.toolExpectedTurn.scope,
+            ...(options.toolExpectedTurn.expectedToolClass === undefined ? {} : { expectedToolClass: options.toolExpectedTurn.expectedToolClass }),
+            ...(options.toolExpectedTurn.maxRetries === undefined ? {} : { maxRetries: options.toolExpectedTurn.maxRetries }),
+          });
   }
 
   readonly #refusalGate: (() => string | undefined) | undefined;
+
+  /** W070b slice 4b counters for monitor visibility (undefined when steering is off). */
+  toolExpectedTurnStats(): ToolExpectedTurnStats | undefined {
+    return this.#toolExpectedTurn?.stats();
+  }
 
   subscribe(listener: (event: CodingSessionEvent) => void): () => void {
     this.#listeners.add(listener);
@@ -127,12 +162,36 @@ export class WorkflowCodingSession {
 
   async #runTurn(prompt: string, images: readonly CodingSessionImage[]): Promise<void> {
     this.#state = { state: "running" };
-    try {
-      await this.driver.start(prompt, (event) => this.#emit(event), images);
-    } catch (error) {
-      if (this.#state.state === "running") {
-        this.#emit({ type: "failed", reason: error instanceof Error ? error.message : "coding session failed" });
+    let currentPrompt = prompt;
+    for (;;) {
+      let sawToolCall = false;
+      try {
+        await this.driver.start(currentPrompt, (event) => {
+          if (event.type === "tool" || event.type === "tool-proposal") sawToolCall = true;
+          this.#emit(event);
+        }, images);
+      } catch (error) {
+        if (this.#state.state === "running") {
+          this.#emit({ type: "failed", reason: error instanceof Error ? error.message : "coding session failed" });
+        }
+        return;
       }
+      const steering = this.#toolExpectedTurn;
+      if (steering === undefined) return;
+      // Only a completed turn can be a stall; a failed/cancelled turn is not.
+      if (this.snapshot().state !== "completed") return;
+      const decision = steering.observe({ hadToolCall: sawToolCall });
+      if (decision.action === "none") return;
+      if (decision.action === "escalate") {
+        this.#emit({ type: "status", status: decision.message });
+        this.#toolExpectedPolicy?.onEscalate?.({ message: decision.message, stats: steering.stats() });
+        return;
+      }
+      this.#emit({ type: "status", status: `tool-expected turn: corrective re-prompt ${decision.attempt} (bounded steering, not enforcement)` });
+      // The corrective turn is a fresh turn; reset state so its own outcome
+      // is what surfaces to the session.
+      this.#state = { state: "running" };
+      currentPrompt = decision.prompt;
     }
   }
 
