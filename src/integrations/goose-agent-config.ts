@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 
 import { METERED_PLACEHOLDER_KEY } from "./model-usage-proxy.js";
+import { gooseExtensionLines, type McpServerSetting } from "./workflow-settings.js";
 
 /**
  * W048: the goose (AAIF) agent-kind configuration — the launch resolver and
@@ -179,21 +180,28 @@ export function gooseLaunchEnvironment(options: {
 export function gooseConfigYaml(options: {
   readonly skillsServerScript?: string | undefined;
   readonly skillsDir?: string | undefined;
+  /** Workflow-pushed MCP servers (the control plane's settings projection). */
+  readonly mcpServers?: readonly McpServerSetting[] | undefined;
 }): string | undefined {
-  if (options.skillsServerScript === undefined || options.skillsDir === undefined) return undefined;
-  return [
-    "# Hub-composed per-runtime goose configuration (W048).",
-    "extensions:",
-    "  skills-mcp:",
-    "    type: stdio",
-    "    name: skills-mcp",
-    "    enabled: true",
-    `    cmd: ${JSON.stringify(process.execPath)}`,
-    `    args: ${JSON.stringify([options.skillsServerScript])}`,
-    "    env_keys: []",
-    "    envs:",
-    `      SKILLS_MCP_DIR: ${JSON.stringify(options.skillsDir)}`,
-    "    timeout: 300",
-    "",
-  ].join("\n");
+  const skills = options.skillsServerScript !== undefined && options.skillsDir !== undefined;
+  const mcpServers = options.mcpServers ?? [];
+  if (!skills && mcpServers.length === 0) return undefined;
+  const lines = ["# Hub-composed per-runtime goose configuration (W048).", "extensions:"];
+  if (skills) {
+    lines.push(
+      "  skills-mcp:",
+      "    type: stdio",
+      "    name: skills-mcp",
+      "    enabled: true",
+      `    cmd: ${JSON.stringify(process.execPath)}`,
+      `    args: ${JSON.stringify([options.skillsServerScript])}`,
+      "    env_keys: []",
+      "    envs:",
+      `      SKILLS_MCP_DIR: ${JSON.stringify(options.skillsDir)}`,
+      "    timeout: 300",
+    );
+  }
+  lines.push(...gooseExtensionLines(mcpServers));
+  lines.push("");
+  return lines.join("\n");
 }

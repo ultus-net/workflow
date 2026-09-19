@@ -1449,6 +1449,126 @@ body {
 
 .settings-docs { padding-top: 0.2rem; }
 
+/* Fullscreen settings page: the same chrome as the modal, filling the viewport
+   with a section nav. `.settings-dialog` is retained on the element so the
+   global open-chrome guards and the e2e selector keep working. */
+.settings-page {
+  width: 100%;
+  max-height: none;
+  height: 100vh;
+  height: 100dvh;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.settings-page-head { gap: 0.9rem; }
+
+.settings-page-title {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-page-body {
+  display: grid;
+  grid-template-columns: 12rem minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.75rem 0.6rem;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.settings-nav-item {
+  text-align: left;
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+}
+
+.settings-nav-item:hover { color: var(--text); border-left-color: var(--border-strong); }
+
+.settings-content {
+  overflow-y: auto;
+  padding: 0.5rem clamp(1rem, 4vw, 3rem) 3rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.settings-content .settings-section { max-width: 52rem; }
+.settings-content > div[id] { scroll-margin-top: 0.75rem; }
+
+.settings-subgroup {
+  margin-top: 0.6rem;
+  padding-top: 0.4rem;
+  border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+}
+
+.settings-subgroup h4 {
+  margin: 0.3rem 0 0.2rem;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+}
+
+.settings-pattern-list { color: var(--text); font-family: var(--font-mono); font-size: 0.7rem; }
+.settings-error { color: var(--danger, #e05252); font-size: 0.75rem; }
+
+.settings-scope { display: inline-flex; gap: 0.3rem; margin: 0.2rem 0 0.4rem; }
+
+.mcp-row-controls { display: inline-flex; align-items: center; gap: 0.35rem; }
+
+.mcp-editor { margin-top: 0.5rem; }
+
+.mcp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0.35rem 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.mcp-field input,
+.mcp-field select,
+.mcp-field textarea {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8rem;
+  border-radius: var(--radius-s);
+  padding: 0.3rem 0.5rem;
+  width: 100%;
+}
+
+.mcp-field-inline { flex-direction: row; align-items: center; gap: 0.5rem; }
+.mcp-field-inline input { width: auto; }
+.mcp-editor-actions { display: inline-flex; gap: 0.5rem; margin-top: 0.4rem; }
+
+@media (max-width: 700px) {
+  .settings-page-body { grid-template-columns: 1fr; }
+  .settings-nav {
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
 [data-theme="light"] .settings-dialog { box-shadow: 0 12px 40px rgba(16, 18, 22, 0.18); }
 
 @media (max-width: 600px) {

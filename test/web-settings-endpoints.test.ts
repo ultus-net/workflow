@@ -1,0 +1,139 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test, { type TestContext } from "node:test";
+
+import {
+  TaskGraph,
+  WorkflowApplication,
+  createWorkflowWebServer,
+  hostCapabilities,
+} from "../src/index.js";
+import {
+  normalizeSettings,
+  readSettingsFile,
+  settingsPaths,
+  writeSettingsFile,
+} from "../src/integrations/workflow-settings.js";
+
+/** Starts the web server against a throwaway home + workspace so the settings
+ * files never touch the operator's real config. */
+async function startServer(context: TestContext): Promise<{ base: string; home: string; workspace: string }> {
+  const home = mkdtempSync(join(tmpdir(), "wf-web-mcp-home-"));
+  const workspace = mkdtempSync(join(tmpdir(), "wf-web-mcp-ws-"));
+  context.after(() => {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(workspace, { recursive: true, force: true });
+  });
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, undefined, undefined, { home, workspace });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+  return { base: `http://127.0.0.1:${port}`, home, workspace };
+}
+
+const serverEntry = (name: string, enabled = true): Record<string, unknown> => ({
+  name,
+  enabled,
+  transport: "stdio",
+  command: "node",
+  args: ["server.js"],
+});
+
+test("MCP catalog: read defaults, write the workspace overlay, and merge with global", async (context) => {
+  const { base, home, workspace } = await startServer(context);
+  const paths = settingsPaths({ home, workspace });
+
+  const empty = await fetch(`${base}/api/settings/mcp`).then((response) => response.json()) as {
+    servers: unknown[]; workspaceOverlay: boolean;
+  };
+  assert.deepEqual(empty.servers, []);
+  assert.equal(empty.workspaceOverlay, true);
+
+  const write = await fetch(`${base}/api/settings/mcp`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ scope: "workspace", servers: [serverEntry("workspace-tools")] }),
+  });
+  assert.equal(write.status, 200);
+  assert.deepEqual(readSettingsFile(paths.workspace!).mcpServers.map((entry) => entry.name), ["workspace-tools"]);
+
+  // A global server is seeded directly, then the effective read merges both.
+  writeSettingsFile(paths.global, normalizeSettings({ mcpServers: [serverEntry("global-tools")] }));
+  const merged = await fetch(`${base}/api/settings/mcp`).then((response) => response.json()) as {
+    servers: { name: string }[]; global: { name: string }[]; workspace: { name: string }[];
+  };
+  assert.deepEqual(merged.servers.map((entry) => entry.name).sort(), ["global-tools", "workspace-tools"]);
+  assert.deepEqual(merged.global.map((entry) => entry.name), ["global-tools"]);
+  assert.deepEqual(merged.workspace.map((entry) => entry.name), ["workspace-tools"]);
+});
+
+test("MCP catalog: workspace scope wins on name conflict", async (context) => {
+  const { base, home, workspace } = await startServer(context);
+  const paths = settingsPaths({ home, workspace });
+  writeSettingsFile(paths.global, normalizeSettings({ mcpServers: [{ ...serverEntry("shared"), command: "global-command" }] }));
+  writeSettingsFile(paths.workspace!, normalizeSettings({ mcpServers: [{ ...serverEntry("shared"), command: "workspace-command" }] }));
+  const merged = await fetch(`${base}/api/settings/mcp`).then((response) => response.json()) as {
+    servers: { name: string; command: string }[];
+  };
+  assert.equal(merged.servers.filter((entry) => entry.name === "shared").length, 1);
+  assert.equal(merged.servers.find((entry) => entry.name === "shared")?.command, "workspace-command");
+});
+
+test("MCP catalog: rejects cross-origin, non-JSON, and malformed bodies", async (context) => {
+  const { base } = await startServer(context);
+
+  const crossOrigin = await fetch(`${base}/api/settings/mcp`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "http://evil.example" },
+    body: JSON.stringify({ scope: "workspace", servers: [] }),
+  });
+  assert.equal(crossOrigin.status, 403);
+
+  const noJson = await fetch(`${base}/api/settings/mcp`, {
+    method: "POST",
+    headers: { "content-type": "text/plain" },
+    body: "nope",
+  });
+  assert.equal(noJson.status, 415);
+
+  const badServers = await fetch(`${base}/api/settings/mcp`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ scope: "workspace", servers: "not-an-array" }),
+  });
+  assert.equal(badServers.status, 400);
+});
+
+test("agent preferences persist as launch defaults and merge per key", async (context) => {
+  const { base, home, workspace } = await startServer(context);
+
+  const first = await fetch(`${base}/api/settings/agents`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agent: "opencode", preference: { model: "openrouter/auto" } }),
+  });
+  assert.equal(first.status, 200);
+  const second = await fetch(`${base}/api/settings/agents`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agent: "opencode", preference: { mode: "plan" } }),
+  });
+  assert.equal(second.status, 200);
+
+  const stored = readSettingsFile(settingsPaths({ home, workspace }).workspace!);
+  assert.deepEqual(stored.agents.opencode, { model: "openrouter/auto", mode: "plan" });
+
+  const missing = await fetch(`${base}/api/settings/agents`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agent: "opencode", preference: {} }),
+  });
+  assert.equal(missing.status, 400);
+});

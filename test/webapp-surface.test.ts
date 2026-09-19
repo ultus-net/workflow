@@ -7,7 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { ConfigChips } from "../src/ui/webapp/app.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
-import { AgentOptionsSection, AgentSection, AppearanceSection } from "../src/ui/webapp/settings-dialog.js";
+import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection } from "../src/ui/webapp/settings-dialog.js";
 import { listPalettes } from "../src/ui/webapp/theme/palettes.js";
 import { DEFAULT_WEB_AGENT, listWebAgents } from "../src/ui/web-agents.js";
 import type { WebConfigOption } from "../src/ui/web-config-options.js";
@@ -114,3 +114,39 @@ test("the settings Appearance section exposes the full palette catalog plus the 
   assert.ok(markup.includes('class="palette-swatch"'), "every palette chip must carry a swatch preview");
   assert.equal(count(markup, 'role="option"'), palettes.length + 1, "one chip per catalog theme plus the amber default");
 });
+
+test("settings page surfaces the Workflow-owned MCP catalog and states launch-time application", () => {
+  const markup = renderToStaticMarkup(createElement(McpSection, {
+    mcp: {
+      servers: [
+        { name: "context7", enabled: true, transport: "http", url: "https://mcp.context7.com/mcp" },
+        { name: "guard", enabled: false, transport: "stdio", command: "node", args: ["server.js"] },
+      ],
+      scope: "workspace",
+      workspaceOverlay: true,
+      loading: false,
+      error: undefined,
+      setScope: noop,
+      upsert: async () => {},
+      remove: async () => {},
+      toggle: async () => {},
+    },
+  }));
+  assert.ok(markup.includes("MCP servers"), "the MCP catalog section must render");
+  assert.ok(markup.includes("context7") && markup.includes("guard"), "every configured server must be listed");
+  assert.ok(markup.includes("Global") && markup.includes("Workspace"), "both settings scopes must be selectable");
+  assert.ok(markup.includes("apply when a") && markup.includes("session starts"), "the page must state that MCP changes apply on the next session");
+  assert.ok(markup.includes("config-toggle"), "each server must carry an enable toggle");
+});
+
+test("agent options group boolean config options as tools and list remembered decisions", () => {
+  const markup = renderToStaticMarkup(createElement(AgentOptionsSection, {
+    options: FULL_OPTIONS,
+    setOption: noop,
+    patterns: { alwaysAllow: ["read_files"], alwaysReject: ["run_commands"] },
+  }));
+  assert.ok(markup.includes("Tools"), "boolean options must surface under a Tools heading");
+  assert.ok(markup.includes("Remembered tool decisions"), "remembered decisions must be listed");
+  assert.ok(markup.includes("read_files") && markup.includes("run_commands"), "the tool patterns must be named");
+});
+

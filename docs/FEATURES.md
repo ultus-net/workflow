@@ -82,7 +82,7 @@ trip over.
 | ~~Notification forwarding into agent UI~~ | **Removed (W050 step 6, 2026-09-18)** | was a vendored-Cline patch (`MCP notifications → tool-update surface`); with the patch gone no equivalent is claimed — ACP surfaces project agent-custom notifications as advisory `agent-context` events (W047) |
 | ~~Lazy tool discovery (`CLINE_LAZY_MCP_TOOLS=1`)~~ | **Removed (W050 step 6, 2026-09-18)** | the discover/call meta-tool layer lived in the vendored-Cline SDK runtime |
 | ~~MCP result truncation (48k middle-cut)~~ | **Removed (W050 step 6, 2026-09-18)** | the `src/extensions/mcp/manager.ts` middle-cut lived in the vendored-Cline patch; bounded results remain server-side in the toolbox (`mcp-toolbox/**/vendor/result-bounds.ts`) |
-| ~~Self-service MCP persistence~~ | **Removed (W050 step 6, 2026-09-18)** | `~/.workflow/cline_mcp_settings.json` and the mcp-settings module were retired in W050 (C3/C4) |
+| ~~Self-service MCP persistence~~ | **Removed (W050 step 6, 2026-09-18); superseded 2026-09-19** | The vendored-Cline `~/.workflow/cline_mcp_settings.json` path was retired in W050 (C3/C4). Replaced by the host-neutral Workflow-owned MCP catalog (`src/integrations/workflow-settings.ts`, global + workspace overlay) edited from the fullscreen browser settings page and **pushed** into each agent's launch config on the next session — see `docs/web-ui-feature-tiers.md`, `GET/POST /api/settings/mcp`. |
 
 ## Context & Memory
 

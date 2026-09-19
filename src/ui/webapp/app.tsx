@@ -19,6 +19,7 @@ import { UsageView } from "./usage-view.js";
 import { listPalettes } from "./theme/palettes.js";
 import { usePalette, useTheme } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
+import type { McpServerSetting } from "../../integrations/workflow-settings.js";
 import type { WebConfigOption } from "../web-config-options.js";
 
 interface SnapshotTask {
@@ -306,6 +307,96 @@ function useCapabilities() {
   return { capabilities: state, setCapability };
 }
 
+interface McpState {
+  readonly servers: readonly McpServerSetting[];
+  readonly global: readonly McpServerSetting[];
+  readonly workspace: readonly McpServerSetting[];
+  readonly workspaceOverlay: boolean;
+}
+
+/** Persists an explicit runtime preference (model/mode/effort) into the
+ * Workflow settings document so the control plane can push it as a launch
+ * default on the next session. Fire-and-forget. */
+function persistAgentPreference(agent: string, preference: { model?: string; mode?: string; thoughtLevel?: string }): void {
+  void fetch("/api/settings/agents", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agent, preference }),
+  }).catch(() => {});
+}
+
+/** Loads and edits the Workflow-owned MCP catalog. The displayed list is the
+ * effective merge (workspace over global); edits write the selected scope. */
+function useMcpSettings() {
+  const [state, setState] = useState<McpState | undefined>(undefined);
+  const [scope, setScopeState] = useState<"global" | "workspace">("global");
+  const [error, setError] = useState<string | undefined>(undefined);
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/settings/mcp");
+      if (!response.ok) return;
+      const loaded = await response.json() as McpState;
+      setState(loaded);
+      setScopeState((current) => (current === "workspace" && !loaded.workspaceOverlay ? "global" : current));
+    } catch {
+      // Keep the last good state; the page retries on the next open.
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const scopeServers = (current: McpState, target: "global" | "workspace"): readonly McpServerSetting[] =>
+    target === "global" ? current.global : current.workspace;
+
+  const commit = useCallback(async (servers: readonly McpServerSetting[], target: "global" | "workspace"): Promise<void> => {
+    setError(undefined);
+    try {
+      const response = await fetch("/api/settings/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scope: target, servers }),
+      });
+      if (!response.ok) {
+        setError(((await response.json()) as { error?: string }).error ?? "could not save MCP servers");
+        return;
+      }
+      await load();
+    } catch {
+      setError("could not save MCP servers");
+    }
+  }, [load]);
+
+  const upsert = useCallback(async (server: McpServerSetting): Promise<void> => {
+    if (state === undefined) return;
+    const list = scopeServers(state, scope);
+    const index = list.findIndex((entry) => entry.name === server.name);
+    const next = index === -1 ? [...list, server] : list.map((entry) => (entry.name === server.name ? server : entry));
+    await commit(next, scope);
+  }, [commit, scope, state, load]);
+
+  const remove = useCallback(async (name: string): Promise<void> => {
+    if (state === undefined) return;
+    await commit(scopeServers(state, scope).filter((entry) => entry.name !== name), scope);
+  }, [commit, scope, state]);
+
+  const toggle = useCallback(async (name: string, enabled: boolean): Promise<void> => {
+    if (state === undefined) return;
+    await commit(scopeServers(state, scope).map((entry) => (entry.name === name ? { ...entry, enabled } : entry)), scope);
+  }, [commit, scope, state]);
+
+  return {
+    servers: state?.servers ?? [],
+    scope,
+    workspaceOverlay: state?.workspaceOverlay ?? false,
+    loading: state === undefined,
+    error,
+    setScope: setScopeState,
+    upsert,
+    remove,
+    toggle,
+  };
+}
+
 /** Polls the agent-advertised session configuration; empty when the agent offers none. */
 /** Last-used value per ACP option, persisted locally so the operator's choices
  * survive reload and the agent reconnecting with its factory default. */
@@ -328,7 +419,7 @@ function writeLastUsed(id: string, value: string | boolean): void {
   }
 }
 
-function useConfigOptions(sessionId: string | undefined) {
+function useConfigOptions(sessionId: string | undefined, agent: string) {
   const [options, setOptions] = useState<WebConfigOption[]>([]);
   // Option ids whose last-used value we already pushed to the agent this
   // session, so a reconnect can't loop restore→default→restore.
@@ -342,6 +433,14 @@ function useConfigOptions(sessionId: string | undefined) {
   const setOption = useCallback((id: string, value: string | boolean): void => {
     // Optimistic: reflect the choice now, reconcile with the server response.
     writeLastUsed(id, value);
+    // Persist model/mode/effort as launch defaults so the control plane pushes
+    // the operator's choice into the agent config on the next session.
+    if (typeof value === "string") {
+      const category = options.find((option) => option.id === id)?.category;
+      if (category === "model") persistAgentPreference(agent, { model: value });
+      else if (category === "mode") persistAgentPreference(agent, { mode: value });
+      else if (category === "thought_level") persistAgentPreference(agent, { thoughtLevel: value });
+    }
     setOptions((previous) => previous.map((option) => option.id === id ? { ...option, currentValue: value } : option));
     void fetch(`/api/config-options${sessionSuffix}`, {
       method: "POST",
@@ -350,7 +449,7 @@ function useConfigOptions(sessionId: string | undefined) {
     }).then(async (response) => {
       if (response.ok) setOptions((await response.json() as { options: WebConfigOption[] }).options);
     }).catch(() => {});
-  }, [sessionSuffix]);
+  }, [sessionSuffix, options, agent]);
   const load = useCallback(async (): Promise<void> => {
     try {
       const response = await fetch(`/api/config-options${sessionSuffix}`);
@@ -1272,7 +1371,7 @@ function EnforcementBadge({ level, transport, copy }: {
 
 /** Top-bar views. Sessions is a page (nav slug); session history stays
  * reachable from the composer via the /sessions command. */
-export type AppView = "chat" | "sessions" | "usage";
+export type AppView = "chat" | "sessions" | "usage" | "settings";
 
 export function App() {
   // The chat view focuses one parallel session at a time; undefined = the
@@ -1288,6 +1387,10 @@ export function App() {
     }
     if (name === "/usage") {
       setView("usage");
+      return true;
+    }
+    if (name === "/settings") {
+      setView("settings");
       return true;
     }
     if (name === "/chat") {
@@ -1317,9 +1420,10 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   // The registry leads with the default agent (OpenCode); fall back to it while
   // the agents list is still loading so the switcher never marks the wrong one.
   const currentAgent = sessions?.find((session) => session.active)?.agent ?? agents[0]?.id ?? "opencode";
-  const { options, setOption } = useConfigOptions(focusedSessionId);
+  const { options, setOption } = useConfigOptions(focusedSessionId, currentAgent);
   const permissions = usePermissions(focusedSessionId);
   const capabilities = useCapabilities();
+  const mcp = useMcpSettings();
   const { isRunning } = useSessionState();
   const identity = useAgentIdentity();
   const theme = useTheme();
@@ -1327,7 +1431,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const palettes = useMemo(() => listPalettes(), []);
   const usage = useSessionUsage();
   const enforcementCopy = snapshot === undefined ? undefined : ENFORCEMENT_COPY[snapshot.enforcementLevel];
-  const [settingsOpen, setSettingsOpen] = useState(false);
   // Focus mode state lives here so the header button and the settings dialog
   // read and write one setting (pre-paint application happens in main.tsx).
   const [railsOff, setRailsOff] = useState((): boolean => {
@@ -1376,12 +1479,12 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         createSession(refreshSessions);
       } else if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key === ",") {
         event.preventDefault();
-        setSettingsOpen(true);
+        setView(view === "settings" ? "chat" : "settings");
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [isRunning, refreshSessions, focusedSessionId]);
+  }, [isRunning, refreshSessions, focusedSessionId, view, setView]);
 
   const activeTitle = sessions?.find((session) => session.active)?.title;
 
@@ -1430,6 +1533,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
               ["chat", "Chat", <ChatIcon key="c" />],
               ["sessions", "Sessions", <SessionsIcon key="s" />],
               ["usage", "Usage", <UsageIcon key="u" />],
+              ["settings", "Settings", <GearIcon key="g" />],
             ] as const).map(([slug, label, icon]) => (
               <button
                 key={slug}
@@ -1452,10 +1556,9 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           <button
             type="button"
             className="btn btn-ghost config-gear"
-            aria-expanded={settingsOpen}
-            aria-haspopup="dialog"
+            aria-expanded={view === "settings"}
             aria-label="Settings"
-            onClick={() => setSettingsOpen(true)}
+            onClick={() => setView(view === "settings" ? "chat" : "settings")}
           >
             <GearIcon />
           </button>
@@ -1502,6 +1605,26 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         />
       ) : view === "usage" ? (
         <UsageView />
+      ) : view === "settings" ? (
+        <SettingsDialog
+          onClose={() => setView("chat")}
+          themeChoice={theme.choice}
+          onThemeChoice={theme.setChoice}
+          palette={palette}
+          onPalette={setPalette}
+          palettes={palettes}
+          railsOff={railsOff}
+          onRailsToggle={setRailsOff}
+          options={options}
+          setOption={setOption}
+          permissions={permissions}
+          capabilities={capabilities}
+          mcp={mcp}
+          enforcement={{ level: snapshot?.enforcementLevel, transport: snapshot?.transport, copy: enforcementCopy }}
+          agents={agents}
+          currentAgent={currentAgent}
+          onSwitchAgent={(agent) => switchAgent(agent, refreshSessions)}
+        />
       ) : (
       <div className="shell-body">
         <aside className="sidebar" aria-label="Repository changes">
@@ -1561,26 +1684,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         branch={gitStatus?.branch}
         usage={usage}
       />
-      {settingsOpen && (
-        <SettingsDialog
-          onClose={() => setSettingsOpen(false)}
-          themeChoice={theme.choice}
-          onThemeChoice={theme.setChoice}
-          palette={palette}
-          onPalette={setPalette}
-          palettes={palettes}
-          railsOff={railsOff}
-          onRailsToggle={setRailsOff}
-          options={options}
-          setOption={setOption}
-          permissions={permissions}
-          capabilities={capabilities}
-          enforcement={{ level: snapshot?.enforcementLevel, transport: snapshot?.transport, copy: enforcementCopy }}
-          agents={agents}
-          currentAgent={currentAgent}
-          onSwitchAgent={(agent) => switchAgent(agent, refreshSessions)}
-        />
-      )}
     </div>
   );
 }

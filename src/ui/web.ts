@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { createOpenRouterAnalytics, usageTimeRange, type OpenRouterAnalytics } from "../integrations/openrouter-analytics.js";
+import { defaultSettings, mergeSettings, normalizeSettings, readSettingsFile, settingsPaths, writeSettingsFile } from "../integrations/workflow-settings.js";
 import { evidenceId, observationId, taskId, type TaskState } from "../kernel/contracts.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
 import { WebSessionManager, type SessionSwitchResult } from "./web-sessions.js";
@@ -37,6 +38,10 @@ export function createWorkflowWebServer(
     /** The OpenRouter management-key analytics client factory; undefined (or
      * returning undefined) means the Usage page reports its setup state. */
     readonly analytics?: () => OpenRouterAnalytics | undefined;
+    /** Workspace root for the per-workspace settings overlay. */
+    readonly workspace?: string | undefined;
+    /** Home root for the global settings file; defaults to the OS home. */
+    readonly home?: string | undefined;
   },
 ) {
   const manager = session instanceof WebSessionManager ? session : undefined;
@@ -45,6 +50,10 @@ export function createWorkflowWebServer(
   const analyticsFactory = options?.analytics ?? ((): OpenRouterAnalytics | undefined => {
     const key = process.env.WORKFLOW_OPENROUTER_MANAGEMENT_KEY;
     return key === undefined || key.length === 0 ? undefined : createOpenRouterAnalytics({ key });
+  });
+  const settingsPathOptions = (): { home?: string; workspace?: string } => ({
+    ...(options?.home === undefined ? {} : { home: options.home }),
+    ...(options?.workspace === undefined ? {} : { workspace: options.workspace }),
   });
 
   /** Session-scoped channel: `?session=<id>` selects a parallel live session;
@@ -464,6 +473,84 @@ export function createWorkflowWebServer(
         }
         application.setCapability(capability, enabled);
         return json(response, 200, { capability, enabled });
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    // The Workflow-owned MCP catalog: the control plane's canonical MCP server
+    // list, projected into each agent's launch config on the next session. The
+    // global file is the base; a workspace overlay (when the service has a
+    // workspace) can be edited independently. Changes are launch-time by
+    // nature — ACP fixes mcpServers at session creation — so the UI states
+    // that they take effect on the next session.
+    if (pathname === "/api/settings/mcp") {
+      const paths = settingsPaths(settingsPathOptions());
+      if (request.method === "GET") {
+        const global = readSettingsFile(paths.global);
+        const workspace = paths.workspace === undefined ? defaultSettings() : readSettingsFile(paths.workspace);
+        return json(response, 200, {
+          servers: mergeSettings(global, workspace).mcpServers,
+          global: global.mcpServers,
+          workspace: workspace.mcpServers,
+          workspaceOverlay: paths.workspace !== undefined,
+        });
+      }
+      if (request.method === "POST") {
+        if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+        if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+          return json(response, 415, { error: "content-type must be application/json" });
+        }
+        try {
+          const body = await readJson(request);
+          const input = body as { scope?: unknown; servers?: unknown } | null;
+          const scope = input?.scope === "global" || input?.scope === "workspace"
+            ? input.scope
+            : paths.workspace === undefined ? "global" : "workspace";
+          if (scope === "workspace" && paths.workspace === undefined) {
+            return json(response, 409, { error: "workspace scope unavailable: the service has no workspace root" });
+          }
+          if (!Array.isArray(input?.servers)) return json(response, 400, { error: "servers must be an array" });
+          const path = scope === "workspace" ? paths.workspace! : paths.global;
+          const current = readSettingsFile(path);
+          const normalized = normalizeSettings({ mcpServers: input.servers });
+          writeSettingsFile(path, { ...current, mcpServers: normalized.mcpServers, updatedAt: new Date().toISOString() });
+          return json(response, 200, { scope, servers: normalized.mcpServers });
+        } catch {
+          return json(response, 400, { error: "invalid request body" });
+        }
+      }
+    }
+    // Persisted agent runtime preferences (model/mode/effort). These are the
+    // launch defaults the control plane pushes into each agent's config on the
+    // next session; live changes still ride ACP `setConfigOption`.
+    if (request.method === "POST" && pathname === "/api/settings/agents") {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const paths = settingsPaths(settingsPathOptions());
+        const body = await readJson(request);
+        const input = body as { agent?: unknown; preference?: unknown; scope?: unknown } | null;
+        const agent = typeof input?.agent === "string" && input.agent.trim().length > 0 ? input.agent.trim() : undefined;
+        if (agent === undefined) return json(response, 400, { error: "agent is required" });
+        const normalized = normalizeSettings({ agents: { [agent]: input?.preference } });
+        const preference = normalized.agents[agent];
+        if (preference === undefined) return json(response, 400, { error: "preference must set at least one of model, mode, thoughtLevel" });
+        const scope = input?.scope === "global" || input?.scope === "workspace"
+          ? input.scope
+          : paths.workspace === undefined ? "global" : "workspace";
+        if (scope === "workspace" && paths.workspace === undefined) {
+          return json(response, 409, { error: "workspace scope unavailable: the service has no workspace root" });
+        }
+        const path = scope === "workspace" ? paths.workspace! : paths.global;
+        const current = readSettingsFile(path);
+        writeSettingsFile(path, {
+          ...current,
+          agents: { ...current.agents, [agent]: { ...(current.agents[agent] ?? {}), ...preference } },
+          updatedAt: new Date().toISOString(),
+        });
+        return json(response, 200, { scope, agent, preference });
       } catch {
         return json(response, 400, { error: "invalid request body" });
       }

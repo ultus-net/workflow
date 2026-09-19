@@ -98,6 +98,22 @@ test("gooseConfigYaml: no mount without both skills surfaces; the documented map
   assert.match(configYaml, /SKILLS_MCP_DIR/);
 });
 
+test("gooseConfigYaml pushes operator MCP servers as documented extensions", () => {
+  const configYaml = gooseConfigYaml({
+    mcpServers: [
+      { name: "tools", enabled: true, transport: "stdio", command: "node", args: ["s.js"], env: { K: "v" } },
+      { name: "web", enabled: true, transport: "http", url: "https://mcp.example/mcp" },
+    ],
+  });
+  assert.ok(configYaml !== undefined, "operator MCP servers alone must compose a config (no skills mount required)");
+  assert.match(configYaml, /extensions:\n[ ]{2}tools:/);
+  assert.match(configYaml, /type: stdio/);
+  assert.match(configYaml, /type: streamable_http/);
+  assert.match(configYaml, /uri: "https:\/\/mcp\.example\/mcp"/);
+  assert.match(configYaml, /K: "v"/);
+  assert.equal(gooseConfigYaml({ mcpServers: [] }), undefined, "no skills and no servers is still no config");
+});
+
 test("gooseWorkspaceConfigTag: stable per workspace, distinct across workspaces, pruner-escaping shape (W049)", () => {
   const tag = gooseWorkspaceConfigTag("/home/hunter/Workflow");
   assert.equal(tag, gooseWorkspaceConfigTag("/home/hunter/Workflow"), "the same workspace must compose the same config root across restarts (goose's session store lives under GOOSE_PATH_ROOT)");

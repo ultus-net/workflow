@@ -13,6 +13,7 @@ import {
 import { globalClineEntrypoint } from "../integrations/cline-launch.js";
 import { globalGooseBinary, gooseProviderKind } from "../integrations/goose-agent-config.js";
 import { upstreamKeyPresent } from "../integrations/upstream-key.js";
+import type { WorkflowSettings } from "../integrations/workflow-settings.js";
 import type { PermissionBroker } from "./permission-broker.js";
 
 export type WebAgentId = "cline" | "opencode" | "goose";
@@ -121,7 +122,7 @@ export async function createAgentRuntime(
   workspace: string,
   taskId: TaskId,
   resumeFrom: string | undefined,
-  options: { readonly permissionBroker?: PermissionBroker | undefined },
+  options: { readonly permissionBroker?: PermissionBroker | undefined; readonly settings?: WorkflowSettings | undefined },
 ): Promise<WorkflowAcpRuntime> {
   if (agent === "opencode") {
     return createConfiguredOpencodeAcpRuntime(application, workspace, taskId, resumeFrom, options);

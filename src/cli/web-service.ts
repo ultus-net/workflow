@@ -7,6 +7,7 @@ import { TaskGraph } from "../kernel/task-graph.js";
 import { PermissionBroker } from "../ui/permission-broker.js";
 import { createAgentRuntime } from "../ui/web-agents.js";
 import { createWorkflowWebServer } from "../ui/web.js";
+import { loadSettings } from "../integrations/workflow-settings.js";
 import { WebSessionManager } from "../ui/web-sessions.js";
 import { buildWebappBundle } from "../ui/webapp/bundle.js";
 
@@ -64,12 +65,17 @@ export async function startWorkflowWeb(options: StartWorkflowWebOptions = {}): P
   // patterns survive session switches; parked prompts are denied on switch.
   const permissionBroker = new PermissionBroker();
   const manager = new WebSessionManager({
+    // Load settings per session so an edit made on the settings page is
+    // pushed into the next session's agent launch config.
     factory: (agent, resumeFrom) =>
-      createAgentRuntime(agent, application, workspace, taskId("W001"), resumeFrom, { permissionBroker }),
+      createAgentRuntime(agent, application, workspace, taskId("W001"), resumeFrom, {
+        permissionBroker,
+        settings: loadSettings({ workspace }),
+      }),
     permissionBroker,
   });
   const webapp = await buildWebappBundle();
-  const server = createWorkflowWebServer(application, manager, webapp);
+  const server = createWorkflowWebServer(application, manager, webapp, { workspace });
   const port = options.port ?? Number(process.env.PORT ?? 4173);
 
   await new Promise<void>((resolve, reject) => {
