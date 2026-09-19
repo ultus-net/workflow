@@ -55,3 +55,47 @@ export class OpenCodeV2EventLog {
 
   replay(): readonly WorkflowExecutionEvent[] { return this.entries(); }
 }
+
+/** Consume a qualified v2 SSE response without assigning authority to it. */
+export async function consumeOpenCodeV2EventStream(
+  response: Response,
+  log: OpenCodeV2EventLog,
+  observedAt: () => string = () => new Date().toISOString(),
+): Promise<number> {
+  if (response.status !== 200 || !response.headers.get("content-type")?.includes("text/event-stream")) {
+    throw new TypeError("OpenCode v2 event response is not a qualified SSE stream");
+  }
+  if (response.body === null) throw new TypeError("OpenCode v2 event response has no body");
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  let count = 0;
+  for (;;) {
+    const part = await reader.read();
+    buffer += part.value ?? "";
+    const frames = buffer.split(/\n\n/);
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      const data = frame.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+      if (data.length === 0 || data === "[DONE]") continue;
+      let payload: unknown;
+      try { payload = JSON.parse(data) as unknown; } catch { continue; }
+      if (typeof payload !== "object" || payload === null) continue;
+      const record = payload as Record<string, unknown>;
+      const properties = typeof record.properties === "object" && record.properties !== null ? record.properties as Record<string, unknown> : record;
+      const sessionId = typeof properties.sessionID === "string" ? properties.sessionID : typeof properties.sessionId === "string" ? properties.sessionId : undefined;
+      const type = typeof record.type === "string" ? record.type : undefined;
+      if (sessionId === undefined || type === undefined) continue;
+      const entry = log.append({
+        ...(typeof record.id === "string" ? { id: record.id } : {}),
+        type,
+        sessionId,
+        ...(typeof properties.parentID === "string" ? { parentSessionId: properties.parentID } : {}),
+        observedAt: observedAt(),
+        payload,
+      });
+      if (entry !== undefined) count += 1;
+    }
+    if (part.done) break;
+  }
+  return count;
+}

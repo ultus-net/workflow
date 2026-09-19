@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { OpenCodeV2EventLog } from "../src/integrations/opencode-v2-event-log.js";
+import { consumeOpenCodeV2EventStream, OpenCodeV2EventLog } from "../src/integrations/opencode-v2-event-log.js";
 
 test("v2 event log appends once and deduplicates stable event ids", () => {
   const log = new OpenCodeV2EventLog();
@@ -29,4 +29,19 @@ test("v2 event log preserves Workflow identity and evidence metadata", () => {
   assert.equal(entry?.taskId, "task-1");
   assert.equal(entry?.stepId, "step-1");
   assert.equal(entry?.authority, "host");
+});
+
+test("v2 SSE consumer parses event frames and deduplicates replay", async () => {
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('id: e1\ndata: {"id":"e1","type":"tool.ended","properties":{"sessionID":"ses-1"}}\n\n'));
+      controller.enqueue(new TextEncoder().encode('data: {"id":"e1","type":"tool.ended","properties":{"sessionID":"ses-1"}}\n\n'));
+      controller.close();
+    },
+  });
+  const response = new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+  const log = new OpenCodeV2EventLog();
+  assert.equal(await consumeOpenCodeV2EventStream(response, log, () => "2026-09-20T00:00:00Z"), 1);
+  // The second frame is a replay with the same payload id; it is not appended.
+  assert.equal(log.entries().length, 1);
 });
