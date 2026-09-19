@@ -363,6 +363,14 @@ long operator hold delays later events (P3-4 — revisit with the live probe);
 forwarded bodies have no size cap and only the known reply-route shape is
 intercepted (P3-7 — the AUTHORITY-SPLIT/BYPASS probes pin the real shapes).
 
+**Process cleanup follow-up (2026-09-19):** W071's focused tests leave zero
+`opencode serve`, W071 `tsx`, or `--import tsx --test` processes. The stock-TUI
+launcher now starts `opencode attach` in its own POSIX process group and sends
+SIGTERM to the group after the TUI exits (`terminateProcessGroup`), preventing
+OpenCode's child TypeScript language servers from being orphaned. Existing
+long-running `opencode` hosts created by other worktrees are intentionally not
+killed by this change.
+
 **Post-fix verification:** typecheck, lint, **50 unit tests**, the gated live
 probe, and `npm run build` all green.
 
