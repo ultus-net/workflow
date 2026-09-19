@@ -4,13 +4,16 @@ import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type {
   Evidence,
+  EvidenceRequirement,
   PolicyDecision,
+  StepId,
   TaskId,
   TaskState,
   TransitionResult,
+  WorkflowStep,
   WorkflowTask,
 } from "../kernel/contracts.js";
-import { TaskGraph } from "../kernel/task-graph.js";
+import { TaskGraph, isRunComplete, type StepTransitionResult } from "../kernel/task-graph.js";
 import { mutationGate, verifyingGate, type CheckpointLedger } from "../pedagogy/checkpoints.js";
 
 export interface WorkflowTaskProjection {
@@ -155,6 +158,16 @@ export class WorkflowApplication {
         reason: `task ${task.id} is ${task.state}, not IN_PROGRESS`,
       };
     }
+    // Ledger invariant I-1 (conditional migration): once a task declares a
+    // step ledger, mutations require an in-progress step. Tasks without a
+    // ledger keep the legacy active-task behavior until the bridge enables one.
+    if (this.#graph.stepsFor(task.id).length > 0 && this.#graph.activeStepId(task.id) === undefined) {
+      return {
+        kind: "deny",
+        code: "NO_ACTIVE_STEP",
+        reason: `task ${task.id} has a step ledger but no step IN_PROGRESS; start a step before mutating`,
+      };
+    }
     const pendingCheckpoint = this.#pedagogyGate === undefined ? undefined : mutationGate(this.#pedagogyGate, task.id);
     if (pendingCheckpoint !== undefined) {
       return {
@@ -221,6 +234,39 @@ export class WorkflowApplication {
 
   addDependency(taskId: TaskId, dependencyId: TaskId): void {
     this.#graph.addDependency(taskId, dependencyId);
+  }
+
+  /** Defines/replaces a task's canonical step ledger (I-2 enforced in the kernel). */
+  defineTaskSteps(
+    taskId: TaskId,
+    proposed: readonly { readonly id?: string; readonly content: string; readonly requiredEvidence?: readonly EvidenceRequirement[] }[],
+  ): readonly WorkflowStep[] {
+    return this.#graph.defineSteps(taskId, proposed);
+  }
+
+  taskSteps(taskId: TaskId): readonly WorkflowStep[] {
+    return this.#graph.stepsFor(taskId);
+  }
+
+  startTaskStep(id: StepId): StepTransitionResult {
+    return this.#graph.startStep(id);
+  }
+
+  completeTaskStep(id: StepId): StepTransitionResult {
+    return this.#graph.completeStep(id);
+  }
+
+  cancelTaskStep(id: StepId): StepTransitionResult {
+    return this.#graph.cancelStep(id);
+  }
+
+  activeStepId(taskId: TaskId): StepId | undefined {
+    return this.#graph.activeStepId(taskId);
+  }
+
+  /** Canonical run-completion predicate (all tasks VERIFIED). */
+  isRunComplete(): boolean {
+    return isRunComplete(this.#graph.tasks());
   }
 
   selectActiveTask(taskId: TaskId): void {
