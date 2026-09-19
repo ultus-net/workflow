@@ -6,6 +6,7 @@ import type { CodingSessionDriver, CodingSessionEvent, CodingSessionImage } from
 import type { TaskId, PolicyDecision } from "../kernel/contracts.js";
 import type { ProposedToolAction, ToolCapability } from "../adapters/host.js";
 import type { WorkflowApplication } from "../application/workflow.js";
+import { fingerprintFile } from "../application/file-claim-ledger.js";
 import type { ProcessContainment } from "../containment/contracts.js";
 import { AcpHostAdapter } from "../adapters/acp.js";
 import {
@@ -82,6 +83,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #guard: WorkflowGuardProvider | undefined;
   #onSkillRead: ((skill: string) => void) | undefined;
   #onToolOutcome: ((sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void) | undefined;
+  #onReadFingerprint: ((fingerprint: import("../application/host.js").ReadFingerprint) => void) | undefined;
   #initialized = false;
   #canLoadSession = false;
   #agentInfo?: { readonly name: string; readonly version?: string } | undefined;
@@ -109,6 +111,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     guard?: WorkflowGuardProvider;
     onSkillRead?: (skill: string) => void;
     onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
+    onReadFingerprint?: (fingerprint: import("../application/host.js").ReadFingerprint) => void;
   }) {
     const authorize = typeof options.authorize === "function"
       ? options.authorize
@@ -122,6 +125,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#guard = options.guard;
     this.#onSkillRead = options.onSkillRead;
     this.#onToolOutcome = options.onToolOutcome ?? (typeof options.authorize === "function" ? undefined : (sessionId, outcome, tool, reason) => (options.authorize as WorkflowApplication).recordToolOutcome(sessionId, outcome, tool, reason));
+    this.#onReadFingerprint = options.onReadFingerprint ?? (typeof options.authorize === "function" ? undefined : (fingerprint) => (options.authorize as WorkflowApplication).recordReadFingerprint(fingerprint));
     this.#client = new AcpSubprocessClient({
       child: options.child,
       resolvePermission: (request) => this.#resolvePermission(request),
@@ -642,7 +646,9 @@ export class AcpSessionDriver implements CodingSessionDriver {
       return {};
     }
     if (toolName === "fs/read_text_file") {
-      return { content: await readFile(path, "utf8") };
+      const content = await readFile(path, "utf8");
+      try { this.#onReadFingerprint?.(fingerprintFile(path)); } catch { /* the next write gate remains fail-closed */ }
+      return { content };
     }
     const entries = await readdir(path, { withFileTypes: true });
     return { entries: entries.map((entry) => ({ name: entry.name, type: entry.isDirectory() ? "directory" : "file" })) };
