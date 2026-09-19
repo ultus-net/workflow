@@ -1077,6 +1077,69 @@ body {
 .diff-meta { color: var(--text-muted); }
 .diff-ctx { color: var(--text-muted); }
 
+/* OpenCode-style edit block: header (path + +N -N) over a line-numbered code
+   view. Two muted number columns and a sign rail; add/del rows tint the code
+   and the numbers, matching the TUI's diff register. */
+.edit-diff {
+  margin: 0.3rem 0 0.2rem;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.edit-diff-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+
+.edit-diff-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 0.76rem var(--font-mono);
+  color: var(--text);
+}
+
+.edit-diff-stats { margin-left: auto; display: inline-flex; gap: 0.5rem; font: 0.72rem var(--font-mono); }
+.edit-diff-add-stat { color: var(--ok); }
+.edit-diff-del-stat { color: var(--deny); }
+
+.edit-diff-body {
+  max-height: 22rem;
+  overflow: auto;
+  padding: 0.2rem 0;
+  font: 0.78rem/1.5 var(--font-mono);
+}
+
+.edit-diff-row { display: grid; grid-template-columns: 3.2rem 3.2rem 1rem minmax(0, 1fr); }
+
+.edit-diff-ln {
+  text-align: right;
+  padding-right: 0.5rem;
+  color: var(--text-muted);
+  opacity: 0.7;
+  user-select: none;
+}
+
+.edit-diff-sign { text-align: center; color: var(--text-muted); user-select: none; }
+
+.edit-diff-code { white-space: pre; overflow-wrap: normal; padding-right: 0.6rem; }
+
+.edit-diff-add { background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.edit-diff-add .edit-diff-code, .edit-diff-add .edit-diff-sign { color: var(--ok); }
+.edit-diff-add .edit-diff-ln { background: color-mix(in srgb, var(--ok) 14%, transparent); }
+
+.edit-diff-del { background: color-mix(in srgb, var(--deny) 10%, transparent); }
+.edit-diff-del .edit-diff-code, .edit-diff-del .edit-diff-sign { color: var(--deny); }
+.edit-diff-del .edit-diff-ln { background: color-mix(in srgb, var(--deny) 14%, transparent); }
+
+.edit-diff-hunk .edit-diff-code { color: var(--text-muted); background: var(--surface-raised); }
+.edit-diff-ctx .edit-diff-code { color: var(--text); }
+
 /* Agent plan checklist */
 
 .part-plan { display: block; border-left-color: var(--accent); }

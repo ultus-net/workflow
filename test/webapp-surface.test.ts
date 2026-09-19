@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { CommandPalette, ConfigChips, ConnectionsSection, StatusBar, UsageMeter } from "../src/ui/webapp/app.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
+import { EditDiff, parseEditTool } from "../src/ui/webapp/diff-text.js";
 import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection } from "../src/ui/webapp/settings-dialog.js";
 import { listPalettes } from "../src/ui/webapp/theme/palettes.js";
 import { DEFAULT_WEB_AGENT, listWebAgents } from "../src/ui/web-agents.js";
@@ -212,5 +213,30 @@ test("inspector connections state every agent's availability and posture honestl
   assert.ok(markup.includes("advisory") && markup.includes("contained"), "containment posture must be stated per agent");
   assert.ok(markup.includes("active"), "the connected agent must be marked active");
   assert.ok(markup.includes("acp transport"), "the transport must be stated");
+});
+
+test("edit tool calls render an opencode-style line-numbered diff", () => {
+  const patch = "--- a/file.ts\n+++ b/file.ts\n@@ -3,3 +3,4 @@\n ctx\n-old\n+new\n+extra\n ctx2";
+  const data = parseEditTool(
+    JSON.stringify({ filePath: "src/file.ts" }),
+    JSON.stringify({ metadata: { filediff: { file: "src/file.ts", patch, additions: 2, deletions: 1 } } }),
+  );
+  assert.ok(data !== undefined, "the edit tool data must parse");
+  const markup = renderToStaticMarkup(createElement(EditDiff, { data: data! }));
+  assert.ok(markup.includes("edit-diff"), "the edit diff must render");
+  assert.ok(markup.includes("src/file.ts"), "the file path must show in the header");
+  assert.ok(markup.includes("+2") && markup.includes("-1"), "the add/del stats must show");
+  assert.ok(markup.includes("edit-diff-add") && markup.includes("edit-diff-del"), "add/del rows must be tinted");
+  assert.ok(markup.includes(">3</span>"), "old-file line numbers must be tracked from the hunk header");
+});
+
+test("edit diff falls back to before/after strings when no patch is present", () => {
+  const data = parseEditTool(
+    JSON.stringify({ filePath: "a.ts", oldString: "alpha\nbeta", newString: "alpha\ngamma" }),
+    undefined,
+  );
+  const markup = renderToStaticMarkup(createElement(EditDiff, { data: data! }));
+  assert.ok(markup.includes("edit-diff-del") && markup.includes("edit-diff-add"), "a computed diff must tint add/del");
+  assert.ok(markup.includes("beta") && markup.includes("gamma"), "the changed lines must show");
 });
 
