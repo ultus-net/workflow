@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 
 import { createOpenModelMeteringPool, openModelProviderId, proxyBaseUrl } from "../src/integrations/open-model-proxy.js";
+import { METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
 import { DEFAULT_OPEN_SOURCE_POOL, type OpenModelDefinition } from "../src/integrations/open-source-pool.js";
 import type { ModelFamily } from "../src/integrations/model-profile.js";
 
@@ -57,7 +58,7 @@ test("the pool composes one metering proxy per keyed vendor with the real key pr
 
     const response = await fetch(`${deepseek.baseUrl}/chat/completions`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: "Bearer PLACEHOLDER" },
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
       body: JSON.stringify({ model: "deepseek-flash", messages: [] }),
     });
     assert.equal(response.status, 200);
@@ -70,12 +71,12 @@ test("the pool composes one metering proxy per keyed vendor with the real key pr
 
     await fetch(`${glm.baseUrl}/chat/completions`, {
       method: "POST",
-      headers: { authorization: "Bearer PLACEHOLDER" },
+      headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
       body: JSON.stringify({ model: "glm-5.3", thinking: { type: "disabled" } }),
     });
     await fetch(`${kimi.baseUrl}/chat/completions`, {
       method: "POST",
-      headers: { authorization: "Bearer PLACEHOLDER" },
+      headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
       body: JSON.stringify({ model: "kimi-k3", thinking: { type: "disabled" } }),
     });
     const glmBody = JSON.parse(upstreams.glm.seen[0]?.body ?? "{}") as Record<string, unknown>;
