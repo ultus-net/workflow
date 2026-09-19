@@ -226,6 +226,55 @@ branch.
 **Post-fix verification:** typecheck, lint, **28 unit tests**, the gated live
 probe, and `npm run build` all green.
 
-**Still open:** M3 (operator-intent reconciliation), the live probe family
-(needs a model key), a real contained launch with a key, the literal
-interactive TUI operator smoke, and the `HOST_ADAPTERS.md` verdict row.
+---
+
+## 10. M3 — operator-intent reconciliation + enforcement mode (2026-09-19)
+
+**Status:** implemented; focused gates green (typecheck, lint, **36 unit
+tests**, gated live probe, build). **Posture remains `advisory`** — the
+enforcement *mechanism* is real, the `enforced` *claim* still awaits the live
+PERMISSION/RULE-CONFIG probes (which need a model key).
+
+**Operator intent (M3.1):** the broker gained `mode`:
+- `auto-resolve` (default) answers from policy immediately; an operator reply
+  is journaled as observation (M2 behavior preserved).
+- `ask-me` holds policy-allowed asks for the operator's answer (the TUI prompt
+  resolves via the gateway intercept), reconciled as
+  `effectiveReply = policyDeny ? reject : operatorReply` — the operator can
+  tighten, never loosen. Policy denials never wait for anyone. An unanswered
+  hold times out to `reject` (fail closed, default 120s). Early operator
+  replies that race ahead of the SSE event are buffered and applied when the
+  ask arrives.
+
+**Enforcement posture (M3.2–M3.4):**
+- `WORKFLOW_OPENCODE_ENFORCEMENT=enforced` makes the daemon verify the pinned
+  ruleset at startup via `assertAskRuleset(engine.config())` — a permissive
+  ruleset refuses to serve (fail closed; `edit`/`bash`/`task` must all be
+  `ask`).
+- The gateway gained an `enforced` flag whose construction fails closed
+  without the broker hook — the structural guarantee that no client reply can
+  reach upstream in enforced posture.
+- The bypass alarm observes `message.part.updated` tool parts: a mutating
+  tool activity with no prior Workflow decision (matched by callID when the
+  request carries one, else by session+tool) is journaled as `(bypass)`, fires
+  `onBypass`, and the daemon shuts the surface down rather than keep serving a
+  ruleset that is not asking.
+- Guard dispatch was already wired (M2); it stays fail-closed and composes
+  with the daemon when a guard provider is supplied.
+
+**Honest boundaries:** the bypass alarm's event-shape assumptions (tool part
+with `callID`/`tool` on `message.part.updated`) are derived from the pinned
+source and the projection helpers, not yet from a live mutating turn — the
+M5 BYPASS probe pins the real shapes. The ruleset check covers the three
+pinned classes; a ruleset that silently allows another mutating class is
+exactly what the BYPASS alarm is for, and the probe must prove it fires.
+
+**Tests (8 new, 36 total):** ask-me hold→once, operator tighten→reject,
+policy-deny immediate reject, timeout→reject, bypass alarm fires / does not
+fire when covered by a decision, `assertAskRuleset` fail-closed matrix, and
+the enforced-gateway-requires-hook construction check.
+
+**Still open:** the live `permission.asked` → authorize → reply probe and the
+rest of the probe family (needs a model key), a real contained launch with a
+key, the literal interactive TUI operator smoke, the `HOST_ADAPTERS.md` verdict
+row, and the final five-axis review pass on the completed milestones.

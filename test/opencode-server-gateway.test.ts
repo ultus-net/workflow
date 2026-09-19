@@ -233,3 +233,21 @@ test("W071 gateway: percent-encoded reply routes cannot dodge interception (revi
 test("W071 gateway: newTuiPassword is distinct per call", () => {
   assert.notEqual(newTuiPassword(), newTuiPassword());
 });
+
+test("W071 gateway (enforced): construction fails closed without the broker hook", async () => {
+  const upstream = await stubUpstream();
+  try {
+    await assert.rejects(
+      createOpencodeServerGateway({
+        upstream: upstream.url,
+        upstreamUsername: "up",
+        upstreamPassword: "secret",
+        tuiPassword: "tuipw",
+        enforced: true,
+      }),
+      /enforced gateway requires the broker hook/,
+    );
+  } finally {
+    void upstream.close();
+  }
+});

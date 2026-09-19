@@ -5,7 +5,12 @@ import { resolve } from "node:path";
 import { hostCapabilities, type ToolCapability } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { TaskGraph } from "../kernel/task-graph.js";
-import { createOpencodeServerAuthority } from "../integrations/opencode-server-authority.js";
+import {
+  assertAskRuleset,
+  createOpencodeServerAuthority,
+  type OpencodeAuthorityEnforcement,
+  type OpencodeAuthorityMode,
+} from "../integrations/opencode-server-authority.js";
 import { createOpencodeServerGateway, newTuiPassword } from "../integrations/opencode-server-gateway.js";
 import {
   opencodeServerDiscoveryPath,
@@ -14,6 +19,20 @@ import {
 } from "../integrations/opencode-server-discovery.js";
 import { createOpencodeServerRuntime } from "../integrations/opencode-server-runtime.js";
 import { HttpRemoteEngine } from "../integrations/remote-acp/engine.js";
+
+export function authorityModeFromEnv(env: NodeJS.ProcessEnv): OpencodeAuthorityMode {
+  const raw = env.WORKFLOW_OPENCODE_AUTHORITY_MODE?.trim();
+  if (raw === undefined || raw === "" || raw === "auto-resolve") return "auto-resolve";
+  if (raw === "ask-me") return "ask-me";
+  throw new Error(`WORKFLOW_OPENCODE_AUTHORITY_MODE must be "auto-resolve" or "ask-me" (got ${JSON.stringify(raw)})`);
+}
+
+export function enforcementFromEnv(env: NodeJS.ProcessEnv): OpencodeAuthorityEnforcement {
+  const raw = env.WORKFLOW_OPENCODE_ENFORCEMENT?.trim();
+  if (raw === undefined || raw === "" || raw === "advisory") return "advisory";
+  if (raw === "enforced") return "enforced";
+  throw new Error(`WORKFLOW_OPENCODE_ENFORCEMENT must be "advisory" or "enforced" (got ${JSON.stringify(raw)})`);
+}
 
 /**
  * W071 — the Workflow OpenCode server daemon.
@@ -58,10 +77,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const workspace = resolve(args.workspace);
   const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? resolve(homedir(), ".workflow", "opencode-server");
   const discoveryPath = opencodeServerDiscoveryPath(stateHome, workspace);
+  const mode = authorityModeFromEnv(process.env);
+  const enforcement = enforcementFromEnv(process.env);
 
   const runtime = await createOpencodeServerRuntime({ workspace, stateHome });
-  // Authority broker (M2): the background policy decision point. It subscribes
-  // to the server's SSE and answers every permission request through
+  // Authority broker: the background policy decision point. It subscribes to
+  // the server's SSE and answers every permission request through
   // WorkflowApplication; the gateway intercepts client replies so the stock TUI
   // can never answer upstream.
   const application = new WorkflowApplication(
@@ -77,6 +98,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     username: runtime.username,
     password: runtime.password,
   });
+  // Enforcement contract (M3): an enforced surface verifies the pinned `ask`
+  // ruleset at startup and refuses to serve a permissive engine.
+  if (enforcement === "enforced") {
+    assertAskRuleset(await engine.config({ cwd: workspace }));
+  }
+  console.log(`[authority] mode=${mode} enforcement=${enforcement} workspace=${workspace}`);
   const shutdownRequested = { requested: false };
   let requestShutdown: () => void = () => undefined;
   const shutdown = new Promise<void>((resolveShutdown) => {
@@ -90,6 +117,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     engine,
     application,
     workspace,
+    mode,
+    enforcement,
     onDecision: (decision) => {
       // Bounded log (review P3h): reasons can carry path/command fragments.
       const reason = (decision.reason ?? "policy allow").slice(0, 160);
@@ -99,6 +128,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     // daemon whose policy point is dead (review P2-1).
     onAuthorityLost: () => {
       console.error("[authority] event stream lost — shutting down the OpenCode server surface");
+      requestShutdown();
+    },
+    // A bypass in enforced posture is a broken invariant: shut the surface
+    // down rather than keep serving a ruleset that is not asking.
+    onBypass: (input) => {
+      console.error(`[authority] BYPASS ${input.tool} session=${input.sessionId}: ${input.reason}`);
       requestShutdown();
     },
   });
@@ -112,6 +147,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       upstreamPassword: runtime.password,
       tuiPassword: newTuiPassword(),
       onPermissionReply: (reply) => authority.handleOperatorReply(reply),
+      enforced: enforcement === "enforced",
     });
   } catch (error) {
     await authority.stop();

@@ -27,6 +27,15 @@ SSE subscription against real opencode). Posture stays `advisory`; the live
 `permission.asked` path and operator-intent reconciliation are M3/M5. Detail in
 `docs/OPENCODE_SERVER_AUTHORITY.md` §8.
 
+**M3 implemented (2026-09-19):** operator-intent reconciliation (`auto-resolve`
+vs `ask-me` with policy-vetoed operator replies, fail-closed timeout, early-reply
+buffering) and enforcement-mode wiring (`WORKFLOW_OPENCODE_ENFORCEMENT=enforced`
+→ startup `assertAskRuleset` verification, gateway enforced-flag construction
+check, bypass alarm on undecided mutating tool activity → daemon teardown).
+Focused gates green (typecheck, lint, 36 unit tests, gated live probe, build).
+Posture stays `advisory` until the live PERMISSION/RULE-CONFIG probes run.
+Detail in `docs/OPENCODE_SERVER_AUTHORITY.md` §10.
+
 **Work item:** W071 (reserved).
 **Operator decisions (2026-09-19, this planning session):**
 1. **Topology:** the operator keeps the **stock `opencode` TUI** as the

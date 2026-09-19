@@ -41,6 +41,12 @@ export interface OpencodeServerGatewayOptions {
    * through upstream (advisory: the client is the answerer).
    */
   readonly onPermissionReply?: ((reply: OpencodePermissionReply) => Promise<void> | void) | undefined;
+  /**
+   * Enforced posture (plan M3): the client must never be able to answer
+   * upstream, so a broker hook is mandatory. Construction fails closed when
+   * `enforced` is set without one.
+   */
+  readonly enforced?: boolean | undefined;
   /** Observation hook for tests/hub monitors. */
   readonly observedRequest?: ((path: string) => void) | undefined;
 }
@@ -61,6 +67,11 @@ const HOP_BY_HOP = new Set([
 export async function createOpencodeServerGateway(
   options: OpencodeServerGatewayOptions,
 ): Promise<OpencodeServerGateway> {
+  if (options.enforced === true && options.onPermissionReply === undefined) {
+    // Enforced means singular authority: without the broker hook the client
+    // would be the answerer, so refuse to build such a gateway.
+    throw new TypeError("an enforced gateway requires the broker hook (onPermissionReply)");
+  }
   const upstream = new URL(options.upstream);
   const upstreamAuth = basic(options.upstreamUsername ?? "opencode", options.upstreamPassword);
   const server = createServer((request, response) => {

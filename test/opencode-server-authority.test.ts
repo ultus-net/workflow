@@ -8,6 +8,7 @@ import { hostCapabilities, type ToolCapability } from "../src/adapters/host.js";
 import { WorkflowApplication } from "../src/application/workflow.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
 import {
+  assertAskRuleset,
   createOpencodeServerAuthority,
   ensureOpencodeSessionTask,
   opencodeSessionTaskId,
@@ -45,9 +46,23 @@ function fakeEngine(events: readonly RemoteEngineEvent[], mode: "complete" | "th
   };
 }
 
-function permission(id: string, action: string, metadata: Record<string, unknown>): RemoteEngineEvent {
-  const request: RemoteEnginePermissionRequest = { id, sessionID: "s1", action, resources: [], metadata };
+function permission(id: string, action: string, metadata: Record<string, unknown>, callId?: string): RemoteEngineEvent {
+  const request: RemoteEnginePermissionRequest = {
+    id,
+    sessionID: "s1",
+    action,
+    resources: [],
+    metadata,
+    ...(callId === undefined ? {} : { tool: { callID: callId } }),
+  };
   return { type: "permission.asked", properties: request };
+}
+
+function toolPart(callId: string, tool: string): RemoteEngineEvent {
+  return {
+    type: "message.part.updated",
+    properties: { sessionID: "s1", part: { type: "tool", callID: callId, tool, state: {} } },
+  };
 }
 
 function application(workspace: string, capabilities: readonly ToolCapability[]): WorkflowApplication {
@@ -149,7 +164,7 @@ test("W071 broker: SSE loss marks authority lost", async (t) => {
   assert.equal(authority.decisions().length, 1);
 });
 
-test("W071 broker: operator replies are journaled as observation in M2", async (t) => {
+test("W071 broker: operator replies are journaled as observation in auto-resolve mode", async (t) => {
   const workspace = mkdtempSync(join(tmpdir(), "wf-broker-op-"));
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
   const journaled: OpencodeAuthorityDecision[] = [];
@@ -160,9 +175,119 @@ test("W071 broker: operator replies are journaled as observation in M2", async (
     workspace,
     onDecision: (decision) => journaled.push(decision),
   });
-  authority.handleOperatorReply({ sessionId: "s1", requestId: "r9", reply: "once" });
+  await authority.handleOperatorReply({ sessionId: "s1", requestId: "r9", reply: "once" });
   assert.equal(journaled.length, 1);
   assert.match(journaled[0]?.reason ?? "", /auto-resolve mode/);
+});
+
+test("W071 broker (ask-me): a policy-allowed ask waits for operator intent and is answered once", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-askme-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const fake = fakeEngine([permission("r1", "bash", {})]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    mode: "ask-me",
+  });
+  const running = authority.start();
+  await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  assert.equal(authority.pendingOperatorReplies, 1, "the ask must be held for the operator");
+  await authority.handleOperatorReply({ sessionId: "s1", requestId: "r1", reply: "once" });
+  await running;
+  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "once" }]);
+});
+
+test("W071 broker (ask-me): the operator can only tighten a policy-allowed ask", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-askme-reject-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const fake = fakeEngine([permission("r1", "bash", {})]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    mode: "ask-me",
+  });
+  const running = authority.start();
+  await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  await authority.handleOperatorReply({ sessionId: "s1", requestId: "r1", reply: "reject" });
+  await running;
+  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+});
+
+test("W071 broker (ask-me): a policy deny is answered immediately, never held", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-askme-deny-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const fake = fakeEngine([permission("r1", "webfetch", {})]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]), // network withheld
+    workspace,
+    mode: "ask-me",
+  });
+  await authority.start();
+  assert.equal(authority.pendingOperatorReplies, 0);
+  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+});
+
+test("W071 broker (ask-me): an unanswered ask times out to reject (fail closed)", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-askme-timeout-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const fake = fakeEngine([permission("r1", "bash", {})]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    mode: "ask-me",
+    operatorReplyTimeoutMs: 20,
+  });
+  await authority.start();
+  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+});
+
+test("W071 broker (enforced): the bypass alarm fires for a mutating tool with no decision", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-bypass-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const bypasses: string[] = [];
+  const fake = fakeEngine([toolPart("c9", "edit")]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    enforcement: "enforced",
+    onBypass: (input) => bypasses.push(input.tool),
+  });
+  await authority.start();
+  assert.deepEqual(bypasses, ["edit"]);
+  assert.equal(authority.decisions().some((decision) => decision.tool === "(bypass)"), true);
+});
+
+test("W071 broker (enforced): a mutating tool covered by a decision does not alarm", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-no-bypass-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const bypasses: string[] = [];
+  const fake = fakeEngine([
+    permission("r1", "edit", { filePath: join(workspace, "src", "a.ts") }, "c9"),
+    toolPart("c9", "edit"),
+  ]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    enforcement: "enforced",
+    onBypass: (input) => bypasses.push(input.tool),
+  });
+  await authority.start();
+  assert.deepEqual(bypasses, []);
+  assert.equal(authority.decisions().some((decision) => decision.tool === "(bypass)"), false);
+  assert.equal(authority.decisions()[0]?.decision, "allow");
+});
+
+test("W071 broker: assertAskRuleset fails closed on a permissive ruleset", () => {
+  assert.doesNotThrow(() => assertAskRuleset({ permission: { edit: "ask", bash: "ask", task: "ask" } }));
+  assert.throws(() => assertAskRuleset({ permission: { edit: "allow", bash: "ask", task: "ask" } }), /not pinned to ask/);
+  assert.throws(() => assertAskRuleset({}), /not pinned to ask/);
+  assert.throws(() => assertAskRuleset(undefined), /not pinned to ask/);
 });
 
 test("W071 broker: session task correlation is stable and additive", () => {

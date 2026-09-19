@@ -923,7 +923,7 @@ bridge (`src/integrations/remote-acp/*`, PR #43).
 `SECURITY_ASSURANCE.md` claims, and an independent five-axis review before
 merge.
 
-**Status (2026-09-19, M0+M1+M2 on branch `feat/w071-standard-tui-background-authority`):**
+**Status (2026-09-19, M0–M3 on branch `feat/w071-standard-tui-background-authority`):**
 plan `docs/superpowers/plans/2026-09-19-standard-tui-background-authority.md`;
 decision record `docs/OPENCODE_SERVER_AUTHORITY.md`. **M0 complete:** against
 real opencode 1.18.31, the loopback server honors `OPENCODE_SERVER_PASSWORD`,
@@ -934,11 +934,10 @@ implemented:** `opencode-server-runtime.ts` (contained `opencode serve` +
 metered config + proxy, fail-closed), `opencode-server-gateway.ts` (auth split,
 compression/pathname fidelity, broker hook vs advisory pass-through),
 `opencode-server-discovery.ts`, the `workflow-opencode-server` daemon, and the
-`workflow-opencode` stock-TUI launcher (bins/scripts added). Focused gates
-green: typecheck, lint, 19 unit tests, gated live probe. **Sequencing
+`workflow-opencode` stock-TUI launcher (bins/scripts added). **Sequencing
 refinement (recorded):** server ownership landed in a dedicated workspace-scoped
-daemon, not the global `workflow-hub`; hub promotion is deferred to M2 (broker
-needs hub authority). **M2 implemented:** `opencode-server-authority.ts` —
+daemon, not the global `workflow-hub`; hub promotion stays available through the
+discovery seam. **M2 implemented:** `opencode-server-authority.ts` —
 subscribes to the server SSE via the production `HttpRemoteEngine`, maps each
 `permission.asked` to a `ProposedToolAction` (`AcpHostAdapter` + an explicit
 OpenCode capability classifier so `webfetch`→network and `task`→spawn), runs
@@ -946,13 +945,23 @@ OpenCode capability classifier so `webfetch`→network and `task`→spawn), runs
 `once`/`reject`; unmappable/malformed/guard failures and policy denials all
 `reject` (fail closed); SSE loss marks authority lost; sessions correlate to
 canonical `opencode-session:<id>` IN_PROGRESS tasks; every decision is
-journaled (observability only); the daemon wires the broker and routes
-intercepted client replies to it. Focused gates green: typecheck, lint, 27 unit
-tests, gated live probe (including a broker SSE subscription against real
-opencode). Client replies are observation-only in M2 — operator-intent modes are
-M3. **Still open:** the live `permission.asked` → authorize → reply probe (needs
-a model key), operator-intent reconciliation (M3), the rest of the live probe
-family (RULE-CONFIG/BYPASS/SUBAGENT/AUTH/METERED/CONTAINMENT), a real contained
-launch with a key, the literal interactive TUI operator smoke, the
-`HOST_ADAPTERS.md` verdict row, and the five-axis review. The surface remains
-**`advisory`** — no `enforced` claim.
+journaled (observability only). **Review passed:** an independent five-axis
+review returned REQUEST_CHANGES (2×P1) and all fixes landed (reply-route
+normalization-safety, advisory forward path, authority-lost teardown, gateway
+error boundary, launcher hardening); the branch was rebased onto main (W071 =
+Phase 13). **M3 implemented:** operator-intent reconciliation —
+`auto-resolve` answers from policy immediately (operator reply = observation);
+`ask-me` holds policy-allowed asks and reconciles the operator's answer as
+`policyDeny ? reject : operatorReply` with a fail-closed timeout, so the
+operator can tighten but never loosen; enforcement mode
+(`WORKFLOW_OPENCODE_ENFORCEMENT=enforced`) verifies the pinned `ask` ruleset at
+startup (`assertAskRuleset`, fail closed), makes the gateway construction
+refuse to exist without the broker hook, and arms the bypass alarm — a
+mutating tool activity with no prior Workflow decision is journaled, fires
+`onBypass`, and tears the surface down. Focused gates green: typecheck, lint,
+36 unit tests, gated live probe, build. **Still open:** the live
+`permission.asked` → authorize → reply probe and the rest of the probe family
+(RULE-CONFIG/BYPASS/SUBAGENT/AUTH/METERED/CONTAINMENT — need a model key), a
+real contained launch with a key, the literal interactive TUI operator smoke,
+the `HOST_ADAPTERS.md` verdict row, and the final five-axis review pass. The
+surface remains **`advisory`** — no `enforced` claim until the probes run.
