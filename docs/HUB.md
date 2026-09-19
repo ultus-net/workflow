@@ -59,9 +59,16 @@ can't be authorized fail **closed** (hub denies rather than guessing).
 
 ## Model routing (open-source pool)
 
-The default model pool is open-source-only. Direct vendor endpoints are
-preferred; OpenRouter is the uniform fallback, and closed models remain
-available through an explicit operator override (they are not deleted).
+The open-source pivot operates at the OpenRouter Auto Router level: the agent
+default remains `openrouter/auto`, and the hub resolves the operator-configured
+`~…-latest` alias pool (`WORKFLOW_OPENROUTER_AUTO_ALIASES` — open-source set:
+`~deepseek/deepseek-flash-latest`, `~z-ai/glm-latest`, `~z-ai/glm-flash-latest`,
+`~moonshotai/kimi-latest`) into the Auto Router's `allowed_models`; the routing
+among the pool happens at OpenRouter, not in this stack. The per-vendor
+direct-endpoint pools below are the opt-in cost path — they engage only when a
+vendor key is configured (direct cost + context caching); families without
+keys route through OpenRouter. Closed models remain available through an
+explicit operator override (they are not deleted).
 
 | Pool id | Vendor | OpenAI base URL | Anthropic base URL | Fallback (OpenRouter) |
 |---|---|---|---|---|
