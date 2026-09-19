@@ -111,5 +111,10 @@ Probe rules (fail closed):
   it must not be labeled `enforced`.
 - The probe re-runs for every pinned agent version bump; stale probe evidence
   never carries to a new version.
+- Harness scaffolding is audited separately and only on operator request: the
+  remove-one-component-at-a-time model-bump audit in
+  `docs/HARNESS_ASSUMPTION_LEDGER.md` is available at every pinned-version
+  bump but is never automatic, and never substitutes for the probe re-runs
+  above.
 
 Run `npm test`, `npm run typecheck`, and `npm run build` after adding an adapter. `npm run test:cline-runtime` is the bounded Cline smoke flow: it loads the built Workflow fixture through the real `@cline/core` plugin loader supplied by an installed Cline CLI, then exercises the loaded `beforeTool` hook without starting a model session. It intentionally fails when that host runtime is unavailable rather than silently downgrading runtime evidence. This host check does not replace conformance tests.

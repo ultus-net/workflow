@@ -266,4 +266,83 @@ Automated suites prove composition; live claims carry only through these gated r
 
 ---
 
+## External standards and guidance tracking (W064, appended 2026-09-19)
+
+Append-only. Each entry records what Workflow claims and does not claim
+relative to an external standard or guidance at the date shown; entries are
+never rewritten, only superseded by a later dated entry. Nothing here upgrades
+or changes an enforcement claim: the `enforced`/`policy-only` markers and the
+per-version probe verdicts in `docs/HOST_ADAPTERS.md` remain the source of
+truth. None of these entries asserts certification, conformance, or endorsement of Workflow by any standards body or vendor.
+
+### 2026-09-19 — NIST AI agent identity/authorization project
+
+- **What Workflow claims:** the hub-issued, per-session, revocable token
+  direction planned in W060 is aligned in spirit with the project's
+  agent-identity/authorization scope (tracked from
+  `docs/AI_LANDSCAPE_RESEARCH.md` §3.1, §6 item 9).
+- **What Workflow does not claim:** no specific NIST publication is
+  implemented or conformance-tested, and Workflow holds no NIST certification
+  or evaluation.
+- **Source:** NIST AI agent identity/authorization project (tracked project;
+  no final publication date recorded).
+
+### 2026-09-19 — ACSC/CISA/UK-NCSC six-agency agentic-AI guidance (source dated 2026-04-30)
+
+- **What Workflow claims:** Workflow's fail-closed authorization,
+  capability withholding, containment, and evidence-before-advance posture is
+  consistent with the guidance's human-oversight and secure-by-design themes.
+- **What Workflow does not claim:** Workflow is not certified against, and is
+  not an implementation of, this guidance; conformance is not asserted.
+- **Source:** six-agency agentic-AI adoption guidance led by ACSC, with CISA
+  and UK NCSC (2026-04-30).
+
+### 2026-09-19 — ISO/IEC 42001
+
+- **What Workflow claims:** this assurance case, the dated append-only records,
+  and the named component owners provide artifacts that a human could use
+  inside an AI management system.
+- **What Workflow does not claim:** Workflow is not ISO/IEC 42001 certified,
+  and this document is not a conformity or gap-assessment statement.
+- **Source:** ISO/IEC 42001 (AI management systems).
+
+### 2026-09-19 — Anthropic Model Hardware Standard research preview (source dated 2026-08-27)
+
+- **What Workflow claims:** Workflow already treats models and host SDKs as
+  replaceable surfaces and keeps hardware/host qualification outside its
+  authority; the standard is tracked as an upstream supply-surface signal.
+- **What Workflow does not claim:** Workflow does not implement or conform to
+  the preview standard, and makes no claim about the trustworthiness of any
+  hardware or host it does not control.
+- **Source:** Anthropic Model Hardware Standard research preview
+  (2026-08-27).
+
+### 2026-09-19 — OpenAI model misalignment reporting framework (source dated 2026-09-16)
+
+- **What Workflow claims:** the completion-claim journal (observability-only,
+  never kernel evidence) and the review/run-registry accountability chain are
+  compatible with a misalignment-incident reporting flow; the planned
+  behavioral supervisor (W053, advisory-first) is the intended reporting
+  surface.
+- **What Workflow does not claim:** Workflow does not report to OpenAI, does
+  not implement the framework, and claims no adversarial-misalignment
+  detection — supervision is advisory observability, never enforcement.
+- **Source:** OpenAI model misalignment reporting framework (2026-09-16).
+
+### 2026-09-19 — Google DeepMind "Three Layers of Agent Security" (source dated 2026-06-18)
+
+- **What Workflow claims:** Workflow's layered posture — deterministic
+  authorization at the mutation boundary plus (planned, advisory) behavioral
+  supervision — maps in direction onto the agent / multi-agent-system /
+  ecosystem layering, with the kernel as the agent-layer deterministic
+  authority.
+- **What Workflow does not claim:** Workflow claims no D/R-level positioning
+  yet (W053 will record it honestly), no ecosystem-layer controls, and no
+  built supervisor layer; the companion AI Control Roadmap's coverage/recall/
+  time-to-response metrics are not measured today.
+- **Source:** Google DeepMind "Three Layers of Agent Security" (2026-06-18);
+  companion AI Control Roadmap.
+
+---
+
 The executable checker for this document is `test/security-assurance.test.ts`: it parses every citation above and fails the suite if any cited automated test, gated probe file, or manual script ceases to exist or no longer contains its cited title. The assurance case is therefore itself under regression protection — the map cannot silently drift from the guarantees it claims.
