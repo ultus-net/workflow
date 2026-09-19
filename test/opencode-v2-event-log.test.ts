@@ -35,7 +35,7 @@ test("v2 SSE consumer parses event frames and deduplicates replay", async () => 
   const body = new ReadableStream({
     start(controller) {
       controller.enqueue(new TextEncoder().encode('id: e1\ndata: {"id":"e1","type":"tool.ended","properties":{"sessionID":"ses-1"}}\n\n'));
-      controller.enqueue(new TextEncoder().encode('data: {"id":"e1","type":"tool.ended","properties":{"sessionID":"ses-1"}}\n\n'));
+      controller.enqueue(new TextEncoder().encode('id: e1\ndata: {"type":"tool.ended","properties":{"sessionID":"ses-1"}}\n\n'));
       controller.close();
     },
   });

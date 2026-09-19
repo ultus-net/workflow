@@ -14,7 +14,7 @@ describe("OpenCode v2 route qualification: server identity and session stats", a
   const info = await fetch(`${baseUrl}/api/info`, { headers });
   assert.equal(info.ok, true, "v2 /api/info must be reachable through the qualified endpoint");
   const infoBody = await info.json() as Record<string, unknown>;
-  assert.equal(typeof infoBody, "object");
+  assert.equal(typeof infoBody.version, "string", "v2 probe must report a pinned server version");
 
   const stats = await fetch(`${baseUrl}/api/experimental/session/stats`, { headers });
   assert.equal(stats.status, 200, `authenticated session.stats returned ${stats.status}`);

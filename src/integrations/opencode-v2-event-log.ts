@@ -72,10 +72,12 @@ export async function consumeOpenCodeV2EventStream(
   for (;;) {
     const part = await reader.read();
     buffer += part.value ?? "";
-    const frames = buffer.split(/\n\n/);
+    const frames = buffer.split(/\r?\n\r?\n/);
     buffer = frames.pop() ?? "";
     for (const frame of frames) {
-      const data = frame.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+      const lines = frame.split(/\r?\n/);
+      const streamId = lines.find((line) => line.startsWith("id:"))?.slice(3).trim();
+      const data = lines.filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
       if (data.length === 0 || data === "[DONE]") continue;
       let payload: unknown;
       try { payload = JSON.parse(data) as unknown; } catch { continue; }
@@ -86,7 +88,7 @@ export async function consumeOpenCodeV2EventStream(
       const type = typeof record.type === "string" ? record.type : undefined;
       if (sessionId === undefined || type === undefined) continue;
       const entry = log.append({
-        ...(typeof record.id === "string" ? { id: record.id } : {}),
+        ...(typeof record.id === "string" ? { id: record.id } : streamId === undefined ? {} : { id: streamId }),
         type,
         sessionId,
         ...(typeof properties.parentID === "string" ? { parentSessionId: properties.parentID } : {}),
