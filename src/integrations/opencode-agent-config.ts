@@ -18,7 +18,19 @@ import { autoLatestModelCatalog } from "./openrouter-auto-latest.js";
 export const OPENCODE_METERED_PROVIDER_ID = "workflow-metered";
 export const DEFAULT_OPENCODE_MODEL = "openrouter/auto";
 
-export function meteredOpencodeConfig(options: {
+/**
+ * A hub-owned open-source vendor provider: the agent points at the loopback
+ * metering proxy with the placeholder credential, exactly like the OpenRouter
+ * provider, while the real vendor key stays proxy-side.
+ */
+export interface MeteredVendorProvider {
+  readonly id: string;
+  readonly name: string;
+  readonly baseURL: string;
+  readonly models: Readonly<Record<string, { readonly name: string }>>;
+}
+
+export interface MeteredOpencodeConfigOptions {
   readonly proxyUrl: string;
   readonly model?: string | undefined;
   /**
@@ -26,6 +38,14 @@ export function meteredOpencodeConfig(options: {
    * models in the ACP model picker (the Auto Router stays the default).
    */
   readonly autoLatest?: { readonly aliases: readonly string[] } | undefined;
+  /**
+   * W070a: the open-source vendor providers composed through their own
+   * loopback proxies. `defaultModel` is the full `<providerId>/<model>` the
+   * agent selects when the operator has not overridden it.
+   */
+  readonly openSource?:
+    | { readonly providers: readonly MeteredVendorProvider[]; readonly defaultModel: string }
+    | undefined;
   /**
    * Plan Task F1: the skills-mcp delivery mount. When provided, the agent
    * mounts the hub-owned skills server (list_skills/read_skill) — the single
@@ -35,8 +55,9 @@ export function meteredOpencodeConfig(options: {
    * from XDG_CONFIG_HOME and list_skills returns the fixture skill verbatim).
    */
   readonly skills?: { readonly serverScript: string; readonly skillsDir: string } | undefined;
-}): Record<string, unknown> {
-  const model = options.model ?? DEFAULT_OPENCODE_MODEL;
+}
+
+export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Record<string, unknown> {
   // Expose the Auto Router plus the alias pool as selectable models so the ACP
   // model picker can switch to a specific family's latest without pinning a
   // version. The Auto Router stays the default selection.
@@ -44,27 +65,48 @@ export function meteredOpencodeConfig(options: {
     [DEFAULT_OPENCODE_MODEL]: { name: "Auto Router" },
     ...autoLatestModelCatalog(options.autoLatest?.aliases ?? []),
   };
-  if (!(model in models)) models[model] = { name: model };
+  const legacyModel = options.model ?? DEFAULT_OPENCODE_MODEL;
+  if (!(legacyModel in models)) models[legacyModel] = { name: legacyModel };
+  const vendorProviders = options.openSource?.providers ?? [];
+  const provider = (): Record<string, unknown> => ({
+    [OPENCODE_METERED_PROVIDER_ID]: {
+      npm: "@ai-sdk/openai-compatible",
+      name: "Workflow metered proxy",
+      options: {
+        baseURL: `${options.proxyUrl}/api/v1`,
+        // Placeholder credential only — the same posture as the Cline
+        // metering path: the per-runtime 0600 config file carries the
+        // placeholder, and the real upstream key stays exclusively in the
+        // hub-side proxy, which ignores the placeholder and injects the
+        // real key upstream. (opencode 1.18's config schema requires a
+        // plain string here, not an env reference — verified live.)
+        apiKey: METERED_PLACEHOLDER_KEY,
+      },
+      models,
+    },
+    ...Object.fromEntries(
+      vendorProviders.map((entry) => [
+        entry.id,
+        {
+          npm: "@ai-sdk/openai-compatible",
+          name: entry.name,
+          options: { baseURL: entry.baseURL, apiKey: METERED_PLACEHOLDER_KEY },
+          models: { ...entry.models },
+        },
+      ]),
+    ),
+  });
+  // The operator's explicit model always rides the legacy OpenRouter-family
+  // provider (closed-model override path). With no override, the open-source
+  // pool default applies when composed, else the Auto Router.
+  const selectedModel =
+    options.model !== undefined
+      ? `${OPENCODE_METERED_PROVIDER_ID}/${options.model}`
+      : options.openSource?.defaultModel ?? `${OPENCODE_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`;
   return {
     $schema: "https://opencode.ai/config.json",
-    provider: {
-      [OPENCODE_METERED_PROVIDER_ID]: {
-        npm: "@ai-sdk/openai-compatible",
-        name: "Workflow metered proxy",
-        options: {
-          baseURL: `${options.proxyUrl}/api/v1`,
-          // Placeholder credential only — the same posture as the Cline
-          // metering path: the per-runtime 0600 config file carries the
-          // placeholder, and the real upstream key stays exclusively in the
-          // hub-side proxy, which ignores the placeholder and injects the
-          // real key upstream. (opencode 1.18's config schema requires a
-          // plain string here, not an env reference — verified live.)
-          apiKey: METERED_PLACEHOLDER_KEY,
-        },
-        models,
-      },
-    },
-    model: `${OPENCODE_METERED_PROVIDER_ID}/${model}`,
+    provider: provider(),
+    model: selectedModel,
     // The hub is the permission authority: ask-configured tools project
     // session/request_permission to the hub, which resolves each request
     // through WorkflowApplication.authorize (G1 probe: denials honored).
