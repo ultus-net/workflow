@@ -6,7 +6,7 @@ import { join } from "node:path";
 
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
-import { shellExecutorFor } from "../integrations/cline-tui-bridge.js";
+import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
 import { createCredentialBroker } from "../integrations/credentials.js";
 import { createSecretServiceStore } from "../integrations/secret-service.js";
@@ -80,7 +80,7 @@ const guard = await createDefaultToolboxGuardProvider({
 // Hub-owned run gates (plan Tasks A2/D1): the reviewer is a contained ACP
 // agent authorized read-only against its own session task; diff sourcing and
 // test execution go through the same contained shell as the /bash route.
-// Everything fails closed at review time (e.g. missing CLINE_API_KEY
+// Everything fails closed at review time (e.g. a missing upstream key
 // surfaces as a blocking reason, never a silent pass).
 const workspaceApplications = new Map<string, WorkflowApplication>();
 const workspaceApplicationFor = (target: string): WorkflowApplication => {

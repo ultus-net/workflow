@@ -76,6 +76,20 @@ export interface ConfigCapableDriver {
   contextWindowTokens?(): number | undefined;
   /** Agent-reported ACP usage (used/size/cost) for runtimes with no metering proxy. */
   acpUsageSnapshot?(): { readonly used?: number; readonly size?: number; readonly costUsd?: number };
+  /** The ACP handshake's agent identity (name + version), once connected. */
+  agentInfo?(): { readonly name: string; readonly version?: string } | undefined;
+  /** The workflow permission-correlation session id (the key parked prompts
+   * carry) — distinct from the ACP agent session id. */
+  permissionSessionKey?(): string | undefined;
+  /** The ACP agent session id, when connected. */
+  agentSessionId?(): string | undefined;
+}
+
+/** One stable permission key per driver: the workflow correlation id the
+ * broker parks under, falling back to the agent session id for fakes. */
+export function driverPermissionKey(driver: unknown): string | undefined {
+  const candidate = driver as { permissionSessionKey?(): string | undefined; agentSessionId?(): string | undefined };
+  return candidate.permissionSessionKey?.() ?? candidate.agentSessionId?.();
 }
 
 /**
@@ -91,6 +105,9 @@ export class SessionChannel {
   readonly #usage: (() => ModelUsageMetrics | undefined) | undefined;
   readonly #budget: { readonly mechanism: () => string; readonly violation?: () => string | undefined } | undefined;
   readonly #broker: PermissionBroker | undefined;
+  /** Scopes parked permission prompts to this channel's ACP session once the
+   * driver knows its id (parallel runtimes park independently). */
+  readonly #permissionKey: (() => string | undefined) | undefined;
   #agentTitle: string | undefined;
 
   constructor(
@@ -98,12 +115,14 @@ export class SessionChannel {
     driver?: ConfigCapableDriver,
     usage?: () => ModelUsageMetrics | undefined,
     broker?: PermissionBroker,
+    permissionKey?: () => string | undefined,
     budget?: { readonly mechanism: () => string; readonly violation?: () => string | undefined },
   ) {
     this.#driver = driver;
     this.#usage = usage;
     this.#budget = budget;
     this.#broker = broker;
+    this.#permissionKey = permissionKey;
     session.subscribe((event) => this.ingest(event));
   }
 
@@ -133,6 +152,12 @@ export class SessionChannel {
     return this.#agentTitle;
   }
 
+  /** The live ACP handshake's agent identity (name + handshake version), or
+   * undefined when the session has not connected / does not report one. */
+  agentInfo(): { readonly name: string; readonly version?: string } | undefined {
+    return this.#driver?.agentInfo?.();
+  }
+
   /** Cumulative metering-proxy metrics for the session's runtime, when metered.
    * The agent-reported context window (ACP usage_update) rides along so the
    * surface can show how full the window is. */
@@ -153,9 +178,9 @@ export class SessionChannel {
     return this.#broker !== undefined;
   }
 
-  /** The parked permission request awaiting the operator, if any. */
+  /** The parked permission request awaiting the operator for this session, if any. */
   pendingPermission(): PendingPermissionRequest | undefined {
-    return this.#broker?.pendingRequest();
+    return this.#broker?.pendingRequest(this.#permissionKey?.());
   }
 
   /** Stored always-allow/always-reject tool patterns. */
@@ -217,8 +242,9 @@ export class SessionChannel {
 
   async cancel(): Promise<void> {
     // A cancelled turn must not leave a permission prompt dangling: the
-    // agent stops waiting, so the parked request resolves as a denial.
-    this.#broker?.cancelPending("turn cancelled by operator");
+    // agent stops waiting, so the parked request resolves as a denial —
+    // only this session's prompts, never a parallel session's.
+    this.#broker?.cancelPending("turn cancelled by operator", this.#permissionKey?.());
     await this.session.cancel();
   }
 }

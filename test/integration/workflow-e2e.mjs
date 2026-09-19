@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  ClineHostAdapter,
   LinuxBubblewrapContainment,
   TaskGraph,
   WorkflowApplication,
   WorkflowContainedProcess,
   evidenceId,
+  hostCapabilities,
   observationId,
   taskId,
 } from "../../dist/index.js";
@@ -24,15 +24,9 @@ const graph = new TaskGraph([
     requiredEvidence: [{ authority: "environment", subject: "artifact" }],
   },
 ]);
-const adapter = new ClineHostAdapter({
-  sessionId: "e2e-session",
-  taskId: id,
-  isMutatingTool: () => true,
-  authoritativePreMutation: true,
-});
 const application = new WorkflowApplication(
   graph,
-  adapter.capabilities,
+  hostCapabilities({ transport: "native", authoritativePreMutation: true }),
   [],
   new Set(["read", "mutation", "process"]),
 );
@@ -42,13 +36,19 @@ const artifact = join(directory, "artifact.txt");
 
 try {
   assert.equal(application.transition(id, "IN_PROGRESS").kind, "accepted");
-  const proposal = adapter.proposalFromBeforeTool({
-    tool: { name: "execute_command" },
+  const proposal = {
+    sessionId: "e2e-session",
+    taskId: id,
+    tool: "execute_command",
+    capability: "process",
+    requiredCapabilities: ["process"],
+    mutating: true,
+    subjects: [],
     input: {
       executable: "/bin/sh",
       args: ["-c", 'printf workflow-e2e > "$1"', "workflow", artifact],
     },
-  });
+  };
   assert.equal(proposal.capability, "process");
   assert.equal(typeof proposal.input, "object");
   assert.notEqual(proposal.input, null);

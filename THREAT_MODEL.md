@@ -38,7 +38,7 @@ Capability withholding is useful only when the host's execution environment actu
 | Allowed process inherits ambient host authority | Linux Bubblewrap backend uses an empty environment, explicit filesystem binds, and isolated network by default | Direct/uncontained process execution remains outside this guarantee; Bubblewrap is not VM/kernel isolation |
 | Stale actor overwrites workflow state | Version conflict plus exclusive local writer lock | Store is not a distributed/HA consensus system |
 | Malformed/tampered persisted state | Persisted domain fields, graph invariants, verification evidence, and transition records are validated on restore | Private store-directory assumption remains; history is validated for legal transitions but is not a cryptographically authenticated audit log |
-| Poisoned durable agent state replays every session | W054 provenance stamps on project-memory records (writer, authority, origin surface, timestamp) and a deterministic startup attestation that flags missing/forged stamps, unexpected writers, untrusted origins, and canary hits before the first turn; flagged recall is suppressed and reported (`src/integrations/durable-state-attestation.ts`, `mcp-toolbox/apps/project-memory-mcp`) | Attestation validates structure and provenance, not truth — a validly-stamped writer can still record a false or malicious assertion, and a local user with store access can forge or strip stamps. See the residual note below |
+| Poisoned durable agent state replays every session | W054 provenance stamps on project-memory records (writer, authority, origin surface, timestamp) and a deterministic attestation that flags missing/forged stamps, unexpected writers, untrusted origins, and canary hits; wherever a surface injects that recall before the first turn it is suppressed and reported (`src/integrations/durable-state-attestation.ts`, `mcp-toolbox/apps/project-memory-mcp`). The W050 removal of the vendored-Cline runtime removed the sole pre-first-turn call site; the pass is currently reachable via `npm run durable-state:attest` | Attestation validates structure and provenance, not truth — a validly-stamped writer can still record a false or malicious assertion, and a local user with store access can forge or strip stamps. See the residual note below |
 | Remote browser drives transitions | Current server binds to loopback in the CLI and accepts only application commands | No authentication; exposing/reverse-proxying it beyond loopback is unsupported |
 | Agent spawns internal subagents the hub cannot gate | `spawn` capability is default-deny; spawn tool proposals classify as `spawn` and host metadata cannot relax it | Agents whose internal subagents emit no permission requests are capped `advisory` or spawn-denied unless probe-verified per pinned version (`docs/HOST_ADAPTERS.md`) |
 | Agent or prompt switches a bypass/auto-approve mode at runtime | Enforcement-altering config options are denied client-side before any wire call; agent-originated `config_option_update` is rejected from retained config with a visible status | An agent that ignores its own permission surface entirely degrades to the OS containment boundary — the denial is observable but the agent cannot be forced to ask |
@@ -80,8 +80,9 @@ sensitive material out of agent-readable workspaces.
 
 Startup attestation and provenance stamps raise the cost and visibility of
 persistent memory poisoning: an unstamped, forged-writer, untrusted-origin, or
-canary-bearing record is flagged before the first model turn and its recall is
-suppressed. But attestation checks *structure and provenance only* — the same
+canary-bearing record is flagged, and where a surface injects project-memory
+recall before the first turn its recall is suppressed. But attestation checks
+*structure and provenance only* — the same
 admission principle Workflow applies to evidence. A writer holding valid
 launch configuration can still record a false or malicious assertion and pass
 attestation, and a local user with write access to the store can forge a
@@ -89,5 +90,9 @@ plausible stamp or strip provenance entirely (the stamp is not a signature and
 the store is not an authenticated log). Coverage is also partial today:
 collectors exist for project memory, while skills, scheduled-agent state, ACP
 session history, and task artifacts are inventoried but not yet attested
-(`docs/DURABLE_STATE_INVENTORY.md`). Treat a clean attestation as "no
+(`docs/DURABLE_STATE_INVENTORY.md`). The W054 pre-first-turn wire rode the
+vendored-Cline runtime, which W050 removed; no current ACP/hub surface injects
+project-memory recall yet, so attestation currently runs on demand via the
+operator CLI (`npm run durable-state:attest`) rather than at a live session
+boundary. Treat a clean attestation as "no
 structural anomaly detected", never as "this durable state is safe to trust".

@@ -29,6 +29,14 @@ CLI TUI stays the primary interactive surface until every item in
 > contained `opencode acp --pure`); the patched Cline CLI TUI is retained
 > fallback insurance, and the workflow-tui flip criterion above is no longer
 > the operative plan. The standalone-local-authority statement remains true.
+>
+> **Further superseded 2026-09-18 (W050 step 6):** the patched-Cline TUI
+> launcher was retired, and the vendored-Cline SDK runtime, `.workflow-cline/`
+> checkout, and Workflow patch were removed. Cline is reached only through the
+> retained thin stock-ACP connector (`src/integrations/cline-launch.ts` resolves
+> ambient `cline --acp`; the `cline` driver composes the generic ACP runtime),
+> probe-PENDING on stock 3.0.62. Prior statements about a patched Cline CLI TUI
+> are historical.
 
 ## Terminal theme (decision 2026-09-16, operator-approved)
 
