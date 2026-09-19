@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { acpAgentKind, resolveSkillsMountFor } from "../src/integrations/acp-runtime.js";
+import { acpAgentKind, openrouterAuthKeyFromAuth, resolveSkillsMountFor } from "../src/integrations/acp-runtime.js";
 import { METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
 import {
   DEFAULT_OPENCODE_MODEL,
@@ -46,6 +46,14 @@ test("acpAgentKind defaults to opencode and selects the cline fallback explicitl
   withEnv({ WORKFLOW_ACP_AGENT: "claude" }, () => {
     assert.throws(() => acpAgentKind(), /WORKFLOW_ACP_AGENT must be "opencode", "cline", or "goose"/);
   });
+});
+
+test("OpenCode auth fallback only accepts a non-empty OpenRouter key", () => {
+  assert.equal(openrouterAuthKeyFromAuth({ openrouter: { key: " or-key " } }), "or-key");
+  assert.equal(openrouterAuthKeyFromAuth({ openrouter: { key: "   " } }), undefined);
+  assert.equal(openrouterAuthKeyFromAuth({ openrouter: { type: "oauth" } }), undefined);
+  assert.equal(openrouterAuthKeyFromAuth({ anthropic: { key: "other-key" } }), undefined);
+  assert.equal(openrouterAuthKeyFromAuth(null), undefined);
 });
 
 test("meteredOpencodeConfig points the agent at the proxy with only the placeholder credential", () => {
