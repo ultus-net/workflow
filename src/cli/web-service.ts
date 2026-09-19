@@ -69,7 +69,13 @@ export async function startWorkflowWeb(options: StartWorkflowWebOptions = {}): P
     permissionBroker,
   });
   const webapp = await buildWebappBundle();
-  const server = createWorkflowWebServer(application, manager, webapp);
+  // W074/W073: the browser reaches the hub's schedule table and loop registry
+  // through this service's proxy; the hub stays the single writer and the
+  // browser never holds a hub token. A hub that is not running degrades to the
+  // Schedules page reporting "hub unavailable" (never a fabricated list).
+  const server = createWorkflowWebServer(application, manager, webapp, {
+    ...(process.env.WORKFLOW_HUB_DIR === undefined ? {} : { hubDiscoveryDir: process.env.WORKFLOW_HUB_DIR }),
+  });
   const port = options.port ?? Number(process.env.PORT ?? 4173);
 
   await new Promise<void>((resolve, reject) => {
