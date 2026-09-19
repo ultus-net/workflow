@@ -149,3 +149,46 @@ inventory and the full bypass note are in
    (`WORKFLOW_OPEN_MODEL_LIVE=1` plus a vendor key) exercises the same
    placeholder discipline but was not run here because no vendor key was
    available.
+
+## 2026-09-19 — W073 self-improvement loop and W074 scheduled-task manager
+
+Two new surfaces can start autonomous, repo-mutating work. Residuals found by
+an adversarial review (dated; several were fixed, the rest are stated here):
+
+1. **The trigger boundary is credential-scoped, not process-scoped.** Starting
+   a loop (`/rsi/start`) and firing a schedule (`/schedule/run-now`) require
+   the verifier credential from `verifier.json` — the same trust model as
+   `/run/finish` — not the ordinary discovery token. That token still sits on
+   disk at the same UID as agent processes, and the ordinary token's blast
+   radius already includes `/bash` (arbitrary contained shell). A compromised
+   agent process that can read `verifier.json` and reach the loopback hub can
+   therefore start a loop. What is claimed: the *ordinary surface token* cannot
+   start loops or fire schedules. What is not claimed: any protection against a
+   same-UID process reading the verifier file. Containment of the discovery/
+   verifier files is the binding control and is recorded, not solved.
+2. **A candidate can influence its own reviewer.** The reviewer reads a
+   candidate-authored diff by definition, and the ≥3-axes anti-rubber-stamp
+   check is an output-shape gate, not an independence proof. The loop no longer
+   feeds the candidate's hypothesis to the reviewer as the run's ask (the
+   operator-authored objective is used instead), but prompt-injection pressure
+   through diff content remains. Mitigation in depth: the reviewer verdict is
+   recorded evidence, the git history is auditable, and `git reset --hard` can
+   revert any accepted commit — but "independent" is a claim with this residual.
+3. **Objective/metric gaming is bounded by review, not prevented.** A candidate
+   could weaken tests to pass the gate. The reviewer gate is the backstop; no
+   automated metric-integrity check exists (e.g. test-count monotonicity).
+4. **Destructive git ops are baseline-gated, not sandboxed.** The loop refuses
+   to start on a dirty or non-repository workspace, so `git reset --hard` +
+   `git clean -fd` can only revert the loop's own candidate changes. What is
+   claimed: no pre-existing operator work can be destroyed by the discard path.
+   What is not claimed: protection against a workspace that becomes dirty
+   mid-loop through an out-of-band actor, or against `git add -A` sweeping
+   files an external process wrote during a candidate's apply window.
+5. **Loop registry state is in-memory.** A hub restart loses running loops and
+   iteration records; a crash between `finish("verified")` and `commit` leaves
+   a mutated, uncommitted tree with no resume. This is recorded as the
+   long-horizon gap (durable `StateAccessor`-style persistence), not solved.
+6. **Run-now bypasses off-peak deferral and the paused flag by design** (an
+   explicit operator ask), while review gating and run budgets still apply.
+   Cost double-spend is bounded by the per-run budget only if one is
+   configured; the loop-level budget (when wired) is separate.
