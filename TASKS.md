@@ -988,9 +988,11 @@ capability the operator's "evidence + ledger" requires and the precondition for 
 **Depends on:** W046 (task-command port), W050 (hub-http seam), W071 (standard-TUI authority), and
 Phase G of `docs/superpowers/plans/2026-09-15-hub-owned-enforcement.md`.
 
-**Spec:** `docs/TASK_TODO_LEDGER_PARITY.md` — invariants I-1…I-5, kernel child nodes, evidence-bound
-checkoff, staged bridge→MCP migration, Phase-G retirement parity.
-**Register:** `docs/COMPLIANCE_REGISTER.md` — DRIFT-001…015 obligations (strict compliance; no prose
+**Spec:** `docs/TASK_TODO_LEDGER_PARITY.md` — invariants I-1…I-10, kernel child nodes, evidence-bound
+checkoff, immutable execution-log target, staged bridge→MCP migration, Phase-G retirement parity.
+**V2 target:** `docs/OPENCODE_V2_MIGRATION_SPEC.md` — C/D and the native bridge now target the OpenCode
+v2 HTTP API after qualification; no deeper v1 ACP expansion without a separately approved compatibility fix.
+**Register:** `docs/COMPLIANCE_REGISTER.md` — DRIFT-001…024 obligations (strict compliance; no prose
 promotions).
 **Baseline:** `docs/PLAN_VS_REALITY_AUDIT.md`.
 
@@ -1011,8 +1013,9 @@ promotions).
 - [ ] **I-9** Deterministic validation gates ordered codes→schema→cross-field→**state-diff re-query**→tests;
       an LLM only classifies; test proves a claimed-but-absent change is rejected.
 - [ ] **I-10** Every execution-log entry carries durable identity (session/agent/task/step).
-- [ ] Stage 1 native-`todowrite` bridge keeps the agent's DX while the plugin remains the enforcement
-      seat (per Phase G); Stage 2 hub-owned enforcement; Stage 3 portable MCP step tool; Stage 4 G6 corpus.
+- [x] Stage 1 native-`todowrite` bridge keeps the agent's DX while the plugin remains the enforcement
+      seat (per Phase G). Stage 2 hub-owned enforcement; Stage 3 portable MCP step tool; Stage 4 G6 corpus
+      remain future stages.
 - [ ] Drift obligations closed with linked evidence: in particular **DRIFT-003** (GUARD_CORPUS_MAP
       "Ported (superset)" overclaim), **DRIFT-004** (`workflow-fs-exec-mcp` dead `/before-tool` route),
       **DRIFT-008/009** (empty `requiredEvidence` escape, missing run-completion predicate),
@@ -1026,12 +1029,10 @@ promotions).
 the G6 corpus run for the pinned agent version, and the closed `docs/COMPLIANCE_REGISTER.md` rows with
 their linking artifacts.
 
-**Status (2026-09-19, Stage 1 in progress):** spec, audit, and compliance register written and committed.
-**Stage 1a–1c landed + tested (commit `426c590`):** kernel `WorkflowStep` child nodes on `TaskGraph`
-with I-2 (no silent deletion), I-3 (evidence-bound checkoff; forged completed steps rejected on
-restore), I-4 (`STEPS_OPEN` gate on `IN_PROGRESS→VERIFYING`; `isRunComplete` predicate), persistence
-round-trip, and the application methods plus the **conditional I-1 gate** (`NO_ACTIVE_STEP` once a task
-declares a ledger). Tests `test/step-ledger.test.ts` (9); affected suites 105/105. **Still open:** the
-native-`todowrite` → canonical step bridge (Stage 1e), enforcement on all surfaces, folding the ledger
-checks into the G6 corpus, and the independent five-axis review. W072 stays **in progress**, not
+**Status (2026-09-20, Stage 1 bridge landed; C/D paused for OpenCode v2):** spec, audit, compliance register,
+and v2 migration/qualification spec are committed. Stage 1 kernel/application work plus native ACP
+`todowrite` bridge are implemented and reviewed **APPROVE**. Focused gates: typecheck/lint clean;
+145/145 focused tests; `test/step-ledger.test.ts` now pins ledger, restore, done-condition, ownership,
+and bridge behavior. **Still open:** all-surface enforcement, G6 corpus folding, immutable execution log,
+state-diff evidence, v2 C/D reconciliation, and Phase-G probes. W072 remains **in progress**, not
 complete.
