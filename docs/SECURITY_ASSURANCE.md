@@ -117,6 +117,10 @@ Policy permission is never represented as sufficient for containment; unavailabl
 | Repository-scoped contained writes preserve unrelated dirty worktree content | `src/containment/linux-bwrap.ts:104` | test/containment.test.ts#"repository-scoped contained writes preserve unrelated dirty worktree content" |
 | The guard runs before every contained execution and its failure denies | `src/containment/workflow-process.ts:14` | test/guarded-process.test.ts#"WorkflowContainedProcess fails closed when the guard throws" |
 | Contained ACP agent launch fails closed on policy-only backends and backends without streaming spawn; scratch-home wins HOME | `src/adapters/acp-contained-agent.ts:41` | test/acp-contained-agent.test.ts#"contained ACP launch fails closed on a policy-only backend" |
+| Symlink resolution precedes the authoritative workspace-confinement decision; a symlink grant whose target escapes is denied | `src/application/workflow.ts:298` | test/application.test.ts#"application resolves symlinks before validating workspace confinement" |
+| A contained process refuses a filesystem grant that resolves outside the workspace through a symlink | `src/containment/workflow-process.ts:28` | test/containment.test.ts#"contained process denies a symlink grant that escapes the workspace" |
+| The read-write-no-delete mount mode blocks deletion and creation while in-place writes persist | `src/containment/linux-bwrap.ts:144` | test/containment.test.ts#"Linux containment read-write-no-delete blocks deletion and creation while preserving writes" |
+| A policy-only passthrough refuses the read-write-no-delete mount mode it cannot enforce | `src/containment/platform.ts:20` | test/platform-containment.test.ts#"passthrough containment refuses read-write-no-delete it cannot enforce" |
 
 ## S6 — Model proxying
 

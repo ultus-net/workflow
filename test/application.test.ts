@@ -116,6 +116,38 @@ test("application denies a dangling in-workspace symlink whose missing target is
   }
 });
 
+test("application resolves symlinks before validating workspace confinement", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "workflow-workspace-order-"));
+  const workspace = join(parent, "repository");
+  const inside = join(workspace, "sub");
+  const outside = join(parent, "outside");
+  try {
+    await Promise.all([mkdir(inside, { recursive: true }), mkdir(outside)]);
+    await writeFile(join(outside, "secret.txt"), "outside\n");
+    // Target carries `..` yet canonicalizes back inside the workspace: a
+    // lexical-only validator would wrongly deny it, so allowing it pins
+    // resolution as the input to the decision.
+    await symlink(join("..", "repository", "sub"), join(workspace, "roundtrip"));
+    // The name is inside the workspace but the resolved target escapes: only
+    // a validator that resolves before deciding can deny it.
+    await symlink(outside, join(workspace, "escape"));
+    const graph = new TaskGraph([task("A")]);
+    graph.transition(taskId("A"), "IN_PROGRESS");
+    const application = new WorkflowApplication(
+      graph,
+      hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+      [],
+      new Set(["read", "mutation"]),
+      workspace,
+    );
+
+    assert.equal(application.authorize({ ...mutation("A"), subjects: ["roundtrip"] }).kind, "allow");
+    assert.equal(application.authorize({ ...mutation("A"), subjects: ["escape/secret.txt"] }).kind, "deny");
+  } finally {
+    await rm(parent, { recursive: true, force: true });
+  }
+});
+
 test("high-blast-radius capabilities are withheld independently of task state and prompts", () => {
   const graph = new TaskGraph([task("A")]);
   graph.transition(taskId("A"), "IN_PROGRESS");

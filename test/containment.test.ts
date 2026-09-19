@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, copyFile, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, copyFile, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -98,6 +98,50 @@ test("contained process fails closed before runtime when a filesystem grant esca
     );
   } finally {
     await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("contained process denies a symlink grant that escapes the workspace", async () => {
+  const parent = await mkdtemp(join(tmpdir(), "workflow-containment-symlink-grant-"));
+  const workspace = join(parent, "repository");
+  const outside = join(parent, "outside");
+  try {
+    await Promise.all([mkdir(workspace), mkdir(outside)]);
+    await symlink(outside, join(workspace, "escape"));
+    const graph = new TaskGraph([processTask]);
+    graph.transition(processTask.id, "IN_PROGRESS");
+    const application = new WorkflowApplication(
+      graph,
+      hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+      [],
+      new Set(["read", "mutation", "process"]),
+      workspace,
+    );
+    const process = new WorkflowContainedProcess(application, new LinuxBubblewrapContainment());
+
+    await assert.rejects(
+      () => process.execute(
+        {
+          sessionId: "session",
+          taskId: processTask.id,
+          tool: "contained-process",
+          capability: "process",
+          mutating: true,
+          subjects: [],
+          input: {},
+        },
+        {
+          executable: "/usr/bin/true",
+          args: [],
+          cwd: workspace,
+          readablePaths: [join(workspace, "escape")],
+          writablePaths: [join(workspace, "escape")],
+        },
+      ),
+      /WORKSPACE_PATH_DENIED/,
+    );
+  } finally {
+    await rm(parent, { recursive: true, force: true });
   }
 });
 
@@ -288,6 +332,62 @@ test("Linux containment permits writes only through an explicit writable grant",
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("Linux containment read-write-no-delete blocks deletion and creation while preserving writes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-containment-no-delete-"));
+  const existing = join(directory, "keep.txt");
+  const created = join(directory, "created.txt");
+  try {
+    await writeFile(existing, "original");
+    const runtime = new LinuxBubblewrapContainment();
+    const result = await runtime.execute({
+      executable: "/bin/sh",
+      args: [
+        "-c",
+        'printf modified > "$1"; printf new > "$2" 2>/dev/null; rm "$1" 2>/dev/null; exit 0',
+        "workflow",
+        existing,
+        created,
+      ],
+      writablePaths: [directory],
+      writableMountMode: "read-write-no-delete",
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(await readFile(existing, "utf8"), "modified");
+    await assert.rejects(() => readFile(created, "utf8"));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Linux containment read-write mode permits deleting entries", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-containment-delete-"));
+  const existing = join(directory, "keep.txt");
+  try {
+    await writeFile(existing, "original");
+    const runtime = new LinuxBubblewrapContainment();
+    const result = await runtime.execute({
+      executable: "/bin/sh",
+      args: ["-c", 'rm "$1"', "workflow", existing],
+      writablePaths: [directory],
+      writableMountMode: "read-write",
+    });
+
+    assert.equal(result.exitCode, 0);
+    await assert.rejects(() => readFile(existing, "utf8"));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("Linux containment rejects an unknown writable mount mode", async () => {
+  const runtime = new LinuxBubblewrapContainment();
+  await assert.rejects(
+    () => runtime.execute({ executable: "/usr/bin/true", args: [], writableMountMode: "read-only" as "read-write" }),
+    /writableMountMode must be/,
+  );
 });
 
 test("repository-scoped contained writes preserve unrelated dirty worktree content", async () => {

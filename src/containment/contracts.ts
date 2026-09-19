@@ -1,11 +1,23 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
+/**
+ * Mount mode for the writable grant(s) of a contained process. `read-write`
+ * binds each granted tree writable. `read-write-no-delete` keeps the granted
+ * tree's directory entries read-only and re-binds every existing regular file
+ * writable, so files can be modified but entries cannot be unlinked or
+ * created. It is a type-level variant distinct from the backend `enforced` /
+ * `policy-only` isolation marker; a policy-only backend cannot establish it.
+ */
+export type WritableMountMode = "read-write" | "read-write-no-delete";
+
 export interface ContainedProcessRequest {
   readonly executable: string;
   readonly args: readonly string[];
   readonly cwd?: string;
   readonly readablePaths?: readonly string[];
   readonly writablePaths?: readonly string[];
+  /** Applies to every `writablePaths` grant; defaults to `read-write`. */
+  readonly writableMountMode?: WritableMountMode;
   readonly network?: "isolated" | "host";
   readonly environment?: Readonly<Record<string, string>>;
 }
