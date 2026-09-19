@@ -1,0 +1,35 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "workflow-guard-mcp",
+  "version": "0.1.0",
+  "description": "Cross-client MCP policy checks for safer agentic coding workflows.",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "guard_check",
+      "description": "Proactively call before a guarded coding-agent action when the host does not enforce this policy itself. Modifications require an active task, a feature branch, and a prior same-session read. Advisory unless the host wires the result into enforcement.",
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "guard_status",
+      "description": "Proactively call at the start of guarded repository work and when a policy denial leaves the required next step unclear. Reports capabilities, operational preconditions, enforcement boundaries, and recommended lifecycle actions.",
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 1600,
+    "toolIndexBytes": 613
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}

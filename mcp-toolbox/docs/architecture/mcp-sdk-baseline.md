@@ -72,3 +72,30 @@ This review intentionally targets SDK v1.29.0 because it matches the repository'
 - MCP TypeScript SDK v1.29 server guide: <https://github.com/modelcontextprotocol/typescript-sdk/blob/v1.29.0/docs/server.md>
 - MCP TypeScript SDK v1.29 protocol guide: <https://github.com/modelcontextprotocol/typescript-sdk/blob/v1.29.0/docs/protocol.md>
 - `McpServer` implementation and `registerTool` contract: <https://github.com/modelcontextprotocol/typescript-sdk/blob/v1.29.0/src/server/mcp.ts>
+
+## 2026-07-28 addendum (surveyed 2026-09-19)
+
+The vendored SDK is now `@modelcontextprotocol/sdk@1.30.0` (current published
+latest). The dated, machine-readable survey lives in
+`packages/protocol-baseline/src/spec.ts` and is asserted by that package's
+tests; the W058/W059 evidence note is
+`docs/superpowers/specs/2026-09-19-w058-w059-mcp-alignment-evidence.md`.
+
+SDK 1.30.0 **provides**: stateless Streamable HTTP
+(`sessionIdGenerator: undefined`), the Tasks extension
+(`experimental/tasks`: `ToolTaskHandler`, `TaskStore`, `registerToolTask`,
+`tasks/get|list|cancel`, `notifications/tasks/status`), the `outputSchema` ⇒
+`structuredContent` result convention, and the CIMD advertisement field.
+
+SDK 1.30.0 **does not provide**: `server/discover`, TTL fields on list
+results, a SEP-2322 MRTR envelope, or Enterprise-Managed Authorization
+(ID-JAG). These are recorded as gaps and deliberately not hand-rolled.
+
+The toolbox adopts Tasks for `verification-accountability-mcp`'s
+`run_verification_async`, declares one result shape per tool through the
+`@agent-tools/protocol-baseline` conformance smoke, and ships generated
+`.well-known/server-card.json` cards for every product. The prior baseline's
+"returning both text `content` and `structuredContent` is supported" note
+still holds, but the duplicate text companion is now marked deprecated-once
+hosts surface structured output; see the evidence note for the
+`result-bounds` interaction that defers its removal.

@@ -1,0 +1,37 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "skills-mcp",
+  "version": "0.1.0",
+  "description": "Hub-owned skills delivery over MCP: metadata-only discovery plus on-demand content (plan Task F1).",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "list_skills",
+      "description": "List available skills (metadata only). Skill content is never returned here — it costs a read_skill call. Screened (malicious-shaped) skills are quarantined and surfaced with their findings.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "read_skill",
+      "description": "Read one skill's full content by name. This is the only delivery path for skill content. Quarantined (malicious-shaped) or level-locked skills are refused.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 1899,
+    "toolIndexBytes": 511
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}

@@ -3,15 +3,24 @@
   "version": "0.1.0",
   "description": "Durable bounded verification observations and freshness synthesis over MCP.",
   "type": "module",
-  "bin": { "verification-accountability-mcp": "./dist/server.js" },
-  "files": ["dist/", "README.md", "LICENSE"],
+  "bin": {
+    "verification-accountability-mcp": "./dist/server.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE",
+    ".well-known/"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/server.js', 0o755)\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "pnpm run build && node --test --import tsx test/*.test.ts",
     "verify": "pnpm run typecheck && pnpm run test"
   },
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
