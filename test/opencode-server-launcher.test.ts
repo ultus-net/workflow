@@ -29,10 +29,6 @@ import {
  * launcher must fail closed rather than invent a server.
  */
 
-function basic(user: string, password: string): string {
-  return `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}`;
-}
-
 async function stubGateway(password: string): Promise<{ url: string; close(): Promise<void> }> {
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     const auth = (request.headers.authorization ?? "").match(/^Basic\s+(.+)$/);
@@ -104,7 +100,25 @@ test("W071 launcher: parses args and builds the stock-client argv", () => {
   const discovery: OpencodeServerDiscovery = {
     protocol: 1, pid: 1, workspace: "/tmp/w", gatewayUrl: "http://127.0.0.1:7", tuiUsername: "opencode", tuiPassword: "pw",
   };
-  assert.deepEqual(opencodeAttachArgs(discovery), ["attach", "http://127.0.0.1:7", "--password", "pw", "--dir", "/tmp/w"]);
+  // The password rides the child ENV, never argv (review P3l).
+  assert.deepEqual(opencodeAttachArgs(discovery), ["attach", "http://127.0.0.1:7", "--dir", "/tmp/w"]);
+});
+
+test("W071 launcher: discovery is only trusted for a loopback gateway (review P3i)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-ensure-nonloop-"));
+  try {
+    const path = opencodeServerDiscoveryPath(dir, "/tmp/alpha");
+    writeOpencodeServerDiscovery(path, {
+      protocol: 1, pid: process.pid, workspace: "/tmp/alpha", gatewayUrl: "http://203.0.113.9:7", tuiUsername: "opencode", tuiPassword: "tuipw",
+    });
+    const result = await ensureDiscovery({
+      workspace: "/tmp/alpha", stateHome: dir, autostart: false,
+      fetchImpl: (() => Promise.resolve(new Response(JSON.stringify({ healthy: true }), { status: 200 }))) as typeof fetch,
+    });
+    assert.equal(result, undefined, "a non-loopback gateway URL must never be attached to");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("W071 launcher: no candidates fails closed", () => {
@@ -140,10 +154,4 @@ test("W071 launcher: ensureDiscovery returns a probed live gateway", async (t) =
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
-
-test("W071 launcher: basic() helper matches the gateway auth format", () => {
-  // Guards against the M0 bug class where the captured credential fragment
-  // was compared to the full header instead of the decoded pair.
-  assert.equal(basic("opencode", "p"), `Basic ${Buffer.from("opencode:p").toString("base64")}`);
 });

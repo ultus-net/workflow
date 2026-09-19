@@ -18,13 +18,15 @@ import { HttpRemoteEngine } from "../integrations/remote-acp/engine.js";
 /**
  * W071 — the Workflow OpenCode server daemon.
  *
- * Owns a contained `opencode serve` and the authority gateway in the
- * background, and publishes only the gateway URL + client password through the
- * discovery file. The upstream server password never leaves this process.
+ * Owns a contained `opencode serve`, the authority gateway, and the authority
+ * broker in the background, and publishes only the gateway URL + client
+ * password through the discovery file. The upstream server password never
+ * leaves this process.
  *
- * M1 posture: advisory. No broker hook is wired yet, so client permission
- * replies pass through the gateway; the surface must not be labeled enforced
- * until the M2 broker lands and the PERMISSION probe is green.
+ * M2 posture: advisory. The broker auto-resolves permission requests from
+ * `WorkflowApplication` policy and the gateway intercepts client replies, but
+ * the surface must not be labeled `enforced` until the live PERMISSION probe
+ * is green.
  *
  * Usage: `workflow-opencode-server [--workspace DIR]`
  * Environment: WORKFLOW_OPENCODE_SERVER_HOME (state root override).
@@ -75,12 +77,29 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     username: runtime.username,
     password: runtime.password,
   });
+  const shutdownRequested = { requested: false };
+  let requestShutdown: () => void = () => undefined;
+  const shutdown = new Promise<void>((resolveShutdown) => {
+    requestShutdown = () => {
+      if (shutdownRequested.requested) return;
+      shutdownRequested.requested = true;
+      resolveShutdown();
+    };
+  });
   const authority = createOpencodeServerAuthority({
     engine,
     application,
     workspace,
     onDecision: (decision) => {
-      console.log(`[authority] ${decision.decision} ${decision.tool} session=${decision.sessionId} reason=${decision.reason ?? "policy allow"}`);
+      // Bounded log (review P3h): reasons can carry path/command fragments.
+      const reason = (decision.reason ?? "policy allow").slice(0, 160);
+      console.log(`[authority] ${decision.decision} ${decision.tool} session=${decision.sessionId} delivered=${decision.delivered ?? true} reason=${reason}`);
+    },
+    // Authority loss must tear the surface down, never keep advertising a
+    // daemon whose policy point is dead (review P2-1).
+    onAuthorityLost: () => {
+      console.error("[authority] event stream lost — shutting down the OpenCode server surface");
+      requestShutdown();
     },
   });
   void authority.start();
@@ -112,10 +131,25 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   console.log(`Workflow OpenCode server gateway at ${gateway.url} for ${workspace}`);
   console.log(`Discovery file: ${discoveryPath}`);
 
-  await new Promise<void>((resolveShutdown) => {
-    process.once("SIGINT", resolveShutdown);
-    process.once("SIGTERM", resolveShutdown);
+  // Process guards (review P2-3): a stray rejection must never crash the
+  // daemon and orphan the contained server without cleanup.
+  process.on("unhandledRejection", (reason) => {
+    console.error(`[daemon] unhandled rejection: ${reason instanceof Error ? reason.message : String(reason)}`);
   });
+  process.on("uncaughtException", (error) => {
+    console.error(`[daemon] uncaught exception: ${error.message}`);
+    void (async () => {
+      await authority.stop();
+      if (gateway !== undefined) await gateway.close();
+      await runtime.dispose();
+      removeOpencodeServerDiscovery(discoveryPath);
+      process.exit(1);
+    })();
+  });
+
+  process.once("SIGINT", requestShutdown);
+  process.once("SIGTERM", requestShutdown);
+  await shutdown;
   await authority.stop();
   await gateway.close();
   await runtime.dispose();

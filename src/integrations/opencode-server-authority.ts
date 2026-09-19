@@ -222,11 +222,9 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
         for await (const event of options.engine.events({ cwd: options.workspace, signal: controller.signal })) {
           if (isPermissionAsked(event)) await answer(event.properties);
         }
-        lost = true;
-        options.onAuthorityLost?.();
+        markLost();
       } catch (error) {
-        lost = true;
-        options.onAuthorityLost?.();
+        markLost();
         streamError = error instanceof Error ? error.message : String(error);
       }
     },

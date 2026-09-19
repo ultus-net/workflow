@@ -165,11 +165,11 @@ awaits the live PERMISSION/RULE-CONFIG probes (which need a model key).
   the broker, so the stock TUI can never answer upstream.
 
 **Why the capability classifier is explicit:** `AcpHostAdapter` classifies by
-tool *kind* only (execute→process, read/search→read, else mutation) and would
-misclassify `webfetch` as mutation and `task` as mutation. The classifier
-escalates the built-in classification (the adapter takes the stricter of the
-two), so `webfetch` is `network` and `task` is `spawn` — both withheld by
-default in the daemon composition.
+tool *kind* only (execute→process, read/search→read, else mutation). `task`
+already reaches `spawn` through the adapter's `KNOWN_SPAWN_TOOLS`; the
+classifier's real addition is `webfetch→network` (which the adapter would
+classify as mutation) plus explicit entries for OpenCode-shaped action names.
+The adapter takes the stricter of the two, so this is escalation-only.
 
 **M2 scope boundary (recorded):** the broker auto-resolves from policy; an
 operator reply that reaches the gateway is journaled as observation only
@@ -182,3 +182,50 @@ here — no model key in this environment — so the end-to-end `permission.aske
 capability/workspace escape/in-workspace mutation/unmappable fail-closed/
 SSE-loss/correlation/operator-reply observation. The gated live probe now also
 confirms the broker subscribes to the real server's SSE and stays live.
+
+---
+
+## 9. Five-axis review + fixes + main sync (2026-09-19)
+
+**Independent review** (`secondary-reviewer/w071-m0-m1-m2`, verdict recorded):
+**REQUEST_CHANGES, no P0, two P1**, all five axes covered. The credential split
+and fail-closed posture were confirmed; the fixes below are applied on this
+branch.
+
+- **P1-1 (fixed)** — the advisory gateway branch returned without responding
+  or forwarding (hang), and its test hit `/reply` instead of the reply route.
+  The no-hook branch now forwards the reply upstream, and the advisory test
+  posts the real `permission/:rid/reply` route and asserts the upstream answer.
+- **P1-2 (fixed)** — reply-route matching is now normalization-safe: the
+  pathname is decoded before matching, so `/…/%72eply` cannot dodge
+  interception, and a reply-shaped path that still does not map cleanly fails
+  closed with 400 instead of being forwarded under the hub credential. Pinned
+  by regression tests.
+- **P2-1 (fixed)** — `authorityLost` now fires `onAuthorityLost`; the daemon
+  logs the loss and tears down (authority stop → gateway close → runtime
+  dispose → discovery removal) instead of advertising a dead policy point.
+- **P2-3 (fixed)** — the gateway handler has an error boundary (500, never a
+  crash), and the daemon registers `unhandledRejection`/`uncaughtException`
+  guards with best-effort teardown on an uncaught exception.
+- **P2-2 (resolved)** — the branch is now **rebased onto origin/main**
+  (post-W052/W057-W064/W070a/W070b main); the only conflict was the TASKS.md
+  Phase numbering — W071 landed as **Phase 13** because main's Phase 12 is the
+  promoted AI-landscape/open-source-pivot items. W070a's reworked
+  `meteredOpencodeConfig` remained option-compatible; all gates re-run green
+  after the rebase.
+- **Selected P3s (fixed)** — reply delivery confirmation in the journal
+  (`delivered` + reason), duplicate-task catch narrowed, `start()` doc, static
+  `node:net` import, dead ternary removed, stale daemon header rewritten,
+  decision log bounded to 160 chars, discovery gateway URL validated loopback,
+  spawn lock against double-daemon launches, and the TUI password now rides
+  the child env instead of argv. **Accepted residuals (recorded):** forwarded
+  bodies have no size limit and upstream requests no explicit timeout (SSE
+  requires none); the §8 wording about `KNOWN_SPAWN_TOOLS` duplication is
+  slightly overstated (the classifier's real addition is `webfetch→network`).
+
+**Post-fix verification:** typecheck, lint, **28 unit tests**, the gated live
+probe, and `npm run build` all green.
+
+**Still open:** M3 (operator-intent reconciliation), the live probe family
+(needs a model key), a real contained launch with a key, the literal
+interactive TUI operator smoke, and the `HOST_ADAPTERS.md` verdict row.

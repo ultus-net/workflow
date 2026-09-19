@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
+import { accessSync, closeSync, constants, existsSync, openSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -49,9 +49,27 @@ export function parseAttachArgs(argv: readonly string[]): OpencodeAttachArgs {
   return { workspace: workspace ?? process.cwd(), autostart };
 }
 
-/** Stock-client arguments: connect to the gateway with the client password. */
+/** Stock-client arguments: connect to the gateway (password rides the env). */
 export function opencodeAttachArgs(discovery: OpencodeServerDiscovery): readonly string[] {
-  return ["attach", discovery.gatewayUrl, "--password", discovery.tuiPassword, "--dir", discovery.workspace];
+  return ["attach", discovery.gatewayUrl, "--dir", discovery.workspace];
+}
+
+/**
+ * The discovery file is 0600 single-user state, but a tampered or foreign
+ * discovery must still fail closed: the launcher only ever attaches to a
+ * loopback gateway (review P3i).
+ */
+export function isLoopbackGatewayUrl(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname;
+    return hostname === "127.0.0.1" || hostname === "::1" || hostname === "localhost";
+  } catch {
+    return false;
+  }
+}
+
+function discoveryIsTrusted(discovery: OpencodeServerDiscovery): boolean {
+  return isLoopbackGatewayUrl(discovery.gatewayUrl) && discovery.workspace !== "";
 }
 
 export interface SpawnCandidate {
@@ -82,6 +100,19 @@ export function resolveDaemonSpawnCandidates(
   return existsSync(dist) ? [{ cmd: process.execPath, args: [dist] }] : [];
 }
 
+/** Exclusive `wx` acquire so two concurrent launchers cannot spawn two daemons. */
+function acquireSpawnLock(lockPath: string): (() => void) | undefined {
+  try {
+    const fd = openSync(lockPath, "wx");
+    return () => {
+      closeSync(fd);
+      rmSync(lockPath, { force: true });
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 export interface EnsureDiscoveryOptions {
   readonly workspace: string;
   readonly stateHome: string;
@@ -101,7 +132,11 @@ export interface EnsureDiscoveryOptions {
 export async function ensureDiscovery(options: EnsureDiscoveryOptions): Promise<OpencodeServerDiscovery | undefined> {
   const discoveryPath = opencodeServerDiscoveryPath(options.stateHome, options.workspace);
   const existing = readOpencodeServerDiscovery(discoveryPath);
-  if (existing !== undefined && (await probeOpencodeServerGateway(existing, options.fetchImpl ?? fetch))) {
+  if (
+    existing !== undefined &&
+    discoveryIsTrusted(existing) &&
+    (await probeOpencodeServerGateway(existing, options.fetchImpl ?? fetch))
+  ) {
     return existing;
   }
   if (options.autostart === false) return undefined;
@@ -109,20 +144,35 @@ export async function ensureDiscovery(options: EnsureDiscoveryOptions): Promise<
   const candidates = options.spawnCandidates ?? resolveDaemonSpawnCandidates(process.env);
   const candidate = candidates[0];
   if (candidate === undefined) return undefined;
-  const spawnFn = options.spawnFn ?? nodeSpawn;
-  const child = spawnFn(candidate.cmd, [...candidate.args, "--workspace", options.workspace], {
-    detached: true,
-    stdio: ["ignore", "ignore", "ignore"],
-  });
-  child.on?.("error", () => undefined);
-  child.unref?.();
 
   const timeoutMs = options.timeoutMs ?? 30_000;
   const pollMs = options.pollMs ?? 250;
   const deadline = Date.now() + timeoutMs;
+  const spawnFn = options.spawnFn ?? nodeSpawn;
+
+  // Spawn lock (review P3j): two concurrent launchers must not start two
+  // daemons. The loser waits for the winner's discovery instead.
+  const releaseLock = acquireSpawnLock(`${discoveryPath}.spawn.lock`);
+  if (releaseLock !== undefined) {
+    try {
+      const child = spawnFn(candidate.cmd, [...candidate.args, "--workspace", options.workspace], {
+        detached: true,
+        stdio: ["ignore", "ignore", "ignore"],
+      });
+      child.on?.("error", () => undefined);
+      child.unref?.();
+    } finally {
+      releaseLock();
+    }
+  }
+
   while (Date.now() < deadline) {
     const discovery = readOpencodeServerDiscovery(discoveryPath);
-    if (discovery !== undefined && (await probeOpencodeServerGateway(discovery, options.fetchImpl ?? fetch))) {
+    if (
+      discovery !== undefined &&
+      discoveryIsTrusted(discovery) &&
+      (await probeOpencodeServerGateway(discovery, options.fetchImpl ?? fetch))
+    ) {
       return discovery;
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, pollMs));
@@ -142,11 +192,16 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   if (binary === undefined) {
     throw new Error("No OpenCode client available: install the opencode CLI globally or set WORKFLOW_OPENCODE_BIN");
   }
-  const child = nodeSpawn(binary, [...opencodeAttachArgs(discovery)], { stdio: "inherit" });
+  const child = nodeSpawn(binary, [...opencodeAttachArgs(discovery)], {
+    stdio: "inherit",
+    // The client credential rides the child env, never argv (review P3l:
+    // argv is readable by any host user; env is same-user-only).
+    env: { ...process.env, OPENCODE_SERVER_PASSWORD: discovery.tuiPassword },
+  });
   await new Promise<void>((resolveExit, reject) => {
     child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      process.exitCode = code ?? (signal === null ? 1 : 1);
+    child.once("exit", (code) => {
+      process.exitCode = code ?? 1;
       resolveExit();
     });
   });

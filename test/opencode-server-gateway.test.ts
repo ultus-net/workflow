@@ -58,7 +58,7 @@ async function stubUpstream(): Promise<StubServer> {
       response.end(gzipSync(Buffer.from(JSON.stringify({ compressed: true }))));
       return;
     }
-    if (pathname === "/reply" && request.method === "POST") {
+    if (/^\/api\/session\/[^/]+\/permission\/[^/]+\/reply$/.test(pathname) && request.method === "POST") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ forwarded: true }));
       return;
@@ -187,13 +187,47 @@ test("W071 gateway (advisory mode): without a broker hook, replies pass through 
   });
   t.after(() => void gateway.close());
 
-  const response = await fetch(gateway.url + "/reply", {
+  // Must be the REAL reply route (review P1-1: the old test hit /reply, which
+  // only exercised generic forwarding and would pass with interception broken).
+  const response = await fetch(gateway.url + "/api/session/sess1/permission/req1/reply?directory=/tmp", {
     method: "POST",
     headers: { authorization: basic("opencode", "tuipw"), "content-type": "application/json" },
     body: JSON.stringify({ reply: "once" }),
   });
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json() as unknown, { forwarded: true });
+  assert.equal(upstream.requests.some((entry) => entry.path.startsWith("/api/session")), true);
+});
+
+test("W071 gateway: percent-encoded reply routes cannot dodge interception (review P1-2)", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const seen: OpencodePermissionReply[] = [];
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    onPermissionReply: (reply) => { seen.push(reply); },
+  });
+  t.after(() => void gateway.close());
+  const headers = { authorization: basic("opencode", "tuipw"), "content-type": "application/json" };
+
+  const encoded = await fetch(gateway.url + "/api/session/sess1/permission/req1/%72eply", {
+    method: "POST", headers, body: JSON.stringify({ reply: "reject" }),
+  });
+  assert.equal(encoded.status, 200);
+  assert.deepEqual(seen, [{ sessionId: "sess1", requestId: "req1", reply: "reject" }]);
+  assert.equal(upstream.requests.some((entry) => entry.path.startsWith("/api/session")), false);
+
+  // A reply-shaped path that does not map cleanly must fail closed, never
+  // reach the upstream under the hub credential.
+  const unmappable = await fetch(gateway.url + "/api/session/sess1/permission/req1/%2E%2E/reply", {
+    method: "POST", headers, body: JSON.stringify({ reply: "reject" }),
+  });
+  assert.equal(unmappable.status, 400);
+  assert.equal(seen.length, 1);
+  assert.equal(upstream.requests.some((entry) => entry.path.startsWith("/api/session")), false);
 });
 
 test("W071 gateway: newTuiPassword is distinct per call", () => {
