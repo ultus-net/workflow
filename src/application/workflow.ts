@@ -166,7 +166,7 @@ export class WorkflowApplication {
   }
 
   #authorize(action: ProposedToolAction): PolicyDecision {
-    if (this.#policyFailures.isOpen(action.sessionId)) {
+    if (action.mutating && this.#policyFailures.isOpen(action.sessionId)) {
       return {
         kind: "deny",
         code: "POLICY_CIRCUIT_BREAKER",

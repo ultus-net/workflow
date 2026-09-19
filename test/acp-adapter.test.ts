@@ -125,6 +125,17 @@ test("ACP mutating proposals without checkable subjects fail closed", () => {
   );
 });
 
+test("ACP adapter preserves read fingerprints on mutating proposals", () => {
+  const adapter = new AcpHostAdapter({ authoritativePermissions: true });
+  const fingerprint = { path: "/workspace/a.ts", digest: "abc", size: 3, modifiedNs: "1" };
+  const action = adapter.proposalFromBeforeTool({
+    sessionId: "s",
+    taskId: taskId("A"),
+    toolCall: { name: "write_file", kind: "edit", locations: [{ path: fingerprint.path }], readFingerprints: [fingerprint] },
+  });
+  assert.deepEqual(action.readFingerprints, [fingerprint]);
+});
+
 test("spawn tools classify to the spawn capability regardless of kind", () => {
   const adapter = new AcpHostAdapter({ authoritativePermissions: true });
   for (const name of ["spawn_agent", "task", "subagent", "agent"]) {
