@@ -34,6 +34,55 @@ test("K3 preserved-thinking replay fixture passes the policy", () => {
   assert.equal(enforceReplayPolicy({ model: "kimi-k3", messages: KIMI_PRESERVED }).action, "allow");
 });
 
+test("parallel tool results after one assistant turn are legitimate replay", () => {
+  const parallel = [
+    { role: "user", content: "inspect both files" },
+    {
+      role: "assistant",
+      content: null,
+      reasoning_content: "I will inspect both files in parallel.",
+      tool_calls: [
+        { id: "call_a", type: "function", function: { name: "read_a" } },
+        { id: "call_b", type: "function", function: { name: "read_b" } },
+      ],
+    },
+    { role: "tool", tool_call_id: "call_a", content: "file A" },
+    { role: "tool", tool_call_id: "call_b", content: "file B" },
+  ];
+
+  assert.deepEqual(detectStrippedReplay(parallel), []);
+  assert.deepEqual(detectSyntheticToolCallTurns(parallel), []);
+});
+
+test("mixed serial and parallel tool replay remains attributable", () => {
+  const mixed = [
+    { role: "user", content: "inspect and compare" },
+    {
+      role: "assistant",
+      content: null,
+      reasoning_content: "I will inspect the first file.",
+      tool_calls: [{ id: "call_serial", type: "function", function: { name: "read_first" } }],
+    },
+    { role: "tool", tool_call_id: "call_serial", content: "first file" },
+    {
+      role: "assistant",
+      content: null,
+      reasoning_content: "Now I will inspect the other two files in parallel.",
+      tool_calls: [
+        { id: "call_parallel_a", type: "function", function: { name: "read_second" } },
+        { id: "call_parallel_b", type: "function", function: { name: "read_third" } },
+      ],
+    },
+    { role: "tool", tool_call_id: "call_parallel_b", content: "third file" },
+    { role: "tool", tool_call_id: "call_parallel_a", content: "second file" },
+  ];
+
+  assert.deepEqual(detectStrippedReplay(mixed), []);
+  assert.deepEqual(detectSyntheticToolCallTurns(mixed), []);
+  assert.equal(enforceReplayPolicy({ model: "kimi-k3", messages: mixed }).action, "allow");
+  assert.equal(enforceReplayPolicy({ model: "deepseek-chat", messages: mixed }).action, "allow");
+});
+
 test("K3 stripped replay fixture is detected and rejected", () => {
   // The reasoning_content was stripped from the assistant turns and the
   // assistant tool-call turn was summarized away, leaving a bare tool result.

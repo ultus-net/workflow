@@ -116,6 +116,22 @@ function toolCallIds(message: ReplayMessage): readonly string[] {
     .filter((id): id is string => typeof id === "string" && id.length > 0);
 }
 
+function precedingToolCallIds(messages: readonly unknown[], index: number): readonly string[] {
+  let cursor = index - 1;
+  while (cursor >= 0) {
+    const previous = asMessage(messages[cursor]);
+    if (previous?.role !== "tool") break;
+    cursor -= 1;
+  }
+  const owner = cursor >= 0 ? asMessage(messages[cursor]) : undefined;
+  return owner?.role === "assistant" ? toolCallIds(owner) : [];
+}
+
+function hasOwningToolCall(messages: readonly unknown[], index: number, message: ReplayMessage): boolean {
+  const id = typeof message.tool_call_id === "string" ? message.tool_call_id : undefined;
+  return id !== undefined && precedingToolCallIds(messages, index).includes(id);
+}
+
 /**
  * Detects a replay that stripped the assistant internals K3 requires.
  *
@@ -129,15 +145,12 @@ export function detectStrippedReplay(messages: readonly unknown[]): ReplayViolat
   for (let index = 0; index < messages.length; index += 1) {
     const message = asMessage(messages[index]);
     if (message === undefined) continue;
-    if (message.role === "tool") {
-      const previous = index > 0 ? asMessage(messages[index - 1]) : undefined;
-      if (previous === undefined || previous.role !== "assistant" || toolCalls(previous).length === 0) {
-        violations.push({
-          code: "stripped-tool-calls",
-          index,
-          detail: "tool result is not preceded by an assistant tool-call turn",
-        });
-      }
+    if (message.role === "tool" && !hasOwningToolCall(messages, index, message)) {
+      violations.push({
+        code: "stripped-tool-calls",
+        index,
+        detail: "tool result is not attributable to a preceding assistant tool-call turn",
+      });
     }
     if (message.role === "assistant" && toolCalls(message).length > 0 && !nonEmptyString(message.reasoning_content)) {
       violations.push({
@@ -163,12 +176,11 @@ export function detectSyntheticToolCallTurns(messages: readonly unknown[]): Repl
     const message = asMessage(messages[index]);
     if (message === undefined) continue;
     if (message.role === "tool") {
-      const previous = index > 0 ? asMessage(messages[index - 1]) : undefined;
-      if (previous === undefined || previous.role !== "assistant" || toolCalls(previous).length === 0) {
+      if (!hasOwningToolCall(messages, index, message)) {
         violations.push({
           code: "synthetic-tool-call-turn",
           index,
-          detail: "tool result has no preceding assistant tool-call turn",
+          detail: "tool result is not attributable to a preceding assistant tool-call turn",
         });
       }
       continue;
