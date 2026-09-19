@@ -12,6 +12,12 @@ model proposes -> Workflow authorizes -> tool acts -> environment supplies evide
 
 SDKs and UIs are replaceable adapters. They must not become sources of workflow truth.
 
+**Task lifecycle process:** `TASKS.md` contains active/pending/blocked W-items only.
+Completed or superseded work is append-only archived in `docs/TASKS_COMPLETED.md`
+with linked test/probe/review evidence. No agent may promote a status from prose;
+archive movement requires deterministic evidence and operator-approved scope.
+OpenCode v2 qualification is tracked separately in `docs/OPENCODE_V2_MIGRATION_SPEC.md`.
+
 ## Architecture Constraints
 
 - The deterministic kernel owns task state, dependency eligibility, policy decisions, evidence requirements, freshness/invalidation, and legal transitions.

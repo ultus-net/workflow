@@ -108,8 +108,11 @@ from fingerprinted provenance, never from stale approvals
 
 ## Where things live
 
-- Roadmap and task ledger: `TASKS.md` (W-numbered work items with acceptance
-  criteria; Phase 11 = daily-driver replacement qualification, W043-W050)
+- Roadmap and task ledger: `TASKS.md` (active W-numbered work items with acceptance
+  criteria). Completed/superseded work is append-only archived in
+  `docs/TASKS_COMPLETED.md`; archive an item only after linked test/probe/review
+  evidence, never because an agent says it is done. Current focus includes W072
+  compliance and OpenCode v2 qualification.
 - Hub design `docs/HUB.md`; versioned SDK-neutral contract
   `docs/HUB_PROTOCOL.md`; adapter matrix and probe verdicts
   `docs/HOST_ADAPTERS.md`; honest feature status `docs/FEATURES.md`;
