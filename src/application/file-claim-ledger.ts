@@ -44,5 +44,6 @@ export class FileClaimLedger {
     }
   }
 
+  owns(sessionId: string, path: string): boolean { return this.#claims.get(path) === sessionId; }
   hasRead(path: string): boolean { return this.#reads.has(path); }
 }
