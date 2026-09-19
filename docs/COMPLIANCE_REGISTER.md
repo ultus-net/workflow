@@ -91,6 +91,7 @@ Severity: P0 (blocks retirement/authority) · P1 (major) · P2 (minor) · P3 (do
 | Date | Obligation(s) | Increment | Evidence | Status effect |
 |---|---|---|---|---|
 | 2026-09-19 | DRIFT-009, DRIFT-010 (partial) | Kernel `WorkflowStep` child nodes + `isRunComplete`; I-2/I-3/I-4 gates; persistence; application step methods + conditional I-1 gate | commit `426c590`; `test/step-ledger.test.ts` (9); affected suites 105/105 | **Advanced, not closed.** DRIFT-009 predicate exists but is not yet enforced at all completion paths; DRIFT-010 still needs the native-`todowrite` bridge, all-surface enforcement, and G6 corpus. DRIFT-008 (empty `requiredEvidence` on session tasks) remains open. |
+| 2026-09-19 | DRIFT-021 (partial) | WorkflowApplication-owned policy-failure tracker with plugin-parity threshold 2 and fail-closed `POLICY_CIRCUIT_BREAKER`; success resets the session state | commit `f379c51`; `test/application-policy-failure-tracker.test.ts` (2) | **Advanced, not closed.** Host adapters still need to call `recordToolOutcome` for every denial/failure/success path before Corpus C is parity-complete. |
 
 ---
 
