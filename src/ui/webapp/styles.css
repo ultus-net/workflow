@@ -2825,3 +2825,20 @@ body {
   color: var(--text-muted);
   font-size: 0.72rem;
 }
+
+/* New-thread affordance in the header (Alt+N stays the shortcut). */
+.new-thread {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  padding: 0.15rem 0.5rem;
+}
+.new-thread:hover { color: var(--text); }
+
+/* Context panel (OpenCode TUI parity): tokens used / window, percent, spend. */
+.panel-context { display: block; }
+.context-rows { display: flex; flex-direction: column; gap: 0.2rem; }
+.context-row { display: flex; justify-content: space-between; gap: 1rem; margin: 0; font-size: 0.8rem; }
+.context-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.68rem; }

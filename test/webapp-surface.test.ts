@@ -5,7 +5,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CommandPalette, ConfigChips, ConnectionsSection, StatusBar, UsageMeter } from "../src/ui/webapp/app.js";
+import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, StatusBar, UsageMeter } from "../src/ui/webapp/app.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { EditDiff, parseEditTool } from "../src/ui/webapp/diff-text.js";
 import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection } from "../src/ui/webapp/settings-dialog.js";
@@ -238,5 +238,28 @@ test("edit diff falls back to before/after strings when no patch is present", ()
   const markup = renderToStaticMarkup(createElement(EditDiff, { data: data! }));
   assert.ok(markup.includes("edit-diff-del") && markup.includes("edit-diff-add"), "a computed diff must tint add/del");
   assert.ok(markup.includes("beta") && markup.includes("gamma"), "the changed lines must show");
+});
+
+test("inspector Context section reports tokens, percent used, and spend", () => {
+  const markup = renderToStaticMarkup(createElement(ContextSection, {
+    usage: { source: "agent" as const, latestPromptTokens: 42_000, contextWindowTokens: 200_000, costUsd: 0.149 },
+  }));
+  assert.ok(markup.includes("Context"), "the Context heading must render");
+  assert.ok(markup.includes("42.0k") && markup.includes("200.0k"), "tokens used / window must show");
+  assert.ok(markup.includes("21%"), "percent used must show");
+  assert.ok(markup.includes("$0.1490"), "spend must show");
+});
+
+test("inspector MCP section lists the configured catalog honestly, not a fabricated connection", () => {
+  const markup = renderToStaticMarkup(createElement(McpConnections, {
+    servers: [
+      { name: "context7", enabled: true, transport: "http", url: "https://mcp.context7.com/mcp" },
+      { name: "guard", enabled: false, transport: "stdio", command: "node" },
+    ],
+  }));
+  assert.ok(markup.includes("MCP"), "the MCP heading must render");
+  assert.ok(markup.includes("context7") && markup.includes("guard"), "every configured server must be listed");
+  assert.ok(markup.includes("configured") && markup.includes("disabled"), "enabled/disabled state must be stated");
+  assert.ok(markup.includes("does not expose"), "the section must state that ACP exposes no live MCP list");
 });
 

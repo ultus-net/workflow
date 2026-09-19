@@ -676,14 +676,14 @@ export function UsageMeter({ usage }: { readonly usage: SessionUsage }) {
           <span className="usage-context-bar" aria-hidden="true">
             <span className="usage-context-fill" style={{ "--context-fill-scale": `${(fillPct ?? 0) / 100}` } as React.CSSProperties} />
           </span>
-          Context {formatTokens(contextUsed)}
+          {formatTokens(contextUsed)}
           {contextWindow !== undefined && <> / {formatTokens(contextWindow)}</>}
-          {fillPct !== undefined && <> · {fillPct}%</>}
+          {fillPct !== undefined && <> ({fillPct}%)</>}
         </span>
       )}
       {metered && (
         <span className="usage-tokens" aria-label={`${usage.promptTokens} prompt tokens, ${usage.completionTokens} completion tokens`}>
-          ↑{formatTokens(usage.promptTokens)} ↓{formatTokens(usage.completionTokens)} tokens
+          ↑{formatTokens(usage.promptTokens)} ↓{formatTokens(usage.completionTokens)}
         </span>
       )}
       {usage.costUsd !== undefined && (
@@ -1376,7 +1376,59 @@ export function ConnectionsSection({ agents, currentAgent, capabilities }: {
   );
 }
 
-function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent, capabilities }: {
+/** Context block, mined from the OpenCode TUI's Context panel: how much of the
+ * model's context window the session is using, and what it has spent. Real
+ * numbers only — a field the agent never reported stays absent. */
+export function ContextSection({ usage }: { readonly usage: SessionUsage | undefined }) {
+  if (usage === undefined) return null;
+  const used = usage.latestPromptTokens;
+  const window = usage.contextWindowTokens;
+  const pct = used !== undefined && window !== undefined && window > 0 ? Math.round((used / window) * 100) : undefined;
+  if (used === undefined && usage.costUsd === undefined) return null;
+  return (
+    <section className="panel-context">
+      <h2>Context</h2>
+      <div className="context-rows">
+        {used !== undefined && (
+          <p className="context-row">
+            <span className="context-label">tokens</span>
+            <span>{formatTokens(used)}{window !== undefined && <span className="muted"> / {formatTokens(window)}</span>}</span>
+          </p>
+        )}
+        {pct !== undefined && (
+          <p className="context-row"><span className="context-label">used</span><span>{pct}%</span></p>
+        )}
+        {usage.costUsd !== undefined && (
+          <p className="context-row"><span className="context-label">spent</span><span>${usage.costUsd.toFixed(4)}</span></p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** Configured MCP catalog. ACP does not expose the agent's live MCP servers,
+ * so this states configuration honestly rather than a fabricated "connected". */
+export function McpConnections({ servers }: { readonly servers: readonly McpServerSetting[] }) {
+  const enabled = servers.filter((server) => server.enabled).length;
+  return (
+    <details className="panel-disclosure">
+      <summary><span>MCP</span><span className="panel-summary-meta">{enabled}/{servers.length}</span></summary>
+      <section className="panel-disclosure-body">
+        {servers.length === 0 && <p className="muted">no MCP servers configured</p>}
+        {servers.map((server) => (
+          <div className="connection-row" key={server.name}>
+            <span className={`connection-dot ${server.enabled ? "connection-dot-ok" : "connection-dot-down"}`} aria-hidden="true" />
+            <span className="connection-name">{server.name}</span>
+            <span className="connection-meta">{server.transport} · {server.enabled ? "configured" : "disabled"}</span>
+          </div>
+        ))}
+        <p className="connection-grants">configured in settings · ACP does not expose the agent's live MCP servers</p>
+      </section>
+    </details>
+  );
+}
+
+function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent, capabilities, usage, mcpServers }: {
   readonly snapshot: Snapshot | undefined;
   readonly refresh: () => Promise<void>;
   readonly worktrees: readonly GitWorktree[] | undefined;
@@ -1384,9 +1436,13 @@ function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent,
   readonly agents: readonly AgentInfo[];
   readonly currentAgent: string;
   readonly capabilities: CapabilitiesState | undefined;
+  readonly usage: SessionUsage | undefined;
+  readonly mcpServers: readonly McpServerSetting[];
 }) {
   return (
     <aside className="panels">
+      <ContextSection usage={usage} />
+      <McpConnections servers={mcpServers} />
       <section>
         <h2>Tasks</h2>
         {(snapshot?.tasks ?? []).map((task) => (
@@ -1841,6 +1897,14 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         <div className="shell-header-left">
           <RailsToggle off={railsOff} onToggle={setRailsOff} />
           <h1 className="shell-wordmark">Workflow</h1>
+          <button
+            type="button"
+            className="btn btn-ghost new-thread"
+            title="Start a new thread (Alt+N)"
+            onClick={() => createSession(refreshSessions)}
+          >
+            <span aria-hidden="true">+</span> New
+          </button>
           <nav className="shell-nav" aria-label="Views">
             {([
               ["chat", "Chat", <ChatIcon key="c" />],
@@ -1976,7 +2040,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           </ThreadPrimitive.Root>
         </section>
         <aside className="inspector" aria-label="Repository changes and supervision">
-          <Panels snapshot={snapshot} refresh={refresh} worktrees={worktrees} gitStatus={gitStatus} agents={agents} currentAgent={currentAgent} capabilities={capabilities.capabilities} />
+          <Panels snapshot={snapshot} refresh={refresh} worktrees={worktrees} gitStatus={gitStatus} agents={agents} currentAgent={currentAgent} capabilities={capabilities.capabilities} usage={usage} mcpServers={mcp.servers} />
         </aside>
       </div>
       )}
