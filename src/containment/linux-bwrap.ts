@@ -3,10 +3,46 @@ import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
-import type { ContainedProcessRequest, ContainedProcessResult, ProcessContainment } from "./contracts.js";
+import type {
+  ContainedProcessRequest,
+  ContainedProcessResult,
+  ProcessContainment,
+  WritableMountMode,
+} from "./contracts.js";
 
 function requireAbsolutePath(value: string, label: string): void {
   if (!isAbsolute(value)) throw new TypeError(`${label} must be an absolute path`);
+}
+
+function requireWritableMountMode(value: WritableMountMode | undefined): WritableMountMode {
+  if (value === undefined) return "read-write";
+  if (value !== "read-write" && value !== "read-write-no-delete") {
+    throw new TypeError("writableMountMode must be read-write or read-write-no-delete");
+  }
+  return value;
+}
+
+/**
+ * Every regular file under a granted writable tree (symlinks and special
+ * files skipped). `read-write-no-delete` re-binds these files writable on top
+ * of a read-only bind of the tree so in-place writes work while directory
+ * entries stay read-only — bubblewrap cannot express "writable entries,
+ * unlink denied", so creation is blocked as the price of enforcing no-delete.
+ */
+function writableRegularFiles(path: string): string[] {
+  const files: string[] = [];
+  const visit = (candidate: string): void => {
+    const stat = lstatSync(candidate);
+    if (stat.isSymbolicLink()) return;
+    if (stat.isFile()) {
+      files.push(candidate);
+      return;
+    }
+    if (!stat.isDirectory()) return;
+    for (const entry of readdirSync(candidate)) visit(resolve(candidate, entry));
+  };
+  visit(path);
+  return files;
 }
 
 function externalHardlinks(path: string): string[] {
@@ -71,6 +107,7 @@ export class LinuxBubblewrapContainment implements ProcessContainment {
     if (request.cwd !== undefined) requireAbsolutePath(request.cwd, "cwd");
     for (const path of request.readablePaths ?? []) requireAbsolutePath(path, "readable path");
     for (const path of request.writablePaths ?? []) requireAbsolutePath(path, "writable path");
+    const writableMountMode = requireWritableMountMode(request.writableMountMode);
 
     const network = request.network ?? "isolated";
     if (network !== "isolated" && network !== "host") throw new TypeError("network must be isolated or host");
@@ -104,7 +141,12 @@ export class LinuxBubblewrapContainment implements ProcessContainment {
     for (const path of request.readablePaths ?? []) args.push("--ro-bind", path, path);
     const hardlinkOverlays = new Set<string>();
     for (const path of request.writablePaths ?? []) {
-      args.push("--bind", path, path);
+      if (writableMountMode === "read-write-no-delete") {
+        args.push("--ro-bind", path, path);
+        for (const file of writableRegularFiles(path)) args.push("--bind", file, file);
+      } else {
+        args.push("--bind", path, path);
+      }
       for (const alias of externalHardlinks(path)) hardlinkOverlays.add(alias);
     }
     // Apply protections last so an overlapping writable grant cannot remount

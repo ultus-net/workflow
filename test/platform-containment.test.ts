@@ -26,3 +26,15 @@ test("passthrough containment still validates request shape", async () => {
   const containment = new PassthroughContainment();
   await assert.rejects(() => containment.execute({ executable: "true", args: [] }), /absolute/);
 });
+
+test("passthrough containment refuses read-write-no-delete it cannot enforce", async () => {
+  const containment = new PassthroughContainment();
+  await assert.rejects(
+    () => containment.execute({ executable: "/usr/bin/true", args: [], writableMountMode: "read-write-no-delete" }),
+    /cannot enforce read-write-no-delete/,
+  );
+  assert.throws(
+    () => containment.spawn({ executable: "/usr/bin/true", args: [], writableMountMode: "read-write-no-delete" }),
+    /cannot enforce read-write-no-delete/,
+  );
+});

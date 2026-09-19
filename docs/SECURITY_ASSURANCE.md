@@ -111,6 +111,10 @@ Policy permission is never represented as sufficient for containment; unavailabl
 | Repository-scoped contained writes preserve unrelated dirty worktree content | `src/containment/linux-bwrap.ts:104` | test/containment.test.ts#"repository-scoped contained writes preserve unrelated dirty worktree content" |
 | The guard runs before every contained execution and its failure denies | `src/containment/workflow-process.ts:14` | test/guarded-process.test.ts#"WorkflowContainedProcess fails closed when the guard throws" |
 | Contained ACP agent launch fails closed on policy-only backends and backends without streaming spawn; scratch-home wins HOME | `src/adapters/acp-contained-agent.ts:41` | test/acp-contained-agent.test.ts#"contained ACP launch fails closed on a policy-only backend" |
+| Symlink resolution precedes the authoritative workspace-confinement decision; a symlink grant whose target escapes is denied | `src/application/workflow.ts:298` | test/application.test.ts#"application resolves symlinks before validating workspace confinement" |
+| A contained process refuses a filesystem grant that resolves outside the workspace through a symlink | `src/containment/workflow-process.ts:28` | test/containment.test.ts#"contained process denies a symlink grant that escapes the workspace" |
+| The read-write-no-delete mount mode blocks deletion and creation while in-place writes persist | `src/containment/linux-bwrap.ts:144` | test/containment.test.ts#"Linux containment read-write-no-delete blocks deletion and creation while preserving writes" |
+| A policy-only passthrough refuses the read-write-no-delete mount mode it cannot enforce | `src/containment/platform.ts:20` | test/platform-containment.test.ts#"passthrough containment refuses read-write-no-delete it cannot enforce" |
 
 ## S6 — Model proxying
 
@@ -174,7 +178,7 @@ UIs consume the application API only; browser surfaces are loopback, origin-guar
 | The web UI reads snapshots and submits commands through the application API only | `src/ui/web.ts` | test/web.test.ts#"web UI reads snapshots and submits commands through the application API" |
 | A new turn is not admitted until a cancelled ACP turn settles (no overlapping turns) | `src/ui/web-session-channel.ts:84` | test/web.test.ts#"web UI does not admit a new turn until a cancelled ACP turn settles" |
 | Invalid prompt images are rejected before touching the session | `src/ui/web.ts:518` | test/web.test.ts#"web UI rejects invalid prompt images before touching the session" |
-| Session switching refuses mid-turn and serializes concurrent switches without leaking runtimes | `src/ui/web-sessions.ts` | test/web-sessions.test.ts#"session manager serializes concurrent switches without leaking runtimes" |
+| Concurrent session creation gives each session its own live runtime without leaks, and parallel sessions never dispose each other | `src/ui/web-sessions.ts` | test/web-sessions.test.ts#"concurrent creates each get their own live runtime without leaks" |
 | TUI actions never change canonical task state; the activity panel surfaces blocking reasons and verdicts | `src/ui/tui.tsx` | test/tui.test.ts#"legacy Ink projection cancels a coding session without changing canonical task state" |
 | The admin credential API requires its distinct capability, rejects cross-origin requests, and never returns secret values | `src/ui/admin-control-plane.ts:31` | test/admin-control-plane.test.ts#"admin credential API requires its distinct capability and never returns secret values" |
 | Ask mode never prompts for hard policy denials; concurrent permission requests fail closed | `src/ui/permission-broker.ts` | test/permission-broker.test.ts#"ask mode never prompts for hard policy denials" |
