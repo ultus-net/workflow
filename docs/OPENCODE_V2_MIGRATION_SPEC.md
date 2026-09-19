@@ -71,6 +71,21 @@ lifecycle routes is a qualification failure unless the route is explicitly class
 its evidence/authority boundary is tested. Gateway tests must cover route classes, not only the known
 permission reply route.
 
+## 2.3 Route qualification matrix (initial)
+
+| Route class | Individual mutation operations | Default v2 target | Qualification evidence |
+|---|---|---|---|
+| Permission authority | `permission.session.create`, `permission.session.reply`, saved-permission update/remove | Workflow broker owns decision; OpenCode v2 transports the request | Live G1 permission allow/deny/reply probe; policy denial overrides operator allow |
+| Session input/control | `session.prompt`, `session.command`, `session.synthetic`, `session.compact`, `session.fork`, `session.move`, `session.interrupt`, `session.background`, `session.remove` | Workflow gateway permits only explicitly authorized operator/agent actions | Route-class auth matrix; append-only log/replay; no task state advancement from input alone |
+| Filesystem/mutation | `filesystem.write`, `session.shell`, `shell.create`, `shell.remove`, `worktree.create/remove`, `vcs.*` mutation equivalents | Workflow authorization + guard + containment before execution | G3 substitution/native fs probe; stale fingerprint/claim tests; containment probe |
+| MCP/integration/config mutation | `mcp.add/remove/connect/disconnect`, `integration.*` connect/OAuth/command lifecycle, `config.experimental.update`, `plugin.update`, `location.reload` | Gateway auth plus Workflow credential/policy boundary; no direct agent mutation | Auth split test for each route family; credential/guard audit; pinned v2 probe |
+| PTY/persistent PTY | `pty.create/update/remove/connect`, `persistentPty.create/shutdown/handoff/update/remove/connectToken` | Explicit operator capability; never implicit mutation authority | Capability/containment test and session identity audit |
+| Read-only observation | `session.get/list/log/context/diff`, `vcs.get/base/status/branch/diff`, `filesystem.read/list/find`, `mcp.list/resource`, `session.stats` | Read-only projection; inputs remain untrusted evidence | Schema/bounds tests, replay/idempotency tests, evidence admission test |
+
+Any operation not classified in this matrix is **not qualified** for Workflow integration. The matrix
+must be updated when the pinned OpenCode API adds an operation; an undocumented route is a qualification
+failure, not an implicit read-only route.
+
 ## 3. Immutable ledger integration
 
 OpenCode v2 enables the long-running-agent model described by the n8n article, but Workflow must keep
