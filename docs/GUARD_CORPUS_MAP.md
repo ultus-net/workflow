@@ -48,7 +48,7 @@ the hub layer today; documented honestly.
    per-session escalation counters are not yet ported; scheduled-run budget
    caps bound the unattended case.
 
-**Ledger corpus status (W072 Stage 1, 2026-09-19):** kernel/application tests in `test/step-ledger.test.ts` pin I-1/I-2/I-3/I-4 and `isRunComplete` (9 tests). This is not yet a G6 retirement verdict: native-todowrite bridging, workflow-guard-mcp parity, and pinned-agent probes remain open. The task-list row above stays **Partial**.
+**Ledger corpus status (W072 Stage 1, 2026-09-19):** kernel/application tests in `test/step-ledger.test.ts` pin I-1/I-2/I-3/I-4, done-condition, single-active-step, persistence, and `isRunComplete` (12 tests). This is not yet a G6 retirement verdict: native-todowrite bridging, workflow-guard-mcp parity, and pinned-agent probes remain open. The task-list row above stays **Partial**.
 
 **Probe status (gated, credentials required — all ran live 2026-09-16):** B3
 subagent probe (`test/acp-cline-subagent-probe.test.ts` — Red verdict in

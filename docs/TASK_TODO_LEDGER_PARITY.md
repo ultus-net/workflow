@@ -193,11 +193,8 @@ it belongs to, so attribution survives restart, replay, and handoff.
     readonly id: StepId;
     readonly taskId: TaskId;
     readonly content: string;
-    readonly status: "pending" | "in_progress" | "completed" | "cancelled";
-    readonly requiredEvidence?: readonly EvidenceRequirement[];
-    readonly evidence?: readonly EvidenceId[];
-    readonly createdAt: string;
-    readonly completedAt?: string;
+    readonly state: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+    readonly requiredEvidence: readonly EvidenceRequirement[];
   }
   ```
 - Task transition validators enforce that `IN_PROGRESS → VERIFYING` asserts all child steps are terminal.
