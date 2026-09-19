@@ -837,3 +837,42 @@ W048's live qualification ran 2026-09-17 against the operator-upgraded goose **1
 - [ ] Fresh full verification (complete suite plus typecheck/lint/build) and an independent review pass on the final merged tree.
 - [ ] The operator's default harness is the hub-owned surface (OpenCode coding lead, goose general-purpose/backup), the opencode workflow-guard plugin is retired from daily use, and the switch is recorded with the honest delta list (G7 control, per-session escalation counters, any accepted risks).
 - [ ] No critical daily-driver gap is hidden: every remaining delta versus the plugin is fixed, accepted in writing, or tracked with severity.
+
+## Phase 12: AI-landscape follow-ups and open-source model pivot (2026-09-19)
+
+Promoted 2026-09-19 with operator direction after implementation + independent five-axis review (verdicts recorded per item; detailed plans: `docs/superpowers/plans/2026-09-19-ai-landscape-followups.md` and `docs/superpowers/plans/2026-09-19-open-source-model-pivot.md`). Items below record what landed, where, and the honest residual follow-ups; probe-gated claims remain probe-gated.
+
+### W051 - Pre-trust parsing audit across all surfaces
+
+**Status (2026-09-19, implemented + reviewed [APPROVE]):** inventory in `docs/PRETRUST_PARSING_AUDIT.md` (dated; includes the levels.json startup-parse row; toolbox-discovery row marked removed-by-W050 with mcp-settings.ts); directory-canary ordering tests prove no reads of poisoned fixtures on covered helpers (`test/pretrust-parsing-audit.test.ts`, 3/3). **Residual (PARTIAL):** criterion 3 covers only the inventory-covered helper paths; universal/acp TUI startup, web-service, hub discovery/scheduler, skills-mcp process startup, ACP tool-call reads, and persistent state need a process-level harness or per-runtime probes.
+
+### W054 - Memory-poisoning defenses for durable agent state
+
+**Status (2026-09-19, implemented + reviewed [APPROVE]):** durable-state inventory with writer authority (`docs/DURABLE_STATE_INVENTORY.md`); provenance stamps in project-memory-mcp (launch-config stamp, missing-stamp fails closed, MCP refuses unstamped writes); deterministic startup attestation + canary detection (`src/integrations/durable-state-attestation.ts`, CLI `npm run durable-state:attest`), poisoned-fixture tests green; THREAT_MODEL residual recorded (attestation validates structure/provenance, not truth). **Residual:** the runtime wire is parked — W050 removed cline-runtime (the only memory-injection caller) and no successor surface injects project memory yet, so nothing calls `attestProjectMemory` before a turn in production; wire it at the first durable-state injection boundary. Run-registry finding routing and canary seeding in live investigation surfaces pending.
+
+### W057 - Harness assumption ledger + model-bump audits
+
+**Status (2026-09-19, implemented + reviewed [APPROVE]):** `docs/HARNESS_ASSUMPTION_LEDGER.md` (7 components with assumed model gaps; operator-invoked remove-one-at-a-time audit procedure; worked example explicitly marked illustrative); version-bump discipline references the audit in `docs/HOST_ADAPTERS.md` (operator-invoked, never automatic, never a substitute for probe re-runs). **Residual:** first real audit run must replace the illustrative numbers.
+
+### W063 - Containment refinements
+
+**Status (2026-09-19, implemented + reviewed [APPROVE]):** resolve-before-validate symlink ordering pinned by tests (non-exploitable audit recorded honestly; W025 fix acknowledged); type-level `read-write-no-delete` mount mode (bwrap ro-bind + per-file binds; delete AND creation blocked — limitation documented; platform passthrough refuses the mode); custom-component audit `docs/CUSTOM_COMPONENT_AUDIT.md` (P2/P3 findings GA-1/GA-2/MX-2/MX-3/MX-4/CB-1/CT-1/CT-3 recorded); OTLP pull-based export deferred with design note. Also repaired a stale `web-sessions` citation in `test/security-assurance.test.ts` left by the main rewrite.
+
+### W064 - Standards tracking for SECURITY_ASSURANCE
+
+**Status (2026-09-19, implemented + reviewed [APPROVE]):** dated claim/not-claim entries for NIST agent identity, ACSC/CISA/NCSC six-agency guidance (2026-04-30), ISO/IEC 42001, Anthropic Model Hardware Standard preview, OpenAI misalignment reporting framework, and Google "Three Layers of Agent Security"; pinned append-tolerantly by `test/security-assurance.test.ts` (7/7).
+
+### W070a - Open-source-first routing pivot
+
+**Status (2026-09-19, implemented + reviewed [APPROVE], integrated through main 0a0e126 + PR #44/c20eef3):** default pool `deepseek-flash` / `glm-5.3` / `glm-5.3-flash` / `kimi-k3`, all endpoints/IDs live-verified with recorded evidence (vendor 401 probes + OpenRouter catalog rows; no guessed IDs); canonical `ModelProfile` request shaping (GLM/K3 never `thinking:disabled`; effort low/high/max); per-vendor metering pools with placeholder-key discipline composed in `createOpencodeRuntime` alongside PR #44's upstream-key fallback; off-peak scheduler option (GLM window verified; DeepSeek operator-supplied); closed models remain operator-override. **Residual:** live vendor completion probes gated unrun (need `DEEPSEEK_API_KEY`/`ZAI_API_KEY`/`MOONSHOT_API_KEY`); off-peak cost delta unmeasured; OpenRouter fallback route test-only until a production caller exists; ACP-conformance re-run owed for new hub-sent params.
+
+### W070b - Open-model optimization + deterministic tool-usage enforcement
+
+**Status (2026-09-19, implemented + reviewed [APPROVE after P1 fix], integrated through main 0a0e126 + PR #44/c20eef3):** per-model replay policy enforced at the metering proxy (K3 preserved-thinking contract: stripped replay rejected 400 pre-upstream; DeepSeek mid-conversation tool-call synthesis diverted to the Anthropic-format path 409; adjacency rule fixed for parallel tool calls after reviewer-reproduced P1); DeepSeek strict-schema translator (canonical ModelProfile-keyed; `/beta` strict mode served via gated golden probe; production `/beta` endpoint selection deliberately deferred to a dedicated provider seam, documented in `docs/OPEN_MODEL_ENFORCEMENT.md`); guard deny-with-redirect text tightened; bounded tool-expected-turn steering (≤2 retries, monitor-visible, opt-in) — a behavioral nudge, never a security control; 13-pattern inventory of the retired workflow-guard plugin with per-pattern dispositions; vendor golden-probe corpus defined. **Residual:** steering dormant until a production caller passes `toolExpectedTurn`; strict-mode production wiring (W062 seam); one live probe run per vendor (keys).
+
+### Checkpoint E - AI-landscape follow-ups landed
+
+- [ ] Live vendor probes recorded per family (needs vendor keys) and off-peak delta measured or no-go'd.
+- [ ] Attestation wired at the first post-W050 durable-state injection boundary; run-registry routing for supervisor findings.
+- [ ] Strict-mode production seam (W062) and golden-probe verdicts recorded per vendor.
+- [ ] W052/W065/W058/W059 and the remaining Phase 12 candidates scheduled per the follow-ups plan sequencing.
