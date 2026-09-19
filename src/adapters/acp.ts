@@ -13,7 +13,7 @@ interface AcpCorrelatedPermission {
   };
 }
 
-const KNOWN_READ_TOOLS: ReadonlySet<string> = new Set(["read", "read_file", "read_files", "search", "glob", "grep", "list"]);
+const KNOWN_READ_TOOLS: ReadonlySet<string> = new Set(["read", "read_file", "read_files", "search", "glob", "grep", "list", "read_skill", "skills-mcp__read_skill"]);
 
 // Subagent spawning is its own capability: an internal subagent emits no
 // permission requests of its own, so spawn is default-deny everywhere and

@@ -17,7 +17,9 @@
     "workflow-hub": "dist/cli/hub.js",
     "workflow-admin": "dist/cli/admin.js",
     "workflow-monitor": "dist/cli/ink-tui.js",
-    "workflow-shell": "dist/cli/contained-shell.js"
+    "workflow-shell": "dist/cli/contained-shell.js",
+    "workflow-opencode-server": "dist/cli/opencode-server.js",
+    "workflow-opencode": "dist/cli/opencode-attach.js"
   },
   "postinstall": "node scripts/prepare-tool.mjs",
   "files": [
@@ -36,6 +38,8 @@
     "lint": "eslint src test",
     "hub": "tsx src/cli/hub.ts",
     "admin": "tsx src/cli/admin.ts",
+    "opencode:server": "tsx src/cli/opencode-server.ts",
+    "opencode:attach": "tsx src/cli/opencode-attach.ts",
     "tui:workflow": "tsx src/cli/ink-tui.tsx",
     "tui:acp": "tsx src/cli/acp-tui.tsx",
     "tui:universal": "tsx src/cli/universal-tui.tsx",

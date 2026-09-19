@@ -117,6 +117,17 @@ in-process (`WorkflowApplication` + `createConfiguredAcpRuntime`, whole-agent
 containment); they do not depend on the hub daemon. The hub remains the shared
 authority for the retained `cline` connector and for launchers that resolve it.
 
+**2026-09-19 (W071 standard-TUI server surface):** a fourth composition exists
+alongside these — a dedicated, workspace-scoped `workflow-opencode-server`
+daemon that owns a contained `opencode serve`, an authority gateway, and the
+policy broker, so the operator can keep the **stock `opencode attach` TUI**
+while Workflow authorizes in the background (`src/cli/opencode-server.ts`,
+`src/cli/opencode-attach.ts`). It composes `WorkflowApplication` in-process in
+the daemon (like the surfaces above) and publishes its own discovery file
+(`~/.workflow/opencode-server/<workspace-tag>.json`); promoting ownership into
+`workflow-hub` via that discovery seam is the recorded follow-up. Posture is
+advisory pending probes — `docs/OPENCODE_SERVER_AUTHORITY.md`.
+
 ## Commands
 
 - `workflow-hub` — start the detached authority daemon (discovery + token).
