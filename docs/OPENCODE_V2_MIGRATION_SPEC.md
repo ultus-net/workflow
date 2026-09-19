@@ -1,6 +1,7 @@
-# OpenCode 2.0 Migration & Control-Plane Qualification
+# OpenCode v2 HTTP API Migration & Control-Plane Qualification
 
 **Status:** Proposed — 2026-09-20  
+**Version identity:** The `/v2/` documentation namespace is an API-generation label, not yet a pinned OpenCode release/version claim. A release/version must be recorded by the qualification probe before any `enforced` claim.  
 **Input:** OpenCode v2 HTTP API (`https://opencode.ai/v2/docs/api`), `llm-enhancements.md`,
 `docs/TASK_TODO_LEDGER_PARITY.md`, `docs/superpowers/plans/2026-09-15-hub-owned-enforcement.md`,
 `docs/superpowers/plans/2026-09-19-standard-tui-background-authority.md`  
@@ -8,7 +9,7 @@
 
 ## 1. Why this migration exists
 
-OpenCode 2.0 exposes a substantially larger server API than the v1 ACP composition Workflow has
+The OpenCode v2 HTTP API documentation exposes a substantially larger server API than the v1 ACP composition Workflow has
 currently modeled: durable sessions, session inboxes, fork/import/export, context and diff views,
 compaction/wait/interrupt, permission requests/replies, MCP lifecycle, filesystem access, shell
 lifecycle, events, worktrees, VCS, and session statistics.
@@ -44,6 +45,32 @@ OpenCode v2 proposes/executes host behavior
 | `session.stats` | Tool reliability, failure/circuit-breaker telemetry | Observability informs policy; it does not replace Workflow evidence |
 | `agent.*`, `model.*`, `provider.*`, `config.*` | Capability/catalog projection | Configuration cannot downgrade Workflow enforcement or credentials policy |
 
+## 2.1 Complete v2 operation inventory
+
+The migration is not scoped to the headline session routes. The initial inventory from the v2 API
+reference is:
+
+- `server`: info; `location`: get/reload; `agent`: list/get; `plugin`: list/check/update
+- `session`: list/create/stats/import/export/active/get/update/remove/fork/switch agent/switch model/move/prompt/command/skill/synthetic/shell/compact/wait/interrupt/background/revert/context/diff/inbox/instructions/generate/log/message/forms/environment/view
+- `model`, `provider`, `generate`; `integration` list/get/connect/OAuth/command lifecycle
+- `mcp` list/add/remove/connect/disconnect/resource catalog; `credential` update/remove/activate
+- `project` list/update; `form` list; `permission` request/saved/session list/create/get/reply
+- `filesystem` read/list/find/write; `command`, `skill`, `rpc`, `event`
+- `pty` and `persistentPty` lifecycle/connect/snapshot; `shell` lifecycle/list/output
+- `reference`, `worktree`, `vcs`, `debug`, `migration`, `websearch`, and `config`
+
+Each operation must receive a Workflow owner or an explicit non-goal in the qualification matrix.
+Endpoint existence alone is not implementation evidence.
+
+## 2.2 Direct API authority and credential boundary
+
+No OpenCode v2 endpoint may bypass the Workflow gateway/authority boundary. The stock TUI or any
+v2 client receives only the distinct gateway credential; the upstream server credential remains
+hub-owned. Direct access to permission, filesystem, shell, MCP, synthetic/prompt, compact, fork, and
+lifecycle routes is a qualification failure unless the route is explicitly classified read-only and
+its evidence/authority boundary is tested. Gateway tests must cover route classes, not only the known
+permission reply route.
+
 ## 3. Immutable ledger integration
 
 OpenCode v2 enables the long-running-agent model described by the n8n article, but Workflow must keep
@@ -65,8 +92,10 @@ logId, observedAt, sessionId, agentId, parentSessionId?, taskId?, stepId?,
 kind, inputDigest?, outputDigest?, authority, result, mutationEpoch
 ```
 
-The envelope is append-only and idempotent by `(sessionId, eventId)` where v2 supplies a stable event
-identity; otherwise Workflow derives a digest-bound fallback and records that limitation.
+The envelope is append-only and must be idempotent. Whether v2 supplies a stable event identity is
+**unverified** until the pinned release probe inspects the actual event payload. If no stable identity
+exists, Workflow must use a documented digest-bound fallback and treat duplicate/replay ambiguity as
+an explicit residual; this is not assumed to be solved by the API documentation alone.
 
 ## 4. C/D redesign against v2
 
