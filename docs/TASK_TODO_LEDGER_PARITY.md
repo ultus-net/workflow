@@ -215,6 +215,14 @@ it belongs to, so attribution survives restart, replay, and handoff.
 
 ## 5. Migration Strategy & Plugin Retirement Criteria
 
+### 5.0 Operator decisions recorded 2026-09-19
+- **Bridge now, MCP target:** native OpenCode `todowrite` is bridged into the canonical ledger while the plugin remains the enforcement seat; the retirement target is a host-agnostic `workflow-task-mcp`, not the retired fs-exec product.
+- **Typed per-step evidence:** a step cannot complete without fresh typed evidence bound to `step:<id>`.
+- **Circuit breaker ownership:** repeated policy failures are counted and enforced by `WorkflowApplication.authorize`, with the guard recording/forwarding observations rather than owning a competing counter.
+- **Write freshness:** the control plane will add explicit read fingerprints and require a matching fingerprint for edit/write, plus session/file claims for concurrent writers.
+- **Subagent budgets:** a parent session owns a bounded mutation budget shared by descendants; child proposals inherit the parent ledger and budget.
+- **Compaction and host-event fidelity:** remain explicitly accepted/probe-gated residuals until ACP provides the required hooks; they are not silently dropped.
+
 In accordance with Phase G of `docs/superpowers/plans/2026-09-15-hub-owned-enforcement.md`, `opencode-workflow-guard` is **not retired until full parity is proven**:
 
 ### Stage 1: Native Todo Bridge (Immediate DX Continuity)

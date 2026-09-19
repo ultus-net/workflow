@@ -65,6 +65,10 @@ Severity: P0 (blocks retirement/authority) · P1 (major) · P2 (minor) · P3 (do
 | DRIFT-018 | P2 | No single-active-step constraint (multiple steps may be `IN_PROGRESS`) | `src/kernel/task-graph.ts` `startStep` | Enforce ≤1 `IN_PROGRESS` step per task; test proves the second start is rejected |
 | DRIFT-019 | P1 | No state-diff re-query gate (claimed change not re-observed in the target); reviewer is the only judge | `src/application/workflow.ts:166-182`; evidence model `src/kernel/contracts.ts:20-34` | Deterministic gate order codes→schema→cross-field→state-diff→tests; test proves a claimed-but-absent change is rejected |
 | DRIFT-020 | P2 | Execution/evidence entries carry task but not a durable identity anchor on every entry | `src/kernel/contracts.ts:25-34`; `src/application/persistence.ts` | Identity (session/agent/task/step) recorded on each log entry; replay preserves attribution |
+| DRIFT-021 | P0 | Corpus C not ported: no WorkflowApplication-owned per-session policy-failure counter/circuit-breaker | plugin `opencode-workflow-guard/src/lib/tool-outcomes.ts:26-95`; plugin enforcement `src/workflow-guard.ts:454-460` | Application-owned session/tool counter + deterministic threshold/decision + tests |
+| DRIFT-022 | P0 | Corpus D not ported: no explicit read fingerprints/concurrent file claims | plugin `src/lib/guard-dispatcher.ts:268-285`; `ProposedToolAction` has no read-fingerprint/claim contract | Read-fingerprint record + matching write requirement + session/file claim lifecycle + tests |
+| DRIFT-023 | P1 | Subagent mutation budget/inheritance not owned by Workflow session hierarchy | plugin `src/policies/todo.ts:26-35,53-85` | Parent-owned bounded budget inherited by descendants; exhaustion fail-closed; tests |
+| DRIFT-024 | P2 | No deterministic state-diff re-query evidence gate | `src/kernel/contracts.ts:25-34`; evidence admission has no postcondition re-query contract | Add machine-observable postcondition/state-diff evidence contract and test |
 
 ---
 
