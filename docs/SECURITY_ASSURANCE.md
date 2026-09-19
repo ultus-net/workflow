@@ -280,7 +280,7 @@ truth. None of these entries asserts certification, conformance, or endorsement 
 - **What Workflow claims:** the hub-issued, per-session, revocable token
   direction planned in W060 is aligned in spirit with the project's
   agent-identity/authorization scope (tracked from
-  `docs/AI_LANDSCAPE_RESEARCH.md` §3.1, §6 item 9).
+  `docs/AI_LANDSCAPE_RESEARCH.md` §3.1, §6 item 9; provenance: that research doc is operator-local and uncommitted in this branch — merge-time action: commit it with the citing changes, canonical copy not duplicated here).
 - **What Workflow does not claim:** no specific NIST publication is
   implemented or conformance-tested, and Workflow holds no NIST certification
   or evaluation.
