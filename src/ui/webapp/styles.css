@@ -2457,24 +2457,18 @@ body {
 .task-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 @media (max-width: 1100px) {
-  /* Stack: chat first, then the inspector (repository changes + supervision).
-     The body scrolls as one column. */
+  /* Half-screen chat: the inspector collapses away and the thread + composer
+     own the screen. The inspector's facts remain reachable at full width or
+     via settings — a half-screen operator is chatting, not supervising. */
+  .inspector { display: none; }
   .shell-body {
     flex-direction: column;
-    overflow-y: auto;
+    overflow: hidden;
   }
   .chat-column { border-inline: 0; padding: var(--space-3) clamp(0.6rem, 1.5vw, 1.25rem); }
-  .thread-viewport { min-height: 30vh; max-height: 65vh; }
-  .msg { max-width: 95%; }
-  .inspector {
-    width: auto;
-    border-left: 0;
-    border-top: 1px solid var(--border);
-    padding: var(--space-4) var(--space-4) var(--space-5);
-    background: transparent;
-  }
-  .panels { overflow: visible; padding: 0; }
-  .composer-chips { flex-wrap: wrap; }
+  .thread-viewport { min-height: 0; max-height: none; flex: 1; }
+  .msg { max-width: 96%; }
+  .composer-chips { overflow-x: auto; flex-wrap: nowrap; }
   .shell-session-title { max-width: 14ch; }
 }
 
