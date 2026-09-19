@@ -30,6 +30,11 @@ Spec: `docs/TASK_TODO_LEDGER_PARITY.md`. Retirement criteria: `docs/superpowers/
 - **I-3** Step completion requires fresh typed evidence bound to the step (no self-certification).
 - **I-4** A task/run cannot complete while any required step/task is open (`isRunComplete`).
 - **I-5** Secondary review audits the ledger against the diff/evidence; mismatch ⇒ `REQUEST_CHANGES`.
+- **I-6** Immutable ledger + append-only execution log; canonical state is a deterministic replay/projection, never mutated in place as the sole source of truth (write/read only; permissions deterministic).
+- **I-7** Every step declares its done-condition before it can start.
+- **I-8** At most one step `IN_PROGRESS` per task (one entry per pass).
+- **I-9** Completion validated by deterministic gates first (codes → schema → cross-field → state-diff re-query → tests); an LLM only classifies, never invents "done".
+- **I-10** Every execution-log entry carries durable identity (session/agent/task/step).
 
 ---
 
@@ -55,6 +60,11 @@ Severity: P0 (blocks retirement/authority) · P1 (major) · P2 (minor) · P3 (do
 | DRIFT-013 | P3 | `DESIGN.md` still Cline-CLI-centric over newer web design | `DESIGN.md:3-12` | Reconcile or mark superseded |
 | DRIFT-014 | P1 | W071 stock-TUI surface `advisory`; live PERMISSION/RULE-CONFIG/BYPASS probes unrun | `docs/OPENCODE_SERVER_AUTHORITY.md:331-334`; `docs/FEATURES.md:74` | Probe family executed with per-probe verdicts; `enforced` only on green |
 | DRIFT-015 | P1 | W054 durable-state attestation not wired to any production injection boundary | `TASKS.md:849-851`; `src/integrations/durable-state-attestation.ts:5-17` | Call at the first post-W050 memory-injection boundary + runtime test |
+| DRIFT-016 | P0 | No append-only execution log; `TaskGraph` mutates state in place (state is the source of truth, not a replay projection) | `src/kernel/task-graph.ts:50-66,151-172`; no execution-log module found | Append-only, write/read-only execution log with deterministic replay; state projected from it; permissions enforced by the harness |
+| DRIFT-017 | P1 | Steps can be defined without a declared done-condition; completion criterion not required before start | `src/kernel/task-graph.ts` `defineSteps`/`startStep` accept empty `requiredEvidence` | A step cannot start until it declares its completion criterion; test proves the block |
+| DRIFT-018 | P2 | No single-active-step constraint (multiple steps may be `IN_PROGRESS`) | `src/kernel/task-graph.ts` `startStep` | Enforce ≤1 `IN_PROGRESS` step per task; test proves the second start is rejected |
+| DRIFT-019 | P1 | No state-diff re-query gate (claimed change not re-observed in the target); reviewer is the only judge | `src/application/workflow.ts:166-182`; evidence model `src/kernel/contracts.ts:20-34` | Deterministic gate order codes→schema→cross-field→state-diff→tests; test proves a claimed-but-absent change is rejected |
+| DRIFT-020 | P2 | Execution/evidence entries carry task but not a durable identity anchor on every entry | `src/kernel/contracts.ts:25-34`; `src/application/persistence.ts` | Identity (session/agent/task/step) recorded on each log entry; replay preserves attribution |
 
 ---
 

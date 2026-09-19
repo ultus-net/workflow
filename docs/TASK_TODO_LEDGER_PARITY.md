@@ -113,6 +113,41 @@ The independent secondary reviewer subagent (`src/review/rubric.ts`, `review-acc
 - The reviewer inspects the step ledger alongside git diffs and test logs.
 - If an agent marked steps `completed` without corresponding diff changes, or marked verification steps done without executing tests, the reviewer records a **P0/P1 finding** and issues a `REQUEST_CHANGES` verdict.
 
+### 3.6 Invariant I-6: Immutable ledger + append-only execution log
+Two distinct artifacts (long-running-agent design, n8n 2026-08-31 — "immutable
+ledgers where agents can write and read, but not modify or delete; permissions
+defined deterministically, not by asking the LLM"):
+- the **plan ledger** (roadmap → tasks → steps) records *what should happen*; and
+- an **append-only execution log** records *what actually happened* — every tool
+  call, model response, state transition, evidence admission, and operator
+  decision.
+
+Rules: entries are write/read only, never modified or deleted; canonical state is
+a **deterministic projection/replay** of the log, not state mutated in place as
+the sole source of truth; a crashed/restarted process resumes by replaying the
+log. Prompt-side requests to "not change the ledger" are never the control.
+
+### 3.7 Invariant I-7: Done-conditions declared before execution
+Every step must declare its completion criterion (its required evidence or an
+explicit machine-checkable postcondition) **before** it can be started, so the
+agent cannot redefine "done" mid-run.
+
+### 3.8 Invariant I-8: One active step at a time
+At most one step of a task may be `IN_PROGRESS` at once; the agent works one
+entry per pass so each validation has exactly one claimed state transition to
+check.
+
+### 3.9 Invariant I-9: Deterministic validation gates (LLM-as-judge last)
+Completion is validated by deterministic gates in increasing cost order:
+response/exit codes → schema validation → cross-field consistency →
+**state-diff re-query** (the claimed change must actually appear in the target
+system) → test execution. An LLM may act only as a narrow classifier mapping an
+observed trace to a fixed category; it never invents "done".
+
+### 3.10 Invariant I-10: Identity on every log entry
+Each execution-log entry carries the durable identity (session/agent/task/step)
+it belongs to, so attribution survives restart, replay, and handoff.
+
 ---
 
 ## 4. Architecture & Component Responsibilities

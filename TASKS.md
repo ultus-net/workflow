@@ -1004,6 +1004,13 @@ promotions).
       a canonical `isRunComplete` predicate refuses completion with any required node open; tests prove both.
 - [ ] **I-5** Secondary review audits the ledger against the diff/evidence; a checked step with no
       corresponding work yields a P0/P1 and `REQUEST_CHANGES`; pinned by a review test.
+- [ ] **I-6** Immutable plan ledger + **append-only execution log**; canonical state is a deterministic
+      replay/projection of the log (write/read only; permissions deterministic); restart resumes by replay.
+- [ ] **I-7** Every step declares its done-condition before it can start; test proves an undeclared step cannot start.
+- [ ] **I-8** At most one `IN_PROGRESS` step per task; test proves a second concurrent start is rejected.
+- [ ] **I-9** Deterministic validation gates ordered codes→schema→cross-field→**state-diff re-query**→tests;
+      an LLM only classifies; test proves a claimed-but-absent change is rejected.
+- [ ] **I-10** Every execution-log entry carries durable identity (session/agent/task/step).
 - [ ] Stage 1 native-`todowrite` bridge keeps the agent's DX while the plugin remains the enforcement
       seat (per Phase G); Stage 2 hub-owned enforcement; Stage 3 portable MCP step tool; Stage 4 G6 corpus.
 - [ ] Drift obligations closed with linked evidence: in particular **DRIFT-003** (GUARD_CORPUS_MAP
