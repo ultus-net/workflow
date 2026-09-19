@@ -98,8 +98,6 @@ test("sharp square edges: no nonzero border-radius survives in the design system
 test("the settings Appearance section exposes the full palette catalog plus the amber default", () => {
   const palettes = listPalettes();
   const markup = renderToStaticMarkup(createElement(AppearanceSection, {
-    themeChoice: "system",
-    onThemeChoice: noop,
     palette: undefined,
     onPalette: noop,
     palettes,

@@ -1593,13 +1593,7 @@ body {
   .settings-row { flex-wrap: wrap; }
 }
 
-/* Color theme segmented control (System / Dark / Light), used in settings */
-
-.theme-choice {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.3rem;
-}
+/* Segmented control (settings scope pickers, usage ranges). */
 
 .theme-option {
   border: 1px solid var(--border);

@@ -2,24 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 
 import { applyPalette, readStoredPalette, storePalette } from "./theme/palettes.js";
 
-export type ThemeChoice = "system" | "dark" | "light";
 export type ResolvedTheme = "dark" | "light";
 
-const THEME_KEY = "workflow.theme";
 const LIGHT_SCHEME = "(prefers-color-scheme: light)";
 
-function readChoice(): ThemeChoice {
-  try {
-    const stored = window.localStorage.getItem(THEME_KEY);
-    return stored === "dark" || stored === "light" ? stored : "system";
-  } catch {
-    // Private browsing or storage disabled: the choice stays session-local.
-    return "system";
-  }
-}
-
-function resolve(choice: ThemeChoice): ResolvedTheme {
-  if (choice !== "system") return choice;
+function resolve(): ResolvedTheme {
   return window.matchMedia(LIGHT_SCHEME).matches ? "light" : "dark";
 }
 
@@ -31,44 +18,27 @@ function apply(resolved: ResolvedTheme): void {
 }
 
 /**
- * Applies the stored choice before first paint (called from main.tsx) so a
- * light-theme operator never sees a dark flash. Presentation-only: theming
- * never reaches the server or the agent.
+ * Applies the OS color scheme before first paint (called from main.tsx) so a
+ * light-mode operator never sees a dark flash. The palette owns the colors;
+ * the OS only picks which palette variant applies.
  */
 export function applyStoredTheme(): void {
-  apply(resolve(readChoice()));
+  apply(resolve());
 }
 
 /**
- * Color-theme control. Mounted once at the app root so "System" follows the
- * OS for the whole session, not only while the settings popover is open;
- * the popover reads/writes the same choice through props.
+ * Keeps `data-theme` in sync with the OS for the whole session so palettes
+ * resolve their dark/light variant. There is no manual mode choice: the
+ * palette owns the colors.
  */
-export function useTheme(): {
-  readonly choice: ThemeChoice;
-  readonly setChoice: (choice: ThemeChoice) => void;
-} {
-  const [choice, setChoiceState] = useState<ThemeChoice>(readChoice);
-
+export function useTheme(): void {
   useEffect(() => {
-    apply(resolve(choice));
-    if (choice !== "system") return;
+    apply(resolve());
     const media = window.matchMedia(LIGHT_SCHEME);
-    const onChange = (): void => apply(resolve("system"));
+    const onChange = (): void => apply(resolve());
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
-  }, [choice]);
-
-  const setChoice = useCallback((next: ThemeChoice): void => {
-    try {
-      window.localStorage.setItem(THEME_KEY, next);
-    } catch {
-      // Storage unavailable: the choice applies for this session only.
-    }
-    setChoiceState(next);
   }, []);
-
-  return { choice, setChoice };
 }
 
 /**

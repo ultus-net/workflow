@@ -6,7 +6,6 @@ import { ConfigField } from "./config-field.js";
 import { formatTokens } from "./presenters.js";
 import { useSessionState, useSessionUsage } from "./runtime.js";
 import type { PaletteSummary } from "./theme/palettes.js";
-import type { ThemeChoice } from "./theme.js";
 
 /** Structural slices of the app hooks the dialog needs; App passes its own. */
 export interface SettingsPermissions {
@@ -49,8 +48,6 @@ export interface SettingsMcp {
 
 export interface SettingsDialogProps {
   readonly onClose: () => void;
-  readonly themeChoice: ThemeChoice;
-  readonly onThemeChoice: (choice: ThemeChoice) => void;
   readonly palette: string | undefined;
   readonly onPalette: (palette: string | undefined) => void;
   readonly palettes: readonly PaletteSummary[];
@@ -225,9 +222,7 @@ function Toggle({ checked, disabled, onChange, ariaLabel, inputRef }: {
   );
 }
 
-export function AppearanceSection({ themeChoice, onThemeChoice, palette, onPalette, palettes, railsOff, onRailsToggle }: {
-  readonly themeChoice: ThemeChoice;
-  readonly onThemeChoice: (choice: ThemeChoice) => void;
+export function AppearanceSection({ palette, onPalette, palettes, railsOff, onRailsToggle }: {
   readonly palette: string | undefined;
   readonly onPalette: (palette: string | undefined) => void;
   readonly palettes: readonly PaletteSummary[];
@@ -236,26 +231,6 @@ export function AppearanceSection({ themeChoice, onThemeChoice, palette, onPalet
 }) {
   return (
     <Section title="Appearance">
-      <Row
-        label="Color theme"
-        description="System follows your OS setting"
-        control={
-          <div className="theme-choice" role="radiogroup" aria-label="Color theme">
-            {(["system", "dark", "light"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                role="radio"
-                aria-checked={themeChoice === option}
-                className={`theme-option ${themeChoice === option ? "theme-option-on" : ""}`}
-                onClick={() => onThemeChoice(option)}
-              >
-                {option === "system" ? "System" : option === "dark" ? "Dark" : "Light"}
-              </button>
-            ))}
-          </div>
-        }
-      />
       <Row
         stacked
         label="Palette"

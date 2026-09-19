@@ -17,7 +17,7 @@ import { SettingsDialog } from "./settings-dialog.js";
 import { SessionsView } from "./sessions-view.js";
 import { UsageView } from "./usage-view.js";
 import { listPalettes } from "./theme/palettes.js";
-import { usePalette, useTheme } from "./theme.js";
+import { usePalette } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
 import type { McpServerSetting } from "../../integrations/workflow-settings.js";
 import type { WebConfigOption } from "../web-config-options.js";
@@ -1696,7 +1696,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const mcp = useMcpSettings();
   const { isRunning, items, queuePrompt } = useSessionState();
   const slashCommands = useSessionCommands();
-  const theme = useTheme();
   const { palette, setPalette } = usePalette();
   const palettes = useMemo(() => listPalettes(), []);
   const usage = useSessionUsage();
@@ -1775,9 +1774,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
     { id: "export-session", title: "Export session as markdown", group: "command", run: () => downloadMarkdown(exportMarkdownOf(items)) },
     ...(activeSession !== undefined ? [{ id: "dismiss-session", title: `Dismiss this session (${activeSession.title})`, group: "command" as const, run: () => dismissSession(activeSession.id, refreshSessions) }] : []),
     ...(hasUnused ? [{ id: "clear-unused", title: "Clear unused sessions", group: "command" as const, run: () => clearUnusedSessions(refreshSessions) }] : []),
-    { id: "theme-system", title: "Theme: System", group: "command", run: () => theme.setChoice("system") },
-    { id: "theme-dark", title: "Theme: Dark", group: "command", run: () => theme.setChoice("dark") },
-    { id: "theme-light", title: "Theme: Light", group: "command", run: () => theme.setChoice("light") },
     ...(sessions ?? []).filter((session) => !session.active).map((session) => ({
       id: `switch-${session.id}`,
       title: `Switch to: ${session.title}`,
@@ -1912,8 +1908,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
       ) : view === "settings" ? (
         <SettingsDialog
           onClose={() => setView("chat")}
-          themeChoice={theme.choice}
-          onThemeChoice={theme.setChoice}
           palette={palette}
           onPalette={setPalette}
           palettes={palettes}
