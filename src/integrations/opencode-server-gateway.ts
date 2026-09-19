@@ -142,7 +142,9 @@ function decodedPathname(rawPathname: string): string {
 }
 
 function isReplyShapedPathname(pathname: string): boolean {
-  return pathname.includes("/permission/") && (pathname.endsWith("/reply") || pathname.includes("/reply?"));
+  // Review P3-1: `pathname` never contains the query string, so only the
+  // suffix form is meaningful.
+  return pathname.includes("/permission/") && pathname.endsWith("/reply");
 }
 
 async function handlePermissionReply(

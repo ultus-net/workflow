@@ -364,3 +364,47 @@ test("W071 broker (M4): a completed decided mutation advances the mutation epoch
   await authority2.start();
   assert.ok(app2.snapshot().mutationEpoch > epochAfterDecision, "an observed completed mutation must advance the epoch");
 });
+
+test("W071 broker: a completed DENIED mutation neither advances the epoch nor covers later activity (review P1-1)", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-deny-obs-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const bypasses: string[] = [];
+  const app = application(workspace, ["read", "process"]); // mutation withheld -> edit denied
+  const epochBefore = app.snapshot().mutationEpoch;
+  const fake = fakeEngine([
+    permission("r1", "edit", { filePath: join(workspace, "src", "a.ts") }, "c1"),
+    toolPart("c1", "edit", "completed"),
+  ]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine, application: app, workspace,
+    enforcement: "enforced",
+    onBypass: (input) => bypasses.push(input.tool),
+  });
+  await authority.start();
+  assert.equal(authority.decisions()[0]?.decision, "deny");
+  assert.equal(app.snapshot().mutationEpoch, epochBefore, "a denied mutation must not advance the epoch");
+  assert.deepEqual(bypasses, ["edit"], "a completed denied mutation must alarm, not be treated as covered");
+});
+
+test("W071 broker: session+tool coverage is consumed once, so a second unasked mutation alarms (review P1-2)", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-consume-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const bypasses: string[] = [];
+  const fake = fakeEngine([
+    // No callID on the ask -> session+tool coverage, consumed by the first part.
+    permission("r1", "edit", { filePath: join(workspace, "src", "a.ts") }),
+    toolPart("c1", "edit", "completed"),
+    // A second mutation of the same tool with no fresh decision.
+    toolPart("c2", "edit", "completed"),
+  ]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    enforcement: "enforced",
+    onBypass: (input) => bypasses.push(input.tool),
+  });
+  await authority.start();
+  assert.equal(authority.decisions()[0]?.decision, "allow", "the first edit is decided");
+  assert.deepEqual(bypasses, ["edit"], "the second, uncovered edit must alarm");
+});

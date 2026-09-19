@@ -161,12 +161,19 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
   const pending = new Map<string, { readonly resolveReply: (reply: "once" | "reject") => void; readonly timer: ReturnType<typeof setTimeout> }>();
   /** Operator replies that raced ahead of the SSE event. */
   const earlyReplies = new Map<string, "once" | "reject">();
-  /** Mutating activity that has a prior decision, keyed by callID. */
-  const answeredCallIds = new Set<string>();
-  /** Mutating activity covered by a decision without a callID (session+tool). */
-  const answeredTools = new Set<string>();
-  /** Subjects of decided mutations, for completion-observation recording (M4). */
-  const decidedSubjects = new Map<string, readonly string[]>();
+  /**
+   * Subjects of ALLOWED mutations, for completion-observation recording (M4),
+   * keyed by the permission's callID. Only delivered allows register here —
+   * denied/rejected/timeout asks must never seed coverage (review P1-1), and
+   * entries are consumed on observation so each allow covers exactly one
+   * observed tool activity (review P1-2).
+   */
+  const allowedSubjectsByCallId = new Map<string, readonly string[]>();
+  /**
+   * Coverage for allowed mutations whose permission carries no callID, keyed
+   * by session+tool — consumed on first observation (review P1-2).
+   */
+  const allowedSubjectsBySessionTool = new Map<string, readonly string[]>();
 
   const record = (decision: OpencodeAuthorityDecision): void => {
     journal.push(decision);
@@ -285,17 +292,26 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
     record({ ...decision, delivered });
   };
 
-  const answer = async (request: RemoteEnginePermissionRequest): Promise<void> => {
+  const answer = async (rawRequest: RemoteEnginePermissionRequest): Promise<void> => {
+    // Normalize the pinned v2 wire shape once (review P2-2); everything
+    // downstream (classifier, callID matching, coverage keys) sees the
+    // contract shape.
+    const request = normalizePermissionRequest(rawRequest);
     const decision = await decide(request);
-    rememberAnswered(request, decision.subjects);
     if (mode === "ask-me" && decision.decision === "allow") {
       // Policy allows but the operator holds the pen (M3): their reply can
       // only tighten it. Timeout fails closed.
       const operatorReply = await holdForOperator(request);
-      await deliver({ ...decision, reply: operatorReply });
+      const held = { ...decision, reply: operatorReply };
+      await deliver(held);
+      if (held.decision === "allow" && held.reply === "once") rememberAllowed(request, held.subjects);
       return;
     }
     await deliver(decision);
+    // Coverage seeds only from a DELIVERED allow (review P1-1): a denied,
+    // operator-rejected, timed-out, or undelivered ask must never authorize
+    // later tool activity.
+    if (decision.decision === "allow" && decision.reply === "once") rememberAllowed(request, decision.subjects);
   };
 
   const holdForOperator = (request: RemoteEnginePermissionRequest): Promise<"once" | "reject"> => {
@@ -307,6 +323,7 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
     return new Promise<"once" | "reject">((resolveHold) => {
       const timer = setTimeout(() => {
         pending.delete(request.id);
+        earlyReplies.delete(request.id); // A stale early reply must not answer a later ask (review P3-2).
         resolveHold("reject"); // Fail closed: an unanswered hold never mutates.
       }, operatorReplyTimeoutMs);
       pending.set(request.id, {
@@ -320,16 +337,13 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
     });
   };
 
-  function rememberAnswered(request: RemoteEnginePermissionRequest, subjects: readonly string[]): void {
+  function rememberAllowed(request: RemoteEnginePermissionRequest, subjects: readonly string[]): void {
     const callId = typeof request.tool?.callID === "string" ? request.tool.callID : undefined;
-    const tool = permissionToolName(request);
     if (callId !== undefined) {
-      answeredCallIds.add(callId);
-      decidedSubjects.set(callId, subjects);
+      allowedSubjectsByCallId.set(callId, subjects);
+      return;
     }
-    const sessionKey = `${request.sessionID}\u0000${tool}`;
-    answeredTools.add(sessionKey);
-    decidedSubjects.set(sessionKey, subjects);
+    allowedSubjectsBySessionTool.set(`${request.sessionID}\u0000${permissionToolName(request)}`, subjects);
   }
 
   /** Extracts the skill name from a read_skill-shaped tool input (M4). */
@@ -379,13 +393,16 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
     if (part === undefined || part.type !== "tool") return;
     const tool = typeof part.tool === "string" ? part.tool : undefined;
     if (tool === undefined) return;
-    const sessionId = typeof properties.sessionID === "string" ? properties.sessionID : undefined;
+    // The part may carry its own session id; the pinned source prefers it
+    // (review P2-1: ignoring it silently no-ops the observer).
+    const sessionId = (typeof properties.sessionID === "string" ? properties.sessionID : undefined)
+      ?? (typeof part.sessionID === "string" ? part.sessionID : undefined);
     if (sessionId === undefined) return;
     const callId = typeof part.callID === "string" ? part.callID : undefined;
     const status = isRecord(part.state) && typeof part.state.status === "string" ? part.state.status : undefined;
     const sessionKey = `${sessionId}\u0000${tool}`;
 
-    if (/read_skill/i.test(tool)) {
+    if (isReadSkillTool(tool)) {
       // Skill delivery (M4): journaled when the content actually arrived.
       if (status !== "completed") return;
       const skill = skillNameFrom(isRecord(part.state) ? part.state.input : undefined) ?? skillNameFrom(part.metadata);
@@ -401,8 +418,20 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
 
     const capability = opencodePermissionCapability(tool);
     if (capability === undefined || capability === "read") return;
-    const subjects =
-      (callId !== undefined ? decidedSubjects.get(callId) : undefined) ?? decidedSubjects.get(sessionKey);
+    // Coverage is strict (review P1-2): prefer the callID match; when the ask
+    // carried no callID (or the part's callID differs from the ask's), fall
+    // back to the single session+tool entry and CONSUME it — one delivered
+    // allow covers exactly one observed tool activity, so a second unasked
+    // mutation of the same tool alarms again.
+    let subjects: readonly string[] | undefined;
+    if (callId !== undefined) {
+      subjects = allowedSubjectsByCallId.get(callId);
+      if (subjects !== undefined) allowedSubjectsByCallId.delete(callId);
+    }
+    if (subjects === undefined) {
+      subjects = allowedSubjectsBySessionTool.get(sessionKey);
+      if (subjects !== undefined) allowedSubjectsBySessionTool.delete(sessionKey);
+    }
     if (subjects === undefined) {
       if (enforcement === "enforced") {
         alarm(sessionId, tool, callId, `mutating tool '${tool}' ran with no prior Workflow decision (bypass alarm, enforced posture)`);
@@ -491,6 +520,30 @@ function permissionToolName(request: RemoteEnginePermissionRequest): string {
   return typeof metadata.toolName === "string" && metadata.toolName.length > 0 ? metadata.toolName : request.action;
 }
 
+/** Exact-name read_skill matching (review P3-3: a `evilread_skill` tool must not journal). */
+function isReadSkillTool(tool: string): boolean {
+  return tool === "read_skill" || tool === "skills-mcp__read_skill";
+}
+
+/**
+ * Normalizes the pinned v2 permission wire shape (review P2-2, probe-pending):
+ * the server's v2 event may carry `properties.permission` (action) and
+ * `properties.patterns` (resources) where this broker's contract expects
+ * `action`/`resources`. Reading both keeps the capability classifier and
+ * callID matching alive against a real server; the M5 PERMISSION probe pins
+ * the exact shape.
+ */
+function normalizePermissionRequest(raw: RemoteEnginePermissionRequest): RemoteEnginePermissionRequest {
+  const record = raw as unknown as Record<string, unknown>;
+  const action = typeof raw.action === "string" && raw.action.length > 0
+    ? raw.action
+    : (typeof record.permission === "string" && record.permission.length > 0 ? record.permission : "unknown");
+  const resources = Array.isArray(raw.resources) && raw.resources.length > 0
+    ? raw.resources
+    : (Array.isArray(record.patterns) ? record.patterns.filter((entry): entry is string => typeof entry === "string") : []);
+  return action === raw.action && resources === raw.resources ? raw : { ...raw, action, resources };
+}
+
 function proposalFromPermission(
   adapter: AcpHostAdapter,
   request: RemoteEnginePermissionRequest,
@@ -531,7 +584,7 @@ export function opencodePermissionCapability(tool: string): ToolCapability | und
   if (tool === "webfetch" || tool === "fetch") return "network";
   if (tool === "task" || tool === "agent" || tool === "subagent") return "spawn";
   if (tool === "read" || tool === "glob" || tool === "grep" || tool === "list") return "read";
-  if (/read_skill/i.test(tool)) return "read";
+  if (isReadSkillTool(tool)) return "read";
   if (tool === "edit" || tool === "write" || tool === "patch" || tool === "apply_patch" || tool === "multiedit") return "mutation";
   return undefined;
 }

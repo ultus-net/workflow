@@ -38,6 +38,7 @@ export function createOpencodeServerBudget(options: OpencodeServerBudgetOptions)
   const intervalMs = options.intervalMs ?? 2_000;
   let violation: string | undefined;
   let timer: ReturnType<typeof setInterval> | undefined;
+  const aborted = new Set<string>();
 
   const exceeded = (usage: ModelUsageMetrics): string | undefined => {
     if (options.budget.maxTotalTokens !== undefined && usage.totalTokens > options.budget.maxTotalTokens) {
@@ -56,14 +57,20 @@ export function createOpencodeServerBudget(options: OpencodeServerBudgetOptions)
   };
 
   const check = (): string | undefined => {
-    if (violation !== undefined) return violation;
     const usage = options.usage();
-    if (usage === undefined) return undefined;
+    if (usage === undefined) return violation;
     const reason = exceeded(usage);
-    if (reason === undefined) return undefined;
-    violation = reason;
-    options.onViolation?.(reason);
+    if (reason !== undefined && violation === undefined) {
+      violation = reason;
+      options.onViolation?.(reason);
+    }
+    if (violation === undefined) return undefined;
+    // While violated, abort every known session that has not been aborted yet
+    // (review P3-5): sessions learned after the crossing must not keep
+    // spending.
     for (const sessionId of options.knownSessions()) {
+      if (aborted.has(sessionId)) continue;
+      aborted.add(sessionId);
       void options.abort(sessionId).catch(() => undefined);
     }
     return violation;

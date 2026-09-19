@@ -155,3 +155,13 @@ test("W071 launcher: ensureDiscovery returns a probed live gateway", async (t) =
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("W071 daemon: env mode parsers accept defaults and reject malformed values (review P3-6)", async () => {
+  const { authorityModeFromEnv, enforcementFromEnv } = await import("../src/cli/opencode-server.js");
+  assert.equal(authorityModeFromEnv({}), "auto-resolve");
+  assert.equal(authorityModeFromEnv({ WORKFLOW_OPENCODE_AUTHORITY_MODE: "ask-me" }), "ask-me");
+  assert.throws(() => authorityModeFromEnv({ WORKFLOW_OPENCODE_AUTHORITY_MODE: "yolo" }), /must be "auto-resolve" or "ask-me"/);
+  assert.equal(enforcementFromEnv({}), "advisory");
+  assert.equal(enforcementFromEnv({ WORKFLOW_OPENCODE_ENFORCEMENT: "enforced" }), "enforced");
+  assert.throws(() => enforcementFromEnv({ WORKFLOW_OPENCODE_ENFORCEMENT: "on" }), /must be "advisory" or "enforced"/);
+});

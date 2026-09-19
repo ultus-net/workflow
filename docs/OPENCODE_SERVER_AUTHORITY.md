@@ -321,3 +321,47 @@ will be reused when the server surface is promoted to hub authority — a
 daemon-side duplicate would be speculative until live sessions exercise the
 completion flow. The budget watcher's abort path is exercised against the
 fake engine; live abort semantics land with the operator's probe runs.
+
+---
+
+## 12. Final five-axis review + fixes (2026-09-19)
+
+**Review** (`secondary-reviewer/w071-final`, verdict recorded): REQUEST_CHANGES
+— no P0, **two P1**, three P2, seven P3. All claimed evidence was reproduced;
+the advisory/probe-PENDING honesty posture was confirmed intact. **The live
+PERMISSION/RULE-CONFIG/BYPASS probes are deferred by operator decision** (no
+model key here); the M5 verdict row will be recorded when they run on the
+operator's machine.
+
+**P1 fixes:**
+- **P1-1 (denied decisions seeded coverage).** `rememberAllowed` now runs only
+  after a *delivered* `allow`; a denied, operator-rejected, timed-out, or
+  undelivered ask never authorizes later activity. Regression test: a completed
+  denied mutation neither advances the epoch nor suppresses the alarm.
+- **P1-2 (session+tool coverage was permanent).** Coverage is now consumed on
+  observation — one delivered allow covers exactly one observed tool activity;
+  the callID map is preferred and the session+tool entry is the single-use
+  fallback (the tool part may carry a callID the ask lacked). Regression test:
+  a second unasked mutation of the same tool alarms.
+
+**P2 fixes:**
+- **P2-1** the observer accepts `part.sessionID` when `properties.sessionID` is
+  absent (the pinned source prefers the part's id).
+- **P2-2** the broker normalizes the pinned v2 wire shape
+  (`properties.permission`→`action`, `properties.patterns`→`resources`) once
+  per event, documented probe-pending.
+- **P2-3** the launcher's spawn lock is now held for the entire readiness wait,
+  so a second launcher cannot start a second daemon.
+
+**P3 fixes:** the unreachable `/reply?` guard was dropped; `earlyReplies`
+entries are purged on timeout (and cleared on stop); `read_skill` matching is
+exact-name only; the budget watcher aborts sessions learned *after* the
+crossing (not just those known at crossing); focused tests added for
+`authorityModeFromEnv`/`enforcementFromEnv` and the reviewed P1 paths.
+**Accepted residuals (recorded):** the SSE loop serializes ask-me holds, so a
+long operator hold delays later events (P3-4 — revisit with the live probe);
+forwarded bodies have no size cap and only the known reply-route shape is
+intercepted (P3-7 — the AUTHORITY-SPLIT/BYPASS probes pin the real shapes).
+
+**Post-fix verification:** typecheck, lint, **46 unit tests**, the gated live
+probe, and `npm run build` all green.

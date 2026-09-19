@@ -150,8 +150,10 @@ export async function ensureDiscovery(options: EnsureDiscoveryOptions): Promise<
   const deadline = Date.now() + timeoutMs;
   const spawnFn = options.spawnFn ?? nodeSpawn;
 
-  // Spawn lock (review P3j): two concurrent launchers must not start two
-  // daemons. The loser waits for the winner's discovery instead.
+  // Spawn lock (review P2-3): held for the ENTIRE readiness wait, so a second
+  // launcher can never spawn a second daemon — it waits for the winner's
+  // discovery instead. The lock is only released once discovery is confirmed
+  // (or the wait times out).
   const releaseLock = acquireSpawnLock(`${discoveryPath}.spawn.lock`);
   if (releaseLock !== undefined) {
     try {
@@ -161,23 +163,28 @@ export async function ensureDiscovery(options: EnsureDiscoveryOptions): Promise<
       });
       child.on?.("error", () => undefined);
       child.unref?.();
-    } finally {
+    } catch {
       releaseLock();
+      return undefined;
     }
   }
 
-  while (Date.now() < deadline) {
-    const discovery = readOpencodeServerDiscovery(discoveryPath);
-    if (
-      discovery !== undefined &&
-      discoveryIsTrusted(discovery) &&
-      (await probeOpencodeServerGateway(discovery, options.fetchImpl ?? fetch))
-    ) {
-      return discovery;
+  try {
+    while (Date.now() < deadline) {
+      const discovery = readOpencodeServerDiscovery(discoveryPath);
+      if (
+        discovery !== undefined &&
+        discoveryIsTrusted(discovery) &&
+        (await probeOpencodeServerGateway(discovery, options.fetchImpl ?? fetch))
+      ) {
+        return discovery;
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, pollMs));
     }
-    await new Promise((resolveWait) => setTimeout(resolveWait, pollMs));
+    return undefined;
+  } finally {
+    releaseLock?.();
   }
-  return undefined;
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
