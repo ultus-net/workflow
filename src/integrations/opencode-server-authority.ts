@@ -268,8 +268,7 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
     };
   };
 
-  const deliver = async (decision: OpencodeAuthorityDecision): Promise<void> => {
-    let delivered = true;
+  const deliver = async (decision: OpencodeAuthorityDecision): Promise<boolean> => {
     try {
       await options.engine.replyPermission({
         sessionId: decision.sessionId,
@@ -277,19 +276,21 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
         reply: decision.reply,
         cwd: options.workspace,
       });
+      record({ ...decision, delivered: true });
+      return true;
     } catch (error) {
       // A reply failure means the engine may still be waiting; the decision is
       // recorded with delivery confirmation so the journal never reports an
-      // allow that never reached the server.
-      delivered = false;
+      // allow that never reached the server. The boolean return gates
+      // coverage seeding (fix-verify N2): an undelivered allow must never
+      // authorize later tool activity.
       record({
         ...decision,
-        delivered,
+        delivered: false,
         reason: `${decision.reason ?? "policy allow"} (upstream reply failed: ${error instanceof Error ? error.message : String(error)})`,
       });
-      return;
+      return false;
     }
-    record({ ...decision, delivered });
   };
 
   const answer = async (rawRequest: RemoteEnginePermissionRequest): Promise<void> => {
@@ -303,15 +304,15 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
       // only tighten it. Timeout fails closed.
       const operatorReply = await holdForOperator(request);
       const held = { ...decision, reply: operatorReply };
-      await deliver(held);
-      if (held.decision === "allow" && held.reply === "once") rememberAllowed(request, held.subjects);
+      const delivered = await deliver(held);
+      if (delivered && held.decision === "allow" && held.reply === "once") rememberAllowed(request, held.subjects);
       return;
     }
-    await deliver(decision);
-    // Coverage seeds only from a DELIVERED allow (review P1-1): a denied,
-    // operator-rejected, timed-out, or undelivered ask must never authorize
-    // later tool activity.
-    if (decision.decision === "allow" && decision.reply === "once") rememberAllowed(request, decision.subjects);
+    // Coverage seeds only from a DELIVERED allow (review P1-1 / fix-verify N2):
+    // a denied, operator-rejected, timed-out, or undelivered ask must never
+    // authorize later tool activity.
+    const delivered = await deliver(decision);
+    if (delivered && decision.decision === "allow" && decision.reply === "once") rememberAllowed(request, decision.subjects);
   };
 
   const holdForOperator = (request: RemoteEnginePermissionRequest): Promise<"once" | "reject"> => {
@@ -393,10 +394,10 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
     if (part === undefined || part.type !== "tool") return;
     const tool = typeof part.tool === "string" ? part.tool : undefined;
     if (tool === undefined) return;
-    // The part may carry its own session id; the pinned source prefers it
-    // (review P2-1: ignoring it silently no-ops the observer).
-    const sessionId = (typeof properties.sessionID === "string" ? properties.sessionID : undefined)
-      ?? (typeof part.sessionID === "string" ? part.sessionID : undefined);
+    // The part may carry its own session id; the pinned source prefers the
+    // part's id (review P2-1).
+    const sessionId = (typeof part.sessionID === "string" ? part.sessionID : undefined)
+      ?? (typeof properties.sessionID === "string" ? properties.sessionID : undefined);
     if (sessionId === undefined) return;
     const callId = typeof part.callID === "string" ? part.callID : undefined;
     const status = isRecord(part.state) && typeof part.state.status === "string" ? part.state.status : undefined;
@@ -418,17 +419,21 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
 
     const capability = opencodePermissionCapability(tool);
     if (capability === undefined || capability === "read") return;
-    // Coverage is strict (review P1-2): prefer the callID match; when the ask
-    // carried no callID (or the part's callID differs from the ask's), fall
-    // back to the single session+tool entry and CONSUME it — one delivered
-    // allow covers exactly one observed tool activity, so a second unasked
-    // mutation of the same tool alarms again.
+    // One tool call emits multiple part updates (pending -> ... -> completed),
+    // so only the terminal observation is acted on (fix-verify N1): consuming
+    // coverage on an early update would false-fire the bypass alarm at the
+    // completed event and skip recordMutation. The completed event is the
+    // single point where coverage is consumed and either the mutation is
+    // recorded or (enforced, uncovered) the bypass alarm fires.
+    if (status !== "completed") return;
     let subjects: readonly string[] | undefined;
     if (callId !== undefined) {
       subjects = allowedSubjectsByCallId.get(callId);
       if (subjects !== undefined) allowedSubjectsByCallId.delete(callId);
     }
     if (subjects === undefined) {
+      // Fallback for asks that carried no callID: a single-use session+tool
+      // entry, so a second unasked mutation of the same tool alarms again.
       subjects = allowedSubjectsBySessionTool.get(sessionKey);
       if (subjects !== undefined) allowedSubjectsBySessionTool.delete(sessionKey);
     }
@@ -438,7 +443,6 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
       }
       return;
     }
-    if (status !== "completed") return;
     try {
       options.application.recordMutation(subjects);
     } catch {
@@ -481,6 +485,7 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
         entry.resolveReply("reject");
       }
       pending.clear();
+      earlyReplies.clear();
     },
     async handleOperatorReply(reply) {
       const held = pending.get(reply.requestId);

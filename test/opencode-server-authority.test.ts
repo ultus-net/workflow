@@ -11,6 +11,7 @@ import {
   assertAskRuleset,
   createOpencodeServerAuthority,
   ensureOpencodeSessionTask,
+  opencodePermissionCapability,
   opencodeSessionTaskId,
   type OpencodeAuthorityDecision,
 } from "../src/integrations/opencode-server-authority.js";
@@ -249,7 +250,8 @@ test("W071 broker (enforced): the bypass alarm fires for a mutating tool with no
   const workspace = mkdtempSync(join(tmpdir(), "wf-broker-bypass-"));
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
   const bypasses: string[] = [];
-  const fake = fakeEngine([toolPart("c9", "edit")]);
+  // The alarm fires on the terminal observation (one call emits several parts).
+  const fake = fakeEngine([toolPart("c9", "edit", "completed")]);
   const authority = createOpencodeServerAuthority({
     engine: fake.engine,
     application: application(workspace, ["read", "mutation", "process"]),
@@ -407,4 +409,81 @@ test("W071 broker: session+tool coverage is consumed once, so a second unasked m
   await authority.start();
   assert.equal(authority.decisions()[0]?.decision, "allow", "the first edit is decided");
   assert.deepEqual(bypasses, ["edit"], "the second, uncovered edit must alarm");
+});
+
+test("W071 broker: a multi-event tool call (pending -> completed) neither alarms nor loses its mutation (fix-verify N1)", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-multipart-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const bypasses: string[] = [];
+  const app = application(workspace, ["read", "mutation", "process"]);
+  const epochBefore = app.snapshot().mutationEpoch;
+  const fake = fakeEngine([
+    permission("r1", "edit", { filePath: join(workspace, "src", "a.ts") }, "c1"),
+    // The real stream emits several updates for one call; only the terminal
+    // completed observation may consume coverage.
+    toolPart("c1", "edit", "pending"),
+    toolPart("c1", "edit", "running"),
+    toolPart("c1", "edit", "completed"),
+  ]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine, application: app, workspace,
+    enforcement: "enforced",
+    onBypass: (input) => bypasses.push(input.tool),
+  });
+  await authority.start();
+  assert.deepEqual(bypasses, [], "an allowed multi-event call must not alarm");
+  assert.ok(app.snapshot().mutationEpoch > epochBefore, "the completed observation must record the mutation");
+});
+
+test("W071 broker: an UNDELIVERED allow never covers later activity (fix-verify N2)", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-undelivered-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const bypasses: string[] = [];
+  const app = application(workspace, ["read", "mutation", "process"]);
+  const epochBefore = app.snapshot().mutationEpoch;
+  const replies: string[] = [];
+  const engine = {
+    async *events() {
+      yield permission("r1", "edit", { filePath: join(workspace, "src", "a.ts") }, "c1");
+      yield toolPart("c1", "edit", "completed");
+    },
+    async replyPermission(input: { readonly reply: string }) {
+      replies.push(input.reply);
+      throw new Error("upstream reply failed");
+    },
+  } as unknown as Pick<RemoteEngine, "events" | "replyPermission">;
+  const authority = createOpencodeServerAuthority({
+    engine, application: app, workspace,
+    enforcement: "enforced",
+    onBypass: (input) => bypasses.push(input.tool),
+  });
+  await authority.start();
+  assert.deepEqual(replies, ["once"]);
+  assert.equal(authority.decisions()[0]?.delivered, false);
+  assert.deepEqual(bypasses, ["edit"], "an undelivered allow must not cover the observed mutation");
+  assert.equal(app.snapshot().mutationEpoch, epochBefore);
+});
+
+test("W071 broker: the part's own sessionID is honored (review P2-1)", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-partsession-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  // No properties.sessionID; only the part carries it.
+  const event: RemoteEngineEvent = {
+    type: "message.part.updated",
+    properties: { part: { type: "tool", sessionID: "s1", callID: "c1", tool: "edit", state: { status: "completed" } } },
+  } as unknown as RemoteEngineEvent;
+  const app = application(workspace, ["read", "mutation", "process"]);
+  const authority = createOpencodeServerAuthority({
+    engine: fakeEngine([event]).engine,
+    application: app,
+    workspace,
+  });
+  await authority.start();
+  assert.equal(authority.decisions().length, 0, "no permission ask; the observer must still resolve the session");
+});
+
+test("W071 broker: read_skill matching is exact, not substring (review P3-3)", () => {
+  assert.equal(opencodePermissionCapability("read_skill"), "read");
+  assert.equal(opencodePermissionCapability("skills-mcp__read_skill"), "read");
+  assert.equal(opencodePermissionCapability("evilread_skill"), undefined);
 });

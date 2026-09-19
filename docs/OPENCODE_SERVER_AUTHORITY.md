@@ -363,5 +363,17 @@ long operator hold delays later events (P3-4 — revisit with the live probe);
 forwarded bodies have no size cap and only the known reply-route shape is
 intercepted (P3-7 — the AUTHORITY-SPLIT/BYPASS probes pin the real shapes).
 
-**Post-fix verification:** typecheck, lint, **46 unit tests**, the gated live
+**Post-fix verification:** typecheck, lint, **50 unit tests**, the gated live
 probe, and `npm run build` all green.
+
+**Fix-verification follow-up (2026-09-19):** a fresh reviewer found two new
+issues in the first fix attempt: consuming coverage on non-terminal tool-part
+updates (the real stream emits pending → running → completed for one call), and
+seeding coverage when the upstream reply failed. Both are fixed: coverage is
+consumed only on the terminal completed observation, and only a delivered allow
+seeds coverage. Regression tests pin both cases. The observer also honors the
+part-level session id and exact read_skill names; the v2 permission normalizer,
+readiness-held spawn lock, and post-violation budget abort behavior remain
+covered. The final review's P3-4 (serial ask-me SSE holds) and P3-7 (forwarded
+body cap/alternate reply routes) remain explicitly accepted residuals pending
+live probe evidence.
