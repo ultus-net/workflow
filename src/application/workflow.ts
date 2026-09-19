@@ -17,6 +17,7 @@ import { TaskGraph, isRunComplete, type StepTransitionResult } from "../kernel/t
 import { mutationGate, verifyingGate, type CheckpointLedger } from "../pedagogy/checkpoints.js";
 import { PolicyFailureTracker } from "./policy-failure-tracker.js";
 import { FileClaimLedger } from "./file-claim-ledger.js";
+import { MutationBudget } from "./mutation-budget.js";
 
 export interface WorkflowTaskProjection {
   readonly id: TaskId;
@@ -50,6 +51,7 @@ export class WorkflowApplication {
   readonly #skillReads = new Map<string, TaskId>();
   readonly #policyFailures = new PolicyFailureTracker();
   readonly #fileClaims = new FileClaimLedger();
+  readonly #mutationBudget = new MutationBudget();
 
   constructor(
     graph: TaskGraph,
@@ -98,6 +100,14 @@ export class WorkflowApplication {
 
   releaseFileClaims(sessionId: string): void {
     this.#fileClaims.release(sessionId);
+  }
+
+  registerSubagentSession(sessionId: string, parentId?: string): void {
+    this.#mutationBudget.register(sessionId, parentId);
+  }
+
+  mutationBudgetRemaining(sessionId: string): number {
+    return this.#mutationBudget.remaining(sessionId);
   }
 
   /**
@@ -253,6 +263,9 @@ export class WorkflowApplication {
           reason: `task ${task.id} requires skill delivery via read_skill before mutations: ${undelivered.join(", ")}`,
         };
       }
+    }
+    if (!this.#mutationBudget.consume(action.sessionId)) {
+      return { kind: "deny", code: "MUTATION_BUDGET_EXHAUSTED", reason: `session ${action.sessionId} and its descendants exhausted the mutation budget` };
     }
     return { kind: "allow" };
   }

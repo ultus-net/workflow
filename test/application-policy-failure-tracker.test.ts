@@ -30,3 +30,14 @@ test("WorkflowApplication exposes circuit-breaker outcomes for the authority lay
   application.recordToolOutcome("s", "succeeded");
   assert.equal(application.authorize(action).kind, "allow");
 });
+
+test("WorkflowApplication enforces a parent-owned mutation budget for descendants", () => {
+  const application = new WorkflowApplication(new TaskGraph([task]), hostCapabilities({ transport: "native", authoritativePreMutation: true }));
+  application.registerSubagentSession("child", "parent");
+  for (let index = 0; index < 100; index += 1) {
+    assert.equal(application.authorize({ ...action, sessionId: "child" }).kind, "allow");
+  }
+  const blocked = application.authorize({ ...action, sessionId: "parent" });
+  assert.equal(blocked.kind, "deny");
+  if (blocked.kind === "deny") assert.equal(blocked.code, "MUTATION_BUDGET_EXHAUSTED");
+});
