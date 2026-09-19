@@ -32,7 +32,7 @@ describe("OpenCode v2 route qualification: event stream is observable", async ()
 });
 
 describe("OpenCode v2 route qualification: auth boundary covers route classes", async () => {
-  for (const path of ["/api/session", "/api/experimental/session/stats", "/api/event"]) {
+  for (const path of ["/api/session", "/api/experimental/session/stats", "/api/event", "/api/experimental/fs/write", "/api/session/s/permission/r/reply", "/api/mcp"]) {
     const response = await fetch(`${baseUrl}${path}`);
     assert.equal(response.status, 401, `${path} must reject unauthenticated access`);
   }
