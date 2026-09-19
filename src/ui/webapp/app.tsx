@@ -14,7 +14,8 @@ import { MarkdownText } from "./markdown-text.js";
 import { describeActivity, formatElapsed, formatTokens } from "./presenters.js";
 import { useSessionState, useSessionUsage, useAgentIdentity, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog } from "./settings-dialog.js";
-import { SessionsView } from "./sessions-view.js";
+import { AgentsView } from "./agents-view.js";
+import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
 import { UsageView } from "./usage-view.js";
 import { listPalettes } from "./theme/palettes.js";
 import { usePalette, useTheme } from "./theme.js";
@@ -208,6 +209,35 @@ function useSessions() {
     return () => clearInterval(timer);
   }, [load]);
   return { sessions, refresh: load };
+}
+
+/** Polls the hub-backed schedule table and self-improvement loop registry
+ * through the web service's hub proxy; undefined arrays mean "hub unavailable". */
+function useOperatorSurfaces() {
+  const [schedules, setSchedules] = useState<ScheduleMeta[] | undefined>(undefined);
+  const [loops, setLoops] = useState<LoopMeta[] | undefined>(undefined);
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const schedulesResponse = await fetch("/api/schedules");
+      if (schedulesResponse.ok) setSchedules((await schedulesResponse.json() as { schedules: ScheduleMeta[] }).schedules);
+      else setSchedules(undefined);
+    } catch {
+      // Keep the last good list; the next poll retries.
+    }
+    try {
+      const loopsResponse = await fetch("/api/loops");
+      if (loopsResponse.ok) setLoops((await loopsResponse.json() as { loops: LoopMeta[] }).loops);
+      else setLoops(undefined);
+    } catch {
+      // Keep the last good list; the next poll retries.
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), PANEL_POLL_MS);
+    return () => clearInterval(timer);
+  }, [load]);
+  return { schedules, loops, refresh: load };
 }
 
 function createSession(refresh: () => Promise<void>): void {
@@ -417,13 +447,25 @@ function UsageIcon() {
     </svg>
   );
 }
-function SessionsIcon() {
+function AgentsIcon() {
   return (
     <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="2.5" y="2.5" width="11" height="4.2" />
       <rect x="2.5" y="9.3" width="11" height="4.2" />
       <circle cx="5" cy="4.6" r="0.7" fill="currentColor" stroke="none" />
       <circle cx="5" cy="11.4" r="0.7" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/** Calendar glyph for the Schedules slug. */
+function SchedulesIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2.5" y="3.5" width="11" height="10" />
+      <path d="M2.5 6.5h11" />
+      <path d="M5.5 2v3M10.5 2v3" />
+      <path d="M5.5 9.5h2M5.5 11.5h5" />
     </svg>
   );
 }
@@ -1270,9 +1312,10 @@ function EnforcementBadge({ level, transport, copy }: {
   );
 }
 
-/** Top-bar views. Sessions is a page (nav slug); session history stays
- * reachable from the composer via the /sessions command. */
-export type AppView = "chat" | "sessions" | "usage";
+/** Top-bar views. Agents (renamed from "Sessions" 2026-09-19) and Schedules
+ * are pages (nav slugs); session history stays reachable from the composer
+ * via the /agents command, with /sessions kept as an alias. */
+export type AppView = "chat" | "agents" | "schedules" | "usage";
 
 export function App() {
   // The chat view focuses one parallel session at a time; undefined = the
@@ -1282,8 +1325,13 @@ export function App() {
   const [focusedSessionId, setFocusedSessionId] = useState<string | undefined>(undefined);
   const handleCommand = useCallback((command: string): boolean => {
     const name = command.split(/\s+/)[0]?.toLowerCase() ?? "";
-    if (name === "/sessions") {
-      setView("sessions");
+    // /agents is the truthful name; /sessions stays as a documented alias.
+    if (name === "/agents" || name === "/sessions") {
+      setView("agents");
+      return true;
+    }
+    if (name === "/schedules") {
+      setView("schedules");
       return true;
     }
     if (name === "/usage") {
@@ -1313,6 +1361,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const gitStatus = useGitStatus();
   const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
+  const { schedules, loops, refresh: refreshSchedules } = useOperatorSurfaces();
   const agents = useAgents();
   // The registry leads with the default agent (OpenCode); fall back to it while
   // the agents list is still loading so the switcher never marks the wrong one.
@@ -1428,7 +1477,8 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           <nav className="shell-nav" aria-label="Views">
             {([
               ["chat", "Chat", <ChatIcon key="c" />],
-              ["sessions", "Sessions", <SessionsIcon key="s" />],
+              ["agents", "Agents", <AgentsIcon key="s" />],
+              ["schedules", "Schedules", <SchedulesIcon key="d" />],
               ["usage", "Usage", <UsageIcon key="u" />],
             ] as const).map(([slug, label, icon]) => (
               <button
@@ -1461,8 +1511,8 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           </button>
         </div>
       </header>
-      {view === "sessions" ? (
-        <SessionsView
+      {view === "agents" ? (
+        <AgentsView
           sessions={sessions}
           agents={agents}
           onActivate={(id) => switchSession(id)}
@@ -1498,6 +1548,32 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           onOpenChat={(id) => {
             switchSession(id);
             setView("chat");
+          }}
+        />
+      ) : view === "schedules" ? (
+        <SchedulesView
+          schedules={schedules}
+          loops={loops}
+          onCancelLoop={(id) => {
+            void fetch("/api/loops/cancel", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id }),
+            }).then(() => refreshSchedules());
+          }}
+          onPauseToggle={(entry) => {
+            void fetch("/api/schedules/save", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ...entry, enabled: entry.enabled === false }),
+            }).then(() => refreshSchedules());
+          }}
+          onDelete={(id) => {
+            void fetch("/api/schedules/delete", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id }),
+            }).then(() => refreshSchedules());
           }}
         />
       ) : view === "usage" ? (

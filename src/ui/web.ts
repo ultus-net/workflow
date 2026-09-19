@@ -1,11 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { createOpenRouterAnalytics, usageTimeRange, type OpenRouterAnalytics } from "../integrations/openrouter-analytics.js";
+import { nextCronMatch, type ScheduleDefinition } from "../integrations/hub-scheduler.js";
 import { evidenceId, observationId, taskId, type TaskState } from "../kernel/contracts.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
 import { WebSessionManager, type SessionSwitchResult } from "./web-sessions.js";
@@ -37,6 +41,14 @@ export function createWorkflowWebServer(
     /** The OpenRouter management-key analytics client factory; undefined (or
      * returning undefined) means the Usage page reports its setup state. */
     readonly analytics?: () => OpenRouterAnalytics | undefined;
+    /**
+     * W074/W073 operator surfaces: the hub discovery directory so the browser
+     * can reach the hub's schedule table and self-improvement loop registry
+     * through this service (the browser itself never holds a hub token). The
+     * hub stays the single writer; the web service is a proxy. Undefined (or a
+     * hub that is not running) means the Schedules page reports unavailable.
+     */
+    readonly hubDiscoveryDir?: string;
   },
 ) {
   const manager = session instanceof WebSessionManager ? session : undefined;
@@ -46,6 +58,46 @@ export function createWorkflowWebServer(
     const key = process.env.WORKFLOW_OPENROUTER_MANAGEMENT_KEY;
     return key === undefined || key.length === 0 ? undefined : createOpenRouterAnalytics({ key });
   });
+
+  /** The hub's operator credential, re-read per request so a hub restart is
+   * picked up without restarting this service. */
+  const hubCredentials = (): { url: string; token: string } | undefined => {
+    const dir = options?.hubDiscoveryDir ?? process.env.WORKFLOW_HUB_DIR ?? resolve(homedir(), ".workflow");
+    const path = join(dir, "hub", "discovery.json");
+    if (!existsSync(path)) return undefined;
+    try {
+      const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+      if (
+        typeof value !== "object" || value === null ||
+        typeof (value as Record<string, unknown>).endpoint !== "string" ||
+        typeof (value as Record<string, unknown>).token !== "string"
+      ) {
+        return undefined;
+      }
+      const record = value as { endpoint: string; token: string };
+      return { url: record.endpoint, token: record.token };
+    } catch {
+      return undefined;
+    }
+  };
+
+  /** Proxy one POST to the hub's operator routes; 503 when the hub is not
+   * reachable (the browser sees "hub unavailable", never a token). */
+  const hubPost = async (path: string, body: unknown): Promise<{ status: number; payload: unknown }> => {
+    const hub = hubCredentials();
+    if (hub === undefined) return { status: 503, payload: { error: "hub unavailable" } };
+    try {
+      const response = await fetch(`${hub.url}${path}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${hub.token}`, "content-type": "application/json" },
+        body: JSON.stringify(body ?? {}),
+        signal: AbortSignal.timeout(5_000),
+      });
+      return { status: response.status, payload: (await response.json()) as unknown };
+    } catch {
+      return { status: 503, payload: { error: "hub unavailable" } };
+    }
+  };
 
   /** Session-scoped channel: `?session=<id>` selects a parallel live session;
    * without the parameter the operator's focused session answers. */
@@ -172,6 +224,98 @@ export function createWorkflowWebServer(
           return version === undefined ? agent : { ...agent, version };
         }),
       });
+    }
+    // ── W074/W073 operator surfaces (hub proxy) ────────────────────────────
+    // The hub is the single writer; this service only relays operator-token
+    // routes. The verifier-gated actions (loop start, schedule run-now) are
+    // deliberately NOT proxied — the browser must never hold that credential.
+    if (request.method === "GET" && pathname === "/api/schedules") {
+      const result = await hubPost("/schedule/list", {});
+      if (result.status !== 200) return json(response, result.status, result.payload);
+      const schedules = (result.payload as { schedules?: ScheduleDefinition[] }).schedules ?? [];
+      return json(response, 200, {
+        schedules: schedules.map((entry) => ({
+          ...entry,
+          nextRunAt: nextCronMatch(entry.cron, new Date())?.toISOString() ?? null,
+        })),
+      });
+    }
+    if (request.method === "POST" && pathname === "/api/schedules/save") {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        if (
+          typeof body !== "object" || body === null ||
+          typeof (body as Record<string, unknown>).id !== "string" ||
+          typeof (body as Record<string, unknown>).title !== "string" ||
+          typeof (body as Record<string, unknown>).cron !== "string" ||
+          typeof (body as Record<string, unknown>).prompt !== "string"
+        ) {
+          return json(response, 400, { error: "invalid schedule save request" });
+        }
+        // Forward only known schedule fields: the browser payload carries the
+        // server-computed `nextRunAt` and may carry arbitrary extras, and the
+        // hub persists whatever it is given. The proxy strips to the table
+        // schema so nothing client-supplied beyond it is ever persisted.
+        const source = body as Record<string, unknown>;
+        const schedule: ScheduleDefinition = {
+          id: source.id as string,
+          title: source.title as string,
+          cron: source.cron as string,
+          prompt: source.prompt as string,
+          ...(typeof source.workspace === "string" ? { workspace: source.workspace } : {}),
+          ...(typeof source.requiresReview === "boolean" ? { requiresReview: source.requiresReview } : {}),
+          ...(typeof source.enabled === "boolean" ? { enabled: source.enabled } : {}),
+          ...(source.budget !== undefined && typeof source.budget === "object" && source.budget !== null
+            ? { budget: source.budget as NonNullable<ScheduleDefinition["budget"]> }
+            : {}),
+          ...(typeof source.taskClass === "string" ? { taskClass: source.taskClass as NonNullable<ScheduleDefinition["taskClass"]> } : {}),
+          ...(source.offPeak !== undefined && typeof source.offPeak === "string" ? { offPeak: source.offPeak as NonNullable<ScheduleDefinition["offPeak"]> } : {}),
+          ...(typeof source.offPeakRequired === "boolean" ? { offPeakRequired: source.offPeakRequired } : {}),
+        };
+        const result = await hubPost("/schedule/save", schedule);
+        return json(response, result.status, result.payload);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    if (request.method === "POST" && pathname === "/api/schedules/delete") {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const id = typeof (body as { id?: unknown } | null)?.id === "string" ? (body as { id: string }).id : undefined;
+        if (id === undefined || id.length === 0) return json(response, 400, { error: "invalid schedule delete request" });
+        const result = await hubPost("/schedule/delete", { id });
+        return json(response, result.status, result.payload);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    if (request.method === "GET" && pathname === "/api/loops") {
+      const result = await hubPost("/rsi/status", {});
+      if (result.status !== 200) return json(response, result.status, result.payload);
+      return json(response, 200, { loops: (result.payload as { loops?: unknown }).loops ?? [] });
+    }
+    if (request.method === "POST" && pathname === "/api/loops/cancel") {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const id = typeof (body as { id?: unknown } | null)?.id === "string" ? (body as { id: string }).id : undefined;
+        if (id === undefined || id.length === 0) return json(response, 400, { error: "invalid loop cancel request" });
+        const result = await hubPost("/rsi/cancel", { id });
+        return json(response, result.status, result.payload);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
     }
     if (request.method === "POST" && pathname === "/api/sessions/agent") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });

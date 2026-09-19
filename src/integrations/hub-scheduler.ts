@@ -164,6 +164,26 @@ export function cronMatches(expression: string, date: Date): boolean {
     : matchesDom && matchesDow;
 }
 
+/**
+ * W074: the next minute strictly after `from` at which `cron` matches, or
+ * `undefined` if none occurs within `horizonMinutes` (default 366 days). Used
+ * by the operator UI's next-run preview; it is a pure function of the cron
+ * expression and the clock, never of scheduler state. Known limit: an annual
+ * Feb-29-only expression can fall outside the default horizon — pass a larger
+ * `horizonMinutes` if a UI must preview those.
+ */
+export function nextCronMatch(expression: string, from: Date, horizonMinutes = 366 * 24 * 60): Date | undefined {
+  // Throws on a malformed expression, same as cronMatches.
+  const start = new Date(from.getTime());
+  start.setSeconds(0, 0);
+  const candidate = new Date(start.getTime() + 60_000);
+  for (let step = 0; step < horizonMinutes; step += 1) {
+    if (cronMatches(expression, candidate)) return new Date(candidate.getTime());
+    candidate.setMinutes(candidate.getMinutes() + 1);
+  }
+  return undefined;
+}
+
 // ── Persisted schedule table ───────────────────────────────────────────────
 
 export interface ScheduleDefinition {
@@ -174,6 +194,12 @@ export interface ScheduleDefinition {
   readonly workspace?: string;
   readonly requiresReview?: boolean;
   readonly budget?: RunBudget;
+  /**
+   * W074: operator pause. A disabled schedule is retained in the table but the
+   * scheduler skips it; `run-now` may still fire it explicitly. Absent means
+   * enabled (backward compatible with existing tables).
+   */
+  readonly enabled?: boolean;
   /** W070a: task class that drives the model profile's effort default. */
   readonly taskClass?: ModelTaskClass;
   /**
@@ -231,6 +257,9 @@ function requireSchedule(entry: unknown): ScheduleDefinition {
   if (record.requiresReview !== undefined && typeof record.requiresReview !== "boolean") {
     throw new TypeError("invalid schedule table: requiresReview must be a boolean");
   }
+  if (record.enabled !== undefined && typeof record.enabled !== "boolean") {
+    throw new TypeError("invalid schedule table: enabled must be a boolean");
+  }
   if (record.taskClass !== undefined && record.taskClass !== "coding" && record.taskClass !== "general" && record.taskClass !== "batch") {
     throw new TypeError("invalid schedule table: taskClass must be coding, general, or batch");
   }
@@ -261,6 +290,15 @@ function requireBudget(entry: unknown): void {
 export interface HubScheduler {
   /** Evaluate every schedule at `now` (deterministic; no timers involved). */
   tick(now?: Date): Promise<void>;
+  /**
+   * W074: fire one schedule immediately (operator run-now). Bypasses the cron
+   * match and the paused flag, and does not consult the off-peak window (the
+   * operator explicitly asked); review gating and the run budget still apply
+   * exactly as a clock-fired run. Returns whether the id resolved to a known
+   * schedule. A crash in the run is handled by `fire` itself (failed run
+   * closed, reason surfaced), never rethrown to the caller.
+   */
+  trigger(id: string): Promise<boolean>;
   /** Start the wall-clock loop (one evaluation per minute, unref'd). */
   start(): void;
   stop(): void;
@@ -291,9 +329,26 @@ export function createHubScheduler(options: {
   const env = options.env ?? process.env;
   const lastFiredMinute = new Map<string, number>();
   const pendingOffPeak = new Map<string, number>();
+  // P2 (adversarial review): one fire per schedule at a time. A slow turn must
+  // not let the next tick (or an eager run-now) start a second concurrent run
+  // for the same schedule.
+  const inFlight = new Set<string>();
   let timer: NodeJS.Timeout | undefined;
 
   const fire = async (schedule: ScheduleDefinition): Promise<void> => {
+    if (inFlight.has(schedule.id)) {
+      log(`scheduler '${schedule.id}': run already in flight; skipping overlapping fire`);
+      return;
+    }
+    inFlight.add(schedule.id);
+    try {
+      await fireOnce(schedule);
+    } finally {
+      inFlight.delete(schedule.id);
+    }
+  };
+
+  const fireOnce = async (schedule: ScheduleDefinition): Promise<void> => {
     const runId = `schedule:${schedule.id}:${randomUUID()}`;
     try {
       await options.controller.begin({
@@ -357,6 +412,9 @@ export function createHubScheduler(options: {
     const minute = Math.floor(now.getTime() / 60_000);
     for (const schedule of schedules) {
       const deferred = pendingOffPeak.get(schedule.id);
+      // W074: a paused schedule is retained but never fired by the clock. An
+      // explicit run-now still fires it (that path bypasses tick entirely).
+      if (schedule.enabled === false) continue;
       // A deferred schedule ignores cron on retry ticks so it fires as soon
       // as its vendor's window opens, however the cron is shaped.
       const due = deferred !== undefined || cronMatches(schedule.cron, now);
@@ -381,6 +439,22 @@ export function createHubScheduler(options: {
 
   return {
     tick,
+    async trigger(id: string): Promise<boolean> {
+      let schedules: readonly ScheduleDefinition[];
+      try {
+        schedules = await options.schedules();
+      } catch (error) {
+        log(`scheduler: run-now could not load schedules: ${error instanceof Error ? error.message : String(error)}`);
+        return false;
+      }
+      const schedule = schedules.find((entry) => entry.id === id);
+      if (schedule === undefined) return false;
+      // P2 (adversarial review): run-now counts as this minute's fire, so a
+      // tick in the same minute cannot double-fire the schedule behind it.
+      lastFiredMinute.set(id, Math.floor((options.now ?? ((): Date => new Date()))().getTime() / 60_000));
+      await fire(schedule);
+      return true;
+    },
     start() {
       if (timer !== undefined) return;
       timer = setInterval(() => {
