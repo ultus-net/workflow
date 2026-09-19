@@ -92,19 +92,24 @@ export class TaskGraph {
       if (evidence.mutationEpoch > input.mutationEpoch) throw new TypeError("persisted evidence is from a future mutation epoch");
       graph.#evidence.push({ ...evidence });
     }
-    for (const task of graph.#tasks.values()) {
-      if (task.state === "VERIFIED" && !task.requiredEvidence.every((requirement) => graph.#hasEvidence(requirement))) {
-        throw new TypeError(`persisted verified task ${task.id} does not have fresh passing evidence for every requirement`);
-      }
-    }
     for (const step of input.steps ?? []) {
       if (!graph.#tasks.has(step.taskId)) throw new TypeError(`persisted step ${step.id} references unknown task ${step.taskId}`);
+      if (step.requiredEvidence.length === 0) throw new TypeError(`persisted step ${step.id} lacks a done-condition`);
       if (graph.#steps.has(step.id)) throw new TypeError(`duplicate step: ${step.id}`);
       graph.#steps.set(step.id, { ...step, requiredEvidence: [...step.requiredEvidence] });
     }
     for (const step of graph.#steps.values()) {
       if (step.state === "COMPLETED" && !graph.#stepHasEvidence(step)) {
         throw new TypeError(`persisted completed step ${step.id} lacks fresh passing evidence`);
+      }
+    }
+    for (const task of graph.#tasks.values()) {
+      if (task.state === "VERIFIED" && !task.requiredEvidence.every((requirement) => graph.#hasEvidence(requirement))) {
+        throw new TypeError(`persisted verified task ${task.id} does not have fresh passing evidence for every requirement`);
+      }
+      const steps = graph.#stepsFor(task.id);
+      if (task.state === "VERIFIED" && steps.length > 0 && !graph.#stepsDone(task.id)) {
+        throw new TypeError(`persisted verified task ${task.id} has open steps`);
       }
     }
     return graph;
@@ -187,12 +192,14 @@ export class TaskGraph {
       if (seen.has(id)) throw new TypeError(`duplicate step: ${id}`);
       seen.add(id);
       const prior = existingById.get(id);
+      const requiredEvidence = [...(entry.requiredEvidence ?? prior?.requiredEvidence ?? [])];
+      if (requiredEvidence.length === 0) throw new TypeError(`step '${content}' must declare a done-condition/evidence requirement`);
       next.push({
         id,
         taskId,
         content,
         state: prior?.state ?? "PENDING",
-        requiredEvidence: [...(entry.requiredEvidence ?? prior?.requiredEvidence ?? [])],
+        requiredEvidence,
       });
     }
     // I-2: an active step cannot silently disappear from the ledger.
@@ -207,7 +214,12 @@ export class TaskGraph {
   }
 
   startStep(id: StepId): StepTransitionResult {
-    return this.#moveStep(id, "IN_PROGRESS", () => this.get(this.step(id).taskId).state === "IN_PROGRESS");
+    const step = this.step(id);
+    const active = this.activeStepId(step.taskId);
+    if (active !== undefined && active !== id) {
+      return { kind: "rejected", code: "STEP_ALREADY_IN_PROGRESS", reason: `task ${step.taskId} already has active step ${active}` };
+    }
+    return this.#moveStep(id, "IN_PROGRESS", () => this.get(step.taskId).state === "IN_PROGRESS");
   }
 
   /** I-3: completion requires the step to have started and to hold fresh

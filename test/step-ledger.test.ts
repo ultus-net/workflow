@@ -14,6 +14,7 @@ import { WorkflowApplication } from "../src/application/workflow.js";
 import { hostCapabilities } from "../src/application/host.js";
 
 const T = taskId("t1");
+const DONE = { authority: "environment" as const, subject: "step:done" };
 
 function task(): WorkflowTask {
   return { id: T, title: "Task", state: "READY", dependencies: [], requiredEvidence: [] };
@@ -40,7 +41,7 @@ function inProgressTask(): TaskGraph {
 
 test("defineSteps assigns stable ids and starts every step PENDING", () => {
   const graph = inProgressTask();
-  const steps = graph.defineSteps(T, [{ content: "first" }, { content: "second" }]);
+  const steps = graph.defineSteps(T, [{ content: "first", requiredEvidence: [DONE] }, { content: "second", requiredEvidence: [DONE] }]);
   assert.equal(steps.length, 2);
   assert.deepEqual(steps.map((step) => step.state), ["PENDING", "PENDING"]);
   assert.notEqual(steps[0]?.id, steps[1]?.id);
@@ -48,17 +49,17 @@ test("defineSteps assigns stable ids and starts every step PENDING", () => {
 
 test("I-2: an active step cannot be silently removed from the ledger", () => {
   const graph = inProgressTask();
-  const [first, second] = graph.defineSteps(T, [{ content: "first" }, { content: "second" }]);
+  const [first, second] = graph.defineSteps(T, [{ content: "first", requiredEvidence: [DONE] }, { content: "second", requiredEvidence: [DONE] }]);
   assert.ok(first !== undefined && second !== undefined);
   graph.startStep(first.id);
   // Re-submitting the ledger without the active first step must throw.
   assert.throws(
-    () => graph.defineSteps(T, [{ id: second.id, content: "second" }]),
+    () => graph.defineSteps(T, [{ id: second.id, content: "second", requiredEvidence: [DONE] }]),
     /without being completed or cancelled/,
   );
   // It may leave the ledger only after an explicit terminal transition.
   assert.equal(graph.cancelStep(first.id).kind, "accepted");
-  assert.doesNotThrow(() => graph.defineSteps(T, [{ id: second.id, content: "second" }]));
+  assert.doesNotThrow(() => graph.defineSteps(T, [{ id: second.id, content: "second", requiredEvidence: [DONE] }]));
 });
 
 test("I-3: completion requires fresh passing evidence for the step's requirements", () => {
@@ -79,7 +80,7 @@ test("I-3: completion requires fresh passing evidence for the step's requirement
 
 test("I-3: a step cannot complete before it has started", () => {
   const graph = inProgressTask();
-  const [step] = graph.defineSteps(T, [{ content: "pending" }]);
+  const [step] = graph.defineSteps(T, [{ content: "pending", requiredEvidence: [DONE] }]);
   assert.ok(step !== undefined);
   const result = graph.completeStep(step.id);
   assert.equal(result.kind, "rejected");
@@ -88,9 +89,10 @@ test("I-3: a step cannot complete before it has started", () => {
 
 test("I-4: a task cannot reach VERIFYING while steps are open, and can once all are terminal", () => {
   const graph = inProgressTask();
-  const [a, b] = graph.defineSteps(T, [{ content: "a" }, { content: "b" }]);
+  const [a, b] = graph.defineSteps(T, [{ content: "a", requiredEvidence: [DONE] }, { content: "b", requiredEvidence: [DONE] }]);
   assert.ok(a !== undefined && b !== undefined);
 
+  graph.recordEvidence(evidence("step:done"));
   const early = graph.transition(T, "VERIFYING");
   assert.equal(early.kind, "rejected");
   if (early.kind === "rejected") assert.equal(early.code, "STEPS_OPEN");
@@ -104,7 +106,7 @@ test("I-4: a task cannot reach VERIFYING while steps are open, and can once all 
 
 test("I-1 support: activeStepId reports the in-progress step", () => {
   const graph = inProgressTask();
-  const [a, b] = graph.defineSteps(T, [{ content: "a" }, { content: "b" }]);
+  const [a, b] = graph.defineSteps(T, [{ content: "a", requiredEvidence: [DONE] }, { content: "b", requiredEvidence: [DONE] }]);
   assert.ok(a !== undefined && b !== undefined);
   assert.equal(graph.activeStepId(T), undefined);
   graph.startStep(b.id);
@@ -157,7 +159,7 @@ test("I-1: once a task declares a step ledger, mutations require an in-progress 
   // No ledger yet: legacy active-task behavior allows the mutation.
   assert.equal(application.authorize(mutation).kind, "allow");
 
-  const [step] = application.defineTaskSteps(T, [{ content: "edit a.ts" }]);
+  const [step] = application.defineTaskSteps(T, [{ content: "edit a.ts", requiredEvidence: [DONE] }]);
   assert.ok(step !== undefined);
   const denied = application.authorize(mutation);
   assert.equal(denied.kind, "deny");
