@@ -84,6 +84,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #onSkillRead: ((skill: string) => void) | undefined;
   #onToolOutcome: ((sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void) | undefined;
   #onReadFingerprint: ((fingerprint: import("../application/host.js").ReadFingerprint) => void) | undefined;
+  #onTodoUpdate: ((entries: readonly { readonly id?: string; readonly content: string; readonly status: "pending" | "in_progress" | "completed" | "cancelled" }[]) => void) | undefined;
   #initialized = false;
   #canLoadSession = false;
   #agentInfo?: { readonly name: string; readonly version?: string } | undefined;
@@ -113,6 +114,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     onSkillRead?: (skill: string) => void;
     onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
     onReadFingerprint?: (fingerprint: import("../application/host.js").ReadFingerprint) => void;
+    onTodoUpdate?: (entries: readonly { readonly id?: string; readonly content: string; readonly status: "pending" | "in_progress" | "completed" | "cancelled" }[]) => void;
   }) {
     const authorize = typeof options.authorize === "function"
       ? options.authorize
@@ -127,6 +129,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#onSkillRead = options.onSkillRead;
     this.#onToolOutcome = options.onToolOutcome ?? (typeof options.authorize === "function" ? undefined : (sessionId, outcome, tool, reason) => (options.authorize as WorkflowApplication).recordToolOutcome(sessionId, outcome, tool, reason));
     this.#onReadFingerprint = options.onReadFingerprint ?? (typeof options.authorize === "function" ? undefined : (fingerprint) => (options.authorize as WorkflowApplication).recordReadFingerprint(fingerprint));
+    this.#onTodoUpdate = options.onTodoUpdate ?? (typeof options.authorize === "function" ? undefined : (entries) => (options.authorize as WorkflowApplication).mirrorNativeTodos(entries));
     this.#client = new AcpSubprocessClient({
       child: options.child,
       resolvePermission: (request) => this.#resolvePermission(request),
@@ -470,6 +473,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
       const rawInput = rawWireText(update.update.rawInput);
       this.#toolTitles.set(callId, title);
       this.#toolCalls.set(callId, { title, toolKind, subjects, ...(rawInput !== undefined ? { rawInput } : {}) });
+      this.#projectTodoUpdate(title, rawInput);
       return {
         type: "tool",
         callId,
@@ -660,6 +664,26 @@ export class AcpSessionDriver implements CodingSessionDriver {
     }
     const entries = await readdir(path, { withFileTypes: true });
     return { entries: entries.map((entry) => ({ name: entry.name, type: entry.isDirectory() ? "directory" : "file" })) };
+  }
+
+  /** Mirrors OpenCode's native todo tool into the canonical step bridge. */
+  #projectTodoUpdate(title: string, rawInput: string | undefined): void {
+    const tool = AcpSessionDriver.toolNameFromTitle(title).toLowerCase();
+    if (tool !== "todo" && tool !== "todowrite") return;
+    if (rawInput === undefined) return;
+    let parsed: unknown;
+    try { parsed = JSON.parse(rawInput) as unknown; } catch { return; }
+    if (typeof parsed !== "object" || parsed === null) return;
+    const todos = (parsed as Record<string, unknown>).todos;
+    if (!Array.isArray(todos)) return;
+    const entries = todos.flatMap((value) => {
+      if (typeof value !== "object" || value === null) return [];
+      const item = value as Record<string, unknown>;
+      if (typeof item.content !== "string") return [];
+      const status: "pending" | "in_progress" | "completed" | "cancelled" = item.status === "in_progress" || item.status === "completed" || item.status === "cancelled" ? item.status : "pending";
+      return [{ ...(typeof item.id === "string" ? { id: item.id } : {}), content: item.content, status }];
+    });
+    if (entries.length > 0) this.#onTodoUpdate?.(entries);
   }
 
   /**

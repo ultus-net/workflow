@@ -298,6 +298,24 @@ export class WorkflowApplication {
     this.#graph.addDependency(taskId, dependencyId);
   }
 
+  /** Bridges a native host todo update into the canonical active task. Agent
+   * completion is never self-certifying: evidence-bound completeStep remains
+   * authoritative even when the host says a todo is completed. */
+  mirrorNativeTodos(entries: readonly { readonly id?: string; readonly content: string; readonly status: "pending" | "in_progress" | "completed" | "cancelled" }[]): readonly WorkflowStep[] {
+    const task = this.activeTaskId();
+    const steps = this.#graph.defineSteps(task, entries.map((entry) => ({
+      ...(entry.id === undefined ? {} : { id: entry.id }),
+      content: entry.content,
+      requiredEvidence: [{ authority: "environment" as const, subject: `step:${entry.id ?? entry.content}` }],
+    })));
+    for (const entry of entries) {
+      if (entry.status !== "in_progress") continue;
+      const step = entry.id === undefined ? undefined : steps.find((candidate) => candidate.id === entry.id);
+      if (step?.state === "PENDING") this.#graph.startStep(step.id);
+    }
+    return this.#graph.stepsFor(task);
+  }
+
   /** Defines/replaces a task's canonical step ledger (I-2 enforced in the kernel). */
   defineTaskSteps(
     taskId: TaskId,

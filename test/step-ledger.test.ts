@@ -188,6 +188,20 @@ test("persistence round-trips steps and rejects a completed step without evidenc
   );
 });
 
+test("native todo bridge mirrors decomposition into canonical steps without self-completing", () => {
+  const graph = new TaskGraph([task()]);
+  const application = new WorkflowApplication(graph, hostCapabilities({ transport: "native", authoritativePreMutation: true }));
+  graph.transition(T, "IN_PROGRESS");
+  application.selectActiveTask(T);
+  const steps = application.mirrorNativeTodos([
+    { id: "todo-1", content: "inspect", status: "in_progress" },
+    { id: "todo-2", content: "fix", status: "completed" },
+  ]);
+  assert.equal(steps.length, 2);
+  assert.equal(steps.find((step) => step.id === "todo-1")?.state, "IN_PROGRESS");
+  assert.equal(steps.find((step) => step.id === "todo-2")?.state, "PENDING");
+});
+
 test("I-1: once a task declares a step ledger, mutations require an in-progress step", () => {
   const graph = new TaskGraph([task()]);
   const application = new WorkflowApplication(graph, hostCapabilities({ transport: "native", authoritativePreMutation: true }));
