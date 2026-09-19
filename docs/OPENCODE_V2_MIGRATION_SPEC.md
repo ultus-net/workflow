@@ -195,4 +195,19 @@ host behavior is involved.
 - Session replay/import/fork does not bypass Workflow authorization, evidence freshness, review, or
   containment.
 - C/D implementation continues against v1 ACP only if a separately approved compatibility fix is needed;
-  otherwise v2 is the target integration surface.
+   otherwise v2 is the target integration surface.
+
+## 8. Upstream PR boundary
+
+After v2 implementation and qualification, maintain an explicit upstream-candidate list before opening
+any PR against OpenCode. Candidates may include only generic OpenCode/ACP improvements that are useful
+without Workflow: protocol compatibility fixes, session lifecycle behavior, event/session-stats
+normalization, generic filesystem/session identity hooks, public extension points, and their upstream
+unit/probe tests or generated API artifacts.
+
+These remain Workflow-owned and must not be proposed upstream as OpenCode behavior: canonical task/step
+ledger state, Workflow authorization, guard policy ownership, evidence/review gates, containment,
+credential custody, and plugin-retirement qualification. An upstream PR is blocked until the pinned v2
+probe family, replay/idempotency tests, authorization-boundary tests, and independent five-axis review
+are green. The PR body must list the exact upstream candidates, source evidence, and any Workflow-only
+residuals.
