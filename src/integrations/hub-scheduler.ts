@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 
 import type { WorkflowRunController } from "./run-controller.js";
+import { isOffPeak, offPeakSpec, type OffPeakVendor } from "./off-peak.js";
+import type { ModelTaskClass } from "./model-profile.js";
 
 /**
  * Plan Tasks C1/C2: hub-native scheduled runs and per-run budget enforcement.
@@ -172,6 +174,16 @@ export interface ScheduleDefinition {
   readonly workspace?: string;
   readonly requiresReview?: boolean;
   readonly budget?: RunBudget;
+  /** W070a: task class that drives the model profile's effort default. */
+  readonly taskClass?: ModelTaskClass;
+  /**
+   * W070a: batch/CI work may declare an off-peak vendor so the scheduler only
+   * fires it inside that vendor's discounted window. `offPeakRequired` (default
+   * true) defers outside the window; when the window is unknown the scheduler
+   * fails open and logs the gap rather than deferring forever.
+   */
+  readonly offPeak?: OffPeakVendor;
+  readonly offPeakRequired?: boolean;
 }
 
 export function loadSchedulesTable(path: string): readonly ScheduleDefinition[] {
@@ -219,6 +231,15 @@ function requireSchedule(entry: unknown): ScheduleDefinition {
   if (record.requiresReview !== undefined && typeof record.requiresReview !== "boolean") {
     throw new TypeError("invalid schedule table: requiresReview must be a boolean");
   }
+  if (record.taskClass !== undefined && record.taskClass !== "coding" && record.taskClass !== "general" && record.taskClass !== "batch") {
+    throw new TypeError("invalid schedule table: taskClass must be coding, general, or batch");
+  }
+  if (record.offPeak !== undefined && record.offPeak !== "deepseek" && record.offPeak !== "glm") {
+    throw new TypeError("invalid schedule table: offPeak must be deepseek or glm");
+  }
+  if (record.offPeakRequired !== undefined && typeof record.offPeakRequired !== "boolean") {
+    throw new TypeError("invalid schedule table: offPeakRequired must be a boolean");
+  }
   cronMatches(record.cron as string, new Date(2026, 0, 1, 0, 0, 0, 0));
   if (record.budget !== undefined) requireBudget(record.budget);
   return entry as ScheduleDefinition;
@@ -263,9 +284,13 @@ export function createHubScheduler(options: {
    * schedule's prompt reaches the turn unchanged.
    */
   readonly promptGuidance?: string;
+  /** Injectable environment for off-peak window resolution (DeepSeek window). */
+  readonly env?: NodeJS.ProcessEnv;
 }): HubScheduler {
   const log = options.log ?? (() => undefined);
+  const env = options.env ?? process.env;
   const lastFiredMinute = new Map<string, number>();
+  const pendingOffPeak = new Map<string, number>();
   let timer: NodeJS.Timeout | undefined;
 
   const fire = async (schedule: ScheduleDefinition): Promise<void> => {
@@ -331,8 +356,24 @@ export function createHubScheduler(options: {
     }
     const minute = Math.floor(now.getTime() / 60_000);
     for (const schedule of schedules) {
+      const deferred = pendingOffPeak.get(schedule.id);
+      // A deferred schedule ignores cron on retry ticks so it fires as soon
+      // as its vendor's window opens, however the cron is shaped.
+      const due = deferred !== undefined || cronMatches(schedule.cron, now);
+      if (!due) continue;
       if (lastFiredMinute.get(schedule.id) === minute) continue;
-      if (!cronMatches(schedule.cron, now)) continue;
+      if (schedule.offPeak !== undefined && schedule.offPeakRequired !== false) {
+        const decision = isOffPeak(schedule.offPeak, now, offPeakSpec(schedule.offPeak, env));
+        if (decision === false) {
+          if (deferred === undefined) log(`scheduler '${schedule.id}': deferred until the ${schedule.offPeak} off-peak window`);
+          pendingOffPeak.set(schedule.id, deferred ?? minute);
+          continue;
+        }
+        if (decision === undefined) {
+          log(`scheduler '${schedule.id}': off-peak window for ${schedule.offPeak} is unknown; firing without deferral (set WORKFLOW_OFF_PEAK_DEEPSEEK_PEAK_UTC to enable deferral)`);
+        }
+      }
+      pendingOffPeak.delete(schedule.id);
       lastFiredMinute.set(schedule.id, minute);
       await fire(schedule);
     }
