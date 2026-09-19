@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
+import { applyPalette, readStoredPalette, storePalette } from "./theme/palettes.js";
+
 export type ThemeChoice = "system" | "dark" | "light";
 export type ResolvedTheme = "dark" | "light";
 
@@ -67,4 +69,31 @@ export function useTheme(): {
   }, []);
 
   return { choice, setChoice };
+}
+
+/**
+ * Palette control (catalog themes on top of the mode choice). Mounted once at
+ * the app root; the settings dialog reads/writes the same choice via props.
+ * undefined = Workflow's own amber identity.
+ */
+export function usePalette(): {
+  readonly palette: string | undefined;
+  readonly setPalette: (palette: string | undefined) => void;
+} {
+  const [palette, setPaletteState] = useState<string | undefined>(() => {
+    // Validate against the catalog: a stale id must not leave a data-palette
+    // attribute with no CSS behind it (that reads as a broken theme).
+    return readStoredPalette();
+  });
+
+  useEffect(() => {
+    applyPalette(palette);
+  }, [palette]);
+
+  const setPalette = useCallback((next: string | undefined): void => {
+    storePalette(next);
+    setPaletteState(next);
+  }, []);
+
+  return { palette, setPalette };
 }

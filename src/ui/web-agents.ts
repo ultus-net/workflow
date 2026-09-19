@@ -1,5 +1,4 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import type { WorkflowApplication } from "../application/workflow.js";
@@ -12,6 +11,7 @@ import {
 } from "../integrations/acp-runtime.js";
 import { globalClineEntrypoint } from "../integrations/cline-launch.js";
 import { globalGooseBinary, gooseProviderKind } from "../integrations/goose-agent-config.js";
+import { upstreamKeyPresent } from "../integrations/upstream-key.js";
 import type { PermissionBroker } from "./permission-broker.js";
 
 export type WebAgentId = "cline" | "opencode" | "goose";
@@ -27,17 +27,6 @@ export interface WebAgentInfo {
   readonly containment: "contained" | "advisory";
   readonly available: boolean;
   readonly reason?: string;
-}
-
-function clineApiKeyPresent(): boolean {
-  if (process.env.CLINE_API_KEY !== undefined) return true;
-  return existsSync(resolve(homedir(), ".config", "workflow", "cline-api-key"));
-}
-
-/** The loopback metering proxy's upstream key (env, else the shared key file). */
-function upstreamKeyPresent(): boolean {
-  if ((process.env.CLINE_API_KEY ?? "").trim().length > 0) return true;
-  return existsSync(resolve(homedir(), ".config", "workflow", "cline-api-key"));
 }
 
 function opencodeBinaryPresent(): boolean {
@@ -84,7 +73,7 @@ export const DEFAULT_WEB_AGENT: WebAgentId = "opencode";
  * The default agent (OpenCode) leads the list; goose (the contained
  * general-purpose/backup agent, W048) precedes the vendored-Cline fallback. */
 export function listWebAgents(): WebAgentInfo[] {
-  const clineAvailable = globalClineEntrypoint() !== undefined && clineApiKeyPresent();
+  const clineAvailable = globalClineEntrypoint() !== undefined && upstreamKeyPresent();
   const opencodeAvailable = opencodeBinaryPresent() && existsSync(opencodeAuthPath());
   const gooseAvailable = gooseBinaryPresent() && gooseCredentialsPresent();
   return [

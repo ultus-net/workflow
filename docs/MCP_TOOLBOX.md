@@ -21,7 +21,7 @@ workflow-guard-mcp server as a Workflow `McpProvider`:
 
 The guard remains advisory for hosts that merely call it as a tool; Workflow's
 kernel owns task state and evidence freshness regardless. In this repository
-the hub is the wired host (plan Task G2): the `/before-tool` route, the ACP
+the hub is the wired host (plan Task G2): the `/bash` contained-shell route, the ACP
 permission resolver, and the OpenCode plugin all deny on guard policy and
 fail closed on guard errors, and the hub daemon refuses to start without a
 working guard provider.
