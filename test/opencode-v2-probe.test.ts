@@ -31,3 +31,12 @@ describe("OpenCode v2 route qualification: event stream is observable", async ()
   assert.equal(response.headers.get("content-type"), "text/event-stream");
   if (response.body !== null) await response.body.cancel();
 });
+
+describe("OpenCode v2 route qualification: auth boundary covers route classes", async () => {
+  for (const path of ["/api/session", "/api/experimental/session/stats", "/api/event"]) {
+    const response = await fetch(`${baseUrl}${path}`);
+    assert.equal(response.status, 401, `${path} must reject unauthenticated access`);
+  }
+  const session = await fetch(`${baseUrl}/api/session`, { headers });
+  assert.equal(session.status, 200, "authenticated read session route must work");
+});
