@@ -72,7 +72,15 @@ Severity: P0 (blocks retirement/authority) · P1 (major) · P2 (minor) · P3 (do
 
 ---
 
-## 4. Provenance
+## 4. Progress log (evidence-linked)
+
+| Date | Obligation(s) | Increment | Evidence | Status effect |
+|---|---|---|---|---|
+| 2026-09-19 | DRIFT-009, DRIFT-010 (partial) | Kernel `WorkflowStep` child nodes + `isRunComplete`; I-2/I-3/I-4 gates; persistence; application step methods + conditional I-1 gate | commit `426c590`; `test/step-ledger.test.ts` (9); affected suites 105/105 | **Advanced, not closed.** DRIFT-009 predicate exists but is not yet enforced at all completion paths; DRIFT-010 still needs the native-`todowrite` bridge, all-surface enforcement, and G6 corpus. DRIFT-008 (empty `requiredEvidence` on session tasks) remains open. |
+
+---
+
+## 5. Provenance
 
 Derived from `docs/PLAN_VS_REALITY_AUDIT.md` (four-pass read-only scan) and `docs/TASK_TODO_LEDGER_PARITY.md`.
 Tracking item: `TASKS.md` **W072**. Review cadence: re-scan before any Checkpoint D sign-off.

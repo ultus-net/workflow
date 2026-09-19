@@ -1019,6 +1019,12 @@ promotions).
 the G6 corpus run for the pinned agent version, and the closed `docs/COMPLIANCE_REGISTER.md` rows with
 their linking artifacts.
 
-**Status (2026-09-19, Proposed — not started):** the spec, audit, and compliance register are written;
-kernel step nodes and the enforcement gates are not yet implemented. Tracked by this item until the
-operator reviews the spec (`docs/TASK_TODO_LEDGER_PARITY.md`).
+**Status (2026-09-19, Stage 1 in progress):** spec, audit, and compliance register written and committed.
+**Stage 1a–1c landed + tested (commit `426c590`):** kernel `WorkflowStep` child nodes on `TaskGraph`
+with I-2 (no silent deletion), I-3 (evidence-bound checkoff; forged completed steps rejected on
+restore), I-4 (`STEPS_OPEN` gate on `IN_PROGRESS→VERIFYING`; `isRunComplete` predicate), persistence
+round-trip, and the application methods plus the **conditional I-1 gate** (`NO_ACTIVE_STEP` once a task
+declares a ledger). Tests `test/step-ledger.test.ts` (9); affected suites 105/105. **Still open:** the
+native-`todowrite` → canonical step bridge (Stage 1e), enforcement on all surfaces, folding the ledger
+checks into the G6 corpus, and the independent five-axis review. W072 stays **in progress**, not
+complete.
