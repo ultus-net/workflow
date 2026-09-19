@@ -5,10 +5,18 @@ import { isAbsolute, join, resolve } from "node:path";
 export type Freshness = "fresh" | "stale" | "unknown";
 export type CurrentSubject =
   | { kind: "fingerprint"; algorithm: string; version: string; scope: string; value: string }
-  | { kind: "ci_revision"; provider: string; repository: string; revision: string };
+  | { kind: "ci_revision"; provider: string; repository: string; revision: string }
+  | { kind: "browser_page"; url: string; pageHash: string };
 export type LocalTestSource = { kind: "local_test"; capability: "test-intelligence-mcp/run_tests"; testIds: string[] };
 export type CiRunSource = { kind: "ci_run"; capability: "ci-intelligence-mcp/list_ci_runs"; provider: "github"; repository: string; runId: string };
-export type VerificationSource = LocalTestSource | CiRunSource;
+export type BrowserVerificationSource = {
+  kind: "browser_verification";
+  capability: "browser-verification-mcp/run_verification";
+  evidenceId: string;
+  evidenceHash: string;
+  observedAt: number;
+};
+export type VerificationSource = LocalTestSource | CiRunSource | BrowserVerificationSource;
 export interface LocalTestResult {
   outcome: "completed" | "timed_out" | "cancelled"; exitCode: number | null;
   passed: number; failed: number; skipped: number; todo: number;
@@ -26,17 +34,33 @@ export interface AuthorityCiRun {
 export interface CiRunResult {
   revision: string; state: AuthorityCiRun["state"]; conclusion?: AuthorityCiRun["conclusion"]; listingTruncated: boolean;
 }
+export type BrowserOutcome = "passed" | "failed" | "inconclusive";
+export interface AuthorityBrowserVerification {
+  outcome: BrowserOutcome; url: string; origin: string; pageHash: string;
+  passed: number; failed: number; truncated: boolean;
+  evidenceId: string; evidenceHash: string; observedAt: number;
+}
+export interface BrowserVerificationResult {
+  outcome: BrowserOutcome; passed: number; failed: number; truncated: boolean;
+}
+export interface BrowserVerificationSubject { kind: "browser_page"; url: string; origin: string; pageHash: string }
 export interface VerificationAuthorities {
   runTests(input: { workspaceRoot: string; testIds: string[]; timeoutMs?: number }, signal?: AbortSignal): Promise<AuthorityLocalTestResult>;
   listCiRuns(input: { revision?: string; limit: number }, signal?: AbortSignal): Promise<{ runs: AuthorityCiRun[]; truncated: boolean }>;
+  runBrowserVerification(input: { url: string; assertions: Array<Record<string, unknown>> }, signal?: AbortSignal): Promise<AuthorityBrowserVerification>;
   ciRepository(): string | undefined;
 }
 export type RecordVerificationInput =
   | { workspaceRoot: string; request: { kind: "local_test"; testIds: string[]; timeoutMs?: number } }
-  | { workspaceRoot: string; request: { kind: "ci_run"; runId: string; revision?: string } };
+  | { workspaceRoot: string; request: { kind: "ci_run"; runId: string; revision?: string } }
+  | { workspaceRoot: string; request: { kind: "browser_verification"; url: string; assertions: Array<Record<string, unknown>> } };
+export type VerificationSubject =
+  | { kind: "local_test_execution"; workspace: string; contentSubject: "unavailable" }
+  | { kind: "ci_revision"; provider: string; repository: string; revision: string }
+  | BrowserVerificationSubject;
 export interface VerificationObservation {
-  id: string; evidenceClass: "observation"; source: VerificationSource; result: LocalTestResult | CiRunResult;
-  subject: { kind: "local_test_execution"; workspace: string; contentSubject: "unavailable" } | { kind: "ci_revision"; provider: string; repository: string; revision: string };
+  id: string; evidenceClass: "observation"; source: VerificationSource; result: LocalTestResult | CiRunResult | BrowserVerificationResult;
+  subject: VerificationSubject;
   recordedAt: number; freshness: Freshness; provenance: { workspace: string };
 }
 export interface ListVerificationsInput { workspaceRoot: string; currentSubject?: CurrentSubject; limit?: number }
@@ -72,16 +96,32 @@ function validCiResult(result: CiRunResult): boolean {
     : result.conclusion === undefined;
   return /^[0-9a-fA-F]{40}$/.test(result.revision) && ["queued", "in_progress", "completed"].includes(result.state) && conclusionValid && typeof result.listingTruncated === "boolean";
 }
+function validBrowserResult(result: BrowserVerificationResult): boolean {
+  return ["passed", "failed", "inconclusive"].includes(result.outcome)
+    && validCount(result.passed) && validCount(result.failed) && result.passed + result.failed <= 1000
+    && typeof result.truncated === "boolean";
+}
+function validBrowserPageHash(value: unknown): value is string { return typeof value === "string" && /^[0-9a-f]{64}$/.test(value); }
 function normalizeRevision(value: string): string {
   if (!/^[0-9a-fA-F]{40}$/.test(value)) throw new Error("CI revision is invalid.");
   return value.toLowerCase();
 }
+function normalizePageHash(value: string): string {
+  if (!/^[0-9a-fA-F]{64}$/.test(value)) throw new Error("Browser page hash is invalid.");
+  return value.toLowerCase();
+}
 function validateCurrentSubject(subject: CurrentSubject): CurrentSubject {
   if (subject.kind === "ci_revision") return { kind: "ci_revision", provider: boundedText(subject.provider, "CI provider", 100), repository: boundedText(subject.repository, "CI repository", 300), revision: normalizeRevision(subject.revision) };
+  if (subject.kind === "browser_page") return { kind: "browser_page", url: boundedText(subject.url, "Browser URL", 2048), pageHash: normalizePageHash(subject.pageHash) };
   return { kind: "fingerprint", algorithm: boundedText(subject.algorithm, "Fingerprint algorithm", 100), version: boundedText(subject.version, "Fingerprint version", 100), scope: boundedText(subject.scope, "Fingerprint scope", 200), value: boundedText(subject.value, "Fingerprint value", 300) };
 }
 function observationFreshness(observation: StoredObservation, current?: CurrentSubject): Freshness {
-  if (!current || observation.subject.kind !== "ci_revision" || current.kind !== "ci_revision") return "unknown";
+  if (!current) return "unknown";
+  if (observation.subject.kind === "browser_page" && current.kind === "browser_page") {
+    if (observation.subject.url !== current.url) return "unknown";
+    return observation.subject.pageHash === current.pageHash ? "fresh" : "stale";
+  }
+  if (observation.subject.kind !== "ci_revision" || current.kind !== "ci_revision") return "unknown";
   if (observation.subject.provider !== current.provider || observation.subject.repository !== current.repository) return "unknown";
   return observation.subject.revision === current.revision ? "fresh" : "stale";
 }
@@ -93,6 +133,9 @@ function validTestIds(value: unknown): value is string[] {
     return /\.(?:test|spec)\.(?:js|cjs|mjs|ts|cts|mts)$/.test(path) && !path.startsWith("/") && !path.includes("\\") && !segments.some((segment) => !segment || segment === "." || segment === ".." || segment === ".git" || segment === "node_modules") && id === boundedText(id, "Test ID", 1000);
   });
 }
+function validBrowserAssertions(value: unknown): value is Array<Record<string, unknown>> {
+  return Array.isArray(value) && value.length <= 20 && value.every((item) => item !== null && typeof item === "object" && !Array.isArray(item) && Buffer.byteLength(JSON.stringify(item)) <= 2_000);
+}
 function validStoredObservation(value: unknown, workspace: string): value is StoredObservation {
   if (!value || typeof value !== "object") return false;
   const item = value as Partial<StoredObservation>;
@@ -100,6 +143,17 @@ function validStoredObservation(value: unknown, workspace: string): value is Sto
   try {
     if (item.source.kind === "local_test") {
       return item.source.capability === "test-intelligence-mcp/run_tests" && validTestIds(item.source.testIds) && item.subject.kind === "local_test_execution" && item.subject.workspace === workspace && item.subject.contentSubject === "unavailable" && validLocalResult(item.result as LocalTestResult);
+    }
+    if (item.source.kind === "browser_verification") {
+      if (item.source.capability !== "browser-verification-mcp/run_verification") return false;
+      if (typeof item.source.evidenceId !== "string" || !/^[0-9a-f-]{36}$/i.test(item.source.evidenceId)) return false;
+      if (!validBrowserPageHash(item.source.evidenceHash)) return false;
+      if (!Number.isSafeInteger(item.source.observedAt) || (item.source.observedAt ?? -1) < 0) return false;
+      if (item.subject.kind !== "browser_page") return false;
+      const url = boundedText(item.subject.url, "Browser URL", 2048);
+      const origin = boundedText(item.subject.origin, "Browser origin", 2048);
+      if (url !== item.subject.url || origin !== item.subject.origin || !validBrowserPageHash(item.subject.pageHash)) return false;
+      return validBrowserResult(item.result as BrowserVerificationResult);
     }
     if (item.source.kind !== "ci_run" || item.source.capability !== "ci-intelligence-mcp/list_ci_runs" || item.source.provider !== "github" || item.subject.kind !== "ci_revision") return false;
     const repository = boundedText(item.source.repository, "CI repository", 300); const runId = boundedText(item.source.runId, "CI run ID", 200); const result = item.result as CiRunResult;
@@ -137,7 +191,7 @@ export class VerificationStore {
   }
   async recordVerification(input: RecordVerificationInput, signal?: AbortSignal): Promise<VerificationObservation> {
     abortIfNeeded(signal); const workspace = await canonicalWorkspace(input.workspaceRoot);
-    let source: VerificationSource; let result: LocalTestResult | CiRunResult; let subject: StoredObservation["subject"];
+    let source: VerificationSource; let result: LocalTestResult | CiRunResult | BrowserVerificationResult; let subject: StoredObservation["subject"];
     if (input.request.kind === "local_test") {
       if (!validTestIds(input.request.testIds)) throw new Error("Local test IDs are invalid.");
       if (input.request.timeoutMs !== undefined && (!Number.isInteger(input.request.timeoutMs) || input.request.timeoutMs < 100 || input.request.timeoutMs > 120_000)) throw new Error("Local test timeout is invalid.");
@@ -148,6 +202,16 @@ export class VerificationStore {
       if (!validLocalResult(result)) throw new Error("Test Intelligence returned invalid verification evidence.");
       source = { kind: "local_test", capability: "test-intelligence-mcp/run_tests", testIds: [...input.request.testIds] };
       subject = { kind: "local_test_execution", workspace, contentSubject: "unavailable" };
+    } else if (input.request.kind === "browser_verification") {
+      const url = input.request.url.trim();
+      if (Buffer.byteLength(url) > 2048 || !/^https?:\/\//.test(url) || /[\0\r\n]/.test(url)) throw new Error("Browser verification URL is invalid.");
+      if (!validBrowserAssertions(input.request.assertions)) throw new Error("Browser verification assertions are invalid.");
+      const observed = await this.authorities.runBrowserVerification({ url, assertions: input.request.assertions.map((assertion) => ({ ...assertion })) }, signal);
+      if (!/^https?:\/\//.test(observed.url) || Buffer.byteLength(observed.url) > 2048 || !validBrowserPageHash(observed.pageHash) || !Number.isSafeInteger(observed.observedAt) || observed.observedAt < 0 || typeof observed.origin !== "string" || Buffer.byteLength(observed.origin) > 2048) throw new Error("Browser Verification returned invalid page identity.");
+      result = { outcome: observed.outcome, passed: observed.passed, failed: observed.failed, truncated: observed.truncated };
+      if (!validBrowserResult(result)) throw new Error("Browser Verification returned invalid verification evidence.");
+      source = { kind: "browser_verification", capability: "browser-verification-mcp/run_verification", evidenceId: observed.evidenceId, evidenceHash: observed.evidenceHash, observedAt: observed.observedAt };
+      subject = { kind: "browser_page", url: observed.url, origin: observed.origin, pageHash: observed.pageHash };
     } else {
       const repository = this.authorities.ciRepository();
       if (!repository) throw new Error("CI verification authority is not configured.");

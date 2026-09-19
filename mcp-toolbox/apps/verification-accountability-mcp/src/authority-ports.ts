@@ -13,6 +13,19 @@ const ciResult = z.object({
   runs: z.array(z.object({ id: z.string(), revision: z.string().regex(/^[0-9a-fA-F]{40}$/), state: z.enum(["queued", "in_progress", "completed"]), conclusion: z.enum(["success", "failure", "cancelled", "timed_out", "skipped", "neutral", "action_required", "unknown"]).optional() }).passthrough()).max(100),
   truncated: z.boolean(),
 });
+const browserResult = z.object({
+  evidence: z.object({
+    id: z.string().regex(/^[0-9a-f-]{36}$/i),
+    hash: z.string().regex(/^[0-9a-f]{64}$/i),
+    recordedAt: z.number().int().nonnegative(),
+    subject: z.object({ kind: z.literal("browser_page"), url: z.string(), origin: z.string(), pageHash: z.string().regex(/^[0-9a-f]{64}$/i) }),
+    result: z.object({
+      outcome: z.enum(["observed", "passed", "failed", "inconclusive"]),
+      assertions: z.object({ passed: z.number().int().nonnegative(), failed: z.number().int().nonnegative() }).optional(),
+      truncated: z.boolean(),
+    }),
+  }),
+});
 
 class PrimitiveClient {
   private client?: Client;
@@ -40,10 +53,29 @@ export function createAuthorityPorts(): VerificationAuthorities & { close(): Pro
   const tests = new PrimitiveClient(process.env.VERIFICATION_ACCOUNTABILITY_TEST_COMMAND ?? "test-intelligence-mcp", parseArgs("VERIFICATION_ACCOUNTABILITY_TEST_ARGS"));
   const ciEnv = Object.fromEntries(["CI_GITHUB_REPOSITORY", "CI_GITHUB_TOKEN", "CI_GITHUB_API_URL"].flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]!]]));
   const ci = new PrimitiveClient(process.env.VERIFICATION_ACCOUNTABILITY_CI_COMMAND ?? "ci-intelligence-mcp", parseArgs("VERIFICATION_ACCOUNTABILITY_CI_ARGS"), ciEnv);
+  const browserEnv = Object.fromEntries(["BROWSER_VERIFICATION_CDP_URL", "BROWSER_VERIFICATION_CHROME_PATH", "BROWSER_VERIFICATION_CHROME_ARGS", "BROWSER_VERIFICATION_ALLOWED_ORIGINS", "BROWSER_VERIFICATION_PROFILE", "BROWSER_VERIFICATION_NAVIGATION_TIMEOUT_MS", "BROWSER_VERIFICATION_COMMAND_TIMEOUT_MS"].flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]!]]));
+  const browser = new PrimitiveClient(process.env.VERIFICATION_ACCOUNTABILITY_BROWSER_COMMAND ?? "browser-verification-mcp", parseArgs("VERIFICATION_ACCOUNTABILITY_BROWSER_ARGS"), browserEnv);
   return {
     runTests: async (input, signal) => testResult.parse(await tests.call("run_tests", input, signal)),
     listCiRuns: async (input, signal) => ciResult.parse(await ci.call("list_ci_runs", input, signal)),
+    runBrowserVerification: async (input, signal) => {
+      const parsed = browserResult.parse(await browser.call("run_verification", { url: input.url, actions: [], assertions: input.assertions, screenshot: false }, signal));
+      const evidence = parsed.evidence;
+      const assertions = evidence.result.assertions ?? { passed: 0, failed: 0 };
+      return {
+        outcome: evidence.result.outcome === "observed" ? "inconclusive" : evidence.result.outcome,
+        url: evidence.subject.url,
+        origin: evidence.subject.origin,
+        pageHash: evidence.subject.pageHash.toLowerCase(),
+        passed: assertions.passed,
+        failed: assertions.failed,
+        truncated: evidence.result.truncated,
+        evidenceId: evidence.id,
+        evidenceHash: evidence.hash.toLowerCase(),
+        observedAt: evidence.recordedAt,
+      };
+    },
     ciRepository: () => process.env.CI_GITHUB_REPOSITORY,
-    close: async () => { await Promise.all([tests.close(), ci.close()]); },
+    close: async () => { await Promise.all([tests.close(), ci.close(), browser.close()]); },
   };
 }

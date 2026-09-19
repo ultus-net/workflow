@@ -14,7 +14,7 @@ test("every toolbox product passes the MCP 2026-07-28 conformance smoke", async 
     .join(" | ");
   assert.equal(failures.length, 0, detail);
   const summary = conformanceSummary(reports);
-  assert.equal(summary.apps, 14);
+  assert.equal(summary.apps, 16);
   assert.equal(summary.failed.length, 0);
 });
 

@@ -49,22 +49,30 @@ const authorities = createAuthorityPorts();
 const store = new VerificationStore(defaultDataRoot(), authorities);
 const localResult = z.object({ outcome: z.enum(["completed", "timed_out", "cancelled"]), exitCode: z.number().int().nullable(), passed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), skipped: z.number().int().nonnegative(), todo: z.number().int().nonnegative(), testsTruncated: z.boolean(), failuresTruncated: z.boolean(), diagnosticsTruncated: z.boolean() });
 const ciResult = z.object({ revision: z.string().regex(/^[0-9a-fA-F]{40}$/), state: z.enum(["queued", "in_progress", "completed"]), conclusion: z.enum(["success", "failure", "cancelled", "timed_out", "skipped", "neutral", "action_required", "unknown"]).optional(), listingTruncated: z.boolean() });
+const browserResult = z.object({ outcome: z.enum(["passed", "failed", "inconclusive"]), passed: z.number().int().nonnegative(), failed: z.number().int().nonnegative(), truncated: z.boolean() });
 const localSource = z.object({ kind: z.literal("local_test"), capability: z.literal("test-intelligence-mcp/run_tests"), testIds: z.array(z.string()) });
 const ciSource = z.object({ kind: z.literal("ci_run"), capability: z.literal("ci-intelligence-mcp/list_ci_runs"), provider: z.literal("github"), repository: z.string(), runId: z.string() });
-const subject = z.union([z.object({ kind: z.literal("local_test_execution"), workspace: z.string(), contentSubject: z.literal("unavailable") }), z.object({ kind: z.literal("ci_revision"), provider: z.string(), repository: z.string(), revision: z.string() })]);
+const browserSource = z.object({ kind: z.literal("browser_verification"), capability: z.literal("browser-verification-mcp/run_verification"), evidenceId: z.string(), evidenceHash: z.string(), observedAt: z.number() });
+const subject = z.union([
+  z.object({ kind: z.literal("local_test_execution"), workspace: z.string(), contentSubject: z.literal("unavailable") }),
+  z.object({ kind: z.literal("ci_revision"), provider: z.string(), repository: z.string(), revision: z.string() }),
+  z.object({ kind: z.literal("browser_page"), url: z.string(), origin: z.string(), pageHash: z.string() }),
+]);
 const currentSubject = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("fingerprint"), algorithm: z.string().min(1).max(100), version: z.string().min(1).max(100), scope: z.string().min(1).max(200), value: z.string().min(1).max(300) }),
   z.object({ kind: z.literal("ci_revision"), provider: z.string().min(1).max(100), repository: z.string().min(1).max(300), revision: z.string().regex(/^[0-9a-fA-F]{40}$/) }),
+  z.object({ kind: z.literal("browser_page"), url: z.string().min(1).max(2048), pageHash: z.string().regex(/^[0-9a-fA-F]{64}$/) }),
 ]);
-const observation = z.object({ id: z.string(), evidenceClass: z.literal("observation"), source: z.union([localSource, ciSource]), result: z.union([localResult, ciResult]), subject, recordedAt: z.number(), freshness: z.enum(["fresh", "stale", "unknown"]), provenance: z.object({ workspace: z.string() }) });
+const observation = z.object({ id: z.string(), evidenceClass: z.literal("observation"), source: z.union([localSource, ciSource, browserSource]), result: z.union([localResult, ciResult, browserResult]), subject, recordedAt: z.number(), freshness: z.enum(["fresh", "stale", "unknown"]), provenance: z.object({ workspace: z.string() }) });
 
 server.registerTool("record_verification", {
-  description: "Call when a new verification observation is required for changed work. Obtains bounded results directly from Test or CI Intelligence and persists the observation; caller-supplied result claims are not accepted. Local test content freshness remains unknown.",
+  description: "Call when a new verification observation is required for changed work. Obtains bounded results directly from Test, CI, or Browser Verification and persists the observation; caller-supplied result claims are not accepted. Local test content freshness remains unknown. Browser observations preserve the page identity the browser tool observed (its hash-stamped evidence id and observed-at time), never a caller-asserted page state.",
   inputSchema: {
     workspaceRoot: z.string().min(1).max(4096),
     request: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("local_test"), testIds: z.array(z.string().min(1).max(1000)).min(1).max(500), timeoutMs: z.number().int().min(100).max(120_000).optional() }),
       z.object({ kind: z.literal("ci_run"), runId: z.string().regex(/^github:[1-9]\d*$/), revision: z.string().regex(/^[0-9a-fA-F]{40}$/).optional() }),
+      z.object({ kind: z.literal("browser_verification"), url: z.string().min(1).max(2048), assertions: z.array(z.record(z.string(), z.unknown())).max(20).default([]) }),
     ]),
   },
   outputSchema: { observation }, annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
@@ -74,7 +82,7 @@ server.registerTool("record_verification", {
 });
 
 server.registerTool("list_verifications", {
-  description: "Proactively call before finalizing or handing off work to recover existing verification evidence and its freshness. Local Test Intelligence content freshness remains unknown because its execution contract has no content-sensitive subject.",
+  description: "Proactively call before finalizing or handing off work to recover existing verification evidence and its freshness. Local Test Intelligence content freshness remains unknown because its execution contract has no content-sensitive subject. Browser observations are fresh only when the current page identity (url plus page hash) matches the observed one; otherwise they are stale or unknown.",
   inputSchema: { workspaceRoot: z.string().min(1).max(4096), currentSubject: currentSubject.optional(), limit: z.number().int().positive().max(50).default(20) },
   outputSchema: { observations: z.array(observation), truncated: z.boolean() }, annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
 }, async (input, extra) => {

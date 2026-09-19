@@ -8,7 +8,7 @@ const root = findWorkspaceRoot();
 
 test("the compact progressive index is strictly smaller than the full catalog", async () => {
   const measurement = await measurePortfolio(root);
-  assert.equal(measurement.apps.length, 14);
+  assert.equal(measurement.apps.length, 16);
   assert.ok(measurement.totals.tools >= 19, `expected at least 19 tools, got ${measurement.totals.tools}`);
   assert.ok(
     measurement.totals.toolIndexBytes < measurement.totals.catalogBytes,

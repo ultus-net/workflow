@@ -1,9 +1,9 @@
 {
-  "name": "egress-audit-mcp",
+  "name": "browser-verification-mcp",
   "version": "0.1.0",
-  "description": "Append-only, bounded egress-reach ledger with anomaly flags for coding agents over MCP.",
+  "description": "Bounded, evidence-producing browser verification over CDP for coding agents.",
   "type": "module",
-  "bin": { "egress-audit-mcp": "./dist/server.js" },
+  "bin": { "browser-verification-mcp": "./dist/server.js" },
   "files": [
     "dist/",
     "README.md",

@@ -16,10 +16,12 @@ export interface AppDescriptor {
 }
 
 export const APPS: readonly AppDescriptor[] = [
+  { id: "browser-verification-mcp", contentOnlyTools: [] },
   { id: "change-intelligence-mcp", contentOnlyTools: [] },
   { id: "ci-intelligence-mcp", contentOnlyTools: [] },
   { id: "code-intelligence-mcp", contentOnlyTools: [] },
   { id: "continuity-checkpoint-mcp", contentOnlyTools: [] },
+  { id: "egress-audit-mcp", contentOnlyTools: [] },
   { id: "git-intelligence-mcp", contentOnlyTools: [] },
   { id: "learning-mcp", contentOnlyTools: [] },
   { id: "project-context-mcp", contentOnlyTools: [] },

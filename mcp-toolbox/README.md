@@ -16,6 +16,7 @@ publishable.
 - `project-memory-mcp` - durable typed project knowledge with bounded retrieval.
 - `review-accountability-mcp` - subject-bound review attestations and follow-up debt.
 - `verification-accountability-mcp` - authority-backed verification observations with bounded freshness assessment.
+- `browser-verification-mcp` - bounded evidence-producing browser verification over CDP (navigate/act/assert, screenshots, debug captures).
 - `learning-mcp` - adaptive pedagogy engine (learner profile, stage progression, intervention budgeting, Socratic checkpoints).
 - `continuity-checkpoint-mcp` - bounded read-only continuity recovery for coding agents.
 - `egress-audit-mcp` - append-only bounded egress-reach ledger with anomaly flags (advisory evidence).

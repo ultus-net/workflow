@@ -1,0 +1,43 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "egress-audit-mcp",
+  "version": "0.1.0",
+  "description": "Append-only, bounded egress-reach ledger with anomaly flags for coding agents over MCP.",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "append_egress_reach",
+      "description": "Record one observed egress reach: a destination domain, the function class reached on it, and the token class that carried it. The ledger is append-only and bounded; it records evidence and never enforces egress policy. Suggested function classes: chat-completions, models-list, file-upload, webhook, embeddings, unknown (a new class is exactly what the anomaly flag surfaces).",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "query_egress_reaches",
+      "description": "Read recorded egress reaches, newest first, bounded by limit. Results are advisory evidence about what was reported, not a complete or authoritative egress record.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "summarize_egress",
+      "description": "Summarize the bounded ledger: entry count, top destination domains, function classes, token classes, and anomaly counts. Advisory evidence, never enforcement.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 4867,
+    "toolIndexBytes": 968
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}

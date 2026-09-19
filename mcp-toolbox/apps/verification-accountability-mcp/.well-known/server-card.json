@@ -24,13 +24,13 @@
   "tools": [
     {
       "name": "record_verification",
-      "description": "Call when a new verification observation is required for changed work. Obtains bounded results directly from Test or CI Intelligence and persists the observation; caller-supplied result claims are not accepted. Local test content freshness remains unknown.",
+      "description": "Call when a new verification observation is required for changed work. Obtains bounded results directly from Test, CI, or Browser Verification and persists the observation; caller-supplied result claims are not accepted. Local test content freshness remains unknown. Browser observations preserve the page identity the browser tool observed (its hash-stamped evidence id and observed-at time), never a caller-asserted page state.",
       "readOnly": false,
       "taskSupport": "forbidden"
     },
     {
       "name": "list_verifications",
-      "description": "Proactively call before finalizing or handing off work to recover existing verification evidence and its freshness. Local Test Intelligence content freshness remains unknown because its execution contract has no content-sensitive subject.",
+      "description": "Proactively call before finalizing or handing off work to recover existing verification evidence and its freshness. Local Test Intelligence content freshness remains unknown because its execution contract has no content-sensitive subject. Browser observations are fresh only when the current page identity (url plus page hash) matches the observed one; otherwise they are stale or unknown.",
       "readOnly": true,
       "taskSupport": "forbidden"
     },
@@ -44,8 +44,8 @@
   "discovery": {
     "strategy": "host-side-progressive",
     "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
-    "fullCatalogBytes": 12578,
-    "toolIndexBytes": 1048
+    "fullCatalogBytes": 16177,
+    "toolIndexBytes": 1372
   },
   "generatedBy": "@agent-tools/protocol-baseline",
   "surveyedAt": "2026-09-19"
