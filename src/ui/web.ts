@@ -70,9 +70,18 @@ export function createWorkflowWebServer(
     return id !== undefined && manager !== undefined && !manager.knowsSession(id);
   }
 
+  /** Session-scoped channel: `?session=<id>` selects a parallel live session;
+   * without the parameter the operator's focused session answers. Viewing
+   * history must never spawn an agent, so only the focused session (or an
+   * already-live one) gets a runtime here — every other id answers from the
+   * registry's stored transcript via /api/session. */
   async function sessionChannel(url: string | undefined): Promise<SessionChannel | undefined> {
     try {
-      if (manager !== undefined) return await manager.channel(sessionId(url));
+      if (manager !== undefined) {
+        const id = sessionId(url);
+        if (id !== undefined && !manager.isLive(id) && id !== manager.activeId()) return undefined;
+        return await manager.channel(id);
+      }
       return singleChannel;
     } catch {
       // A failed runtime factory must never reject the request listener:
@@ -172,18 +181,19 @@ export function createWorkflowWebServer(
       return json(response, 200, { sessions: manager.list() });
     }
     if (request.method === "GET" && pathname === "/api/agents") {
-      // Annotate each agent with the handshake version any live session's
-      // runtime reported — absent (never fabricated) when unknown. The active
-      // agent additionally carries the session capabilities its handshake
-      // advertised (close/fork/list/resume), for the inspector's Connections.
-      const versions = manager?.liveAgentVersions() ?? new Map();
-      const activeAgent = manager?.activeMeta()?.agent;
-      const capabilities = manager?.activeChannel()?.sessionCapabilities();
+      // Annotate each agent with the live handshake facts (version, advertised
+      // session capabilities) any live session's runtime reported — absent
+      // (never fabricated) when unknown. Read paths only: this must never
+      // spawn a runtime just to answer.
+      const facts = manager?.liveAgentFacts() ?? new Map();
       return json(response, 200, {
         agents: listWebAgents().map((agent) => {
-          const version = versions.get(agent.id);
-          const annotated = version === undefined ? agent : { ...agent, version };
-          return agent.id === activeAgent && capabilities !== undefined ? { ...annotated, capabilities } : annotated;
+          const live = facts.get(agent.id);
+          return live === undefined ? agent : {
+            ...agent,
+            ...(live.version !== undefined ? { version: live.version } : {}),
+            ...(live.capabilities !== undefined ? { capabilities: live.capabilities } : {}),
+          };
         }),
       });
     }
@@ -571,23 +581,33 @@ export function createWorkflowWebServer(
     if (request.method === "GET" && pathname === "/api/session") {
       if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
       const active = await sessionChannel(request.url);
-      // The meta answers for the requested session; focused by default.
       const requested = sessionId(request.url);
-      const meta = requested === undefined
+      // History-first: a session with no live runtime serves its persisted
+      // transcript and last-known usage straight from the registry — viewing
+      // history never spawns an agent process.
+      const candidate = active === undefined ? manager?.historyFor(requested) : undefined;
+      const stored = candidate !== undefined && (candidate.items.length > 0 || candidate.usage !== undefined) ? candidate : undefined;
+      const meta = active === undefined ? undefined : (requested === undefined
         ? manager?.activeMeta()
-        : manager?.list().find((entry) => entry.id === requested);
+        : manager?.list().find((entry) => entry.id === requested));
       // The live handshake's version for the requested session, when known.
       const agentVersion = manager?.agentVersion(requested);
+      const spawnError = active === undefined ? manager?.spawnError(requested) : undefined;
       return json(response, 200, {
         available: active !== undefined,
-        ...(meta === undefined ? {} : { id: meta.id, title: meta.title, agent: meta.agent }),
-        ...(agentVersion === undefined ? {} : { agentVersion }),
-        state: active?.state() ?? { state: "unavailable" },
-        items: active?.items() ?? [],
-        ...(active?.usage() !== undefined ? { usage: active.usage() } : {}),
-        ...(active?.availableCommands() !== undefined && active.availableCommands().length > 0
-          ? { commands: active.availableCommands() }
-          : {}),
+        ...(spawnError === undefined ? {} : { error: spawnError }),
+        ...(active === undefined
+          ? (candidate === undefined ? {} : { id: candidate.id, title: candidate.title, agent: candidate.agent })
+          : {
+            ...(meta === undefined ? {} : { id: meta.id, title: meta.title, agent: meta.agent }),
+            ...(agentVersion === undefined ? {} : { agentVersion }),
+          }),
+        state: active?.state() ?? (stored === undefined ? { state: "unavailable" } : { state: "stored" }),
+        items: active?.items() ?? stored?.items ?? [],
+        // Slash commands the live agent advertised; absent (never fabricated)
+        // when no runtime is connected.
+        ...(active === undefined ? {} : { commands: active.availableCommands() }),
+        ...((active?.usage() ?? stored?.usage) === undefined ? {} : { usage: active?.usage() ?? stored!.usage }),
         ...(active?.budgetMechanism() === undefined ? {} : {
           budgetMechanism: active.budgetMechanism(),
           ...(active?.budgetViolation() === undefined ? {} : { budgetViolation: active.budgetViolation() }),

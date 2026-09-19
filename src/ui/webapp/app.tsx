@@ -12,7 +12,7 @@ import { ConfigField } from "./config-field.js";
 import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
 import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } from "./presenters.js";
-import { useSessionCommands, useSessionState, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
+import { useSessionCommands, useSessionState, useSessionStatus, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog } from "./settings-dialog.js";
 import { SessionsView } from "./sessions-view.js";
 import { UsageView } from "./usage-view.js";
@@ -1699,6 +1699,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const { palette, setPalette } = usePalette();
   const palettes = useMemo(() => listPalettes(), []);
   const usage = useSessionUsage();
+  const sessionStatus = useSessionStatus();
   const enforcementCopy = snapshot === undefined ? undefined : ENFORCEMENT_COPY[snapshot.enforcementLevel];
   // Focus mode state lives here so the header button and the settings dialog
   // read and write one setting (pre-paint application happens in main.tsx).
@@ -1946,6 +1947,12 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
               <ThreadPrimitive.Messages>
                 {({ message }) => (message.role === "user" ? <UserMessage /> : <AssistantMessage />)}
               </ThreadPrimitive.Messages>
+              {sessionStatus.error !== undefined && (
+                <div className="session-status-error" role="status">{sessionStatus.error}</div>
+              )}
+              {sessionStatus.state === "stored" && (
+                <div className="session-status-stored" role="status">History snapshot · live agent not running</div>
+              )}
               {permissions.pending !== null && (
                 <PermissionPrompt
                   pending={permissions.pending}
