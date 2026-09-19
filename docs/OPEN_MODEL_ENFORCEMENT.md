@@ -92,6 +92,35 @@ assumption survives unexamined.
   classifies from the wire model id directly, so only the test helper and
   `shouldUseStrictSchemas` need reconciling.
 
+## Post-merge reconciliation (2026-09-19, integration worker)
+
+W070a was merged into this branch (`4157612`). Resolutions, for the record:
+
+- **Shared proxy (`src/integrations/model-usage-proxy.ts`):** both hooks
+  survive. Wire order is parse → `enforceReplayPolicy` (reject /
+  route-anthropic) → Auto Router alias injection → `transformBody` (W070a
+  `ModelProfile` shaping). W070b's replay check runs before shaping, so a
+  rejected replay is never shaped or forwarded.
+- **`ModelProfile` reconciliation (the open dependency above, now closed):** the
+  `open-model-profile.ts` stub was **deleted**. W070b's replay policy now owns
+  its own `ModelFamily` / `classifyModelFamily` locally (`kimi-k3` vendor name
+  plus the `unknown` fallback), because it classifies from the wire id and must
+  not apply a vendor contract a model did not advertise.
+  `deepseek-strict-schema.ts` imports W070a's canonical `ModelProfile` from
+  `src/integrations/model-profile.ts`; `shouldUseStrictSchemas` keys on the
+  canonical family (`deepseek`). The `/beta` base-URL constant now lives beside
+  the translator as `DEEPSEEK_STRICT_BASE_URL` (the duplicate
+  `DEEPSEEK_ANTHROPIC_BASE_URL` was dropped; the canonical
+  `VENDOR_DEFAULTS.deepseek.anthropicEndpoint` is the single source).
+- **Strict-translator production wiring stays OPEN by design:** the metering
+  proxy's upstream is fixed per provider and DeepSeek's pool entry uses the
+  non-`/beta` base (`https://api.deepseek.com`), so selecting the strict
+  endpoint and applying `strictifyToolDefinitions` is a per-vendor composition
+  decision (a dedicated `/beta` proxy for DeepSeek, W062 territory), not a
+  one-line `transformBody` change. The gated golden probe
+  (`test/open-model-golden-probe.test.ts`) already exercises the end-to-end
+  strict path through `/beta`.
+
 ## Golden-probe corpus (slice 6 / W062 input)
 
 `test/fixtures/open-model-golden-probes.ts` defines one golden check set per

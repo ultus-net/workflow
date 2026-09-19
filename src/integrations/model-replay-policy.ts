@@ -1,5 +1,3 @@
-import { classifyModelFamily, type ModelFamily } from "./open-model-profile.js";
-
 /**
  * W070b slice 1: per-model assistant-message replay policy.
  *
@@ -22,6 +20,29 @@ import { classifyModelFamily, type ModelFamily } from "./open-model-profile.js";
 
 /** Where a harness may synthesize/insert a mid-conversation tool-call turn. */
 export type ReplayTransport = "chat-completions" | "anthropic-messages";
+
+/**
+ * Replay-time family classification from the wire model id. This is W070b's
+ * own union (`kimi-k3` vendor name plus an `unknown` fallback) and is
+ * intentionally distinct from W070a's canonical `ModelFamily`
+ * (`deepseek | glm | kimi`, no fallback) — the replay policy classifies
+ * directly from the id and must never apply a vendor contract a model did not
+ * advertise. Reconciled after the W070a merge (the `open-model-profile.ts`
+ * consumer stub was deleted; W070a owns the canonical type).
+ */
+export type ModelFamily = "deepseek" | "glm" | "kimi-k3" | "unknown";
+
+const DEEPSEEK_MARKERS = ["deepseek"];
+const GLM_MARKERS = ["glm", "z-ai", "zhipu"];
+const KIMI_MARKERS = ["kimi", "moonshot"];
+
+export function classifyModelFamily(modelId: string): ModelFamily {
+  const normalized = modelId.toLowerCase();
+  if (DEEPSEEK_MARKERS.some((marker) => normalized.includes(marker))) return "deepseek";
+  if (GLM_MARKERS.some((marker) => normalized.includes(marker))) return "glm";
+  if (KIMI_MARKERS.some((marker) => normalized.includes(marker))) return "kimi-k3";
+  return "unknown";
+}
 
 export interface ReplayPolicy {
   readonly family: ModelFamily;

@@ -1,4 +1,12 @@
-import type { ModelProfile } from "./open-model-profile.js";
+import type { ModelProfile } from "./model-profile.js";
+
+/**
+ * DeepSeek's server-validated strict-schema base URL (Beta). Selecting this
+ * endpoint and applying the translator at request time is the per-vendor proxy
+ * composition seam (W070a's `createModelUsageProxy` `transformBody`); see
+ * `docs/OPEN_MODEL_ENFORCEMENT.md` §"Composition seam and open dependency".
+ */
+export const DEEPSEEK_STRICT_BASE_URL = "https://api.deepseek.com/beta";
 
 /**
  * W070b slice 3: DeepSeek server-validated strict tool schemas.

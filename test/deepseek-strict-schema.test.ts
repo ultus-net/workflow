@@ -7,7 +7,7 @@ import {
   strictifySchema,
   strictifyToolDefinitions,
 } from "../src/integrations/deepseek-strict-schema.js";
-import { profileFromModelId } from "../src/integrations/open-model-profile.js";
+import { modelProfile } from "../src/integrations/model-profile.js";
 
 test("strictifySchema: all properties required, additionalProperties false, keywords stripped", () => {
   const strict = strictifySchema({
@@ -92,7 +92,7 @@ test("strictifyToolDefinitions marks strict and names the offending tool on fail
 });
 
 test("shouldUseStrictSchemas only for DeepSeek profiles", () => {
-  assert.equal(shouldUseStrictSchemas(profileFromModelId("deepseek-chat")), true);
-  assert.equal(shouldUseStrictSchemas(profileFromModelId("glm-5.3")), false);
-  assert.equal(shouldUseStrictSchemas(profileFromModelId("kimi-k3")), false);
+  assert.equal(shouldUseStrictSchemas(modelProfile({ family: "deepseek", model: "deepseek-chat" })), true);
+  assert.equal(shouldUseStrictSchemas(modelProfile({ family: "glm", model: "glm-5.3" })), false);
+  assert.equal(shouldUseStrictSchemas(modelProfile({ family: "kimi", model: "kimi-k3" })), false);
 });
