@@ -16,6 +16,7 @@ import type {
 import { TaskGraph, isRunComplete, type StepTransitionResult } from "../kernel/task-graph.js";
 import { mutationGate, verifyingGate, type CheckpointLedger } from "../pedagogy/checkpoints.js";
 import { PolicyFailureTracker } from "./policy-failure-tracker.js";
+import { FileClaimLedger } from "./file-claim-ledger.js";
 
 export interface WorkflowTaskProjection {
   readonly id: TaskId;
@@ -48,6 +49,7 @@ export class WorkflowApplication {
   readonly #taskRequiredSkills = new Map<TaskId, readonly string[]>();
   readonly #skillReads = new Map<string, TaskId>();
   readonly #policyFailures = new PolicyFailureTracker();
+  readonly #fileClaims = new FileClaimLedger();
 
   constructor(
     graph: TaskGraph,
@@ -78,6 +80,20 @@ export class WorkflowApplication {
 
   policyFailureCount(sessionId: string): number {
     return this.#policyFailures.count(sessionId);
+  }
+
+  /** Record a successful read before an edit/write can use it in a host that
+   * enables Policy-1 read fingerprints. */
+  recordReadFingerprint(fingerprint: import("./host.js").ReadFingerprint): void {
+    this.#fileClaims.recordRead(fingerprint);
+  }
+
+  claimFiles(sessionId: string, paths: readonly string[]): boolean {
+    return this.#fileClaims.claim(sessionId, paths);
+  }
+
+  releaseFileClaims(sessionId: string): void {
+    this.#fileClaims.release(sessionId);
   }
 
   /**
@@ -173,6 +189,17 @@ export class WorkflowApplication {
       }
     }
     if (!action.mutating) return { kind: "allow" };
+
+    if (this.host.requireReadFingerprint) {
+      const fingerprints = action.readFingerprints ?? [];
+      const missing = action.subjects.filter((path) => {
+        const fingerprint = fingerprints.find((entry) => entry.path === path);
+        return fingerprint === undefined || !this.#fileClaims.matchesCurrent(path, fingerprint);
+      });
+      if (missing.length > 0) {
+        return { kind: "deny", code: "STALE_OR_MISSING_READ", reason: `fresh read required before mutation: ${missing.join(", ")}` };
+      }
+    }
 
     let task;
     try {
