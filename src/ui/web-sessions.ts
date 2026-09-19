@@ -362,7 +362,6 @@ export class WebSessionManager {
     return await this.#ensure(record);
   }
 
-  /** One shared spawn per record; concurrent callers await the same promise. */
   /** One shared spawn per record; concurrent callers await the same promise.
    * Failures latch a cooldown so the 1s UI poll cannot re-spawn a dead agent
    * launch over and over. The failure count survives cooldown expiry so the

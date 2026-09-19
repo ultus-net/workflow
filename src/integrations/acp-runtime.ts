@@ -190,7 +190,7 @@ async function createOpencodeRuntime(
       join(configDir, "opencode", "opencode.json"),
       JSON.stringify(meteredOpencodeConfig({
         proxyUrl: proxy.url,
-model: configModel ?? options.settings?.agents.opencode?.model,
+        model: configModel ?? options.settings?.agents.opencode?.model,
         ...(autoLatest === undefined ? {} : { autoLatest: { aliases: autoLatest.aliases } }),
         ...(openSelection === undefined ? {} : { openSource: openSelection }),
         ...(skillsMount === undefined ? {} : { skills: skillsMount }),
@@ -424,7 +424,7 @@ export async function createConfiguredOpencodeAcpRuntime(
   resumeFrom?: string,
   options: AcpRuntimeOptions = {},
 ): Promise<WorkflowAcpRuntime> {
-return createOpencodeRuntime(application, workspace, taskId, resumeFrom, undefined, options);
+  return createOpencodeRuntime(application, workspace, taskId, resumeFrom, undefined, options);
 }
 
 /**

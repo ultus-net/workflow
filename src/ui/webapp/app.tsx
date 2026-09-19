@@ -727,8 +727,10 @@ export function StatusBar({ agent, model, usage, branch, isRunning }: {
           <span className="status-bar-item status-bar-model" title={model}>{model}</span>
         )}
       </div>
-      <div className="status-bar-group status-bar-right">
+      <div className="status-bar-group status-bar-middle">
         {usage !== undefined && <UsageMeter usage={usage} />}
+      </div>
+      <div className="status-bar-group status-bar-right">
         {branch !== undefined && (
           <span className="status-bar-item status-bar-branch" title={branch}>{branch}</span>
         )}
@@ -1093,11 +1095,9 @@ function RegenerateAction() {
   if (lastUser === undefined || lastUser.kind !== "user") return null;
   if (last === undefined || (last.kind !== "completion" && last.kind !== "assistant")) return null;
   return (
-    <div className="thread-tail">
-      <button className="btn btn-ghost" onClick={() => queuePrompt(lastUser.text)}>
-        Regenerate
-      </button>
-    </div>
+    <button className="btn btn-ghost regenerate-button" onClick={() => queuePrompt(lastUser.text)}>
+      Regenerate
+    </button>
   );
 }
 
@@ -1744,9 +1744,9 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         document.querySelector<HTMLElement>(".composer-input")?.focus();
       } else if (
         event.key === "Escape" && isRunning && !typing &&
-        // Any open chrome (settings dialog, model combobox) owns this Escape;
-        // cancelling a running turn must never ride along with closing it.
-        document.querySelector(".settings-dialog, .config-combobox-pop") === null
+        // Any open chrome (settings page, command palette, model combobox)
+        // owns this Escape; cancelling a running turn must never ride along.
+        document.querySelector(".settings-dialog, .palette, .config-combobox-pop") === null
       ) {
         // Escape cancels the session the operator is viewing, not whichever
         // session the server happens to have focused.
@@ -1864,15 +1864,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         </div>
         <div className="shell-header-actions">
           <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
-          <button
-            type="button"
-            className="btn btn-ghost config-gear"
-            aria-expanded={view === "settings"}
-            aria-label="Settings"
-            onClick={() => setView(view === "settings" ? "chat" : "settings")}
-          >
-            <GearIcon />
-          </button>
         </div>
       </header>
       {view === "sessions" ? (
@@ -1970,7 +1961,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
                   remembered={permissions.patterns.alwaysAllow.length + permissions.patterns.alwaysReject.length}
                 />
               )}
-              <RegenerateAction />
               <AuiIf condition={(state) => state.thread.isRunning}>
                 <WorkingStatus />
               </AuiIf>
@@ -1979,6 +1969,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
               <Composer options={options} setOption={setOption} />
               <QueueIndicator />
               <div className="composer-meta">
+                <RegenerateAction />
                 <ExportSessionButton />
               </div>
             </div>

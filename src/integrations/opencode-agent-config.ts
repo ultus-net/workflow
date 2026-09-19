@@ -73,7 +73,7 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
     [DEFAULT_OPENCODE_MODEL]: { name: "Auto Router" },
     ...autoLatestModelCatalog(options.autoLatest?.aliases ?? []),
   };
-const legacyModel = options.model ?? DEFAULT_OPENCODE_MODEL;
+  const legacyModel = options.model ?? DEFAULT_OPENCODE_MODEL;
   if (!(legacyModel in models)) models[legacyModel] = { name: legacyModel };
   const vendorProviders = options.openSource?.providers ?? [];
   const provider = (): Record<string, unknown> => ({
