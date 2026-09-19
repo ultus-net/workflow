@@ -173,6 +173,9 @@ export class TaskGraph {
       throw new TypeError(`cannot define steps for task in ${task.state}`);
     }
     const existing = this.#stepsFor(taskId);
+    if (proposed.length === 0 && existing.length > 0) {
+      throw new TypeError(`cannot clear task ${taskId} step ledger`);
+    }
     const existingById = new Map(existing.map((step) => [step.id, step]));
     const seen = new Set<StepId>();
     const next: WorkflowStep[] = [];
@@ -188,6 +191,10 @@ export class TaskGraph {
         } while (this.#steps.has(id) || seen.has(id));
       } else {
         id = stepId(entry.id);
+        const ownedBy = this.#steps.get(id);
+        if (ownedBy !== undefined && ownedBy.taskId !== taskId) {
+          throw new TypeError(`step ${id} belongs to task ${ownedBy.taskId}`);
+        }
       }
       if (seen.has(id)) throw new TypeError(`duplicate step: ${id}`);
       seen.add(id);

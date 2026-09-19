@@ -24,7 +24,7 @@ export class PolicyFailureTracker {
   recordFailure(input: PolicyFailureInput): number {
     const signature = createHash("sha256").update(`${input.tool}\0${input.reason}`).digest("hex");
     const previous = this.#failures.get(input.sessionId);
-    const consecutive = (previous?.signature === signature ? previous.consecutive : 0) + 1;
+    const consecutive = (previous?.consecutive ?? 0) + 1;
     this.#failures.set(input.sessionId, { signature, consecutive });
     return consecutive;
   }

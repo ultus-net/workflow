@@ -141,6 +141,15 @@ test("persistence round-trips steps and rejects a completed step without evidenc
     }),
     /lacks fresh passing evidence/,
   );
+
+  assert.throws(
+    () => TaskGraph.restore({
+      ...persisted,
+      tasks: [{ ...persisted.tasks[0]!, state: "VERIFIED" }],
+      steps: [{ ...step, state: "PENDING" }],
+    }),
+    /has open steps/,
+  );
 });
 
 test("I-1: once a task declares a step ledger, mutations require an in-progress step", () => {
