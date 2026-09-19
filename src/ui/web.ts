@@ -5,6 +5,7 @@ import { promisify } from "node:util";
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
+import { createOpenRouterAnalytics, usageTimeRange, type OpenRouterAnalytics } from "../integrations/openrouter-analytics.js";
 import { evidenceId, observationId, taskId, type TaskState } from "../kernel/contracts.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
 import { WebSessionManager, type SessionSwitchResult } from "./web-sessions.js";
@@ -32,14 +33,37 @@ export function createWorkflowWebServer(
   application: WorkflowApplication,
   session?: WorkflowCodingSession | WebSessionManager,
   webapp?: WebappBundle,
+  options?: {
+    /** The OpenRouter management-key analytics client factory; undefined (or
+     * returning undefined) means the Usage page reports its setup state. */
+    readonly analytics?: () => OpenRouterAnalytics | undefined;
+  },
 ) {
   const manager = session instanceof WebSessionManager ? session : undefined;
   const single = session !== undefined && !(session instanceof WebSessionManager) ? session : undefined;
   const singleChannel = single === undefined ? undefined : new SessionChannel(single);
+  const analyticsFactory = options?.analytics ?? ((): OpenRouterAnalytics | undefined => {
+    const key = process.env.WORKFLOW_OPENROUTER_MANAGEMENT_KEY;
+    return key === undefined || key.length === 0 ? undefined : createOpenRouterAnalytics({ key });
+  });
 
-  async function channel(): Promise<SessionChannel | undefined> {
+  /** Session-scoped channel: `?session=<id>` selects a parallel live session;
+   * without the parameter the operator's focused session answers. */
+  function sessionId(url: string | undefined): string | undefined {
+    if (url === undefined) return undefined;
+    return new URL(url, "http://workflow.local").searchParams.get("session") ?? undefined;
+  }
+
+  /** A session id that is present but unknown must 404, never silently
+   * answer as the focused session (stale/dismissed ids). */
+  function unknownSession(url: string | undefined): boolean {
+    const id = sessionId(url);
+    return id !== undefined && manager !== undefined && !manager.knowsSession(id);
+  }
+
+  async function sessionChannel(url: string | undefined): Promise<SessionChannel | undefined> {
     try {
-      if (manager !== undefined) return await manager.channel();
+      if (manager !== undefined) return await manager.channel(sessionId(url));
       return singleChannel;
     } catch {
       // A failed runtime factory must never reject the request listener:
@@ -49,32 +73,35 @@ export function createWorkflowWebServer(
   }
 
   return createServer(async (request, response) => {
-    if (request.method === "GET" && request.url === "/") return html(response, PAGE);
-    if (request.method === "GET" && request.url === "/app.js") {
+    // Static routes match on pathname so query strings (cache-busting,
+    // iframe params) never turn the app shell into a 404.
+    const pathname = request.url === undefined ? "/" : new URL(request.url, "http://workflow.local").pathname;
+    if (request.method === "GET" && pathname === "/") return html(response, PAGE);
+    if (request.method === "GET" && pathname === "/app.js") {
       if (webapp === undefined) return json(response, 503, { error: "webapp bundle not built" });
       return asset(response, "text/javascript; charset=utf-8", webapp.js);
     }
-    if (request.method === "GET" && request.url === "/app.css") {
+    if (request.method === "GET" && pathname === "/app.css") {
       if (webapp === undefined) return json(response, 503, { error: "webapp bundle not built" });
       return asset(response, "text/css; charset=utf-8", webapp.css);
     }
-    if (request.method === "GET" && request.url === "/manifest.webmanifest") {
+    if (request.method === "GET" && pathname === "/manifest.webmanifest") {
       return json(response, 200, PWA_MANIFEST);
     }
-    if (request.method === "GET" && request.url === "/sw.js") {
+    if (request.method === "GET" && pathname === "/sw.js") {
       const version = webapp === undefined
         ? "unbuilt"
         : createHash("sha256").update(webapp.js).update(webapp.css).digest("hex").slice(0, 12);
       return asset(response, "text/javascript; charset=utf-8", serviceWorkerSource(version));
     }
-    if (request.method === "GET" && request.url === "/icon-192.png") {
+    if (request.method === "GET" && pathname === "/icon-192.png") {
       return asset(response, "image/png", renderIconPng(192));
     }
-    if (request.method === "GET" && request.url === "/icon-512.png") {
+    if (request.method === "GET" && pathname === "/icon-512.png") {
       return asset(response, "image/png", renderIconPng(512));
     }
-    if (request.method === "GET" && request.url === "/api/snapshot") return json(response, 200, application.snapshot());
-    if (request.method === "GET" && request.url === "/api/git") {
+    if (request.method === "GET" && pathname === "/api/snapshot") return json(response, 200, application.snapshot());
+    if (request.method === "GET" && pathname === "/api/git") {
       const workspace = application.workspaceRoot;
       if (workspace === undefined) return json(response, 503, { error: "workspace unavailable" });
       try {
@@ -87,11 +114,11 @@ export function createWorkflowWebServer(
         return json(response, 503, { error: "git repository unavailable" });
       }
     }
-    if (request.method === "GET" && request.url?.startsWith("/api/git/diff?")) {
+    if (request.method === "GET" && pathname === "/api/git/diff") {
       const workspace = application.workspaceRoot;
       if (workspace === undefined) return json(response, 503, { error: "workspace unavailable" });
       try {
-        const path = new URL(request.url, "http://workflow.local").searchParams.get("path");
+        const path = new URL(request.url ?? "/", "http://workflow.local").searchParams.get("path");
         const status = await gitStatus(workspace);
         const change = status.changes.find((entry) => entry.path === path);
         if (change === undefined) return json(response, 404, { error: "changed path not found" });
@@ -100,14 +127,53 @@ export function createWorkflowWebServer(
         return json(response, 503, { error: "git diff unavailable" });
       }
     }
-    if (request.method === "GET" && request.url === "/api/sessions") {
+    if (request.method === "GET" && pathname === "/api/worktrees") {
+      const workspace = application.workspaceRoot;
+      if (workspace === undefined) return json(response, 503, { error: "workspace unavailable" });
+      try {
+        return json(response, 200, { worktrees: await gitWorktrees(workspace) });
+      } catch {
+        return json(response, 503, { error: "git worktrees unavailable" });
+      }
+    }
+    if (request.method === "GET" && pathname === "/api/usage") {
+      const analytics = analyticsFactory();
+      if (analytics === undefined) {
+        return json(response, 200, {
+          available: false,
+          reason: "OpenRouter analytics need a Management key — set WORKFLOW_OPENROUTER_MANAGEMENT_KEY (server-side only; it never reaches the browser)",
+        });
+      }
+      const requestedDays = new URL(request.url ?? "/", "http://workflow.local").searchParams.get("days");
+      const days = requestedDays === "30" ? 30 : requestedDays === "1" ? 1 : 7;
+      const { startIso, endIso } = usageTimeRange(days);
+      try {
+        const [byModel, byDay, credits] = await Promise.all([
+          analytics.queryByModel(startIso, endIso),
+          analytics.queryDaily(startIso, endIso),
+          analytics.credits(),
+        ]);
+        return json(response, 200, { available: true, days, credits, byModel, byDay });
+      } catch (error) {
+        return json(response, 503, { error: error instanceof Error ? error.message : "OpenRouter analytics unavailable" });
+      }
+    }
+    if (request.method === "GET" && pathname === "/api/sessions") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       return json(response, 200, { sessions: manager.list() });
     }
-    if (request.method === "GET" && request.url === "/api/agents") {
-      return json(response, 200, { agents: listWebAgents() });
+    if (request.method === "GET" && pathname === "/api/agents") {
+      // Annotate each agent with the handshake version any live session's
+      // runtime reported — absent (never fabricated) when unknown.
+      const versions = manager?.liveAgentVersions() ?? new Map();
+      return json(response, 200, {
+        agents: listWebAgents().map((agent) => {
+          const version = versions.get(agent.id);
+          return version === undefined ? agent : { ...agent, version };
+        }),
+      });
     }
-    if (request.method === "POST" && request.url === "/api/sessions/agent") {
+    if (request.method === "POST" && pathname === "/api/sessions/agent") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -117,21 +183,26 @@ export function createWorkflowWebServer(
         const body = await readJson(request);
         const agent = (body as { agent?: unknown } | null)?.agent;
         if (!isWebAgentId(agent)) return json(response, 400, { error: "unknown agent" });
+        // With a session id the agent switch targets that parallel session;
+        // without it the operator's focused session re-launches.
+        const target = typeof (body as { session?: unknown } | null)?.session === "string"
+          ? (body as { session: string }).session
+          : undefined;
         const info = listWebAgents().find((entry) => entry.id === agent);
         if (info !== undefined && !info.available) {
           return json(response, 409, { error: `agent unavailable: ${info.reason ?? "prerequisites not met"}` });
         }
-        return switchResult(response, await manager.setActiveAgent(agent), 200);
+        return switchResult(response, await manager.setActiveAgent(agent, target), 200);
       } catch {
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/sessions") {
+    if (request.method === "POST" && pathname === "/api/sessions") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       return switchResult(response, await manager.create(), 201);
     }
-    if (request.method === "POST" && request.url === "/api/sessions/activate") {
+    if (request.method === "POST" && pathname === "/api/sessions/activate") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -146,7 +217,7 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/sessions/dismiss") {
+    if (request.method === "POST" && pathname === "/api/sessions/dismiss") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -163,7 +234,7 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/sessions/rename") {
+    if (request.method === "POST" && pathname === "/api/sessions/rename") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -180,7 +251,7 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/tasks/retry") {
+    if (request.method === "POST" && pathname === "/api/tasks/retry") {
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
         return json(response, 415, { error: "content-type must be application/json" });
@@ -197,7 +268,7 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/tasks") {
+    if (request.method === "POST" && pathname === "/api/tasks") {
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
         return json(response, 415, { error: "content-type must be application/json" });
@@ -236,7 +307,7 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/evidence") {
+    if (request.method === "POST" && pathname === "/api/evidence") {
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
         return json(response, 415, { error: "content-type must be application/json" });
@@ -265,13 +336,15 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "GET" && request.url === "/api/config-options") {
-      const active = await channel();
+    if (request.method === "GET" && pathname === "/api/config-options") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
+      const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       return json(response, 200, { options: active.configOptions() });
     }
-    if (request.method === "POST" && request.url === "/api/config-options") {
-      const active = await channel();
+    if (request.method === "POST" && pathname === "/api/config-options") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
+      const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -295,8 +368,9 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "GET" && request.url === "/api/permission") {
-      const active = await channel();
+    if (request.method === "GET" && pathname === "/api/permission") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
+      const active = await sessionChannel(request.url);
       return json(response, 200, {
         available: active?.permissionAskingAvailable() ?? false,
         mode: active?.permissionMode() ?? "auto",
@@ -304,8 +378,9 @@ export function createWorkflowWebServer(
         patterns: active?.permissionPatterns() ?? { alwaysAllow: [], alwaysReject: [] },
       });
     }
-    if (request.method === "POST" && request.url === "/api/permission") {
-      const active = await channel();
+    if (request.method === "POST" && pathname === "/api/permission") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
+      const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -334,8 +409,9 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/permission-mode") {
-      const active = await channel();
+    if (request.method === "POST" && pathname === "/api/permission-mode") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
+      const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -361,7 +437,7 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "GET" && request.url === "/api/capabilities") {
+    if (request.method === "GET" && pathname === "/api/capabilities") {
       return json(response, 200, {
         capabilities: [...application.allowedCapabilities],
         // Process/network can only be enabled when workspace confinement is
@@ -369,7 +445,7 @@ export function createWorkflowWebServer(
         workspaceConfinement: application.workspaceRoot !== undefined,
       });
     }
-    if (request.method === "POST" && request.url === "/api/capabilities") {
+    if (request.method === "POST" && pathname === "/api/capabilities") {
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
         return json(response, 415, { error: "content-type must be application/json" });
@@ -392,19 +468,28 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "GET" && request.url?.startsWith("/api/image/")) {
-      const active = await channel();
-      const stored = active?.image(decodeURIComponent(request.url.slice("/api/image/".length)));
+    if (request.method === "GET" && pathname.startsWith("/api/image/")) {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
+      const active = await sessionChannel(request.url);
+      const stored = active?.image(decodeURIComponent(pathname.slice("/api/image/".length)));
       if (stored === undefined) return json(response, 404, { error: "not found" });
       response.writeHead(200, { "content-type": stored.mediaType, "cache-control": "private, immutable" });
       return response.end(Buffer.from(stored.data, "base64"));
     }
-    if (request.method === "GET" && request.url === "/api/session") {
-      const active = await channel();
-      const meta = manager?.activeMeta();
+    if (request.method === "GET" && pathname === "/api/session") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
+      const active = await sessionChannel(request.url);
+      // The meta answers for the requested session; focused by default.
+      const requested = sessionId(request.url);
+      const meta = requested === undefined
+        ? manager?.activeMeta()
+        : manager?.list().find((entry) => entry.id === requested);
+      // The live handshake's version for the requested session, when known.
+      const agentVersion = manager?.agentVersion(requested);
       return json(response, 200, {
         available: active !== undefined,
         ...(meta === undefined ? {} : { id: meta.id, title: meta.title, agent: meta.agent }),
+        ...(agentVersion === undefined ? {} : { agentVersion }),
         state: active?.state() ?? { state: "unavailable" },
         items: active?.items() ?? [],
         ...(active?.usage() !== undefined ? { usage: active.usage() } : {}),
@@ -414,8 +499,9 @@ export function createWorkflowWebServer(
         }),
       });
     }
-    if (request.method === "POST" && request.url === "/api/prompt") {
-      const active = await channel();
+    if (request.method === "POST" && pathname === "/api/prompt") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
+      const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
@@ -432,14 +518,15 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
-    if (request.method === "POST" && request.url === "/api/cancel") {
-      const active = await channel();
+    if (request.method === "POST" && pathname === "/api/cancel") {
+      if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
+      const active = await sessionChannel(request.url);
       if (active === undefined) return json(response, 503, { error: "ACP session unavailable" });
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       await active.cancel();
       return json(response, 200, { cancelled: true });
     }
-    if (request.method === "POST" && request.url === "/api/transition") {
+    if (request.method === "POST" && pathname === "/api/transition") {
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
         return json(response, 415, { error: "content-type must be application/json" });
@@ -455,6 +542,56 @@ export function createWorkflowWebServer(
     }
     return json(response, 404, { error: "not found" });
   });
+}
+
+export interface GitWorktree {
+  readonly path: string;
+  readonly head?: string;
+  /** Short branch name; null for bare/detached entries. */
+  readonly branch: string | null;
+  readonly bare: boolean;
+  readonly detached: boolean;
+  /** The worktree the web server's workspace lives in. */
+  readonly current: boolean;
+}
+
+/** `git worktree list --porcelain`, parsed; the source for the collapsible
+ * left-rail list. Read-only — switching worktrees stays an operator command. */
+async function gitWorktrees(workspace: string): Promise<readonly GitWorktree[]> {
+  const { stdout } = await execGit("git", ["worktree", "list", "--porcelain"], {
+    cwd: workspace,
+    maxBuffer: 1024 * 1024,
+  });
+  const worktrees: GitWorktree[] = [];
+  let current: { path?: string; head?: string; branch?: string; bare?: boolean; detached?: boolean } = {};
+  const flush = (): void => {
+    if (current.path === undefined) return;
+    worktrees.push({
+      path: current.path,
+      ...(current.head === undefined ? {} : { head: current.head }),
+      branch: current.branch ?? null,
+      bare: current.bare === true,
+      detached: current.detached === true,
+      current: current.path === workspace,
+    });
+    current = {};
+  };
+  for (const line of stdout.split("\n")) {
+    if (line.startsWith("worktree ")) {
+      flush();
+      current.path = line.slice("worktree ".length);
+    } else if (line.startsWith("HEAD ")) {
+      current.head = line.slice("HEAD ".length);
+    } else if (line.startsWith("branch ")) {
+      current.branch = line.slice("branch ".length).replace(/^refs\/heads\//, "");
+    } else if (line === "bare") {
+      current.bare = true;
+    } else if (line === "detached") {
+      current.detached = true;
+    }
+  }
+  flush();
+  return worktrees;
 }
 
 async function gitStatus(workspace: string): Promise<{ branch: string; changes: GitChange[] }> {

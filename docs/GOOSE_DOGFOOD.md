@@ -86,3 +86,11 @@ runs).
 - The operator's daily-driver period remains the gate for the backup-slot
   takeover (W049's full criterion), W050, and Checkpoint D.
 - Re-run the matrix on every goose version bump, like the probe family.
+
+**Supersession note (2026-09-18, W050 step 6).** The vendored-Cline SDK runtime,
+its `.workflow-cline/` checkout, and its Workflow patch were removed on branch
+`feat/w050-cline-removal` (not yet merged), together with the hub's
+Cline-specific `/before-tool` and `/team-task` routes; the thin stock-ACP
+connector is retained and probe-PENDING on stock 3.0.62. The W050 takeover and
+Checkpoint D operator gates referenced above remain open, so prior statements in
+this record are historical.

@@ -114,8 +114,8 @@ export class LinuxBubblewrapContainment implements ProcessContainment {
     const environment = request.environment ?? {};
     const args = this.#baseArgs(request.cwd);
     // bwrap execs the child inside the new mount tree, so the executable must
-    // exist there even when it lives outside the system binds (e.g. the
-    // vendored compiled Cline binary under the repository). Bind the file
+    // exist there even when it lives outside the system binds (e.g. a
+    // vendored agent binary under the repository). Bind the file
     // itself; symlinked launchers are resolved to their realpath on the host
     // and mounted at both paths so exec by either name works. A missing
     // binary is intentionally not probed: the bind targets the requested

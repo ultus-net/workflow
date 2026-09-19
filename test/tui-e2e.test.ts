@@ -167,7 +167,7 @@ test("TUI e2e: a terminal that never answers OSC 11 keeps typing alive and falls
   terminal.write("/");
   await waitFor(() => plain().includes("Workflow options"), "options menu");
   terminal.write("\x1b[B\x1b[B");
-  await waitFor(() => plain().includes("❯ 3 Build"), "arrow keys move the menu cursor");
+  await waitFor(() => plain().includes("❯ 3 Inspect symbol"), "arrow keys move the menu cursor");
   assert.ok(plain().includes("Workflow options"), "the menu must stay open while navigating");
 
   // 4. Esc closes the menu.
