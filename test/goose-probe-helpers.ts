@@ -1,9 +1,5 @@
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { readFileSync } from "node:fs";
-
 import { globalGooseBinary, resolveGooseLaunch, type GooseLaunch } from "../src/integrations/goose-agent-config.js";
+import { readUpstreamKeyFile, upstreamKeyFromEnv, upstreamKeyFilePath } from "../src/integrations/upstream-key.js";
 
 /**
  * Shared helpers for the gated goose probe family
@@ -12,21 +8,16 @@ import { globalGooseBinary, resolveGooseLaunch, type GooseLaunch } from "../src/
  * ambient-PATH goose version (`agentInfo`) per the family conventions.
  */
 
-/** Default key file shared with the OpenRouter upstream (probe parity). */
-export const defaultGooseKeyFile: string = join(homedir(), ".config", "workflow", "cline-api-key");
+/** Canonical shared OpenRouter upstream key file (legacy path still read). */
+export const defaultGooseKeyFile: string = upstreamKeyFilePath();
 
-/** Env-first key loading; throws (skips are handled by each probe's gate). */
+/** Env-first key loading (canonical, then legacy); throws (skips are each probe's gate). */
 export function loadGooseApiKey(label: string): string {
-  const key = process.env.CLINE_API_KEY?.trim() || readKeyFile();
+  const key = upstreamKeyFromEnv() ?? readUpstreamKeyFile();
   if (!key) {
-    throw new Error(`${label} requires CLINE_API_KEY or ${defaultGooseKeyFile} (the OpenRouter upstream key for the metering proxy)`);
+    throw new Error(`${label} requires WORKFLOW_UPSTREAM_KEY or ${defaultGooseKeyFile} (legacy CLINE_API_KEY / ~/.config/workflow/cline-api-key accepted; the upstream key for the metering proxy)`);
   }
   return key;
-}
-
-function readKeyFile(): string {
-  if (!existsSync(defaultGooseKeyFile)) return "";
-  return readFileSync(defaultGooseKeyFile, "utf8").trim();
 }
 
 /** Production-parity goose entry: WORKFLOW_GOOSE_BIN override, else PATH. */

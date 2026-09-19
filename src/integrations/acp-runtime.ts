@@ -33,6 +33,7 @@ import { loadOpenModelKeys } from "./open-model-keys.js";
 import { createOpenModelMeteringPool, type OpenModelMeteringPool } from "./open-model-proxy.js";
 import { findOpenModel, openSourcePoolFromEnv } from "./open-source-pool.js";
 import { DEFAULT_OPENCODE_MODEL, OPENCODE_METERED_PROVIDER_ID, type MeteredVendorProvider } from "./opencode-agent-config.js";
+import { loadUpstreamApiKey } from "./upstream-key.js";
 
 export interface WorkflowAcpRuntime {
   readonly driver: AcpSessionDriver;
@@ -320,9 +321,7 @@ async function createClineRuntime(
   const scratchHome = resolve(homedir(), ".workflow", "acp-home");
   mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
 
-  const workflowRoot = resolve(fileURLToPath(import.meta.url), "..", "..", "..");
   const launchCline = resolveClineLaunch({
-    workflowRoot,
     envBinOverride: process.env.WORKFLOW_CLINE_BIN,
     clineOnPath: globalClineEntrypoint(),
   });
@@ -512,18 +511,10 @@ function pruneStaleOpencodeHomes(acpHome: string): void {
 /**
  * The upstream (OpenRouter) key for the hub-side metering proxy. This key
  * never enters the agent's environment or config files: the proxy holds it
- * and injects it upstream. Env override first, then the key file shared
- * with the gated probes. An empty or whitespace-only env value falls
- * through to the key file (the pre-pivot Cline path would have passed the
- * whitespace through; treating it as unset is the deliberate tightening).
+ * and injects it upstream. Resolution lives in `./upstream-key.ts`:
+ * `WORKFLOW_UPSTREAM_KEY` / `~/.config/workflow/upstream-key` are canonical,
+ * with back-compat reads of `CLINE_API_KEY` / `~/.config/workflow/cline-api-key`.
  */
-function loadUpstreamApiKey(): string {
-  const apiKey = process.env.CLINE_API_KEY?.trim() || readKeyFile();
-  if (!apiKey) {
-    throw new Error("ACP driver requires CLINE_API_KEY or ~/.config/workflow/cline-api-key (the upstream key for the metering proxy)");
-  }
-  return apiKey;
-}
 
 /**
  * W048: the goose (AAIF) runtime — the third `WORKFLOW_ACP_AGENT` kind and
@@ -661,14 +652,6 @@ async function createGooseRuntime(
     // No rmSync here either: a failed launch must not destroy prior
     // sessions in the workspace-keyed store (W049 resume requirement).
     throw error;
-  }
-}
-
-function readKeyFile(): string | undefined {
-  try {
-    return readFileSync(resolve(homedir(), ".config", "workflow", "cline-api-key"), "utf8").trim();
-  } catch {
-    return undefined;
   }
 }
 

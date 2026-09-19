@@ -17,7 +17,7 @@ export interface ContainedAcpAgentLaunchOptions {
   readonly workspace: string;
   /** Absolute scratch directory bound as the agent's HOME (state/logs). */
   readonly home: string;
-  /** Extra environment entries (e.g. CLINE_API_KEY, CLINE_PROVIDER). HOME always wins. */
+  /** Extra environment entries (e.g. the agent's provider credential). HOME always wins. */
   readonly environment?: Readonly<Record<string, string>>;
   /** Additional read-only paths the agent needs (e.g. a fixture script directory). */
   readonly readablePaths?: readonly string[];

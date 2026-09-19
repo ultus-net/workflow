@@ -11,7 +11,7 @@ import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type TaskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createWorkflowHub, resolveHubDiscoveryPath } from "../src/integrations/workflow-hub.js";
 import { createReviewerFactory, createRunTestRunner } from "../src/integrations/hub-run-gates.js";
-import { shellExecutorFor } from "../src/integrations/cline-tui-bridge.js";
+import { shellExecutorFor } from "../src/integrations/run-controller.js";
 import { createConfiguredAcpRuntime } from "../src/integrations/acp-runtime.js";
 import { createHubScheduler, type ScheduleDefinition } from "../src/integrations/hub-scheduler.js";
 import { randomUUID } from "node:crypto";

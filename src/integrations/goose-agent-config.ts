@@ -96,8 +96,9 @@ export function gooseProviderKind(env: NodeJS.ProcessEnv = process.env): GoosePr
  * provider credentials by env (never a keyring inside containment).
  *
  * OpenRouter composes through the loopback metering proxy exactly like the
- * Cline/OpenCode paths: the agent sees only the placeholder key and a host
- * pointing at the proxy; the real key stays proxy-side. Azure AI Foundry is
+ * other metered ACP paths (OpenCode, Cline): the agent sees only the
+ * placeholder key and a host pointing at the proxy; the real key stays
+ * proxy-side. Azure AI Foundry is
  * env-composed direct (endpoint + API key env; ambient `az`-CLI and Entra
  * auth cannot survive the scratch-HOME boundary — the hub injects the key).
  */
@@ -115,7 +116,7 @@ export function gooseLaunchEnvironment(options: {
     GOOSE_MODE: "approve",
     GOOSE_TELEMETRY_ENABLED: "false",
     // Ambient PATH passes through deliberately — a deviation from the
-    // sanitized bwrap default PATH the cline/opencode launches use, because
+    // sanitized bwrap default PATH the other ACP launches use, because
     // goose's shell-tool workload needs the operator's real toolchain. The
     // passthrough is boundary-inert: PATH entries cannot resolve inside
     // bwrap unless a bind mounts them, so this shapes what goose may
@@ -140,7 +141,7 @@ export function gooseLaunchEnvironment(options: {
       throw new Error("the openrouter goose profile requires the loopback metering proxy");
     }
     // Plan line 21: OPENROUTER_HOST → proxy with a placeholder key (parity
-    // with the Cline/OpenCode metered paths — the key posture is identical).
+    // with the other metered ACP paths — the key posture is identical).
     // Live-run evidence (1.50.1): OPENROUTER_HOST is the provider ROOT —
     // goose appends /api/v1/chat/completions itself, so composing the
     // proxy's /api/v1 base here doubled the path (404). env > stored secrets.

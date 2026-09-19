@@ -29,6 +29,7 @@ interface SessionEnvelope {
   readonly id?: string;
   readonly title?: string;
   readonly agent?: string;
+  readonly agentVersion?: string;
   readonly state: { readonly state: string };
   readonly items: readonly OperatorSessionItem[];
   readonly usage?: SessionUsage;
@@ -39,6 +40,13 @@ const SessionUsageContext = createContext<SessionUsage | undefined>(undefined);
 /** Latest metering metrics for the active session; undefined when unmetered. */
 export function useSessionUsage(): SessionUsage | undefined {
   return useContext(SessionUsageContext);
+}
+
+/** The focused session's live agent identity (handshake facts). */
+const AgentIdentityContext = createContext<{ readonly agent?: string | undefined; readonly version?: string | undefined }>({});
+
+export function useAgentIdentity(): { readonly agent?: string | undefined; readonly version?: string | undefined } {
+  return useContext(AgentIdentityContext);
 }
 
 const SessionStateContext = createContext<{
@@ -84,18 +92,19 @@ function useShowThinking(): readonly [boolean, (value: boolean) => void] {
   return [showThinking, update];
 }
 
-/** Polls the Workflow-owned session projection; the browser holds no authority. */
-function useWorkflowSession() {
+/** Polls the Workflow-owned session projection; the browser holds no authority.
+ * With a sessionId the poll targets that parallel live session explicitly. */
+function useWorkflowSession(sessionId: string | undefined) {
   const [envelope, setEnvelope] = useState<SessionEnvelope>({ available: false, state: { state: "connecting" }, items: [] });
   const load = useCallback(async (): Promise<void> => {
     try {
-      const response = await fetch("/api/session");
+      const response = await fetch(sessionId === undefined ? "/api/session" : `/api/session?session=${encodeURIComponent(sessionId)}`);
       if (!response.ok) return;
       setEnvelope(await response.json() as SessionEnvelope);
     } catch {
       // Keep the last good snapshot; the next poll retries.
     }
-  }, []);
+  }, [sessionId]);
   useEffect(() => {
     void load();
     const timer = setInterval(() => void load(), POLL_MS);
@@ -106,15 +115,26 @@ function useWorkflowSession() {
 
 const attachments = new SimpleImageAttachmentAdapter();
 
-export function WorkflowRuntimeProvider({ children }: { readonly children: ReactNode }) {
-  const { envelope, refresh } = useWorkflowSession();
+export function WorkflowRuntimeProvider({ children, sessionId, onCommandSession }: {
+  readonly children: ReactNode;
+  /** The parallel session the chat view is focused on; undefined = server focus. */
+  readonly sessionId?: string | undefined;
+  /** A prompt that begins with a slash command: return true when the app
+   * handled it, false to send it to the agent like any prompt. */
+  readonly onCommandSession?: ((command: string) => boolean) | undefined;
+}) {
+  const { envelope, refresh } = useWorkflowSession(sessionId);
   const isRunning = envelope.state.state === "running";
   const [queuedPrompt, setQueuedPrompt] = useState<string | undefined>(undefined);
   const [seenState, setSeenState] = useState("connecting");
   const [showThinking, setShowThinking] = useShowThinking();
 
   const sendPrompt = useCallback(async (prompt: string, images: readonly { readonly mediaType: string; readonly data: string }[] = []): Promise<void> => {
-    const response = await fetch("/api/prompt", {
+    // Slash commands are app commands first (true = handled), then agent
+    // commands — the composer never turns them into a plain prompt.
+    if (prompt.trim().startsWith("/") && onCommandSession !== undefined && onCommandSession(prompt.trim()) === true) return;
+    const suffix = sessionId === undefined ? "" : `?session=${encodeURIComponent(sessionId)}`;
+    const response = await fetch(`/api/prompt${suffix}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompt, ...(images.length > 0 ? { images } : {}) }),
@@ -129,7 +149,7 @@ export function WorkflowRuntimeProvider({ children }: { readonly children: React
     // The server records the user turn before accepting, so an immediate
     // refresh shows it without waiting for the next poll tick.
     await refresh();
-  }, [refresh]);
+  }, [refresh, sessionId, onCommandSession]);
 
   // Queue-while-running: the moment the turn settles, the queued prompt goes out.
   useEffect(() => {
@@ -172,9 +192,9 @@ export function WorkflowRuntimeProvider({ children }: { readonly children: React
   }, [sendPrompt]);
 
   const onCancel = useCallback(async (): Promise<void> => {
-    await fetch("/api/cancel", { method: "POST" });
+    await fetch(sessionId === undefined ? "/api/cancel" : `/api/cancel?session=${encodeURIComponent(sessionId)}`, { method: "POST" });
     await refresh();
-  }, [refresh]);
+  }, [refresh, sessionId]);
 
   const discardQueue = useCallback((): void => {
     setQueuedPrompt(undefined);
@@ -199,9 +219,11 @@ export function WorkflowRuntimeProvider({ children }: { readonly children: React
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <SessionUsageContext.Provider value={envelope.usage}>
-        <SessionStateContext.Provider value={{ isRunning, items: envelope.items, queuedPrompt, discardQueue, queuePrompt, showThinking, setShowThinking }}>
-          {children}
-        </SessionStateContext.Provider>
+        <AgentIdentityContext.Provider value={{ agent: envelope.agent, version: envelope.agentVersion }}>
+          <SessionStateContext.Provider value={{ isRunning, items: envelope.items, queuedPrompt, discardQueue, queuePrompt, showThinking, setShowThinking }}>
+            {children}
+          </SessionStateContext.Provider>
+        </AgentIdentityContext.Provider>
       </SessionUsageContext.Provider>
     </AssistantRuntimeProvider>
   );

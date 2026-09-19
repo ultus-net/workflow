@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 
-import type { WorkflowRunController } from "./cline-tui-bridge.js";
+import type { WorkflowRunController } from "./run-controller.js";
 import { isOffPeak, offPeakSpec, type OffPeakVendor } from "./off-peak.js";
 import type { ModelTaskClass } from "./model-profile.js";
 
