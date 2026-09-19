@@ -1838,10 +1838,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         />
       ) : (
       <div className="shell-body">
-        <aside className="sidebar" aria-label="Repository changes">
-          <WorktreeRail worktrees={worktrees} />
-          <GitRail status={gitStatus} />
-        </aside>
         <section className="chat-column">
           <ThreadPrimitive.Root className="thread-root">
             <ThreadPrimitive.Viewport className="thread-viewport">
@@ -1884,7 +1880,9 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
             </div>
           </ThreadPrimitive.Root>
         </section>
-        <aside className="inspector" aria-label="Workflow supervision">
+        <aside className="inspector" aria-label="Repository changes and supervision">
+          <GitRail status={gitStatus} />
+          <WorktreeRail worktrees={worktrees} />
           <Panels snapshot={snapshot} refresh={refresh} />
         </aside>
       </div>

@@ -176,7 +176,6 @@ body {
 
 @media (min-width: 1101px) {
   .rail-toggle { display: inline-flex; }
-  html[data-rails="off"] .sidebar,
   html[data-rails="off"] .inspector { display: none; }
 }
 
@@ -222,28 +221,8 @@ body {
   min-height: 0;
 }
 
-/* Left sidebar: sessions + repository changes (the operator's navigation). */
-.sidebar {
-  width: 17.5rem;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-  border-right: 1px solid var(--border);
-  background: var(--bg);
-  padding: var(--space-4);
-}
-
-/* Repository changes sit below the session list, separated by a rule. */
-.sidebar > .git-rail {
-  border-top: 1px solid var(--border);
-  padding-top: var(--space-3);
-  margin-top: var(--space-3);
-}
-
+/* No left rail: sessions live in the command palette (Ctrl/Cmd+P), and the
+   repository changes lead the right inspector. */
 .chat-column {
   flex: 1;
   display: flex;
@@ -270,11 +249,13 @@ body {
    the same content class (the fallback covers non-diff text only). */
 .git-diff { margin: 0 0 0.45rem; padding: 0.55rem; max-height: 16rem; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-s); background: var(--bg-deep); color: var(--text-muted); font: 0.78rem/1.5 var(--font-mono); white-space: pre; }
 
-/* Right inspector: supervision (usage, tasks, evidence, history). */
+/* Right inspector: repository changes first, then supervision (tasks,
+   connections, evidence, history) — one scrolling column. */
 .inspector {
   width: 19.5rem;
   flex: none;
   display: flex;
+  flex-direction: column;
   min-height: 0;
   min-width: 0;
   overflow-y: auto;
@@ -283,6 +264,14 @@ body {
   border-left: 1px solid var(--border);
   background: var(--bg);
   padding: var(--space-4);
+}
+
+/* Repository changes lead the inspector, separated from supervision by a rule. */
+.inspector > .git-rail {
+  flex: none;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: var(--space-3);
+  margin-bottom: var(--space-3);
 }
 
 .thread-root {
@@ -2453,19 +2442,24 @@ body {
 .task-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
 @media (max-width: 1100px) {
-  /* Half-screen chat: the rails collapse away entirely and the thread +
-     composer own the screen. The rails' facts remain reachable at full
-     width, in the inspector's domain, or via settings — a half-screen
-     operator is chatting, not supervising. */
-  .sidebar, .inspector { display: none; }
+  /* Stack: chat first, then the inspector (repository changes + supervision).
+     The body scrolls as one column. */
   .shell-body {
     flex-direction: column;
-    overflow: hidden;
+    overflow-y: auto;
   }
   .chat-column { border-inline: 0; padding: var(--space-3) clamp(0.6rem, 1.5vw, 1.25rem); }
-  .thread-viewport { min-height: 0; max-height: none; flex: 1; }
-  .msg { max-width: 96%; }
-  .composer-chips { overflow-x: auto; flex-wrap: nowrap; }
+  .thread-viewport { min-height: 30vh; max-height: 65vh; }
+  .msg { max-width: 95%; }
+  .inspector {
+    width: auto;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    padding: var(--space-4) var(--space-4) var(--space-5);
+    background: transparent;
+  }
+  .panels { overflow: visible; padding: 0; }
+  .composer-chips { flex-wrap: wrap; }
   .shell-session-title { max-width: 14ch; }
 }
 
