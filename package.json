@@ -49,6 +49,7 @@
     "toolbox:install": "pnpm --dir mcp-toolbox install",
     "toolbox:build": "pnpm --dir mcp-toolbox run build",
     "toolbox:verify": "pnpm --dir mcp-toolbox run verify",
+    "durable-state:attest": "tsx src/cli/durable-state-attest.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

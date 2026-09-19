@@ -3,7 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { defaultDataRoot, MEMORY_KINDS, ProjectMemoryStore } from "./project-memory.js";
+import { defaultDataRoot, isMemoryStampConfig, MEMORY_KINDS, MEMORY_WRITER_AUTHORITIES, ProjectMemoryStore, type MemoryStampConfig } from "./project-memory.js";
 
 const server = new McpServer(
   { name: "project-memory-mcp", version: "0.1.0" },
@@ -37,14 +37,36 @@ server.registerTool = ((name: string, config: unknown, handler: (input: never, e
       throw error;
     }
   }) as never)) as typeof server.registerTool;
-const store = new ProjectMemoryStore(defaultDataRoot());
+const store = new ProjectMemoryStore(defaultDataRoot(), stampFromEnv(process.env));
 const memoryKind = z.enum(MEMORY_KINDS);
 const memoryRecord = z.object({
   id: z.string(), kind: memoryKind, content: z.string(), paths: z.array(z.string()), createdAt: z.number(),
   supersedes: z.string().optional(), status: z.enum(["current", "superseded"]), evidenceClass: z.literal("assertion"),
   freshness: z.enum(["fresh", "stale"]),
-  provenance: z.object({ origin: z.literal("project-memory-mcp/record_memory"), workspace: z.string() }),
+  provenance: z.object({
+    origin: z.literal("project-memory-mcp/record_memory"), workspace: z.string(),
+    writer: z.string(), authority: z.enum(MEMORY_WRITER_AUTHORITIES), originSurface: z.string(), stampedAt: z.number(),
+  }),
 });
+
+/**
+ * The provenance stamp is launch configuration, never a tool argument: the
+ * hosting surface (operator or Workflow) sets it in the child environment so
+ * an agent cannot relabel its own writes in-band. Absent config leaves the
+ * store unstamped and every write fails loudly; partially-set config throws
+ * here so a misconfiguration is never silently half-applied.
+ */
+function stampFromEnv(env: NodeJS.ProcessEnv): MemoryStampConfig | undefined {
+  const writer = env.PROJECT_MEMORY_WRITER;
+  const authority = env.PROJECT_MEMORY_WRITER_AUTHORITY;
+  const originSurface = env.PROJECT_MEMORY_ORIGIN_SURFACE;
+  if (writer === undefined && authority === undefined && originSurface === undefined) return undefined;
+  const candidate = { writer, authority, originSurface };
+  if (!isMemoryStampConfig(candidate)) {
+    throw new Error("Invalid project memory provenance stamp configuration; PROJECT_MEMORY_WRITER, PROJECT_MEMORY_WRITER_AUTHORITY, and PROJECT_MEMORY_ORIGIN_SURFACE must all be set to valid values.");
+  }
+  return candidate;
+}
 
 server.registerTool(
   "record_memory",

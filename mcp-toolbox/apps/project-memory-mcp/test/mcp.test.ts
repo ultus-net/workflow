@@ -17,7 +17,12 @@ before(async () => {
   client = new Client({ name: "project-memory-black-box-test", version: "1.0.0" });
   await client.connect(new StdioClientTransport({
     command: process.execPath, args: ["dist/server.js"], cwd: process.cwd(), stderr: "pipe",
-    env: { PROJECT_MEMORY_DATA_DIR: dataRoot },
+    env: {
+      PROJECT_MEMORY_DATA_DIR: dataRoot,
+      PROJECT_MEMORY_WRITER: "project-memory-black-box-test",
+      PROJECT_MEMORY_WRITER_AUTHORITY: "agent",
+      PROJECT_MEMORY_ORIGIN_SURFACE: "test:mcp",
+    },
   }));
 });
 
@@ -44,15 +49,34 @@ test("compiled server exposes bounded record and search schemas", async () => {
 test("recorded memory survives MCP calls and is returned as assertion provenance", async () => {
   const written = await client.callTool({ name: "record_memory", arguments: { workspaceRoot: workspace, kind: "decision", content: "Use alpha storage", paths: ["src/storage.ts"] } });
   assert.equal(written.isError, undefined);
-  const record = (written.structuredContent as { record: { evidenceClass: string; freshness: string } }).record;
+  const record = (written.structuredContent as { record: { evidenceClass: string; freshness: string; provenance: { writer: string; authority: string; originSurface: string; stampedAt: number } } }).record;
   assert.equal(record.evidenceClass, "assertion");
   assert.equal(record.freshness, "fresh");
+  assert.equal(record.provenance.writer, "project-memory-black-box-test");
+  assert.equal(record.provenance.authority, "agent");
+  assert.equal(record.provenance.originSurface, "test:mcp");
+  assert.ok(Number.isSafeInteger(record.provenance.stampedAt) && record.provenance.stampedAt > 0);
 
   const found = await client.callTool({ name: "search_memory", arguments: { workspaceRoot: workspace, query: "alpha" } });
   assert.equal(found.isError, undefined);
   const result = found.structuredContent as { records: Array<{ content: string }>; truncated: boolean };
   assert.equal(result.records[0]?.content, "Use alpha storage");
   assert.equal(result.truncated, false);
+});
+
+test("a server launched without a provenance stamp refuses writes loudly", async (t) => {
+  const bareData = await mkdtemp(join(tmpdir(), "project-memory-mcp-bare-"));
+  t.after(() => rm(bareData, { recursive: true, force: true }));
+  const bare = new Client({ name: "project-memory-unstamped-test", version: "1.0.0" });
+  t.after(() => bare.close());
+  await bare.connect(new StdioClientTransport({
+    command: process.execPath, args: ["dist/server.js"], cwd: process.cwd(), stderr: "pipe",
+    env: { PROJECT_MEMORY_DATA_DIR: bareData },
+  }));
+
+  const refused = await bare.callTool({ name: "record_memory", arguments: { workspaceRoot: workspace, kind: "fact", content: "unstamped write" } });
+  assert.equal(refused.isError, true);
+  assert.match(JSON.stringify(refused.content), /provenance stamp/i);
 });
 
 test("emits MCP log and progress notifications for tool calls", async () => {

@@ -5,6 +5,34 @@ import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "no
 export const MEMORY_KINDS = ["fact", "decision", "constraint", "lesson"] as const;
 export type MemoryKind = (typeof MEMORY_KINDS)[number];
 
+/**
+ * W054: every durable record carries a provenance stamp naming who wrote it
+ * (writer identity), the surface it came through (origin surface), and when
+ * (stampedAt). The stamp is server configuration set at launch, never a
+ * tool argument, so an agent cannot forge a different writer in-band. A
+ * missing stamp fails the write loudly rather than being silently accepted.
+ */
+export const MEMORY_WRITER_AUTHORITIES = ["operator", "agent", "external-evidence"] as const;
+export type MemoryWriterAuthority = (typeof MEMORY_WRITER_AUTHORITIES)[number];
+
+export interface MemoryStampConfig {
+  writer: string;
+  authority: MemoryWriterAuthority;
+  originSurface: string;
+}
+
+export interface StoredProvenance {
+  origin: "project-memory-mcp/record_memory";
+  writer: string;
+  authority: MemoryWriterAuthority;
+  originSurface: string;
+  stampedAt: number;
+}
+
+export interface MemoryProvenance extends StoredProvenance {
+  workspace: string;
+}
+
 export interface MemoryRecord {
   id: string;
   kind: MemoryKind;
@@ -15,7 +43,7 @@ export interface MemoryRecord {
   status: "current" | "superseded";
   evidenceClass: "assertion";
   freshness: "fresh" | "stale";
-  provenance: { origin: "project-memory-mcp/record_memory"; workspace: string };
+  provenance: MemoryProvenance;
 }
 
 export interface RecordInput {
@@ -29,7 +57,7 @@ export interface RecordInput {
 export interface SearchInput { workspaceRoot: string; query: string; limit?: number }
 export interface SearchResult { records: MemoryRecord[]; truncated: boolean }
 
-interface StoredRecord extends Omit<MemoryRecord, "freshness" | "provenance"> {}
+interface StoredRecord extends Omit<MemoryRecord, "freshness" | "provenance"> { provenance: StoredProvenance }
 interface StoreDocument { version: 1; workspace: string; records: StoredRecord[] }
 
 const MAX_RECORDS = 1000;
@@ -50,11 +78,32 @@ function containsSecret(value: string): boolean {
   return SECRET_PATTERNS.some((pattern) => pattern.test(value));
 }
 
+function isIdentity(value: unknown): value is string {
+  return typeof value === "string" && value.trim() === value && value.length > 0 && value.length <= 200 && !/[\0\r\n]/.test(value);
+}
+
+export function isMemoryStampConfig(value: unknown): value is MemoryStampConfig {
+  if (!value || typeof value !== "object") return false;
+  const stamp = value as Partial<MemoryStampConfig>;
+  return isIdentity(stamp.writer) && isIdentity(stamp.originSurface)
+    && MEMORY_WRITER_AUTHORITIES.includes(stamp.authority as MemoryWriterAuthority);
+}
+
+function isStoredProvenance(value: unknown): value is StoredProvenance {
+  if (!value || typeof value !== "object") return false;
+  const provenance = value as Partial<StoredProvenance>;
+  return provenance.origin === "project-memory-mcp/record_memory"
+    && isIdentity(provenance.writer)
+    && isIdentity(provenance.originSurface)
+    && MEMORY_WRITER_AUTHORITIES.includes(provenance.authority as MemoryWriterAuthority)
+    && typeof provenance.stampedAt === "number" && Number.isSafeInteger(provenance.stampedAt) && provenance.stampedAt >= 0;
+}
+
 function publicRecord(record: StoredRecord, workspace: string): MemoryRecord {
   return {
     ...record,
     freshness: record.status === "current" ? "fresh" : "stale",
-    provenance: { origin: "project-memory-mcp/record_memory", workspace },
+    provenance: { ...record.provenance, workspace },
   };
 }
 
@@ -74,7 +123,8 @@ function isStoredRecord(value: unknown): value is StoredRecord {
     && typeof record.createdAt === "number" && Number.isSafeInteger(record.createdAt) && record.createdAt >= 0
     && (record.supersedes === undefined || (typeof record.supersedes === "string" && record.supersedes.length > 0 && record.supersedes.length <= 200 && !/[\0\r\n]/.test(record.supersedes)))
     && (record.status === "current" || record.status === "superseded")
-    && record.evidenceClass === "assertion";
+    && record.evidenceClass === "assertion"
+    && isStoredProvenance(record.provenance);
 }
 
 async function canonicalWorkspace(workspaceRoot: string): Promise<string> {
@@ -120,7 +170,11 @@ function tokenize(input: string): string[] {
 export class ProjectMemoryStore {
   private readonly writes = new Map<string, Promise<void>>();
 
-  constructor(private readonly dataRoot: string) {}
+  constructor(private readonly dataRoot: string, private readonly stamp?: MemoryStampConfig) {
+    if (stamp !== undefined && !isMemoryStampConfig(stamp)) {
+      throw new Error("Project memory provenance stamp is malformed.");
+    }
+  }
 
   private pathFor(workspace: string): string {
     return join(this.dataRoot, `${createHash("sha256").update(workspace).digest("hex")}.json`);
@@ -186,9 +240,18 @@ export class ProjectMemoryStore {
         superseded = document.records.find((record) => record.id === input.supersedes && record.status === "current");
         if (!superseded) throw new Error("Superseded memory must identify a current memory in this project.");
       }
+      const stamp = this.stamp;
+      if (stamp === undefined) {
+        throw new Error("Project memory writes require a provenance stamp (writer, authority, originSurface); set PROJECT_MEMORY_WRITER, PROJECT_MEMORY_WRITER_AUTHORITY, and PROJECT_MEMORY_ORIGIN_SURFACE at server launch.");
+      }
+      const now = Date.now();
       stored = {
-        id: randomUUID(), kind: input.kind, content, paths: safePaths, createdAt: Date.now(),
+        id: randomUUID(), kind: input.kind, content, paths: safePaths, createdAt: now,
         ...(input.supersedes ? { supersedes: input.supersedes } : {}), status: "current", evidenceClass: "assertion",
+        provenance: {
+          origin: "project-memory-mcp/record_memory", writer: stamp.writer, authority: stamp.authority,
+          originSurface: stamp.originSurface, stampedAt: now,
+        },
       };
       if (superseded) superseded.status = "superseded";
       document.records.push(stored);

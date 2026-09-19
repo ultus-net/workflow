@@ -1,5 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { join, resolve } from "node:path";
 
 /**
  * Thin Workflow-side client for the project-memory MCP server. Used by the
@@ -9,6 +10,14 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
  */
 
 export type MemoryKind = "fact" | "decision" | "constraint" | "lesson";
+export type MemoryWriterAuthority = "operator" | "agent" | "external-evidence";
+
+/** Launch-time provenance stamp (W054): the server refuses unstamped writes. */
+export interface MemoryStampConfig {
+  readonly writer: string;
+  readonly authority: MemoryWriterAuthority;
+  readonly originSurface: string;
+}
 
 export interface MemoryRecord {
   readonly id: string;
@@ -19,7 +28,14 @@ export interface MemoryRecord {
   readonly status: "current" | "superseded";
   readonly evidenceClass: "assertion";
   readonly freshness: "fresh" | "stale";
-  readonly provenance: { readonly origin: string; readonly workspace: string };
+  readonly provenance: {
+    readonly origin: string;
+    readonly workspace: string;
+    readonly writer?: string;
+    readonly authority?: MemoryWriterAuthority;
+    readonly originSurface?: string;
+    readonly stampedAt?: number;
+  };
 }
 
 export interface ProjectMemory {
@@ -32,13 +48,22 @@ export function createProjectMemoryClient(options: {
   readonly serverScript: string;
   readonly workspaceRoot: string;
   readonly dataDir?: string;
+  readonly stamp?: MemoryStampConfig;
 }): Promise<ProjectMemory> {
   const client = new Client({ name: "workflow-compaction-bridge", version: "1.0.0" });
+  const env: Record<string, string> = {
+    ...(options.dataDir === undefined ? {} : { PROJECT_MEMORY_DATA_DIR: options.dataDir }),
+    ...(options.stamp === undefined ? {} : {
+      PROJECT_MEMORY_WRITER: options.stamp.writer,
+      PROJECT_MEMORY_WRITER_AUTHORITY: options.stamp.authority,
+      PROJECT_MEMORY_ORIGIN_SURFACE: options.stamp.originSurface,
+    }),
+  };
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [options.serverScript],
     stderr: "pipe",
-    ...(options.dataDir === undefined ? {} : { env: { PROJECT_MEMORY_DATA_DIR: options.dataDir } }),
+    ...(Object.keys(env).length === 0 ? {} : { env }),
   });
 
   const call = async (name: string, args: Record<string, unknown>): Promise<unknown> => {
@@ -88,4 +113,12 @@ export function formatMemoryRecall(
   if (lines.length === 1) return "";
   const block = lines.join("\n");
   return block.length > options.maxChars ? `${block.slice(0, options.maxChars - 1)}…` : block;
+}
+
+/** Same default data root the project-memory server resolves (W054 attestation reads the same store). */
+export function defaultProjectMemoryDataRoot(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.PROJECT_MEMORY_DATA_DIR) return resolve(env.PROJECT_MEMORY_DATA_DIR);
+  if (env.XDG_DATA_HOME) return join(resolve(env.XDG_DATA_HOME), "project-memory-mcp");
+  if (!env.HOME) throw new Error("HOME is required when no project memory data directory is configured.");
+  return join(resolve(env.HOME), ".local", "share", "project-memory-mcp");
 }

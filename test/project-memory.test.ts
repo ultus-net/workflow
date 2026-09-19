@@ -4,18 +4,24 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
-import { createProjectMemoryClient, formatMemoryRecall } from "../src/integrations/project-memory.js";
+import { createProjectMemoryClient, formatMemoryRecall, type MemoryStampConfig } from "../src/integrations/project-memory.js";
 
 const serverScript = resolve("mcp-toolbox/apps/project-memory-mcp/dist/server.js");
+const STAMP: MemoryStampConfig = { writer: "workflow-compaction-bridge", authority: "agent", originSurface: "workflow:cline-runtime" };
 
-function memoryClient(dataDir: string) {
-  return createProjectMemoryClient({ serverScript, workspaceRoot: process.cwd(), dataDir });
+function memoryClient(dataDir: string, stamp?: MemoryStampConfig) {
+  return createProjectMemoryClient({
+    serverScript,
+    workspaceRoot: process.cwd(),
+    dataDir,
+    ...(stamp === undefined ? {} : { stamp }),
+  });
 }
 
-test("project memory client records and recalls workspace facts", async (t) => {
+test("project memory client records and recalls workspace facts with provenance stamps", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "wf-memory-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const memory = await memoryClient(dir);
+  const memory = await memoryClient(dir, STAMP);
   t.after(() => memory.close());
 
   await memory.record("decision", "Use atomic writes for the hub discovery file", ["src/integrations/workflow-hub.ts"]);
@@ -25,6 +31,19 @@ test("project memory client records and recalls workspace facts", async (t) => {
   assert.ok(records.length >= 1);
   assert.equal(records[0]!.content, "Use atomic writes for the hub discovery file");
   assert.equal(records[0]!.kind, "decision");
+  assert.equal(records[0]!.provenance.writer, STAMP.writer);
+  assert.equal(records[0]!.provenance.authority, STAMP.authority);
+  assert.equal(records[0]!.provenance.originSurface, STAMP.originSurface);
+  assert.ok(Number.isSafeInteger(records[0]!.provenance.stampedAt));
+});
+
+test("the client surfaces the server's loud refusal when no stamp is configured", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-memory-unstamped-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const memory = await memoryClient(dir);
+  t.after(() => memory.close());
+
+  await assert.rejects(memory.record("fact", "must not persist"), /provenance stamp/i);
 });
 
 test("formatMemoryRecall renders a bounded, provenance-tagged prompt block", () => {
