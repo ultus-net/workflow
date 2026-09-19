@@ -240,6 +240,14 @@ test("edit diff falls back to before/after strings when no patch is present", ()
   assert.ok(markup.includes("beta") && markup.includes("gamma"), "the changed lines must show");
 });
 
+test("edit diff keeps a deleted line whose payload itself starts with --", () => {
+  const patch = "@@ -1,3 +1,2 @@\n keep\n---comment\n-removed\n+added";
+  const data = parseEditTool(JSON.stringify({ filePath: "a.sql" }), JSON.stringify({ metadata: { diff: patch } }));
+  const markup = renderToStaticMarkup(createElement(EditDiff, { data: data! }));
+  assert.ok(markup.includes("--comment"), "a deletion starting with -- must not be dropped as a file header");
+  assert.ok(markup.includes("removed") && markup.includes("added"), "the other changed lines must show");
+});
+
 test("inspector Context section reports tokens, percent used, and spend", () => {
   const markup = renderToStaticMarkup(createElement(ContextSection, {
     usage: { source: "agent" as const, latestPromptTokens: 42_000, contextWindowTokens: 200_000, costUsd: 0.149 },

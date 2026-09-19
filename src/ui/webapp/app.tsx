@@ -1382,8 +1382,8 @@ export function ConnectionsSection({ agents, currentAgent, capabilities }: {
 export function ContextSection({ usage }: { readonly usage: SessionUsage | undefined }) {
   if (usage === undefined) return null;
   const used = usage.latestPromptTokens;
-  const window = usage.contextWindowTokens;
-  const pct = used !== undefined && window !== undefined && window > 0 ? Math.round((used / window) * 100) : undefined;
+  const contextWindow = usage.contextWindowTokens;
+  const pct = used !== undefined && contextWindow !== undefined && contextWindow > 0 ? Math.round((used / contextWindow) * 100) : undefined;
   if (used === undefined && usage.costUsd === undefined) return null;
   return (
     <section className="panel-context">
@@ -1392,7 +1392,7 @@ export function ContextSection({ usage }: { readonly usage: SessionUsage | undef
         {used !== undefined && (
           <p className="context-row">
             <span className="context-label">tokens</span>
-            <span>{formatTokens(used)}{window !== undefined && <span className="muted"> / {formatTokens(window)}</span>}</span>
+            <span>{formatTokens(used)}{contextWindow !== undefined && <span className="muted"> / {formatTokens(contextWindow)}</span>}</span>
           </p>
         )}
         {pct !== undefined && (

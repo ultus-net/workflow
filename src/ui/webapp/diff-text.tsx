@@ -113,6 +113,9 @@ function rowsFromPatch(patch: string): EditRow[] {
   const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
   let oldNo = 0;
   let newNo = 0;
+  // File headers only precede the first hunk: inside a hunk, a deleted line
+  // whose payload starts with "--" renders as "---…" and must stay content.
+  let inHunk = false;
   for (const line of patch.split("\n")) {
     if (line.startsWith("@@")) {
       const match = hunk.exec(line);
@@ -120,12 +123,13 @@ function rowsFromPatch(patch: string): EditRow[] {
         oldNo = Number(match[1]);
         newNo = Number(match[2]);
       }
+      inHunk = true;
       rows.push({ sign: "@", text: line });
-    } else if (
+    } else if (!inHunk && (
       line.startsWith("diff --git") || line.startsWith("index ") ||
       line.startsWith("---") || line.startsWith("+++ ") ||
       line.startsWith("new file") || line.startsWith("deleted file")
-    ) {
+    )) {
       // File headers are not code; the EditDiff header carries the path.
     } else if (line.startsWith("+")) {
       rows.push({ newNo, sign: "+", text: line.slice(1) });
@@ -196,7 +200,6 @@ export function EditDiff({ data }: { readonly data: EditToolData }) {
   const rows = data.patch !== undefined
     ? rowsFromPatch(data.patch)
     : rowsFromContents(data.before ?? "", data.after ?? "");
-  if (rows.length === 0) return null;
   const additions = data.additions ?? rows.filter((row) => row.sign === "+").length;
   const deletions = data.deletions ?? rows.filter((row) => row.sign === "-").length;
   return (
@@ -209,14 +212,16 @@ export function EditDiff({ data }: { readonly data: EditToolData }) {
         </span>
       </div>
       <div className="edit-diff-body">
-        {rows.map((row, index) => (
-          <div className={`edit-diff-row ${rowClass(row.sign)}`} key={index}>
-            <span className="edit-diff-ln" aria-hidden="true">{row.oldNo ?? ""}</span>
-            <span className="edit-diff-ln" aria-hidden="true">{row.newNo ?? ""}</span>
-            <span className="edit-diff-sign" aria-hidden="true">{row.sign === "@" ? "" : row.sign}</span>
-            <code className="edit-diff-code">{row.text || " "}</code>
-          </div>
-        ))}
+        {rows.length === 0
+          ? <p className="muted edit-diff-empty">no textual changes</p>
+          : rows.map((row, index) => (
+            <div className={`edit-diff-row ${rowClass(row.sign)}`} key={index}>
+              <span className="edit-diff-ln" aria-hidden="true">{row.oldNo ?? ""}</span>
+              <span className="edit-diff-ln" aria-hidden="true">{row.newNo ?? ""}</span>
+              <span className="edit-diff-sign" aria-hidden="true">{row.sign === "@" ? "" : row.sign}</span>
+              <code className="edit-diff-code">{row.text || " "}</code>
+            </div>
+          ))}
       </div>
     </div>
   );

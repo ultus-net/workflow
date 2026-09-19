@@ -1115,6 +1115,8 @@ body {
   font: 0.78rem/1.5 var(--font-mono);
 }
 
+.edit-diff-empty { margin: 0.4rem 0.6rem; font-size: 0.78rem; }
+
 .edit-diff-row { display: grid; grid-template-columns: 3.2rem 3.2rem 1rem minmax(0, 1fr); }
 
 .edit-diff-ln {
