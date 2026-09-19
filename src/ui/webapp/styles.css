@@ -305,6 +305,19 @@ body {
   scrollbar-color: var(--border-strong) transparent;
 }
 
+/* Session status banners: a runtime spawn error (why it is unavailable) or a
+   stored history snapshot being shown with no live agent. */
+.session-status-error,
+.session-status-stored {
+  margin: 0.4rem 0;
+  padding: 0.45rem 0.7rem;
+  border-left: 2px solid var(--accent);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: 0.78rem;
+}
+.session-status-error { border-left-color: var(--fail); color: var(--fail); }
+
 .welcome {
   border: 1px dashed var(--border);
   border-radius: var(--radius);
