@@ -81,6 +81,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #resumeFrom: string | undefined;
   #guard: WorkflowGuardProvider | undefined;
   #onSkillRead: ((skill: string) => void) | undefined;
+  #onToolOutcome: ((sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void) | undefined;
   #initialized = false;
   #canLoadSession = false;
   #agentInfo?: { readonly name: string; readonly version?: string } | undefined;
@@ -107,6 +108,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
     onSkillRead?: (skill: string) => void;
+    onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
   }) {
     const authorize = typeof options.authorize === "function"
       ? options.authorize
@@ -119,6 +121,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#resumeFrom = options.resumeFrom;
     this.#guard = options.guard;
     this.#onSkillRead = options.onSkillRead;
+    this.#onToolOutcome = options.onToolOutcome ?? (typeof options.authorize === "function" ? undefined : (sessionId, outcome, tool, reason) => (options.authorize as WorkflowApplication).recordToolOutcome(sessionId, outcome, tool, reason));
     this.#client = new AcpSubprocessClient({
       child: options.child,
       resolvePermission: (request) => this.#resolvePermission(request),
@@ -179,6 +182,12 @@ export class AcpSessionDriver implements CodingSessionDriver {
         });
       }
       const event = this.#project(update, this.#assistant);
+      if (event?.type === "tool") {
+        if (event.status === "completed") this.#onToolOutcome?.(this.#workflowSessionId, "succeeded", event.title);
+        else if (event.status === "error" || event.status === "cancelled") {
+          this.#onToolOutcome?.(this.#workflowSessionId, "failed", event.title, event.status);
+        }
+      }
       if (event !== undefined) {
         this.#emit(event);
         for (const listener of this.#listeners) listener(event);
@@ -210,8 +219,9 @@ export class AcpSessionDriver implements CodingSessionDriver {
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
-    onSkillRead?: (skill: string) => void;
-  }): AcpSessionDriver {
+     onSkillRead?: (skill: string) => void;
+     onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
+   }): AcpSessionDriver {
     const child = launchContainedAcpAgent(options.containment, options.launch);
     return new AcpSessionDriver({ ...options, child });
   }
