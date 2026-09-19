@@ -5,12 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { ProjectMemoryStore } from "../src/project-memory.js";
+import { ProjectMemoryStore, type MemoryStampConfig } from "../src/project-memory.js";
+
+const STAMP: MemoryStampConfig = { writer: "test-harness", authority: "agent", originSurface: "test:memory" };
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "project-memory-workspace-"));
   const dataRoot = await mkdtemp(join(tmpdir(), "project-memory-data-"));
-  return { root, dataRoot, store: new ProjectMemoryStore(dataRoot) };
+  return { root, dataRoot, store: new ProjectMemoryStore(dataRoot, STAMP) };
 }
 
 test("persists and searches all memory kinds across store instances", async (t) => {
@@ -139,4 +141,46 @@ test("bounds a project to 1000 historical records without evicting knowledge", a
   await assert.rejects(store.record({ workspaceRoot: root, kind: "fact", content: "one too many", paths: [] }), /limit/i);
   const file = join(dataRoot, `${createHash("sha256").update(await realpath(root)).digest("hex")}.json`);
   assert.equal((JSON.parse(await readFile(file, "utf8")) as { records: unknown[] }).records.length, 1000);
+});
+
+test("stamps every record with writer, authority, origin surface, and timestamp across reloads", async (t) => {
+  const { root, dataRoot, store } = await fixture();
+  t.after(async () => Promise.all([rm(root, { recursive: true, force: true }), rm(dataRoot, { recursive: true, force: true })]));
+
+  const record = await store.record({ workspaceRoot: root, kind: "decision", content: "stamped durable memory", paths: [] });
+  assert.equal(record.provenance.origin, "project-memory-mcp/record_memory");
+  assert.equal(record.provenance.writer, STAMP.writer);
+  assert.equal(record.provenance.authority, STAMP.authority);
+  assert.equal(record.provenance.originSurface, STAMP.originSurface);
+  assert.ok(Number.isSafeInteger(record.provenance.stampedAt) && record.provenance.stampedAt > 0);
+
+  const reloaded = await new ProjectMemoryStore(dataRoot).search({ workspaceRoot: root, query: "stamped", limit: 8 });
+  assert.deepEqual(reloaded.records[0]?.provenance, { ...record.provenance, workspace: await realpath(root) });
+});
+
+test("fails loudly when a write has no provenance stamp", async (t) => {
+  const { root, dataRoot } = await fixture();
+  t.after(async () => Promise.all([rm(root, { recursive: true, force: true }), rm(dataRoot, { recursive: true, force: true })]));
+
+  const unstamped = new ProjectMemoryStore(dataRoot);
+  await assert.rejects(
+    unstamped.record({ workspaceRoot: root, kind: "fact", content: "must not persist", paths: [] }),
+    /provenance stamp/i,
+  );
+  const file = join(dataRoot, `${createHash("sha256").update(await realpath(root)).digest("hex")}.json`);
+  await assert.rejects(readFile(file, "utf8"), /ENOENT/);
+});
+
+test("fails closed when a store holds an unstamped legacy or forged record", async (t) => {
+  const { root, dataRoot, store } = await fixture();
+  t.after(async () => Promise.all([rm(root, { recursive: true, force: true }), rm(dataRoot, { recursive: true, force: true })]));
+  const canonical = await realpath(root);
+  const file = join(dataRoot, `${createHash("sha256").update(canonical).digest("hex")}.json`);
+  await mkdir(dataRoot, { recursive: true });
+  await writeFile(file, JSON.stringify({ version: 1, workspace: canonical, records: [{
+    id: "legacy", kind: "fact", content: "no stamp", paths: [], createdAt: 1, status: "current", evidenceClass: "assertion",
+  }] }), { mode: 0o600 });
+
+  await assert.rejects(store.search({ workspaceRoot: root, query: "stamp", limit: 8 }), /store/i);
+  await assert.rejects(store.record({ workspaceRoot: root, kind: "fact", content: "cannot append", paths: [] }), /store/i);
 });

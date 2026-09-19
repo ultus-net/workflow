@@ -38,6 +38,7 @@ Capability withholding is useful only when the host's execution environment actu
 | Allowed process inherits ambient host authority | Linux Bubblewrap backend uses an empty environment, explicit filesystem binds, and isolated network by default | Direct/uncontained process execution remains outside this guarantee; Bubblewrap is not VM/kernel isolation |
 | Stale actor overwrites workflow state | Version conflict plus exclusive local writer lock | Store is not a distributed/HA consensus system |
 | Malformed/tampered persisted state | Persisted domain fields, graph invariants, verification evidence, and transition records are validated on restore | Private store-directory assumption remains; history is validated for legal transitions but is not a cryptographically authenticated audit log |
+| Poisoned durable agent state replays every session | W054 provenance stamps on project-memory records (writer, authority, origin surface, timestamp) and a deterministic startup attestation that flags missing/forged stamps, unexpected writers, untrusted origins, and canary hits before the first turn; flagged recall is suppressed and reported (`src/integrations/durable-state-attestation.ts`, `mcp-toolbox/apps/project-memory-mcp`) | Attestation validates structure and provenance, not truth — a validly-stamped writer can still record a false or malicious assertion, and a local user with store access can forge or strip stamps. See the residual note below |
 | Remote browser drives transitions | Current server binds to loopback in the CLI and accepts only application commands | No authentication; exposing/reverse-proxying it beyond loopback is unsupported |
 | Agent spawns internal subagents the hub cannot gate | `spawn` capability is default-deny; spawn tool proposals classify as `spawn` and host metadata cannot relax it | Agents whose internal subagents emit no permission requests are capped `advisory` or spawn-denied unless probe-verified per pinned version (`docs/HOST_ADAPTERS.md`) |
 | Agent or prompt switches a bypass/auto-approve mode at runtime | Enforcement-altering config options are denied client-side before any wire call; agent-originated `config_option_update` is rejected from retained config with a visible status | An agent that ignores its own permission surface entirely degrades to the OS containment boundary — the denial is observable but the agent cannot be forced to ask |
@@ -51,6 +52,7 @@ Capability withholding is useful only when the host's execution environment actu
 3. Keep production credentials and destructive infrastructure permissions outside agent environments by default.
 4. Treat MCP, host, UI, model, and persisted bytes as boundary inputs rather than sources of workflow truth.
 5. Route allowed processes through `WorkflowContainedProcess` with the Linux backend when relying on W019 containment; direct process APIs bypass that boundary.
+6. Treat startup attestation as advisory observability, never a truth oracle: a clean attestation means "no structural or provenance anomaly was detected", not "the durable state is correct".
 
 ## Residual Risk: Model-Channel Exfiltration (C3)
 
@@ -73,3 +75,19 @@ egress-policy point for payload policy (destination allow-lists, size
 ceilings, content filtering). Until payload policy exists,
 operators should treat model egress as unmonitored and keep the most
 sensitive material out of agent-readable workspaces.
+
+## Residual Risk: Durable-State Attestation Validates Structure, Not Truth (W054)
+
+Startup attestation and provenance stamps raise the cost and visibility of
+persistent memory poisoning: an unstamped, forged-writer, untrusted-origin, or
+canary-bearing record is flagged before the first model turn and its recall is
+suppressed. But attestation checks *structure and provenance only* — the same
+admission principle Workflow applies to evidence. A writer holding valid
+launch configuration can still record a false or malicious assertion and pass
+attestation, and a local user with write access to the store can forge a
+plausible stamp or strip provenance entirely (the stamp is not a signature and
+the store is not an authenticated log). Coverage is also partial today:
+collectors exist for project memory, while skills, scheduled-agent state, ACP
+session history, and task artifacts are inventoried but not yet attested
+(`docs/DURABLE_STATE_INVENTORY.md`). Treat a clean attestation as "no
+structural anomaly detected", never as "this durable state is safe to trust".

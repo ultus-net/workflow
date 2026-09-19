@@ -13,7 +13,8 @@ import { createDefaultToolboxGuardProvider } from "./mcp-toolbox-guard.js";
 import { createWorkflowClinePlugin } from "./cline-plugin.js";
 import { ClineSessionDriver } from "./cline-session.js";
 import { createWorkflowClineShellExecutor } from "./cline-shell-executor.js";
-import { createProjectMemoryClient, formatMemoryRecall, type ProjectMemory } from "./project-memory.js";
+import { createProjectMemoryClient, defaultProjectMemoryDataRoot, formatMemoryRecall, type ProjectMemory } from "./project-memory.js";
+import { attestProjectMemory, defaultAttestationPolicy, formatAttestationReport, memoryRecallAllowed } from "./durable-state-attestation.js";
 import { resolveStyleFromEnv, stylePromptAddendum, type SessionStyle } from "./response-style.js";
 
 interface ClineRuntimeCore {
@@ -66,11 +67,38 @@ export async function createConfiguredClineRuntime(application: WorkflowApplicat
   // Compaction bridge: recall durable project memory at session start and
   // flush a bounded outcome record after each completed run, so context
   // compaction never loses durable state. Advisory: no memory server, no bridge.
+  // W054: attest the durable store before the first turn and suppress recall
+  // when it is flagged (missing/forged stamps, untrusted origin, canary hit).
   const memoryServer = resolve(fileURLToPath(import.meta.url), "../../../mcp-toolbox/apps/project-memory-mcp/dist/server.js");
-  const memory: ProjectMemory | undefined = existsSync(memoryServer)
-    ? await createProjectMemoryClient({ serverScript: memoryServer, workspaceRoot }).catch(() => undefined)
+  let memoryDataDir: string | undefined;
+  try {
+    memoryDataDir = defaultProjectMemoryDataRoot();
+  } catch {
+    memoryDataDir = undefined;
+  }
+  const memory: ProjectMemory | undefined = memoryDataDir !== undefined && existsSync(memoryServer)
+    ? await createProjectMemoryClient({
+        serverScript: memoryServer,
+        workspaceRoot,
+        dataDir: memoryDataDir,
+        stamp: { writer: "workflow-compaction-bridge", authority: "agent", originSurface: "workflow:cline-runtime" },
+      }).catch(() => undefined)
     : undefined;
-  const memoryRecall = memory === undefined
+  const attestation = memoryDataDir === undefined
+    ? undefined
+    : await attestProjectMemory({
+        dataRoot: memoryDataDir,
+        workspaceRoot,
+        policy: defaultAttestationPolicy(process.env),
+      }).catch(() => undefined);
+  if (memoryDataDir === undefined) {
+    console.warn("Workflow durable-state attestation could not resolve a project-memory data root; suppressing project-memory recall for this session (fail closed).");
+  } else if (attestation === undefined) {
+    console.warn("Workflow durable-state attestation could not run; suppressing project-memory recall for this session (fail closed).");
+  } else if (attestation.flagged) {
+    console.warn(`Workflow durable-state attestation flagged issues before the first turn; suppressing project-memory recall:\n${formatAttestationReport(attestation)}`);
+  }
+  const memoryRecall = memory === undefined || attestation === undefined || !memoryRecallAllowed(attestation)
     ? ""
     : formatMemoryRecall(await memory.recall("decisions constraints lessons", 8).catch(() => []), { maxChars: 2_000 });
   // Session style (caveman speech / ponytail build) is re-read per submission

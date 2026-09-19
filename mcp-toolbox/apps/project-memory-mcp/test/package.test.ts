@@ -26,7 +26,15 @@ test("packed npm artifact independently records and searches memory", async () =
     accessSync(binary, constants.X_OK);
     const client = new Client({ name: "project-memory-package-test", version: "1.0.0" });
     try {
-      await client.connect(new StdioClientTransport({ command: binary, cwd: consumer, stderr: "pipe", env: { PROJECT_MEMORY_DATA_DIR: dataRoot } }));
+      await client.connect(new StdioClientTransport({
+        command: binary, cwd: consumer, stderr: "pipe",
+        env: {
+          PROJECT_MEMORY_DATA_DIR: dataRoot,
+          PROJECT_MEMORY_WRITER: "project-memory-package-test",
+          PROJECT_MEMORY_WRITER_AUTHORITY: "agent",
+          PROJECT_MEMORY_ORIGIN_SURFACE: "test:package",
+        },
+      }));
       assert.deepEqual(client.getServerVersion(), { name: "project-memory-mcp", version: "0.1.0" });
       await client.callTool({ name: "record_memory", arguments: { workspaceRoot: workspace, kind: "lesson", content: "packed durable knowledge" } });
       const result = await client.callTool({ name: "search_memory", arguments: { workspaceRoot: workspace, query: "durable" } });
