@@ -595,7 +595,7 @@ export function ConfigChips({ options, setOption }: {
   return (
     <div className="composer-chips">
       {pickers.map((option) => (
-        <span className="config-picker" key={option.id} title={option.description ?? option.name}>
+        <span className="config-picker" data-category={option.category ?? option.id} key={option.id} title={option.description ?? option.name}>
           <ChipIcon category={option.category} />
           <ConfigField option={option} setOption={setOption} />
         </span>

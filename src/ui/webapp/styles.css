@@ -109,6 +109,19 @@ body {
   max-width: 34ch;
 }
 
+/* Session management lives in the command palette; the only session chrome
+   left is the header title, editable inline on double-click. */
+.shell-session-rename {
+  background: var(--bg-deep);
+  border: 1px solid var(--accent);
+  border-radius: 0;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.1rem 0.35rem;
+  outline: none;
+  max-width: 34ch;
+}
+
 .shell-header-actions {
   display: flex;
   align-items: center;
@@ -274,14 +287,14 @@ body {
   margin-bottom: var(--space-3);
 }
 
+/* The thread and composer run edge to edge (the OpenCode TUI register):
+   density over a centered reading column. */
 .thread-root {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  max-width: 76ch;
   width: 100%;
-  margin: 0 auto;
 }
 
 .thread-viewport {
@@ -1714,6 +1727,12 @@ body {
 
 .config-picker:hover,
 .config-picker:focus-within { background: var(--surface); color: var(--text); }
+
+/* The model is the headline choice: its chip reads in the accent at rest and
+   holds it through hover; every other chip stays muted until hovered. */
+.config-picker[data-category="model"],
+.config-picker[data-category="model"]:hover,
+.config-picker[data-category="model"]:focus-within { color: var(--accent); }
 
 .config-picker > svg { flex: none; opacity: 0.75; }
 
