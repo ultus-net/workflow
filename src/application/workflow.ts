@@ -75,11 +75,15 @@ export class WorkflowApplication {
   /** Records a completed tool outcome so a session's failure breaker resets. */
   recordToolOutcome(sessionId: string, outcome: "succeeded" | "failed" | "denied", tool = "unknown", reason = ""): void {
     if (outcome === "succeeded") this.#policyFailures.recordSuccess(sessionId);
-    else this.#policyFailures.recordFailure({ sessionId, tool, reason });
+    else if (outcome === "denied") this.#policyFailures.recordFailure({ sessionId, tool, reason });
   }
 
   policyFailureCount(sessionId: string): number {
     return this.#policyFailures.count(sessionId);
+  }
+
+  clearPolicyFailures(sessionId: string): void {
+    this.#policyFailures.clear(sessionId);
   }
 
   /** Record a successful read before an edit/write can use it in a host that
@@ -153,8 +157,10 @@ export class WorkflowApplication {
    * circuit breaker, matching the plugin's repeated-failure behavior. */
   authorize(action: ProposedToolAction): PolicyDecision {
     const decision = this.#authorize(action);
-    if (decision.kind === "deny" && decision.code !== "POLICY_CIRCUIT_BREAKER") {
-      this.#policyFailures.recordFailure({ sessionId: action.sessionId, tool: action.tool, reason: `${decision.code}:${decision.reason}` });
+    if (decision.kind === "deny" && action.mutating && decision.code !== "POLICY_CIRCUIT_BREAKER" && decision.code !== "CAPABILITY_WITHHELD") {
+      // Count policy-class failures, not ordinary capability configuration
+      // denials; the latter must never freeze a legitimate later mutation.
+      this.#policyFailures.recordFailure({ sessionId: action.sessionId, tool: action.tool, reason: decision.code });
     }
     return decision;
   }

@@ -47,6 +47,31 @@ test("defineSteps assigns stable ids and starts every step PENDING", () => {
   assert.notEqual(steps[0]?.id, steps[1]?.id);
 });
 
+test("explicit step ids cannot overwrite a step owned by another task", () => {
+  const other = taskId("other");
+  const graph = new TaskGraph([task(), { ...task(), id: other }]);
+  const [foreign] = graph.defineSteps(other, [{ id: "shared", content: "foreign", requiredEvidence: [DONE] }]);
+  assert.ok(foreign !== undefined);
+  assert.throws(() => graph.defineSteps(T, [{ id: "shared", content: "collision", requiredEvidence: [DONE] }]), /belongs to task/);
+  assert.equal(graph.step(foreign.id).taskId, other);
+});
+
+test("an existing ledger cannot be cleared to escape the step gate", () => {
+  const graph = inProgressTask();
+  graph.defineSteps(T, [{ content: "keep", requiredEvidence: [DONE] }]);
+  assert.throws(() => graph.defineSteps(T, []), /cannot clear task/);
+});
+
+test("I-8: a task cannot start two steps concurrently", () => {
+  const graph = inProgressTask();
+  const [a, b] = graph.defineSteps(T, [{ content: "a", requiredEvidence: [DONE] }, { content: "b", requiredEvidence: [DONE] }]);
+  assert.ok(a !== undefined && b !== undefined);
+  assert.equal(graph.startStep(a.id).kind, "accepted");
+  const second = graph.startStep(b.id);
+  assert.equal(second.kind, "rejected");
+  if (second.kind === "rejected") assert.equal(second.code, "STEP_ALREADY_IN_PROGRESS");
+});
+
 test("I-2: an active step cannot be silently removed from the ledger", () => {
   const graph = inProgressTask();
   const [first, second] = graph.defineSteps(T, [{ content: "first", requiredEvidence: [DONE] }, { content: "second", requiredEvidence: [DONE] }]);

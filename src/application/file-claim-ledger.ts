@@ -35,9 +35,13 @@ export class FileClaimLedger {
   }
 
   matchesCurrent(path: string, fingerprint: ReadFingerprint): boolean {
-    const current = fingerprintFile(path);
-    return current.path === fingerprint.path && current.digest === fingerprint.digest &&
-      current.size === fingerprint.size && current.modifiedNs === fingerprint.modifiedNs;
+    try {
+      const current = fingerprintFile(path);
+      return current.path === fingerprint.path && current.digest === fingerprint.digest &&
+        current.size === fingerprint.size && current.modifiedNs === fingerprint.modifiedNs;
+    } catch {
+      return false;
+    }
   }
 
   hasRead(path: string): boolean { return this.#reads.has(path); }

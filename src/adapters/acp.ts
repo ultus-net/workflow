@@ -33,6 +33,7 @@ export class AcpHostAdapter implements TranslatingHostAdapter<AcpCorrelatedPermi
     this.capabilities = hostCapabilities({
       transport: "acp",
       authoritativePreMutation: options.authoritativePermissions,
+      requireReadFingerprint: options.authoritativePermissions,
     });
   }
 

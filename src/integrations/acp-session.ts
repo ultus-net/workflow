@@ -94,6 +94,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #sessionConfig?: AcpSessionConfig;
   #contextWindowTokens?: number;
   #acpUsage: { used?: number; size?: number; costUsd?: number } = {};
+  readonly #readFingerprints = new Map<string, import("../application/host.js").ReadFingerprint>();
   #toolTitles = new Map<string, string>();
   #toolCalls = new Map<string, { title: string; toolKind: string; subjects: string[]; rawInput?: string }>();
   #assistant: string[] = [];
@@ -614,8 +615,11 @@ export class AcpSessionDriver implements CodingSessionDriver {
         kind: mutating ? "edit" : "read",
         capability,
         rawInput: params,
-        locations: [{ path }],
-      },
+         locations: [{ path }],
+         ...(mutating && this.#readFingerprints.has(path)
+           ? { readFingerprints: [this.#readFingerprints.get(path)!] }
+           : {}),
+       },
     });
     const decision = await this.#authorize(proposal);
     if (decision.kind !== "allow") {
@@ -647,7 +651,11 @@ export class AcpSessionDriver implements CodingSessionDriver {
     }
     if (toolName === "fs/read_text_file") {
       const content = await readFile(path, "utf8");
-      try { this.#onReadFingerprint?.(fingerprintFile(path)); } catch { /* the next write gate remains fail-closed */ }
+      try {
+        const fingerprint = fingerprintFile(path);
+        this.#readFingerprints.set(path, fingerprint);
+        this.#onReadFingerprint?.(fingerprint);
+      } catch { /* the next write gate remains fail-closed */ }
       return { content };
     }
     const entries = await readdir(path, { withFileTypes: true });
