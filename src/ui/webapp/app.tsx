@@ -888,6 +888,61 @@ function Composer({ options, setOption }: {
   readonly setOption: (id: string, value: string | boolean) => void;
 }) {
   const { isRunning, queuePrompt } = useSessionState();
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const caretRef = useRef<HTMLSpanElement>(null);
+  const mirrorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const input = inputRef.current;
+    const caret = caretRef.current;
+    const mirror = mirrorRef.current;
+    if (input === null || caret === null || mirror === null) return;
+
+    const place = (): void => {
+      if (document.activeElement !== input) {
+        caret.dataset.visible = "false";
+        return;
+      }
+      caret.dataset.visible = "true";
+      const style = window.getComputedStyle(input);
+      mirror.style.width = `${input.clientWidth}px`;
+      mirror.textContent = input.value.slice(0, input.selectionStart ?? input.value.length);
+      const marker = document.createElement("span");
+      marker.textContent = "\u200b";
+      mirror.appendChild(marker);
+      const inputRect = input.getBoundingClientRect();
+      const markerRect = marker.getBoundingClientRect();
+      const fontSize = Number.parseFloat(style.fontSize);
+      caret.style.left = `${markerRect.left - inputRect.left - input.scrollLeft}px`;
+      caret.style.top = `${markerRect.top - inputRect.top - input.scrollTop}px`;
+      caret.style.height = style.lineHeight === "normal" ? `${fontSize * 1.2}px` : style.lineHeight;
+    };
+
+    const hide = (): void => { caret.dataset.visible = "false"; };
+
+    place();
+    input.addEventListener("input", place);
+    input.addEventListener("select", place);
+    input.addEventListener("keydown", place);
+    input.addEventListener("keyup", place);
+    input.addEventListener("click", place);
+    input.addEventListener("scroll", place);
+    input.addEventListener("focus", place);
+    input.addEventListener("blur", hide);
+    document.addEventListener("selectionchange", place);
+    return () => {
+      input.removeEventListener("input", place);
+      input.removeEventListener("select", place);
+      input.removeEventListener("keydown", place);
+      input.removeEventListener("keyup", place);
+      input.removeEventListener("click", place);
+      input.removeEventListener("scroll", place);
+      input.removeEventListener("focus", place);
+      input.removeEventListener("blur", hide);
+      document.removeEventListener("selectionchange", place);
+    };
+  }, []);
+
   return (
     <ComposerPrimitive.Root
       className="composer"
@@ -916,12 +971,17 @@ function Composer({ options, setOption }: {
           )}
         </ComposerPrimitive.Attachments>
       </div>
-      <ComposerPrimitive.Input
-        className="composer-input"
-        placeholder={isRunning ? "Queue a follow-up — sends when the agent finishes" : "Describe the work to perform"}
-        submitMode="enter"
-        aria-label="Prompt"
-      />
+      <div className="composer-input-wrap">
+        <ComposerPrimitive.Input
+          ref={inputRef}
+          className="composer-input"
+          placeholder={isRunning ? "Queue a follow-up — sends when the agent finishes" : "Describe the work to perform"}
+          submitMode="enter"
+          aria-label="Prompt"
+        />
+        <span className="composer-caret" ref={caretRef} aria-hidden="true" />
+        <div className="composer-caret-mirror" ref={mirrorRef} aria-hidden="true" />
+      </div>
       <div className="composer-footer">
         <ConfigChips options={options} setOption={setOption} />
         <div className="composer-actions">
