@@ -12,7 +12,7 @@ import { ConfigField } from "./config-field.js";
 import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
 import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } from "./presenters.js";
-import { useSessionState, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
+import { useSessionCommands, useSessionState, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog } from "./settings-dialog.js";
 import { SessionsView } from "./sessions-view.js";
 import { UsageView } from "./usage-view.js";
@@ -158,6 +158,8 @@ export interface AgentInfo {
   readonly reason?: string;
   /** The live ACP handshake version, when the server has one (never fabricated). */
   readonly version?: string;
+  /** Session management capabilities from the live ACP handshake. */
+  readonly capabilities?: { readonly close: boolean; readonly fork: boolean; readonly list: boolean; readonly resume: boolean };
 }
 
 /** Polls the agents the server can compose (availability + posture). */
@@ -1319,9 +1321,67 @@ function Composer({ options, setOption }: {
   );
 }
 
-function Panels({ snapshot, refresh }: {
+/** Live agent connections, mined from the OpenCode TUI's right rail (its
+ * MCP/LSP lists). ACP does not advertise an agent's internal tool servers, so
+ * this states only what the surface knows honestly: which agents are
+ * reachable, their posture, the connected agent's handshake version, and the
+ * hub's capability grants. Exported for the UI-surface regression pin. */
+export function ConnectionsSection({ agents, currentAgent, capabilities }: {
+  readonly agents: readonly AgentInfo[];
+  readonly currentAgent: string;
+  readonly capabilities: CapabilitiesState | undefined;
+}) {
+  const available = agents.filter((agent) => agent.available).length;
+  const active = agents.find((agent) => agent.id === currentAgent);
+  return (
+    <details className="panel-disclosure">
+      <summary><span>Connections</span><span className="panel-summary-meta">{available}/{agents.length}</span></summary>
+      <section className="panel-disclosure-body">
+        {agents.length === 0 && <p className="muted">agent registry unavailable</p>}
+        {agents.map((agent) => (
+          <div className="connection-row" key={agent.id}>
+            <span
+              className={`connection-dot ${agent.available ? "connection-dot-ok" : "connection-dot-down"}`}
+              title={agent.available ? "available" : (agent.reason ?? "unavailable")}
+              aria-hidden="true"
+            />
+            <span className="connection-name">
+              {agent.name}
+              {agent.version !== undefined && <span className="connection-version"> {agent.version}</span>}
+            </span>
+            <span className="connection-meta">
+              {agent.id === currentAgent && <span className="connection-active">active</span>}
+              {agent.containment}
+            </span>
+          </div>
+        ))}
+        {capabilities !== undefined && (
+          <p className="connection-grants">
+            acp transport
+            {capabilities.workspaceConfinement ? " · workspace confined" : " · no workspace confinement"}
+            {" · grants "}{capabilities.capabilities.length > 0 ? capabilities.capabilities.join(", ") : "none"}
+          </p>
+        )}
+        {active?.capabilities !== undefined && (
+          <p className="connection-grants">
+            {"session capabilities "}
+            {Object.entries(active.capabilities)
+              .filter(([, supported]) => supported)
+              .map(([name]) => name)
+              .join(" ") || "none"}
+          </p>
+        )}
+      </section>
+    </details>
+  );
+}
+
+function Panels({ snapshot, refresh, agents, currentAgent, capabilities }: {
   readonly snapshot: Snapshot | undefined;
   readonly refresh: () => Promise<void>;
+  readonly agents: readonly AgentInfo[];
+  readonly currentAgent: string;
+  readonly capabilities: CapabilitiesState | undefined;
 }) {
   return (
     <aside className="panels">
@@ -1347,6 +1407,7 @@ function Panels({ snapshot, refresh }: {
         ))}
         <AddTaskForm refresh={refresh} />
       </section>
+      <ConnectionsSection agents={agents} currentAgent={currentAgent} capabilities={capabilities} />
       <details className="panel-disclosure">
         <summary><span>Evidence</span><span className="panel-summary-meta">{snapshot?.evidence.length ?? 0}</span></summary>
         <section className="panel-disclosure-body">
@@ -1633,7 +1694,8 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const permissions = usePermissions(focusedSessionId);
   const capabilities = useCapabilities();
   const mcp = useMcpSettings();
-  const { isRunning, items } = useSessionState();
+  const { isRunning, items, queuePrompt } = useSessionState();
+  const slashCommands = useSessionCommands();
   const theme = useTheme();
   const { palette, setPalette } = usePalette();
   const palettes = useMemo(() => listPalettes(), []);
@@ -1722,6 +1784,13 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
       group: "session" as const,
       note: formatRelativeTime(session.updatedAt),
       run: () => activateSession(session.id, refreshSessions),
+    })),
+    ...slashCommands.map((command) => ({
+      id: `slash-${command.name}`,
+      title: `/${command.name}`,
+      group: "slash" as const,
+      note: command.description,
+      run: () => queuePrompt(`/${command.name}`),
     })),
   ];
 
@@ -1907,7 +1976,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         <aside className="inspector" aria-label="Repository changes and supervision">
           <GitRail status={gitStatus} />
           <WorktreeRail worktrees={worktrees} />
-          <Panels snapshot={snapshot} refresh={refresh} />
+          <Panels snapshot={snapshot} refresh={refresh} agents={agents} currentAgent={currentAgent} capabilities={capabilities.capabilities} />
         </aside>
       </div>
       )}

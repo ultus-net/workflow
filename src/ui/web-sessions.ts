@@ -119,6 +119,11 @@ export class WebSessionManager {
     return focused === undefined ? undefined : this.#meta(focused);
   }
 
+  /** The focused session's live channel, when it has a runtime. */
+  activeChannel(): SessionChannel | undefined {
+    return this.#focusedSession()?.channel;
+  }
+
   /** Handshake version of one session's live runtime (or the focused one).
    * undefined is honest: not connected, or the agent did not report a version. */
   agentVersion(id?: string): string | undefined {

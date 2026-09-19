@@ -173,12 +173,17 @@ export function createWorkflowWebServer(
     }
     if (request.method === "GET" && pathname === "/api/agents") {
       // Annotate each agent with the handshake version any live session's
-      // runtime reported — absent (never fabricated) when unknown.
+      // runtime reported — absent (never fabricated) when unknown. The active
+      // agent additionally carries the session capabilities its handshake
+      // advertised (close/fork/list/resume), for the inspector's Connections.
       const versions = manager?.liveAgentVersions() ?? new Map();
+      const activeAgent = manager?.activeMeta()?.agent;
+      const capabilities = manager?.activeChannel()?.sessionCapabilities();
       return json(response, 200, {
         agents: listWebAgents().map((agent) => {
           const version = versions.get(agent.id);
-          return version === undefined ? agent : { ...agent, version };
+          const annotated = version === undefined ? agent : { ...agent, version };
+          return agent.id === activeAgent && capabilities !== undefined ? { ...annotated, capabilities } : annotated;
         }),
       });
     }
@@ -580,6 +585,9 @@ export function createWorkflowWebServer(
         state: active?.state() ?? { state: "unavailable" },
         items: active?.items() ?? [],
         ...(active?.usage() !== undefined ? { usage: active.usage() } : {}),
+        ...(active?.availableCommands() !== undefined && active.availableCommands().length > 0
+          ? { commands: active.availableCommands() }
+          : {}),
         ...(active?.budgetMechanism() === undefined ? {} : {
           budgetMechanism: active.budgetMechanism(),
           ...(active?.budgetViolation() === undefined ? {} : { budgetViolation: active.budgetViolation() }),

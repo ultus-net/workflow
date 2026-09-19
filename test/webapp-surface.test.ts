@@ -5,7 +5,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CommandPalette, ConfigChips, StatusBar, UsageMeter } from "../src/ui/webapp/app.js";
+import { CommandPalette, ConfigChips, ConnectionsSection, StatusBar, UsageMeter } from "../src/ui/webapp/app.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection } from "../src/ui/webapp/settings-dialog.js";
 import { listPalettes } from "../src/ui/webapp/theme/palettes.js";
@@ -198,5 +198,21 @@ test("usage readout: metered runtimes show tokens, unmetered show ACP context + 
   assert.ok(unmetered.includes("21%"), "agent-reported context fill must show");
   assert.ok(unmetered.includes("$0.1490"), "agent-reported cost must show");
   assert.ok(!unmetered.includes("usage-tokens"), "token counters must stay hidden when the agent does not report them");
+});
+
+test("inspector connections state every agent's availability and posture honestly", () => {
+  const agents = listWebAgents();
+  const markup = renderToStaticMarkup(createElement(ConnectionsSection, {
+    agents,
+    currentAgent: DEFAULT_WEB_AGENT,
+    capabilities: { capabilities: ["process", "network"], workspaceConfinement: true },
+  }));
+  for (const agent of agents) {
+    assert.ok(markup.includes(agent.name), `connections is missing the "${agent.name}" agent`);
+  }
+  assert.ok(markup.includes("connection-dot"), "each agent row carries a semantic availability dot");
+  assert.ok(markup.includes("advisory") && markup.includes("contained"), "containment posture must be stated per agent");
+  assert.ok(markup.includes("active"), "the connected agent must be marked active");
+  assert.ok(markup.includes("acp transport"), "the transport must be stated");
 });
 

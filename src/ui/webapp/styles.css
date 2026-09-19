@@ -2699,3 +2699,47 @@ body {
   color: var(--text-muted);
   font-size: 0.72rem;
 }
+
+/* Inspector Connections: live agent availability, posture, and capabilities —
+   what the surface honestly knows, nothing fabricated from ACP's silence. */
+.connection-row {
+  display: grid;
+  grid-template-columns: 0.5rem minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: baseline;
+  padding: 0.4rem 0;
+  font-size: 0.8rem;
+}
+
+.connection-dot {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 0;
+  align-self: center;
+}
+
+.connection-dot-ok { background: var(--ok); }
+.connection-dot-down { background: var(--fail); }
+
+.connection-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-version { color: var(--text-muted); }
+
+.connection-meta {
+  display: inline-flex;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.connection-active { color: var(--accent); }
+
+.connection-grants {
+  margin: 0.35rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}

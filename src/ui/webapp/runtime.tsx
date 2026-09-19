@@ -37,6 +37,14 @@ interface SessionEnvelope {
   readonly state: { readonly state: string };
   readonly items: readonly OperatorSessionItem[];
   readonly usage?: SessionUsage;
+  /** Slash commands the agent advertised (ACP available_commands_update). */
+  readonly commands?: readonly SessionCommand[];
+}
+
+/** One agent-advertised slash command (ACP available_commands_update). */
+export interface SessionCommand {
+  readonly name: string;
+  readonly description: string;
 }
 
 const SessionUsageContext = createContext<SessionUsage | undefined>(undefined);
@@ -44,6 +52,13 @@ const SessionUsageContext = createContext<SessionUsage | undefined>(undefined);
 /** Latest metering metrics for the active session; undefined when unmetered. */
 export function useSessionUsage(): SessionUsage | undefined {
   return useContext(SessionUsageContext);
+}
+
+const SessionCommandsContext = createContext<readonly SessionCommand[]>([]);
+
+/** Slash commands the active agent advertised; empty until/unless it does. */
+export function useSessionCommands(): readonly SessionCommand[] {
+  return useContext(SessionCommandsContext);
 }
 
 /** The focused session's live agent identity (handshake facts). */
@@ -224,9 +239,11 @@ export function WorkflowRuntimeProvider({ children, sessionId, onCommandSession 
     <AssistantRuntimeProvider runtime={runtime}>
       <SessionUsageContext.Provider value={envelope.usage}>
         <AgentIdentityContext.Provider value={{ agent: envelope.agent, version: envelope.agentVersion }}>
-          <SessionStateContext.Provider value={{ isRunning, items: envelope.items, queuedPrompt, discardQueue, queuePrompt, showThinking, setShowThinking }}>
-            {children}
-          </SessionStateContext.Provider>
+          <SessionCommandsContext.Provider value={envelope.commands ?? []}>
+            <SessionStateContext.Provider value={{ isRunning, items: envelope.items, queuedPrompt, discardQueue, queuePrompt, showThinking, setShowThinking }}>
+              {children}
+            </SessionStateContext.Provider>
+          </SessionCommandsContext.Provider>
         </AgentIdentityContext.Provider>
       </SessionUsageContext.Provider>
     </AssistantRuntimeProvider>
