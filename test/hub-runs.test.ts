@@ -485,6 +485,7 @@ test("recorded run usage rides the hub /snapshot projection for monitors", async
     graph,
     schedulerFactory: (handles) => ({
       tick: async () => undefined,
+      trigger: async () => false,
       start: () => {
         if (recorded) return;
         recorded = true;
