@@ -2582,3 +2582,115 @@ body {
 /* Light theme: soften the dark-tuned elevation shadows. */
 [data-theme="light"] .config-combobox-pop { box-shadow: 0 8px 24px rgba(16, 18, 22, 0.12); }
 [data-theme="light"] .part-permission { box-shadow: 0 6px 18px rgba(16, 18, 22, 0.10); }
+
+/* Command palette (Ctrl/Cmd+P), mined from the OpenCode ctrl+p affordance:
+ * a top-anchored square panel sharing the modal chrome (backdrop z-40, one
+ * level under the combobox popover's 60). Commands, session switches, and
+ * agent slash commands share one filtered list; the active row gets an inset
+ * accent bar. */
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: clamp(3rem, 12vh, 8rem) clamp(0.75rem, 3vw, 2rem) 1rem;
+  background: color-mix(in srgb, var(--bg-deep) 62%, transparent);
+  z-index: 40;
+}
+
+.palette {
+  width: min(34rem, 100%);
+  max-height: min(26rem, 70vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: 0;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+}
+
+.palette-input {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.6rem 0.75rem;
+  outline: none;
+}
+
+.palette-input::placeholder { color: var(--text-muted); }
+
+.palette-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 0.3rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.palette-group {
+  display: block;
+  padding: 0.4rem 0.45rem 0.2rem;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.palette-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  padding: 0.4rem 0.45rem;
+  cursor: pointer;
+  text-align: left;
+}
+
+.palette-row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-row-active {
+  background: var(--surface);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.palette-row-keybind {
+  font: inherit;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 0;
+  background: var(--surface);
+  padding: 0 0.3rem;
+  flex: none;
+}
+
+.palette-empty { margin: 0.4rem 0.45rem; font-size: 0.8rem; }
+
+.palette-row-note {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}

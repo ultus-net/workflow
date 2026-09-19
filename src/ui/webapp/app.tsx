@@ -11,7 +11,7 @@ import { ActionPart, AttentionPart, CompletionPart, OutcomePart, PlanPart, Think
 import { ConfigField } from "./config-field.js";
 import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
-import { describeActivity, formatElapsed, formatTokens } from "./presenters.js";
+import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } from "./presenters.js";
 import { useSessionState, useSessionUsage, useAgentIdentity, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog } from "./settings-dialog.js";
 import { SessionsView } from "./sessions-view.js";
@@ -213,6 +213,30 @@ function useSessions() {
 
 function createSession(refresh: () => Promise<void>): void {
   void fetch("/api/sessions", { method: "POST" }).then(() => refresh());
+}
+
+function activateSession(id: string, refresh: () => Promise<void>): void {
+  void fetch("/api/sessions/activate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id }),
+  }).then(() => refresh());
+}
+
+function dismissSession(id: string, refresh: () => Promise<void>): void {
+  void fetch("/api/sessions/dismiss", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id }),
+  }).then(() => refresh());
+}
+
+function clearUnusedSessions(refresh: () => Promise<void>): void {
+  void fetch("/api/sessions/dismiss", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clearUnused: true }),
+  }).then(() => refresh());
 }
 
 type PermissionDecision = "allow_once" | "allow_always" | "reject_once" | "reject_always";
@@ -720,6 +744,121 @@ function WorktreeRail({ worktrees }: { readonly worktrees: readonly GitWorktree[
   );
 }
 
+/** One runnable palette entry: an app command, a session switch target, or an
+ * agent-advertised slash command. */
+export interface PaletteCommand {
+  readonly id: string;
+  readonly title: string;
+  readonly group: "command" | "session" | "slash";
+  readonly keybind?: string;
+  /** Right-aligned muted fact (e.g. a session's last activity, a slash
+   * command's description) when no keybind shows. */
+  readonly note?: string;
+  readonly run: () => void;
+}
+
+const GROUP_LABEL: Record<PaletteCommand["group"], string> = {
+  command: "Commands",
+  session: "Sessions",
+  slash: "Slash commands",
+};
+
+/** Command palette, mined from the OpenCode ctrl+p affordance: one filtered
+ * list of app commands and session switches. The input keeps focus while
+ * arrows move the selection; Enter runs, Esc closes (from anywhere inside —
+ * the handler sits on the dialog, not just the input). Every entry rides an
+ * existing action — the palette adds reach, never new behavior. Focus returns
+ * to whatever held it before the palette opened. Exported for the UI-surface
+ * regression pin. */
+export function CommandPalette({ commands, onClose }: {
+  readonly commands: readonly PaletteCommand[];
+  readonly onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [index, setIndex] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  // Focus returns to the previously focused element on close (modal manners).
+  const previousFocusRef = useRef<Element | null>(null);
+  useEffect(() => {
+    previousFocusRef.current = document.activeElement;
+    return () => {
+      if (previousFocusRef.current instanceof HTMLElement) previousFocusRef.current.focus();
+    };
+  }, []);
+  const needle = query.trim().toLowerCase();
+  const visible = needle === "" ? commands : commands.filter((command) => command.title.toLowerCase().includes(needle));
+  const clamped = Math.min(index, Math.max(0, visible.length - 1));
+
+  const runAt = (position: number): void => {
+    const command = visible[position];
+    if (command === undefined) return;
+    onClose();
+    command.run();
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      // The palette owns this Escape; a running turn must not cancel with it.
+      event.stopPropagation();
+      onClose();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      setIndex(Math.min(Math.max(clamped + delta, 0), Math.max(0, visible.length - 1)));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      runAt(clamped);
+    }
+  };
+
+  useEffect(() => {
+    listRef.current
+      ?.querySelector(".palette-row-active")
+      ?.scrollIntoView({ block: "nearest" });
+  }, [clamped]);
+
+  let lastGroup: PaletteCommand["group"] | undefined;
+  return (
+    <div className="palette-backdrop" onClick={onClose}>
+      <div className="palette" role="dialog" aria-modal="true" aria-label="Command palette" onClick={(event) => event.stopPropagation()} onKeyDown={onKeyDown}>
+        <input
+          className="palette-input"
+          type="text"
+          placeholder="Type a command or search sessions"
+          aria-label="Command palette search"
+          value={query}
+          autoFocus
+          onChange={(event) => { setQuery(event.target.value); setIndex(0); }}
+        />
+        <div className="palette-list" role="listbox" aria-label="Commands" ref={listRef}>
+          {visible.length === 0 && <p className="muted palette-empty">no matches</p>}
+          {visible.map((command, position) => {
+            const header = command.group !== lastGroup ? <span className="palette-group" aria-hidden="true">{GROUP_LABEL[command.group]}</span> : undefined;
+            lastGroup = command.group;
+            return (
+              <span key={command.id}>
+                {header}
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={position === clamped}
+                  className={`palette-row ${position === clamped ? "palette-row-active" : ""}`}
+                  onMouseEnter={() => setIndex(position)}
+                  onClick={() => runAt(position)}
+                >
+                  <span className="palette-row-title">{command.title}</span>
+                  {command.keybind !== undefined && <kbd className="palette-row-keybind">{command.keybind}</kbd>}
+                  {command.keybind === undefined && command.note !== undefined && <span className="palette-row-note">{command.note}</span>}
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Header toggle: hides the git rail and inspector so the thread centers.
  * The state lives in App so the settings dialog's Focus mode row and this
  * button always read/write the same setting. */
@@ -769,6 +908,51 @@ function WorkingStatus() {
           every second. */}
       <span className="working-elapsed" aria-hidden="true">{formatElapsed(elapsed)}</span>
     </div>
+  );
+}
+
+/** The active session's title in the header. Double-click renames inline:
+ * session management lives in the command palette, so the header is the one
+ * place the active session's identity stays editable. */
+function SessionTitle({ session, refresh }: { readonly session: SessionMeta | undefined; readonly refresh: () => Promise<void> }) {
+  const [renaming, setRenaming] = useState<string | undefined>(undefined);
+  if (session === undefined) return null;
+  if (renaming !== undefined) {
+    const commit = async (): Promise<void> => {
+      const title = renaming.trim();
+      setRenaming(undefined);
+      if (title.length > 0 && title !== session.title) {
+        await fetch("/api/sessions/rename", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: session.id, title }),
+        });
+        await refresh();
+      }
+    };
+    return (
+      <input
+        className="shell-session-title shell-session-rename"
+        aria-label="Rename session"
+        value={renaming}
+        autoFocus
+        onChange={(event) => setRenaming(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") void commit();
+          if (event.key === "Escape") setRenaming(undefined);
+        }}
+        onBlur={() => void commit()}
+      />
+    );
+  }
+  return (
+    <span
+      className="shell-session-title"
+      title={`${session.title} (double-click to rename)`}
+      onDoubleClick={() => setRenaming(session.title)}
+    >
+      {session.title}
+    </span>
   );
 }
 
@@ -1424,7 +1608,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const permissions = usePermissions(focusedSessionId);
   const capabilities = useCapabilities();
   const mcp = useMcpSettings();
-  const { isRunning } = useSessionState();
+  const { isRunning, items } = useSessionState();
   const identity = useAgentIdentity();
   const theme = useTheme();
   const { palette, setPalette } = usePalette();
@@ -1440,6 +1624,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
       return false;
     }
   });
+  const [paletteOpen, setPaletteOpen] = useState(false);
   useEffect(() => {
     document.documentElement.dataset.rails = railsOff ? "off" : "on";
     try {
@@ -1480,13 +1665,41 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
       } else if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key === ",") {
         event.preventDefault();
         setView(view === "settings" ? "chat" : "settings");
+      } else if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "p") {
+        // The OpenCode ctrl+p affordance; the browser's print dialog never wins.
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [isRunning, refreshSessions, focusedSessionId, view, setView]);
 
-  const activeTitle = sessions?.find((session) => session.active)?.title;
+  const activeSession = sessions?.find((session) => session.active);
+  const hasUnused = (sessions ?? []).some((session) => !session.active && session.title === "New session");
+  // Palette entries ride existing actions only: the palette adds reach, never
+  // new behavior. Session switches list every non-active session by title
+  // (with last activity, so same-titled sessions stay distinguishable).
+  const paletteCommands: readonly PaletteCommand[] = [
+    { id: "new-session", title: "New session", group: "command", keybind: "Alt+N", run: () => createSession(refreshSessions) },
+    { id: "focus-composer", title: "Focus composer", group: "command", keybind: "/", run: () => document.querySelector<HTMLElement>(".composer-input")?.focus() },
+    { id: "open-settings", title: "Open settings", group: "command", keybind: "Ctrl+,", run: () => setView("settings") },
+    { id: "toggle-rails", title: railsOff ? "Show side panels" : "Focus mode: hide side panels", group: "command", run: () => setRailsOff(!railsOff) },
+    ...(isRunning ? [{ id: "cancel-turn", title: "Cancel the running turn", group: "command" as const, keybind: "Esc", run: () => void fetch("/api/cancel", { method: "POST" }) }] : []),
+    { id: "export-session", title: "Export session as markdown", group: "command", run: () => downloadMarkdown(exportMarkdownOf(items)) },
+    ...(activeSession !== undefined ? [{ id: "dismiss-session", title: `Dismiss this session (${activeSession.title})`, group: "command" as const, run: () => dismissSession(activeSession.id, refreshSessions) }] : []),
+    ...(hasUnused ? [{ id: "clear-unused", title: "Clear unused sessions", group: "command" as const, run: () => clearUnusedSessions(refreshSessions) }] : []),
+    { id: "theme-system", title: "Theme: System", group: "command", run: () => theme.setChoice("system") },
+    { id: "theme-dark", title: "Theme: Dark", group: "command", run: () => theme.setChoice("dark") },
+    { id: "theme-light", title: "Theme: Light", group: "command", run: () => theme.setChoice("light") },
+    ...(sessions ?? []).filter((session) => !session.active).map((session) => ({
+      id: `switch-${session.id}`,
+      title: `Switch to: ${session.title}`,
+      group: "session" as const,
+      note: formatRelativeTime(session.updatedAt),
+      run: () => activateSession(session.id, refreshSessions),
+    })),
+  ];
 
   const createSessionWithAgent = useCallback((agent: string): void => {
     void fetch("/api/sessions", { method: "POST" }).then((created) => {
@@ -1547,9 +1760,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
               </button>
             ))}
           </nav>
-          {view === "chat" && activeTitle !== undefined && (
-            <span className="shell-session-title" title={activeTitle}>{activeTitle}</span>
-          )}
+          {view === "chat" && <SessionTitle session={activeSession} refresh={refreshSessions} />}
         </div>
         <div className="shell-header-actions">
           <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
@@ -1684,6 +1895,9 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         branch={gitStatus?.branch}
         usage={usage}
       />
+      {paletteOpen && (
+        <CommandPalette commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
+      )}
     </div>
   );
 }

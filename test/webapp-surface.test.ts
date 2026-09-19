@@ -5,7 +5,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ConfigChips } from "../src/ui/webapp/app.js";
+import { CommandPalette, ConfigChips } from "../src/ui/webapp/app.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection } from "../src/ui/webapp/settings-dialog.js";
 import { listPalettes } from "../src/ui/webapp/theme/palettes.js";
@@ -148,5 +148,21 @@ test("agent options group boolean config options as tools and list remembered de
   assert.ok(markup.includes("Tools"), "boolean options must surface under a Tools heading");
   assert.ok(markup.includes("Remembered tool decisions"), "remembered decisions must be listed");
   assert.ok(markup.includes("read_files") && markup.includes("run_commands"), "the tool patterns must be named");
+});
+
+test("command palette lists commands with keybinds and session switches (the ctrl+p affordance)", () => {
+  const markup = renderToStaticMarkup(createElement(CommandPalette, {
+    commands: [
+      { id: "new-session", title: "New session", group: "command" as const, keybind: "Alt+N", run: noop },
+      { id: "open-settings", title: "Open settings", group: "command" as const, keybind: "Ctrl+,", run: noop },
+      { id: "switch-1", title: "Switch to: Testing", group: "session" as const, run: noop },
+    ],
+    onClose: noop,
+  }));
+  assert.ok(markup.includes("palette"), "the palette must render");
+  assert.ok(markup.includes("New session") && markup.includes("Open settings"), "app commands must be listed");
+  assert.ok(markup.includes("Alt+N") && markup.includes("Ctrl+,"), "keybind chips must show on command rows");
+  assert.ok(markup.includes("Switch to: Testing"), "session switches must be listed");
+  assert.ok(markup.includes("Commands") && markup.includes("Sessions"), "group headers must separate commands from sessions");
 });
 
