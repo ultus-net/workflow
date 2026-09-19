@@ -241,15 +241,11 @@ body {
   display: flex;
   min-height: 0;
   min-width: 0;
-  padding: var(--space-5) var(--space-5) var(--space-4);
+  padding: var(--space-2) var(--space-3) var(--space-2);
 }
 
-.git-rail { min-height: 0; overflow: visible; scrollbar-width: thin; }
-.git-rail-head { display: flex; align-items: center; gap: 0.55rem; padding-bottom: 0.65rem; }
-.git-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.78rem; color: var(--text-muted); }
-.git-count { margin-left: auto; color: var(--text-muted); font-size: 0.72rem; }
-.git-changes { border-top: 1px solid var(--border); padding-top: 0.45rem; }
-.git-changes > .muted { font-size: 0.75rem; }
+/* Repository-changes disclosure (inspector): branch line + per-file rows. */
+.git-branch { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.78rem; color: var(--text-muted); margin: 0 0 0.3rem; }
 .git-change { display: grid; grid-template-columns: 1rem minmax(0, 1fr); gap: 0.4rem; width: 100%; padding: 0.42rem 0.15rem; border: 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); background: transparent; color: var(--text); font: inherit; font-size: 0.75rem; text-align: left; cursor: pointer; }
 .git-change:hover { background: var(--surface); }
 .git-change:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -277,14 +273,6 @@ body {
   border-left: 1px solid var(--border);
   background: var(--bg);
   padding: var(--space-4);
-}
-
-/* Repository changes lead the inspector, separated from supervision by a rule. */
-.inspector > .git-rail {
-  flex: none;
-  border-bottom: 1px solid var(--border);
-  padding-bottom: var(--space-3);
-  margin-bottom: var(--space-3);
 }
 
 /* The thread and composer run edge to edge (the OpenCode TUI register):
@@ -370,23 +358,32 @@ body {
 /* Messages */
 
 .msg {
-  margin: 0.85rem 0;
-  max-width: 85%;
+  margin: 0.45rem 0;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  border-left: 2px solid var(--border-active, var(--accent));
+  background: var(--surface);
+  padding: 0.85rem 1.1rem;
 }
 
+/* OpenCode TUI user message: full-width panel with a colored left rail,
+   timestamps/queued state beneath the text, never a floating bubble. */
 .msg-user {
-  margin-left: auto;
-  background: var(--accent-fill);
-  color: var(--accent-ink);
-  border-radius: var(--radius-s);
-  padding: 0.65rem 0.85rem;
-  width: fit-content;
+  margin-left: 0;
+  background: var(--surface);
+  color: var(--text);
+  width: 100%;
+  border-radius: 0;
+  border-left-color: var(--accent-fill);
 }
 
 .msg-assistant {
-  margin-right: auto;
+  margin-right: 0;
   width: 100%;
   max-width: 100%;
+  background: transparent;
+  border-left-color: var(--border);
 }
 
 .msg-text {
@@ -396,7 +393,7 @@ body {
 }
 
 .msg-assistant > .msg-text {
-  padding: 0.25rem 0;
+  padding: 0.15rem 0;
 }
 
 /* Message hover actions (copy / edit) */

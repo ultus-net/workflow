@@ -1376,9 +1376,11 @@ export function ConnectionsSection({ agents, currentAgent, capabilities }: {
   );
 }
 
-function Panels({ snapshot, refresh, agents, currentAgent, capabilities }: {
+function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent, capabilities }: {
   readonly snapshot: Snapshot | undefined;
   readonly refresh: () => Promise<void>;
+  readonly worktrees: readonly GitWorktree[] | undefined;
+  readonly gitStatus: GitStatus | undefined;
   readonly agents: readonly AgentInfo[];
   readonly currentAgent: string;
   readonly capabilities: CapabilitiesState | undefined;
@@ -1431,6 +1433,10 @@ function Panels({ snapshot, refresh, agents, currentAgent, capabilities }: {
           ))}
         </section>
       </details>
+      {/* Reference panels sit under History, collapsed: the worktree list and
+          working-tree changes are facts to consult, not controls to watch. */}
+      <WorktreeRail worktrees={worktrees} />
+      <GitChanges status={gitStatus} />
     </aside>
   );
 }
@@ -1443,35 +1449,39 @@ const GIT_STATUS_MARK: Record<GitChange["status"], string> = {
   untracked: "?",
 };
 
-function GitRail({ status }: { readonly status: GitStatus | undefined }) {
-  const [open, setOpen] = useState<{ path: string; diff: string | undefined } | undefined>(undefined);
+/** Collapsible working-tree changes for the inspector: branch + change count
+ * in the summary, per-file rows opening a full diff popout in the body. */
+function GitChanges({ status }: { readonly status: GitStatus | undefined }) {
+  const [open, setOpen] = useState(false);
+  const [diff, setDiff] = useState<{ path: string; diff: string | undefined } | undefined>(undefined);
   const diffRequestRef = useRef(0);
   const openDiff = async (path: string): Promise<void> => {
     const request = ++diffRequestRef.current;
-    setOpen({ path, diff: undefined });
+    setDiff({ path, diff: undefined });
     try {
       const response = await fetch(`/api/git/diff?path=${encodeURIComponent(path)}`);
       const nextDiff = response.ok
         ? (await response.json() as { diff: string }).diff
         : `Diff unavailable (HTTP ${response.status})`;
-      if (request === diffRequestRef.current) setOpen({ path, diff: nextDiff });
+      if (request === diffRequestRef.current) setDiff({ path, diff: nextDiff });
     } catch {
-      if (request === diffRequestRef.current) setOpen({ path, diff: "Diff unavailable (network error)" });
+      if (request === diffRequestRef.current) setDiff({ path, diff: "Diff unavailable (network error)" });
     }
   };
   // Closing invalidates any in-flight fetch so a late response cannot reopen
   // the popout the operator just dismissed.
   const closeDiff = (): void => {
     diffRequestRef.current += 1;
-    setOpen(undefined);
+    setDiff(undefined);
   };
   return (
-    <aside className="git-rail" aria-label="Repository changes">
-      <div className="git-rail-head">
-        <span className="git-branch" title={status?.branch}>⌘ {status?.branch ?? "repository"}</span>
-        <span className="git-count">{status?.changes.length ?? 0}</span>
-      </div>
-      <div className="git-changes">
+    <details className="panel-disclosure git-disclosure" open={open} onToggle={(event) => setOpen((event.target as HTMLDetailsElement).open)}>
+      <summary>
+        <span>Changes</span>
+        <span className="panel-summary-meta">{status?.changes.length ?? 0}</span>
+      </summary>
+      <div className="panel-disclosure-body">
+        <p className="git-branch" title={status?.branch}>⌘ {status?.branch ?? "repository"}</p>
         {status !== undefined && status.changes.length === 0 && <p className="muted">working tree clean</p>}
         {(status?.changes ?? []).map((change) => (
           <button key={change.path} className="git-change" aria-haspopup="dialog" onClick={() => void openDiff(change.path)}>
@@ -1480,10 +1490,10 @@ function GitRail({ status }: { readonly status: GitStatus | undefined }) {
           </button>
         ))}
       </div>
-      {open !== undefined && (
-        <DiffDialog path={open.path} diff={open.diff} onClose={closeDiff} />
+      {diff !== undefined && (
+        <DiffDialog path={diff.path} diff={diff.diff} onClose={closeDiff} />
       )}
-    </aside>
+    </details>
   );
 }
 
@@ -1975,9 +1985,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           </ThreadPrimitive.Root>
         </section>
         <aside className="inspector" aria-label="Repository changes and supervision">
-          <GitRail status={gitStatus} />
-          <WorktreeRail worktrees={worktrees} />
-          <Panels snapshot={snapshot} refresh={refresh} agents={agents} currentAgent={currentAgent} capabilities={capabilities.capabilities} />
+          <Panels snapshot={snapshot} refresh={refresh} worktrees={worktrees} gitStatus={gitStatus} agents={agents} currentAgent={currentAgent} capabilities={capabilities.capabilities} />
         </aside>
       </div>
       )}
