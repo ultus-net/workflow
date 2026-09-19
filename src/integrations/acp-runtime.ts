@@ -243,11 +243,12 @@ async function createOpencodeRuntime(
           XDG_CONFIG_HOME: configDir,
         },
       },
-      authorize: options.permissionBroker === undefined
-        ? application
-        : (action: ProposedToolAction) =>
-          options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
-      workspace,
+       authorize: options.permissionBroker === undefined
+         ? application
+         : (action: ProposedToolAction) =>
+           options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
+       onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
+       workspace,
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
@@ -366,11 +367,12 @@ async function createClineRuntime(
           CLINE_PROVIDER_SETTINGS_PATH: settingsPath,
         },
       },
-      authorize: options.permissionBroker === undefined
-        ? application
-        : (action: ProposedToolAction) =>
-          options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
-      workspace,
+       authorize: options.permissionBroker === undefined
+         ? application
+         : (action: ProposedToolAction) =>
+           options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
+       onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
+       workspace,
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
@@ -558,11 +560,12 @@ async function createGooseRuntime(
           env: gooseLaunchSettingsEnv(process.env, options.settings),
         }),
       },
-      authorize: options.permissionBroker === undefined
-        ? application
-        : (action: ProposedToolAction) =>
-          options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
-      workspace,
+       authorize: options.permissionBroker === undefined
+         ? application
+         : (action: ProposedToolAction) =>
+           options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
+       onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
+       workspace,
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
