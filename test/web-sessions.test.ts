@@ -402,7 +402,7 @@ test("session manager syncs agent-provided titles and serves runtime usage", asy
   });
 
   const channel = await manager.channel();
-  assert.deepEqual(channel.usage(), metrics, "the channel exposes the runtime's metering metrics");
+  assert.deepEqual(channel.usage(), { source: "metered", ...metrics }, "the channel exposes the runtime's metering metrics");
   channel.ingest({ type: "session-info", title: "Agent-titled work" });
   const created = await manager.create();
   assert.equal(created.kind, "ok");
@@ -410,7 +410,7 @@ test("session manager syncs agent-provided titles and serves runtime usage", asy
   const titled = manager.list().find((session) => !session.active);
   assert.equal(titled?.title, "Agent-titled work", "session_info_update titles win over the derived title");
   const active = await manager.channel();
-  assert.deepEqual(active.usage(), metrics, "the next runtime's metrics flow through its own channel");
+  assert.deepEqual(active.usage(), { source: "metered", ...metrics }, "the next runtime's metrics flow through its own channel");
   await manager.dispose();
 });
 

@@ -84,6 +84,9 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #initialized = false;
   #canLoadSession = false;
   #agentInfo?: { readonly name: string; readonly version?: string } | undefined;
+  #sessionCapabilities: Record<string, unknown> = {};
+  #availableCommands: { readonly name: string; readonly description: string }[] = [];
+  #turnTokenTotals = { input: 0, output: 0, turns: 0 };
   #agentSessionId?: string;
   #sessionConfig?: AcpSessionConfig;
   #contextWindowTokens?: number;
@@ -163,6 +166,18 @@ export class AcpSessionDriver implements CodingSessionDriver {
         const cost = usage.cost as { amount?: unknown } | undefined;
         if (typeof cost?.amount === "number" && Number.isFinite(cost.amount) && cost.amount >= 0) this.#acpUsage.costUsd = cost.amount;
       }
+      if (update.update.sessionUpdate === "available_commands_update" && Array.isArray(update.update.availableCommands)) {
+        // Slash commands the agent advertises (OpenCode: builtin init/review,
+        // user commands, MCP prompts, skills). Tolerant parse: only
+        // well-formed entries survive.
+        this.#availableCommands = update.update.availableCommands.flatMap((command) => {
+          if (typeof command !== "object" || command === null) return [];
+          const entry = command as { name?: unknown; description?: unknown };
+          return typeof entry.name === "string" && entry.name.length > 0
+            ? [{ name: entry.name, description: typeof entry.description === "string" ? entry.description : "" }]
+            : [];
+        });
+      }
       const event = this.#project(update, this.#assistant);
       if (event !== undefined) {
         this.#emit(event);
@@ -214,6 +229,10 @@ export class AcpSessionDriver implements CodingSessionDriver {
       // The handshake's agentInfo is the authoritative agent identity — the
       // version string the operator surface displays as "opencode vX".
       this.#agentInfo = initialized.agentInfo;
+      const sessionCapabilities = initialized.agentCapabilities["sessionCapabilities"];
+      this.#sessionCapabilities = typeof sessionCapabilities === "object" && sessionCapabilities !== null
+        ? sessionCapabilities as Record<string, unknown>
+        : {};
       this.#initialized = true;
     }
     if (this.#agentSessionId === undefined) {
@@ -254,7 +273,22 @@ export class AcpSessionDriver implements CodingSessionDriver {
       ...(images ?? []).map((image) => ({ type: "image", data: image.data, mimeType: image.mediaType })),
     ];
     const result = (await this.#prompt(agentSessionId, content)) as
-      { stopReason?: string; failClosedReason?: string } | undefined;
+      { stopReason?: string; failClosedReason?: string; usage?: unknown } | undefined;
+    // The prompt response carries this turn's token split (OpenCode:
+    // input/output/thought/cache). Per-turn deltas accumulate into session
+    // totals here; the persisted baseline in the channel carries them across
+    // process restarts.
+    const turnUsage = result?.usage;
+    if (typeof turnUsage === "object" && turnUsage !== null) {
+      const split = turnUsage as Record<string, unknown>;
+      const count = (value: unknown): number | undefined =>
+        typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+      const input = count(split["inputTokens"]);
+      const output = count(split["outputTokens"]);
+      if (input !== undefined) this.#turnTokenTotals.input += input;
+      if (output !== undefined) this.#turnTokenTotals.output += output;
+      if (input !== undefined || output !== undefined) this.#turnTokenTotals.turns += 1;
+    }
     const stopReason = result?.stopReason;
     if (stopReason === "end_turn") {
       emit({ type: "completed", result: this.#assistant.join("") });
@@ -339,6 +373,30 @@ export class AcpSessionDriver implements CodingSessionDriver {
    * provider auth). */
   acpUsageSnapshot(): { readonly used?: number; readonly size?: number; readonly costUsd?: number } {
     return { ...this.#acpUsage };
+  }
+
+  /** Session management capabilities the agent advertised at initialize
+   * (ACP sessionCapabilities: close/fork/list/resume on OpenCode). */
+  sessionCapabilities(): { readonly close: boolean; readonly fork: boolean; readonly list: boolean; readonly resume: boolean } {
+    const caps = this.#sessionCapabilities;
+    return {
+      close: caps["close"] !== undefined,
+      fork: caps["fork"] !== undefined,
+      list: caps["list"] !== undefined,
+      resume: caps["resume"] !== undefined,
+    };
+  }
+
+  /** Slash commands the agent advertised (available_commands_update); empty
+   * until the agent sends the list. */
+  availableCommands(): readonly { readonly name: string; readonly description: string }[] {
+    return this.#availableCommands;
+  }
+
+  /** This process's accumulated per-turn token split from prompt responses
+   * (deltas only — the channel's persisted baseline carries history). */
+  turnTokenTotals(): { readonly input: number; readonly output: number; readonly turns: number } {
+    return { ...this.#turnTokenTotals };
   }
 
   /** Mutate configuration on the existing ACP session and retain the agent's complete returned state. */

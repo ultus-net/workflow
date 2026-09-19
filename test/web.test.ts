@@ -824,7 +824,7 @@ test("web UI serves cumulative usage metrics for metered runtimes only", async (
     usage?: typeof metrics;
     budgetMechanism?: string;
   };
-  assert.deepEqual(metered.usage, metrics);
+  assert.deepEqual(metered.usage, { source: "metered", ...metrics });
   // W045: the hub records the active budget mechanism per runtime.
   assert.equal(metered.budgetMechanism, "test: no local caps (fake runtime)");
 

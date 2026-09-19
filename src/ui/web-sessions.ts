@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import type { WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
 import type { PermissionBroker } from "./permission-broker.js";
 import { DEFAULT_WEB_AGENT, isWebAgentId, type WebAgentId } from "./web-agents.js";
-import { SessionChannel, driverPermissionKey } from "./web-session-channel.js";
+import { SessionChannel, driverPermissionKey, type SessionUsageReadout } from "./web-session-channel.js";
 
 export interface WebSessionMeta {
   readonly id: string;
@@ -30,6 +30,8 @@ interface SessionRecord {
   createdAt: string;
   updatedAt: string;
   agent?: WebAgentId;
+  /** Persisted usage readout; the channel merges it as a restart baseline. */
+  usage?: SessionUsageReadout;
 }
 
 interface ActiveSession {
@@ -320,6 +322,9 @@ export class WebSessionManager {
           mechanism: () => runtime.budgetMechanism,
           ...(runtime.budgetViolation === undefined ? {} : { violation: () => runtime.budgetViolation?.() }),
         },
+        // Restart continuity: the record's persisted readout becomes the
+        // channel's baseline, so the meter never blanks between processes.
+        record.usage,
       );
       // Eagerly establish the ACP session on every spawn, not only on resume:
       // a fresh session's connect() captures the agent's advertised config
@@ -422,11 +427,15 @@ export class WebSessionManager {
     return this.#focusId === undefined ? undefined : this.#live.get(this.#focusId);
   }
 
-  /** Copies volatile facts (agent session id, agent/derived title) into a record. */
+  /** Copies volatile facts (agent session id, agent/derived title, the latest
+   * usage readout) into a record. The usage readout is already baseline-merged
+   * by the channel, so what lands here is the session-cumulative total. */
   #capture(record: SessionRecord, active: ActiveSession | undefined): void {
     if (active === undefined) return;
     const agentId = active.runtime.driver.agentSessionId();
     if (agentId !== undefined) record.agentSessionId = agentId;
+    const usage = active.channel.usage();
+    if (usage !== undefined) record.usage = usage;
     // An agent-provided title (session_info_update) is the most accurate
     // label and outranks both the placeholder and the derived-from-prompt title.
     const agentTitle = active.channel.agentTitle();
