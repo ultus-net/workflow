@@ -12,12 +12,6 @@ model proposes -> Workflow authorizes -> tool acts -> environment supplies evide
 
 SDKs and UIs are replaceable adapters. They must not become sources of workflow truth.
 
-**Task lifecycle process:** `TASKS.md` contains active/pending/blocked W-items only.
-Completed or superseded work is append-only archived in `docs/TASKS_COMPLETED.md`
-with linked test/probe/review evidence. No agent may promote a status from prose;
-archive movement requires deterministic evidence and operator-approved scope.
-OpenCode v2 qualification is tracked separately in `docs/OPENCODE_V2_MIGRATION_SPEC.md`.
-
 ## Architecture Constraints
 
 - The deterministic kernel owns task state, dependency eligibility, policy decisions, evidence requirements, freshness/invalidation, and legal transitions.
@@ -767,7 +761,7 @@ W045 is complete. `src/integrations/session-budget.ts` carries the interactive e
 - [x] Decomposition suggestions are advisory (model-proposed); task creation and dependency changes stay deterministic operator-confirmed or rule-driven.
 - [x] Tests prove blocked-decomposition rejection and evidence-driven unlocking in an interactive-shaped flow.
 
-W046 is complete. The mechanism, not a UI: `src/application/task-commands.ts` is the deterministic task-command port — `createTask` (kernel-validated: missing/duplicate/cyclic dependencies reject), `activateTask` (READY→IN_PROGRESS + `selectActiveTask`; BLOCKED/VERIFIED/FAILED/VERIFYING refuse with the state named, never guessing), `completeTask` (IN_PROGRESS→VERIFYING→fresh environment evidence→VERIFIED, evidence-gated exactly like every canonical task — tool success alone never verifies), `retryTask`, and a non-throwing `activeTaskId()`. The TaskGraph itself is never handed out; the port composes only application commands, so the kernel keeps owning validation, readiness derivation, and evidence freshness. Correlation: `AcpSessionDriver`'s task stamp widened from a fixed id to `TaskId | (() => TaskId)` — hub runs, the reviewer, and web sessions keep their fixed ids (proven unchanged), while the interactive surfaces (`acp-tui`, the universal TUI's acp driver) compose `activeTaskCorrelation(application)`: every proposal re-reads the active-task pointer at request time, so an operator activating a decomposed task mid-session moves the authorization target for every later proposal — the money test drives the same driver/session through three prompts and watches the stamped task id move from the session seed to the decomposed task and then to the fail-closed sentinel after completion. The sentinel (`no-active-task`, a non-existent id) is the blocked-work form: `activeTaskId()` throwing (no IN_PROGRESS task) correlates with a sentinel that the application gate denies as UNKNOWN_TASK — fail-closed without leaving the ACP permission request unanswered on the wire (a throwing getter would hang the request; the correlator never throws). Advisory half: ACP `plan` projections keep arriving as advisory events with zero canonical effect (pinned by a test: a planning prompt creates no tasks); nothing model-proposed becomes canonical except through the port, operator-confirmed or rule-driven like the hub's run/team-task flows. Docs reconciled honestly: SECURITY_ASSURANCE residual 19 rewritten (the mechanism landed; the residuals that remain are the thin selection UX and the explicit-activation requirement), the ACP_DECISION supersession note updated (the original :58 follow-up line keeps its dated wording, the note supersedes its decomposition clause), and the acp-tui "lives in the hub follow-up, not here" comment replaced by the correlation comment. Tests: `test/interactive-task-commands.test.ts` (8 — port contract incl. kernel rejections through the port, blocked-decomposition rejection (BLOCKED task denies mutation and refuses activation), evidence-driven unlock (prerequisite VERIFIED → dependent READY → activated → allowed), retry, illegal-state completion guards, sentinel fail-closed correlation, the interactive-shaped three-prompt correlation test, fixed-id stability for hub runs, advisory-plan purity), plus the full affected battery green (acp-session, application, coding-session-queue, adapter-conformance, security-assurance, web, hub-runs, session-port — 90/90 + the 8 new). Honest residual: the Ctrl+T task palette shipped (PR #29) on `acp-tui` and `universal-tui` — it drives create/activate/retry through the port, surfaces kernel rejections in-palette, and is read-only on surfaces without a port (the web UI's existing `/api/tasks` + `/api/transition` routes already speak application commands) — so mid-session task switches are now operator-driven; a session whose active task completes must still explicitly activate the next one, and the palette flow is not yet dogfooded live (W049).
+W046 is complete. The mechanism, not a UI: `src/application/task-commands.ts` is the deterministic task-command port — `createTask` (kernel-validated: missing/duplicate/cyclic dependencies reject), `activateTask` (READY→IN_PROGRESS + `selectActiveTask`; BLOCKED/VERIFIED/FAILED/VERIFYING refuse with the state named, never guessing), `completeTask` (IN_PROGRESS→VERIFYING→fresh environment evidence→VERIFIED, evidence-gated exactly like every canonical task — tool success alone never verifies), `retryTask`, and a non-throwing `activeTaskId()`. The TaskGraph itself is never handed out; the port composes only application commands, so the kernel keeps owning validation, readiness derivation, and evidence freshness. Correlation: `AcpSessionDriver`'s task stamp widened from a fixed id to `TaskId | (() => TaskId)` — hub runs, the reviewer, and web sessions keep their fixed ids (proven unchanged), while the interactive surfaces (`acp-tui`, the universal TUI's acp driver) compose `activeTaskCorrelation(application)`: every proposal re-reads the active-task pointer at request time, so an operator activating a decomposed task mid-session moves the authorization target for every later proposal — the money test drives the same driver/session through three prompts and watches the stamped task id move from the session seed to the decomposed task and then to the fail-closed sentinel after completion. The sentinel (`no-active-task`, a non-existent id) is the blocked-work form: `activeTaskId()` throwing (no IN_PROGRESS task) correlates with a sentinel that the application gate denies as UNKNOWN_TASK — fail-closed without leaving the ACP permission request unanswered on the wire (a throwing getter would hang the request; the correlator never throws). Advisory half: ACP `plan` projections keep arriving as advisory events with zero canonical effect (pinned by a test: a planning prompt creates no tasks); nothing model-proposed becomes canonical except through the port, operator-confirmed or rule-driven like the hub's run/team-task flows. Docs reconciled honestly: SECURITY_ASSURANCE residual 19 rewritten (the mechanism landed; the residuals that remain are the thin selection UX and the explicit-activation requirement), the ACP_DECISION supersession note updated (the original :58 follow-up line keeps its dated wording, the note supersedes its decomposition clause), and the acp-tui "lives in the hub follow-up, not here" comment replaced by the correlation comment. Tests: `test/interactive-task-commands.test.ts` (8 — port contract incl. kernel rejections through the port, blocked-decomposition rejection (BLOCKED task denies mutation and refuses activation), evidence-driven unlock (prerequisite VERIFIED → dependent READY → activated → allowed), retry, illegal-state completion guards, sentinel fail-closed correlation, the interactive-shaped three-prompt correlation test, fixed-id stability for hub runs, advisory-plan purity), plus the full affected battery green (acp-session, application, coding-session-queue, adapter-conformance, security-assurance, web, hub-runs, session-port — 90/90 + the 8 new). Honest residual: no TUI task-selection palette yet — the port is the seam every surface can drive (the web UI's existing `/api/tasks` + `/api/transition` routes already speak application commands), and a session whose active task completes must explicitly activate the next one; until a palette exists, mid-session task switches are a surface-integration exercise, honestly not dogfooded live yet.
 
 **Verification:** application/session contract tests plus the interactive-shaped correlation suite green as listed; a real interactive session exercising a multi-task request lands with the operator's dogfood sessions (W049) — until then the flow is proven by the fake-agent interactive test only.
 
@@ -1058,13 +1052,163 @@ surfacing it in the custom web UI is the accepted track; an upstream-candidate P
 generic todo tool is parked, and the interim advisory workaround is a plan file via
 `WORKFLOW_ADVISORY_NOTES`. Recorded in project memory 2026-09-20.
 
-## Phase 15: Settings Panel, Launcher Engine Axis, and Hub Orientation (2026-09-20)
+
+## Phase 15: Bounded recursive self-improvement (2026-09-19)
+
+### W073 - Bounded self-improvement loop (Karpathy loop) under Workflow authority
+
+**Objective:** Implement the propose → apply → test → evaluate → commit/discard
+loop described by the operator's two cited sources (MindStudio's "Karpathy
+Loop" explainer; Anthropic's "When AI builds itself") as a deterministic
+integration-layer orchestrator that routes every candidate through the
+canonical run lifecycle, so nothing is committed unless the kernel reached
+`VERIFIED` on fresh evidence. The loop is workspace-parameterized, so the same
+control-plane capability can later be pointed at other repositories.
+
+**Spec:** `docs/superpowers/plans/2026-09-19-recursive-self-improvement-loop.md`.
+**Module:** `src/integrations/self-improvement-loop.ts` (loop, git candidate
+workspace, `createAuthorityGate`).
+
+**Depends on:** the run registry / run-lifecycle gates (W038–W042 area) and
+the hub reviewer + test runner wiring (`hub-run-gates.ts`). No kernel change.
+
+**Acceptance criteria:**
+- [x] A candidate is committed only after `finish("verified")` resolves; every
+      rejection path closes the run `failed` and discards the workspace.
+- [x] An authority-begin refusal, a malformed proposal, or a proposal-source
+      failure stops the loop without mutating (fail closed).
+- [x] The loop is single-instance per workspace; a second concurrent run for
+      the same workspace is refused.
+- [x] Bounds stop the loop deterministically: `maxIterations`,
+      `maxConsecutiveRejections`, and an optional cost budget.
+- [x] The objective is validated up front (absolute workspace, non-empty
+      description, positive integer iteration cap, valid direction/budget).
+- [x] A verified-but-uncommittable candidate is audited and stops the loop,
+      reporting it uncommitted — never as committed.
+- [x] The git candidate workspace detects a change, commits it, and
+      destructively discards uncommitted work in a dedicated checkout.
+- [x] An integration test composes the real `createRunRegistry` (reviewer +
+      test runner) and proves an accepted candidate's run reaches `VERIFIED`
+      on recorded reviewer + environment evidence, while a rejected
+      candidate's run ends `FAILED` and its change is discarded.
+- [x] `npm run lint`, `npm run typecheck`, and the focused test file pass.
+
+**Verification:** `test/self-improvement-loop.test.ts` (21 tests: hermetic
+bounds/fail-closed coverage, the registry-composition acceptance path, and
+real-git workspace coverage); `npm run lint`; `npm run typecheck`; the recorded
+five-axis review.
+
+**Status (2026-09-19, implemented on `feat/w073-self-improvement-loop`):** the
+loop, git candidate workspace, and authority adapter landed with the focused
+suite green (27 tests: hermetic bounds/fail-closed coverage, the
+registry-composition acceptance path, and real-git workspace coverage), lint
+and typecheck clean. **Independent five-axis review:** `[REQUEST_CHANGES]`
+(2×P2, 5×P3); both P2s fixed and pinned by test — a failed rollback (run close
+or discard) is now surfaced on the iteration record and **stops the loop**
+instead of continuing over an unsafe tree — and the P3s are fixed
+(best-effort commit ref, realpath-keyed single-instance lock, guarded
+`usageUsd`/`onIteration`) or recorded as residuals (`git add -A` dirt,
+iteration-boundary budget) in the plan's review record. **Re-review:**
+`[REQUEST_CHANGES]` on one P2 regression from the fix round (the lock acquired
+the realpath key but released the raw path, leaking the lock under path
+aliases); fixed and pinned by a symlink-alias symmetry test, with the
+remaining new branches pinned too. **Residuals (recorded,
+not buried):** the production agent applier and `measure` are composition-time
+seams — this item ships the orchestrator and git workspace, not a new agent
+runtime; the git command runner runs outside Bubblewrap in this first slice
+(hub-side action on a dedicated workspace, not an agent tool call); proposals
+are not yet sourced from a live model. A final re-review verdict is recorded
+before merge.
+
+**Trigger / monitor / cancel surface (2026-09-19, operator-directed):** the
+operator chose the hub-owned **registry + admin CLI + hub API** path with
+boundary-scoped cancel. Landed: the loop's cooperative `shouldStop` hook
+(checked only at iteration boundaries; a throwing predicate fails closed); the
+hub-owned `self-improvement-registry.ts` (`start`/`status`/`cancel`, validated
+specs, realpath duplicate refusal, bounded history); the hub routes
+`POST /rsi/start|status|cancel` (`hub-http.ts` + `workflow-hub.ts`; 404 when
+unconfigured); and the `workflow-rsi` CLI client (`src/cli/rsi.ts`, bin added).
+
+**Adversarial-review round (2026-09-19, operator-directed):** an independent
+adversarial reviewer with its own primary-source research returned
+`[REQUEST_CHANGES]` (2×P0, 2×P1) and all four blockers were fixed and pinned:
+a **clean-baseline precheck** (`CandidateWorkspace.assertBaseline`; refuses a
+dirty tree or non-repo, so the destructive discard can only revert the loop's
+own candidate changes); **`requiresReview` defaults to true** at `/rsi/start`
+with explicit opt-out (`requiresReview:false` / `--no-review`; the vacuous
+evidence-free default path is closed); **`/rsi/start` and `/schedule/run-now`
+require the verifier credential** (the same trust model as `/run/finish`) with
+the CLI reading `verifier.json`; and the reviewer's run ask is the
+**operator-authored objective**, never the candidate's hypothesis.
+`THREAT_MODEL.md` (2026-09-19 §1–6) records the residuals honestly — notably
+that the boundary is credential-scoped, not process-scoped (a same-UID process
+that can read `verifier.json` can start a loop), and that reviewer
+independence carries a prompt-injection residual through candidate-authored
+diffs. Focused suites: loop 32, registry 8, hub API 5, schedule manager 10, CLI
+parse 6 — all green; lint and typecheck clean. The production `LoopRunner`
+(live proposal source + agent applier + measure) remains a composition-time
+seam; `cli/hub.ts` now composes the registry with a fail-closed runner until
+Checkpoint F lands it.
+
+### W074 - Scheduled-task manager (backend landed; web page pending)
+
+**Objective:** expose the existing hub cron engine as an operator-managed
+scheduled-task surface: hub routes (`schedule/list|save|delete|run-now`), a
+live schedule authority that persists via `saveSchedulesTable` and feeds the
+running scheduler (today the table loads once and is frozen), a next-run
+preview over `cronMatches`, and a Schedules page (nav slug beside Chat ·
+Sessions · Usage) with create/edit, pause, run-now, delete, and last-outcome
+correlation via `/snapshot` gateObservability.
+
+**Status (2026-09-19, backend implemented + adversarially reviewed):**
+`ScheduleDefinition` gained an `enabled` pause flag (retained but skipped by
+`tick`); `nextCronMatch` and `HubScheduler.trigger(id)` added;
+`schedule-registry.ts` owns the table live (list/get/save/remove; persists via
+`saveSchedulesTable` before admitting; run-now attached to the scheduler); hub
+routes `/schedule/list|save|delete|run-now` added (`hub-http.ts` +
+`workflow-hub.ts`, which auto-wires the registry's run-now to the scheduler —
+`run-now` is verifier-credential-gated after the adversarial review, P1-1);
+overlapping tick/run-now fires are collapsed (in-flight guard + minute
+consumption); `cli/hub.ts` now composes the live registry with an always-on
+scheduler, so operator edits take effect without a hub restart. Focused suite
+`test/schedule-manager.test.ts` (10 tests) green alongside the touched
+hub-scheduler/hub-runs suites; lint and typecheck clean. **Pending:** the web
+Schedules page and its SSR/CDP tests. **Residual:** schedule edits are
+hub-single-writer (the existing instance lock guarantees one hub); a durable
+registry across restarts is part of the long-horizon gap below.
+
+## Long-horizon gaps recorded 2026-09-19 (OpenRouter cookbook)
+
+The operator supplied OpenRouter's "Build a Long-Horizon Agent" cookbook; the
+W073 loop and hub scheduler were checked against it. Gaps (honest, tracked):
+
+- **Per-iteration step/token ceilings** on the candidate agent turn (W073
+  budgets only at iteration boundaries via `usageUsd`).
+- **Durable/resumable loop state**: the registry is in-memory; a hub restart
+  loses running loops and iteration records. Adopt the cookbook's `StateAccessor`
+  atomic temp+rename discipline (swallow only `ENOENT`).
+- **Completion notification**: notify (webhook/event) when a loop terminates.
+
+### Checkpoint F - bounded self-improvement loop landed
+
+- [ ] Wire a live proposal source (agent turn) and a production `measure` at a
+      composition root.
+- [ ] Containment-wrap the git command runner (or route commits through the
+      contained shell executor) and record the residual closure.
+- [ ] Point the loop at a second repository to prove the workspace-parameterized
+      control-plane capability end to end.
+- [ ] Project the registry status/iteration records into the web UI (Sessions
+      page card + `/rsi` surface-handled command) over the `/rsi/*` routes.
+- [ ] Durable/resumable loop registry (atomic `StateAccessor`-style persistence)
+      + per-iteration step/token ceilings + completion notification.
+
+## Phase 16: Settings Panel, Launcher Engine Axis, and Hub Orientation (2026-09-20)
 
 The operator panel rollout (selector `13269a9`, connector catalog `c221908`, model routing
 `91ab09f` is **complete**). Remaining slices of the agreed sequence plus the hub-briefing design
 decision (recorded in project memory 2026-09-20).
 
-### W073 - Launcher engine axis: `workflow web --agent <kind>`
+### W075 - Launcher engine axis: `workflow web --agent <kind>`
 
 **Objective:** Let the operator choose the ACP agent kind (opencode / goose / cline) at launch —
 `workflow web --agent goose` — resolved through `WORKFLOW_ACP_AGENT`, with the panel's agent
@@ -1096,14 +1240,14 @@ each surface may claim.
 lockstep test; 35/35 across web-settings + webapp-surface + workflow-launcher), typecheck and lint
 clean, five-axis review APPROVED (2026-09-20).
 
-### W074 - Qualification probes: stock opencode web UI behind the hub gateway; v2 config hot-reload
+### W076 - Qualification probes: stock opencode web UI behind the hub gateway; v2 config hot-reload
 
 **Objective:** Turn the two remaining experimental seams into probe-gated, dated verdicts: (a) the
 stock opencode web UI projected through the hub gateway as a second surface (per
 `docs/ideas/hub-control-plane.md`); (b) v2 config hot-reload — a routing/settings change reaching a
 live hub session without a restart.
 
-**Depends on:** W073 (engine axis lands before probes exercise multiple agent kinds).
+**Depends on:** W075 (engine axis lands before probes exercise multiple agent kinds).
 
 **Acceptance criteria:**
 - [x] A live probe drives the stock opencode web UI behind the hub gateway and records the verdict
@@ -1113,7 +1257,7 @@ live hub session without a restart.
       `app-shell` route class (§2.5 row) and surfaced the version-tolerance repair: v2.x serves the
       SPA on every bare path, so the health wait walks both contracts via the shared
       `src/integrations/opencode-health.ts` module (v1 JSON `{healthy:true}` or v2 `/api/info` —
-      landed 2026-09-20 from a concurrent session in this checkout, folded into the W074 commit with
+      landed 2026-09-20 from a concurrent session in this checkout, folded into the W076 commit with
       attribution); the always-run runtime test (4/4) is repaired. The M1 attach probe's bare-path
       spellings are stale on v2.0.10 — stated in `docs/HOST_ADAPTERS.md` with the reason;
       re-qualification open.)
@@ -1154,7 +1298,7 @@ test/opencode-webui-gateway-probe.test.ts` green (v2.0.10, 2026-09-20); classifi
   running (probe-verified, quiet otherwise, foreign-host refused, `WORKFLOW_OPENCODE_STOCK_TAB=0`
   opt-out); 3/3 focused tests (`test/web-launch-tab.test.ts`).
 
-### W075 - Hub orientation briefing (prompt-level block; skill depth layer behind a dated decision)
+### W077 - Hub orientation briefing (prompt-level block; skill depth layer behind a dated decision)
 
 **Objective:** Give hub-launched agents a deterministic orientation so toolbox/guard tools are used
 correctly. Design decision recorded 2026-09-20: a static, versioned, provenance-tagged prompt-level
@@ -1165,7 +1309,7 @@ file at session create for OpenCode first). Native host skill injection stays **
 2026-09-15 hub-owned-enforcement plan — the skill-file route needs an explicit dated supersession or
 a file-provisioning framing before it ships.
 
-**Depends on:** W074 (probes establish the host-version behavior the skill-discovery claim needs).
+**Depends on:** W076 (probes establish the host-version behavior the skill-discovery claim needs).
 
 **Acceptance criteria:**
 - [x] `buildOrientation()` (extending `src/integrations/prompt-guidance.ts`): static template,
@@ -1197,7 +1341,7 @@ a file-provisioning framing before it ships.
       and a `docs/FEATURES.md` status entry; advisory only — enforcement stays in the guard MCP
       server. (Orientation row added; the skill-delivery row lands with the delivery decision.)
 
-**Verification:** `test/g5-observability.test.ts` (W075 composition/opt-out/no-interpolation pins) +
+**Verification:** `test/g5-observability.test.ts` (W077 composition/opt-out/no-interpolation pins) +
 `test/toolbox-catalog.test.ts` (skill-body corpus pin) + `test/hub-scheduler.test.ts` (seam
 unchanged) — 23/23; typecheck and lint clean; ledger + FEATURES rows dated 2026-09-20. Five-axis
 review round 1: REQUEST_CHANGES (P1 provenance claim false — begin recorded the raw prompt; P2
@@ -1205,7 +1349,7 @@ block pointed at the undelivered skill; three P3s) — all fixed in `c296415` (c
 recorded ask, orientation v2 drops the skill pointer, full-text frozen pin, hedged tool presence,
 precise wording). Re-review 2026-09-20: **APPROVE** recorded.
 
-### W076 - `workflow doctor`: honest self-check of the operator's setup
+### W078 - `workflow doctor`: honest self-check of the operator's setup
 
 **Objective:** One command that states the truth about the local setup — settings docs parse,
 credential presence (booleans, never values), hub/gateway reachability, containment posture
@@ -1223,7 +1367,7 @@ fail-loud, matching the honest-claims culture. Idea adopted from oh-my-openagent
 - [ ] Every check is pass/warn/fail with an actionable fix line; nothing silently passes.
 - [ ] Focused tests pin the report composition; typecheck and lint clean; five-axis review.
 
-### W077 - Hash-anchored edits: evaluation against the read-fingerprint ledger (design doc)
+### W079 - Hash-anchored edits: evaluation against the read-fingerprint ledger (design doc)
 
 **Objective:** Evaluate a Hashline-style upgrade (`LINE#ID` content-hash tags on reads, edits
 validated against the tags) for the surfaces where Workflow owns the edit path, against the
@@ -1240,14 +1384,14 @@ oh-my-openagent / "The Harness Problem"; no upstream code.
 - [ ] A decision with evidence: adopt, adapt, or reject — recorded in the doc; no code before the
       decision.
 
-### W078 - Skill-embedded connector scoping (gated on the skill-delivery decision)
+### W080 - Skill-embedded connector scoping (gated on the skill-delivery decision)
 
-**Objective:** Let the generated `workflow-toolbox` skill (W075) declare which connectors it needs,
+**Objective:** Let the generated `workflow-toolbox` skill (W077) declare which connectors it needs,
 mounted on demand for the session and torn down after — the context-budget fix oh-my-openagent
 ships as "skill-embedded MCPs". Hard constraint: skill-scoped mounts still cross the hub-written
 config and guard authorization — scoping, never a bypass lane.
 
-**Depends on:** the dated skill-delivery decision (W075 — native host skill injection stays off
+**Depends on:** the dated skill-delivery decision (W077 — native host skill injection stays off
 until it exists).
 
 **Acceptance criteria:**
@@ -1257,13 +1401,13 @@ until it exists).
       path; the guard still owns authorization.
 - [ ] Probe-gated per host version before any claim.
 
-### W079 - Session stats on the Usage page (data-lane read #2)
+### W081 - Session stats on the Usage page (data-lane read #2)
 
 **Objective:** Surface the documented `GET /api/experimental/session/stats` (per-session activity,
 usage, tool reliability) in the custom web UI's Usage page, read through the enforced gateway when
 the server topology runs — same honest-unavailable pattern as the live MCP state.
 
-**Depends on:** W074 (gateway + app-shell class landed).
+**Depends on:** W076 (gateway + app-shell class landed).
 
 **Acceptance criteria:**
 - [ ] `fetchSessionStats` in `src/integrations/opencode-live-state.ts` with the same
@@ -1272,7 +1416,7 @@ the server topology runs — same honest-unavailable pattern as the live MCP sta
       honest reasons when unavailable.
 - [ ] Focused tests; typecheck and lint clean.
 
-### W080 - Auto-compaction over the v2 API (restore the plugin-era feature)
+### W082 - Auto-compaction over the v2 API (restore the plugin-era feature)
 
 **Objective:** Restore context-window maintenance lost in the plugin→hub pivot. OpenCode v2 exposes
 compaction over the documented API (`POST /api/session/{sessionID}/compact`; provider/model config
@@ -1285,7 +1429,7 @@ control in the custom web UI, (c) a hub-owned auto-trigger at a usage threshold 
 gate, budget-guard compatible), (d) probe per pinned version. The v2 compaction
 hook (`ctx.session.hook("compaction")`) is explicitly NOT used — no plugins.
 
-**Depends on:** W074 (gateway verdicts); probe gating per `docs/HOST_ADAPTERS.md`.
+**Depends on:** W076 (gateway verdicts); probe gating per `docs/HOST_ADAPTERS.md`.
 
 **Acceptance criteria:**
 - [x] Route-class decision recorded in §2.5 with tests: `compact` is now an explicitly classified

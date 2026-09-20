@@ -14,14 +14,14 @@ import { MarkdownText } from "./markdown-text.js";
 import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } from "./presenters.js";
 import { useSessionCommands, useSessionState, useSessionStatus, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog, type RoutingFacts } from "./settings-dialog.js";
-import { SessionsView } from "./sessions-view.js";
+import { AgentsView } from "./agents-view.js";
+import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
 import { UsageView } from "./usage-view.js";
 import { listPalettes } from "./theme/palettes.js";
 import { usePalette } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
 import type { AgentRuntimePreference, McpServerSetting } from "../../integrations/workflow-settings.js";
 import type { LiveMcpState } from "../../integrations/opencode-live-state.js";
-import type { ScheduleDefinition } from "../../integrations/hub-scheduler.js";
 import type { ToolboxCatalogEntry } from "../../integrations/toolbox-catalog.js";
 import type { WebConfigOption } from "../web-config-options.js";
 
@@ -216,6 +216,35 @@ function useSessions() {
     return () => clearInterval(timer);
   }, [load]);
   return { sessions, refresh: load };
+}
+
+/** Polls the hub-backed schedule table and self-improvement loop registry
+ * through the web service's hub proxy; undefined arrays mean "hub unavailable". */
+function useOperatorSurfaces() {
+  const [schedules, setSchedules] = useState<ScheduleMeta[] | undefined>(undefined);
+  const [loops, setLoops] = useState<LoopMeta[] | undefined>(undefined);
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const schedulesResponse = await fetch("/api/schedules");
+      if (schedulesResponse.ok) setSchedules((await schedulesResponse.json() as { schedules: ScheduleMeta[] }).schedules);
+      else setSchedules(undefined);
+    } catch {
+      // Keep the last good list; the next poll retries.
+    }
+    try {
+      const loopsResponse = await fetch("/api/loops");
+      if (loopsResponse.ok) setLoops((await loopsResponse.json() as { loops: LoopMeta[] }).loops);
+      else setLoops(undefined);
+    } catch {
+      // Keep the last good list; the next poll retries.
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), PANEL_POLL_MS);
+    return () => clearInterval(timer);
+  }, [load]);
+  return { schedules, loops, refresh: load };
 }
 
 function createSession(refresh: () => Promise<void>): void {
@@ -488,38 +517,8 @@ function useRoutingSettings() {
   return { agents: agents ?? {}, facts: facts ?? { upstream: "…", envModelOpencode: false, envModelGoose: false, managementKey: false }, loading: agents === undefined, error, onSave: save };
 }
 
-/** Reads the hub scheduler's operator surface: the schedule table (shared
- * file state, read with the hub's own contract) plus hub reachability. The
- * hub daemon loads the table at startup and owns run history. */
-interface SchedulesState {
-  readonly schedules: readonly ScheduleDefinition[];
-  readonly schedulesPath: string;
-  readonly error?: string | undefined;
-  readonly hub: { readonly reachable: boolean; readonly url?: string };
-}
-
-function useSchedules() {
-  const [state, setState] = useState<SchedulesState | undefined>(undefined);
-
-  const load = useCallback(async (): Promise<void> => {
-    try {
-      const response = await fetch("/api/schedules");
-      if (!response.ok) return;
-      setState(await response.json() as SchedulesState);
-    } catch {
-      // Keep the last good state; the page retries on the next open.
-    }
-  }, []);
-  useEffect(() => { void load(); }, [load]);
-
-  return {
-    schedules: state?.schedules ?? [],
-    schedulesPath: state?.schedulesPath ?? "",
-    hub: state?.hub,
-    error: state?.error,
-    loading: state === undefined,
-  };
-}
+// The schedule surface belongs to main's Schedules page (useOperatorSurfaces
+// → the hub proxy): this branch's read-only settings hook was superseded.
 
 /** Polls the agent-advertised session configuration; empty when the agent offers none. */
 /** Last-used value per ACP option, persisted locally so the operator's choices
@@ -640,13 +639,25 @@ function UsageIcon() {
     </svg>
   );
 }
-function SessionsIcon() {
+function AgentsIcon() {
   return (
     <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <rect x="2.5" y="2.5" width="11" height="4.2" />
       <rect x="2.5" y="9.3" width="11" height="4.2" />
       <circle cx="5" cy="4.6" r="0.7" fill="currentColor" stroke="none" />
       <circle cx="5" cy="11.4" r="0.7" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/** Calendar glyph for the Schedules slug. */
+function SchedulesIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2.5" y="3.5" width="11" height="10" />
+      <path d="M2.5 6.5h11" />
+      <path d="M5.5 2v3M10.5 2v3" />
+      <path d="M5.5 9.5h2M5.5 11.5h5" />
     </svg>
   );
 }
@@ -1801,9 +1812,12 @@ function EnforcementBadge({ level, transport, copy }: {
   );
 }
 
-/** Top-bar views. Sessions is a page (nav slug); session history stays
- * reachable from the composer via the /sessions command. */
-export type AppView = "chat" | "sessions" | "usage" | "settings";
+/** Top-bar views. Agents (renamed from "Sessions" 2026-09-19) and Schedules
+ * are pages (nav slugs); session history stays reachable from the composer
+ * via the /agents command, with /sessions kept as an alias. The settings
+ * panel (W077-era operator surfaces) is reachable from the gear and the
+ * Ctrl/Cmd+, command. */
+export type AppView = "chat" | "agents" | "schedules" | "usage" | "settings";
 
 export function App() {
   // The chat view focuses one parallel session at a time; undefined = the
@@ -1813,8 +1827,13 @@ export function App() {
   const [focusedSessionId, setFocusedSessionId] = useState<string | undefined>(undefined);
   const handleCommand = useCallback((command: string): boolean => {
     const name = command.split(/\s+/)[0]?.toLowerCase() ?? "";
-    if (name === "/sessions") {
-      setView("sessions");
+    // /agents is the truthful name; /sessions stays as a documented alias.
+    if (name === "/agents" || name === "/sessions") {
+      setView("agents");
+      return true;
+    }
+    if (name === "/schedules") {
+      setView("schedules");
       return true;
     }
     if (name === "/usage") {
@@ -1848,6 +1867,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const gitStatus = useGitStatus();
   const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
+  const { schedules, loops, refresh: refreshSchedules } = useOperatorSurfaces();
   const agents = useAgents();
   // The registry leads with the default agent (OpenCode); fall back to it while
   // the agents list is still loading so the switcher never marks the wrong one.
@@ -1857,7 +1877,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const capabilities = useCapabilities();
   const mcp = useMcpSettings();
   const routing = useRoutingSettings();
-  const schedules = useSchedules();
   const { isRunning, items, queuePrompt } = useSessionState();
   const slashCommands = useSessionCommands();
   const { palette, setPalette } = usePalette();
@@ -2006,7 +2025,8 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           <nav className="shell-nav" aria-label="Views">
             {([
               ["chat", "Chat", <ChatIcon key="c" />],
-              ["sessions", "Sessions", <SessionsIcon key="s" />],
+              ["agents", "Agents", <AgentsIcon key="s" />],
+              ["schedules", "Schedules", <SchedulesIcon key="d" />],
               ["usage", "Usage", <UsageIcon key="u" />],
               ["settings", "Settings", <GearIcon key="g" />],
             ] as const).map(([slug, label, icon]) => (
@@ -2028,8 +2048,8 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
         </div>
       </header>
-      {view === "sessions" ? (
-        <SessionsView
+      {view === "agents" ? (
+        <AgentsView
           sessions={sessions}
           agents={agents}
           onActivate={(id) => switchSession(id)}
@@ -2067,6 +2087,32 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
             setView("chat");
           }}
         />
+      ) : view === "schedules" ? (
+        <SchedulesView
+          schedules={schedules}
+          loops={loops}
+          onCancelLoop={(id) => {
+            void fetch("/api/loops/cancel", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id }),
+            }).then(() => refreshSchedules());
+          }}
+          onPauseToggle={(entry) => {
+            void fetch("/api/schedules/save", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ ...entry, enabled: entry.enabled === false }),
+            }).then(() => refreshSchedules());
+          }}
+          onDelete={(id) => {
+            void fetch("/api/schedules/delete", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id }),
+            }).then(() => refreshSchedules());
+          }}
+        />
       ) : view === "usage" ? (
         <UsageView />
       ) : view === "settings" ? (
@@ -2083,7 +2129,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           capabilities={capabilities}
           mcp={mcp}
           routing={routing}
-          schedules={schedules}
           enforcement={{ level: snapshot?.enforcementLevel, transport: snapshot?.transport, copy: enforcementCopy }}
           agents={agents}
           currentAgent={currentAgent}

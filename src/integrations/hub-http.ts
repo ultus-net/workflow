@@ -5,6 +5,8 @@ import type { WorkflowApplication } from "../application/workflow.js";
 import { buildReviewRubric } from "../review/rubric.js";
 import { shellExecutorFor, type WorkflowApplicationResolver, type WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
+import type { SelfImprovementRegistry, SelfImprovementSpec } from "./self-improvement-registry.js";
+import type { ScheduleRegistry } from "./schedule-registry.js";
 
 /**
  * The hub's host-neutral loopback HTTP server and discovery bridge.
@@ -30,6 +32,8 @@ interface HubRequestContext {
   readonly resolveApplication: WorkflowApplicationResolver;
   readonly runController: WorkflowRunController | undefined;
   readonly guard: WorkflowGuardProvider | undefined;
+  readonly selfImprovement: SelfImprovementRegistry | undefined;
+  readonly schedules: ScheduleRegistry | undefined;
 }
 
 export async function createWorkflowHubBridge(
@@ -41,10 +45,12 @@ export async function createWorkflowHubBridge(
   runController?: WorkflowRunController,
   observeRequest?: (path: string) => void,
   guard?: WorkflowGuardProvider,
+  selfImprovement?: SelfImprovementRegistry,
+  schedules?: ScheduleRegistry,
 ): Promise<WorkflowHubBridge> {
   const token = randomBytes(32).toString("hex");
   const verificationToken = randomBytes(32).toString("hex");
-  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard };
+  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules };
 
   const server = createServer((request, response) => {
     if (request.url !== undefined) observeRequest?.(new URL(request.url, "http://127.0.0.1").pathname);
@@ -77,7 +83,17 @@ async function handleRequest(
 ): Promise<void> {
   try {
     if (request.method !== "POST") return send(response, 401, { error: "unauthorized" });
-    const verifierOnly = request.url === "/run/review" || request.url === "/run/finish";
+    // P1-1 (adversarial review): starting a self-improvement loop and firing a
+    // scheduled run now are consequential autonomous actions. They require the
+    // verifier credential (distributed separately from the ordinary surface
+    // token in `verifier.json`), the same trust model as /run/finish — the
+    // ordinary token's blast radius (which any same-UID surface holds) must
+    // not include switching on an autonomous mutation loop.
+    const verifierOnly =
+      request.url === "/run/review" ||
+      request.url === "/run/finish" ||
+      request.url === "/rsi/start" ||
+      request.url === "/schedule/run-now";
     const requiredToken = verifierOnly ? context.verificationToken : context.token;
     if (!authorized(request, requiredToken)) return send(response, 401, { error: "unauthorized" });
     if (request.url === "/health") return send(response, 200, { status: "ok" });
@@ -128,6 +144,86 @@ async function handleRequest(
       }
       await context.runController.finish({ runId: body.runId, outcome: body.outcome });
       return send(response, 200, {});
+    }
+    if (request.url === "/rsi/start") {
+      if (context.selfImprovement === undefined) return send(response, 404, { error: "not found" });
+      if (
+        !isRecord(body) || typeof body.workspace !== "string" ||
+        typeof body.objective !== "string" || typeof body.maxIterations !== "number"
+      ) {
+        return send(response, 400, { error: "invalid self-improvement start request" });
+      }
+      const spec: SelfImprovementSpec = {
+        workspace: body.workspace,
+        objective: body.objective,
+        maxIterations: body.maxIterations,
+        // P0-2 (adversarial review): the review gate is ON by default. A plain
+        // run verifies with no evidence requirements at all, so an unspecified
+        // flag must never produce an evidence-free acceptance path — opting out
+        // is an explicit `requiresReview: false`.
+        ...(body.requiresReview === false ? { requiresReview: false } : { requiresReview: true }),
+        ...(typeof body.maxConsecutiveRejections === "number" ? { maxConsecutiveRejections: body.maxConsecutiveRejections } : {}),
+        ...(typeof body.budgetUsd === "number" ? { budgetUsd: body.budgetUsd } : {}),
+        ...(body.direction === "higher" || body.direction === "lower" ? { direction: body.direction } : {}),
+        ...(typeof body.baselineScore === "number" ? { baselineScore: body.baselineScore } : {}),
+      };
+      try {
+        return send(response, 200, { loop: context.selfImprovement.start(spec) });
+      } catch (error) {
+        // Invalid spec or a duplicate running loop: a client error, not a
+        // server fault, and never a silently queued second loop.
+        return send(response, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    if (request.url === "/rsi/status") {
+      if (context.selfImprovement === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body)) return send(response, 400, { error: "invalid self-improvement status request" });
+      if (typeof body.id === "string" && body.id.length > 0) {
+        return send(response, 200, { loop: context.selfImprovement.get(body.id) ?? null });
+      }
+      return send(response, 200, { loops: context.selfImprovement.status() });
+    }
+    if (request.url === "/rsi/cancel") {
+      if (context.selfImprovement === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body)) return send(response, 400, { error: "invalid self-improvement cancel request" });
+      const cancelled = context.selfImprovement.cancel({
+        ...(typeof body.id === "string" ? { id: body.id } : {}),
+        ...(typeof body.workspace === "string" ? { workspace: body.workspace } : {}),
+      });
+      return send(response, 200, { cancelled });
+    }
+    if (request.url === "/schedule/list") {
+      if (context.schedules === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body)) return send(response, 400, { error: "invalid schedule list request" });
+      return send(response, 200, { schedules: context.schedules.list() });
+    }
+    if (request.url === "/schedule/save") {
+      if (context.schedules === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body) || typeof body.id !== "string" || typeof body.title !== "string" || typeof body.cron !== "string" || typeof body.prompt !== "string") {
+        return send(response, 400, { error: "invalid schedule save request" });
+      }
+      try {
+        const schedules = context.schedules.save(body as unknown as import("./hub-scheduler.js").ScheduleDefinition);
+        return send(response, 200, { schedules });
+      } catch (error) {
+        // Validation or persistence failure: a client error when the shape is
+        // bad, but never a partially-admitted in-memory schedule.
+        return send(response, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    if (request.url === "/schedule/delete") {
+      if (context.schedules === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body) || typeof body.id !== "string" || body.id.length === 0) {
+        return send(response, 400, { error: "invalid schedule delete request" });
+      }
+      return send(response, 200, { schedules: context.schedules.remove(body.id) });
+    }
+    if (request.url === "/schedule/run-now") {
+      if (context.schedules === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body) || typeof body.id !== "string" || body.id.length === 0) {
+        return send(response, 400, { error: "invalid schedule run-now request" });
+      }
+      return send(response, 200, { fired: await context.schedules.runNow(body.id) });
     }
     if (request.url === "/snapshot") {
       if (!isRecord(body)) return send(response, 400, { error: "invalid snapshot request" });

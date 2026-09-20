@@ -43,6 +43,13 @@ export function useSessionUsage(): SessionUsage | undefined {
   return useContext(SessionUsageContext);
 }
 
+/** The focused session's live agent identity (handshake facts). */
+const AgentIdentityContext = createContext<{ readonly agent?: string | undefined; readonly version?: string | undefined }>({});
+
+export function useAgentIdentity(): { readonly agent?: string | undefined; readonly version?: string | undefined } {
+  return useContext(AgentIdentityContext);
+}
+
 const SessionCommandsContext = createContext<readonly SessionCommand[]>([]);
 
 /** Slash commands the active agent advertised; empty until/unless it does. */
@@ -227,13 +234,15 @@ export function WorkflowRuntimeProvider({ children, sessionId, onCommandSession 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <SessionUsageContext.Provider value={envelope.usage}>
-        <SessionStatusContext.Provider value={{ state: envelope.state.state, ...(envelope.error === undefined ? {} : { error: envelope.error }) }}>
-          <SessionCommandsContext.Provider value={envelope.commands ?? []}>
-            <SessionStateContext.Provider value={{ isRunning, items: envelope.items, queuedPrompt, discardQueue, queuePrompt, showThinking, setShowThinking }}>
-              {children}
-            </SessionStateContext.Provider>
-          </SessionCommandsContext.Provider>
-        </SessionStatusContext.Provider>
+        <AgentIdentityContext.Provider value={{ agent: envelope.agent, version: envelope.agentVersion }}>
+          <SessionStatusContext.Provider value={{ state: envelope.state.state, ...(envelope.error === undefined ? {} : { error: envelope.error }) }}>
+            <SessionCommandsContext.Provider value={envelope.commands ?? []}>
+              <SessionStateContext.Provider value={{ isRunning, items: envelope.items, queuedPrompt, discardQueue, queuePrompt, showThinking, setShowThinking }}>
+                {children}
+              </SessionStateContext.Provider>
+            </SessionCommandsContext.Provider>
+          </SessionStatusContext.Provider>
+        </AgentIdentityContext.Provider>
       </SessionUsageContext.Provider>
     </AssistantRuntimeProvider>
   );

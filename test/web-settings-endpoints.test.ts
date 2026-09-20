@@ -19,7 +19,6 @@ import {
 } from "../src/integrations/workflow-settings.js";
 import { opencodeServerWorkspaceTag } from "../src/integrations/opencode-server-runtime.js";
 import { writeOpencodeServerDiscovery } from "../src/integrations/opencode-server-discovery.js";
-import { saveSchedulesTable } from "../src/integrations/hub-scheduler.js";
 
 /** Starts the web server against a throwaway home + workspace so the settings
  * files never touch the operator's real config. */
@@ -219,36 +218,7 @@ test("live MCP endpoint: honest unavailable states without a topology daemon", a
   assert.match(dead.reason ?? "", /did not answer/);
 });
 
-test("schedules endpoint: the shared table reads with the hub's own contract, errors surface honestly", async (context) => {
-  const { base } = await startServer(context);
-  const schedulesPath = join(tmpdir(), `wf-sched-${process.pid}-${Date.now()}.json`);
-  context.after(() => rmSync(schedulesPath, { force: true }));
-
-  const previous = process.env.WORKFLOW_HUB_SCHEDULES;
-  process.env.WORKFLOW_HUB_SCHEDULES = schedulesPath;
-  context.after(() => {
-    if (previous === undefined) delete process.env.WORKFLOW_HUB_SCHEDULES;
-    else process.env.WORKFLOW_HUB_SCHEDULES = previous;
-  });
-
-  // No file: no schedules, no error, and the path is stated for the operator.
-  const empty = await fetch(`${base}/api/schedules`).then((response) => response.json()) as {
-    schedules: unknown[]; schedulesPath: string; error?: string; hub: { reachable: boolean };
-  };
-  assert.deepEqual(empty.schedules, []);
-  assert.equal(empty.error, undefined);
-  assert.equal(empty.schedulesPath, schedulesPath, "the echoed path is the table the hub actually reads");
-  assert.equal(typeof empty.hub.reachable, "boolean", "hub reachability is an honest probe result");
-
-  // A real table reads through with its definitions (written via the real
-  // saver so the fixture follows the versioned envelope exactly).
-  saveSchedulesTable(schedulesPath, [{
-    id: "nightly", title: "Nightly audit", cron: "0 9 * * *", prompt: "audit the repo", requiresReview: true,
-  }]);
-  const loaded = await fetch(`${base}/api/schedules`).then((response) => response.json()) as {
-    schedules: readonly { id: string; title: string; cron: string; prompt: string }[];
-  };
-  assert.equal(loaded.schedules.length, 1);
-  assert.equal(loaded.schedules[0]?.id, "nightly");
-  assert.equal(loaded.schedules[0]?.prompt, "audit the repo");
-});
+// The "schedules endpoint" test was removed in the merge with main: the
+// /api/schedules surface is main's hub proxy (live schedule registry with
+// save/delete/run-now, pinned by the hub-proxy endpoint tests on main), which
+// supersedes this branch's read-only file-table read.

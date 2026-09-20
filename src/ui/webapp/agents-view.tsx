@@ -22,12 +22,14 @@ function CloseIcon() {
 }
 
 /**
- * The Sessions page: every session record with its live facts (running? live
- * runtime? which agent), the agent picker for new sessions, and switch /
- * rename / dismiss. Session history lives here and behind /sessions — never
- * in a sidebar panel.
+ * The Agents page (renamed from "Sessions" 2026-09-19, operator direction: a
+ * more truthful description that avoids confusion with transcript history):
+ * every agent session record with its live facts (running? live runtime? which
+ * agent), the agent picker for new sessions, and switch / rename / dismiss.
+ * Session history lives here and behind /agents (the /sessions command stays
+ * as an alias) — never in a sidebar panel.
  */
-export function SessionsView({ sessions, agents, onActivate, onCreate, onSwitchAgent, onRename, onDismiss, onClearUnused, onOpenChat }: {
+export function AgentsView({ sessions, agents, onActivate, onCreate, onSwitchAgent, onRename, onDismiss, onClearUnused, onOpenChat }: {
   readonly sessions: readonly SessionMeta[] | undefined;
   readonly agents: readonly AgentInfo[];
   readonly onActivate: (id: string) => void;
@@ -49,9 +51,9 @@ export function SessionsView({ sessions, agents, onActivate, onCreate, onSwitchA
 
   if (sessions === undefined) {
     return (
-      <section className="sessions-view" aria-label="Sessions">
+      <section className="sessions-view" aria-label="Agents">
         <header className="sessions-view-head">
-          <h2>Sessions</h2>
+          <h2>Agents</h2>
         </header>
         <p className="muted sessions-empty-note">This server runs a single session — session management is unavailable.</p>
       </section>
@@ -59,9 +61,9 @@ export function SessionsView({ sessions, agents, onActivate, onCreate, onSwitchA
   }
 
   return (
-    <section className="sessions-view" aria-label="Sessions">
+    <section className="sessions-view" aria-label="Agents">
       <header className="sessions-view-head">
-        <h2>Sessions</h2>
+        <h2>Agents</h2>
         <div className="sessions-view-new">
           <label className="sessions-agent-label" htmlFor="sessions-agent-picker">New session on</label>
           <select

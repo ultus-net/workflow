@@ -18,9 +18,10 @@ import { canonicalWorkspace } from "../integrations/run-registry.js";
 import {
   createBudgetGuard,
   createHubScheduler,
-  loadSchedulesTable,
   type BudgetGuard,
 } from "../integrations/hub-scheduler.js";
+import { createScheduleRegistry } from "../integrations/schedule-registry.js";
+import { createSelfImprovementRegistry } from "../integrations/self-improvement-registry.js";
 import { createWorkflowHub, type WorkflowHubSchedulerHandles } from "../integrations/workflow-hub.js";
 import { taskId, type TaskId } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
@@ -138,23 +139,24 @@ const testRunner = teamTaskVerificationCommand !== undefined && teamTaskVerifica
   ? createRunTestRunner({ command: teamTaskVerificationCommand, shell: containedShell(true) })
   : undefined;
 
-// Plan Task C1/C2: the hub-native scheduler. The table lives under the data
-// dir (WORKFLOW_HUB_SCHEDULES overrides the path); an absent or empty table
-// means no scheduled runs. Every fired run is review-gated by default and
-// budget-enforced from metering-proxy metrics (plan C2).
+// Plan Task C1/C2: the hub-native scheduler, now W074-managed. The table
+// lives under the data dir (WORKFLOW_HUB_SCHEDULES overrides the path) and is
+// owned by the live schedule registry, so operator edits take effect without a
+// hub restart. An absent or empty table means no scheduled runs.
 const schedulesPath = process.env.WORKFLOW_HUB_SCHEDULES ?? join(homedir(), ".workflow", "scheduler.json");
-const schedules = loadSchedulesTable(schedulesPath);
-// Plan Task G5 + W075 wiring: the hub composes scheduled prompts, so the
-// orientation block (W075 — static, versioned, no interpolation; the agent
+const scheduleRegistry = createScheduleRegistry({ path: schedulesPath });
+// Plan Task G5 + W077 wiring: the hub composes scheduled prompts, so the
+// orientation block (W077 — static, versioned, no interpolation; the agent
 // learns the hub exists and which tools to reach for) and the operator's
 // advisory guidance (WORKFLOW_ADVISORY_STYLE / WORKFLOW_ADVISORY_NOTES) are
 // prepended to every scheduled turn — honestly advisory prompt text.
 const promptGuidance = hubPromptGuidanceFromEnv(process.env);
-const schedulerFactory = schedules.length === 0 ? undefined : (handles: WorkflowHubSchedulerHandles) =>
-  createHubScheduler({
+const schedulerFactory = (handles: WorkflowHubSchedulerHandles) => {
+  const scheduler = createHubScheduler({
     controller: handles.controller,
     recordBlockingReason: handles.recordBlockingReason,
-    schedules: () => schedules,
+    // Live read: registry edits are visible to the very next tick.
+    schedules: () => scheduleRegistry.list(),
     log: (message) => console.log(message),
     ...(promptGuidance === undefined ? {} : { promptGuidance }),
     runTurn: async ({ runId, workspace, prompt, budget }) => {
@@ -207,6 +209,8 @@ const schedulerFactory = schedules.length === 0 ? undefined : (handles: Workflow
       }
     },
   });
+  return scheduler;
+};
 
 let hub: Awaited<ReturnType<typeof createWorkflowHub>>;
 try {
@@ -215,7 +219,17 @@ try {
     guard,
     ...(teamTaskVerificationCommand === undefined ? {} : { teamTaskVerificationCommand }),
     ...(testRunner === undefined ? {} : { testRunner }),
-    ...(schedulerFactory === undefined ? {} : { schedulerFactory }),
+    schedulerFactory,
+    schedules: scheduleRegistry,
+    // W073 trigger surface: the registry and its routes exist, but the
+    // production LoopRunner (live proposal source + agent applier + measure)
+    // is Checkpoint F work. It fails closed with that message rather than
+    // pretending a loop ran — /rsi/start surfaces the error as a client error.
+    selfImprovement: createSelfImprovementRegistry({
+      runLoop: async () => {
+        throw new Error("no production self-improvement loop runner is configured on this hub yet (Checkpoint F)");
+      },
+    }),
     reviewerFactory,
     ...(requestLogPath === undefined ? {} : {
       observeRequest: (path) => appendFileSync(requestLogPath, `${path}\n`, { mode: 0o600 }),

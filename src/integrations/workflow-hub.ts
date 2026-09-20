@@ -10,6 +10,8 @@ import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-c
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { createRunRegistry, type RunReviewerFactory, type RunTestRunner } from "./run-registry.js";
 import type { HubScheduler } from "./hub-scheduler.js";
+import type { SelfImprovementRegistry } from "./self-improvement-registry.js";
+import type { ScheduleRegistry } from "./schedule-registry.js";
 
 /**
  * The Workflow hub daemon: a long-running loopback authority that any Cline
@@ -55,6 +57,18 @@ export async function createWorkflowHub(
     reviewerFactory?: RunReviewerFactory;
     testRunner?: RunTestRunner;
     schedulerFactory?: (handles: WorkflowHubSchedulerHandles) => HubScheduler;
+    /**
+     * W073 trigger surface: when provided, the hub exposes operator-token
+     * `/rsi/start|status|cancel` routes backed by this registry. Absent means
+     * the routes 404 (the loop is not configured on this hub).
+     */
+    selfImprovement?: SelfImprovementRegistry;
+    /**
+     * W074 scheduled-task manager: when provided, the hub exposes
+     * operator-token `/schedule/list|save|delete|run-now` routes backed by this
+     * registry. Absent means the routes 404.
+     */
+    schedules?: ScheduleRegistry;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -80,12 +94,22 @@ export async function createWorkflowHub(
         recordRunUsage: runs.recordRunUsage,
       })
       : undefined;
+    // W074: connect the schedule registry's run-now to the live scheduler so
+    // the operator route fires the same gated run path the clock uses. Done
+    // here (not in each composition root) so any caller wiring a registry and
+    // a scheduler together gets run-now for free.
+    if (scheduler !== undefined && options.schedules !== undefined) {
+      const scheduleRegistry = options.schedules;
+      scheduleRegistry.attachRunner((id) => scheduler.trigger(id));
+    }
     bridge = await createWorkflowHubBridge(
       application,
       runs?.resolve,
       runs?.controller,
       options.observeRequest,
       options.guard,
+      options.selfImprovement,
+      options.schedules,
     );
     options.observeBridgeStarted?.(bridge.url);
     scheduler?.start();

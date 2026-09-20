@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 
 import type { AgentRuntimePreference, McpServerSetting, McpTransport } from "../../integrations/workflow-settings.js";
 import type { LiveMcpState } from "../../integrations/opencode-live-state.js";
-import type { ScheduleDefinition } from "../../integrations/hub-scheduler.js";
 import type { WebConfigOption } from "../web-config-options.js";
 import { ConfigField } from "./config-field.js";
 import { formatTokens } from "./presenters.js";
@@ -78,16 +77,9 @@ export interface SettingsRouting {
   readonly onSave: (agent: string, preference: AgentRuntimePreference) => Promise<boolean>;
 }
 
-/** The scheduler's operator surface (read-only): the hub daemon's cron table
- * plus hub reachability. The hub loads the table at startup and owns run
- * history, so this section states what it can and cannot show. */
-export interface SettingsSchedules {
-  readonly schedules: readonly ScheduleDefinition[];
-  readonly schedulesPath: string;
-  readonly hub: { readonly reachable: boolean; readonly url?: string } | undefined;
-  readonly error?: string | undefined;
-  readonly loading: boolean;
-}
+// The schedule surface lives on main's Schedules page (hub proxy, live
+// registry with pause/resume/delete/run-now) — the settings section from this
+// branch was superseded and removed in the merge.
 
 export interface SettingsDialogProps {
   readonly onClose: () => void;
@@ -102,7 +94,6 @@ export interface SettingsDialogProps {
   readonly permissions: SettingsPermissions;
   readonly capabilities: SettingsCapabilities;
   readonly mcp: SettingsMcp;
-  readonly schedules: SettingsSchedules;
   readonly enforcement: { readonly level: string | undefined; readonly transport: string | undefined; readonly copy: string | undefined };
   readonly agents: readonly SettingsAgentInfo[];
   readonly currentAgent: string;
@@ -115,7 +106,6 @@ const NAV: readonly { readonly id: string; readonly label: string }[] = [
   { id: "settings-options", label: "Agent options" },
   { id: "settings-routing", label: "Model routing" },
   { id: "settings-mcp", label: "MCP servers" },
-  { id: "settings-schedules", label: "Schedules" },
   { id: "settings-approvals", label: "Approvals" },
   { id: "settings-transcript", label: "Transcript" },
   { id: "settings-notifications", label: "Notifications" },
@@ -207,7 +197,6 @@ export function SettingsDialog(props: SettingsDialogProps) {
           <div id="settings-options"><AgentOptionsSection options={props.options} setOption={props.setOption} patterns={props.permissions.patterns} /></div>
           <div id="settings-routing"><RoutingSection routing={props.routing} /></div>
           <div id="settings-mcp"><McpSection mcp={props.mcp} /></div>
-          <div id="settings-schedules"><SchedulesSection schedules={props.schedules} /></div>
           {props.permissions.available && (
             <div id="settings-approvals"><ApprovalsSection permissions={props.permissions} capabilities={props.capabilities} /></div>
           )}
@@ -838,53 +827,6 @@ function RoutingAgentForm({ agent, preference, onSave }: {
         </p>
       )}
     </div>
-  );
-}
-
-/**
- * The scheduler's operator surface — read-only by design: the hub daemon
- * loads the cron table at startup and owns run history, so this section shows
- * what the file holds, states the hub state honestly, and points run history
- * at the monitor TUI. Editing arrives later (it needs a hub reload seam so a
- * file edit cannot silently desync from the running daemon).
- */
-export function SchedulesSection({ schedules }: { readonly schedules: SettingsSchedules }) {
-  return (
-    <Section title="Schedules">
-      <p className="settings-desc">
-        The hub daemon's cron table (<code>{schedules.schedulesPath}</code>). The hub loads this table
-        at startup — edits apply on hub restart — and run history lives in the hub process
-        (the monitor TUI shows per-run usage).
-      </p>
-      {schedules.loading && <p className="settings-desc">Loading schedules…</p>}
-      {schedules.error !== undefined && <p className="settings-error" role="alert">{schedules.error}</p>}
-      {schedules.hub !== undefined && (
-        <Row
-          label="Hub daemon"
-          description={schedules.hub.reachable ? `running (${schedules.hub.url ?? "discovered"})` : "not reachable — schedules fire when the hub daemon runs"}
-          control={<span className="settings-desc">{schedules.hub.reachable ? "reachable" : "unreachable"}</span>}
-        />
-      )}
-      {schedules.schedules.length === 0 && !schedules.loading && !schedules.error && (
-        <p className="settings-desc">No schedules configured. Add entries to the cron table and restart the hub to fire them.</p>
-      )}
-      {schedules.schedules.map((schedule) => (
-        <Row
-          key={schedule.id}
-          label={schedule.title === "" ? schedule.id : schedule.title}
-          description={[
-            `${schedule.cron}`,
-            schedule.workspace === undefined ? "workspace: none (hub default)" : `workspace: ${schedule.workspace}`,
-            schedule.prompt,
-            schedule.requiresReview === false ? "review: skipped" : "review: required",
-            schedule.budget === undefined ? undefined : `budget: ${JSON.stringify(schedule.budget)}`,
-            schedule.taskClass === undefined ? undefined : `class: ${schedule.taskClass}`,
-            schedule.offPeak === undefined ? undefined : `off-peak: ${schedule.offPeak}`,
-          ].join(" · ")}
-          control={<span className="settings-desc">{schedule.requiresReview === false ? "no review" : "review-gated"}</span>}
-        />
-      ))}
-    </Section>
   );
 }
 
