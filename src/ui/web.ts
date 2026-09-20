@@ -542,36 +542,58 @@ export function createWorkflowWebServer(
     // Persisted agent runtime preferences (model/mode/effort). These are the
     // launch defaults the control plane pushes into each agent's config on the
     // next session; live changes still ride ACP `setConfigOption`.
-    if (request.method === "POST" && pathname === "/api/settings/agents") {
-      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
-      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
-        return json(response, 415, { error: "content-type must be application/json" });
-      }
-      try {
+    if (pathname === "/api/settings/agents") {
+      if (request.method === "GET") {
         const paths = settingsPaths(settingsPathOptions());
-        const body = await readJson(request);
-        const input = body as { agent?: unknown; preference?: unknown; scope?: unknown } | null;
-        const agent = typeof input?.agent === "string" && input.agent.trim().length > 0 ? input.agent.trim() : undefined;
-        if (agent === undefined) return json(response, 400, { error: "agent is required" });
-        const normalized = normalizeSettings({ agents: { [agent]: input?.preference } });
-        const preference = normalized.agents[agent];
-        if (preference === undefined) return json(response, 400, { error: "preference must set at least one of model, mode, thoughtLevel" });
-        const scope = input?.scope === "global" || input?.scope === "workspace"
-          ? input.scope
-          : paths.workspace === undefined ? "global" : "workspace";
-        if (scope === "workspace" && paths.workspace === undefined) {
-          return json(response, 409, { error: "workspace scope unavailable: the service has no workspace root" });
-        }
-        const path = scope === "workspace" ? paths.workspace! : paths.global;
-        const current = readSettingsFile(path);
-        writeSettingsFile(path, {
-          ...current,
-          agents: { ...current.agents, [agent]: { ...(current.agents[agent] ?? {}), ...preference } },
-          updatedAt: new Date().toISOString(),
+        const global = readSettingsFile(paths.global);
+        const workspace = paths.workspace === undefined ? defaultSettings() : readSettingsFile(paths.workspace);
+        return json(response, 200, {
+          agents: mergeSettings(global, workspace).agents,
+          // Routing facts the env currently dictates — presence booleans and
+          // the upstream URL only, never secret values.
+          facts: {
+            upstream: process.env.WORKFLOW_ACP_UPSTREAM?.trim() || "https://openrouter.ai",
+            envModelOpencode: (process.env.WORKFLOW_OPENCODE_MODEL ?? "").trim().length > 0,
+            envModelGoose: [
+              process.env.WORKFLOW_GOOSE_MODEL,
+              process.env.GOOSE_MODEL,
+              process.env.AZURE_FOUNDRY_MODEL,
+            ].some((entry) => (entry ?? "").trim().length > 0),
+            managementKey: (process.env.WORKFLOW_OPENROUTER_MANAGEMENT_KEY ?? "").trim().length > 0,
+          },
         });
-        return json(response, 200, { scope, agent, preference });
-      } catch {
-        return json(response, 400, { error: "invalid request body" });
+      }
+      if (request.method === "POST") {
+        if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+        if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+          return json(response, 415, { error: "content-type must be application/json" });
+        }
+        try {
+          const paths = settingsPaths(settingsPathOptions());
+          const body = await readJson(request);
+          const input = body as { agent?: unknown; preference?: unknown; scope?: unknown } | null;
+          const agent = typeof input?.agent === "string" && input.agent.trim().length > 0 ? input.agent.trim() : undefined;
+          if (agent === undefined) return json(response, 400, { error: "agent is required" });
+          const normalized = normalizeSettings({ agents: { [agent]: input?.preference } });
+          const preference = normalized.agents[agent];
+          if (preference === undefined) return json(response, 400, { error: "preference must set at least one of model, mode, thoughtLevel" });
+          const scope = input?.scope === "global" || input?.scope === "workspace"
+            ? input.scope
+            : paths.workspace === undefined ? "global" : "workspace";
+          if (scope === "workspace" && paths.workspace === undefined) {
+            return json(response, 409, { error: "workspace scope unavailable: the service has no workspace root" });
+          }
+          const path = scope === "workspace" ? paths.workspace! : paths.global;
+          const current = readSettingsFile(path);
+          writeSettingsFile(path, {
+            ...current,
+            agents: { ...current.agents, [agent]: { ...(current.agents[agent] ?? {}), ...preference } },
+            updatedAt: new Date().toISOString(),
+          });
+          return json(response, 200, { scope, agent, preference });
+        } catch {
+          return json(response, 400, { error: "invalid request body" });
+        }
       }
     }
     if (request.method === "GET" && pathname.startsWith("/api/image/")) {

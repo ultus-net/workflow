@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 
-import type { McpServerSetting, McpTransport } from "../../integrations/workflow-settings.js";
+import type { AgentRuntimePreference, McpServerSetting, McpTransport } from "../../integrations/workflow-settings.js";
 import type { WebConfigOption } from "../web-config-options.js";
 import { ConfigField } from "./config-field.js";
 import { formatTokens } from "./presenters.js";
@@ -55,6 +55,23 @@ export interface SettingsMcp {
   readonly toggle: (name: string, enabled: boolean) => Promise<void>;
 }
 
+/** Environment-dictated routing facts, surfaced read-only in the routing section. */
+export interface RoutingFacts {
+  readonly upstream: string;
+  readonly envModelOpencode: boolean;
+  readonly envModelGoose: boolean;
+  readonly managementKey: boolean;
+}
+
+export interface SettingsRouting {
+  readonly agents: Readonly<Record<string, AgentRuntimePreference>>;
+  readonly facts: RoutingFacts;
+  readonly loading: boolean;
+  readonly error: string | undefined;
+  /** Persists one agent's launch defaults (same doc the runtime consumes). */
+  readonly onSave: (agent: string, preference: AgentRuntimePreference) => Promise<void>;
+}
+
 export interface SettingsDialogProps {
   readonly onClose: () => void;
   readonly palette: string | undefined;
@@ -64,6 +81,7 @@ export interface SettingsDialogProps {
   readonly onRailsToggle: (off: boolean) => void;
   readonly options: readonly WebConfigOption[];
   readonly setOption: (id: string, value: string | boolean) => void;
+  readonly routing: SettingsRouting;
   readonly permissions: SettingsPermissions;
   readonly capabilities: SettingsCapabilities;
   readonly mcp: SettingsMcp;
@@ -77,6 +95,7 @@ const NAV: readonly { readonly id: string; readonly label: string }[] = [
   { id: "settings-appearance", label: "Appearance" },
   { id: "settings-agent", label: "Agent" },
   { id: "settings-options", label: "Agent options" },
+  { id: "settings-routing", label: "Model routing" },
   { id: "settings-mcp", label: "MCP servers" },
   { id: "settings-approvals", label: "Approvals" },
   { id: "settings-transcript", label: "Transcript" },
@@ -167,6 +186,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
           <div id="settings-appearance"><AppearanceSection {...props} /></div>
           <div id="settings-agent"><AgentSection agents={props.agents} currentAgent={props.currentAgent} onSwitchAgent={props.onSwitchAgent} /></div>
           <div id="settings-options"><AgentOptionsSection options={props.options} setOption={props.setOption} patterns={props.permissions.patterns} /></div>
+          <div id="settings-routing"><RoutingSection routing={props.routing} /></div>
           <div id="settings-mcp"><McpSection mcp={props.mcp} /></div>
           {props.permissions.available && (
             <div id="settings-approvals"><ApprovalsSection permissions={props.permissions} capabilities={props.capabilities} /></div>
@@ -650,6 +670,115 @@ function ConnectorsSection({ mcp }: { readonly mcp: SettingsMcp }) {
           />
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Model routing: the persisted per-agent launch defaults (model + reasoning
+ * effort) written to the same settings document the runtime consumes at
+ * launch (`agents.<id>.model` → the metered launch config), plus the routing
+ * facts the environment currently dictates, stated read-only and honestly —
+ * an env-set model override wins over the panel default, so it is shown, not
+ * hidden. `thoughtLevel` applies where the engine consumes a reasoning-effort
+ * launch flag.
+ */
+const ROUTING_AGENTS: readonly { readonly id: string; readonly label: string; readonly hint: string }[] = [
+  { id: "opencode", label: "OpenCode", hint: "consumed at launch into the metered opencode config" },
+  { id: "goose", label: "Goose", hint: "persisted launch default for the contained goose agent" },
+  { id: "cline", label: "Cline", hint: "persisted launch default; maps to the engine's thinking flag" },
+];
+
+const THOUGHT_LEVELS: readonly string[] = ["none", "low", "medium", "high", "xhigh"];
+
+export function RoutingSection({ routing }: { readonly routing: SettingsRouting }) {
+  return (
+    <Section title="Model routing">
+      <p className="settings-desc">
+        Launch defaults per agent — the model and reasoning effort the control plane
+        writes into each agent's launch config on the next session. Live changes still
+        ride the agent's own config options.
+      </p>
+      {routing.loading && <p className="settings-desc">Loading routing defaults…</p>}
+      {routing.error !== undefined && <p className="settings-error" role="alert">{routing.error}</p>}
+      {ROUTING_AGENTS.map((agent) => {
+        const preference = routing.agents[agent.id] ?? {};
+        return (
+          <div className="settings-subgroup" key={agent.id}>
+            <h4>{agent.label}</h4>
+            <p className="settings-desc">{agent.hint}</p>
+            <RoutingAgentForm agent={agent.id} preference={preference} onSave={routing.onSave} />
+          </div>
+        );
+      })}
+      <div className="settings-subgroup">
+        <h4>Environment facts</h4>
+        <Row
+          label="Model traffic upstream"
+          description={routing.facts.upstream}
+          control={<span className="settings-desc">set via WORKFLOW_ACP_UPSTREAM</span>}
+        />
+        <Row
+          label="Env model overrides"
+          description={
+            routing.facts.envModelOpencode || routing.facts.envModelGoose
+              ? "present — an env-set model wins over the panel default for that agent"
+              : "none — the panel defaults apply to every agent"
+          }
+          control={<span className="settings-desc">{[routing.facts.envModelOpencode ? "opencode" : "", routing.facts.envModelGoose ? "goose" : ""].filter(Boolean).join(", ") || "—"}</span>}
+        />
+        <Row
+          label="Usage management key"
+          description="WORKFLOW_OPENROUTER_MANAGEMENT_KEY"
+          control={<span className="settings-desc">{routing.facts.managementKey ? "present" : "absent"}</span>}
+        />
+      </div>
+    </Section>
+  );
+}
+
+function RoutingAgentForm({ agent, preference, onSave }: {
+  readonly agent: string;
+  readonly preference: AgentRuntimePreference;
+  readonly onSave: (agent: string, preference: AgentRuntimePreference) => Promise<void>;
+}) {
+  const [model, setModel] = useState(preference.model ?? "");
+  const [thoughtLevel, setThoughtLevel] = useState(preference.thoughtLevel ?? "");
+  const [saved, setSaved] = useState(false);
+  const dirty = (preference.model ?? "") !== model || (preference.thoughtLevel ?? "") !== thoughtLevel;
+  return (
+    <div className="mcp-editor" role="group" aria-label={`${agent} launch defaults`}>
+      <label className="mcp-field">
+        <span>Model</span>
+        <input
+          value={model}
+          placeholder="engine default"
+          onChange={(event) => { setModel(event.target.value); setSaved(false); }}
+        />
+      </label>
+      <label className="mcp-field">
+        <span>Reasoning effort</span>
+        <select value={thoughtLevel} onChange={(event) => { setThoughtLevel(event.target.value); setSaved(false); }}>
+          <option value="">engine default</option>
+          {THOUGHT_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
+        </select>
+      </label>
+      <span className="mcp-editor-actions">
+        <button
+          type="button"
+          className="btn"
+          disabled={!dirty}
+          onClick={() => {
+            const next: AgentRuntimePreference = {
+              ...(model.trim() === "" ? {} : { model: model.trim() }),
+              ...(thoughtLevel === "" ? {} : { thoughtLevel }),
+            };
+            void onSave(agent, next).then(() => setSaved(true));
+          }}
+        >
+          {saved ? "Saved" : "Save"}
+        </button>
+      </span>
     </div>
   );
 }

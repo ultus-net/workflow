@@ -13,13 +13,13 @@ import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
 import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } from "./presenters.js";
 import { useSessionCommands, useSessionState, useSessionStatus, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
-import { SettingsDialog } from "./settings-dialog.js";
+import { SettingsDialog, type RoutingFacts } from "./settings-dialog.js";
 import { SessionsView } from "./sessions-view.js";
 import { UsageView } from "./usage-view.js";
 import { listPalettes } from "./theme/palettes.js";
 import { usePalette } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
-import type { McpServerSetting } from "../../integrations/workflow-settings.js";
+import type { AgentRuntimePreference, McpServerSetting } from "../../integrations/workflow-settings.js";
 import type { ToolboxCatalogEntry } from "../../integrations/toolbox-catalog.js";
 import type { WebConfigOption } from "../web-config-options.js";
 
@@ -426,6 +426,46 @@ function useMcpSettings() {
     remove,
     toggle,
   };
+}
+
+/** Loads and edits the persisted per-agent launch defaults (model routing). */
+function useRoutingSettings() {
+  const [agents, setAgents] = useState<Record<string, AgentRuntimePreference> | undefined>(undefined);
+  const [facts, setFacts] = useState<RoutingFacts | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>(undefined);
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/settings/agents");
+      if (!response.ok) return;
+      const loaded = await response.json() as { agents: Record<string, AgentRuntimePreference>; facts: RoutingFacts };
+      setAgents(loaded.agents);
+      setFacts(loaded.facts);
+    } catch {
+      // Keep the last good state; the page retries on the next open.
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const save = useCallback(async (agent: string, preference: AgentRuntimePreference): Promise<void> => {
+    setError(undefined);
+    try {
+      const response = await fetch("/api/settings/agents", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agent, preference }),
+      });
+      if (!response.ok) {
+        setError(((await response.json()) as { error?: string }).error ?? "could not save routing defaults");
+        return;
+      }
+      await load();
+    } catch {
+      setError("could not save routing defaults");
+    }
+  }, [load]);
+
+  return { agents: agents ?? {}, facts: facts ?? { upstream: "…", envModelOpencode: false, envModelGoose: false, managementKey: false }, loading: agents === undefined, error, onSave: save };
 }
 
 /** Polls the agent-advertised session configuration; empty when the agent offers none. */
@@ -1763,6 +1803,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const permissions = usePermissions(focusedSessionId);
   const capabilities = useCapabilities();
   const mcp = useMcpSettings();
+  const routing = useRoutingSettings();
   const { isRunning, items, queuePrompt } = useSessionState();
   const slashCommands = useSessionCommands();
   const { palette, setPalette } = usePalette();
@@ -1987,6 +2028,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           permissions={permissions}
           capabilities={capabilities}
           mcp={mcp}
+          routing={routing}
           enforcement={{ level: snapshot?.enforcementLevel, transport: snapshot?.transport, copy: enforcementCopy }}
           agents={agents}
           currentAgent={currentAgent}

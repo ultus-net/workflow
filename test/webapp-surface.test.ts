@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, StatusBar, UsageMeter } from "../src/ui/webapp/app.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { EditDiff, parseEditTool } from "../src/ui/webapp/diff-text.js";
-import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection } from "../src/ui/webapp/settings-dialog.js";
+import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection, RoutingSection } from "../src/ui/webapp/settings-dialog.js";
 import { listPalettes } from "../src/ui/webapp/theme/palettes.js";
 import { DEFAULT_WEB_AGENT, listWebAgents } from "../src/ui/web-agents.js";
 import type { WebConfigOption } from "../src/ui/web-config-options.js";
@@ -297,5 +297,34 @@ test("inspector MCP section lists the configured catalog honestly, not a fabrica
   assert.ok(markup.includes("context7") && markup.includes("guard"), "every configured server must be listed");
   assert.ok(markup.includes("configured") && markup.includes("disabled"), "enabled/disabled state must be stated");
   assert.ok(markup.includes("does not expose"), "the section must state that ACP exposes no live MCP list");
+});
+
+test("settings routing section edits per-agent launch defaults and states env facts honestly", () => {
+  const markup = renderToStaticMarkup(createElement(RoutingSection, {
+    routing: {
+      agents: {
+        opencode: { model: "openrouter/auto", thoughtLevel: "high" },
+        goose: { mode: "build" },
+      },
+      facts: {
+        upstream: "https://openrouter.ai",
+        envModelOpencode: true,
+        envModelGoose: false,
+        managementKey: true,
+      },
+      loading: false,
+      error: undefined,
+      onSave: async () => {},
+    },
+  }));
+  assert.ok(markup.includes("Model routing"), "the routing section must render");
+  for (const agent of ["OpenCode", "Goose", "Cline"]) {
+    assert.ok(markup.includes(agent), `the routing section must cover ${agent}`);
+  }
+  assert.ok(markup.includes("openrouter/auto"), "the persisted model default must be shown");
+  assert.ok(markup.includes("high"), "the persisted reasoning effort must be selected");
+  assert.ok(markup.includes("next session"), "the section must state defaults apply at launch, not live");
+  assert.ok(markup.includes("wins over the panel default"), "an env-set model override must be stated, not hidden");
+  assert.ok(markup.includes("present"), "the management key fact must show presence, never the value");
 });
 

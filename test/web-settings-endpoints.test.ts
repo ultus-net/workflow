@@ -137,3 +137,48 @@ test("agent preferences persist as launch defaults and merge per key", async (co
   });
   assert.equal(missing.status, 400);
 });
+
+test("agent routing GET merges scopes and reports environment facts without secrets", async (context) => {
+  const { base, home, workspace } = await startServer(context);
+
+  const seed = await fetch(`${base}/api/settings/agents`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agent: "goose", preference: { model: "goose/seeded" } }),
+  });
+  assert.equal(seed.status, 200);
+  writeSettingsFile(settingsPaths({ home, workspace }).global, normalizeSettings({
+    agents: { goose: { mode: "build" }, opencode: { model: "openrouter/auto" } },
+  }));
+
+  // The upstream fact must echo the operator-set env var; restore it after.
+  const previousUpstream = process.env.WORKFLOW_ACP_UPSTREAM;
+  const previousModel = process.env.WORKFLOW_OPENCODE_MODEL;
+  process.env.WORKFLOW_ACP_UPSTREAM = "https://example-upstream.test";
+  delete process.env.WORKFLOW_OPENCODE_MODEL;
+  context.after(() => {
+    if (previousUpstream === undefined) delete process.env.WORKFLOW_ACP_UPSTREAM;
+    else process.env.WORKFLOW_ACP_UPSTREAM = previousUpstream;
+    if (previousModel === undefined) delete process.env.WORKFLOW_OPENCODE_MODEL;
+    else process.env.WORKFLOW_OPENCODE_MODEL = previousModel;
+  });
+
+  const read = await fetch(`${base}/api/settings/agents`).then((response) => response.json()) as {
+    agents: Record<string, Record<string, string>>;
+    facts: Record<string, unknown>;
+  };
+
+  // Workspace (just persisted) merges over global per key.
+  assert.equal(read.agents.goose?.model, "goose/seeded");
+  assert.equal(read.agents.goose?.mode, "build");
+  assert.equal(read.agents.opencode?.model, "openrouter/auto");
+
+  // Facts: echo the upstream env var, presence booleans only — never secret values.
+  assert.equal(read.facts.upstream, "https://example-upstream.test");
+  assert.deepEqual(Object.keys(read.facts).sort(), [
+    "envModelGoose", "envModelOpencode", "managementKey", "upstream",
+  ]);
+  assert.equal(read.facts.envModelOpencode, false, "env model was deleted; the panel default must apply");
+  assert.equal(typeof read.facts.envModelGoose, "boolean");
+  assert.equal(typeof read.facts.managementKey, "boolean");
+});
