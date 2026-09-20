@@ -9,6 +9,7 @@ import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpCon
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { EditDiff, parseEditTool } from "../src/ui/webapp/diff-text.js";
 import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection, RoutingSection, SchedulesSection } from "../src/ui/webapp/settings-dialog.js";
+import { LiveTopologyStats } from "../src/ui/webapp/usage-view.js";
 import { listPalettes } from "../src/ui/webapp/theme/palettes.js";
 import { DEFAULT_WEB_AGENT, listWebAgents } from "../src/ui/web-agents.js";
 import type { WebConfigOption } from "../src/ui/web-config-options.js";
@@ -383,5 +384,30 @@ test("the schedules section lists the hub's cron table and states its limits hon
   assert.ok(markup.includes("not reachable"), "an unreachable hub is stated honestly");
   assert.ok(markup.includes("edits apply on hub restart"), "the panel must state the startup-load contract");
   assert.ok(markup.includes("monitor TUI"), "run history must be pointed where it actually lives");
+});
+
+test("the usage view renders live topology statistics and states absence honestly", () => {
+  const live = renderToStaticMarkup(createElement(LiveTopologyStats, {
+    state: {
+      live: true as const,
+      gatewayUrl: "http://127.0.0.1:4699",
+      stats: {
+        sessions: 4, prompts: 11, steps: 23,
+        tokens: { input: 12_000, output: 3_400, reasoning: 900, cacheRead: 120, cacheWrite: 60 },
+        cost: 0.421,
+        tools: { calls: 18, succeeded: 15, failed: 2, unfinished: 1 },
+      },
+    },
+  }));
+  assert.ok(live.includes("Server topology") && live.includes("127.0.0.1:4699"), "the stats block must attribute its source gateway");
+  assert.ok(live.includes("11") && live.includes("23"), "prompt and step counts must render");
+  assert.ok(live.includes("$0.4210"), "cost must render at four decimals");
+  assert.ok(live.includes("18 calls") && live.includes("2 failed"), "tool reliability must render");
+
+  const unavailable = renderToStaticMarkup(createElement(LiveTopologyStats, {
+    state: { live: false as const, reason: "no server topology daemon is running for this workspace" },
+  }));
+  assert.match(unavailable, /no server-topology stats/, "absence must be stated as a value");
+  assert.match(unavailable, /no server topology daemon/, "the honest reason renders");
 });
 

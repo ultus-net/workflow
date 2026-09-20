@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { fetchLiveMcp } from "../src/integrations/opencode-live-state.js";
+import { fetchLiveMcp, fetchSessionStats } from "../src/integrations/opencode-live-state.js";
 import { opencodeServerDiscoveryPath, writeOpencodeServerDiscovery } from "../src/integrations/opencode-server-discovery.js";
 
 /**
@@ -80,4 +80,47 @@ test("live MCP read: a dead gateway and a foreign host fail closed with reasons"
   const refused = await fetchLiveMcp({ workspace: discovery.workspace, stateHome: foreign, fetchImpl: stubFetch({ "/api/info": { version: "2.0.10" } }) });
   assert.equal(refused.live, false);
   if (!refused.live) assert.match(refused.reason, /not loopback/);
+});
+
+test("session stats: the documented aggregate maps defensively to the live state", async (t) => {
+  const stateHome = mkdtempSync(join(tmpdir(), "wf-live-state-"));
+  t.after(() => rmSync(stateHome, { recursive: true, force: true }));
+  writeOpencodeServerDiscovery(opencodeServerDiscoveryPath(stateHome, discovery.workspace), discovery);
+  // The recon-verified v2.0.10 aggregate shape, plus junk the mapper must not trust.
+  const fetchImpl = stubFetch({
+    "/api/info": { version: "2.0.10" },
+    "/api/experimental/session/stats": { data: {
+      range: { from: 1, to: 2 },
+      sessions: 3,
+      subagents: 2,
+      prompts: 7,
+      steps: 12,
+      tokens: { input: 1000, output: 2000, reasoning: 300, cache: { read: 50, write: 60 } },
+      cost: 0.1234,
+      tools: { mode: "summary", totals: { calls: 9, succeeded: 7, failed: 1, unfinished: 1 } },
+      activeDays: 2,
+      notANumber: "garbage",
+    } },
+  });
+  const state = await fetchSessionStats({ workspace: discovery.workspace, stateHome, fetchImpl });
+  assert.equal(state.live, true);
+  if (state.live) {
+    assert.equal(state.gatewayUrl, "http://127.0.0.1:4699");
+    assert.deepEqual(state.stats, {
+      sessions: 3,
+      prompts: 7,
+      steps: 12,
+      tokens: { input: 1000, output: 2000, reasoning: 300, cacheRead: 50, cacheWrite: 60 },
+      cost: 0.1234,
+      tools: { calls: 9, succeeded: 7, failed: 1, unfinished: 1 },
+    });
+  }
+});
+
+test("session stats: unavailable without a daemon, and the reason is the value", async (t) => {
+  const stateHome = mkdtempSync(join(tmpdir(), "wf-live-state-"));
+  t.after(() => rmSync(stateHome, { recursive: true, force: true }));
+  const state = await fetchSessionStats({ workspace: "/tmp/wf-live-nowhere", stateHome, fetchImpl: stubFetch({}) });
+  assert.equal(state.live, false);
+  if (!state.live) assert.match(state.reason, /no server topology daemon.*session stats/s);
 });

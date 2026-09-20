@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { createOpenRouterAnalytics, usageTimeRange, type OpenRouterAnalytics } from "../integrations/openrouter-analytics.js";
-import { fetchLiveMcp } from "../integrations/opencode-live-state.js";
+import { fetchLiveMcp, fetchSessionStats } from "../integrations/opencode-live-state.js";
 import { loadSchedulesTable, type ScheduleDefinition } from "../integrations/hub-scheduler.js";
 import { resolveHubDiscoveryPath } from "../integrations/workflow-hub.js";
 import { readHubDiscovery, probeHub } from "../cli/hub-client.js";
@@ -553,6 +553,14 @@ export function createWorkflowWebServer(
     if (request.method === "GET" && pathname === "/api/settings/mcp/live") {
       const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
       const live = await fetchLiveMcp({ workspace: options?.workspace ?? process.cwd(), stateHome });
+      return json(response, 200, live);
+    }
+    // Live session statistics (W079, data lane read #2): the documented
+    // aggregate through the enforced gateway, honest reasons when the
+    // topology is not running. Read-only.
+    if (request.method === "GET" && pathname === "/api/usage/sessions/live") {
+      const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
+      const live = await fetchSessionStats({ workspace: options?.workspace ?? process.cwd(), stateHome });
       return json(response, 200, live);
     }
     // The scheduler's operator surface (the custom web UI, per the operator's
