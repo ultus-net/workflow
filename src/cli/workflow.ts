@@ -87,6 +87,13 @@ if (selected === "web") {
   // it stays an explicit opt-in (honest-claims: no enforced claim is made).
   const opencodeWeb = process.env.WORKFLOW_OPENCODE_WEB_URL;
   if (opencodeWeb !== undefined && opencodeWeb !== "") void openBrowser(opencodeWeb);
+} else if (selected === "doctor") {
+  const { runDoctor, renderDoctorReport } = await import("./doctor.js");
+  const checks = await runDoctor({ workspace });
+  console.log(renderDoctorReport(checks));
+  // Exit 1 only on hard failures; warns (a hub not running, no topology) are
+  // expected states, not failures.
+  process.exitCode = checks.some((check) => check.status === "fail") ? 1 : 0;
 } else if (selected === "settings") {
   const { startWorkflowWeb } = await import("./web-service.js");
   const service = await startWorkflowWeb({ workspace });

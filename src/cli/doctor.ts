@@ -1,0 +1,188 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+import { probeHub, readHubDiscovery } from "./hub-client.js";
+import { resolveHubDiscoveryPath } from "../integrations/workflow-hub.js";
+import {
+  opencodeServerDiscoveryPath,
+  probeOpencodeServerGateway,
+  readOpencodeServerDiscovery,
+} from "../integrations/opencode-server-discovery.js";
+import { listWebAgents } from "../ui/web-agents.js";
+import { normalizeSettings, settingsPaths } from "../integrations/workflow-settings.js";
+
+/**
+ * W076 — `workflow doctor`: one command that states the truth about the
+ * operator's setup — fail-loud, actionable, credential values never printed.
+ * Every check is pass/warn/fail; nothing silently passes (the honest-claims
+ * culture applied to diagnostics). Idea adopted from oh-my-openagent's
+ * `doctor` (pattern only; SUL-1.0 upstream — no code).
+ */
+
+export type DoctorStatus = "pass" | "warn" | "fail";
+
+export interface DoctorCheck {
+  readonly name: string;
+  readonly status: DoctorStatus;
+  readonly detail: string;
+  /** The actionable fix line when the check is not a pass. */
+  readonly fix?: string;
+}
+
+export interface DoctorOptions {
+  readonly home?: string | undefined;
+  readonly workspace?: string | undefined;
+  readonly fetchImpl?: typeof fetch | undefined;
+}
+
+const PASS = "✓";
+const WARN = "!";
+const FAIL = "✗";
+
+/** Settings documents: both scopes parse, or the error is the value. */
+export function checkSettingsDocs(options: DoctorOptions = {}): DoctorCheck {
+  const name = "settings documents";
+  try {
+    const paths = settingsPaths({
+      ...(options.home === undefined ? {} : { home: options.home }),
+      ...(options.workspace === undefined ? {} : { workspace: options.workspace }),
+    });
+    if (!existsSync(paths.global)) {
+      return { name, status: "pass", detail: `no global settings yet (created on first write) — ${paths.global}` };
+    }
+    const global = normalizeSettings(JSON.parse(readFileSync(paths.global, "utf8")));
+    let overlayNote = "";
+    if (paths.workspace !== undefined && existsSync(paths.workspace)) {
+      const overlay = normalizeSettings(JSON.parse(readFileSync(paths.workspace, "utf8")));
+      overlayNote = `; workspace overlay parses (${overlay.mcpServers.length} servers, ${Object.keys(overlay.agents).length} agent prefs)`;
+    }
+    return {
+      name,
+      status: "pass",
+      detail: `global parses (${global.mcpServers.length} mcp servers, ${Object.keys(global.agents).length} agent prefs) at ${paths.global}${overlayNote}`,
+    };
+  } catch (error) {
+    return {
+      name,
+      status: "fail",
+      detail: `settings documents do not parse: ${error instanceof Error ? error.message : String(error)}`,
+      fix: "fix the JSON in ~/.config/workflow/settings.json (or the workspace overlay) — the control plane fails closed on unparseable settings",
+    };
+  }
+}
+
+/** Per-agent credential presence: the switcher's own truth (booleans + the
+ * same reasons the UI renders), never secret values. */
+export function checkAgentCredentials(): readonly DoctorCheck[] {
+  return listWebAgents().map((agent) => {
+    const name = `agent credentials: ${agent.name}`;
+    if (agent.available) {
+      return { name, status: "pass" as const, detail: `${agent.name} is available (${agent.containment} launch)` };
+    }
+    return {
+      name,
+      status: "fail" as const,
+      detail: `${agent.name} unavailable — ${agent.reason ?? "prerequisites not met"}`,
+      ...(agent.reason === undefined ? {} : { fix: agent.reason }),
+    };
+  });
+}
+
+/** Hub daemon reachability: the registry and scheduler live there. */
+export async function checkHub(_options: DoctorOptions = {}): Promise<DoctorCheck> {
+  const name = "hub daemon";
+  const discovery = readHubDiscovery(resolveHubDiscoveryPath(join(homedir(), ".workflow")));
+  if (discovery === undefined) {
+    return {
+      name,
+      status: "warn",
+      detail: "no hub discovery file — scheduled runs and run gates need the hub daemon (`workflow hub`)",
+      fix: "start the hub daemon: workflow hub",
+    };
+  }
+  const reachable = await probeHub(discovery);
+  if (!reachable) {
+    return {
+      name,
+      status: "fail",
+      detail: `stale hub discovery at ${discovery.endpoint} — nothing answered /health`,
+      fix: "delete the stale discovery file (~/.workflow/hub/discovery.json) and start the hub daemon: workflow hub",
+    };
+  }
+  return { name, status: "pass", detail: `reachable at ${discovery.endpoint}` };
+}
+
+/** The Workflow-owned opencode server topology: gateway up for this workspace? */
+export async function checkTopologyGateway(options: DoctorOptions = {}): Promise<DoctorCheck> {
+  const name = "server topology gateway";
+  const workspace = options.workspace ?? process.cwd();
+  const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
+  const discovery = readOpencodeServerDiscovery(opencodeServerDiscoveryPath(stateHome, workspace));
+  if (discovery === undefined) {
+    return {
+      name,
+      status: "warn",
+      detail: `no topology daemon for this workspace (${workspace}) — the stock web UI tab and live MCP/stats reads have nothing to answer`,
+      fix: "start it when you want the topology: workflow tui (or the hub, which owns the daemon)",
+    };
+  }
+  const healthy = await probeOpencodeServerGateway(discovery, options.fetchImpl);
+  if (!healthy) {
+    return {
+      name,
+      status: "fail",
+      detail: `stale topology discovery at ${discovery.gatewayUrl} — nothing answered`,
+      fix: "the daemon exited; restart it (workflow tui) or delete the stale discovery file under ~/.workflow/opencode-server",
+    };
+  }
+  return { name, status: "pass", detail: `gateway live at ${discovery.gatewayUrl} (workspace ${discovery.workspace})` };
+}
+
+/** The gated live-probe families: which could run right now, and where the
+ * dated verdicts live. Doctor states the gates; it never fabricates verdicts. */
+export function checkProbeGates(): DoctorCheck {
+  const name = "gated live probes";
+  const gates: readonly { readonly env: string; readonly label: string }[] = [
+    { env: "WORKFLOW_ACP_OPENCODE_SUBAGENT", label: "OpenCode ACP subagent projection" },
+    { env: "WORKFLOW_ACP_OPENCODE_MCP_MOUNT", label: "OpenCode ACP MCP mount" },
+    { env: "WORKFLOW_ACP_OPENCODE_RESUME", label: "OpenCode ACP session resume" },
+    { env: "WORKFLOW_ACP_GOOSE_SUBAGENT", label: "goose subagent projection" },
+    { env: "WORKFLOW_ACP_GOOSE_METERED", label: "goose metered turn" },
+    { env: "WORKFLOW_OPENCODE_SERVER_ATTACH", label: "standard-TUI server topology (M1)" },
+    { env: "WORKFLOW_OPENCODE_WEBUI_PROBE", label: "stock web UI behind the enforced gateway" },
+    { env: "WORKFLOW_OPENCODE_V2_PROBE", label: "opencode v2 route qualification" },
+  ];
+  const ready = gates.filter((gate) => process.env[gate.env] === "1");
+  return {
+    name,
+    status: "pass",
+    detail: `${ready.length}/${gates.length} gates armed (${
+      ready.length > 0 ? ready.map((gate) => gate.env).join(", ") : "none"
+    }) — dated verdicts live in docs/HOST_ADAPTERS.md; run a gated probe with WORKFLOW_<GATE>=1 node --import tsx --test test/<probe>.test.ts`,
+  };
+}
+
+export async function runDoctor(options: DoctorOptions = {}): Promise<readonly DoctorCheck[]> {
+  const checks: DoctorCheck[] = [];
+  checks.push(checkSettingsDocs(options));
+  checks.push(...checkAgentCredentials());
+  checks.push(await checkHub(options));
+  checks.push(await checkTopologyGateway(options));
+  checks.push(checkProbeGates());
+  return checks;
+}
+
+export function renderDoctorReport(checks: readonly DoctorCheck[]): string {
+  return [
+    "Workflow doctor — the local setup, stated honestly:",
+    "",
+    ...checks.map((check) =>
+      [
+        `  ${check.status === "pass" ? PASS : check.status === "warn" ? WARN : FAIL} ${check.name}: ${check.detail}`,
+        ...(check.fix === undefined ? [] : [`      fix: ${check.fix}`]),
+      ].join("\n"),
+    ),
+    "",
+  ].join("\n");
+}

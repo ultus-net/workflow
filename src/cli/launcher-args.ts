@@ -8,21 +8,23 @@ import { fileURLToPath } from "node:url";
  * keeping the picker testable without spawning anything.
  */
 
-export type LauncherVerb = "web" | "tui" | "settings" | "hub";
+export type LauncherVerb = "web" | "tui" | "settings" | "hub" | "doctor";
 
 export const LAUNCHER_OPTIONS: readonly { readonly verb: LauncherVerb; readonly label: string }[] = [
   { verb: "web", label: "web — browser operator UI (+ settings tab)" },
   { verb: "tui", label: "tui — official opencode TUI via the hub gateway" },
   { verb: "settings", label: "settings — settings panel only" },
   { verb: "hub", label: "hub — hub daemon only (no display)" },
+  // `doctor` is a utility verb (`workflow doctor`), deliberately absent from
+  // the interactive display picker — the picker selects a display, not a check.
 ];
 
 /** Subcommand-first contract: argv[0] is the surface verb when bare. */
 export function parseLauncherArgs(argv: readonly string[]): { verb?: LauncherVerb; rest: readonly string[] } {
   const verb = argv[0];
   if (verb === undefined || verb.startsWith("-")) return { rest: argv };
-  if (verb !== "web" && verb !== "tui" && verb !== "settings" && verb !== "hub") {
-    throw new TypeError(`unknown surface '${verb}' (expected web | tui | settings | hub)`);
+  if (verb !== "web" && verb !== "tui" && verb !== "settings" && verb !== "hub" && verb !== "doctor") {
+    throw new TypeError(`unknown surface '${verb}' (expected web | tui | settings | hub | doctor)`);
   }
   return { verb, rest: argv.slice(1) };
 }
