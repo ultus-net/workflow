@@ -1091,15 +1091,30 @@ live hub session without a restart.
 **Depends on:** W073 (engine axis lands before probes exercise multiple agent kinds).
 
 **Acceptance criteria:**
-- [ ] A live probe drives the stock opencode web UI behind the hub gateway and records the verdict
-      per pinned version in `docs/HOST_ADAPTERS.md` (gated on `WORKFLOW_ACP_*`, skips clean when unset).
-- [ ] A live probe or deterministic test proves config publish → live session pickup (or documents
-      the restart-required limitation honestly in `docs/FEATURES.md`).
-- [ ] No claim upgrades to Complete without the probe evidence; hub config publish remains the
-      single journal of record.
+- [x] A live probe drives the stock opencode web UI behind the hub gateway and records the verdict
+      per pinned version in `docs/HOST_ADAPTERS.md` (gated, skips clean when unset).
+      (`test/opencode-webui-gateway-probe.test.ts`, gate `WORKFLOW_OPENCODE_WEBUI_PROBE=1`; **live
+      green on stock v2.0.10, 2026-09-20** through the enforced gateway. Required a deliberate
+      `app-shell` route class (§2.5 row) and surfaced the version-tolerance repair: v2.x serves the
+      SPA on every bare path, so the health wait walks both contracts via the shared
+      `src/integrations/opencode-health.ts` module (v1 JSON `{healthy:true}` or v2 `/api/info` —
+      landed 2026-09-20 from a concurrent session in this checkout, folded into the W074 commit with
+      attribution); the always-run runtime test (4/4) is repaired. The M1 attach probe's bare-path
+      spellings are stale on v2.0.10 — stated in `docs/HOST_ADAPTERS.md` with the reason;
+      re-qualification open.)
+- [x] A live probe or deterministic test proves config publish → live session pickup (or documents
+      the restart-required limitation honestly in `docs/FEATURES.md`). (Documented: launch-time
+      application only — only `model` reaches a launch config today; reasoning effort has no launch
+      consumer yet; no hot reload, changes reach a *new* session. Pinned by the routing UI copy +
+      focused tests; `docs/FEATURES.md` row "Settings panel: model routing (slice 2)".)
+- [x] No claim upgrades to Complete without the probe evidence; hub config publish remains the
+      single journal of record. (The web-UI row was upgraded only with the live probe; W071's attach
+      surface stays advisory/probe-PENDING with the staleness stated, not silently repaired.)
 
-**Verification:** the gated probe tests run green with the gate set; `docs/HOST_ADAPTERS.md` and
-`docs/FEATURES.md` rows updated with dated verdicts.
+**Verification:** `WORKFLOW_OPENCODE_WEBUI_PROBE=1 node --import tsx --test
+test/opencode-webui-gateway-probe.test.ts` green (v2.0.10, 2026-09-20); classifier + gateway suites
+82/82; `test/opencode-server-runtime.test.ts` 4/4; typecheck and lint clean; dated rows in
+`docs/HOST_ADAPTERS.md`, `docs/FEATURES.md`, and §2.5.
 
 ### W075 - Hub orientation briefing (prompt-level block; skill depth layer behind a dated decision)
 
