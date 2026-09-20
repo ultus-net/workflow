@@ -33,7 +33,7 @@ const RANGES = [
  * read through the enforced gateway when the server topology runs. Honest
  * states only — null until resolved, the reason is the value when unavailable,
  * never a fabricated figure. */
-export function LiveTopologyStats(props: { readonly state?: LiveStatsState | undefined } = {}) {
+export function LiveTopologyStats(props: { readonly state?: LiveStatsState | undefined }) {
   const [fetched, setFetched] = useState<LiveStatsState | undefined>(undefined);
   const state = props.state ?? fetched;
   useEffect(() => {
