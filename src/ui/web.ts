@@ -7,6 +7,7 @@ import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { createOpenRouterAnalytics, usageTimeRange, type OpenRouterAnalytics } from "../integrations/openrouter-analytics.js";
 import { defaultSettings, mergeSettings, normalizeSettings, readSettingsFile, settingsPaths, writeSettingsFile } from "../integrations/workflow-settings.js";
+import { resolveToolboxCatalog } from "../integrations/toolbox-catalog.js";
 import { evidenceId, observationId, taskId, type TaskState } from "../kernel/contracts.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
 import { WebSessionManager, type SessionSwitchResult } from "./web-sessions.js";
@@ -508,6 +509,9 @@ export function createWorkflowWebServer(
           global: global.mcpServers,
           workspace: workspace.mcpServers,
           workspaceOverlay: paths.workspace !== undefined,
+          // The vendored connector catalog: every toolbox MCP the operator can
+          // enable with one toggle instead of hand-typed JSON.
+          catalog: resolveToolboxCatalog(),
         });
       }
       if (request.method === "POST") {

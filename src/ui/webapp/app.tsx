@@ -20,6 +20,7 @@ import { listPalettes } from "./theme/palettes.js";
 import { usePalette } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
 import type { McpServerSetting } from "../../integrations/workflow-settings.js";
+import type { ToolboxCatalogEntry } from "../../integrations/toolbox-catalog.js";
 import type { WebConfigOption } from "../web-config-options.js";
 
 interface SnapshotTask {
@@ -340,6 +341,7 @@ interface McpState {
   readonly global: readonly McpServerSetting[];
   readonly workspace: readonly McpServerSetting[];
   readonly workspaceOverlay: boolean;
+  readonly catalog?: readonly ToolboxCatalogEntry[];
 }
 
 /** Persists an explicit runtime preference (model/mode/effort) into the
@@ -416,6 +418,7 @@ function useMcpSettings() {
     servers: state?.servers ?? [],
     scope,
     workspaceOverlay: state?.workspaceOverlay ?? false,
+    catalog: state?.catalog ?? [],
     loading: state === undefined,
     error,
     setScope: setScopeState,

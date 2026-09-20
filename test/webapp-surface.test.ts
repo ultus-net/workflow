@@ -121,6 +121,7 @@ test("settings page surfaces the Workflow-owned MCP catalog and states launch-ti
         { name: "context7", enabled: true, transport: "http", url: "https://mcp.context7.com/mcp" },
         { name: "guard", enabled: false, transport: "stdio", command: "node", args: ["server.js"] },
       ],
+      catalog: [],
       scope: "workspace",
       workspaceOverlay: true,
       loading: false,
@@ -136,6 +137,33 @@ test("settings page surfaces the Workflow-owned MCP catalog and states launch-ti
   assert.ok(markup.includes("Global") && markup.includes("Workspace"), "both settings scopes must be selectable");
   assert.ok(markup.includes("apply when a") && markup.includes("session starts"), "the page must state that MCP changes apply on the next session");
   assert.ok(markup.includes("config-toggle"), "each server must carry an enable toggle");
+});
+
+test("the connectors section lists vendored apps with availability and add controls", () => {
+  const markup = renderToStaticMarkup(createElement(McpSection, {
+    mcp: {
+      servers: [{ name: "skills-mcp", enabled: true, transport: "stdio", command: "node", args: ["server.js"] }],
+      catalog: [
+        { name: "skills-mcp", description: "Skills delivery.", transport: "stdio", serverPath: "/x/dist/server.js", available: true },
+        { name: "git-intelligence-mcp", description: "Git intelligence.", transport: "stdio", serverPath: "/x/dist/server.js", available: true },
+        { name: "egress-audit-mcp", description: "Egress audit.", transport: "stdio", serverPath: "/x/dist/server.js", available: false },
+      ],
+      scope: "global",
+      workspaceOverlay: false,
+      loading: false,
+      error: undefined,
+      setScope: noop,
+      upsert: async () => {},
+      remove: async () => {},
+      toggle: async () => {},
+    },
+  }));
+  assert.ok(markup.includes("Available connectors"), "the vendored connector grid must render");
+  assert.ok(markup.includes("Added"), "a connector already configured must show as added, not a duplicate add");
+  assert.ok(markup.includes("Git intelligence."), "an unconfigured connector must carry its description");
+  assert.ok(markup.includes("not built (npm run toolbox:build)"), "an unbuilt connector must state its availability honestly");
+  assert.ok(markup.includes("Unbuilt"), "an unbuilt connector must be labeled and its Add control disabled");
+  assert.ok(!markup.includes(">Add</button>") || markup.includes("mcp-catalog-add"), "an available unconfigured connector offers Add");
 });
 
 test("agent options group boolean config options as tools and list remembered decisions", () => {

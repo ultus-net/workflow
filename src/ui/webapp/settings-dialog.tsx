@@ -34,8 +34,17 @@ export interface SettingsAgentInfo {
  * each agent's launch config when a session starts — never hot-applied, since
  * ACP fixes `mcpServers` at session creation.
  */
+export interface SettingsMcpCatalogEntry {
+  readonly name: string;
+  readonly description: string;
+  readonly transport: "stdio";
+  readonly serverPath: string;
+  readonly available: boolean;
+}
+
 export interface SettingsMcp {
   readonly servers: readonly McpServerSetting[];
+  readonly catalog: readonly SettingsMcpCatalogEntry[];
   readonly scope: "global" | "workspace";
   readonly workspaceOverlay: boolean;
   readonly loading: boolean;
@@ -534,6 +543,7 @@ export function McpSection({ mcp }: { readonly mcp: SettingsMcp }) {
           }
         />
       ))}
+      <ConnectorsSection mcp={mcp} />
       {!editing && (
         <button type="button" className="btn btn-ghost settings-reset" onClick={() => { setFormError(undefined); setDraft(emptyDraft()); }}>
           Add MCP server
@@ -591,6 +601,56 @@ export function McpSection({ mcp }: { readonly mcp: SettingsMcp }) {
         </form>
       )}
     </Section>
+  );
+}
+
+/**
+ * The vendored connector catalog (settings MVP): every mcp-toolbox app, with
+ * truthful build availability, enabled with one toggle. A connector already
+ * present in the configured list shows as added rather than duplicating it —
+ * the configured row above remains the single control for it.
+ */
+function ConnectorsSection({ mcp }: { readonly mcp: SettingsMcp }) {
+  const configured = new Set(mcp.servers.map((server) => server.name));
+  if (mcp.catalog.length === 0) return null;
+  return (
+    <div className="settings-subgroup">
+      <h4>Available connectors</h4>
+      <p className="settings-desc">
+        Vendored Workflow MCP servers. Adding one writes the same launch config the
+        servers above write — it takes effect on the next session.
+      </p>
+      {mcp.catalog.map((entry) => {
+        const added = configured.has(entry.name);
+        return (
+          <Row
+            key={entry.name}
+            label={entry.name}
+            description={entry.available ? entry.description : `${entry.description} · not built (npm run toolbox:build)`}
+            control={
+              <button
+                type="button"
+                className={`btn btn-ghost settings-reset ${added ? "" : "mcp-catalog-add"}`}
+                disabled={added || !entry.available}
+                onClick={() => {
+                  if (added || !entry.available) return;
+                  void mcp.upsert({
+                    name: entry.name,
+                    enabled: true,
+                    transport: entry.transport,
+                    command: "node",
+                    args: [entry.serverPath],
+                  });
+                }}
+                title={added ? "Already configured — control it in the list above" : undefined}
+              >
+                {added ? "Added" : (entry.available ? "Add" : "Unbuilt")}
+              </button>
+            }
+          />
+        );
+      })}
+    </div>
   );
 }
 
