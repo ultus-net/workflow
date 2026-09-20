@@ -118,6 +118,27 @@ test("step ledger: read starts empty, define appends with an evidence requiremen
   const locked = await post(base, "/api/steps/cancel", { id: "t1-step-1" });
   assert.equal(locked.status, 409);
   assert.equal((await locked.json() as { code: string }).code, "ILLEGAL_STEP_TRANSITION");
+
+  // Appending to an existing ledger is the primary second+step usage: the
+  // reconstruction must carry prior steps through unchanged (ids, contents,
+  // evidence requirements) or the kernel's I-2/priority rules bite and the
+  // operator sees a duplicate or a state-losing ledger.
+  const appended = await post(base, "/api/steps/define", { taskId: "t1", content: "review the diff" });
+  assert.equal(appended.status, 201);
+  const afterAppend = (await appended.json() as {
+    steps: readonly { id: string; content: string; state: string; requiredEvidence: readonly unknown[] }[];
+  }).steps;
+  assert.equal(afterAppend.length, 2);
+  assert.deepEqual(afterAppend[0], {
+    id: "t1-step-1",
+    taskId: "t1",
+    content: "write the tests",
+    state: "COMPLETED",
+    requiredEvidence: [{ authority: "environment", subject: "step:write the tests" }],
+  }, "the prior step survives re-definition bit-for-bit (id, task, content, state, evidence)");
+  assert.equal(afterAppend[1]?.id, "t1-step-2");
+  assert.equal(afterAppend[1]?.state, "PENDING");
+  assert.deepEqual(afterAppend[1]?.requiredEvidence, [{ authority: "environment", subject: "step:review the diff" }]);
 });
 
 test("step ledger: define guards fail closed (unknown task, empty content, blocked task)", async (context) => {

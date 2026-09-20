@@ -412,7 +412,6 @@ test("the step-ledger row renders the canonical step with only kernel-legal acti
   assert.ok(!active.includes("Start step"), "a step already in progress offers no start");
   assert.match(active, /evidence-bound/, "completion must state that it is evidence-bound (I-3)");
 
-  // A step on a task that is not IN_PROGRESS offers no actions at all: the
   // A step on a task that is not IN_PROGRESS cannot start (I-1: the kernel
   // requires the task IN_PROGRESS) and there is nothing to complete yet — but
   // cancel stays legal from PENDING (the kernel's cancel guard is trivial), so
