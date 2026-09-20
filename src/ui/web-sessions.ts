@@ -136,6 +136,16 @@ export class WebSessionManager {
     return this.#sessions.some((entry) => entry.id === id);
   }
 
+  /** The session's live agent session id (the ACP driver's agent session —
+   * for the opencode driver, the v2 `ses…` id the data-lane routes take).
+   * Reads the live runtime first, then the persisted record; undefined when
+   * the session has never established a runtime (nothing to compact). */
+  agentSessionIdFor(id: string): string | undefined {
+    const fromLive = this.#live.get(id)?.runtime.driver.agentSessionId();
+    if (fromLive !== undefined) return fromLive;
+    return this.#sessions.find((entry) => entry.id === id)?.agentSessionId;
+  }
+
   activeMeta(): WebSessionMeta | undefined {
     const focused = this.#focusId === undefined ? undefined : this.#sessions.find((entry) => entry.id === this.#focusId);
     return focused === undefined ? undefined : this.#meta(focused);

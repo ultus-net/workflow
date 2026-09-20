@@ -1436,16 +1436,30 @@ hook (`ctx.session.hook("compaction")`) is explicitly NOT used — no plugins.
       forwarded session-input op (operator-controlled maintenance) — classifier row + gateway
       forward test + upstream stub updated; the §2.5 bullet records the dated reclassification
       (`fork`/`move`/`remove`/staged-revert remain denied).
-- [ ] Research note: what OpenCode v2 does natively per compaction type (`native` vs `summary`) and
-      whether the ACP lane (`opencode acp`) auto-compacts without the HTTP route — the ACP-lane
-      gap is the actual regression the operator hit. (Partially answered from the v2 docs: the
-      runtime compacts on context overflow instead of retrying, and a `compaction` request hook
-      exists upstream — **not used** per the no-plugins constraint. Live probe still owed.)
+- [x] Research note: what OpenCode v2 does natively per compaction type (`native` vs `summary`) and
+      whether the ACP lane (`opencode acp`) auto-compacts without the HTTP route — **completed
+      2026-09-20** as the dated §9 research note (pinned v2.0.10 binary strings + the v2 OpenAPI):
+      `native` compaction is provider-local (replay cannot reconstruct it), `summary` is v2's own
+      persisted checkpoint; auto-compaction is per-model runtime config (`compactIfNeeded`,
+      `compactThreshold`, `compaction.auto`) that runs on the session stream — **not** the HTTP
+      route — so the ACP lane auto-compacts exactly when the model's config enables it, and the
+      operator regression is the overflow `400` ("start a new session or use /compact") when auto
+      is unavailable. No plugin involved, per the no-plugins constraint.
 - [ ] The PWA surfaces context pressure and a compaction control (custom UI, per the
       surface-division decision); the hub-side auto-trigger is deterministic and budget-guard-aware.
-      (**Open** — needs the topology session wiring; deferred to the next compaction slice.)
-- [ ] Live probe evidence per pinned version; no enforced claim without it. (**Open**.)
-
+      (**Half-landed 2026-09-20**: the control is wired — the inspector Context section's
+      "Compact…" affordance → `POST /api/sessions/compact` → the manager's agent-session record →
+      the documented route through the enforced gateway; the honest copy states the documented
+      steering semantics (queued, runs at the next step boundary) and failures surface the
+      gateway's reason verbatim. **Still open:** the hub-side threshold auto-trigger — a
+      deterministic, budget-guard-aware gate needs its own design decision (threshold source,
+      trigger owner) before it lands.)
+- [x] Live probe evidence per pinned version; no enforced claim without it. (**Done 2026-09-20:**
+      `test/opencode-compact-probe.test.ts` gated `WORKFLOW_OPENCODE_COMPACT_PROBE=1` ran live
+      green on stock v2.0.10 through the **enforced** gateway — unauthenticated compact `401`,
+      session create via the documented route, and compact **admitted** as the documented
+      `Session.Inbox.Compaction` inbox item (queued at the next step boundary); the verdict is
+      recorded in `docs/HOST_ADAPTERS.md`.)
 ### W083 - Step-ledger panel in the custom web UI (the todo-tracking track)
 
 **Objective:** Surface the W072 kernel step ledger (roadmap → tasks → steps) in the

@@ -2909,3 +2909,4 @@ body {
 .context-rows { display: flex; flex-direction: column; gap: 0.2rem; }
 .context-row { display: flex; justify-content: space-between; gap: 1rem; margin: 0; font-size: 0.8rem; }
 .context-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.68rem; }
+.context-compaction { margin: 0.3rem 0 0; color: var(--text-muted); font-size: 0.72rem; }

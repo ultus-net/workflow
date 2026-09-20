@@ -286,6 +286,16 @@ test("inspector Context section reports tokens, percent used, and spend", () => 
   assert.ok(markup.includes("42.0k") && markup.includes("200.0k"), "tokens used / window must show");
   assert.ok(markup.includes("21%"), "percent used must show");
   assert.ok(markup.includes("$0.1490"), "spend must show");
+  // W082: the manual compaction control rides a focused live session —
+  // absent without one, present (honestly labelled) with one.
+  assert.ok(!markup.includes("Compact"), "no compaction control without a focused session");
+  const withSession = renderToStaticMarkup(createElement(ContextSection, {
+    usage: { source: "agent" as const, latestPromptTokens: 42_000, contextWindowTokens: 200_000, costUsd: 0.149 },
+    sessionId: "web-abc123",
+    onCompactSession: noop as () => Promise<string>,
+  }));
+  assert.ok(withSession.includes("Compact"), "the compaction control renders for a focused session");
+  assert.match(withSession, /next step boundary/, "the control states the documented steering semantics");
 });
 
 test("inspector MCP section lists the configured catalog honestly, not a fabricated connection", () => {
