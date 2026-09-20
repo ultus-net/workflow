@@ -147,6 +147,39 @@ export async function checkTopologyGateway(options: DoctorOptions = {}): Promise
 }
 
 /**
+ * The containment backend report (the last missing W078 check): what
+ * isolation the agent launches will actually get on this machine, stated
+ * with the same enforced/policy-only distinction the containment layer
+ * guarantees at the type level. Linux is enforced-capable only when the
+ * bwrap binary exists at the compiled-in path — a missing binary is a warn
+ * (contained launches fail closed at spawn, which is safe but useless)
+ * rather than a silent pass; non-Linux is the honest policy-only passthrough
+ * the platform layer documents, with its limitation stated.
+ */
+export function checkContainment(options: { platform?: NodeJS.Platform; bwrapPath?: string } = {}): DoctorCheck {
+  const name = "containment backend";
+  const platform = options.platform ?? process.platform;
+  if (platform !== "linux") {
+    return {
+      name,
+      status: "warn",
+      detail: `no process isolation on ${platform} — launches run with policy gating only (the typed policy-only marker, never claimed as enforced)`,
+      fix: "full isolation is Linux-only today (bubblewrap); on this platform every contained launch is visibly marked policy-only",
+    };
+  }
+  const bwrapPath = options.bwrapPath ?? "/usr/bin/bwrap";
+  if (!existsSync(bwrapPath)) {
+    return {
+      name,
+      status: "warn",
+      detail: `linux is enforced-capable, but bwrap was not found at ${bwrapPath} — contained agent launches will fail closed at spawn`,
+      fix: "install bubblewrap (the bwrap binary) so agent processes get the enforced filesystem boundary",
+    };
+  }
+  return { name, status: "pass", detail: `bubblewrap present at ${bwrapPath} — contained launches run the enforced filesystem boundary` };
+}
+
+/**
  * W078 follow-up: the machine-readable probe verdict register
  * (`docs/PROBE_VERDICTS.json`) is the doctor's gate catalog — no second
  * hardcoded gate list to drift. The register row is the durable record
@@ -197,6 +230,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<readonly D
   checks.push(...checkAgentCredentials());
   checks.push(await checkHub());
   checks.push(await checkTopologyGateway(options));
+  checks.push(checkContainment());
   checks.push(checkProbeVerdicts());
   return checks;
 }

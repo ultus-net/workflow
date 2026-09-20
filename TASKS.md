@@ -1360,12 +1360,20 @@ fail-loud, matching the honest-claims culture. Idea adopted from oh-my-openagent
 **Depends on:** none.
 
 **Acceptance criteria:**
-- [ ] `workflow doctor` checks: settings files parse (global + workspace overlay), credential
+- [x] `workflow doctor` checks: settings files parse (global + workspace overlay), credential
       presence per agent (presence booleans only), hub reachability (discovery + probe), server
       topology gateway reachability, containment backend report, and prints each surface's
-      probe-PENDING verdicts with their gates.
-- [ ] Every check is pass/warn/fail with an actionable fix line; nothing silently passes.
-- [ ] Focused tests pin the report composition; typecheck and lint clean; five-axis review.
+      probe-PENDING verdicts with their gates. (**Complete 2026-09-21**: all six checks live in
+      `src/cli/doctor.ts` — the containment backend report was the last missing piece (`checkContainment`:
+      linux enforced-capable with bwrap present, a warn when the bwrap binary is missing since
+      contained launches fail closed at spawn, and the typed policy-only passthrough on non-Linux,
+      never claimed as enforced) and probe verdicts print from the register with their gates.)
+- [x] Every check is pass/warn/fail with an actionable fix line; nothing silently passes.
+      (**Verified 2026-09-21** against the report composition and its pins.)
+- [x] Focused tests pin the report composition; typecheck and lint clean; five-axis review.
+      (**Verified 2026-09-21**: `test/doctor.test.ts` (6) + the register suite; typecheck/lint
+      clean; the five-axis review of 2026-09-21 covers the doctor surface — APPROVE recorded for
+      this pass, including the register-driven gate catalog and the containment check.)
 
 **Follow-up (2026-09-20, W078 follow-up — the machine-readable probe verdict register):**
 the doctor reported probe gates from a hardcoded list that had already drifted (it named 8
@@ -1482,11 +1490,21 @@ the server topology runs — same honest-unavailable pattern as the live MCP sta
 **Depends on:** W076 (gateway + app-shell class landed).
 
 **Acceptance criteria:**
-- [ ] `fetchSessionStats` in `src/integrations/opencode-live-state.ts` with the same
-      discovery/probe/loopback/fail-closed contract as `fetchLiveMcp`.
-- [ ] A read-only endpoint + Usage-page block rendering the server's own stats, attributed;
-      honest reasons when unavailable.
-- [ ] Focused tests; typecheck and lint clean.
+- [x] `fetchSessionStats` in `src/integrations/opencode-live-state.ts` with the same
+      discovery/probe/loopback/fail-closed contract as `fetchLiveMcp`. (**Verified 2026-09-21**
+      against the as-built code: the shared `resolveLiveGateway` walk — discovery → loopback-host
+      check → gateway probe → the resolved gateway — is the single honest gate both reads share;
+      every unavailable outcome is an explicit reason, never a fabricated connection.)
+- [x] A read-only endpoint + Usage-page block rendering the server's own stats, attributed;
+      honest reasons when unavailable. (**Verified 2026-09-21**: `GET /api/usage/sessions/live`
+      in `src/ui/web.ts` is read-only and honest-unavailable; the Usage page block
+      (`src/ui/webapp/usage-view.tsx`) fetches it and renders the server's own aggregate —
+      sessions/prompts/steps, the token split incl. cache read/write, cost, and tool
+      reliability — with the unavailable reasons surfaced as values.)
+- [x] Focused tests; typecheck and lint clean. (**Verified 2026-09-21**:
+      `test/opencode-live-state.test.ts` (8, incl. the stats live/unavailable shapes) green;
+      typecheck and lint clean. The slice had landed with its ledger boxes unticked — this pass
+      reconciles the ledger to the shipped, tested implementation.)
 
 ### W082 - Auto-compaction over the v2 API (restore the plugin-era feature)
 
@@ -1701,13 +1719,28 @@ field stripping, pinned in `test/web-operator-surfaces.test.ts`); no hub
 change.
 
 **Acceptance criteria:**
-- [ ] The Schedules page offers a create form (id, title, cron, prompt,
+- [x] The Schedules page offers a create form (id, title, cron, prompt,
       workspace, review requirement) and per-schedule edit that prefills the
       form; editing preserves advanced fields (budget, taskClass, off-peak)
       by sending the full schedule entry through the same save proxy.
-- [ ] Save failures surface the hub's validation message verbatim (e.g. an
+      (**Verified 2026-09-21** against the as-built code: the create/edit form
+      (`src/ui/webapp/schedules-view.tsx`) upserts through
+      `POST /api/schedules/save` with the full entry, so the hub's
+      ScheduleMeta advanced fields survive edit round-trips.)
+- [x] Save failures surface the hub's validation message verbatim (e.g. an
       invalid cron) — never a silent failure or a fabricated success.
-- [ ] The pause/resume toggle and delete keep their existing semantics; run
-      and loop start stay CLI-only with the page saying so.
-- [ ] SSR pins for the form affordances; the save-proxy endpoint tests keep
+      (**Verified 2026-09-21**: `onSaveSchedule` resolves the hub proxy's
+      error message and the form renders it in a `role="alert"` slot.)
+- [x] The pause/resume toggle and delete keep their existing semantics; run
+      and loop start stay CLI-only with the page saying so. (**Verified
+      2026-09-21**: pause/resume/delete ride the existing hub-proxy routes
+      unchanged, and the page states "run-now and loop start are CLI-only —
+      they require the verifier credential, never the browser token".)
+- [x] SSR pins for the form affordances; the save-proxy endpoint tests keep
       passing unchanged (no server change); typecheck and lint clean.
+      (**Verified 2026-09-21**: the W085 pins in `test/webapp-surface.test.ts`
+      (create/edit affordances, colliding-id refusal before the save, per-
+      schedule edit) and `test/web-operator-surfaces.test.ts` (save proxy)
+      green; typecheck and lint clean. The slice had landed via
+      `feat/schedule-create-edit` (PR #62) with its ledger boxes unticked —
+      this pass reconciles the ledger to the shipped, tested implementation.)

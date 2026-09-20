@@ -8,6 +8,7 @@ import {
   checkSettingsDocs,
   checkAgentCredentials,
   checkProbeVerdicts,
+  checkContainment,
   renderDoctorReport,
 } from "../src/cli/doctor.js";
 import { parseLauncherArgs } from "../src/cli/launcher-args.js";
@@ -66,6 +67,33 @@ test("doctor: the probe verdict register check states the honest register state"
   assert.match(check.detail, /docs\/PROBE_VERDICTS\.json/);
   assert.match(check.detail, /docs\/HOST_ADAPTERS\.md/);
   assert.doesNotMatch(check.detail, /sk-[A-Za-z0-9]{8,}/, "never a credential value");
+});
+
+test("doctor: the containment backend report states enforced-capable, missing-bwrap, and policy-only honestly", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-doctor-bwrap-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // Linux with a real bwrap binary at the probed path → enforced-capable.
+  const bwrap = join(dir, "bwrap");
+  writeFileSync(bwrap, "");
+  const enforced = checkContainment({ platform: "linux", bwrapPath: bwrap });
+  assert.equal(enforced.status, "pass");
+  assert.match(enforced.detail, /bubblewrap present/);
+  assert.match(enforced.detail, /enforced filesystem boundary/);
+
+  // Linux without bwrap is a WARN (contained launches fail closed at spawn),
+  // never a silent pass — the actionable fix names the package.
+  const missing = checkContainment({ platform: "linux", bwrapPath: join(dir, "absent-bwrap") });
+  assert.equal(missing.status, "warn");
+  assert.match(missing.detail, /bwrap was not found/);
+  assert.match(missing.detail, /fail closed at spawn/);
+  assert.match(missing.fix ?? "", /install bubblewrap/);
+
+  // Non-Linux is the typed policy-only passthrough, stated with its limit.
+  const policyOnly = checkContainment({ platform: "darwin", bwrapPath: bwrap });
+  assert.equal(policyOnly.status, "warn");
+  assert.match(policyOnly.detail, /policy gating only/);
+  assert.match(policyOnly.detail, /never claimed as enforced/);
+  assert.match(policyOnly.fix ?? "", /Linux-only/);
 });
 
 test("doctor: the report renders icons, fixes, and never truncates a failure", () => {
