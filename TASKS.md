@@ -1070,12 +1070,16 @@ each surface may claim.
       `listWebAgents()`) honestly — unprobed kinds show their probe-PENDING status, not a green check.
       (Pre-existing and pinned: status-bar containment title, agent switcher, settings AgentSection,
       `/api/agents` with availability `reason`; goose/cline render `contained`, opencode `advisory`.)
-- [ ] Parsing lives in `src/cli/launcher-args.ts` with focused tests; `npm run typecheck`/`lint` clean;
-      an independent five-axis review is recorded. (Parsing + tests + gates done 2026-09-20;
-      **review pending**.)
+- [x] Parsing lives in `src/cli/launcher-args.ts` with focused tests; `npm run typecheck`/`lint` clean;
+      an independent five-axis review is recorded. (Parsing + tests + gates done 2026-09-20. Review
+      round 1: REQUEST_CHANGES — three P2, three P3, no P0/P1; all six fixed in `d2c78cd` (honest
+      launch-consumption copy, truthful save state + disclosed clear limitation, wired precedence,
+      exact-value fact pins, `acpAgentKind` lockstep drift guard). Re-review 2026-09-20: **APPROVE**
+      recorded, 35/35 focused.)
 
-**Verification:** `node --import tsx --test test/workflow-launcher.test.ts` (9/9, includes the
-web-agents posture suite companion run 14/14), typecheck and lint clean (2026-09-20).
+**Verification:** `node --import tsx --test test/workflow-launcher.test.ts` (10/10 after the
+lockstep test; 35/35 across web-settings + webapp-surface + workflow-launcher), typecheck and lint
+clean, five-axis review APPROVED (2026-09-20).
 
 ### W074 - Qualification probes: stock opencode web UI behind the hub gateway; v2 config hot-reload
 
