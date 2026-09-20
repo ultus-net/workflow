@@ -1185,4 +1185,7 @@ a file-provisioning framing before it ships.
 **Verification:** `test/g5-observability.test.ts` (W075 composition/opt-out/no-interpolation pins) +
 `test/toolbox-catalog.test.ts` (skill-body corpus pin) + `test/hub-scheduler.test.ts` (seam
 unchanged) — 23/23; typecheck and lint clean; ledger + FEATURES rows dated 2026-09-20. Five-axis
-review pending (next step before this item is treated as approved).
+review round 1: REQUEST_CHANGES (P1 provenance claim false — begin recorded the raw prompt; P2
+block pointed at the undelivered skill; three P3s) — all fixed in `c296415` (composed prompt is the
+recorded ask, orientation v2 drops the skill pointer, full-text frozen pin, hedged tool presence,
+precise wording). Re-review 2026-09-20: **APPROVE** recorded.
