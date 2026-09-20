@@ -776,6 +776,36 @@ body {
   flex-wrap: wrap;
 }
 
+/* W085: the schedule create/edit form on the Schedules page. */
+.schedule-form {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.5rem 0;
+}
+
+.schedule-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 0.4rem;
+}
+
+.schedule-form input:not([type="checkbox"]) {
+  min-width: 0;
+}
+
+.schedule-form-check {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.schedule-form-error {
+  color: var(--fail);
+  font-size: 0.8rem;
+}
+
 .session-card-rename {
   display: flex;
   align-items: center;

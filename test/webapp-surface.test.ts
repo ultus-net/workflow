@@ -6,6 +6,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, StatusBar, UsageMeter } from "../src/ui/webapp/app.js";
+import { ScheduleForm, SchedulesView } from "../src/ui/webapp/schedules-view.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { EditDiff, parseEditTool } from "../src/ui/webapp/diff-text.js";
 import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection, RoutingSection } from "../src/ui/webapp/settings-dialog.js";
@@ -391,5 +392,52 @@ test("the usage view renders live topology statistics and states absence honestl
   }));
   assert.match(unavailable, /no server-topology stats/, "absence must be stated as a value");
   assert.match(unavailable, /no server topology daemon/, "the honest reason renders");
+});
+
+test("W085: the schedule form renders create and edit affordances with the hub error slot", () => {
+  const createForm = renderToStaticMarkup(createElement(ScheduleForm, {
+    initial: undefined,
+    onSave: noop as () => Promise<string | undefined>,
+    onCancel: noop,
+  }));
+  assert.match(createForm, /Create schedule/, "the create label renders");
+  assert.match(createForm, /Schedule id/, "the id field is labeled");
+  assert.match(createForm, /Schedule cron/, "the cron field is labeled");
+  assert.match(createForm, /require secondary review/, "the review checkbox is labeled");
+  assert.match(createForm, /Cancel/, "cancel is offered");
+
+  const editForm = renderToStaticMarkup(createElement(ScheduleForm, {
+    initial: { id: "nightly", title: "Nightly audit", cron: "0 9 * * *", prompt: "audit" },
+    onSave: noop as () => Promise<string | undefined>,
+    onCancel: noop,
+  }));
+  assert.match(editForm, /Save changes/, "the edit label renders");
+  assert.match(editForm, /disabled(=|=')?/, "the id field is locked while editing (identity, not content)");
+  assert.ok(editForm.includes("value=\"nightly\""), "the prefilled id renders for the edit");
+});
+
+test("W085: the Schedules page offers create and per-schedule edit", () => {
+  const markup = renderToStaticMarkup(createElement(SchedulesView, {
+    schedules: [{ id: "nightly", title: "Nightly audit", cron: "0 9 * * *", prompt: "audit the repo" }],
+    loops: [],
+    onCancelLoop: noop,
+    onPauseToggle: noop,
+    onDelete: noop,
+    onSaveSchedule: noop as () => Promise<string | undefined>,
+  }));
+  assert.match(markup, /New schedule/, "the create affordance renders");
+  assert.ok(markup.includes("Edit"), "per-schedule edit renders");
+  assert.ok(markup.includes("run-now and loop start are CLI-only"), "the credential boundary stays stated");
+  assert.ok(!markup.includes("add one to the hub table"), "the hand-edit-the-file empty state is gone");
+
+  const empty = renderToStaticMarkup(createElement(SchedulesView, {
+    schedules: [],
+    loops: [],
+    onCancelLoop: noop,
+    onPauseToggle: noop,
+    onDelete: noop,
+    onSaveSchedule: noop as () => Promise<string | undefined>,
+  }));
+  assert.match(empty, /no schedules — create one above/, "the empty state points at the form");
 });
 
