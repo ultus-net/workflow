@@ -31,10 +31,25 @@ describe("OpenCode v2 route qualification: event stream is observable", async ()
   if (response.body !== null) await response.body.cancel();
 });
 
-describe("OpenCode v2 route qualification: auth boundary covers route classes", async () => {
-  for (const path of ["/api/session", "/api/experimental/session/stats", "/api/event", "/api/experimental/fs/write", "/api/session/s/permission/r/reply", "/api/mcp"]) {
-    const response = await fetch(`${baseUrl}${path}`);
-    assert.equal(response.status, 401, `${path} must reject unauthenticated access`);
+describe("OpenCode v2 route qualification: auth boundary covers every route class", async () => {
+  // One representative mutation/observation route per §2.4 class. The pinned
+  // server must reject unauthenticated access to all of them; the gateway's
+  // own route-class enforcement is pinned by the always-run
+  // `test/opencode-server-gateway.test.ts` against the shared classifier.
+  const byClass: readonly (readonly [string, readonly string[]])[] = [
+    ["read-only", ["/api/session", "/api/experimental/session/stats", "/api/event", "/api/mcp", "/api/config"]],
+    ["permission-authority", ["/api/session/s/permission/r/reply", "/api/permission/saved"]],
+    ["filesystem-mutation", ["/api/experimental/fs/write", "/api/session/s/shell"]],
+    ["mcp-config-mutation", ["/api/plugin/update", "/api/location/reload"]],
+    ["pty", ["/api/pty"]],
+    ["session-input", ["/api/session/s/prompt", "/api/session/s/compact"]],
+    ["unknown", ["/api/experimental/unqualified"]],
+  ];
+  for (const [routeClass, paths] of byClass) {
+    for (const path of paths) {
+      const response = await fetch(`${baseUrl}${path}`);
+      assert.equal(response.status, 401, `${routeClass} route ${path} must reject unauthenticated access (got ${response.status})`);
+    }
   }
   const session = await fetch(`${baseUrl}/api/session`, { headers });
   assert.equal(session.status, 200, "authenticated read session route must work");

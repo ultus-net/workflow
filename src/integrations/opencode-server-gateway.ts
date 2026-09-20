@@ -2,6 +2,11 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, request as httpRequest } from "node:http";
 import type { IncomingMessage, Server as HttpServer, ServerResponse } from "node:http";
 
+import {
+  OPENCODE_V2_PERMISSION_REPLY_ROUTE,
+  qualifyOpenCodeV2Route,
+} from "./opencode-v2-route-class.js";
+
 /**
  * W071 — the OpenCode server gateway.
  *
@@ -58,7 +63,6 @@ export interface OpencodeServerGateway {
   close(): Promise<void>;
 }
 
-const REPLY_ROUTE = /^\/api\/session\/([^/]+)\/permission\/([^/]+)\/reply$/;
 const HOP_BY_HOP = new Set([
   "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
   "te", "trailer", "transfer-encoding", "upgrade",
@@ -113,20 +117,33 @@ async function handle(
   }
   const rawPathname = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
   const pathname = decodedPathname(rawPathname);
+  const method = request.method ?? "";
+  const qualification = qualifyOpenCodeV2Route(method, pathname);
   options.observedRequest?.(pathname);
-  const reply = request.method === "POST" ? REPLY_ROUTE.exec(pathname) : null;
+  const reply = method === "POST" ? OPENCODE_V2_PERMISSION_REPLY_ROUTE.exec(pathname) : null;
   if (reply !== null) {
     if (options.onPermissionReply !== undefined) {
+      // Broker posture: the reply is handed to the hub and never forwarded.
       await handlePermissionReply(request, response, options, reply[1]!, reply[2]!);
       return;
     }
     // Advisory posture: no broker authority yet; the client reply is the
     // answerer, so it passes through. The surface must not be labeled
     // enforced in this mode.
-  } else if (request.method === "POST" && isReplyShapedPathname(pathname)) {
+  } else if (method === "POST" && isReplyShapedPathname(pathname)) {
     // A reply-shaped path that does not map cleanly must never be forwarded
     // upstream under the hub credential (review P1-2: fail closed).
     sendJson(response, 400, { error: "unmappable permission reply path" });
+    return;
+  }
+  if (options.enforced === true && qualification.disposition !== "forward") {
+    // §2.2: an enforced gateway forwards only explicitly qualified read-only
+    // and input routes. `deny`, `unknown`, and a broker route reached without
+    // the broker hook (e.g. a non-POST verb on the reply path) all fail closed
+    // and never reach the upstream under the hub credential.
+    sendJson(response, 403, {
+      error: `route class not qualified for direct access: ${qualification.routeClass}`,
+    });
     return;
   }
   forward(request, response, upstream, upstreamAuth);

@@ -26,9 +26,27 @@ test("v2 session claims preserve read freshness and exclusive file ownership", (
   claims.register({ sessionId: "s" });
   const fingerprint = fingerprintFile(path);
   claims.recordRead("s", fingerprint);
-  assert.equal(claims.matchesRead(path, fingerprint), true);
+  assert.equal(claims.matchesRead("s", path, fingerprint), true);
   assert.equal(claims.claim("s", [path]), true);
   assert.equal(claims.claim("other", [path]), false);
   writeFileSync(path, "after");
-  assert.equal(claims.matchesRead(path, fingerprint), false);
+  assert.equal(claims.matchesRead("s", path, fingerprint), false);
+});
+
+test("v2 session claims scope read freshness to the recording session", () => {
+  const dir = mkdtempSync(join(tmpdir(), "workflow-v2-claims-scope-"));
+  const path = join(dir, "file.txt");
+  writeFileSync(path, "same");
+  const fingerprint = fingerprintFile(path);
+  const claims = new OpenCodeV2SessionClaims();
+  claims.register({ sessionId: "a" });
+  claims.register({ sessionId: "b" });
+  claims.recordRead("a", fingerprint);
+
+  // The global ledger has an unchanged read for the path, but only session `a`
+  // recorded it; a stale/missing read in `b` must fail closed.
+  assert.equal(claims.matchesRead("b", path, fingerprint), false);
+  assert.equal(claims.matchesRead("a", path, fingerprint), true);
+  claims.release("a");
+  assert.equal(claims.matchesRead("a", path, fingerprint), false);
 });

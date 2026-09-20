@@ -12,6 +12,7 @@ export interface OpenCodeV2SessionIdentity {
  * budget primitives for the gateway to enforce. */
 export class OpenCodeV2SessionClaims {
   readonly #claims = new FileClaimLedger();
+  readonly #reads = new Map<string, Map<string, ReadFingerprint>>();
   readonly #budget: MutationBudget;
 
   constructor(maxMutations = 100) {
@@ -23,6 +24,12 @@ export class OpenCodeV2SessionClaims {
   }
 
   recordRead(sessionId: string, fingerprint: ReadFingerprint): void {
+    let reads = this.#reads.get(sessionId);
+    if (reads === undefined) {
+      reads = new Map();
+      this.#reads.set(sessionId, reads);
+    }
+    reads.set(fingerprint.path, fingerprint);
     this.#claims.recordRead(fingerprint);
   }
 
@@ -32,6 +39,7 @@ export class OpenCodeV2SessionClaims {
 
   release(sessionId: string): void {
     this.#claims.release(sessionId);
+    this.#reads.delete(sessionId);
     this.#budget.clear(sessionId);
   }
 
@@ -39,7 +47,8 @@ export class OpenCodeV2SessionClaims {
     return this.#budget.consume(sessionId);
   }
 
-  matchesRead(path: string, fingerprint: ReadFingerprint): boolean {
-    return this.#claims.matchesCurrent(path, fingerprint);
+  matchesRead(sessionId: string, path: string, fingerprint: ReadFingerprint): boolean {
+    const recorded = this.#reads.get(sessionId)?.get(path);
+    return recorded !== undefined && recorded.digest === fingerprint.digest && this.#claims.matchesCurrent(path, fingerprint);
   }
 }

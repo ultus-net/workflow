@@ -107,7 +107,44 @@ Any operation not classified in this matrix is **not qualified** for Workflow in
 must be updated when the pinned OpenCode API adds an operation; an undocumented route is a qualification
 failure, not an implicit read-only route.
 
-## 2.4 External architecture reference: `lherron/agent-control-plane`
+## 2.5 Implemented route-class gateway qualification (2026-09-20)
+
+The matrix is now executable. `src/integrations/opencode-v2-route-class.ts` is the single pure
+classifier (method + pathname → route class → gateway disposition `forward` / `broker` / `deny`) and is
+consumed by both the production gateway and the probes, so the tested contract is the enforced contract.
+
+- **Read-only observation** (`GET`/`HEAD`/`OPTIONS` on a classified subtree — including `filesystem.read`,
+  the `experimental/fs` spelling, `integration`, `command`, `rpc`, and the permission *read* routes) is
+  forwarded.
+- **Permission authority reply** is brokered; every other permission mutation is denied, and in enforced
+  posture the reply route is broker-only for **every** verb (a non-POST verb fails closed rather than
+  forwarding under the hub credential). Advisory posture still passes the POST reply through, unchanged.
+- **Filesystem/shell/worktree/vcs mutation**, **MCP/integration/config/plugin/location mutation**, and
+  **PTY** are denied — they must cross Workflow authorization/guard/containment, not a direct v2 client call.
+- **Session input/control** the operator surface needs (`prompt`, `command`, `synthetic`, `interrupt`,
+  `wait`, `background`, `inbox`, `message`, `instructions`, `generate`, `switch`, `skill`, session
+  create/update/import) is forwarded because it cannot advance canonical state alone; destructive session
+  lifecycle (`compact`, `fork`, `move`, `revert`, `remove`) is denied. There is deliberately **no session
+  catch-all**: an unlisted session operation (e.g. a future `session.purge`) fails closed as `unknown`.
+- **Anything unclassified fails closed** (`unknown` → `deny`); a read whose subtree is unrecognized is
+  not implicitly safe. The classifier tracks the §2.1/§2.4 inventory; operation spellings the pinned
+  release adds but this classifier does not yet enumerate (observed candidates: `file.content`, `find`,
+  `path`, `session.abort/init/todo`) fail closed as `unknown` until classified and tested — the
+  fail-closed direction is intentional, and the matrix must be extended before an enforced surface ships.
+
+When `enforced`, the gateway forwards only routes whose disposition is `forward`; it answers any other
+client request (`deny`, `unknown`, or a broker route reached without the broker hook) with `403` carrying
+the route class, and never forwards it upstream under the hub credential. Advisory posture preserves the
+historical pass-through and must not be labeled `enforced`.
+
+**Evidence:** `test/opencode-v2-route-class.test.ts` (classifier cases, always run) and the route-class
+gateway tests in `test/opencode-server-gateway.test.ts` (read-only forwarded, mutation/unknown/removed-
+session/non-POST-reply denied without upstream reach, brokered POST reply intercepted, advisory
+pass-through preserved). The gated live probe `test/opencode-v2-probe.test.ts`
+(`WORKFLOW_OPENCODE_V2_PROBE=1`) now checks the server's unauthenticated `401` boundary across every route
+class; a live gateway verdict still requires the pinned server + model-key probe family.
+
+## 2.6 External architecture reference: `lherron/agent-control-plane`
 
 The external `agent-control-plane` repository is a useful architecture reference, not a dependency.
 Its current spec separates durable ACP session/input/job/interface stores, an API/control-plane facade,
