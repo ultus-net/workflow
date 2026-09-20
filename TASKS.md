@@ -1445,3 +1445,33 @@ hook (`ctx.session.hook("compaction")`) is explicitly NOT used — no plugins.
       surface-division decision); the hub-side auto-trigger is deterministic and budget-guard-aware.
       (**Open** — needs the topology session wiring; deferred to the next compaction slice.)
 - [ ] Live probe evidence per pinned version; no enforced claim without it. (**Open**.)
+
+### W083 - Step-ledger panel in the custom web UI (the todo-tracking track)
+
+**Objective:** Surface the W072 kernel step ledger (roadmap → tasks → steps) in the
+custom web UI's inspector Tasks section — the accepted tracking surface since
+stock OpenCode v2 removed native `todowrite`/`todoread` (W072 addendum). The
+surface reads the canonical ledger and drives operator-gated step transitions
+through the application command port only; the kernel keeps validating legal
+transitions and evidence-bound completion, so the panel can never self-certify
+a step.
+
+**Depends on:** W072 (step ledger invariants I-1…I-4, kernel + application API);
+no kernel change.
+
+**Acceptance criteria:**
+- [ ] `GET /api/steps` reads the workspace's canonical ledger through the
+      application (`taskSteps`/`activeStepId`/`activeTaskId` + the snapshot's
+      task states) — never the raw TaskGraph.
+- [ ] `POST /api/steps/start|complete|cancel` drive the operator-gated
+      transitions through the application command port; kernel rejections
+      surface verbatim as `409` with the structured
+      `ILLEGAL_STEP_TRANSITION` / `STEP_EVIDENCE_REQUIRED` /
+      `STEP_TASK_NOT_IN_PROGRESS` code and reason (fail-closed honesty, no
+      client-side success invention).
+- [ ] The inspector Tasks section renders each task's step ledger (state chip,
+      content, evidence-requirement count) with start/cancel/complete actions;
+      the complete action states that completion is evidence-bound and shows
+      the kernel's rejection reason instead of a silent failure.
+- [ ] Focused endpoint + SSR tests pin the read shape, the transition mapping,
+      and the rejection surfacing; typecheck and lint clean.
