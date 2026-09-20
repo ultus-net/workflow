@@ -114,16 +114,24 @@ const NAV: readonly { readonly id: string; readonly label: string }[] = [
 ];
 
 /**
- * The fullscreen operator settings page: appearance and UI layout, all
- * agent-advertised options (model, effort, mode, tool toggles), the
- * Workflow-owned MCP catalog, approvals and capabilities, transcript and
- * notifications, the keyboard map, and the session's authority facts. One
- * surface, one source of truth per setting — each control writes the same
- * state its composer-adjacent twin uses, so the two never diverge.
+ * The fullscreen operator settings page: dedicated sections behind the left
+ * rail — appearance and UI layout, all agent-advertised options (model,
+ * effort, mode, tool toggles), the Workflow-owned MCP catalog, approvals and
+ * capabilities, transcript and notifications, the keyboard map, and the
+ * session's authority facts. One surface, one source of truth per setting —
+ * each control writes the same state its composer-adjacent twin uses, so the
+ * two never diverge. The nav SWITCHES the visible section (2026-09-21,
+ * operator request) instead of anchor-scrolling one long page; Appearance
+ * leads so the palette catalog is immediately reachable.
  */
 export function SettingsDialog(props: SettingsDialogProps) {
   const pageRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
+  // Dedicated sections: the nav switches the visible section instead of
+  // anchor-scrolling one long page. Appearance leads (the e2e opens settings
+  // and reaches the palette chips immediately).
+  const [section, setSection] = useState<string>(NAV[0]!.id);
 
   // Open: focus the first control; close: focus returns to the opener.
   useEffect(() => {
@@ -158,9 +166,29 @@ export function SettingsDialog(props: SettingsDialogProps) {
     }
   };
 
-  const jump = (id: string): void => {
-    pageRef.current?.querySelector<HTMLElement>(`#${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  const selectSection = (id: string): void => {
+    setSection(id);
+    // A fresh section starts at its top, never at the previous section's
+    // scroll position.
+    if (contentRef.current !== null) contentRef.current.scrollTop = 0;
   };
+
+  const sections: ReadonlyMap<string, ReactNode> = new Map<string, ReactNode>([
+    ["settings-appearance", <AppearanceSection {...props} />],
+    ["settings-agent", <AgentSection agents={props.agents} currentAgent={props.currentAgent} onSwitchAgent={props.onSwitchAgent} />],
+    ["settings-options", <AgentOptionsSection options={props.options} setOption={props.setOption} patterns={props.permissions.patterns} />],
+    ["settings-routing", <RoutingSection routing={props.routing} />],
+    ["settings-mcp", <McpSection mcp={props.mcp} />],
+    ...(props.permissions.available
+      ? [["settings-approvals", <ApprovalsSection permissions={props.permissions} capabilities={props.capabilities} />] as const]
+      : []),
+    ["settings-transcript", <TranscriptSection />],
+    ["settings-notifications", <NotificationsSection />],
+    ["settings-shortcuts", <ShortcutsSection />],
+    ["settings-session", <SessionSection enforcement={props.enforcement} />],
+  ]);
+  const navItems = NAV.filter((entry) => sections.has(entry.id));
+  const active = sections.has(section) ? section : navItems[0]!.id;
 
   return (
     <div
@@ -185,25 +213,20 @@ export function SettingsDialog(props: SettingsDialogProps) {
       </header>
       <div className="settings-page-body">
         <nav className="settings-nav" aria-label="Settings sections">
-          {NAV.map((entry) => (
-            <button type="button" className="settings-nav-item" key={entry.id} onClick={() => jump(entry.id)}>
+          {navItems.map((entry) => (
+            <button
+              type="button"
+              className={`settings-nav-item ${section === entry.id ? "settings-nav-item-on" : ""}`}
+              key={entry.id}
+              aria-current={section === entry.id ? "true" : undefined}
+              onClick={() => selectSection(entry.id)}
+            >
               {entry.label}
             </button>
           ))}
         </nav>
-        <div className="settings-content">
-          <div id="settings-appearance"><AppearanceSection {...props} /></div>
-          <div id="settings-agent"><AgentSection agents={props.agents} currentAgent={props.currentAgent} onSwitchAgent={props.onSwitchAgent} /></div>
-          <div id="settings-options"><AgentOptionsSection options={props.options} setOption={props.setOption} patterns={props.permissions.patterns} /></div>
-          <div id="settings-routing"><RoutingSection routing={props.routing} /></div>
-          <div id="settings-mcp"><McpSection mcp={props.mcp} /></div>
-          {props.permissions.available && (
-            <div id="settings-approvals"><ApprovalsSection permissions={props.permissions} capabilities={props.capabilities} /></div>
-          )}
-          <div id="settings-transcript"><TranscriptSection /></div>
-          <div id="settings-notifications"><NotificationsSection /></div>
-          <div id="settings-shortcuts"><ShortcutsSection /></div>
-          <div id="settings-session"><SessionSection enforcement={props.enforcement} /></div>
+        <div className="settings-content" ref={contentRef}>
+          <div id={active}>{sections.get(active)}</div>
         </div>
       </div>
     </div>

@@ -9,7 +9,7 @@ import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpCon
 import { ScheduleForm, SchedulesView, scheduleIdCollisionError, type ScheduleMeta } from "../src/ui/webapp/schedules-view.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { EditDiff, parseEditTool } from "../src/ui/webapp/diff-text.js";
-import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection, RoutingSection } from "../src/ui/webapp/settings-dialog.js";
+import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection, RoutingSection, SettingsDialog } from "../src/ui/webapp/settings-dialog.js";
 import { LiveTopologyStats } from "../src/ui/webapp/usage-view.js";
 import { listPalettes } from "../src/ui/webapp/theme/palettes.js";
 import { DEFAULT_WEB_AGENT, listWebAgents } from "../src/ui/web-agents.js";
@@ -96,6 +96,59 @@ test("sharp square edges: no nonzero border-radius survives in the design system
   const declarations = [...css.matchAll(/border-radius:\s*([^;]+);/g)].map((match) => match[1]?.trim() ?? "");
   const offenders = declarations.filter((value) => !isSquare(value));
   assert.deepEqual(offenders, [], `nonzero border-radius reintroduced: ${offenders.join(", ")}`);
+});
+
+test("the settings page shows one dedicated section with the active nav marker (no one-page anchor scroll)", () => {
+  const palettes = listPalettes();
+  const markup = renderToStaticMarkup(createElement(SettingsDialog, {
+    onClose: noop,
+    palette: undefined,
+    onPalette: noop,
+    palettes,
+    railsOff: false,
+    onRailsToggle: noop,
+    options: [],
+    setOption: noop,
+    routing: {
+      agents: {},
+      facts: { upstream: "https://openrouter.ai", envModelOpencode: false, envModelGoose: false, managementKey: false },
+      loading: false,
+      error: undefined,
+      onSave: async () => false,
+    },
+    permissions: {
+      available: false,
+      mode: "auto",
+      update: async () => undefined,
+      patterns: { alwaysAllow: [], alwaysReject: [] },
+    },
+    capabilities: { capabilities: undefined, setCapability: async () => undefined },
+    mcp: {
+      servers: [],
+      catalog: [],
+      scope: "global",
+      workspaceOverlay: false,
+      loading: false,
+      error: undefined,
+      setScope: noop,
+      upsert: async () => undefined,
+      remove: async () => undefined,
+      toggle: async () => undefined,
+    },
+    enforcement: { level: undefined, transport: undefined, copy: undefined },
+    agents: [],
+    currentAgent: "opencode",
+    onSwitchAgent: noop,
+  }));
+  // Exactly ONE section renders: the content holds the active section's
+  // wrapper and no other section wrappers — dedicated sections, not a long
+  // one-page scroll with anchor jumps.
+  const sectionIds = [...markup.matchAll(/<div id="(settings-[a-z]+)"/g)].map((match) => match[1]!);
+  assert.deepEqual(sectionIds, ["settings-appearance"], "only the active section renders");
+  // The active nav slug is marked; unavailable sections (Approvals without
+  // the broker) are filtered out of the nav entirely.
+  assert.match(markup, /settings-nav-item-on[^>]*>Appearance</);
+  assert.ok(!markup.includes(">Approvals<"), "an unavailable section never renders a nav slug");
 });
 
 test("the settings Appearance section exposes the full palette catalog plus the amber default", () => {

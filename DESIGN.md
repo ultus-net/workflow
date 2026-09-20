@@ -61,6 +61,8 @@ Recorded verbatim from the operator; these are binding constraints, and later fr
 
 - **Model selector auto-closes — fixed.** The combobox popover no longer closes while the operator scrolls the list (the scroll handler ignores the list's own scroll); it stays open until a choice, Escape, or a genuine outside click. The popover is portalled to `<body>` with fixed positioning, escapes ancestor `overflow: hidden`, sits above the settings backdrop (z-index 60 > 40), and flips/clamps to stay on-screen.
 - **Model selection reverting to the factory default — fixed.** The operator's last-used value for every ACP option persists (localStorage) and is restored over the agent's factory default; favourites load alongside.
+- **Settings page scroll stranded the status bar — fixed (2026-09-21, operator report).** The settings page's grid row auto-sized to its content, so the shell overflowed the viewport and the whole document scrolled — the status bar rendered mid-page under the content with dead space below. The row is now bounded (`grid-template-rows: minmax(0, 1fr)`), so section content scrolls INSIDE `.settings-content` and the shell keeps its viewport height with the footer pinned at the bottom.
+- **Settings nav now switches dedicated sections (2026-09-21, operator request).** The left-rail slugs no longer anchor-scroll one long settings page: each slug shows exactly its own section (state-switched, active marker `settings-nav-item-on`, content resets to the top on switch), and sections that are unavailable (Approvals without the permission broker) drop out of the nav entirely. The top-bar slugs already swap dedicated views and are unchanged.
 
 ### Follow-up directions
 
