@@ -392,7 +392,10 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
     const properties: { readonly sessionID?: unknown; readonly part?: unknown } = event.properties;
     const part = isRecord(properties.part) ? properties.part : undefined;
     if (part === undefined || part.type !== "tool") return;
-    const tool = typeof part.tool === "string" ? part.tool : undefined;
+    // V2 renamed the tool-part field `name` -> `tool`; v1-shaped parts
+    // (agent-reported, e.g. ACP) still carry the name in `name`.
+    const tool = typeof part.tool === "string" ? part.tool
+      : typeof part.name === "string" ? part.name : undefined;
     if (tool === undefined) return;
     // The part may carry its own session id; the pinned source prefers the
     // part's id (review P2-1).

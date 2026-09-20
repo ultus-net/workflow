@@ -41,6 +41,32 @@ test("OpenCode session driver translates SDK events and image input through the 
   assert.equal(session.snapshot().state, "completed");
 });
 
+test("OpenCode session driver accepts v1-shaped tool parts (name field)", async () => {
+  const driver = new OpenCodeSessionDriver({
+    async create() { return { data: { id: "session-v1-parts" } }; },
+    async prompt() { await new Promise((resolve) => setTimeout(resolve, 0)); return { data: { parts: [{ type: "text", text: "Finished" }] } }; },
+    async abort() { return { data: true }; },
+    event: {
+      async subscribe() {
+        return { stream: (async function* () {
+          yield { type: "message.part.updated", properties: { part: { type: "tool", sessionID: "session-v1-parts", name: "edit", state: { status: "running" } } } };
+          yield { type: "message.part.updated", properties: { part: { type: "tool", sessionID: "session-v1-parts", name: "edit", state: { status: "completed" } } } };
+        })() };
+      },
+    },
+  });
+  const session = new WorkflowCodingSession(driver);
+  const events: unknown[] = [];
+  session.subscribe((event) => events.push(event));
+
+  await session.submit("Do work");
+
+  assert.ok(events.some((event) => (event as { type: string; tool?: string }).type === "tool-proposal"
+    && (event as { tool?: string }).tool === "edit"));
+  assert.ok(events.some((event) => (event as { type: string; tool?: string }).type === "tool-outcome"
+    && (event as { tool?: string }).tool === "edit"));
+});
+
 test("OpenCode session cancellation aborts the active SDK session", async () => {
   let aborted: string | undefined;
   let release!: () => void;

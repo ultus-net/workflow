@@ -110,6 +110,14 @@ test("tool part updates project pending/running/completed/error states", () => {
   assert.equal((failed?.update as { status: string }).status, "failed");
 });
 
+test("v1-shaped tool parts (name field) project kind and title", () => {
+  const projected = projectSessionUpdate(event("message.part.updated", {
+    part: { type: "tool", sessionID: "ses_1", callID: "call_1", name: "bash", state: { status: "pending" } },
+  }));
+  assert.equal((projected?.update as { kind: string }).kind, "execute");
+  assert.equal((projected?.update as { title?: string }).title, "bash");
+});
+
 test("tool projection carries file locations from the raw input", () => {
   const single = projectSessionUpdate(event("message.part.updated", {
     part: { type: "tool", sessionID: "ses_1", callID: "call_1", tool: "edit", state: { status: "running", input: { filePath: "src/a.ts" } } },
