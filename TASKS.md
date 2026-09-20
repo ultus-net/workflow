@@ -1202,3 +1202,93 @@ review round 1: REQUEST_CHANGES (P1 provenance claim false — begin recorded th
 block pointed at the undelivered skill; three P3s) — all fixed in `c296415` (composed prompt is the
 recorded ask, orientation v2 drops the skill pointer, full-text frozen pin, hedged tool presence,
 precise wording). Re-review 2026-09-20: **APPROVE** recorded.
+
+### W076 - `workflow doctor`: honest self-check of the operator's setup
+
+**Objective:** One command that states the truth about the local setup — settings docs parse,
+credential presence (booleans, never values), hub/gateway reachability, containment posture
+(enforced vs policy-only), and per-surface probe verdicts from `docs/HOST_ADAPTERS.md` — surfaced
+fail-loud, matching the honest-claims culture. Idea adopted from oh-my-openagent's `doctor`
+(pattern only; SUL-1.0 upstream, no code).
+
+**Depends on:** none.
+
+**Acceptance criteria:**
+- [ ] `workflow doctor` checks: settings files parse (global + workspace overlay), credential
+      presence per agent (presence booleans only), hub reachability (discovery + probe), server
+      topology gateway reachability, containment backend report, and prints each surface's
+      probe-PENDING verdicts with their gates.
+- [ ] Every check is pass/warn/fail with an actionable fix line; nothing silently passes.
+- [ ] Focused tests pin the report composition; typecheck and lint clean; five-axis review.
+
+### W077 - Hash-anchored edits: evaluation against the read-fingerprint ledger (design doc)
+
+**Objective:** Evaluate a Hashline-style upgrade (`LINE#ID` content-hash tags on reads, edits
+validated against the tags) for the surfaces where Workflow owns the edit path, against the
+implemented `FileClaimLedger` digest/size/mtime freshness (DRIFT-022). Idea adopted from
+oh-my-openagent / "The Harness Problem"; no upstream code.
+
+**Depends on:** W072 ledger invariants (fresh reads before mutation).
+
+**Acceptance criteria:**
+- [ ] A dated design doc compares content-addressed line identity vs the current digest/size/mtime
+      claim matching: capture points (where reads are surfaced), enforcement point (edit validation
+      through the guard, not prompt text), adversarial cases (same-hash collisions, truncated
+      reads), and a probe plan.
+- [ ] A decision with evidence: adopt, adapt, or reject — recorded in the doc; no code before the
+      decision.
+
+### W078 - Skill-embedded connector scoping (gated on the skill-delivery decision)
+
+**Objective:** Let the generated `workflow-toolbox` skill (W075) declare which connectors it needs,
+mounted on demand for the session and torn down after — the context-budget fix oh-my-openagent
+ships as "skill-embedded MCPs". Hard constraint: skill-scoped mounts still cross the hub-written
+config and guard authorization — scoping, never a bypass lane.
+
+**Depends on:** the dated skill-delivery decision (W075 — native host skill injection stays off
+until it exists).
+
+**Acceptance criteria:**
+- [ ] The skill schema gains an optional `connectors` declaration validated against the toolbox
+      catalog (unknown connector → fail loud).
+- [ ] Delivery (when it ships) mounts only declared connectors, through the existing launch-config
+      path; the guard still owns authorization.
+- [ ] Probe-gated per host version before any claim.
+
+### W079 - Session stats on the Usage page (data-lane read #2)
+
+**Objective:** Surface the documented `GET /api/experimental/session/stats` (per-session activity,
+usage, tool reliability) in the custom web UI's Usage page, read through the enforced gateway when
+the server topology runs — same honest-unavailable pattern as the live MCP state.
+
+**Depends on:** W074 (gateway + app-shell class landed).
+
+**Acceptance criteria:**
+- [ ] `fetchSessionStats` in `src/integrations/opencode-live-state.ts` with the same
+      discovery/probe/loopback/fail-closed contract as `fetchLiveMcp`.
+- [ ] A read-only endpoint + Usage-page block rendering the server's own stats, attributed;
+      honest reasons when unavailable.
+- [ ] Focused tests; typecheck and lint clean.
+
+### W080 - Auto-compaction over the v2 API (restore the plugin-era feature)
+
+**Objective:** Restore context-window maintenance lost in the plugin→hub pivot. OpenCode v2 exposes
+compaction over the documented API (`POST /api/session/{sessionID}/compact`; provider/model config
+distinguishes `native` vs `summary` compaction). Design a hub-owned, deterministic trigger — not a
+prompt-side loop: (a) classify `compact` in the route-class matrix (currently deny by default; it
+is session maintenance that cannot advance canonical state — reclassify deliberately with tests,
+not by drift), (b) an operator compaction control in the custom web UI, (c) a hub-owned
+auto-trigger at a usage threshold (deterministic gate, budget-guard compatible), (d) probe per
+pinned version.
+
+**Depends on:** W074 (gateway verdicts); probe gating per `docs/HOST_ADAPTERS.md`.
+
+**Acceptance criteria:**
+- [ ] Route-class decision recorded in §2.5/§2.9 with tests: compact becomes an explicitly
+      classified session-input op (operator-controllable), NOT forward-by-default-forget.
+- [ ] Research note: what OpenCode v2 does natively per compaction type (`native` vs `summary`) and
+      whether the ACP lane (`opencode acp`) auto-compacts without the HTTP route — the ACP-lane
+      gap is the actual regression the operator hit.
+- [ ] The PWA surfaces context pressure and a compaction control (custom UI, per the
+      surface-division decision); the hub-side auto-trigger is deterministic and budget-guard-aware.
+- [ ] Live probe evidence per pinned version; no enforced claim without it.
