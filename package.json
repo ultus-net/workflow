@@ -12,7 +12,8 @@
     }
   },
   "bin": {
-    "workflow": "dist/cli/web-launch.js",
+    "workflow": "dist/cli/workflow.js",
+    "workflow-web": "dist/cli/web-launch.js",
     "workflow-tui": "dist/cli/universal-tui.js",
     "workflow-hub": "dist/cli/hub.js",
     "workflow-admin": "dist/cli/admin.js",
