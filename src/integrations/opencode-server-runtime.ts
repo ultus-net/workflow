@@ -40,6 +40,14 @@ export interface OpencodeServerRuntimeOptions {
   readonly upstream?: string | undefined;
   /** Metered model id; defaults to the hub OpenCode default. */
   readonly model?: string | undefined;
+  /**
+   * W082 (config-side auto-compaction trigger): when true, the hub-written
+   * server config composes `compaction: { auto: true }` so sessions driven
+   * through this topology get the same deterministic maintenance the ACP
+   * lane composes from the settings preference. The CLI resolves it from the
+   * operator's `agents.opencode.autoCompact` setting (default off).
+   */
+  readonly autoCompact?: boolean | undefined;
   /** Upstream API key; defaults to `loadUpstreamApiKey()` (throws when absent). */
   readonly apiKey?: string | undefined;
   /** Loopback port; defaults to a free port. Injectable for tests. */
@@ -116,6 +124,9 @@ export async function createOpencodeServerRuntime(
       JSON.stringify(meteredOpencodeConfig({
         proxyUrl: proxy.url,
         model: options.model ?? process.env.WORKFLOW_OPENCODE_MODEL,
+        // W082: the daemon carries the same config-side auto-compaction
+        // trigger the ACP lane composes (settings `agents.opencode.autoCompact`).
+        ...(options.autoCompact === true ? { autoCompact: true } : {}),
         ...(autoLatest === undefined ? {} : { autoLatest: { aliases: autoLatest.aliases } }),
         ...(skillsMount === undefined ? {} : { skills: skillsMount }),
       })),

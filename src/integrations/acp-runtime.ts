@@ -191,6 +191,10 @@ async function createOpencodeRuntime(
       JSON.stringify(meteredOpencodeConfig({
         proxyUrl: proxy.url,
         model: configModel ?? options.settings?.agents.opencode?.model,
+        // W082: the operator's autoCompact preference composes the
+        // `compaction: { auto: true }` block into the hub-written config —
+        // the config-side auto-compaction trigger (default off).
+        ...(options.settings?.agents.opencode?.autoCompact === true ? { autoCompact: true } : {}),
         ...(autoLatest === undefined ? {} : { autoLatest: { aliases: autoLatest.aliases } }),
         ...(openSelection === undefined ? {} : { openSource: openSelection }),
         ...(skillsMount === undefined ? {} : { skills: skillsMount }),

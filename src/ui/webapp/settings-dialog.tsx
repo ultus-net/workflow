@@ -774,19 +774,30 @@ function RoutingAgentForm({ agent, preference, onSave }: {
 }) {
   const [model, setModel] = useState(preference.model ?? "");
   const [thoughtLevel, setThoughtLevel] = useState(preference.thoughtLevel ?? "");
+  // W082: the config-side auto-compaction trigger — opencode only, the only
+  // agent whose launch config composes it today.
+  const [autoCompact, setAutoCompact] = useState(preference.autoCompact === true);
   const [saved, setSaved] = useState(false);
   // Re-sync from the refreshed document after every load/save so the form
   // reflects what actually persisted, never a stale local draft.
   useEffect(() => {
     setModel(preference.model ?? "");
     setThoughtLevel(preference.thoughtLevel ?? "");
+    setAutoCompact(preference.autoCompact === true);
     setSaved(false);
-  }, [preference.model, preference.thoughtLevel]);
-  const dirty = (preference.model ?? "") !== model.trim() || (preference.thoughtLevel ?? "") !== thoughtLevel;
-  // The merge persists per key and cannot clear: an all-empty save would be
-  // rejected, so it is disabled here and the limitation is stated, not hidden.
-  const persistedAnything = preference.model !== undefined || preference.mode !== undefined || preference.thoughtLevel !== undefined;
-  const clearsEverything = persistedAnything && model.trim() === "" && thoughtLevel === "";
+  }, [preference.model, preference.thoughtLevel, preference.autoCompact]);
+  const dirty = (preference.model ?? "") !== model.trim() || (preference.thoughtLevel ?? "") !== thoughtLevel || (preference.autoCompact === true) !== autoCompact;
+  // The merge persists per key and cannot clear string keys: an all-empty save
+  // would be rejected, so it is disabled here and the limitation is stated,
+  // not hidden. autoCompact is an exception by construction — an explicit
+  // boolean persists, so unchecking sticks.
+  const persistedAnything = preference.model !== undefined || preference.mode !== undefined || preference.thoughtLevel !== undefined || preference.autoCompact !== undefined;
+  // Strings cannot clear (per-key merge), but autoCompact can: an unchanged
+  // boolean with empty string fields and something persisted means the save
+  // would change nothing — the honest disable. A CHANGED boolean always
+  // persists something real.
+  const clearsEverything = persistedAnything && model.trim() === "" && thoughtLevel === "" && (preference.autoCompact === true) === autoCompact;
+  const canPersist = dirty && !clearsEverything;
   return (
     <div className="mcp-editor" role="group" aria-label={`${agent} launch defaults`}>
       <label className="mcp-field">
@@ -804,15 +815,28 @@ function RoutingAgentForm({ agent, preference, onSave }: {
           {THOUGHT_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
         </select>
       </label>
+      {agent === "opencode" && (
+        <label className="mcp-field mcp-check">
+          <input
+            type="checkbox"
+            checked={autoCompact}
+            onChange={(event) => { setAutoCompact(event.target.checked); setSaved(false); }}
+          />
+          <span>Compact automatically when context runs low</span>
+        </label>
+      )}
       <span className="mcp-editor-actions">
         <button
           type="button"
           className="btn"
-          disabled={!dirty || clearsEverything}
+          disabled={!canPersist}
           onClick={() => {
             const next: AgentRuntimePreference = {
               ...(model.trim() === "" ? {} : { model: model.trim() }),
               ...(thoughtLevel === "" ? {} : { thoughtLevel }),
+              // An explicit boolean: the operator's choice persists (so an
+              // uncheck sticks), and only true arms the launch composition.
+              ...(agent === "opencode" ? { autoCompact } : {}),
             };
             void onSave(agent, next).then((ok) => { if (ok) setSaved(true); });
           }}
@@ -822,8 +846,9 @@ function RoutingAgentForm({ agent, preference, onSave }: {
       </span>
       {persistedAnything && (
         <p className="settings-desc">
-          Saved values merge per key; the panel cannot clear them yet — edit the
-          settings file to return an agent to its engine default.
+          Saved values merge per key; string keys cannot be cleared yet — edit
+          the settings file to return an agent to its engine default. The
+          auto-compact checkbox can be switched off directly.
         </p>
       )}
     </div>

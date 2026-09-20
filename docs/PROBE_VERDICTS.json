@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-09-20",
+  "updated": "2026-09-21",
   "verdicts": [
     {
       "id": "acp-cline-probe",
@@ -483,6 +483,18 @@
       "posture": "unqualified",
       "evidence": "docs/FEATURES.md W070a row (no recorded live verdict; no vendor keys were available)",
       "blocker": "needs vendor API keys (per-family) in the probe environment"
+    },
+    {
+      "id": "opencode-auto-compact-config-load",
+      "host": "opencode",
+      "hostVersion": "2.0.10 (stock serve, hub-written config)",
+      "probe": "test/opencode-auto-compact-probe.test.ts",
+      "gate": "WORKFLOW_OPENCODE_AUTO_COMPACT_PROBE",
+      "date": "2026-09-21",
+      "result": "green",
+      "posture": "advisory",
+      "evidence": "docs/HOST_ADAPTERS.md W082 auto-trigger entry (config-load arm live green: the composed config carries compaction: { auto: true } beside the pinned ask ruleset, and /api/config lists the hub-written document with the compaction block parsed)",
+      "note": "The config-load arm is the deterministic trigger delivery (config-owned, no plugin, no prompt-side loop). The LIVE auto-compact turn arm \u2014 a real model turn overflowing context and compacting on the pinned version \u2014 stays PENDING (needs a real model key); no enforced claim for the runtime's auto-compaction behavior is earned by this row."
     }
   ]
 }

@@ -1668,6 +1668,20 @@ body {
   color: var(--text-muted);
 }
 
+/* W082: the auto-compact checkbox row — horizontal, control left of its
+ * label, checkbox exempt from the full-width text-field styling. */
+.mcp-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--text);
+}
+
+.mcp-check input[type="checkbox"] {
+  width: auto;
+  accent-color: var(--accent-fill);
+}
+
 .mcp-field input,
 .mcp-field select,
 .mcp-field textarea {

@@ -20,7 +20,25 @@ import {
 } from "../integrations/opencode-server-discovery.js";
 import { createOpencodeServerRuntime } from "../integrations/opencode-server-runtime.js";
 import { HttpRemoteEngine } from "../integrations/remote-acp/engine.js";
+import { loadSettings } from "../integrations/workflow-settings.js";
 import { sessionBudgetFromEnv } from "../integrations/session-budget.js";
+
+/**
+ * W082: whether the daemon's hub-written server config composes the
+ * config-side auto-compaction trigger — the operator's
+ * `agents.opencode.autoCompact` setting (workspace overlay over global).
+ * Fail-soft by design: the trigger is an opt-in, so an unreadable settings
+ * document degrades to the honest default (off) instead of refusing the
+ * topology; a launch failure over a compaction preference would invert the
+ * priority.
+ */
+export function resolveDaemonAutoCompact(workspace: string): boolean {
+  try {
+    return loadSettings({ workspace }).agents.opencode?.autoCompact === true;
+  } catch {
+    return false;
+  }
+}
 
 export function authorityModeFromEnv(env: NodeJS.ProcessEnv): OpencodeAuthorityMode {
   const raw = env.WORKFLOW_OPENCODE_AUTHORITY_MODE?.trim();
@@ -82,7 +100,16 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const mode = authorityModeFromEnv(process.env);
   const enforcement = enforcementFromEnv(process.env);
 
-  const runtime = await createOpencodeServerRuntime({ workspace, stateHome });
+  const runtime = await createOpencodeServerRuntime({
+    workspace,
+    stateHome,
+    // W082: the daemon carries the operator's autoCompact preference into the
+    // hub-written server config (same trigger the ACP lane composes). A
+    // settings read failure must not block the daemon — the trigger is
+    // opt-in, so an unreadable settings document degrades to the honest
+    // default (off) rather than refusing the topology.
+    ...(resolveDaemonAutoCompact(workspace) ? { autoCompact: true } : {}),
+  });
   // Authority broker: the background policy decision point. It subscribes to
   // the server's SSE and answers every permission request through
   // WorkflowApplication; the gateway intercepts client replies so the stock TUI

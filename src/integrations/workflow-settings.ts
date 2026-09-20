@@ -40,6 +40,23 @@ export interface AgentRuntimePreference {
   readonly model?: string;
   readonly mode?: string;
   readonly thoughtLevel?: string;
+  /**
+   * W082 (config-side auto-compaction trigger): when true, the hub-written
+   * launch config composes `compaction: { auto: true }` for this agent — the
+   * session runtime then compacts on its own at the documented threshold
+   * (per-model runtime behavior; the §9 research note: the ACP lane
+   * auto-compacts exactly when the model's compaction config enables it).
+   * The default is OFF (absent or false — no invented runtime defaults;
+   * current behavior is unchanged). An explicit `false` persists as the
+   * operator's choice so an uncheck sticks through the per-key merge.
+   * Launch-time applied like the other agent preferences: a change reaches a
+   * NEW session. Budget-guard compatible by
+   * construction: a compaction turn is a normal metered model turn through
+   * the same loopback proxy the W045 interactive budget guard watches, and
+   * the sticky refusal gate still bounds every later prompt — auto-compaction
+   * composes no bypass lane.
+   */
+  readonly autoCompact?: boolean;
 }
 
 export function defaultSettings(): WorkflowSettings {
@@ -114,11 +131,17 @@ export function normalizeSettings(value: unknown): WorkflowSettings {
       const model = normalizeString(raw.model);
       const mode = normalizeString(raw.mode);
       const thoughtLevel = normalizeString(raw.thoughtLevel);
-      if (model === undefined && mode === undefined && thoughtLevel === undefined) continue;
+      // W082: an explicit boolean persists as the operator's choice (so an
+      // uncheck can stick in the merge); a non-boolean is dropped fail-closed.
+      // Only `=== true` ever arms the trigger — the composition sites treat
+      // everything else as the honest default (off).
+      const autoCompact = typeof raw.autoCompact === "boolean" ? raw.autoCompact : undefined;
+      if (model === undefined && mode === undefined && thoughtLevel === undefined && autoCompact === undefined) continue;
       agents[id] = {
         ...(model === undefined ? {} : { model }),
         ...(mode === undefined ? {} : { mode }),
         ...(thoughtLevel === undefined ? {} : { thoughtLevel }),
+        ...(autoCompact === undefined ? {} : { autoCompact }),
       };
     }
   }

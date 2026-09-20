@@ -352,6 +352,36 @@ context overflow surfaces as a `400` (`Context overflow: … Please start a new 
 operator control over the documented route through the enforced gateway (W082 box 3, this slice);
 the hub-side auto-trigger remains a separate deterministic gate (box 3 second half, still open).
 
+**Auto-trigger decision addendum (2026-09-21, W082 box 3 second half — decided and landed):** the
+hub-side automatic compaction trigger is **config-side**. Ownership decision (operator direction
+2026-09-20, three candidates weighed): the **session runtime under hub-written config** is the
+owner — this research note already established that the ACP lane auto-compacts exactly when the
+model's compaction config enables it, so Workflow's deterministic lever is composing
+`compaction: { auto: true }` into the hub-written per-runtime config (the same composition every
+hub-owned surface rides), not owning a poller. **Hub scheduler: rejected** — cron is the wrong
+shape for a threshold trigger and the hub daemon has no per-session visibility (separate process).
+**Session manager: rejected** — its ACP `usage_update` view covers only live web-UI sessions, and
+it cannot reach those sessions through the gateway anyway (store finding, below). **Topology
+daemon monitor: recorded as the data-lane follow-up**, gated on a per-session usage-read probe
+(per-session message tokens ARE documented in the v2 message payloads —
+`GET /api/session/{id}/message` — so the source exists; the monitor is worthwhile only if the
+config-side trigger proves insufficient for gateway-driven sessions). Implementation (2026-09-21):
+settings `agents.<id>.autoCompact` (explicit boolean, default off, workspace-over-global, panel
+toggle for opencode) composes `compaction: { auto: true }` in `meteredOpencodeConfig` for both the
+ACP subprocess and the topology server config (the daemon resolves the same preference
+fail-soft). Budget-guard-aware by construction: a compaction turn is a normal metered model turn
+through the same loopback proxy the W045 interactive budget guard watches; the sticky refusal gate
+bounds every later prompt; no bypass lane. No plugin hook composed anywhere. Probe evidence
+(2026-09-21): `test/opencode-auto-compact-probe.test.ts` (`WORKFLOW_OPENCODE_AUTO_COMPACT_PROBE=1`)
+live green on v2.0.10 — the composed config carries the block beside the pinned ask ruleset and
+`/api/config` lists the hub-written document with `compaction.auto === true` parsed; the LIVE
+auto-compact turn arm (a real overflow turn compacting) stays PENDING on a real model key —
+register row `opencode-auto-compact-config-load` in `docs/PROBE_VERDICTS.json`. Store finding
+recorded the same day: the web session registry's agent-session ids live in the ACP subprocess's
+scratch-HOME session store while the gateway fronts the topology server's own store, so the manual
+control's admit path is route-qualified and its session-level reachability for web-UI ACP sessions
+is unprobed — the control surfaces the gateway's refusal verbatim, never a fabricated success.
+
 **Matrix reconciliation (this dated change):** documented reads that were failing closed are now
 `read-only`/`forward` — bare permission reads (`/api/permission/request`, `/api/permission/saved`;
 the §2.5 text always claimed permission reads, the pattern diverged), `GET /api/worktree` (repo
@@ -388,7 +418,7 @@ The documented v2 API (§9) reopens several. Each prior concession, re-examined:
 | Config-defined providers invisible in `/api/provider` + `/api/model/default` ignores the config model (§9) — metered-model resolution risk | v2 provider visibility follows credential activation | `POST /api/session` accepts an explicit `model: Model.Ref`; credential/integration connect + activate routes exist | **Solvable path identified** — probe the credential-activation flow; until then, pin the metered model explicitly on session create rather than trusting defaults |
 | Interactive-TUI sessions unmetered ("the hub never sees those runtimes") | TUI sessions ran in their own process | In the server topology the TUI attaches to the hub-owned server; stats cover every session server-side | **Solvable in the server topology**; ACP interactive sessions stay proxy-metered until the chat-lane consolidation |
 | Chat lane (PWA) on per-session ACP runtimes; consolidation parked | Unmetered-default risk + provider visibility | Explicit model refs on session create remove the worst failure mode | **Partially unlocked, still parked** — full consolidation gated on the provider-visibility probe (W080-adjacent) |
-| Auto-compaction lost in the plugin→hub pivot | Plugin hooks could trigger compaction in-process | `POST /api/session/{id}/compact` + provider `native`/`summary` compaction config | **W080 route decision landed; W082 slice in progress (2026-09-20)** — compact re-classified deliberately in §2.5 (forward, operator-controlled maintenance); the §9 research note answers the ACP-lane question (auto-compaction is runtime config behavior, the operator regression is the overflow 400 when auto is unavailable); the PWA manual compaction control rides the enforced gateway in this slice; the hub-side threshold auto-trigger stays open, no prompt-side loop and no plugin hook |
+| Auto-compaction lost in the plugin→hub pivot | Plugin hooks could trigger compaction in-process | `POST /api/session/{id}/compact` + provider `native`/`summary` compaction config | **W082 decided and landed (2026-09-21; route decision 2026-09-20)** — compact re-classified deliberately in §2.5 (forward, operator-controlled maintenance); the PWA manual compaction control rides the enforced gateway; the hub-side auto-trigger is **config-side** (settings `agents.<id>.autoCompact` → `compaction: { auto: true }` in the hub-written config for the ACP subprocess and the topology server; §9 addendum records the owner decision — runtime-under-config, scheduler/session-manager rejected, topology-daemon monitor the gated data-lane follow-up); no prompt-side loop and no plugin hook; the live auto-compact turn arm stays PENDING on a real model key (register row `opencode-auto-compact-config-load`) |
 | fs/shell/pty deny classes through the gateway | Containment: mutations cross Workflow authorization | The API exposes them to *its own* clients | **Keep** — the data lane changes nothing about the mutation boundary |
 | Skill delivery gated (native host skill injection off) | Injection boundary discipline | `GET /api/skill` is list-only; no write surface | **Keep, unchanged** — W078 scoping lands with the delivery decision |
 | Session resume via ACP `session/load` | Probe-proven | `experimental/session/export\|import` exist as data transfers | **Keep**; note export/import as a future migration tool only |

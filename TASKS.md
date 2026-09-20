@@ -1367,6 +1367,52 @@ fail-loud, matching the honest-claims culture. Idea adopted from oh-my-openagent
 - [ ] Every check is pass/warn/fail with an actionable fix line; nothing silently passes.
 - [ ] Focused tests pin the report composition; typecheck and lint clean; five-axis review.
 
+**Follow-up (2026-09-20, W078 follow-up — the machine-readable probe verdict register):**
+the doctor reported probe gates from a hardcoded list that had already drifted (it named 8
+families while the test corpus carries ~30 gate-style probe files), and the dated verdicts lived
+only in prose — documentation and runtime claims had no shared record. The register makes the
+verdict state durable and machine-checkable:
+
+- [x] `docs/PROBE_VERDICTS.json` (schema v1, fail-closed validation in
+      `src/integrations/probe-verdicts.ts`): one dated row per gate — host + version of record,
+      probe file, gate env, date, result (`green`/`red`/`negative`/`pending`/`blocked`),
+      enforcement posture the verdict supports, evidence write-up, and a required blocker for
+      every `blocked` row (the missing operator environment/credential). Seeded with 42 rows
+      covering every gated probe family: dated greens (OpenCode ACP 2026-09-16, goose 1.50.1
+      2026-09-17, topology M1/webUI/compact on v2.0.10 2026-09-20, scheduled turn, vendored-Cline
+      3.0.61 era), the Cline subagent Red, the goose subagent-hooks Negative, and the honestly
+      blocked family (remote ACP bridge, model-key permission probes, open-model live, stock-Cline
+      auth, azure metered) — item 5 of the operator's list now has a durable machine-readable home
+      instead of prose-only blockers.
+- [x] Bidirectional anti-drift pin (`test/probe-verdict-register.test.ts`): every register row's
+      probe file must exist AND still name its gate, and every gate-style `WORKFLOW_* === "1"`
+      probe file in the test corpus must have a register row — adding a gated probe without
+      registering it, or renaming/removing a gate the register records, fails the suite. Fail-closed
+      schema drift cases pinned (version, dates, enums, duplicate ids, deleted probe file,
+      blocked-without-blocker).
+- [x] Doctor reads the register (`checkProbeVerdicts`, replacing the stale hardcoded
+      `checkProbeGates` list): renders the tally and which gates are armed right now, surfaces
+      pending/blocked as a warn with the run-a-probe fix line, and fails loud on a corrupt or
+      drifted register. Doctor's own pin (`test/doctor.test.ts`) updated to the register-driven
+      composition.
+- [x] Five-axis review for this follow-up slice. (**Done 2026-09-21: APPROVE** recorded by a
+      fresh-context secondary reviewer across all five axes, no P0-P2 findings, six P3s — the
+      register's `updated` stamp predating its newest row, optional-field typing, the doctor fix
+      line for blocked rows, the corpus-scan heuristic limits, awkward fail wording, and a cheap
+      non-gated unit pin for the server-runtime composition. **Fixed in this slice:** the stamp
+      bumped and a validator rule added (`updated` can never predate the newest verdict date —
+      fail-closed, test-pinned), optional `blocker`/`note` fields now type-checked fail-closed,
+      the probe-path pattern widened to subdirectory probe files, the scan heuristic's documented
+      limits stated in the anti-drift test, and the doctor fix line now routes blocked rows to
+      their named blocker instead of an impossible "run the probe". **Accepted residuals:** the
+      flat corpus scan stays (documented); the server-runtime composition spread is covered by the
+      shared `meteredOpencodeConfig` pin plus the gated live probe rather than a dedicated
+      non-gated unit.)
+
+**Verification (2026-09-20, widened 2026-09-21):** `test/probe-verdict-register.test.ts` (5) +
+`test/doctor.test.ts` (5) — 10/10; typecheck, lint, and build clean. Focused-run per the
+operator resource directive (no full-suite run).
+
 ### W079 - Hash-anchored edits: evaluation against the read-fingerprint ledger (design doc)
 
 **Objective:** Evaluate a Hashline-style upgrade (`LINE#ID` content-hash tags on reads, edits
@@ -1377,12 +1423,24 @@ oh-my-openagent / "The Harness Problem"; no upstream code.
 **Depends on:** W072 ledger invariants (fresh reads before mutation).
 
 **Acceptance criteria:**
-- [ ] A dated design doc compares content-addressed line identity vs the current digest/size/mtime
+- [x] A dated design doc compares content-addressed line identity vs the current digest/size/mtime
       claim matching: capture points (where reads are surfaced), enforcement point (edit validation
       through the guard, not prompt text), adversarial cases (same-hash collisions, truncated
-      reads), and a probe plan.
-- [ ] A decision with evidence: adopt, adapt, or reject — recorded in the doc; no code before the
-      decision.
+      reads), and a probe plan. (**Done 2026-09-20:**
+      `docs/superpowers/specs/2026-09-20-w079-hashline-read-fingerprint-decision.md` — grounded in
+      the as-built capture points (ACP fs-read lane + the v2 gateway claims) and the
+      `STALE_OR_MISSING_READ` authorization gate.)
+- [x] A decision with evidence: adopt, adapt, or reject — recorded in the doc; no code before the
+      decision. (**Decision 2026-09-20: REJECT** — the current whole-file digest ledger is strictly
+      more conservative on every adversarial case the doc examines: sha256 whole-file has no
+      collision surface while per-line hashes collide trivially and need positional anchors that
+      insertions invalidate; a truncated read claims whole-file freshness either way, so hashline
+      degrades to the whole-file rule everywhere it matters; the enforcement point would not move —
+      hashline only relaxes what counts as stale, which is the invariant the ledger exists to hold.
+      The one real improvement the idea surfaced — recording a read window for windowed reads — is
+      recorded in the doc as a scoped option requiring its own dated decision if the gateway lane
+      ever surfaces windowed reads; the ACP lane does not today. No code shipped with this
+      decision.)
 
 ### W080 - Skill-embedded connector scoping (gated on the skill-delivery decision)
 
@@ -1395,11 +1453,25 @@ config and guard authorization — scoping, never a bypass lane.
 until it exists).
 
 **Acceptance criteria:**
-- [ ] The skill schema gains an optional `connectors` declaration validated against the toolbox
-      catalog (unknown connector → fail loud).
+- [x] The skill schema gains an optional `connectors` declaration validated against the toolbox
+      catalog (unknown connector → fail loud). (**Done 2026-09-20, schema half only — the mount
+      half stays gated on the skill-delivery decision, as the dependency states:**
+      `validateSkillConnectors` in `src/integrations/toolbox-catalog.ts` — absent means no
+      connector claims; an unknown name, a non-string entry, or a duplicate fails loud
+      (`TypeError`), validated against the catalog that is the single source of truth;
+      `toolboxSkillBody` renders a validated declaration into the frontmatter (`connectors:` list,
+      frontmatter `version` bumped to 2) and stays byte-identical to the W077 corpus pin without
+      one. Pins: `test/skill-connectors.test.ts` (4). **Deliberately NOT landed:** any mount code —
+      there is no skill-delivery path to compose it into (2026-09-15 plan keeps native host skill
+      injection off), so a mount seam today would be dead code, and the honest state is the gated
+      box below.)
 - [ ] Delivery (when it ships) mounts only declared connectors, through the existing launch-config
-      path; the guard still owns authorization.
-- [ ] Probe-gated per host version before any claim.
+      path; the guard still owns authorization. (**Gated 2026-09-20:** still waits on the
+      skill-delivery decision; when it ships, the mount composes ONLY declared connectors through
+      the hub-written launch-config path — scoping, never a bypass lane.)
+- [ ] Probe-gated per host version before any claim. (**Gated:** the skills-delivery probe family
+      (`WORKFLOW_ACP_OPENCODE_SKILLS`) is `pending` in `docs/PROBE_VERDICTS.json` — no live verdict,
+      no support claim; the register row is the durable reminder to probe before claiming.)
 
 ### W081 - Session stats on the Usage page (data-lane read #2)
 
@@ -1445,21 +1517,52 @@ hook (`ctx.session.hook("compaction")`) is explicitly NOT used — no plugins.
       route — so the ACP lane auto-compacts exactly when the model's config enables it, and the
       operator regression is the overflow `400` ("start a new session or use /compact") when auto
       is unavailable. No plugin involved, per the no-plugins constraint.
-- [ ] The PWA surfaces context pressure and a compaction control (custom UI, per the
+- [x] The PWA surfaces context pressure and a compaction control (custom UI, per the
       surface-division decision); the hub-side auto-trigger is deterministic and budget-guard-aware.
-      (**Half-landed 2026-09-20**: the control is wired — the inspector Context section's
-      "Compact…" affordance → `POST /api/sessions/compact` → the manager's agent-session record →
-      the documented route through the enforced gateway; the honest copy states the documented
-      steering semantics (queued, runs at the next step boundary) and failures surface the
-      gateway's reason verbatim. **Still open:** the hub-side threshold auto-trigger — a
-      deterministic, budget-guard-aware gate needs its own design decision (threshold source,
-      trigger owner) before it lands.)
+      (**Manual control landed 2026-09-20**: the inspector Context section's "Compact…" affordance →
+      `POST /api/sessions/compact` → the manager's agent-session record → the documented route
+      through the enforced gateway; the honest copy states the documented steering semantics
+      (queued, runs at the next step boundary) and failures surface the gateway's reason verbatim.
+      **Auto-trigger decided and landed 2026-09-21, config-side** — the design decision (operator
+      direction 2026-09-20): ownership is the **session runtime under hub-written config**, per the
+      §9 research note that the ACP lane auto-compacts exactly when the model's compaction config
+      enables it, so Workflow's deterministic lever is composing `compaction: { auto: true }` into
+      the hub-written config rather than owning a poller. The **hub scheduler** is rejected as
+      owner (cron is the wrong shape for a threshold trigger; the hub daemon has no per-session
+      visibility), the **session manager** is rejected (its ACP `usage_update` view covers only
+      live web-UI sessions, and — store finding below — it cannot reach those sessions through the
+      gateway anyway), and the **topology daemon monitor** is recorded as the data-lane follow-up
+      behind a per-session usage-read probe (per-session message tokens are documented in the v2
+      message payloads). Implementation: settings `agents.<id>.autoCompact` (explicit boolean,
+      default off, workspace-over-global, panel toggle for opencode) composes
+      `compaction: { auto: true }` in `meteredOpencodeConfig` — consumed by the ACP subprocess
+      composition AND the topology server config (the daemon resolves the same preference
+      fail-soft). **Budget-guard-aware by construction**: a compaction turn is a normal metered
+      model turn through the same loopback proxy the W045 interactive budget guard watches, the
+      sticky refusal gate still bounds every later prompt, and no bypass lane is composed. Focused
+      pins: `test/auto-compact-config.test.ts` (3). **Store finding recorded honestly:** the web
+      session registry's agent-session ids live in the ACP subprocess's scratch-HOME store while
+      the gateway fronts the topology server's own store, so the manual control's admit path is
+      qualified at the route level (probe-created session) and its session-level reachability for
+      web-UI ACP sessions is unprobed — the control surfaces the gateway's refusal verbatim when
+      the store does not hold the session, never a fabricated success.)
 - [x] Live probe evidence per pinned version; no enforced claim without it. (**Done 2026-09-20:**
       `test/opencode-compact-probe.test.ts` gated `WORKFLOW_OPENCODE_COMPACT_PROBE=1` ran live
       green on stock v2.0.10 through the **enforced** gateway — unauthenticated compact `401`,
       session create via the documented route, and compact **admitted** as the documented
       `Session.Inbox.Compaction` inbox item (queued at the next step boundary); the verdict is
-      recorded in `docs/HOST_ADAPTERS.md`.)
+      recorded in `docs/HOST_ADAPTERS.md`.) (**Auto-trigger probe added and run live 2026-09-21:**
+      `test/opencode-auto-compact-probe.test.ts`, gated `WORKFLOW_OPENCODE_AUTO_COMPACT_PROBE=1`,
+      ran live green on stock v2.0.10 — the composed hub-written config carries
+      `compaction: { auto: true }` beside the pinned ask ruleset and the real server's
+      `/api/config` documents include that document with the compaction block parsed (the
+      config-load arm IS the deterministic trigger delivery). The LIVE auto-compact turn arm — a
+      real model turn overflowing context and compacting — stays **PENDING** (needs a real model
+      key, operator environment); recorded in `docs/PROBE_VERDICTS.json`
+      (`opencode-auto-compact-config-load`, dated 2026-09-21, with the pending arm named in the
+      row). No plugin hook is composed anywhere in this slice; no `enforced` claim for the
+      runtime's auto-compaction behavior.)
+
 ### W083 - Step-ledger panel in the custom web UI (the todo-tracking track)
 
 **Objective:** Surface the W072 kernel step ledger (roadmap → tasks → steps) in the
