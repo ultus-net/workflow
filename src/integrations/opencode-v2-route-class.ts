@@ -44,8 +44,13 @@ export const OPENCODE_V2_PERMISSION_REPLY_ROUTE =
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-/** Read-only observation classes (§2.4 "Read-only observation" row). */
-const READ_ONLY_ROUTE = /^\/(?:api\/)?(?:experimental\/)?(?:info|agent|plugin|model|provider|project|form|event|mcp|skill|vcs|debug|migration|websearch|reference|config|session|location|filesystem|shell|integration|command|rpc|fs)(?:\/|$)/;
+/** Read-only observation classes (§2.4 "Read-only observation" row), reconciled
+ * 2026-09-20 against the documented v2 inventory (opencode.ai/v2/docs/api,
+ * 136 operations): `permission` bare reads (the §2.5 text always said permission
+ * reads are read-only; the pattern omission diverged), `worktree` (list is repo
+ * metadata), and `pty` (the list is observation; connect/mutate stay denied by
+ * the mutation rule below). Persistent-pty stays unclassified (prototype). */
+const READ_ONLY_ROUTE = /^\/(?:api\/)?(?:experimental\/)?(?:info|agent|plugin|model|provider|project|form|event|mcp|skill|vcs|debug|migration|websearch|reference|config|session|location|filesystem|shell|integration|command|rpc|fs|permission|worktree|pty)(?:\/|$)/;
 
 interface MutationRule {
   readonly routeClass: OpenCodeV2RouteClass;
@@ -91,18 +96,29 @@ const MUTATION_RULES: readonly MutationRule[] = [
     pattern: /\/(?:mcp|integration|credential|config|plugin|location)(?:\/|$)/,
   },
   // Session input/control: operator/agent input the surface needs is forwarded;
-  // it cannot advance canonical state on its own. Destructive session
-  // lifecycle changes are held back.
+  // it cannot advance canonical state on its own. The list is reconciled with
+  // the documented v2 session operations (2026-09-20): model/agent switch and
+  // the experimental `skill`/`wait` spellings are documented ops; `switch` was
+  // never a documented op and is gone; destructive lifecycle (compact, fork,
+  // move, remove, the staged-revert family) is held back.
   {
     routeClass: "session-input",
     disposition: "forward",
-    pattern: /^\/api\/session\/[^/]+\/(?:prompt|command|synthetic|interrupt|abort|wait|background|inbox|message|instructions|generate|switch|skill)$/,
+    pattern: /^\/api\/(?:experimental\/)?session\/[^/]+\/(?:prompt|command|synthetic|interrupt|abort|wait|background|generate|agent|model|skill)$/,
     methods: ["POST"],
+  },
+  // Documented operator input on a pending inbox item (delivery decision:
+  // steer/queue). Cancelling (DELETE) stays behind the DELETE backstop below.
+  {
+    routeClass: "session-input",
+    disposition: "forward",
+    pattern: /^\/api\/(?:experimental\/)?session\/[^/]+\/inbox\/[^/]+$/,
+    methods: ["PATCH"],
   },
   {
     routeClass: "session-input",
     disposition: "deny",
-    pattern: /^\/api\/session\/[^/]+\/(?:compact|fork|move|revert|remove)$/,
+    pattern: /^\/api\/(?:experimental\/)?session\/[^/]+\/(?:compact|fork|move|remove|revert)(?:\/(?:stage|commit))?$/,
   },
   // Removing a session is destructive and releases claims/budget, so it must
   // run through the Workflow lifecycle path rather than a raw client DELETE.
@@ -114,18 +130,14 @@ const MUTATION_RULES: readonly MutationRule[] = [
   },
   // Session create / update / import: explicit input operations only. There is
   // deliberately no session catch-all — a newly added session operation must be
-  // classified (and tested) before an enforced gateway will forward it.
-  {
-    routeClass: "session-input",
-    disposition: "forward",
-    pattern: /^\/api\/session\/import$/,
-    methods: ["POST"],
-  },
+  // classified (and tested) before an enforced gateway will forward it. Import
+  // (documented `POST /api/experimental/session/import`) is denied through the
+  // gateway: foreign session data enters through the hub lifecycle, which owns
+  // provenance, never through a raw client call.
   {
     routeClass: "session-input",
     disposition: "deny",
-    pattern: /^\/api\/session\/import(?:\/|$)/,
-    methods: ["PATCH", "PUT", "DELETE"],
+    pattern: /^\/api\/(?:experimental\/)?session\/import(?:\/|$)?$/,
   },
   {
     routeClass: "session-input",
@@ -137,7 +149,7 @@ const MUTATION_RULES: readonly MutationRule[] = [
     routeClass: "session-input",
     disposition: "forward",
     pattern: /^\/api\/session\/[^/]+$/,
-    methods: ["PATCH", "PUT"],
+    methods: ["PATCH"],
   },
 ];
 

@@ -1116,6 +1116,29 @@ test/opencode-webui-gateway-probe.test.ts` green (v2.0.10, 2026-09-20); classifi
 82/82; `test/opencode-server-runtime.test.ts` 4/4; typecheck and lint clean; dated rows in
 `docs/HOST_ADAPTERS.md`, `docs/FEATURES.md`, and §2.5.
 
+**Gap follow-ups (2026-09-20, same day — the two named gaps are closed):**
+- **Fresh research** against the brand-new official v2 docs (`opencode.ai/v2/docs/api`, 136
+  operations — §9): the matrix was reconciled with the documented inventory (bare permission/
+  worktree/pty reads unblocked; documented session ops classified — `agent`/`model` switch,
+  experimental `skill`/`wait`, staged-revert family, inbox PATCH; undocumented verbs like `PUT
+  /api/session/{id}` and the speculative `switch` narrowed away), and the dual-lane integration
+  decision (ACP = control lane; v2 HTTP API = data lane, per the operator) is recorded in project
+  memory and §9.
+- **M1 attach probe re-qualified live on v2.0.10** (`WORKFLOW_OPENCODE_SERVER_ATTACH=1`, v2
+  spellings): config loaded and parsed, `/api/session` create through the gateway returns
+  `data.id`, authority split holds, **broker SSE subscribes and intercepts without forwarding**
+  (the engine's event stream now tries `/api/event` by content-type with a `/global/event`
+  fallback). Still advisory — the live permission path needs a model key.
+- **v2 provider-visibility finding** (§9, matching the upstream custom-provider issue class):
+  config-defined providers do not list in `/api/provider` or `/api/model` on v2.0.10, and
+  `/api/model/default` ignores the config `model`; the metered provider is asserted via the loaded
+  config documents. Follow-up: evaluate the `/api/credential/{id}/activate` path for metered
+  visibility.
+- **The stock web UI tab is wired**: `openStockWebTab` (`src/cli/web-launch.ts`) surfaces the
+  gateway-served stock UI as a second `workflow web` tab when the topology daemon is already
+  running (probe-verified, quiet otherwise, foreign-host refused, `WORKFLOW_OPENCODE_STOCK_TAB=0`
+  opt-out); 3/3 focused tests (`test/web-launch-tab.test.ts`).
+
 ### W075 - Hub orientation briefing (prompt-level block; skill depth layer behind a dated decision)
 
 **Objective:** Give hub-launched agents a deterministic orientation so toolbox/guard tools are used

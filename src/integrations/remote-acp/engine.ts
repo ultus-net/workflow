@@ -309,11 +309,21 @@ export class HttpRemoteEngine implements RemoteEngine {
   }
 
   async *events(input: { cwd: string; signal: AbortSignal }): AsyncIterable<RemoteEngineEvent> {
-    const response = await this.#fetch(this.#url("/global/event", input.cwd), {
-      method: "GET",
-      headers: { ...this.#headers(), accept: "text/event-stream" },
-      signal: input.signal,
-    });
+    // v2 moved the JSON API (and the SSE stream) under `/api/*`; the bare
+    // `/global/event` spelling is v1 and now answers with the web UI's HTML
+    // catch-all — a 200 that is NOT an event stream. Try the documented v2
+    // route first and fall back to the v1 spelling by content type, so the
+    // subscription is live on either pinned generation.
+    const open = async (path: string): Promise<Response> =>
+      this.#fetch(this.#url(path, input.cwd), {
+        method: "GET",
+        headers: { ...this.#headers(), accept: "text/event-stream" },
+        signal: input.signal,
+      });
+    let response = await open("/api/event");
+    if (!response.ok || !(response.headers.get("content-type") ?? "").includes("text/event-stream")) {
+      response = await open("/global/event");
+    }
     if (!response.ok || response.body === null) {
       throw new Error(`remote engine event stream failed (${response.status})`);
     }

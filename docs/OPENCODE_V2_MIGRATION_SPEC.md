@@ -144,10 +144,14 @@ consumed by both the production gateway and the probes, so the tested contract i
   them rather than normalizing.
 - **Anything unclassified fails closed** (`unknown` → `deny`); a read whose subtree is unrecognized is
   not implicitly safe. The classifier tracks the §2.1/§2.4 inventory; operation spellings the pinned
-  release adds but this classifier does not yet enumerate (observed candidates: `file.content`, `find`,
-  `path`, `session.init/todo`) fail closed as `unknown` until classified and tested — the
-  fail-closed direction is intentional, and the matrix must be extended before an enforced surface ships.
-  (`session.abort` is now classified: operator stop-control, forwarded as session input.)
+  release adds but this classifier does not yet enumerate fail closed as `unknown` until classified
+  and tested — the fail-closed direction is intentional, and the matrix must be extended before an
+  enforced surface ships. (`session.abort` is now classified: operator stop-control, forwarded as
+  session input. **2026-09-20:** the matrix was reconciled against the documented v2 inventory —
+  see §2.7 — which replaced the earlier speculative spellings (`switch` was never a documented op)
+  and classified the documented session operations (`agent`/`model` switch, the experimental
+  `skill`/`wait` spellings, the staged-revert family, inbox PATCH) and the bare permission/worktree/pty
+  reads.)
 
 When `enforced`, the gateway forwards only routes whose disposition is `forward`; it answers any other
 client request (`deny`, `unknown`, or a broker route reached without the broker hook) with `403` carrying
@@ -301,3 +305,45 @@ credential custody, and plugin-retirement qualification. An upstream PR is block
 probe family, replay/idempotency tests, authorization-boundary tests, and independent five-axis review
 are green. The PR body must list the exact upstream candidates, source evidence, and any Workflow-only
 residuals.
+
+## 9. Documented v2 API inventory and the dual-lane integration decision (2026-09-20)
+
+Fresh research against the brand-new official documentation (`https://opencode.ai/v2/docs/api/`,
+OpenAPI 3.1, 136 operations / 245 schemas; machine-readable at `/v2/openapi.json`; verified live
+against the pinned stock server **v2.0.10**). The legacy `opencode.ai/docs/server/` page still
+documents the **v1** bare-path API (`/session`, `/global/event`) — the spelling family W071's
+runtime was originally written against. Stock v2 serves the web UI as an SPA fallback on every bare
+path and exposes the JSON API under `/api/*` only. **All new integration speaks v2 spellings.**
+
+**Dual-lane decision (operator directive, 2026-09-20):** ACP remains the control lane — session
+lifecycle, prompts, permission authority, turn flow. The documented v2 HTTP API is the **data
+lane**, used wherever ACP lacks exposure: live MCP list (`GET /api/mcp`), per-session usage truth
+(`GET /api/experimental/session/stats`), provider/model/agent enumeration (`GET /api/provider`,
+`/api/model`, `/api/model/default`, `/api/agent`), the event stream (`GET /api/event`), and the
+location-scoped fs/shell/vcs/worktree/reference surfaces. Hub-side consumption is in-zone (the hub
+owns the spawned server and its credential on loopback); anything surfaced to external clients
+crosses the enforced gateway under the §2.5 route-class dispositions — no API data reaches a client
+except through a classified `forward`.
+
+**Matrix reconciliation (this dated change):** documented reads that were failing closed are now
+`read-only`/`forward` — bare permission reads (`/api/permission/request`, `/api/permission/saved`;
+the §2.5 text always claimed permission reads, the pattern diverged), `GET /api/worktree` (repo
+metadata), `GET /api/pty` (list; connect/mutate stay denied). Documented session operations are
+classified: `POST …/agent` and `…/model` switch and the experimental `skill`/`wait` spellings
+forward (operator input); the staged-revert family (`revert/stage`, `revert/commit`) and the
+destructive lifecycle (`compact`, `fork`, `move`, `remove`) deny; the documented inbox `PATCH`
+(delivery decision) forwards while `DELETE` stays held back; import is denied through the gateway in
+both spellings (foreign session data enters through the hub lifecycle, which owns provenance).
+Tightenings: `PUT /api/session/{id}` was never documented (was incidentally forwarded) and now fails
+closed; the speculative `switch` op is gone. Still **intentionally unclassified** (fail closed
+until a need is shown and they are classified): forms (`create`/`reply`/`cancel`), session
+`environment` (credential-bearing env injection), `view`, client-driven `websearch`, plugin
+`rpc`, project `PATCH`, persistent-pty (prototype), and PTY/connect tokens.
+
+Auth: the v2 client docs show `Authorization: Bearer <token>`; the server-password flow
+(`OPENCODE_SERVER_PASSWORD`, Basic `opencode:<password>`) is live-verified on v2.0.10 and is what
+the Workflow runtime and gateway compose. Both are honored by the pinned release.
+
+**Evidence:** `test/opencode-v2-route-class.test.ts` (reconciled case table), the route-class
+gateway suite, and the gated live probes (`WORKFLOW_OPENCODE_WEBUI_PROBE=1` app-shell verdict;
+`WORKFLOW_OPENCODE_SERVER_ATTACH=1` M1 re-qualification, v2 spellings).
