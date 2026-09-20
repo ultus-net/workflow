@@ -99,12 +99,15 @@ const MUTATION_RULES: readonly MutationRule[] = [
   // it cannot advance canonical state on its own. The list is reconciled with
   // the documented v2 session operations (2026-09-20): model/agent switch and
   // the experimental `skill`/`wait` spellings are documented ops; `switch` was
-  // never a documented op and is gone; destructive lifecycle (compact, fork,
-  // move, remove, the staged-revert family) is held back.
+  // never a documented op and is gone; destructive lifecycle (fork, move,
+  // remove, the staged-revert family) is held back — compact was deliberately
+  // reclassified (W080): it is operator-controlled session maintenance (a
+  // checkpoint summary that cannot advance canonical state), not a destructive
+  // lifecycle change, and the operator's control needs it to cross the gateway.
   {
     routeClass: "session-input",
     disposition: "forward",
-    pattern: /^\/api\/(?:experimental\/)?session\/[^/]+\/(?:prompt|command|synthetic|interrupt|abort|wait|background|generate|agent|model|skill)$/,
+    pattern: /^\/api\/(?:experimental\/)?session\/[^/]+\/(?:prompt|command|synthetic|interrupt|abort|wait|background|generate|agent|model|skill|compact)$/,
     methods: ["POST"],
   },
   // Documented operator input on a pending inbox item (delivery decision:
@@ -118,7 +121,7 @@ const MUTATION_RULES: readonly MutationRule[] = [
   {
     routeClass: "session-input",
     disposition: "deny",
-    pattern: /^\/api\/(?:experimental\/)?session\/[^/]+\/(?:compact|fork|move|remove|revert)(?:\/(?:stage|commit))?$/,
+    pattern: /^\/api\/(?:experimental\/)?session\/[^/]+\/(?:fork|move|remove|revert)(?:\/(?:stage|commit))?$/,
   },
   // Removing a session is destructive and releases claims/budget, so it must
   // run through the Workflow lifecycle path rather than a raw client DELETE.

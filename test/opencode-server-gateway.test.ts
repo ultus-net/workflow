@@ -57,6 +57,11 @@ async function stubUpstream(): Promise<StubServer> {
       response.end(JSON.stringify({ integration: [] }));
       return;
     }
+    if (pathname === "/api/session/s/compact" && request.method === "POST") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: { compacted: true } }));
+      return;
+    }
     if (pathname === "/gzip") {
       // Mirrors real `opencode serve`: gzipped JSON with content-encoding.
       response.writeHead(200, { "content-type": "application/json", "content-encoding": "gzip" });
@@ -284,6 +289,27 @@ test("W071 gateway (enforced): read-only observation is forwarded", async (t) =>
   assert.deepEqual(await response.json() as unknown, { integration: [] });
 });
 
+test("W080 gateway (enforced): compact is a forwarded session-input op (operator-controlled maintenance)", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    enforced: true,
+    onPermissionReply: () => undefined,
+  });
+  t.after(() => void gateway.close());
+
+  const response = await fetch(gateway.url + "/api/session/s/compact", {
+    method: "POST",
+    headers: { authorization: basic("opencode", "tuipw"), "content-type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(response.status, 200, "compact must forward to the upstream in enforced posture");
+});
+
 test("W071 gateway (enforced): mutation route classes are denied and never forwarded", async (t) => {
   const upstream = await stubUpstream();
   t.after(() => void upstream.close());
@@ -303,7 +329,6 @@ test("W071 gateway (enforced): mutation route classes are denied and never forwa
     ["POST", "/api/session/s/shell"],
     ["POST", "/api/mcp"],
     ["POST", "/api/pty"],
-    ["POST", "/api/session/s/compact"],
     ["POST", "/api/session/s/purge"],
     ["DELETE", "/api/session/s"],
     ["DELETE", "/api/session/s/message"],

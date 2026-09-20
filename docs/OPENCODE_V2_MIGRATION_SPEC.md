@@ -129,6 +129,9 @@ consumed by both the production gateway and the probes, so the tested contract i
   create/update/import) is forwarded because it cannot advance canonical state alone; destructive session
   lifecycle (`compact`, `fork`, `move`, `revert`, `remove`) is denied. There is deliberately **no session
   catch-all**: an unlisted session operation (e.g. a future `session.purge`) fails closed as `unknown`.
+  (**2026-09-20, W080 reclassification:** `compact` moved to *forward* — operator-controlled session
+  maintenance (a checkpoint summary that cannot advance canonical state), not destructive lifecycle;
+  `fork`, `move`, `remove`, and the staged-revert family remain denied.)
 - **Config reads are denied even though they are reads** (review P3): the v2 config payload carries
   provider credentials, so a raw forward would leak them; the hub serves redacted config itself. The
   api-optional spelling (`/config`) is denied the same way.

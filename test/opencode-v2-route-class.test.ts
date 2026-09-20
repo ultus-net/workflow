@@ -71,7 +71,7 @@ const cases: readonly {
   { name: "the undocumented bare import spelling is denied too", method: "POST", path: "/api/session/import", routeClass: "session-input", disposition: "deny" },
   { name: "staged revert is held back", method: "POST", path: "/api/session/s/revert/stage", routeClass: "session-input", disposition: "deny" },
   { name: "revert commit is held back", method: "POST", path: "/api/session/s/revert/commit", routeClass: "session-input", disposition: "deny" },
-  { name: "session compact is held back", method: "POST", path: "/api/session/s/compact", routeClass: "session-input", disposition: "deny" },
+  { name: "session compact is forwarded (W080: operator-controlled session maintenance, not destructive lifecycle)", method: "POST", path: "/api/session/s/compact", routeClass: "session-input", disposition: "forward" },
   { name: "session fork is held back", method: "POST", path: "/api/session/s/fork", routeClass: "session-input", disposition: "deny" },
   { name: "session remove is held back", method: "DELETE", path: "/api/session/s", routeClass: "session-input", disposition: "deny" },
   { name: "a DELETE on a session input op is held back", method: "DELETE", path: "/api/session/s/message", routeClass: "session-input", disposition: "deny" },

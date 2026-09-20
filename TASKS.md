@@ -1288,11 +1288,16 @@ hook (`ctx.session.hook("compaction")`) is explicitly NOT used — no plugins.
 **Depends on:** W074 (gateway verdicts); probe gating per `docs/HOST_ADAPTERS.md`.
 
 **Acceptance criteria:**
-- [ ] Route-class decision recorded in §2.5/§2.9 with tests: compact becomes an explicitly
-      classified session-input op (operator-controllable), NOT forward-by-default-forget.
+- [x] Route-class decision recorded in §2.5 with tests: `compact` is now an explicitly classified
+      forwarded session-input op (operator-controlled maintenance) — classifier row + gateway
+      forward test + upstream stub updated; the §2.5 bullet records the dated reclassification
+      (`fork`/`move`/`remove`/staged-revert remain denied).
 - [ ] Research note: what OpenCode v2 does natively per compaction type (`native` vs `summary`) and
       whether the ACP lane (`opencode acp`) auto-compacts without the HTTP route — the ACP-lane
-      gap is the actual regression the operator hit.
+      gap is the actual regression the operator hit. (Partially answered from the v2 docs: the
+      runtime compacts on context overflow instead of retrying, and a `compaction` request hook
+      exists upstream — **not used** per the no-plugins constraint. Live probe still owed.)
 - [ ] The PWA surfaces context pressure and a compaction control (custom UI, per the
       surface-division decision); the hub-side auto-trigger is deterministic and budget-guard-aware.
-- [ ] Live probe evidence per pinned version; no enforced claim without it.
+      (**Open** — needs the topology session wiring; deferred to the next compaction slice.)
+- [ ] Live probe evidence per pinned version; no enforced claim without it. (**Open**.)
