@@ -1568,3 +1568,29 @@ plugin).
       in `docs/policy-coverage.md` (numeric-target mutation-signal tradeoff,
       push `--delete`/`-d` flag gate omission, `/dev/null`-family filter
       divergence, quoted-target first-space truncation).**
+### W085 - Schedule create/edit in the web UI (the hub reload seam is the live registry)
+
+**Objective:** Complete the Schedules page's operator surface: create and edit
+schedules from the browser through the existing hub proxy. The original idea
+of a "hub reload seam" is already solved by main's live schedule registry
+(W074: `createScheduleRegistry` reads the table live, so `POST /schedule/save`
+takes effect on the very next tick without a hub restart) — what is missing is
+purely the affordance: the Schedules page renders pause/resume and delete but
+no create/edit form, and its empty state points the operator at hand-editing
+the table file.
+
+**Depends on:** main's hub proxy (`/api/schedules/save` upsert-by-id with
+field stripping, pinned in `test/web-operator-surfaces.test.ts`); no hub
+change.
+
+**Acceptance criteria:**
+- [ ] The Schedules page offers a create form (id, title, cron, prompt,
+      workspace, review requirement) and per-schedule edit that prefills the
+      form; editing preserves advanced fields (budget, taskClass, off-peak)
+      by sending the full schedule entry through the same save proxy.
+- [ ] Save failures surface the hub's validation message verbatim (e.g. an
+      invalid cron) — never a silent failure or a fabricated success.
+- [ ] The pause/resume toggle and delete keep their existing semantics; run
+      and loop start stay CLI-only with the page saying so.
+- [ ] SSR pins for the form affordances; the save-proxy endpoint tests keep
+      passing unchanged (no server change); typecheck and lint clean.

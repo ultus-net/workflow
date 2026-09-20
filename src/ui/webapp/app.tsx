@@ -2276,6 +2276,27 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
               body: JSON.stringify({ id }),
             }).then(() => refreshSchedules());
           }}
+          onSaveSchedule={async (fields, base) => {
+            // Editing spreads the full existing entry under the form's fields
+            // so advanced schedule fields (budget, taskClass, off-peak) the
+            // form does not collect survive the proxy's field stripping.
+            const body = base === undefined ? fields : { ...base, ...fields };
+            try {
+              const response = await fetch("/api/schedules/save", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(body),
+              });
+              if (response.ok) {
+                refreshSchedules();
+                return undefined;
+              }
+              const payload = await response.json().catch(() => undefined) as { error?: string } | undefined;
+              return payload?.error ?? `the hub refused the save (${response.status})`;
+            } catch {
+              return "the panel could not reach the hub proxy";
+            }
+          }}
         />
       ) : view === "usage" ? (
         <UsageView />
