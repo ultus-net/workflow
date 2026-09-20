@@ -21,6 +21,7 @@ import { usePalette } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
 import type { AgentRuntimePreference, McpServerSetting } from "../../integrations/workflow-settings.js";
 import type { LiveMcpState } from "../../integrations/opencode-live-state.js";
+import type { ScheduleDefinition } from "../../integrations/hub-scheduler.js";
 import type { ToolboxCatalogEntry } from "../../integrations/toolbox-catalog.js";
 import type { WebConfigOption } from "../web-config-options.js";
 
@@ -485,6 +486,39 @@ function useRoutingSettings() {
   }, [load]);
 
   return { agents: agents ?? {}, facts: facts ?? { upstream: "…", envModelOpencode: false, envModelGoose: false, managementKey: false }, loading: agents === undefined, error, onSave: save };
+}
+
+/** Reads the hub scheduler's operator surface: the schedule table (shared
+ * file state, read with the hub's own contract) plus hub reachability. The
+ * hub daemon loads the table at startup and owns run history. */
+interface SchedulesState {
+  readonly schedules: readonly ScheduleDefinition[];
+  readonly schedulesPath: string;
+  readonly error?: string | undefined;
+  readonly hub: { readonly reachable: boolean; readonly url?: string };
+}
+
+function useSchedules() {
+  const [state, setState] = useState<SchedulesState | undefined>(undefined);
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/schedules");
+      if (!response.ok) return;
+      setState(await response.json() as SchedulesState);
+    } catch {
+      // Keep the last good state; the page retries on the next open.
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  return {
+    schedules: state?.schedules ?? [],
+    schedulesPath: state?.schedulesPath ?? "",
+    hub: state?.hub,
+    error: state?.error,
+    loading: state === undefined,
+  };
 }
 
 /** Polls the agent-advertised session configuration; empty when the agent offers none. */
@@ -1823,6 +1857,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const capabilities = useCapabilities();
   const mcp = useMcpSettings();
   const routing = useRoutingSettings();
+  const schedules = useSchedules();
   const { isRunning, items, queuePrompt } = useSessionState();
   const slashCommands = useSessionCommands();
   const { palette, setPalette } = usePalette();
@@ -2048,6 +2083,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           capabilities={capabilities}
           mcp={mcp}
           routing={routing}
+          schedules={schedules}
           enforcement={{ level: snapshot?.enforcementLevel, transport: snapshot?.transport, copy: enforcementCopy }}
           agents={agents}
           currentAgent={currentAgent}

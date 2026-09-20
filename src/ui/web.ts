@@ -9,6 +9,9 @@ import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { createOpenRouterAnalytics, usageTimeRange, type OpenRouterAnalytics } from "../integrations/openrouter-analytics.js";
 import { fetchLiveMcp } from "../integrations/opencode-live-state.js";
+import { loadSchedulesTable, type ScheduleDefinition } from "../integrations/hub-scheduler.js";
+import { resolveHubDiscoveryPath } from "../integrations/workflow-hub.js";
+import { readHubDiscovery, probeHub } from "../cli/hub-client.js";
 import { defaultSettings, mergeSettings, normalizeSettings, readSettingsFile, settingsPaths, writeSettingsFile } from "../integrations/workflow-settings.js";
 import { resolveToolboxCatalog } from "../integrations/toolbox-catalog.js";
 import { evidenceId, observationId, taskId, type TaskState } from "../kernel/contracts.js";
@@ -551,6 +554,33 @@ export function createWorkflowWebServer(
       const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
       const live = await fetchLiveMcp({ workspace: options?.workspace ?? process.cwd(), stateHome });
       return json(response, 200, live);
+    }
+    // The scheduler's operator surface (the custom web UI, per the operator's
+    // surface-division decision): the schedule table is shared file state, read
+    // with the same contract the hub daemon uses (WORKFLOW_HUB_SCHEDULES). The
+    // hub loads the table at startup, so the panel states that edits apply on
+    // hub restart; run history lives in the hub process and is only observable
+    // when the hub is reachable.
+    if (request.method === "GET" && pathname === "/api/schedules") {
+      const schedulesPath = process.env.WORKFLOW_HUB_SCHEDULES ?? join(homedir(), ".workflow", "scheduler.json");
+      let schedules: readonly ScheduleDefinition[] = [];
+      let tableError: string | undefined;
+      try {
+        schedules = loadSchedulesTable(schedulesPath);
+      } catch (error) {
+        tableError = error instanceof Error ? error.message : String(error);
+      }
+      const hubDiscovery = readHubDiscovery(resolveHubDiscoveryPath(join(homedir(), ".workflow")));
+      const hubReachable = hubDiscovery !== undefined && await probeHub(hubDiscovery);
+      return json(response, 200, {
+        schedules,
+        schedulesPath,
+        ...(tableError === undefined ? {} : { error: tableError }),
+        hub: {
+          reachable: hubReachable,
+          ...(hubDiscovery !== undefined ? { url: hubDiscovery.endpoint } : {}),
+        },
+      });
     }
     // Persisted agent runtime preferences (model/mode/effort). These are the
     // launch defaults the control plane pushes into each agent's config on the

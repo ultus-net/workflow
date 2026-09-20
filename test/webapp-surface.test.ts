@@ -8,7 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, StatusBar, UsageMeter } from "../src/ui/webapp/app.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { EditDiff, parseEditTool } from "../src/ui/webapp/diff-text.js";
-import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection, RoutingSection } from "../src/ui/webapp/settings-dialog.js";
+import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection, RoutingSection, SchedulesSection } from "../src/ui/webapp/settings-dialog.js";
 import { listPalettes } from "../src/ui/webapp/theme/palettes.js";
 import { DEFAULT_WEB_AGENT, listWebAgents } from "../src/ui/web-agents.js";
 import type { WebConfigOption } from "../src/ui/web-config-options.js";
@@ -360,5 +360,28 @@ test("the MCP section renders live gateway state and keeps the launch-time copy 
   assert.match(unavailable, /No live MCP state/, "the unavailable state must render");
   assert.match(unavailable, /no server topology daemon/, "the honest reason renders as the value");
   assert.ok(unavailable.includes("apply when a") && unavailable.includes("session starts"), "the launch-time statement stays");
+});
+
+test("the schedules section lists the hub's cron table and states its limits honestly", () => {
+  const markup = renderToStaticMarkup(createElement(SchedulesSection, {
+    schedules: {
+      schedules: [
+        { id: "nightly", title: "Nightly audit", cron: "0 9 * * *", prompt: "audit the repo", requiresReview: true },
+        { id: "triage", title: "", cron: "*/30 * * * *", prompt: "triage", workspace: "/ws", requiresReview: false },
+      ],
+      schedulesPath: "/home/op/.workflow/scheduler.json",
+      hub: { reachable: false },
+      error: undefined,
+      loading: false,
+    },
+  }));
+  assert.ok(markup.includes("Schedules"), "the schedules section must render");
+  assert.ok(markup.includes("Nightly audit") && markup.includes("audit the repo"), "the schedule's title and prompt must show");
+  assert.ok(markup.includes("0 9 * * *"), "the cron must show");
+  assert.ok(markup.includes("triage"), "an untitled schedule falls back to its id");
+  assert.ok(markup.includes("review-gated") && markup.includes("no review"), "review posture must be stated per schedule");
+  assert.ok(markup.includes("not reachable"), "an unreachable hub is stated honestly");
+  assert.ok(markup.includes("edits apply on hub restart"), "the panel must state the startup-load contract");
+  assert.ok(markup.includes("monitor TUI"), "run history must be pointed where it actually lives");
 });
 

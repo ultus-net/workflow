@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -216,4 +216,37 @@ test("live MCP endpoint: honest unavailable states without a topology daemon", a
   const dead = await fetch(`${base}/api/settings/mcp/live`).then((response) => response.json()) as { live: boolean; reason?: string };
   assert.equal(dead.live, false);
   assert.match(dead.reason ?? "", /did not answer/);
+});
+
+test("schedules endpoint: the shared table reads with the hub's own contract, errors surface honestly", async (context) => {
+  const { base } = await startServer(context);
+  const schedulesPath = join(tmpdir(), `wf-sched-${process.pid}-${Date.now()}.json`);
+  context.after(() => rmSync(schedulesPath, { force: true }));
+
+  const previous = process.env.WORKFLOW_HUB_SCHEDULES;
+  process.env.WORKFLOW_HUB_SCHEDULES = schedulesPath;
+  context.after(() => {
+    if (previous === undefined) delete process.env.WORKFLOW_HUB_SCHEDULES;
+    else process.env.WORKFLOW_HUB_SCHEDULES = previous;
+  });
+
+  // No file: no schedules, no error, and the path is stated for the operator.
+  const empty = await fetch(`${base}/api/schedules`).then((response) => response.json()) as {
+    schedules: unknown[]; schedulesPath: string; error?: string; hub: { reachable: boolean };
+  };
+  assert.deepEqual(empty.schedules, []);
+  assert.equal(empty.error, undefined);
+  assert.equal(empty.schedulesPath, schedulesPath, "the echoed path is the table the hub actually reads");
+  assert.equal(typeof empty.hub.reachable, "boolean", "hub reachability is an honest probe result");
+
+  // A real table reads through with its definitions.
+  writeFileSync(schedulesPath, JSON.stringify([{
+    id: "nightly", title: "Nightly audit", cron: "0 9 * * *", prompt: "audit the repo", requiresReview: true,
+  }]), "utf8");
+  const loaded = await fetch(`${base}/api/schedules`).then((response) => response.json()) as {
+    schedules: readonly { id: string; title: string; cron: string; prompt: string }[];
+  };
+  assert.equal(loaded.schedules.length, 1);
+  assert.equal(loaded.schedules[0]?.id, "nightly");
+  assert.equal(loaded.schedules[0]?.prompt, "audit the repo");
 });
