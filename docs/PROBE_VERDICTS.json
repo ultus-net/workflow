@@ -451,14 +451,14 @@
     {
       "id": "opencode-v2-route-qualification",
       "host": "opencode",
-      "hostVersion": "pinned stock server (WORKFLOW_OPENCODE_V2_URL)",
+      "hostVersion": "2.0.10 (stock serve, contained, started for the probe)",
       "probe": "test/opencode-v2-probe.test.ts",
       "gate": "WORKFLOW_OPENCODE_V2_PROBE",
-      "date": "2026-09-20",
-      "result": "pending",
-      "posture": "unqualified",
-      "evidence": "test/opencode-v2-probe.test.ts (needs a running stock v2 endpoint); the route-class matrix itself is test-pinned in test/opencode-v2-route-class.test.ts",
-      "blocker": "needs a running stock opencode v2 server endpoint (WORKFLOW_OPENCODE_V2_URL/PASSWORD)"
+      "date": "2026-09-21",
+      "result": "green",
+      "posture": "advisory",
+      "evidence": "Live run 2026-09-21 against a contained stock v2.0.10 server started for the probe: /api/info reports the pinned version, authenticated /api/experimental/session/stats returns the documented data envelope, /api/event is an observable SSE stream, and the unauthenticated auth boundary covers every route class. The route-class matrix itself stays test-pinned in test/opencode-v2-route-class.test.ts.",
+      "note": "No model turn involved (no credentials consumed); the server rode a fake-proxy hub-written config like the M1/webUI/compact probes."
     },
     {
       "id": "opencode-compact",
