@@ -1043,6 +1043,19 @@ and bridge behavior. **Still open:** all-surface enforcement, G6 corpus folding,
 state-diff evidence, v2 C/D reconciliation, and Phase-G probes. W072 remains **in progress**, not
 complete.
 
+**Addendum (2026-09-20, v2 host-version finding):** stock OpenCode **removed the `todowrite`/`todoread`
+agent tools entirely in v2** (upstream `anomalyco/opencode#42421`, closed **not planned**; verified
+on the pinned v2.0.10 binary — zero tool strings, zero HTTP todo routes; only adjacent experimental
+surface is `instructions/entries`). Consequences: the native-todowrite bridge has **no agent-facing
+input on the pinned OpenCode host version** (it remains valid for hosts that expose native todos —
+goose/cline); the guard's todowrite gate can never be satisfied by a model on OpenCode v2, which
+validates the earlier removal of the todo requirement from the workflow-guard plugin. Decision: do
+NOT pivot tracking to `instructions/entries` (experimental, session-scoped, wrong semantics). The
+canonical tracking surface is the Workflow step ledger — surfacing it in the custom web UI is the
+accepted track; an upstream-candidate PR (§8) to restore a generic todo tool is parked, and the
+interim advisory workaround is a plan file via `WORKFLOW_ADVISORY_NOTES`. Recorded in project
+memory 2026-09-20.
+
 ## Phase 15: Settings Panel, Launcher Engine Axis, and Hub Orientation (2026-09-20)
 
 The operator panel rollout (selector `13269a9`, connector catalog `c221908`, model routing
