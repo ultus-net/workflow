@@ -347,3 +347,28 @@ the Workflow runtime and gateway compose. Both are honored by the pinned release
 **Evidence:** `test/opencode-v2-route-class.test.ts` (reconciled case table), the route-class
 gateway suite, and the gated live probes (`WORKFLOW_OPENCODE_WEBUI_PROBE=1` app-shell verdict;
 `WORKFLOW_OPENCODE_SERVER_ATTACH=1` M1 re-qualification, v2 spellings).
+
+## 10. Limitations re-examined under the data lane (2026-09-20, operator directive)
+
+The pivot to hub-owned enforcement made deliberate trade-offs that ACP's narrow surface forced.
+The documented v2 API (§9) reopens several. Each prior concession, re-examined:
+
+| Prior limitation / concession | Why it existed | Data-lane status | Disposition |
+| --- | --- | --- | --- |
+| "ACP exposes no live MCP list" (inspector honesty line) | ACP carries no MCP inventory | `GET /api/mcp` through the gateway gives live per-server state | **Solved** — `GET /api/settings/mcp/live` + settings panel (`9bd1cf4`) |
+| Usage truth only from the hub's metering proxy; per-session stats absent | ACP exposes usage only via the metering proxy | `GET /api/experimental/session/stats` returns server-side activity/usage/tool-reliability | **In progress** — W079 (Usage page read through the gateway); the proxy remains the budget-enforcement point |
+| `agents.*.thoughtLevel` persisted with **no launch consumer** (routing-knobs honest copy) | No launch path carried reasoning effort | v2 config documents per-model `settings.reasoningEffort` **and variants** (`opencode.ai/v2/docs/models`) | **Solvable now, probe-gated** — map `thoughtLevel` → `settings.reasoningEffort` in the launch-config writer (v2 shape), verify on a live turn before touching the UI copy |
+| Config-defined providers invisible in `/api/provider` + `/api/model/default` ignores the config model (§9) — metered-model resolution risk | v2 provider visibility follows credential activation | `POST /api/session` accepts an explicit `model: Model.Ref`; credential/integration connect + activate routes exist | **Solvable path identified** — probe the credential-activation flow; until then, pin the metered model explicitly on session create rather than trusting defaults |
+| Interactive-TUI sessions unmetered ("the hub never sees those runtimes") | TUI sessions ran in their own process | In the server topology the TUI attaches to the hub-owned server; stats cover every session server-side | **Solvable in the server topology**; ACP interactive sessions stay proxy-metered until the chat-lane consolidation |
+| Chat lane (PWA) on per-session ACP runtimes; consolidation parked | Unmetered-default risk + provider visibility | Explicit model refs on session create remove the worst failure mode | **Partially unlocked, still parked** — full consolidation gated on the provider-visibility probe (W080-adjacent) |
+| Auto-compaction lost in the plugin→hub pivot | Plugin hooks could trigger compaction in-process | `POST /api/session/{id}/compact` + provider `native`/`summary` compaction config | **Queued as W080** — compact must be re-classified deliberately in §2.5 (currently deny-by-default), with a hub-owned threshold trigger, not a prompt-side loop |
+| fs/shell/pty deny classes through the gateway | Containment: mutations cross Workflow authorization | The API exposes them to *its own* clients | **Keep** — the data lane changes nothing about the mutation boundary |
+| Skill delivery gated (native host skill injection off) | Injection boundary discipline | `GET /api/skill` is list-only; no write surface | **Keep, unchanged** — W078 scoping lands with the delivery decision |
+| Session resume via ACP `session/load` | Probe-proven | `experimental/session/export\|import` exist as data transfers | **Keep**; note export/import as a future migration tool only |
+| PWA transcript is ACP-advisory | ACP update stream is the only transcript source | `/api/event` SSE carries richer tool/provider state | **Candidate (observability only)** — transcript enrichment through the gateway; advisory posture unchanged |
+| "No ACP/hub surface injects project-memory recall" (durable-state inventory) | No injection boundary existed | `instructions/entries` is now a per-session durable write surface | **Parked, deliberately** — a durable-state injection boundary requires the attestation discipline (DRIFT-015) before anything writes there; rejected as a todo-pivot (§9 addendum) |
+
+**Rules going forward:** (1) a concession is retired only with probe evidence on the pinned
+version — documentation is a lead, not a verdict; (2) data-lane reads cross classified gateway
+routes (§2.5) even when the hub could read in-zone; (3) enforcement never moves to the data lane —
+the metering proxy, guard, and containment stay where they are.
