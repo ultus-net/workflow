@@ -67,10 +67,13 @@ Endpoint existence alone is not implementation evidence.
 
 No OpenCode v2 endpoint may bypass the Workflow gateway/authority boundary. The stock TUI or any
 v2 client receives only the distinct gateway credential; the upstream server credential remains
-hub-owned. Direct access to permission, filesystem, shell, MCP, synthetic/prompt, compact, fork, and
-lifecycle routes is a qualification failure unless the route is explicitly classified read-only and
-its evidence/authority boundary is tested. Gateway tests must cover route classes, not only the known
-permission reply route.
+hub-owned. Direct access to permission, filesystem, shell, MCP, config/plugin, and session lifecycle
+routes is a qualification failure unless the route's disposition comes from the executable route-class
+matrix (§2.5) and its evidence/authority boundary is tested: read-only observation is forwarded, the
+permission reply is brokered, session input/control the operator surface needs (`prompt`,
+`synthetic`, `message`, …) is forwarded because it cannot advance canonical state alone, and
+destructive session lifecycle (`compact`, `fork`, `move`, `revert`, `remove`) is denied. Gateway
+tests must cover route classes, not only the known permission reply route.
 
 ## 2.3 Observed v2.0.10 qualification snapshot
 
