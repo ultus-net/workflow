@@ -61,17 +61,21 @@ function hasUnsafeGitAlias(command: string): boolean {
 
 // Ported from upstream opencode-workflow-guard (#134, W084): publishing a tag
 // is a release operation, not a branch mutation, so explicit tag refspecs are
-// exempt from the protected-branch push rules. Deletion refspecs
-// (`:refs/tags/<name>` — empty source) are not exempt. Unlike upstream, the
-// portable core does not execute `git show-ref` to probe whether a short name
-// resolves to an existing tag: short names stay under the ordinary rule, and
-// they only collide when the name equals a protected branch, which is that
-// rule's intended target.
+// exempt from the protected-branch push rules. Upstream's ordering is
+// load-bearing: a refspec containing a colon is tag-publish ONLY when its
+// DESTINATION is `:refs/tags/...` — checking the tag-shaped source first
+// would exempt `refs/tags/v1:main`, whose unqualified destination resolves to
+// the protected branch `refs/heads/main` (a real bypass, caught in review).
+// Deletion refspecs (`:refs/tags/<name>` — empty source) are never exempt.
+// Unlike upstream, the portable core does not execute `git show-ref` to probe
+// whether a short name resolves to an existing tag: short names stay under
+// the ordinary rule, and they only collide when the name equals a protected
+// branch, which is that rule's intended target.
 function tagPublishRefspecIn(refspec: string): boolean {
   const token = refspec.replace(/^\+/, "");
   if (token.length === 0 || token.startsWith(":")) return false;
-  if (token.startsWith("refs/tags/")) return true;
-  return token.includes(":refs/tags/");
+  if (token.includes(":")) return token.includes(":refs/tags/");
+  return token.startsWith("refs/tags/");
 }
 
 function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>): string | undefined {

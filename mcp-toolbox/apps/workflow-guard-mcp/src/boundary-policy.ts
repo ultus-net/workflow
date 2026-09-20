@@ -22,14 +22,22 @@ export function isCollaborationInvocation(segment: string): boolean {
 }
 
 // Removes single- and double-quoted spans from a shell segment. Used to
-// analyze the residue of collaboration invocations: quoted arguments are
-// command data and can never be shell redirects, while unquoted redirects
-// keep receiving full validation. NOTE: unlike shell.ts's
-// prepareRedirectResidue, this strips EVERY span including redirect targets
-// and glued concatenations — only use it for collaboration segments where all
-// quoted content is command data.
+// analyze the residue of collaboration invocations. W084 review fix: run
+// prepareRedirectResidue FIRST so a quoted redirect target is unquoted and
+// survives (a quoted target is a real file — `gh pr list >
+// '.opencode/config.json'` must stay denied), then strip the remaining data
+// spans (including glued concatenations and segment-start spans). Only use
+// this for collaboration segments, where all other quoted content is command
+// data.
 function stripQuotedSpans(segment: string): string {
   return segment.replace(/'[^'\n]*'/g, " ").replace(/"[^"\n]*"/g, " ");
+}
+
+// The collaboration-residue analysis for one raw segment: quoted redirect
+// targets are honored (unquoted by prepareRedirectResidue), then every other
+// quoted span is stripped as command data.
+function collaborationResidue(rawSegment: string): string {
+  return stripQuotedSpans(prepareRedirectResidue(rawSegment));
 }
 
 function expandedTarget(path: string): string | undefined {
@@ -169,7 +177,7 @@ export function shellHasFileMutation(command: string, depth = 0): boolean {
     // Same collaboration-residue analysis as checkBoundaryPolicy (W084):
     // quoted arguments of gh/glab/az PR/issue commands are command data, not
     // shell redirects, while unquoted redirects still get full validation.
-    const segment = isCollaborationInvocation(rawSegment) ? stripQuotedSpans(rawSegment) : rawSegment;
+    const segment = isCollaborationInvocation(rawSegment) ? collaborationResidue(rawSegment) : rawSegment;
     const words = unwrapShellWords(segment);
     const executable = basename(words[0] ?? "");
     if (/^(?:ba|z|da|k)?sh$/i.test(executable)) {
@@ -214,7 +222,7 @@ export function checkBoundaryPolicy(command: string, workspaceRoot?: string, dep
     // Ported from upstream opencode-workflow-guard (#144, W084): quoted
     // arguments of gh/glab/az PR/issue commands are command data, not shell
     // redirects, while unquoted redirects still get full validation below.
-    const segment = isCollaborationInvocation(rawSegment) ? stripQuotedSpans(rawSegment) : rawSegment;
+    const segment = isCollaborationInvocation(rawSegment) ? collaborationResidue(rawSegment) : rawSegment;
     const words = unwrapShellWords(segment);
     const executable = basename(words[0] ?? "");
     if (/^(?:ba|z|da|k)?sh$/i.test(executable)) {

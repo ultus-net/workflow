@@ -58,3 +58,27 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   changes (V2 plugin entrypoint, continuation, verify timeout, TUI slot
   rendering) remain deliberately out of scope: they are host-side plugin
   responsibilities, and Workflow ships no plugins.
+
+  Known divergences, stated (secondary review 2026-09-20):
+  - **Numeric redirect targets** (`echo x > 5`) are filtered as comparison
+    operands and no longer count as file mutations — upstream's conscious
+    tradeoff, ported as-is. Consequence: the freshness/verification signal
+    misses a write into a numeric filename (an attacker chain via a symlinked
+    numeric name was already outside the boundary deny pre-port; the
+    mutation-signal gap is the delta). If a stricter signal is needed, scope
+    the filter to genuine comparison syntax (`[[ ]]`, arithmetic) rather than
+    dropping numeric targets wholesale.
+  - **`git push --delete`/`-d` flags**: upstream's `tagRefspecIn` also returns
+    false for flag-deleted pushes, so `git push origin --delete
+    refs/tags/<name>` stays blocked there when the tag is named like a
+    protected branch; the port omits that gate (deleting a tag is not a branch
+    mutation, so allowing it is arguably more precise). Deletion REFSPECS
+    (`:refs/tags/<name>`) are never exempt in either.
+  - **`/dev/null|stdout|stderr|tty|fd/N` redirect targets**: upstream filters
+    these from mutation analysis; the port does not, so `> /dev/null` still
+    counts as a mutation signal (stricter, harmless — freshness gets an extra
+    no-op signal).
+  - **Quoted redirect targets containing spaces** analyze only up to the
+    target's first space (pre-existing truncation class in both the pre-port
+    regex and upstream); the comment in shell.ts states the first-word scope
+    honestly.

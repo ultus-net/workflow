@@ -385,6 +385,11 @@ test("W084: collaboration invocations exempt quoted args, not unquoted redirects
   const outside = checkPolicy({ action: "shell", command: `gh pr create --title t > /tmp/wg-w084-escape-probe`, workspaceRoot: root });
   assert.equal(outside.decision, "deny");
   assert.equal(outside.policy, "workspace-boundary");
+  // W084 review P1 fix: a QUOTED redirect target in a collaboration segment
+  // is a real file and survives the residue analysis.
+  const quotedTarget = checkPolicy({ action: "shell", command: `gh pr list > '${OC_DIR}${OC}.json'`, workspaceRoot: root });
+  assert.equal(quotedTarget.decision, "deny", "a quoted redirect target in a collaboration command is a real file, not command data");
+  assert.equal(quotedTarget.policy, "guard-tamper");
 });
 
 test("W084: project plan files under .opencode/plans/ are documents, not configuration", () => {
@@ -423,4 +428,20 @@ test("W084: git tag publish flows are release operations, not branch mutations",
   const branchPush = checkPolicy({ action: "shell", command: "git push origin main", currentBranch: "feature/wip" });
   assert.equal(branchPush.decision, "deny");
   assert.equal(branchPush.policy, "protected-branch-push");
+  // W084 review P0 fix: upstream's ordering is load-bearing. A tag-SHAPED
+  // SOURCE with a branch destination is a branch mutation, not a tag publish —
+  // the unqualified destination resolves to refs/heads/<branch>.
+  const tagSourceToBranch = checkPolicy({ action: "shell", command: "git push origin refs/tags/v1:main", currentBranch: "feature/wip" });
+  assert.equal(tagSourceToBranch.decision, "deny", "a tag source pushed to an unqualified protected destination must stay denied");
+  assert.equal(tagSourceToBranch.policy, "protected-branch-push");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin refs/tags/v1:refs/heads/main", currentBranch: "feature/wip" }).decision, "deny");
+  const customProtected = checkPolicy({ action: "shell", command: "git push origin refs/tags/v1:release", currentBranch: "feature/wip", protectedBranches: ["release"] });
+  assert.equal(customProtected.decision, "deny", "configured protected branches get the same destination rule");
+  assert.equal(customProtected.policy, "protected-branch-push");
+  // The chain a bypass would need: create the tag anywhere, then point it at
+  // the protected branch — still denied at the push.
+  const chain = checkPolicy({ action: "shell", command: "git tag evil && git push origin refs/tags/evil:main", currentBranch: "feature/wip" });
+  assert.equal(chain.decision, "deny");
+  // A real tag-to-tag publish keeps its exemption.
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin refs/tags/v1:refs/tags/v1", currentBranch: "feature/wip" }).decision, "allow");
 });
