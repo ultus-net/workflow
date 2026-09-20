@@ -20,6 +20,7 @@ export type OpenCodeV2RouteClass =
   | "filesystem-mutation"
   | "mcp-config-mutation"
   | "pty"
+  | "app-shell"
   | "unknown";
 
 /**
@@ -164,6 +165,20 @@ export function qualifyOpenCodeV2Route(
     return { routeClass: "permission-authority", disposition: "broker" };
   }
   if (READ_METHODS.has(normalized)) {
+    // The stock v2 web UI's static surface (W074a, deliberate §2.5 row): the
+    // app shell and its hashed build output, forward for GET/HEAD only. This
+    // is an explicit allowlist — anything else under the root stays
+    // `unknown`/deny; a POST on the shell path is still a mutation candidate
+    // and fails closed below. Verified against opencode v2.0.10: `GET /`
+    // serves `text/html`, bundles live under `/_assets/`, icons under
+    // `/icons/`, plus `/site.webmanifest` and the unprompted `/favicon.ico`.
+    if (path === "/"
+      || path.startsWith("/_assets/")
+      || path.startsWith("/icons/")
+      || path === "/site.webmanifest"
+      || path === "/favicon.ico") {
+      return { routeClass: "app-shell", disposition: "forward" };
+    }
     // A config read is a read, but not one the gateway may serve with the hub
     // credential: the v2 config payload carries provider credentials, so a raw
     // forward leaks them to the client (review P3). The hub serves redacted

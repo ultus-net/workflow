@@ -132,6 +132,13 @@ consumed by both the production gateway and the probes, so the tested contract i
 - **Config reads are denied even though they are reads** (review P3): the v2 config payload carries
   provider credentials, so a raw forward would leak them; the hub serves redacted config itself. The
   api-optional spelling (`/config`) is denied the same way.
+- **App-shell route class (2026-09-20, W074a):** the stock v2 web UI's static surface is an explicit,
+  allowlisted class — `GET`/`HEAD` only, `forward`: exactly `/`, the hashed build output under
+  `/_assets/`, icons under `/icons/`, plus `/site.webmanifest` and the unprompted `/favicon.ico`.
+  Anything else under the root stays `unknown`/deny (no root catch-all), a `POST` on the shell path
+  still fails closed as a mutation candidate, and dot-segment paths are refused before the allowlist
+  is consulted. Motivation: project the stock opencode web UI through the gateway as a second
+  operator surface with the hub credential split intact.
 - **Dot-segment pathnames fail closed** (review P3): the gateway proxies the raw path upstream, so a
   `.`/`..` segment could classify as one route and resolve as another upstream; classification refuses
   them rather than normalizing.
@@ -152,7 +159,11 @@ gateway tests in `test/opencode-server-gateway.test.ts` (read-only forwarded, mu
 session/non-POST-reply denied without upstream reach, brokered POST reply intercepted, advisory
 pass-through preserved). The gated live probe `test/opencode-v2-probe.test.ts`
 (`WORKFLOW_OPENCODE_V2_PROBE=1`) now checks the server's unauthenticated `401` boundary across every route
-class; a live gateway verdict still requires the pinned server + model-key probe family.
+class; a live gateway verdict still requires the pinned server + model-key probe family. The gated
+live probe `test/opencode-webui-gateway-probe.test.ts` (`WORKFLOW_OPENCODE_WEBUI_PROBE=1`) qualifies
+the app-shell class end to end against the pinned stock server through the **enforced** gateway
+(live-verified on opencode v2.0.10, 2026-09-20: shell HTML + hashed bundle + manifest forward;
+unauthenticated `401`; unknown root read and config read stay `403` fail-closed).
 
 ## 2.6 External architecture reference: `lherron/agent-control-plane`
 

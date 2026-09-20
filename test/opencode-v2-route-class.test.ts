@@ -76,6 +76,15 @@ const cases: readonly {
   { name: "dot-segment path fails closed even when the target classifies", method: "GET", path: "/api/session/../config", routeClass: "unknown", disposition: "deny" },
   { name: "current-segment dot path fails closed", method: "GET", path: "/api/./info", routeClass: "unknown", disposition: "deny" },
   { name: "trailing slash still classifies normally", method: "GET", path: "/api/session/s/", routeClass: "read-only", disposition: "forward" },
+  { name: "the app shell root is forwarded", method: "GET", path: "/", routeClass: "app-shell", disposition: "forward" },
+  { name: "a HEAD on the app shell is a read too", method: "HEAD", path: "/", routeClass: "app-shell", disposition: "forward" },
+  { name: "a hashed bundle under _assets is forwarded", method: "GET", path: "/_assets/index-H0aDU4WO.js", routeClass: "app-shell", disposition: "forward" },
+  { name: "an icon asset is forwarded", method: "GET", path: "/icons/prod/favicon.ico", routeClass: "app-shell", disposition: "forward" },
+  { name: "the web manifest is forwarded", method: "GET", path: "/site.webmanifest", routeClass: "app-shell", disposition: "forward" },
+  { name: "the unprompted favicon is forwarded", method: "GET", path: "/favicon.ico", routeClass: "app-shell", disposition: "forward" },
+  { name: "a POST on the app shell is not a read and fails closed", method: "POST", path: "/", routeClass: "unknown", disposition: "deny" },
+  { name: "a root-level file outside the allowlist is not implicit app-shell", method: "GET", path: "/random.js", routeClass: "unknown", disposition: "deny" },
+  { name: "a dot segment through an asset path fails closed", method: "GET", path: "/_assets/../config", routeClass: "unknown", disposition: "deny" },
 ];
 
 for (const entry of cases) {
