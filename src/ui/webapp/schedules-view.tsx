@@ -73,6 +73,11 @@ export function SchedulesView({ schedules, loops, onCancelLoop, onPauseToggle, o
           initial={editing === "new" ? undefined : editing}
           onCancel={() => setEditing(undefined)}
           onSave={async (fields) => {
+            // W085 review P2: refuse a colliding id up front — see the helper.
+            if (editing === "new") {
+              const collision = scheduleIdCollisionError(fields, schedules);
+              if (collision !== undefined) return collision;
+            }
             const error = await onSaveSchedule(fields, editing === "new" ? undefined : editing);
             if (error === undefined) setEditing(undefined);
             return error;
@@ -135,6 +140,20 @@ export function SchedulesView({ schedules, loops, onCancelLoop, onPauseToggle, o
       </div>
     </section>
   );
+}
+
+/**
+ * W085 review P2: the hub's `POST /schedule/save` is upsert-by-id, so creating
+ * a schedule with an existing id would silently REPLACE that schedule (and
+ * drop its advanced fields) while reporting success. The page refuses the
+ * collision client-side, before the save ever crosses the proxy. Exported so
+ * the refusal contract is pinnable without driving the interactive form.
+ */
+export function scheduleIdCollisionError(fields: ScheduleSaveInput, schedules: readonly ScheduleMeta[] | undefined): string | undefined {
+  if ((schedules ?? []).some((entry) => entry.id === fields.id)) {
+    return `a schedule with id '${fields.id}' already exists — edit it instead`;
+  }
+  return undefined;
 }
 
 /**

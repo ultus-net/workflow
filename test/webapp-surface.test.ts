@@ -6,7 +6,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, StatusBar, UsageMeter } from "../src/ui/webapp/app.js";
-import { ScheduleForm, SchedulesView } from "../src/ui/webapp/schedules-view.js";
+import { ScheduleForm, SchedulesView, scheduleIdCollisionError, type ScheduleMeta } from "../src/ui/webapp/schedules-view.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { EditDiff, parseEditTool } from "../src/ui/webapp/diff-text.js";
 import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection, RoutingSection } from "../src/ui/webapp/settings-dialog.js";
@@ -412,8 +412,18 @@ test("W085: the schedule form renders create and edit affordances with the hub e
     onCancel: noop,
   }));
   assert.match(editForm, /Save changes/, "the edit label renders");
-  assert.match(editForm, /disabled(=|=')?/, "the id field is locked while editing (identity, not content)");
+  assert.match(editForm, /aria-label="Schedule id"[^>]*disabled/, "the id field is locked while editing (identity, not content)");
   assert.ok(editForm.includes("value=\"nightly\""), "the prefilled id renders for the edit");
+});
+
+// W085 review P2: the hub's save is upsert-by-id — creating with a colliding
+// id would silently REPLACE that schedule. The page refuses client-side.
+test("W085: creating a schedule with a colliding id is refused before the save", () => {
+  const existing: ScheduleMeta = { id: "nightly", title: "Nightly audit", cron: "0 9 * * *", prompt: "audit the repo" };
+  const collision = scheduleIdCollisionError({ id: "nightly", title: "t", cron: "0 9 * * *", prompt: "p" }, [existing]);
+  assert.match(collision ?? "", /already exists — edit it instead/, "the refusal names the colliding id and points at edit");
+  assert.equal(scheduleIdCollisionError({ id: "other", title: "t", cron: "0 9 * * *", prompt: "p" }, [existing]), undefined, "a fresh id saves");
+  assert.equal(scheduleIdCollisionError({ id: "nightly", title: "t", cron: "0 9 * * *", prompt: "p" }, undefined), undefined, "an empty table saves");
 });
 
 test("W085: the Schedules page offers create and per-schedule edit", () => {

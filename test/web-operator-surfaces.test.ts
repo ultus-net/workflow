@@ -99,6 +99,22 @@ test("the web service proxies the hub schedule table and loop registry", async (
   assert.notEqual(paused.schedules[0]?.nextRunAt, "2030-01-01T00:00:00.000Z", "nextRunAt is recomputed, never persisted from the client");
   assert.equal(paused.schedules[0]?.injected, undefined, "unknown client keys are stripped before the hub persists them");
 
+  // W085 review P2: the strip must also FORWARD the advanced schedule fields
+  // (budget/taskClass/off-peak) — the browser edit path spreads the full
+  // existing entry under the form fields precisely so these survive; a strip
+  // regression would silently drop them on every edit.
+  const withAdvanced = await fetch(`${base}/api/schedules/save`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: base },
+    body: JSON.stringify({ id: "nightly", title: "Nightly audit", cron: "0 9 * * *", prompt: "audit", workspace: ws, budget: { maxTotalTokens: 50_000 }, taskClass: "general", offPeak: "deepseek", injected2: true }),
+  });
+  assert.equal(withAdvanced.status, 200);
+  const advanced = await fetch(`${base}/api/schedules`).then((r) => r.json() as Promise<{ schedules: Array<{ budget?: unknown; taskClass?: string; offPeak?: string; injected2?: unknown }> }>);
+  assert.deepEqual(advanced.schedules[0]?.budget, { maxTotalTokens: 50_000 }, "budget survives the browser edit round-trip");
+  assert.equal(advanced.schedules[0]?.taskClass, "general", "taskClass survives the browser edit round-trip");
+  assert.equal(advanced.schedules[0]?.offPeak, "deepseek", "offPeak survives the browser edit round-trip");
+  assert.equal(advanced.schedules[0]?.injected2, undefined, "unknown keys stay stripped");
+
   // Guards mirror the other mutation endpoints.
   const crossOrigin = await fetch(`${base}/api/schedules/delete`, {
     method: "POST",
