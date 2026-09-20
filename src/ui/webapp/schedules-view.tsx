@@ -14,6 +14,7 @@ export interface ScheduleMeta {
   readonly budget?: unknown;
   readonly taskClass?: string;
   readonly offPeak?: string;
+  readonly offPeakRequired?: boolean;
 }
 
 /** The common schedule fields the create/edit form collects. */
