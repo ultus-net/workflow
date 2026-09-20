@@ -90,7 +90,7 @@ export function checkAgentCredentials(): readonly DoctorCheck[] {
 }
 
 /** Hub daemon reachability: the registry and scheduler live there. */
-export async function checkHub(_options: DoctorOptions = {}): Promise<DoctorCheck> {
+export async function checkHub(): Promise<DoctorCheck> {
   const name = "hub daemon";
   const discovery = readHubDiscovery(resolveHubDiscoveryPath(join(homedir(), ".workflow")));
   if (discovery === undefined) {
@@ -167,7 +167,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<readonly D
   const checks: DoctorCheck[] = [];
   checks.push(checkSettingsDocs(options));
   checks.push(...checkAgentCredentials());
-  checks.push(await checkHub(options));
+  checks.push(await checkHub());
   checks.push(await checkTopologyGateway(options));
   checks.push(checkProbeGates());
   return checks;
