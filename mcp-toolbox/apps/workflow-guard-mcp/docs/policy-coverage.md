@@ -37,3 +37,24 @@ This matrix classifies the upstream `opencode-workflow-guard` behavior by where 
 - Host UI presentation and notification delivery.
 
 This separation is intentional: adding more MCP tools does not turn an advisory MCP connection into a native-tool interceptor. Hosts with trustworthy pre-action hooks can enforce core decisions; other clients should combine advisory policy with their native sandbox and approval model.
+
+## Upstream parity log
+
+- **2026-09-20 (W084):** ported the upstream policy fixes that landed after the
+  2026-09-12 vendoring (upstream `ec097d4..HEAD`, PRs #134/#135/#136/#144/#152):
+  quoted-residue redirect/tamper matching (`prepareRedirectResidue`; verb
+  patterns stay on quote-flattened text), collaboration-invocation exemptions
+  (`gh|glab issue|pr`, `az repos pr`) with unquoted redirects still validated,
+  the project `.opencode/plans/` exemption (per-candidate, symlink-aware,
+  project-only), tag-publish exemptions (deletion stays flagged; the port is
+  deterministic — no `git show-ref` probe, so short tag names stay under the
+  ordinary protected-branch rule), fd-duplication and numeric-comparison
+  operand filters, and a realpath candidate check in the guard-tamper
+  configuration-path rule (closing a symlink gap relative to upstream's
+  isProtectedPath). Upstream's todo-gate deadlock fix is evaluated and not
+  ported as a gate (no todo predicates here); instead the `guard_status`
+  precondition advice no longer claims a todowrite precondition the policy
+  never enforced and OpenCode v2 hosts cannot satisfy. Plugin-runtime upstream
+  changes (V2 plugin entrypoint, continuation, verify timeout, TUI slot
+  rendering) remain deliberately out of scope: they are host-side plugin
+  responsibilities, and Workflow ships no plugins.

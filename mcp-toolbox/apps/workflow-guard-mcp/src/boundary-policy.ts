@@ -1,13 +1,36 @@
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { decodeShellEscapes, splitShellSegments, unwrapShellWords } from "./shell.js";
+import { decodeShellEscapes, prepareRedirectResidue, splitShellSegments, unwrapShellWords } from "./shell.js";
 import { checkProtectedPath, checkSecretPath } from "./path-policy.js";
 
 const TOOL = ["open", "code"].join("");
 const TOOL_JSON_RE = new RegExp(`(?:^|/)${TOOL}\\.jsonc?$`, "i");
 const TOOL_DIR_RE = new RegExp(`(?:^|/)\\.${TOOL}(?:/|$)`, "i");
 const TOOL_CONFIG_RE = new RegExp(`/\\.config/${TOOL}(?:/|\\.jsonc?$)`, "i");
+
+// Ported from upstream opencode-workflow-guard (#144/#152, W084):
+// collaboration invocations (hosted-git/PR/issue CLIs) never write local
+// configuration: their arguments may legitimately mention guarded paths.
+const COLLABORATION_INVOCATION_PATTERNS: RegExp[] = [
+  /^\s*(?:gh|glab)\s+(?:issue|pr)\b/,
+  /^\s*az\s+repos\s+pr\b/,
+];
+
+export function isCollaborationInvocation(segment: string): boolean {
+  return COLLABORATION_INVOCATION_PATTERNS.some((re) => re.test(segment));
+}
+
+// Removes single- and double-quoted spans from a shell segment. Used to
+// analyze the residue of collaboration invocations: quoted arguments are
+// command data and can never be shell redirects, while unquoted redirects
+// keep receiving full validation. NOTE: unlike shell.ts's
+// prepareRedirectResidue, this strips EVERY span including redirect targets
+// and glued concatenations — only use it for collaboration segments where all
+// quoted content is command data.
+function stripQuotedSpans(segment: string): string {
+  return segment.replace(/'[^'\n]*'/g, " ").replace(/"[^"\n]*"/g, " ");
+}
 
 function expandedTarget(path: string): string | undefined {
   const trimmed = path.trim().replace(/^["']|["']$/g, "");
@@ -51,7 +74,28 @@ function mutationPaths(segment: string): { targets: string[]; moveSources: strin
   const targets: string[] = [];
   const moveSources: string[] = [];
   const secretSources: string[] = [];
-  for (const match of segment.matchAll(/(?:^|[\s>]|(?<=[^\s"']))(?:\d*&?)?>{1,2}\s*["']?([^\s>&|;"']+)/g)) if (match[1]) targets.push(match[1]);
+  // Ported from upstream opencode-workflow-guard (#144/#152, W084): redirect
+  // detection runs on the quote-stripped residue — quoted data spans are
+  // command data and their ">" characters are not redirects, while redirect
+  // targets keep their value whether quoted or not. The `(?!=)` lookahead
+  // after the op rejects comparison operators (`>=`, `==`) so they cannot
+  // match as a redirect op with `=` as its target.
+  const residue = prepareRedirectResidue(segment);
+  const redirectRe = /(?:^|[\s>]|(?<=[^\s"']))([0-9]*&?>>?&?(?!=))\s*["']?([^\s>&|;"']+)/g;
+  for (const redirectMatch of residue.matchAll(redirectRe)) {
+    if (!redirectMatch[1] || !redirectMatch[2]) continue;
+    const op = redirectMatch[1];
+    const target = redirectMatch[2];
+    // Filter fd duplication (e.g. 2>&1, >&2) where the target is purely an fd
+    // number, and comparison operands from embedded non-shell syntax (SQL,
+    // awk, test expressions): `WHERE count > 5`, `x >= 10`. A bare `>` whose
+    // target is purely numeric is overwhelmingly a comparison operand, not a
+    // redirect into a numeric filename. `>>` and fd forms (`2>`) keep
+    // redirect semantics.
+    const isFdDup = op.endsWith("&") && /^\d+$/.test(target);
+    const isComparisonOperand = op === ">" && /^\d+$/.test(target);
+    if (!isFdDup && !isComparisonOperand) targets.push(target);
+  }
   if (command === "tee") targets.push(...words.slice(1).filter((word) => !word.startsWith("-")));
   if (command === "dd") targets.push(...words.slice(1).filter((word) => word.startsWith("of=")).map((word) => word.slice(3)));
   if (["touch", "mkdir", "rm", "unlink", "rmdir", "truncate", "chmod", "chown", "chgrp"].includes(command)) targets.push(...words.slice(1).filter((word) => !word.startsWith("-")));
@@ -121,7 +165,11 @@ function mutationPaths(segment: string): { targets: string[]; moveSources: strin
 
 export function shellHasFileMutation(command: string, depth = 0): boolean {
   if (depth >= 16) return true;
-  return splitShellSegments(command).some((segment) => {
+  return splitShellSegments(command).some((rawSegment) => {
+    // Same collaboration-residue analysis as checkBoundaryPolicy (W084):
+    // quoted arguments of gh/glab/az PR/issue commands are command data, not
+    // shell redirects, while unquoted redirects still get full validation.
+    const segment = isCollaborationInvocation(rawSegment) ? stripQuotedSpans(rawSegment) : rawSegment;
     const words = unwrapShellWords(segment);
     const executable = basename(words[0] ?? "");
     if (/^(?:ba|z|da|k)?sh$/i.test(executable)) {
@@ -133,11 +181,27 @@ export function shellHasFileMutation(command: string, depth = 0): boolean {
   });
 }
 
+// Ported from upstream opencode-workflow-guard (#135, W084): opencode plan
+// mode writes agent plan markdown under the project's .opencode/plans/
+// directory — plan files are documents, not configuration. The trailing
+// slash keeps the plans directory itself protected, `plansx/` prefixes are
+// not exempt, and the exemption is per-candidate: a lexical path inside
+// plans/ that resolves through a symlink into a config-shaped realpath is
+// still denied (the realpath candidate is checked independently).
 function isGuardConfigurationPath(path: string, workspaceRoot?: string): boolean {
+  const guarded = (candidate: string): boolean => {
+    if (candidate.toLowerCase().includes(`/.${TOOL}/plans/`)) return false;
+    return TOOL_JSON_RE.test(candidate) || /(?:^|\/)workflow-guard\.jsonc?$/i.test(candidate) || TOOL_DIR_RE.test(candidate) || TOOL_CONFIG_RE.test(candidate);
+  };
   const expanded = expandedTarget(path);
   if (expanded === undefined) return true;
-  const resolved = resolve(workspaceRoot ?? process.cwd(), expanded).replaceAll("\\", "/");
-  return TOOL_JSON_RE.test(resolved) || /(?:^|\/)workflow-guard\.jsonc?$/i.test(resolved) || TOOL_DIR_RE.test(resolved) || TOOL_CONFIG_RE.test(resolved);
+  const lexical = resolve(workspaceRoot ?? process.cwd(), expanded).replaceAll("\\", "/");
+  if (guarded(lexical)) return true;
+  // Preserve the symlink-awareness the secret/protected-path checks already
+  // have: checking only the lexical path reopens bypasses through symlinked
+  // directories (upstream guard constraint).
+  const real = realPathWithMissingTail(lexical);
+  return real !== undefined && real !== lexical && guarded(real.replaceAll("\\", "/"));
 }
 
 export function checkBoundaryPolicy(command: string, workspaceRoot?: string, depth = 0): { policy: string; decision: "deny"; reason: string } | undefined {
@@ -146,7 +210,11 @@ export function checkBoundaryPolicy(command: string, workspaceRoot?: string, dep
   const toolCommand = new RegExp(`(?:^|\\s)${TOOL}\\s+(?:-[^|;&]*\\s+)*(?:auth|config|permission)\\b`, "i");
   const autoCommand = new RegExp(`(?:^|\\s)${TOOL}\\s+(?:run\\s+)?--auto\\b`, "i");
   if (toolCommand.test(normalized) || autoCommand.test(normalized)) return { decision: "deny", policy: "guard-tamper", reason: "Changing host auth, permissions, or guard configuration from the agent is not allowed." };
-  for (const segment of splitShellSegments(command)) {
+  for (const rawSegment of splitShellSegments(command)) {
+    // Ported from upstream opencode-workflow-guard (#144, W084): quoted
+    // arguments of gh/glab/az PR/issue commands are command data, not shell
+    // redirects, while unquoted redirects still get full validation below.
+    const segment = isCollaborationInvocation(rawSegment) ? stripQuotedSpans(rawSegment) : rawSegment;
     const words = unwrapShellWords(segment);
     const executable = basename(words[0] ?? "");
     if (/^(?:ba|z|da|k)?sh$/i.test(executable)) {

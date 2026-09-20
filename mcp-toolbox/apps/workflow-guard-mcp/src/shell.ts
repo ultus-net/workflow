@@ -56,6 +56,24 @@ export function decodeShellEscapes(text: string): string {
     .replace(/\\([0-3][0-7]{2})/g, (_, oct: string) => String.fromCharCode(parseInt(oct, 8)));
 }
 
+// Ported from upstream opencode-workflow-guard (#144/#152, W084): reduce a shell
+// segment to the syntax that actually executes. Redirect targets are honored
+// whether quoted or not (a quoted redirect target is still a real file),
+// while SELF-CONTAINED quoted spans preceded by whitespace are command data
+// and can never be shell redirects or operators. Quote spans glued to bare
+// text are shell concatenation inside a single word (e.g. open''code.json)
+// and are kept for the normalizer to flatten. A quoted span at segment start
+// is NOT stripped: it can be a quoted command word ("opencode" auth) and must
+// stay visible to verb patterns.
+export function prepareRedirectResidue(segment: string): string {
+  const withTargets = segment
+    .replace(/(>>?)\s*'([^']*)'/g, "$1 $2")
+    .replace(/(>>?)\s*"([^"]*)"/g, "$1 $2");
+  return withTargets
+    .replace(/\s'[^']*'(?=$|[\s)>;&|])/g, " ")
+    .replace(/\s"[^"]*"(?=$|[\s)>;&|])/g, " ");
+}
+
 export function splitShellSegments(command: string): string[] {
   const segments: string[] = [];
   let current = "";

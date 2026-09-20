@@ -1464,32 +1464,53 @@ constraint is unchanged (the guard MCP is Workflow-owned, not an OpenCode
 plugin).
 
 **Acceptance criteria:**
-- [ ] Redirect/tamper matching runs on the quote-stripped residue
+- [x] Redirect/tamper matching runs on the quote-stripped residue
       (`prepareRedirectResidue` ported): quoted data spans no longer produce
       phantom redirect targets; quoted redirect targets still count; verb
       patterns still run on quote-flattened text (quoted command words stay
       blocked); fd-duplication (`2>&1`) and numeric comparison operands
       (`WHERE count > 5`) are not file mutations, while a real redirect
       alongside them still is.
-- [ ] Collaboration invocations (`gh|glab issue|pr`, `az repos pr`) are exempt
+- [x] Collaboration invocations (`gh|glab issue|pr`, `az repos pr`) are exempt
       from quoted-arg mutation scanning — their quoted arguments are command
       data — while their unquoted redirects still get full validation
       (guarded-path destination, outside-workspace).
-- [ ] Project plan files under `.opencode/plans/` are exempt from the
+- [x] Project plan files under `.opencode/plans/` are exempt from the
       guard-tamper config-path rule (documents, not configuration); the plans
       directory itself, `plansx/` prefixes, `plans/../` escapes, and
       user-level `~/.config/opencode/plans/` stay blocked; the exemption is
       per-candidate so a plans symlink resolving into a config-shaped realpath
-      is still denied.
-- [ ] `git tag` publish flows are exempt from protected-branch write rules
+      is still denied. The port also closed a realpath gap the vendored
+      guard-tamper check had relative to upstream: `isGuardConfigurationPath`
+      now checks the realpath candidate behind a lexical path, matching
+      upstream's symlink-aware `isProtectedPath` constraint.
+- [x] `git tag` publish flows are exempt from protected-branch write rules
       (release, not branch mutation) while tag deletion (`-d`/`--delete`)
       stays flagged; tag-shaped explicit refspecs (`refs/tags/...`) are exempt
       from the protected-branch-push rule while deletion refspecs
       (`:refs/tags/...`) are not. The port is deterministic — no `git
-      show-ref` execution (the portable core evaluates host-supplied facts).
-- [ ] The V2 todo-gate deadlock fix is evaluated and consciously skipped or
-      ported with a note (the vendored core has no todo predicates, and the
-      Workflow guard dropped the todo requirement in W072).
-- [ ] Adversarial regression pins for every ported behavior in the vendored
-      test suite; `npm run toolbox:verify` stays green; typecheck and lint
+      show-ref` execution (the portable core evaluates host-supplied facts);
+      upstream's short-name tag probe (`git show-ref`) is consciously not
+      ported — short names stay under the ordinary rule, which only collides
+      when a tag is named like a protected branch (that rule's intended
+      target). Upstream's merged-branch push rules (which their tag exemption
+      also relaxes) do not exist in the vendored core, so no additional
+      relaxation is needed.
+- [x] The V2 todo-gate deadlock fix is evaluated and consciously **not
+      ported as a gate** — the vendored core has no todo predicates
+      (policy-coverage lists them as remaining candidates) and the Workflow
+      guard dropped the todo requirement in W072. But the evaluation surfaced
+      the same deadlock in advisory form: the vendored `guard_status`
+      precondition text claimed "an active task in todowrite" — a
+      precondition the policy never enforced and OpenCode v2 hosts cannot
+      satisfy (native todowrite removed). The text is now host-aware
+      (keep an active task/step where the host has a tracking surface;
+      otherwise the host's ledger), so the advisory no longer steers a model
+      toward an impossible precondition.
+- [x] Adversarial regression pins for every ported behavior in the vendored
+      test suite (quoted residue, verb flattening, numeric comparisons,
+      collaboration exemptions, plans exemptions incl. the symlinked-realpath
+      case, tag publish/delete, tag refspec push); `npm run toolbox:verify`
+      green across the monorepo (guard product typecheck+build+tests 0 fail);
+      repo typecheck and lint clean.
       clean.
