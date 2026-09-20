@@ -1157,21 +1157,27 @@ a file-provisioning framing before it ships.
       `ORIENTATION_VERSION` stamp, no interpolation of task/repo/env data, silence-when-unset,
       prepended at scheduled-turn session start. (Implemented as `buildOrientation` +
       `hubPromptGuidanceFromEnv` — the hub composes orientation first, operator advisory second;
-      `WORKFLOW_HUB_ORIENTATION=0` opts out; composed per scheduled turn, which is each scheduled
-      run's session start; bounded ~180 tokens.)
+      `WORKFLOW_HUB_ORIENTATION=0` opts out. The block is composed once at hub startup and
+      **prepended per scheduled turn** — each scheduled run's session start; bounded ~160 tokens.
+      Version "2" drops the pointer to the not-yet-delivered skill, review P2.)
 - [x] Composition pin + no-interpolation pin in focused tests (scheduler composition like
-      `test/hub-scheduler.test.ts:178`). (Pinned in `test/g5-observability.test.ts`: frozen-shape +
-      byte-identical + no-placeholder pins, opt-out pin, ordering pin; the scheduler's own
+      `test/hub-scheduler.test.ts:178`). (Pinned in `test/g5-observability.test.ts`: **full-text
+      frozen pin** — any wording change must fail the test and force a version bump — plus
+      no-placeholder and hedged-tool-presence pins, opt-out pin, ordering pin; the scheduler's own
       `promptGuidance` seam is unchanged so the existing composition pin holds.)
 - [x] Orientation version + fingerprint recorded in the run registry for review provenance. (The
-      version is embedded in the block text, which rides the run's `taskPrompt` — the W041
-      provenance digest binds exactly what the agent saw; no registry contract widening needed.)
+      version is embedded in the block text; the scheduler now records the **composed** prompt as
+      the run's `taskPrompt` — pinned by a scheduler test (`begin records the composed prompt`) —
+      so the W041 provenance digest binds exactly what the agent received and an orientation change
+      invalidates recorded fingerprints. Review P1: the original claim was false because `begin`
+      recorded the raw schedule prompt; fixed in the same slice.)
 - [x] Skill body generated from the toolbox catalog with a content-pinning test against the corpus;
       per-host delivery (OpenCode skill dir; goose/cline) only when that surface qualifies.
       (`toolboxSkillBody` generates from the resolved catalog — names, descriptions, truthful
       availability; corpus-pinned in `test/toolbox-catalog.test.ts`. **Delivery is deliberately NOT
       implemented**: native host skill injection stays off per the 2026-09-15 plan — a dated
-      decision or file-provisioning framing is the prerequisite, stated in `docs/FEATURES.md`.)
+      decision or file-provisioning framing is the prerequisite, stated in `docs/FEATURES.md` —
+      and the orientation block does not reference the skill until it ships.)
 - [x] Ledger rows in `docs/HARNESS_ASSUMPTION_LEDGER.md` (advisory orientation block, skill recall)
       and a `docs/FEATURES.md` status entry; advisory only — enforcement stays in the guard MCP
       server. (Orientation row added; the skill-delivery row lands with the delivery decision.)
