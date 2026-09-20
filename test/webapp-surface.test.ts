@@ -5,7 +5,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, StatusBar, UsageMeter } from "../src/ui/webapp/app.js";
+import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, StatusBar, StepLedgerRow, UsageMeter } from "../src/ui/webapp/app.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { EditDiff, parseEditTool } from "../src/ui/webapp/diff-text.js";
 import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection, RoutingSection } from "../src/ui/webapp/settings-dialog.js";
@@ -391,5 +391,47 @@ test("the usage view renders live topology statistics and states absence honestl
   }));
   assert.match(unavailable, /no server-topology stats/, "absence must be stated as a value");
   assert.match(unavailable, /no server topology daemon/, "the honest reason renders");
+});
+
+test("the step-ledger row renders the canonical step with only kernel-legal actions", () => {
+  const step = {
+    id: "t1-step-1",
+    content: "write the tests",
+    state: "IN_PROGRESS" as const,
+    requiredEvidence: [{ authority: "environment", subject: "step:write the tests" }],
+  };
+  const active = renderToStaticMarkup(createElement(StepLedgerRow, {
+    step,
+    taskState: "IN_PROGRESS",
+    refreshSteps: noop as () => Promise<void>,
+  }));
+  assert.ok(active.includes("write the tests"), "the step content must render");
+  assert.ok(active.includes("in progress"), "the step state must render");
+  assert.ok(active.includes("1 evidence requirement"), "the evidence-requirement count must show");
+  assert.ok(active.includes("Complete") && active.includes("Cancel"), "legal in-progress actions render");
+  assert.ok(!active.includes("Start step"), "a step already in progress offers no start");
+  assert.match(active, /evidence-bound/, "completion must state that it is evidence-bound (I-3)");
+
+  // A step on a task that is not IN_PROGRESS cannot start (I-1: the kernel
+  // requires the task IN_PROGRESS) and there is nothing to complete yet — but
+  // cancel stays legal from PENDING (the kernel's cancel guard is trivial), so
+  // the panel keeps exactly the affordances the kernel would accept.
+  const parked = renderToStaticMarkup(createElement(StepLedgerRow, {
+    step: { ...step, state: "PENDING" as const },
+    taskState: "READY",
+    refreshSteps: noop as () => Promise<void>,
+  }));
+  assert.ok(!parked.includes("Start step") && !parked.includes("Complete"),
+    "start and complete do not render while the task cannot legally transition");
+  assert.ok(parked.includes("Cancel"), "cancel remains kernel-legal from PENDING and stays offered");
+
+  // A terminal step renders its state without any action affordance.
+  const done = renderToStaticMarkup(createElement(StepLedgerRow, {
+    step: { ...step, state: "COMPLETED" as const },
+    taskState: "IN_PROGRESS",
+    refreshSteps: noop as () => Promise<void>,
+  }));
+  assert.ok(done.includes("completed"), "the terminal state must render");
+  assert.ok(!done.includes("Complete") && !done.includes("Cancel"), "a terminal step offers no actions");
 });
 
