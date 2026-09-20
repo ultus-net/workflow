@@ -1509,7 +1509,18 @@ plugin).
       toward an impossible precondition.
 - [x] Adversarial regression pins for every ported behavior in the vendored
       test suite (quoted residue, verb flattening, numeric comparisons,
-      collaboration exemptions, plans exemptions incl. the symlinked-realpath
-      case, tag publish/delete, tag refspec push); `npm run toolbox:verify`
-      green across the monorepo (guard product typecheck+build+tests 0 fail);
-      repo typecheck and lint clean.
+      collaboration exemptions incl. the quoted-target survival, plans
+      exemptions incl. the symlinked-realpath case, tag publish/delete, tag
+      refspec push incl. the tag-source-to-protected-branch shapes);
+      `npm run toolbox:verify` green across the monorepo (guard product
+      typecheck+build+tests 0 fail); repo typecheck and lint clean.
+      **Five-axis review: first verdict [REQUEST_CHANGES] (independent
+      adversarial reviewer, live probes) — P0 tag-source refspec bypass
+      (`refs/tags/v1:main` exempted as tag-publish; resolves to
+      `refs/heads/main`) and P1 collaboration quoted-redirect-target
+      regression — both fixed in `4e65cb2` with regression pins; re-review
+      [APPROVE] (2026-09-20, probed 9 deny / 13 allow tag shapes, 44/44 probe
+      cases, no over-tightening, no new P0–P2). Known divergences are stated
+      in `docs/policy-coverage.md` (numeric-target mutation-signal tradeoff,
+      push `--delete`/`-d` flag gate omission, `/dev/null`-family filter
+      divergence, quoted-target first-space truncation).**
