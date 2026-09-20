@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { checkPolicy, extractPatchPaths } from "../src/policy.js";
+import { shellHasFileMutation } from "../src/boundary-policy.js";
 import { evaluateClaudePreToolUse } from "../src/claude-hook.js";
 
 test("blocks sensitive paths", () => {
@@ -317,4 +318,130 @@ test("escalates with circuit breaker guidance on repeated failures", () => {
   assert.equal(cbDeny.decision, "deny");
   assert.equal(cbDeny.reason.includes("Workflow Guard Circuit Breaker"), true);
   assert.equal(cbDeny.reason.includes("Repeated failures detected"), true);
+});
+
+// ---- W084: upstream opencode-workflow-guard parity port (2026-09-20) ----
+// Ports the upstream adversarial pins for the post-vendoring drift (#134/#135,
+// #136/#144/#152). The "open" + "code" concatenations avoid the guard's own
+// protected-path vocabulary in source, mirroring upstream's fixtures.
+
+const OC = ["open", "code"].join("");
+const OC_DIR = `.${OC}/`;
+const OC_CONFIG_DIR = `.config/${OC}/`;
+
+test("W084: quoted data spans are not redirects — quoted residue analysis", () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-guard-w084-"));
+  // A quoted span's ">" is command data, not a redirect; the real (unquoted)
+  // redirect at the end still gets analyzed, but its target is a plain
+  // workspace document.
+  assert.equal(checkPolicy({ action: "shell", command: `echo "flow: x > ${OC_DIR}plans/" > notes.md`, workspaceRoot: root }).decision, "allow");
+  // Unquoted redirect into the guarded tree stays blocked.
+  const unquoted = checkPolicy({ action: "shell", command: `echo x > ${OC_DIR}y`, workspaceRoot: root });
+  assert.equal(unquoted.decision, "deny");
+  assert.equal(unquoted.policy, "guard-tamper");
+  // A quoted REAL redirect target is still a real file.
+  const quotedTarget = checkPolicy({ action: "shell", command: `echo x > "${OC_DIR}${OC}.json"`, workspaceRoot: root });
+  assert.equal(quotedTarget.decision, "deny");
+  assert.equal(quotedTarget.policy, "guard-tamper");
+});
+
+test("W084: verb patterns still run on quote-flattened text", () => {
+  // A quoted command word still executes the CLI verb.
+  const quotedWord = checkPolicy({ action: "shell", command: `"${OC}" auth login` });
+  assert.equal(quotedWord.decision, "deny");
+  assert.equal(quotedWord.policy, "guard-tamper");
+  // An eval payload quoting the CLI verb is still the verb.
+  const evalPayload = checkPolicy({ action: "shell", command: `eval '${OC} auth login'` });
+  assert.equal(evalPayload.decision, "deny");
+  assert.equal(evalPayload.policy, "guard-tamper");
+});
+
+test("W084: numeric comparison operands are not file mutations", () => {
+  assert.equal(checkPolicy({ action: "shell", command: `sqlite3 app.db "SELECT id FROM events WHERE count > 5"` }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: `psql -c "SELECT 1 FROM metrics WHERE n >= 10"` }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: `grep -E 'latency > 200' src/log.ts` }).decision, "allow");
+  // A real redirect alongside a numeric comparison is still detected as a
+  // mutation for the freshness/verification layer (it is a workspace
+  // document, so boundary does not deny it — but the mutation is real).
+  assert.equal(shellHasFileMutation(`echo "x > 5" > src/a.ts`), true, "a real redirect beside quoted comparison data must still count as a mutation");
+  assert.equal(shellHasFileMutation(`sqlite3 app.db "SELECT id FROM events WHERE count > 5"`), false, "a quoted comparison must not count as a mutation");
+});
+
+test("W084: collaboration invocations exempt quoted args, not unquoted redirects", () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-guard-w084-collab-"));
+  // Quoted body text mentioning guarded paths is command data.
+  assert.equal(
+    checkPolicy({ action: "shell", command: `gh pr edit 42 --body "see ${OC_CONFIG_DIR}${OC}.json and the flow > limits"`, workspaceRoot: root }).decision,
+    "allow",
+  );
+  // A compound command's OTHER segment still gets full analysis.
+  const compound = checkPolicy({ action: "shell", command: `gh issue create --repo example/proj --title t && echo x > ${OC}.json`, workspaceRoot: root });
+  assert.equal(compound.decision, "deny");
+  assert.equal(compound.policy, "guard-tamper");
+  // An unquoted redirect in a collaboration segment still gets full validation.
+  const globalConfig = checkPolicy({ action: "shell", command: `gh issue list > /var/home/x/${OC_CONFIG_DIR}${OC}.json`, workspaceRoot: root });
+  assert.equal(globalConfig.decision, "deny");
+  assert.equal(globalConfig.policy, "guard-tamper");
+  const outside = checkPolicy({ action: "shell", command: `gh pr create --title t > /tmp/wg-w084-escape-probe`, workspaceRoot: root });
+  assert.equal(outside.decision, "deny");
+  assert.equal(outside.policy, "workspace-boundary");
+  // W084 review P1 fix: a QUOTED redirect target in a collaboration segment
+  // is a real file and survives the residue analysis.
+  const quotedTarget = checkPolicy({ action: "shell", command: `gh pr list > '${OC_DIR}${OC}.json'`, workspaceRoot: root });
+  assert.equal(quotedTarget.decision, "deny", "a quoted redirect target in a collaboration command is a real file, not command data");
+  assert.equal(quotedTarget.policy, "guard-tamper");
+});
+
+test("W084: project plan files under .opencode/plans/ are documents, not configuration", () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-guard-w084-plans-"));
+  mkdirSync(join(root, OC_DIR, "plans"), { recursive: true });
+  // A plan file inside the project plans directory is allowed.
+  const planFile = checkPolicy({ action: "shell", command: `echo "# plan" > ${OC_DIR}plans/1789589538371-plan.md`, workspaceRoot: root });
+  assert.equal(planFile.decision, "allow", `unexpected: ${planFile.reason ?? ""}`);
+  // Escaping the plans directory via .. is still tamper.
+  assert.equal(checkPolicy({ action: "shell", command: `echo "{}" > ${OC_DIR}plans/../${OC}.json`, workspaceRoot: root }).policy, "guard-tamper");
+  // The plans directory itself stays protected (no trailing-slash exemption).
+  assert.equal(checkPolicy({ action: "shell", command: `echo "{}" > ${OC_DIR}plans`, workspaceRoot: root }).policy, "guard-tamper");
+  // A plansx/ prefix is not exempt.
+  assert.equal(checkPolicy({ action: "shell", command: `echo x > ${OC_DIR}plansx/x.md`, workspaceRoot: root }).policy, "guard-tamper");
+  // The exemption is project-only: user-level config plans stay guarded.
+  assert.equal(checkPolicy({ action: "shell", command: `echo x > /var/home/x/${OC_CONFIG_DIR}plans/x.md`, workspaceRoot: root }).policy, "guard-tamper");
+  // Plans symlinked into a config-shaped realpath stays blocked.
+  const aliasRoot = mkdtempSync(join(tmpdir(), "workflow-guard-w084-plans-alias-"));
+  mkdirSync(join(aliasRoot, OC_CONFIG_DIR), { recursive: true });
+  mkdirSync(join(aliasRoot, OC_DIR), { recursive: true });
+  symlinkSync(join(aliasRoot, OC_CONFIG_DIR), join(aliasRoot, OC_DIR, "plans"), "dir");
+  const throughSymlink = checkPolicy({ action: "shell", command: `echo "{}" > ${OC_DIR}plans/x.md`, workspaceRoot: aliasRoot });
+  assert.equal(throughSymlink.decision, "deny", "plans symlink resolving into a config-shaped realpath must stay blocked");
+  assert.equal(throughSymlink.policy, "guard-tamper");
+});
+
+test("W084: git tag publish flows are release operations, not branch mutations", () => {
+  // Tag creation on a protected branch is allowed; deletion stays flagged.
+  assert.equal(checkPolicy({ action: "shell", command: "git tag v0.3.0", currentBranch: "main" }).decision, "allow");
+  const tagDelete = checkPolicy({ action: "shell", command: "git tag -d v0.3.0", currentBranch: "main" });
+  assert.equal(tagDelete.decision, "deny");
+  assert.equal(tagDelete.policy, "protected-branch-write");
+  // Explicit tag refspecs are exempt from the protected-branch push rule...
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin refs/tags/v0.3.0", currentBranch: "feature/wip" }).decision, "allow");
+  // ... while a plain branch push is not.
+  const branchPush = checkPolicy({ action: "shell", command: "git push origin main", currentBranch: "feature/wip" });
+  assert.equal(branchPush.decision, "deny");
+  assert.equal(branchPush.policy, "protected-branch-push");
+  // W084 review P0 fix: upstream's ordering is load-bearing. A tag-SHAPED
+  // SOURCE with a branch destination is a branch mutation, not a tag publish —
+  // the unqualified destination resolves to refs/heads/<branch>.
+  const tagSourceToBranch = checkPolicy({ action: "shell", command: "git push origin refs/tags/v1:main", currentBranch: "feature/wip" });
+  assert.equal(tagSourceToBranch.decision, "deny", "a tag source pushed to an unqualified protected destination must stay denied");
+  assert.equal(tagSourceToBranch.policy, "protected-branch-push");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin refs/tags/v1:refs/heads/main", currentBranch: "feature/wip" }).decision, "deny");
+  const customProtected = checkPolicy({ action: "shell", command: "git push origin refs/tags/v1:release", currentBranch: "feature/wip", protectedBranches: ["release"] });
+  assert.equal(customProtected.decision, "deny", "configured protected branches get the same destination rule");
+  assert.equal(customProtected.policy, "protected-branch-push");
+  // The chain a bypass would need: create the tag anywhere, then point it at
+  // the protected branch — still denied at the push.
+  const chain = checkPolicy({ action: "shell", command: "git tag evil && git push origin refs/tags/evil:main", currentBranch: "feature/wip" });
+  assert.equal(chain.decision, "deny");
+  // A real tag-to-tag publish keeps its exemption.
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin refs/tags/v1:refs/tags/v1", currentBranch: "feature/wip" }).decision, "allow");
 });

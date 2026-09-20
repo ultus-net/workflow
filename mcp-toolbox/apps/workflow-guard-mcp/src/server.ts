@@ -95,7 +95,12 @@ server.registerTool(
         enforcement: "host-dependent",
         executesActions: false,
         preconditions: {
-          modifications: "Modifications require an active task in todowrite (status pending or in_progress), a feature branch (edits on main/master are blocked), and a prior read of existing files in the current session.",
+          // W084 (upstream cd2448e evaluation): the vendored policy has no
+          // todo gate, and hosts without a todo tool (OpenCode v2 removed
+          // native todowrite) can never satisfy one — the advisory text must
+          // not claim a precondition the policy does not enforce and the host
+          // cannot provide.
+          modifications: "Keep an active task or step in the host's tracking surface where one exists (todo/task tools); where the host has none (e.g. OpenCode v2 removed native todowrite), track steps through the host's available ledger instead. Edits on main/master are blocked, and the files you will change must be read in the current session.",
           finalization: "Marking every task completed triggers the finalization gate - fresh verification evidence (test run) is required after the last mutation, and protected-branch/conflict checks apply.",
         },
         circuitBreaker: {
