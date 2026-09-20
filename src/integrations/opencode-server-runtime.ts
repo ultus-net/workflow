@@ -9,6 +9,7 @@ import { launchContainedAcpAgent } from "../adapters/acp-contained-agent.js";
 import type { ProcessContainment } from "../containment/contracts.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import { resolveSkillsMount } from "./acp-runtime.js";
+import { provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts } from "./toolbox-catalog.js";
 import { createModelUsageProxy, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
 import { globalOpencodeBinary, meteredOpencodeConfig, resolveOpencodeLaunch } from "./opencode-agent-config.js";
 import { probeOpencodeHealth } from "./opencode-health.js";
@@ -119,6 +120,21 @@ export async function createOpencodeServerRuntime(
   try {
     const autoLatest = autoLatestConfigFromEnv({ upstream });
     const skillsMount = resolveSkillsMount();
+    // W080 mount half: provision the workflow-toolbox skill into the hub-owned
+    // delivery store and compose the declared-connector mounts (the daemon has
+    // no operator settings doc; the declaration's built filter applies, and
+    // the delivery mount dedupes skills-mcp). Best-effort orientation: a
+    // failed provisioning degrades to no delivery, never a failed daemon.
+    let skillConnectors: readonly { readonly name: string; readonly serverPath: string }[] = [];
+    if (skillsMount !== undefined) {
+      try {
+        const catalog = resolveToolboxCatalog();
+        provisionToolboxSkill(skillsMount.skillsDir, catalog);
+        skillConnectors = skillConnectorMounts(catalog, { alreadyMounted: ["skills-mcp"] });
+      } catch (error) {
+        console.error(`workflow-toolbox skill delivery failed for the topology (continuing without it): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     writeFileSync(
       join(configDir, "opencode", "opencode.json"),
       JSON.stringify(meteredOpencodeConfig({
@@ -129,6 +145,7 @@ export async function createOpencodeServerRuntime(
         ...(options.autoCompact === true ? { autoCompact: true } : {}),
         ...(autoLatest === undefined ? {} : { autoLatest: { aliases: autoLatest.aliases } }),
         ...(skillsMount === undefined ? {} : { skills: skillsMount }),
+        ...(skillConnectors.length === 0 ? {} : { skillConnectors }),
       })),
       { encoding: "utf8", mode: 0o600 },
     );

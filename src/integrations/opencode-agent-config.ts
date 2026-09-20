@@ -75,6 +75,17 @@ export interface MeteredOpencodeConfigOptions {
   readonly skills?: { readonly serverScript: string; readonly skillsDir: string } | undefined;
 /** Workflow-pushed MCP servers (the control plane's settings projection). */
   readonly mcpServers?: readonly McpServerSetting[] | undefined;
+  /**
+   * W080 mount half: stdio mounts for the delivered skill's DECLARED
+   * connectors (validated + built-filtered + operator-disabled-filtered by
+   * the caller via `skillConnectorMounts`). Composed into the hub-written
+   * config's mcp map only for names not already present (skills-mcp itself
+   * arrives through the delivery mount), so the session's tool surface is
+   * exactly the declared floor plus the operator's settings — and every
+   * entry crosses the same application/guard authorization as any other MCP
+   * server. Absent composes nothing.
+   */
+  readonly skillConnectors?: readonly { readonly name: string; readonly serverPath: string }[] | undefined;
 }
 
 export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Record<string, unknown> {
@@ -130,6 +141,16 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
       type: "local",
       command: [process.execPath, options.skills.serverScript],
       environment: { SKILLS_MCP_DIR: options.skills.skillsDir },
+    };
+  }
+  // W080 mount half: the delivered skill's declared connectors — only names
+  // not already present (the delivery mount and operator settings win), each
+  // a stdio entry over the vendored built entrypoint.
+  for (const connector of options.skillConnectors ?? []) {
+    if (mcp[connector.name] !== undefined) continue;
+    mcp[connector.name] = {
+      type: "local",
+      command: [process.execPath, connector.serverPath],
     };
   }
   return {

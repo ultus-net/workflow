@@ -35,6 +35,7 @@ import { findOpenModel, openSourcePoolFromEnv } from "./open-source-pool.js";
 import { DEFAULT_OPENCODE_MODEL, OPENCODE_METERED_PROVIDER_ID, type MeteredVendorProvider } from "./opencode-agent-config.js";
 import { loadUpstreamApiKey } from "./upstream-key.js";
 import { enabledMcpServers, type WorkflowSettings } from "./workflow-settings.js";
+import { provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts } from "./toolbox-catalog.js";
 
 export interface WorkflowAcpRuntime {
   readonly driver: AcpSessionDriver;
@@ -175,6 +176,30 @@ async function createOpencodeRuntime(
     // against; absent server or directory means no delivery to mount (levels
     // gating composes to no-ops without the dir, matching the TUI surfaces).
     const skillsMount = resolveSkillsMount();
+    // W080 mount half: provision the generated workflow-toolbox skill into the
+    // hub-owned delivery store, then compute the declared-connector mounts.
+    // Provisioning is best-effort orientation (advisory, never enforcement): a
+    // failed write degrades to no delivery with a visible log, never a failed
+    // session. Operator-disabled connectors never mount from the declaration.
+    let skillConnectors: readonly { readonly name: string; readonly serverPath: string }[] = [];
+    if (skillsMount !== undefined) {
+      try {
+        const catalog = resolveToolboxCatalog();
+        provisionToolboxSkill(skillsMount.skillsDir, catalog);
+        const disabled = (options.settings?.mcpServers ?? [])
+          .filter((server) => server.enabled === false)
+          .map((server) => server.name);
+        const operatorMounted = (options.settings?.mcpServers ?? [])
+          .filter((server) => server.enabled)
+          .map((server) => server.name);
+        skillConnectors = skillConnectorMounts(catalog, {
+          disabled,
+          alreadyMounted: ["skills-mcp", ...operatorMounted],
+        });
+      } catch (error) {
+        console.error(`workflow-toolbox skill delivery failed (continuing without it): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     const openSelection = openPool === undefined ? undefined : openSourceConfig(openPool);
     // An operator override that names a live open-source pool model is handled
     // by the open-source provider itself (defaultModel); any other override
@@ -198,6 +223,7 @@ async function createOpencodeRuntime(
         ...(autoLatest === undefined ? {} : { autoLatest: { aliases: autoLatest.aliases } }),
         ...(openSelection === undefined ? {} : { openSource: openSelection }),
         ...(skillsMount === undefined ? {} : { skills: skillsMount }),
+        ...(skillConnectors.length === 0 ? {} : { skillConnectors }),
         ...(options.settings === undefined ? {} : { mcpServers: enabledMcpServers(options.settings) }),
       })),
       { encoding: "utf8", mode: 0o600 },

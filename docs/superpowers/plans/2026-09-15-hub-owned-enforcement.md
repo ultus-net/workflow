@@ -354,6 +354,27 @@ delivery, never adherence (prompts are not a security boundary).
 > the vendored surface — the stock-launched mount probe can never pass
 > (`docs/ACP_RESEARCH.md`, "Patched-SDK versus stock-ACP" section).
 
+> **Skill-delivery decision addendum (2026-09-21, operator direction — file-
+> provisioning framing APPROVED; W077/W080 gate resolved):** the 2026-09-15
+> "native host skill injection stays off" rule is **not superseded — it is
+> given its delivery mechanism**. Provisioning the hub-generated
+> `workflow-toolbox` skill file into `SKILLS_MCP_DIR` (`provisionToolboxSkill`,
+> `src/integrations/toolbox-catalog.ts`) is writing to the **hub's own delivery
+> store** — the directory `skills-mcp` scans and serves through the journaled
+> `read_skill` — not host-native injection: the host's native `skill` tool
+> stays permission-denied (`"skill": "deny"`), the store stays outside every
+> agent workspace (the structural bypass closure above is untouched), and
+> `list_skills`/`read_skill` remain the single content path with journaling
+> on allow. What stays **off** is anything that would teach a host to inject
+> skills outside this path (host skill directories inside the workspace,
+> prompt-side skill content, native `skill`-tool enablement). The delivered
+> skill's frontmatter declares its connectors (W080): the hub-critical pair
+> (`workflow-guard-mcp`, `skills-mcp`) filtered to built entries — a floor,
+> not a wholesale mount; operator settings still own every other connector,
+> an explicit operator disable always wins over the declaration, and the
+> declared mounts cross the same hub-written config and application/guard
+> authorization as any other MCP server (scoping, never a bypass lane).
+
 ### Task F2: Availability gating by learner level
 
 **Files:**

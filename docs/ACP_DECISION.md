@@ -116,7 +116,7 @@ silently rewritten.
     original follow-up line at :58 keeps its dated wording; this note
     supersedes its decomposition clause.
 
-## W050 SDK-seam decision — PROPOSED, awaiting operator signature (2026-09-18)
+## W050 SDK-seam decision — ACCEPTED (operator signature recorded 2026-09-21)
 
 **Decision required (TASKS W050 criterion 2):** whether the vendored-Cline SDK
 seam is retained for its unique capability — host-hook visibility into
@@ -160,15 +160,17 @@ this is reachable only through an operator-granted spawn.
 vendored-Cline removal (criterion 3) proceeds only once criterion 1 holds and
 this criterion-2 signature is recorded.
 
-**Status:** PROPOSED — the seam is not retired by silence or by this draft.
-Operator signature below closes criterion 2; absent it, the seam stays retained.
+**Status:** ~~PROPOSED~~ **ACCEPTED — the operator signed the accepted-risk on 2026-09-21**
+(in interactive session, selecting "SDK-seam: record accepted-risk"). The seam is not
+retained on the subagent-internal-visibility ground; the residual risk above is the
+operator's explicit accepted risk. Criterion 2 of TASKS W050 is closed by this signature.
 
 Operator decision:
 
-- [ ] accept the accepted-risk (the seam is not required)
+- [x] accept the accepted-risk (the seam is not required) — **accepted 2026-09-21**
 - [ ] reject (retain the seam; commission a live Cline-side subagent-internal proof)
 
-Signed: __________ Date: __________
+Signed: operator (via agent session ses_f417829e3ffeM6sfHp0CeF06Rd) Date: 2026-09-21
 
 **Supersession note (2026-09-18, W050 step 6).** The vendored-Cline SDK runtime,
 its `.workflow-cline/` checkout, and its Workflow patch were removed on branch

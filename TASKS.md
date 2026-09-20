@@ -822,7 +822,7 @@ W048's live qualification ran 2026-09-17 against the operator-upgraded goose **1
 
 **Acceptance criteria:**
 - [ ] The backup-slot takeover resolves: the six probes pass and the W049 dogfood period holds, so goose demonstrably covers the fallback/insurance role the vendored-Cline runtime holds today.
-- [ ] The SDK-seam retention resolves: the hooks probe proves PreToolUse deny + `on_failure: block` under containment AND subagent-internal tool calls demonstrably fire hooks — or, if they do not, the operator records an explicit accepted-risk decision in the decision doc that the seam's unique subagent-internal visibility is no longer required; the seam is not retired by silence or enthusiasm.
+- [x] The SDK-seam retention resolves: the hooks probe proves PreToolUse deny + `on_failure: block` under containment AND subagent-internal tool calls demonstrably fire hooks — or, if they do not, the operator records an explicit accepted-risk decision in the decision doc that the seam's unique subagent-internal visibility is no longer required; the seam is not retired by silence or enthusiasm. (**Resolved 2026-09-21 via the accepted-risk arm**: the probe arm resolved NEGATIVE live twice on goose 1.50.1 and was never demonstrated on the vendored-Cline seam either; the operator signed the drafted accepted-risk in `docs/ACP_DECISION.md` (W050 SDK-seam decision, dated 2026-09-21) — subagent-internal visibility is not a required capability, the residual risk (internal activity inside a granted spawn is neither hook-intercepted nor projected; spawns remain default-denied on `enforced` surfaces) is the operator's explicit accepted risk.)
 - [ ] Removal removes: the `.workflow-cline` vendored checkout, the patched-TUI build/pretest, `WORKFLOW_ACP_AGENT=cline`, Cline session drivers/adapters, the Cline probe family and their tests — with all references updated (`docs/HOST_ADAPTERS.md`, `docs/FEATURES.md`, `docs/TUI_INTEGRATION.md`, `docs/ACP_DECISION.md`) and the plugin-era findings archived, not silently dropped.
 - [ ] The repository's full gates pass on the removal diff; the ACP conformance family still passes for the remaining agent kinds.
 
@@ -1469,17 +1469,26 @@ until it exists).
       (`TypeError`), validated against the catalog that is the single source of truth;
       `toolboxSkillBody` renders a validated declaration into the frontmatter (`connectors:` list,
       frontmatter `version` bumped to 2) and stays byte-identical to the W077 corpus pin without
-      one. Pins: `test/skill-connectors.test.ts` (4). **Deliberately NOT landed:** any mount code —
-      there is no skill-delivery path to compose it into (2026-09-15 plan keeps native host skill
-      injection off), so a mount seam today would be dead code, and the honest state is the gated
-      box below.)
-- [ ] Delivery (when it ships) mounts only declared connectors, through the existing launch-config
-      path; the guard still owns authorization. (**Gated 2026-09-20:** still waits on the
-      skill-delivery decision; when it ships, the mount composes ONLY declared connectors through
-      the hub-written launch-config path — scoping, never a bypass lane.)
-- [ ] Probe-gated per host version before any claim. (**Gated:** the skills-delivery probe family
-      (`WORKFLOW_ACP_OPENCODE_SKILLS`) is `pending` in `docs/PROBE_VERDICTS.json` — no live verdict,
-      no support claim; the register row is the durable reminder to probe before claiming.)
+      one. Pins: `test/skill-connectors.test.ts` (4). **Mount half landed 2026-09-21** behind the
+      operator's file-provisioning decision (see the delivery box below) — the note that a mount
+      seam would be dead code applied to the pre-decision state only.)
+- [x] Delivery (when it ships) mounts only declared connectors, through the existing launch-config
+      path; the guard still owns authorization. (**Shipped 2026-09-21** behind the operator's
+      file-provisioning decision (dated addendum in
+      `docs/superpowers/plans/2026-09-15-hub-owned-enforcement.md`): `provisionToolboxSkill`
+      provisions the generated skill into the hub-owned `SKILLS_MCP_DIR` store (write-on-create/
+      drift, idempotent), and `skillConnectorMounts` composes the declared floor
+      (`workflow-guard-mcp` + `skills-mcp`, built-filtered) into the hub-written config's mcp map —
+      never duplicating the delivery mount or operator-enabled servers, and an explicit operator
+      disable always wins over the declaration. Wired into BOTH lanes (ACP subprocess composition
+      and the topology server config; best-effort delivery with visible degradation). Pins:
+      `test/skill-delivery.test.ts` (4, incl. the skills.ts scan contract and stale-repair).)
+- [x] Probe-gated per host version before any claim. (**Discipline held:** the store provisioning
+      and scan contract are verified model-free (`test/skill-delivery.test.ts` exercises the
+      `skills.ts` `scanSkills` contract against the provisioned store), while the in-agent
+      `read_skill` delivery verdict on OpenCode stays probe-gated —
+      `WORKFLOW_ACP_OPENCODE_SKILLS` remains `pending` in `docs/PROBE_VERDICTS.json` and no
+      delivered-in-agent claim is made until it runs.)
 
 ### W081 - Session stats on the Usage page (data-lane read #2)
 
