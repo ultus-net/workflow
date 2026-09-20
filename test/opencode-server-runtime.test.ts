@@ -91,9 +91,23 @@ test("W071 runtime: launches through an injected boundary and writes the pinned 
   assert.equal(config.model, "workflow-metered/openrouter/auto");
   assert.notEqual(config.provider?.["workflow-metered"], undefined);
 
-  const health = await fetch(`${runtime.url}/global/health`, {
-    headers: { authorization: `Basic ${Buffer.from(`${runtime.username}:${runtime.password}`).toString("base64")}` },
-  });
-  assert.equal(health.status, 200);
-  assert.equal((await health.json() as { healthy?: unknown }).healthy, true);
+  // Health contract is version-tolerant (2026-09-20): v1.x answers
+  // `/global/health` with JSON `{ healthy: true }`; v2.x serves the SPA on
+  // bare paths and the JSON API under `/api/*`, where `/api/info` is the
+  // health signal. Either shape proves the server is up under auth.
+  const authHeaders = { authorization: `Basic ${Buffer.from(`${runtime.username}:${runtime.password}`).toString("base64")}` };
+  const legacyHealth = await fetch(`${runtime.url}/global/health`, { headers: authHeaders });
+  assert.equal(legacyHealth.status, 200);
+  const legacyBody = await legacyHealth.text();
+  let healthy: boolean;
+  try {
+    healthy = (JSON.parse(legacyBody) as { healthy?: unknown }).healthy === true;
+  } catch {
+    healthy = false; // SPA fallback HTML — the v2 shape, checked next.
+  }
+  if (!healthy) {
+    const info = await fetch(`${runtime.url}/api/info`, { headers: authHeaders });
+    assert.equal(info.status, 200, "neither health contract answered: server is not healthy");
+    assert.match((await info.json() as { version?: unknown }).version as string, /^\d/, "the v2 info payload must carry a version");
+  }
 });

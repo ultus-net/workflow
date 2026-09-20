@@ -11,6 +11,8 @@
  * spec, section 3.
  */
 
+import { isHealthyOpencodeBody } from "../opencode-health.js";
+
 export type RemoteEngineReply = "once" | "always" | "reject";
 
 export interface RemoteEnginePermissionRequest {
@@ -159,10 +161,34 @@ export class HttpRemoteEngine implements RemoteEngine {
   }
 
   async health(): Promise<{ healthy: boolean; version?: string }> {
-    const body = await this.#json("GET", "/global/health", { cwd: this.#defaultCwd });
-    return isRecord(body) && body.healthy === true
-      ? { healthy: true, ...(typeof body.version === "string" ? { version: body.version } : {}) }
-      : { healthy: false };
+    // v2 answers the authenticated liveness envelope on /api/info; v1 answered
+    // {healthy: true} on /global/health (v2 serves its web-UI HTML catch-all
+    // there — a 200 that must never parse as healthy). A 401/403 rejects: a
+    // wrong credential must surface, never degrade to unhealthy.
+    let networkError: unknown;
+    for (const path of ["/api/info", "/global/health"] as const) {
+      let response: Response;
+      try {
+        response = await this.#fetch(this.#url(path, this.#defaultCwd), { method: "GET", headers: this.#headers() });
+      } catch (error) {
+        networkError = error;
+        continue;
+      }
+      networkError = undefined;
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(`remote engine GET ${path} failed (${response.status})`);
+      }
+      if (!response.ok) continue;
+      const body: unknown = await response.json().catch(() => undefined);
+      if (isHealthyOpencodeBody(path, body)) {
+        const version = isRecord(body) && typeof body.version === "string" ? body.version : undefined;
+        return version === undefined ? { healthy: true } : { healthy: true, version };
+      }
+      // 200 non-JSON (the v2 HTML catch-all) or an unexpected envelope: fall
+      // through to the v1 route.
+    }
+    if (networkError !== undefined) throw networkError;
+    return { healthy: false };
   }
 
   async createSession(input: { cwd: string; title?: string }): Promise<{ id: string }> {

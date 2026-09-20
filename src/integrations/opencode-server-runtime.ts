@@ -11,6 +11,7 @@ import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import { resolveSkillsMount } from "./acp-runtime.js";
 import { createModelUsageProxy, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
 import { globalOpencodeBinary, meteredOpencodeConfig, resolveOpencodeLaunch } from "./opencode-agent-config.js";
+import { probeOpencodeHealth } from "./opencode-health.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
 import { loadUpstreamApiKey } from "./upstream-key.js";
 
@@ -212,19 +213,14 @@ async function waitForServer(input: WaitForServerInput): Promise<{ url: string; 
       throw new Error(`opencode serve exited before becoming healthy (${exited ?? "signal"}): ${stderr.trim()}`);
     }
     const baseUrl = parseListeningUrl(stdout) ?? input.fallbackUrl;
-    try {
-      const response = await fetchImpl(`${baseUrl}/global/health`, {
-        headers: { authorization: auth },
-        signal: AbortSignal.timeout(2_000),
-      });
-      if (response.ok) {
-        const body = await response.json() as { healthy?: unknown; version?: unknown };
-        if (body.healthy === true) {
-          return { url: baseUrl, version: typeof body.version === "string" ? body.version : undefined };
-        }
-      }
-    } catch {
-      // Not up yet.
+    // The launch probe walks both health contracts (see opencode-health.ts):
+    // v1.x answers /global/health with JSON { healthy: true }; v2.x serves the
+    // web UI as an SPA fallback on every bare path — /global/health returns
+    // HTML — and /api/info answers the { version, ... } JSON that is the
+    // health signal.
+    const healthy = await probeOpencodeHealth(fetchImpl, baseUrl, auth);
+    if (healthy !== undefined) {
+      return { url: baseUrl, version: healthy.version };
     }
     await new Promise((resolveWait) => setTimeout(resolveWait, 150));
   }
