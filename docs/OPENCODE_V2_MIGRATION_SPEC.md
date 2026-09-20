@@ -125,15 +125,22 @@ consumed by both the production gateway and the probes, so the tested contract i
 - **Filesystem/shell/worktree/vcs mutation**, **MCP/integration/config/plugin/location mutation**, and
   **PTY** are denied — they must cross Workflow authorization/guard/containment, not a direct v2 client call.
 - **Session input/control** the operator surface needs (`prompt`, `command`, `synthetic`, `interrupt`,
-  `wait`, `background`, `inbox`, `message`, `instructions`, `generate`, `switch`, `skill`, session
+  `abort`, `wait`, `background`, `inbox`, `message`, `instructions`, `generate`, `switch`, `skill`, session
   create/update/import) is forwarded because it cannot advance canonical state alone; destructive session
   lifecycle (`compact`, `fork`, `move`, `revert`, `remove`) is denied. There is deliberately **no session
   catch-all**: an unlisted session operation (e.g. a future `session.purge`) fails closed as `unknown`.
+- **Config reads are denied even though they are reads** (review P3): the v2 config payload carries
+  provider credentials, so a raw forward would leak them; the hub serves redacted config itself. The
+  api-optional spelling (`/config`) is denied the same way.
+- **Dot-segment pathnames fail closed** (review P3): the gateway proxies the raw path upstream, so a
+  `.`/`..` segment could classify as one route and resolve as another upstream; classification refuses
+  them rather than normalizing.
 - **Anything unclassified fails closed** (`unknown` → `deny`); a read whose subtree is unrecognized is
   not implicitly safe. The classifier tracks the §2.1/§2.4 inventory; operation spellings the pinned
   release adds but this classifier does not yet enumerate (observed candidates: `file.content`, `find`,
-  `path`, `session.abort/init/todo`) fail closed as `unknown` until classified and tested — the
+  `path`, `session.init/todo`) fail closed as `unknown` until classified and tested — the
   fail-closed direction is intentional, and the matrix must be extended before an enforced surface ships.
+  (`session.abort` is now classified: operator stop-control, forwarded as session input.)
 
 When `enforced`, the gateway forwards only routes whose disposition is `forward`; it answers any other
 client request (`deny`, `unknown`, or a broker route reached without the broker hook) with `403` carrying

@@ -589,9 +589,14 @@ function proposalFromPermission(
  */
 export function opencodePermissionCapability(tool: string): ToolCapability | undefined {
   if (tool === "bash" || tool === "shell") return "process";
-  if (tool === "webfetch" || tool === "fetch") return "network";
+  // Code Mode interpreter (v2 builtin): arbitrary JS that can invoke tools, so
+  // it is at least process-class (review P2: execute was unmapped).
+  if (tool === "execute") return "process";
+  if (tool === "webfetch" || tool === "fetch" || tool === "websearch") return "network";
   if (tool === "task" || tool === "agent" || tool === "subagent") return "spawn";
   if (tool === "read" || tool === "glob" || tool === "grep" || tool === "list") return "read";
+  // Operator elicitation only; no workspace effect.
+  if (tool === "question") return "read";
   if (isReadSkillTool(tool)) return "read";
   if (tool === "edit" || tool === "write" || tool === "patch" || tool === "apply_patch" || tool === "multiedit") return "mutation";
   return undefined;

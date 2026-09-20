@@ -509,3 +509,12 @@ test("W071 broker: read_skill matching is exact, not substring (review P3-3)", (
   assert.equal(opencodePermissionCapability("skills-mcp__read_skill"), "read");
   assert.equal(opencodePermissionCapability("evilread_skill"), undefined);
 });
+
+test("W071 broker: v2 execute/websearch/question tools are capability-mapped (review P2)", () => {
+  assert.equal(opencodePermissionCapability("execute"), "process");
+  assert.equal(opencodePermissionCapability("websearch"), "network");
+  assert.equal(opencodePermissionCapability("question"), "read");
+  // Agent-reported names outside the registry stay unmapped; the adapter's
+  // kind-based classification (conservative) applies instead.
+  assert.equal(opencodePermissionCapability("todowrite"), undefined);
+});

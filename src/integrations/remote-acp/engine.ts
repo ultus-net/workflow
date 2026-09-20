@@ -39,6 +39,8 @@ export interface RemotePart {
   readonly text?: string;
   readonly callID?: string;
   readonly tool?: string;
+  /** V1-shaped tool parts carry the tool name here; v2 uses `tool` (guard handoff §1). */
+  readonly name?: string;
   readonly state?: RemotePartState;
 }
 

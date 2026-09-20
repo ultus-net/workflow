@@ -95,7 +95,7 @@ const MUTATION_RULES: readonly MutationRule[] = [
   {
     routeClass: "session-input",
     disposition: "forward",
-    pattern: /^\/api\/session\/[^/]+\/(?:prompt|command|synthetic|interrupt|wait|background|inbox|message|instructions|generate|switch|skill)$/,
+    pattern: /^\/api\/session\/[^/]+\/(?:prompt|command|synthetic|interrupt|abort|wait|background|inbox|message|instructions|generate|switch|skill)$/,
     methods: ["POST"],
   },
   {
@@ -151,12 +151,27 @@ export function qualifyOpenCodeV2Route(
 ): OpenCodeV2RouteQualification {
   const normalized = method.toUpperCase();
   const path = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  // Review P3: dot-segment paths are never normalized-and-forwarded. The
+  // gateway proxies the raw pathname upstream, so classification and forwarding
+  // must see the same path; a dot segment could otherwise classify as one route
+  // and resolve to another upstream. Fail closed instead.
+  if (path.split("/").some((segment) => segment === "." || segment === "..")) {
+    return { routeClass: "unknown", disposition: "deny" };
+  }
   // The permission reply route is broker-owned for EVERY verb, reads included:
   // it must never be forwarded under the hub credential regardless of method.
   if (OPENCODE_V2_PERMISSION_REPLY_ROUTE.test(path)) {
     return { routeClass: "permission-authority", disposition: "broker" };
   }
   if (READ_METHODS.has(normalized)) {
+    // A config read is a read, but not one the gateway may serve with the hub
+    // credential: the v2 config payload carries provider credentials, so a raw
+    // forward leaks them to the client (review P3). The hub serves redacted
+    // config itself; direct reads fail closed. Advisory posture preserves the
+    // historical pass-through (the enforced check is the only consumer).
+    if (path === "/api/config" || path.startsWith("/api/config/") || path === "/config" || path.startsWith("/config/")) {
+      return { routeClass: "read-only", disposition: "deny" };
+    }
     if (READ_ONLY_ROUTE.test(path)) {
       return { routeClass: "read-only", disposition: "forward" };
     }

@@ -27,7 +27,9 @@ const cases: readonly {
   { name: "session diff is read-only", method: "GET", path: "/api/session/s/diff", routeClass: "read-only", disposition: "forward" },
   { name: "event stream is read-only", method: "GET", path: "/api/event", routeClass: "read-only", disposition: "forward" },
   { name: "mcp list is read-only", method: "GET", path: "/api/mcp", routeClass: "read-only", disposition: "forward" },
-  { name: "config read is read-only", method: "GET", path: "/api/config", routeClass: "read-only", disposition: "forward" },
+  { name: "config read is denied to protect the hub credential (review P3)", method: "GET", path: "/api/config", routeClass: "read-only", disposition: "deny" },
+  { name: "config subtree read is denied the same way", method: "GET", path: "/api/config/providers", routeClass: "read-only", disposition: "deny" },
+  { name: "api-optional config spelling is denied too", method: "GET", path: "/config", routeClass: "read-only", disposition: "deny" },
   { name: "filesystem read is read-only", method: "GET", path: "/api/filesystem/read", routeClass: "read-only", disposition: "forward" },
   { name: "experimental filesystem read is read-only", method: "GET", path: "/api/experimental/fs/read", routeClass: "read-only", disposition: "forward" },
   { name: "shell output read is read-only", method: "GET", path: "/api/shell/output", routeClass: "read-only", disposition: "forward" },
@@ -54,6 +56,7 @@ const cases: readonly {
   { name: "session prompt is forwarded", method: "POST", path: "/api/session/s/prompt", routeClass: "session-input", disposition: "forward" },
   { name: "session command is forwarded", method: "POST", path: "/api/session/s/command", routeClass: "session-input", disposition: "forward" },
   { name: "session interrupt is forwarded", method: "POST", path: "/api/session/s/interrupt", routeClass: "session-input", disposition: "forward" },
+  { name: "session abort is forwarded (operator control, review P3)", method: "POST", path: "/api/session/s/abort", routeClass: "session-input", disposition: "forward" },
   { name: "session background is forwarded", method: "POST", path: "/api/session/s/background", routeClass: "session-input", disposition: "forward" },
   { name: "session create is forwarded", method: "POST", path: "/api/session", routeClass: "session-input", disposition: "forward" },
   { name: "session update is forwarded", method: "PATCH", path: "/api/session/s", routeClass: "session-input", disposition: "forward" },
@@ -70,6 +73,9 @@ const cases: readonly {
   { name: "unknown mutation fails closed", method: "POST", path: "/api/experimental/unknown", routeClass: "unknown", disposition: "deny" },
   { name: "unknown read fails closed", method: "GET", path: "/api/experimental/unknown", routeClass: "unknown", disposition: "deny" },
   { name: "an undocumented route is not implicit read-only", method: "POST", path: "/api/debug/evil", routeClass: "unknown", disposition: "deny" },
+  { name: "dot-segment path fails closed even when the target classifies", method: "GET", path: "/api/session/../config", routeClass: "unknown", disposition: "deny" },
+  { name: "current-segment dot path fails closed", method: "GET", path: "/api/./info", routeClass: "unknown", disposition: "deny" },
+  { name: "trailing slash still classifies normally", method: "GET", path: "/api/session/s/", routeClass: "read-only", disposition: "forward" },
 ];
 
 for (const entry of cases) {

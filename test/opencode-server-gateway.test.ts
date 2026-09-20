@@ -52,6 +52,11 @@ async function stubUpstream(): Promise<StubServer> {
       response.end(JSON.stringify({ permission: { edit: "ask", bash: "ask", task: "ask" } }));
       return;
     }
+    if (pathname === "/api/integration") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ integration: [] }));
+      return;
+    }
     if (pathname === "/gzip") {
       // Mirrors real `opencode serve`: gzipped JSON with content-encoding.
       response.writeHead(200, { "content-type": "application/json", "content-encoding": "gzip" });
@@ -272,11 +277,11 @@ test("W071 gateway (enforced): read-only observation is forwarded", async (t) =>
   });
   t.after(() => void gateway.close());
 
-  const response = await fetch(gateway.url + "/config", {
+  const response = await fetch(gateway.url + "/api/integration", {
     headers: { authorization: basic("opencode", "tuipw") },
   });
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json() as unknown, { permission: { edit: "ask", bash: "ask", task: "ask" } });
+  assert.deepEqual(await response.json() as unknown, { integration: [] });
 });
 
 test("W071 gateway (enforced): mutation route classes are denied and never forwarded", async (t) => {
@@ -307,10 +312,13 @@ test("W071 gateway (enforced): mutation route classes are denied and never forwa
     ["PATCH", "/api/session/import"],
     ["DELETE", "/api/session/import"],
     ["POST", "/api/experimental/unknown"],
+    // A read, but denied: the config payload carries provider credentials the
+    // gateway must not hand a client (review P3).
+    ["GET", "/api/config"],
   ] as const;
   for (const [method, path] of denied) {
     const init: RequestInit = { method, headers };
-    if (method !== "DELETE") init.body = "{}";
+    if (method === "POST" || method === "PUT" || method === "PATCH") init.body = "{}";
     const response = await fetch(gateway.url + path, init);
     assert.equal(response.status, 403, `${method} ${path} must be denied in enforced posture`);
   }
@@ -338,7 +346,7 @@ test("W071 gateway (enforced): a non-POST verb on the broker reply route is deni
   // The reply route must be broker-only for every verb: a broker disposition
   // reached without the broker hook fails closed rather than handing the hub
   // credential to a client-supplied call on the authority route.
-  for (const method of ["GET", "PUT", "PATCH", "DELETE"]) {
+  for (const method of ["GET", "OPTIONS", "PUT", "PATCH", "DELETE"]) {
     const response = await fetch(gateway.url + "/api/session/s/permission/r/reply", { method, headers });
     assert.equal(response.status, 403, `${method} on the reply route must be denied in enforced posture`);
   }
