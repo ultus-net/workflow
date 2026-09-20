@@ -14,9 +14,10 @@ import { parseLauncherArgs } from "../src/cli/launcher-args.js";
 
 /**
  * W076 — `workflow doctor`: honest self-checks, pass/warn/fail, actionable
- * fixes, credential VALUES never printed. Checks with live side effects (hub
- * probe, gateway probe) take injectable fetch; the unit tests pin the pure
- * report composition and the checks that can be driven without daemons.
+ * fixes, credential VALUES never printed. The topology-gateway check takes an
+ * injectable fetch; the hub check uses probeHub directly. The unit tests pin
+ * the pure report composition and the checks that can be driven without
+ * daemons.
  */
 
 test("doctor: the doctor verb parses as a utility surface and is absent from the display picker", () => {
