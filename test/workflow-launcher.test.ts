@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { acpAgentKind } from "../src/integrations/acp-runtime.js";
 import {
   LAUNCHER_OPTIONS,
   cliSibling,
@@ -87,4 +88,17 @@ test("an explicit --agent overrides the ambient env; absence leaves the env defa
   // undefined here and `acpAgentKind` fails closed at composition time.
   assert.equal(resolveAgentKind(undefined, "gpt5"), undefined);
   assert.equal(resolveAgentKind(undefined, undefined), undefined);
+});
+
+test("the launcher's agent-kind list stays in lockstep with the runtime's acpAgentKind", () => {
+  // Drift guard: a fourth kind added to one union only must fail here.
+  const previous = process.env.WORKFLOW_ACP_AGENT;
+  for (const kind of ["opencode", "cline", "goose"] as const) {
+    process.env.WORKFLOW_ACP_AGENT = kind;
+    assert.equal(acpAgentKind(), kind);
+  }
+  process.env.WORKFLOW_ACP_AGENT = "gpt5";
+  assert.throws(() => acpAgentKind(), /must be "opencode", "cline", or "goose"/);
+  if (previous === undefined) delete process.env.WORKFLOW_ACP_AGENT;
+  else process.env.WORKFLOW_ACP_AGENT = previous;
 });

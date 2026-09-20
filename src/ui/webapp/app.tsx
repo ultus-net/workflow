@@ -447,7 +447,7 @@ function useRoutingSettings() {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const save = useCallback(async (agent: string, preference: AgentRuntimePreference): Promise<void> => {
+  const save = useCallback(async (agent: string, preference: AgentRuntimePreference): Promise<boolean> => {
     setError(undefined);
     try {
       const response = await fetch("/api/settings/agents", {
@@ -457,11 +457,13 @@ function useRoutingSettings() {
       });
       if (!response.ok) {
         setError(((await response.json()) as { error?: string }).error ?? "could not save routing defaults");
-        return;
+        return false;
       }
       await load();
+      return true;
     } catch {
       setError("could not save routing defaults");
+      return false;
     }
   }, [load]);
 

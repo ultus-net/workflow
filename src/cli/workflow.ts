@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 
-import { cliSibling, LAUNCHER_OPTIONS, parseAgentFlag, parseLauncherArgs, resolveSelection } from "./launcher-args.js";
+import { cliSibling, LAUNCHER_OPTIONS, parseAgentFlag, parseLauncherArgs, resolveAgentKind, resolveSelection } from "./launcher-args.js";
 import { openBrowser } from "./open-browser.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 import { runWebLaunch } from "./web-launch.js";
@@ -48,7 +48,11 @@ if (agentChoice.error !== undefined) {
 // ambient `WORKFLOW_ACP_AGENT` stays authoritative when no flag is given.
 // Containment is decided downstream per kind (`LinuxBubblewrapContainment`);
 // the flag selects the engine, never the isolation boundary.
-if (agentChoice.agent !== undefined) process.env.WORKFLOW_ACP_AGENT = agentChoice.agent;
+if (agentChoice.agent !== undefined) {
+  // Precedence flows through the same helper the tests pin: an explicit flag
+  // wins over the ambient env, and the effective kind is what gets exported.
+  process.env.WORKFLOW_ACP_AGENT = resolveAgentKind(agentChoice.agent, process.env.WORKFLOW_ACP_AGENT) ?? agentChoice.agent;
+}
 // A flag before the verb (`workflow --agent goose web`) still resolves: the
 // post-strip remainder is re-parsed when argv[0] was the flag itself.
 const { verb, rest } = initial.verb === undefined

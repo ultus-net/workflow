@@ -68,8 +68,9 @@ export interface SettingsRouting {
   readonly facts: RoutingFacts;
   readonly loading: boolean;
   readonly error: string | undefined;
-  /** Persists one agent's launch defaults (same doc the runtime consumes). */
-  readonly onSave: (agent: string, preference: AgentRuntimePreference) => Promise<void>;
+  /** Persists one agent's launch defaults (same doc the runtime consumes).
+   * Resolves `true` only when the save succeeded. */
+  readonly onSave: (agent: string, preference: AgentRuntimePreference) => Promise<boolean>;
 }
 
 export interface SettingsDialogProps {
@@ -676,17 +677,18 @@ function ConnectorsSection({ mcp }: { readonly mcp: SettingsMcp }) {
 
 /**
  * Model routing: the persisted per-agent launch defaults (model + reasoning
- * effort) written to the same settings document the runtime consumes at
- * launch (`agents.<id>.model` → the metered launch config), plus the routing
- * facts the environment currently dictates, stated read-only and honestly —
- * an env-set model override wins over the panel default, so it is shown, not
- * hidden. `thoughtLevel` applies where the engine consumes a reasoning-effort
- * launch flag.
+ * effort) written to the settings document, plus the routing facts the
+ * environment currently dictates, stated read-only and honestly — an env-set
+ * model override wins over the panel default, so it is shown, not hidden.
+ * Launch consumption is claimed per agent, never wholesale: only `model`
+ * reaches a launch config today (OpenCode's metered config, goose's launch);
+ * `thoughtLevel` and the whole cline preference are persisted with no launch
+ * consumer yet.
  */
 const ROUTING_AGENTS: readonly { readonly id: string; readonly label: string; readonly hint: string }[] = [
-  { id: "opencode", label: "OpenCode", hint: "consumed at launch into the metered opencode config" },
-  { id: "goose", label: "Goose", hint: "persisted launch default for the contained goose agent" },
-  { id: "cline", label: "Cline", hint: "persisted launch default; maps to the engine's thinking flag" },
+  { id: "opencode", label: "OpenCode", hint: "model is consumed at launch into the metered opencode config" },
+  { id: "goose", label: "Goose", hint: "model is consumed at launch by the contained goose agent" },
+  { id: "cline", label: "Cline", hint: "persisted launch default; no launch-time consumer yet" },
 ];
 
 const THOUGHT_LEVELS: readonly string[] = ["none", "low", "medium", "high", "xhigh"];
@@ -695,8 +697,9 @@ export function RoutingSection({ routing }: { readonly routing: SettingsRouting 
   return (
     <Section title="Model routing">
       <p className="settings-desc">
-        Launch defaults per agent — the model and reasoning effort the control plane
-        writes into each agent's launch config on the next session. Live changes still
+        Per-agent launch defaults. The model default is written into the launch
+        config for OpenCode and goose on the next session; reasoning effort is
+        persisted now — no engine consumes it at launch yet. Live changes still
         ride the agent's own config options.
       </p>
       {routing.loading && <p className="settings-desc">Loading routing defaults…</p>}
@@ -740,12 +743,23 @@ export function RoutingSection({ routing }: { readonly routing: SettingsRouting 
 function RoutingAgentForm({ agent, preference, onSave }: {
   readonly agent: string;
   readonly preference: AgentRuntimePreference;
-  readonly onSave: (agent: string, preference: AgentRuntimePreference) => Promise<void>;
+  readonly onSave: (agent: string, preference: AgentRuntimePreference) => Promise<boolean>;
 }) {
   const [model, setModel] = useState(preference.model ?? "");
   const [thoughtLevel, setThoughtLevel] = useState(preference.thoughtLevel ?? "");
   const [saved, setSaved] = useState(false);
-  const dirty = (preference.model ?? "") !== model || (preference.thoughtLevel ?? "") !== thoughtLevel;
+  // Re-sync from the refreshed document after every load/save so the form
+  // reflects what actually persisted, never a stale local draft.
+  useEffect(() => {
+    setModel(preference.model ?? "");
+    setThoughtLevel(preference.thoughtLevel ?? "");
+    setSaved(false);
+  }, [preference.model, preference.thoughtLevel]);
+  const dirty = (preference.model ?? "") !== model.trim() || (preference.thoughtLevel ?? "") !== thoughtLevel;
+  // The merge persists per key and cannot clear: an all-empty save would be
+  // rejected, so it is disabled here and the limitation is stated, not hidden.
+  const persistedAnything = preference.model !== undefined || preference.mode !== undefined || preference.thoughtLevel !== undefined;
+  const clearsEverything = persistedAnything && model.trim() === "" && thoughtLevel === "";
   return (
     <div className="mcp-editor" role="group" aria-label={`${agent} launch defaults`}>
       <label className="mcp-field">
@@ -767,18 +781,24 @@ function RoutingAgentForm({ agent, preference, onSave }: {
         <button
           type="button"
           className="btn"
-          disabled={!dirty}
+          disabled={!dirty || clearsEverything}
           onClick={() => {
             const next: AgentRuntimePreference = {
               ...(model.trim() === "" ? {} : { model: model.trim() }),
               ...(thoughtLevel === "" ? {} : { thoughtLevel }),
             };
-            void onSave(agent, next).then(() => setSaved(true));
+            void onSave(agent, next).then((ok) => { if (ok) setSaved(true); });
           }}
         >
           {saved ? "Saved" : "Save"}
         </button>
       </span>
+      {persistedAnything && (
+        <p className="settings-desc">
+          Saved values merge per key; the panel cannot clear them yet — edit the
+          settings file to return an agent to its engine default.
+        </p>
+      )}
     </div>
   );
 }

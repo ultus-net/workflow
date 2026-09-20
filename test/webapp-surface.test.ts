@@ -314,7 +314,7 @@ test("settings routing section edits per-agent launch defaults and states env fa
       },
       loading: false,
       error: undefined,
-      onSave: async () => {},
+      onSave: async () => true,
     },
   }));
   assert.ok(markup.includes("Model routing"), "the routing section must render");

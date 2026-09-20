@@ -151,16 +151,23 @@ test("agent routing GET merges scopes and reports environment facts without secr
     agents: { goose: { mode: "build" }, opencode: { model: "openrouter/auto" } },
   }));
 
-  // The upstream fact must echo the operator-set env var; restore it after.
-  const previousUpstream = process.env.WORKFLOW_ACP_UPSTREAM;
-  const previousModel = process.env.WORKFLOW_OPENCODE_MODEL;
+  // The upstream fact must echo the operator-set env var; every presence
+  // boolean's inputs are isolated so the exact values are pinned, not ambient.
+  const envSnapshot: readonly [string, string | undefined][] = [
+    ["WORKFLOW_ACP_UPSTREAM", process.env.WORKFLOW_ACP_UPSTREAM],
+    ["WORKFLOW_OPENCODE_MODEL", process.env.WORKFLOW_OPENCODE_MODEL],
+    ["WORKFLOW_GOOSE_MODEL", process.env.WORKFLOW_GOOSE_MODEL],
+    ["GOOSE_MODEL", process.env.GOOSE_MODEL],
+    ["AZURE_FOUNDRY_MODEL", process.env.AZURE_FOUNDRY_MODEL],
+    ["WORKFLOW_OPENROUTER_MANAGEMENT_KEY", process.env.WORKFLOW_OPENROUTER_MANAGEMENT_KEY],
+  ];
   process.env.WORKFLOW_ACP_UPSTREAM = "https://example-upstream.test";
-  delete process.env.WORKFLOW_OPENCODE_MODEL;
+  for (const [name] of envSnapshot.slice(1)) delete process.env[name];
   context.after(() => {
-    if (previousUpstream === undefined) delete process.env.WORKFLOW_ACP_UPSTREAM;
-    else process.env.WORKFLOW_ACP_UPSTREAM = previousUpstream;
-    if (previousModel === undefined) delete process.env.WORKFLOW_OPENCODE_MODEL;
-    else process.env.WORKFLOW_OPENCODE_MODEL = previousModel;
+    for (const [name, value] of envSnapshot) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   });
 
   const read = await fetch(`${base}/api/settings/agents`).then((response) => response.json()) as {
@@ -179,6 +186,6 @@ test("agent routing GET merges scopes and reports environment facts without secr
     "envModelGoose", "envModelOpencode", "managementKey", "upstream",
   ]);
   assert.equal(read.facts.envModelOpencode, false, "env model was deleted; the panel default must apply");
-  assert.equal(typeof read.facts.envModelGoose, "boolean");
-  assert.equal(typeof read.facts.managementKey, "boolean");
+  assert.equal(read.facts.envModelGoose, false, "all goose model env inputs were deleted");
+  assert.equal(read.facts.managementKey, false, "the management key env input was deleted");
 });
