@@ -730,7 +730,10 @@ export function createWorkflowWebServer(
         }
         const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
         const result = await compactSession({ workspace: options?.workspace ?? process.cwd(), stateHome, sessionId: agentSessionId });
-        return json(response, result.compacted ? 200 : 409, result);
+        // A gateway-walk unavailability (no daemon, not loopback, did not
+        // answer) maps to 503 like the sibling unavailable reads; every other
+        // refusal stays a 409 with the verbatim reason.
+        return json(response, result.compacted ? 200 : result.unavailable === true ? 503 : 409, result);
       } catch {
         return json(response, 400, { error: "invalid request body" });
       }

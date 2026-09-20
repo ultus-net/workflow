@@ -1496,6 +1496,10 @@ export function ContextSection({ usage, sessionId, onCompactSession }: {
   readonly onCompactSession?: ((id: string) => Promise<string>) | undefined;
 }) {
   const [compaction, setCompaction] = useState<string | undefined>(undefined);
+  const [compactBusy, setCompactBusy] = useState(false);
+  // The status line belongs to the session it was requested for: switching
+  // focus clears it instead of attributing one session's compaction to another.
+  useEffect(() => { setCompaction(undefined); }, [sessionId]);
   if (usage === undefined) return null;
   const used = usage.latestPromptTokens;
   const contextWindow = usage.contextWindowTokens;
@@ -1522,10 +1526,17 @@ export function ContextSection({ usage, sessionId, onCompactSession }: {
             <span className="context-label">upkeep</span>
             <button
               className="task-action"
-              onClick={() => { void onCompactSession(sessionId).then(setCompaction); }}
+              disabled={compactBusy}
+              onClick={() => {
+                setCompactBusy(true);
+                void onCompactSession(sessionId).then((result) => {
+                  setCompactBusy(false);
+                  setCompaction(result);
+                });
+              }}
               title="Queue manual compaction over the enforced gateway — it runs at the session's next step boundary"
             >
-              Compact…
+              {compactBusy ? "Queueing…" : "Compact…"}
             </button>
           </p>
         )}

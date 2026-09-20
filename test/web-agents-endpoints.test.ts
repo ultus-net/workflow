@@ -145,13 +145,14 @@ test("POST /api/sessions/compact: honest refusals without a manager, an agent se
   assert.equal(missingId.status, 400);
 
   // An established runtime (fake driver reports a ses_… id) with no server
-  // topology → the gateway walk's honest unavailable reason. create() spawns
-  // the runtime immediately, so the compact path goes straight to the walk.
+  // topology → the gateway walk's honest unavailability reason, mapped to 503
+  // like the sibling unavailable reads (W082 review P3). create() spawns the
+  // runtime immediately, so the compact path goes straight to the walk.
   const created = await manager.create();
   assert.equal(created.kind, "ok");
   if (created.kind !== "ok") return;
   const compact = await post(url, { contentType: "application/json", body: JSON.stringify({ id: created.meta.id }) });
-  assert.equal(compact.status, 409);
+  assert.equal(compact.status, 503);
   assert.match((await compact.json() as { reason: string }).reason, /no server topology daemon.*compaction/s);
   await manager.dispose();
 

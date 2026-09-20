@@ -334,8 +334,10 @@ context management — the binary carries `AI SDK routes cannot replay native pr
 state`, i.e. replay/import cannot reconstruct it, so native compaction state is provider-local and
 ephemeral from v2's perspective. **`summary`** is v2's own checkpoint summary, persisted
 (`compactions` table, `compaction_idx`) and replayable. Per-model config drives both:
-`compaction: { auto, prune, keep/preserve_reserve_tokens, compactThreshold }` (binary-validated
-config field). **When it runs:** with `auto` enabled the session runtime compacts on its own —
+`compaction: { auto, keep: { tokens } }` with a compact threshold (`compactThreshold`) and a
+reserved context buffer for the summarization turn (the binary's `keep.tokens` /
+`reserved→buffer` projection; the v1-era `prune`/`preserve_recent_tokens` spellings survive only
+in the V1-compat projection). **When it runs:** with `auto` enabled the session runtime compacts on its own —
 `compactIfNeeded` fires on the session stream and emits `compaction-queued` plus the
 `compaction.started/.ended/.failed/.interrupted/.unavailable/.delta` lifecycle events; this is
 runtime behavior, NOT the HTTP route. **Manual compaction** is `SessionCompaction.compactManual`,
