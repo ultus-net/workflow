@@ -112,6 +112,49 @@ function useSnapshot() {
   return { snapshot, refresh: load };
 }
 
+/** One canonical step of a task's ledger (W072 kernel invariants; W083 surface).
+ * Steps live in the kernel's TaskGraph — the browser only ever sees the
+ * application's projection of them. */
+interface StepRow {
+  readonly id: string;
+  readonly content: string;
+  readonly state: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "CANCELLED";
+  readonly requiredEvidence: readonly { readonly authority: string; readonly subject: string }[];
+}
+
+interface StepLedgerTask {
+  readonly id: string;
+  readonly title: string;
+  readonly state: string;
+  readonly blockers: readonly string[];
+  readonly steps: readonly StepRow[];
+  readonly activeStepId: string | null;
+}
+
+interface StepLedger {
+  readonly activeTaskId: string | null;
+  readonly tasks: readonly StepLedgerTask[];
+}
+
+/** Polls the canonical step ledger alongside the task snapshot. */
+function useStepLedger() {
+  const [ledger, setLedger] = useState<StepLedger | undefined>(undefined);
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/steps");
+      if (response.ok) setLedger(await response.json() as StepLedger);
+    } catch {
+      // Keep the last good ledger; the next poll retries.
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), PANEL_POLL_MS);
+    return () => clearInterval(timer);
+  }, [load]);
+  return { ledger, refreshSteps: load };
+}
+
 function useGitStatus() {
   const [status, setStatus] = useState<GitStatus | undefined>(undefined);
   useEffect(() => {
@@ -1568,7 +1611,7 @@ export function McpConnections({ servers }: { readonly servers: readonly McpServ
   );
 }
 
-function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent, capabilities, usage, mcpServers, focusedSessionId, onCompactSession }: {
+function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent, capabilities, usage, mcpServers, focusedSessionId, onCompactSession, ledger, refreshSteps }: {
   readonly snapshot: Snapshot | undefined;
   readonly refresh: () => Promise<void>;
   readonly worktrees: readonly GitWorktree[] | undefined;
@@ -1582,32 +1625,51 @@ function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent,
    * the compaction control applies to it. */
   readonly focusedSessionId?: string | undefined;
   readonly onCompactSession?: ((id: string) => Promise<string>) | undefined;
+  readonly ledger: StepLedger | undefined;
+  readonly refreshSteps: () => Promise<void>;
 }) {
+  const ledgerByTask = new Map((ledger?.tasks ?? []).map((entry) => [entry.id, entry]));
   return (
     <aside className="panels">
       <ContextSection usage={usage} sessionId={focusedSessionId} onCompactSession={onCompactSession} />
       <McpConnections servers={mcpServers} />
       <section>
         <h2>Tasks</h2>
-        {(snapshot?.tasks ?? []).map((task) => (
-          <div className={`task ${task.state === "BLOCKED" ? "task-blocked" : ""}`} key={task.id}>
-            <strong>{task.id}</strong>
-            <span className={`task-state task-state-${task.state.toLowerCase()}`}>{task.state}</span>
-            <span className="task-title">
-              {task.title}
-              {task.blockers.length > 0 && <span className="task-blockers">blocked by {task.blockers.join(", ")}</span>}
-            </span>
-            {NEXT_STATE[task.state] !== undefined && (
-              <button className="task-action" onClick={() => advance(task.id, NEXT_STATE[task.state]!, refresh)}>
-                {NEXT_STATE_ACTION[task.state]}
-              </button>
-            )}
-            {task.state === "FAILED" && (
-              <button className="task-action" onClick={() => retryTask(task.id, refresh)}>Retry</button>
-            )}
-          </div>
-        ))}
+        {(snapshot?.tasks ?? []).map((task) => {
+          const ledgerTask = ledgerByTask.get(task.id);
+          return (
+            <div className={`task ${task.state === "BLOCKED" ? "task-blocked" : ""}`} key={task.id}>
+              <strong>{task.id}</strong>
+              <span className={`task-state task-state-${task.state.toLowerCase()}`}>{task.state}</span>
+              <span className="task-title">
+                {task.title}
+                {task.blockers.length > 0 && <span className="task-blockers">blocked by {task.blockers.join(", ")}</span>}
+              </span>
+              {NEXT_STATE[task.state] !== undefined && (
+                <button className="task-action" onClick={() => advance(task.id, NEXT_STATE[task.state]!, refresh)}>
+                  {NEXT_STATE_ACTION[task.state]}
+                </button>
+              )}
+              {task.state === "FAILED" && (
+                <button className="task-action" onClick={() => retryTask(task.id, refresh)}>Retry</button>
+              )}
+              {ledgerTask !== undefined && ledgerTask.steps.length > 0 && (
+                <ul className="step-ledger">
+                  {ledgerTask.steps.map((step) => (
+                    <StepLedgerRow key={step.id} step={step} taskState={ledgerTask.state} refreshSteps={refreshSteps} />
+                  ))}
+                </ul>
+              )}
+              <AddStepForm taskId={task.id} refreshSteps={refreshSteps} />
+            </div>
+          );
+        })}
         <AddTaskForm refresh={refresh} />
+        <p className="panel-note">
+          Steps are the canonical decomposition ledger — stock OpenCode v2 removed native todos
+          (W072 addendum). Completion is evidence-bound: the kernel refuses a step without fresh
+          passing evidence, and the refusal shows here verbatim.
+        </p>
       </section>
       <ConnectionsSection agents={agents} currentAgent={currentAgent} capabilities={capabilities} />
       <details className="panel-disclosure">
@@ -1757,6 +1819,107 @@ function retryTask(taskId: string, refresh: () => Promise<void>): void {
   }).then(() => refresh());
 }
 
+const STEP_LABEL: Record<StepRow["state"], string> = {
+  PENDING: "pending",
+  IN_PROGRESS: "in progress",
+  COMPLETED: "completed",
+  CANCELLED: "cancelled",
+};
+
+/** One canonical step row. Transitions ride the application command port and
+ * the kernel's structured rejections surface verbatim — completion is
+ * evidence-bound (I-3), so the Complete button is an honest attempt, not a
+ * promise: the refusal reason renders instead of a silent failure. */
+export function StepLedgerRow({ step, taskState, refreshSteps }: {
+  readonly step: StepRow;
+  readonly taskState: string;
+  readonly refreshSteps: () => Promise<void>;
+}) {
+  const [rejection, setRejection] = useState<string | undefined>(undefined);
+  const act = async (action: "start" | "complete" | "cancel"): Promise<void> => {
+    setRejection(undefined);
+    let message: string | undefined;
+    try {
+      const response = await fetch(`/api/steps/${action}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: step.id }),
+      });
+      if (response.status === 409) {
+        const result = await response.json().catch(() => undefined) as { code?: string; reason?: string } | undefined;
+        message = result?.reason ?? result?.code ?? "the kernel refused the transition";
+      }
+    } catch {
+      message = "the panel could not reach the control plane";
+    }
+    setRejection(message);
+    await refreshSteps();
+  };
+  const actionable = taskState === "IN_PROGRESS";
+  return (
+    <li className="step-row">
+      <span className={`task-state task-state-${step.state.toLowerCase()}`}>{STEP_LABEL[step.state]}</span>
+      <span className="step-content">{step.content}</span>
+      <span className="step-evidence">
+        {step.requiredEvidence.length} evidence requirement{step.requiredEvidence.length === 1 ? "" : "s"}
+      </span>
+      {step.state === "PENDING" && actionable && (
+        <button className="task-action" onClick={() => void act("start")}>Start step</button>
+      )}
+      {step.state === "IN_PROGRESS" && (
+        <button
+          className="task-action"
+          onClick={() => void act("complete")}
+          title="Completion is evidence-bound — the kernel refuses without fresh passing evidence"
+        >
+          Complete
+        </button>
+      )}
+      {(step.state === "PENDING" || step.state === "IN_PROGRESS") && (
+        <button className="task-action" onClick={() => void act("cancel")}>Cancel</button>
+      )}
+      {rejection !== undefined && <span className="step-rejection" role="alert">{rejection}</span>}
+    </li>
+  );
+}
+
+/** Operator-gated decomposition: appends one step to a task's ledger. The
+ * kernel still enforces I-2 (an active ledger cannot be silently cleared) and
+ * its refusal surfaces verbatim. */
+function AddStepForm({ taskId, refreshSteps }: { readonly taskId: string; readonly refreshSteps: () => Promise<void> }) {
+  const [content, setContent] = useState("");
+  const [error, setError] = useState<string | undefined>(undefined);
+  const submit = (): void => {
+    void fetch("/api/steps/define", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ taskId, content }),
+    }).then(async (response) => {
+      if (response.ok) {
+        setContent("");
+        setError(undefined);
+      } else {
+        const result = await response.json().catch(() => undefined) as { error?: string } | undefined;
+        setError(result?.error ?? "the ledger change was refused");
+      }
+      await refreshSteps();
+    });
+  };
+  return (
+    <form
+      className="step-add"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (content.trim().length > 0) submit();
+      }}
+    >
+      <input aria-label={`New step for task ${taskId}`} placeholder="add a step to the ledger" value={content} onChange={(event) => setContent(event.target.value)} />
+      <button className="btn btn-ghost" type="submit">Add step</button>
+      {error !== undefined && <span className="step-rejection" role="alert">{error}</span>}
+    </form>
+  );
+}
+
 /** Compact form for the hub's addTask: id + title, added BLOCKED. */
 function AddTaskForm({ refresh }: { readonly refresh: () => Promise<void> }) {
   const [taskId, setTaskId] = useState("");
@@ -1901,6 +2064,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   readonly setFocusedSessionId: (id: string | undefined) => void;
 }) {
   const { snapshot, refresh } = useSnapshot();
+  const { ledger, refreshSteps } = useStepLedger();
   const gitStatus = useGitStatus();
   const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
@@ -2168,6 +2332,27 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
               body: JSON.stringify({ id }),
             }).then(() => refreshSchedules());
           }}
+          onSaveSchedule={async (fields, base) => {
+            // Editing spreads the full existing entry under the form's fields
+            // so advanced schedule fields (budget, taskClass, off-peak) the
+            // form does not collect survive the proxy's field stripping.
+            const body = base === undefined ? fields : { ...base, ...fields };
+            try {
+              const response = await fetch("/api/schedules/save", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(body),
+              });
+              if (response.ok) {
+                refreshSchedules();
+                return undefined;
+              }
+              const payload = await response.json().catch(() => undefined) as { error?: string } | undefined;
+              return payload?.error ?? `the hub refused the save (${response.status})`;
+            } catch {
+              return "the panel could not reach the hub proxy";
+            }
+          }}
         />
       ) : view === "usage" ? (
         <UsageView />
@@ -2241,7 +2426,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           </ThreadPrimitive.Root>
         </section>
         <aside className="inspector" aria-label="Repository changes and supervision">
-          <Panels snapshot={snapshot} refresh={refresh} worktrees={worktrees} gitStatus={gitStatus} agents={agents} currentAgent={currentAgent} capabilities={capabilities.capabilities} usage={usage} mcpServers={mcp.servers} focusedSessionId={focusedSessionId} onCompactSession={compactFocusedSession} />
+          <Panels snapshot={snapshot} refresh={refresh} worktrees={worktrees} gitStatus={gitStatus} agents={agents} currentAgent={currentAgent} capabilities={capabilities.capabilities} usage={usage} mcpServers={mcp.servers} focusedSessionId={focusedSessionId} onCompactSession={compactFocusedSession} ledger={ledger} refreshSteps={refreshSteps} />
         </aside>
       </div>
       )}

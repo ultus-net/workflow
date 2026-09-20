@@ -13,7 +13,7 @@ import { compactSession, fetchLiveMcp, fetchSessionStats } from "../integrations
 import { nextCronMatch, type ScheduleDefinition } from "../integrations/hub-scheduler.js";
 import { defaultSettings, mergeSettings, normalizeSettings, readSettingsFile, settingsPaths, writeSettingsFile } from "../integrations/workflow-settings.js";
 import { resolveToolboxCatalog } from "../integrations/toolbox-catalog.js";
-import { evidenceId, observationId, taskId, type TaskState } from "../kernel/contracts.js";
+import { evidenceId, observationId, stepId, taskId, type TaskState } from "../kernel/contracts.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
 import { WebSessionManager, type SessionSwitchResult } from "./web-sessions.js";
 import { isWebAgentId, listWebAgents } from "./web-agents.js";
@@ -474,6 +474,102 @@ export function createWorkflowWebServer(
         // immediately, so a hard-coded BLOCKED would misreport the graph.
         const state = application.snapshot().tasks.find((task) => task.id === rawTaskId)?.state ?? "BLOCKED";
         return json(response, 201, { taskId: rawTaskId, state });
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    // W083: the canonical step ledger (roadmap → tasks → steps) is the custom
+    // web UI's tracking surface (stock OpenCode v2 removed native todos). Reads
+    // compose the application's public API — never the raw TaskGraph — and the
+    // kernel's structured rejections surface verbatim so the panel can never
+    // self-certify a step.
+    if (request.method === "GET" && pathname === "/api/steps") {
+      const snapshot = application.snapshot();
+      // The panel's "active task" is the ledger-relevant fact: exactly one
+      // task IN_PROGRESS. (The application's activation pointer is the
+      // interactive-authorization correlation, a different concern.) Zero or
+      // several IN_PROGRESS tasks read as null and the panel simply gates the
+      // per-row actions on each task's own state.
+      const inProgress = snapshot.tasks.filter((task) => task.state === "IN_PROGRESS");
+      const activeTaskId = inProgress.length === 1 ? inProgress[0]?.id ?? null : null;
+      return json(response, 200, {
+        activeTaskId,
+        tasks: snapshot.tasks.map((task) => {
+          const id = taskId(task.id);
+          return {
+            ...task,
+            steps: application.taskSteps(id),
+            activeStepId: application.activeStepId(id) ?? null,
+          };
+        }),
+      });
+    }
+    if (
+      request.method === "POST" &&
+      (pathname === "/api/steps/start" || pathname === "/api/steps/complete" || pathname === "/api/steps/cancel")
+    ) {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const rawStepId = (body as { id?: unknown } | null)?.id;
+        if (typeof rawStepId !== "string" || rawStepId.trim().length === 0) {
+          return json(response, 400, { error: "step id is required" });
+        }
+        const id = stepId(rawStepId);
+        const result = pathname === "/api/steps/start"
+          ? application.startTaskStep(id)
+          : pathname === "/api/steps/complete"
+            ? application.completeTaskStep(id)
+            : application.cancelTaskStep(id);
+        // Rejections are kernel decisions (illegal transition, missing fresh
+        // evidence, task not in progress) — 409 with the structured code and
+        // reason, never rewritten into a client-side success.
+        return json(response, result.kind === "accepted" ? 200 : 409, result);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    if (request.method === "POST" && pathname === "/api/steps/define") {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const input = body as { taskId?: unknown; content?: unknown } | null;
+        const rawTaskId = typeof input?.taskId === "string" ? input.taskId.trim() : "";
+        const content = typeof input?.content === "string" ? input.content.trim() : "";
+        if (rawTaskId.length === 0 || content.length === 0) {
+          return json(response, 400, { error: "taskId and content are required" });
+        }
+        const id = taskId(rawTaskId);
+        const known = application.snapshot().tasks.some((task) => task.id === rawTaskId);
+        if (!known) return json(response, 404, { error: `unknown task ${rawTaskId}` });
+        // Operator-gated decomposition: append one step to the task's ledger.
+        // The appended step carries an explicit environment-evidence
+        // requirement (subject `step:<content>`), the same contract the
+        // native-todo bridge assigns — an empty requirement list would let the
+        // step complete with zero evidence and hollow out I-3. Re-defining
+        // carries the existing steps through unchanged; the kernel still
+        // enforces I-2 (an active ledger cannot be silently cleared), and its
+        // TypeError is surfaced verbatim.
+        const existing = application.taskSteps(id).map((step) => ({
+          id: step.id,
+          content: step.content,
+          requiredEvidence: [...step.requiredEvidence],
+        }));
+        try {
+          const steps = application.defineTaskSteps(id, [
+            ...existing,
+            { content, requiredEvidence: [{ authority: "environment" as const, subject: `step:${content}` }] },
+          ]);
+          return json(response, 201, { steps });
+        } catch (error) {
+          return json(response, 409, { error: error instanceof Error ? error.message : String(error) });
+        }
       } catch {
         return json(response, 400, { error: "invalid request body" });
       }

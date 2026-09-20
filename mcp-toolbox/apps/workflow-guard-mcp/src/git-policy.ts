@@ -1,7 +1,10 @@
 import { basename } from "node:path";
 import { splitShellSegments, unwrapShellWords } from "./shell.js";
 
-const gitWriteRe = /\bgit\s+(?:add|rm|mv|commit|merge|rebase|cherry-pick|revert|stash\s+pop|apply|am|restore|reset|update-ref|filter-branch)\b|\bgit\s+tag\s+(?!--?list\b|-l\b)|\bgit\s+checkout\s+(?!-b\b)|\bgit\s+branch\s+(?:[^|;&]*\s)?-[dDM]\b/;
+// Ported from upstream opencode-workflow-guard (#134/#135, W084): `git tag`
+// publish flows are release operations, not branch mutations — only tag
+// DELETION (-d/--delete) stays flagged as a git write.
+const gitWriteRe = /\bgit\s+(?:add|rm|mv|commit|merge|rebase|cherry-pick|revert|stash\s+pop|apply|am|restore|reset|update-ref|filter-branch)\b|\bgit\s+tag\s+(?!--?list\b|-l\b)(?:[^|;&]*\s)?(?:-d\b|--delete\b)|\bgit\s+checkout\s+(?!-b\b)|\bgit\s+branch\s+(?:[^|;&]*\s)?-[dDM]\b/;
 const gitValueOptions = new Set(["-C", "--git-dir", "--work-tree", "-c", "--config-env", "--namespace"]);
 const gitBooleanOptions = new Set(["--version", "--help", "--no-pager", "-p", "--paginate", "--bare", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--exec-path"]);
 
@@ -56,6 +59,25 @@ function hasUnsafeGitAlias(command: string): boolean {
   });
 }
 
+// Ported from upstream opencode-workflow-guard (#134, W084): publishing a tag
+// is a release operation, not a branch mutation, so explicit tag refspecs are
+// exempt from the protected-branch push rules. Upstream's ordering is
+// load-bearing: a refspec containing a colon is tag-publish ONLY when its
+// DESTINATION is `:refs/tags/...` — checking the tag-shaped source first
+// would exempt `refs/tags/v1:main`, whose unqualified destination resolves to
+// the protected branch `refs/heads/main` (a real bypass, caught in review).
+// Deletion refspecs (`:refs/tags/<name>` — empty source) are never exempt.
+// Unlike upstream, the portable core does not execute `git show-ref` to probe
+// whether a short name resolves to an existing tag: short names stay under
+// the ordinary rule, and they only collide when the name equals a protected
+// branch, which is that rule's intended target.
+function tagPublishRefspecIn(refspec: string): boolean {
+  const token = refspec.replace(/^\+/, "");
+  if (token.length === 0 || token.startsWith(":")) return false;
+  if (token.includes(":")) return token.includes(":refs/tags/");
+  return token.startsWith("refs/tags/");
+}
+
 function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>): string | undefined {
   for (const segment of splitShellSegments(command)) {
     const normalized = normalizedGitSegments(segment)[0];
@@ -64,6 +86,7 @@ function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>
     if (words[1] !== "push") continue;
     for (const branch of protectedBranches) {
       for (const refspec of words.slice(2).filter((word) => !word.startsWith("-"))) {
+        if (tagPublishRefspecIn(refspec)) continue;
         const destination = refspec.includes(":") ? refspec.slice(refspec.lastIndexOf(":") + 1) : refspec;
         const normalizedDestination = destination.replace(/^refs\/heads\//, "");
         if (normalizedDestination === branch) return branch;
