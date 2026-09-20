@@ -1050,11 +1050,13 @@ surface is `instructions/entries`). Consequences: the native-todowrite bridge ha
 input on the pinned OpenCode host version** (it remains valid for hosts that expose native todos —
 goose/cline); the guard's todowrite gate can never be satisfied by a model on OpenCode v2, which
 validates the earlier removal of the todo requirement from the workflow-guard plugin. Decision: do
-NOT pivot tracking to `instructions/entries` (experimental, session-scoped, wrong semantics). The
-canonical tracking surface is the Workflow step ledger — surfacing it in the custom web UI is the
-accepted track; an upstream-candidate PR (§8) to restore a generic todo tool is parked, and the
-interim advisory workaround is a plan file via `WORKFLOW_ADVISORY_NOTES`. Recorded in project
-memory 2026-09-20.
+NOT pivot tracking to `instructions/entries` (experimental, session-scoped, wrong semantics), and —
+per the operator's no-plugins constraint — do NOT restore a todo tool via the v2 plugin API's
+`ctx.tool.transform` (the richer v2 plugin surface is deliberately not adopted; see the constraint
+recorded in project memory 2026-09-20). The canonical tracking surface is the Workflow step ledger —
+surfacing it in the custom web UI is the accepted track; an upstream-candidate PR (§8) to restore a
+generic todo tool is parked, and the interim advisory workaround is a plan file via
+`WORKFLOW_ADVISORY_NOTES`. Recorded in project memory 2026-09-20.
 
 ## Phase 15: Settings Panel, Launcher Engine Axis, and Hub Orientation (2026-09-20)
 
@@ -1274,12 +1276,14 @@ the server topology runs — same honest-unavailable pattern as the live MCP sta
 
 **Objective:** Restore context-window maintenance lost in the plugin→hub pivot. OpenCode v2 exposes
 compaction over the documented API (`POST /api/session/{sessionID}/compact`; provider/model config
-distinguishes `native` vs `summary` compaction). Design a hub-owned, deterministic trigger — not a
-prompt-side loop: (a) classify `compact` in the route-class matrix (currently deny by default; it
-is session maintenance that cannot advance canonical state — reclassify deliberately with tests,
-not by drift), (b) an operator compaction control in the custom web UI, (c) a hub-owned
-auto-trigger at a usage threshold (deterministic gate, budget-guard compatible), (d) probe per
-pinned version.
+distinguishes `native` vs `summary` compaction) **and its runtime already compacts on context
+overflow instead of retrying** — no plugin involved, per the operator's no-plugins constraint. The
+design is hub-owned and deterministic — not a prompt-side loop: (a) classify `compact` in the
+route-class matrix (currently deny by default; it is session maintenance that cannot advance
+canonical state — reclassify deliberately with tests, not by drift), (b) an operator compaction
+control in the custom web UI, (c) a hub-owned auto-trigger at a usage threshold (deterministic
+gate, budget-guard compatible), (d) probe per pinned version. The v2 compaction
+hook (`ctx.session.hook("compaction")`) is explicitly NOT used — no plugins.
 
 **Depends on:** W074 (gateway verdicts); probe gating per `docs/HOST_ADAPTERS.md`.
 
