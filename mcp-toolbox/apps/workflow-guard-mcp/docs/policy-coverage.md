@@ -37,3 +37,48 @@ This matrix classifies the upstream `opencode-workflow-guard` behavior by where 
 - Host UI presentation and notification delivery.
 
 This separation is intentional: adding more MCP tools does not turn an advisory MCP connection into a native-tool interceptor. Hosts with trustworthy pre-action hooks can enforce core decisions; other clients should combine advisory policy with their native sandbox and approval model.
+
+## Upstream parity log
+
+- **2026-09-20 (W084):** ported the upstream policy fixes that landed after the
+  2026-09-12 vendoring (upstream `ec097d4..HEAD`, PRs #134/#135/#136/#144/#152):
+  quoted-residue redirect/tamper matching (`prepareRedirectResidue`; verb
+  patterns stay on quote-flattened text), collaboration-invocation exemptions
+  (`gh|glab issue|pr`, `az repos pr`) with unquoted redirects still validated,
+  the project `.opencode/plans/` exemption (per-candidate, symlink-aware,
+  project-only), tag-publish exemptions (deletion stays flagged; the port is
+  deterministic — no `git show-ref` probe, so short tag names stay under the
+  ordinary protected-branch rule), fd-duplication and numeric-comparison
+  operand filters, and a realpath candidate check in the guard-tamper
+  configuration-path rule (closing a symlink gap relative to upstream's
+  isProtectedPath). Upstream's todo-gate deadlock fix is evaluated and not
+  ported as a gate (no todo predicates here); instead the `guard_status`
+  precondition advice no longer claims a todowrite precondition the policy
+  never enforced and OpenCode v2 hosts cannot satisfy. Plugin-runtime upstream
+  changes (V2 plugin entrypoint, continuation, verify timeout, TUI slot
+  rendering) remain deliberately out of scope: they are host-side plugin
+  responsibilities, and Workflow ships no plugins.
+
+  Known divergences, stated (secondary review 2026-09-20):
+  - **Numeric redirect targets** (`echo x > 5`) are filtered as comparison
+    operands and no longer count as file mutations — upstream's conscious
+    tradeoff, ported as-is. Consequence: the freshness/verification signal
+    misses a write into a numeric filename (an attacker chain via a symlinked
+    numeric name was already outside the boundary deny pre-port; the
+    mutation-signal gap is the delta). If a stricter signal is needed, scope
+    the filter to genuine comparison syntax (`[[ ]]`, arithmetic) rather than
+    dropping numeric targets wholesale.
+  - **`git push --delete`/`-d` flags**: upstream's `tagRefspecIn` also returns
+    false for flag-deleted pushes, so `git push origin --delete
+    refs/tags/<name>` stays blocked there when the tag is named like a
+    protected branch; the port omits that gate (deleting a tag is not a branch
+    mutation, so allowing it is arguably more precise). Deletion REFSPECS
+    (`:refs/tags/<name>`) are never exempt in either.
+  - **`/dev/null|stdout|stderr|tty|fd/N` redirect targets**: upstream filters
+    these from mutation analysis; the port does not, so `> /dev/null` still
+    counts as a mutation signal (stricter, harmless — freshness gets an extra
+    no-op signal).
+  - **Quoted redirect targets containing spaces** analyze only up to the
+    target's first space (pre-existing truncation class in both the pre-port
+    regex and upstream); the comment in shell.ts states the first-word scope
+    honestly.

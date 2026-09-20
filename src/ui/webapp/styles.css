@@ -2518,8 +2518,37 @@ body {
 .task-state { color: var(--text-muted); font-size: 0.8rem; }
 .task-state-verified { color: var(--ok); }
 .task-state-failed { color: var(--fail); }
+.task-state-pending, .task-state-in_progress, .task-state-cancelled { color: var(--text-muted); }
+.task-state-completed { color: var(--ok); }
 .task-blockers { display: block; color: var(--text-muted); font-size: 0.8rem; }
 .task-title { grid-column: 1 / -1; overflow-wrap: break-word; }
+
+/* W083: the canonical step ledger, nested under each task card. */
+.step-ledger {
+  grid-column: 1 / -1;
+  margin: 0.35rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.step-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: baseline;
+  font-size: 0.85rem;
+  padding-left: 0.6rem;
+  border-left: 2px solid var(--border);
+}
+
+.step-content { flex: 1 1 auto; overflow-wrap: break-word; }
+.step-evidence { color: var(--text-muted); font-size: 0.75rem; }
+.step-rejection { flex-basis: 100%; color: var(--fail); font-size: 0.8rem; }
+
+.step-add { display: flex; gap: 0.4rem; margin-top: 0.35rem; grid-column: 1 / -1; }
+.step-add input { flex: 1 1 auto; min-width: 0; }
 
 .task-action {
   justify-self: end;
@@ -2824,6 +2853,12 @@ body {
 
 .connection-grants {
   margin: 0.35rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.panel-note {
+  margin: 0.5rem 0 0;
   color: var(--text-muted);
   font-size: 0.72rem;
 }
