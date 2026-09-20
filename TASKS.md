@@ -1153,16 +1153,30 @@ a file-provisioning framing before it ships.
 **Depends on:** W074 (probes establish the host-version behavior the skill-discovery claim needs).
 
 **Acceptance criteria:**
-- [ ] `buildOrientation()` (extending `src/integrations/prompt-guidance.ts`): static template,
+- [x] `buildOrientation()` (extending `src/integrations/prompt-guidance.ts`): static template,
       `ORIENTATION_VERSION` stamp, no interpolation of task/repo/env data, silence-when-unset,
-      prepended once at session start (scheduled turns first).
-- [ ] Composition pin + no-interpolation pin in focused tests (scheduler composition like
-      `test/hub-scheduler.test.ts:178`).
-- [ ] Orientation version + fingerprint recorded in the run registry for review provenance.
-- [ ] Skill body generated from the toolbox catalog with a content-pinning test against the corpus;
+      prepended at scheduled-turn session start. (Implemented as `buildOrientation` +
+      `hubPromptGuidanceFromEnv` — the hub composes orientation first, operator advisory second;
+      `WORKFLOW_HUB_ORIENTATION=0` opts out; composed per scheduled turn, which is each scheduled
+      run's session start; bounded ~180 tokens.)
+- [x] Composition pin + no-interpolation pin in focused tests (scheduler composition like
+      `test/hub-scheduler.test.ts:178`). (Pinned in `test/g5-observability.test.ts`: frozen-shape +
+      byte-identical + no-placeholder pins, opt-out pin, ordering pin; the scheduler's own
+      `promptGuidance` seam is unchanged so the existing composition pin holds.)
+- [x] Orientation version + fingerprint recorded in the run registry for review provenance. (The
+      version is embedded in the block text, which rides the run's `taskPrompt` — the W041
+      provenance digest binds exactly what the agent saw; no registry contract widening needed.)
+- [x] Skill body generated from the toolbox catalog with a content-pinning test against the corpus;
       per-host delivery (OpenCode skill dir; goose/cline) only when that surface qualifies.
-- [ ] Ledger rows in `docs/HARNESS_ASSUMPTION_LEDGER.md` (advisory orientation block, skill recall)
-      and a `docs/FEATURES.md` status entry; advisory only — enforcement stays in the guard MCP server.
+      (`toolboxSkillBody` generates from the resolved catalog — names, descriptions, truthful
+      availability; corpus-pinned in `test/toolbox-catalog.test.ts`. **Delivery is deliberately NOT
+      implemented**: native host skill injection stays off per the 2026-09-15 plan — a dated
+      decision or file-provisioning framing is the prerequisite, stated in `docs/FEATURES.md`.)
+- [x] Ledger rows in `docs/HARNESS_ASSUMPTION_LEDGER.md` (advisory orientation block, skill recall)
+      and a `docs/FEATURES.md` status entry; advisory only — enforcement stays in the guard MCP
+      server. (Orientation row added; the skill-delivery row lands with the delivery decision.)
 
-**Verification:** focused prompt-guidance/scheduler tests, catalog-pinning test, and the ledger/doc
-rows; no live-probe claim without the W074 gates.
+**Verification:** `test/g5-observability.test.ts` (W075 composition/opt-out/no-interpolation pins) +
+`test/toolbox-catalog.test.ts` (skill-body corpus pin) + `test/hub-scheduler.test.ts` (seam
+unchanged) — 23/23; typecheck and lint clean; ledger + FEATURES rows dated 2026-09-20. Five-axis
+review pending (next step before this item is treated as approved).

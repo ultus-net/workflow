@@ -8,6 +8,7 @@ import {
   packageRoot,
   resolveToolboxCatalog,
   toolboxServerPath,
+  toolboxSkillBody,
 } from "../src/integrations/toolbox-catalog.js";
 
 /**
@@ -52,6 +53,27 @@ test("availability resolution uses the injected probe and keeps entries pure", (
   const absent = resolveToolboxCatalog({ exists: () => false });
   assert.equal(absent.every((entry) => entry.available === false), true);
   assert.equal(absent.every((entry) => entry.serverPath.endsWith(join("dist", "server.js"))), true);
+});
+
+test("the W075 skill body is generated from the catalog and stays in lockstep with the corpus", () => {
+  const body = toolboxSkillBody(resolveToolboxCatalog());
+  // Every connector appears with its catalog description and a truthful
+  // build state; the body is a proper skill file (frontmatter, bounded doc).
+  for (const app of TOOLBOX_CATALOG) {
+    assert.ok(body.includes(`**${app.name}**`), `the skill body must list ${app.name}`);
+    assert.ok(body.includes(app.description), `the skill body must carry ${app.name}'s catalog description`);
+  }
+  assert.match(body, /---\nname: workflow-toolbox\n/, "frontmatter names the skill");
+  assert.match(body, /# Workflow toolbox/, "the body carries the section heading");
+  assert.match(body, /never authorizes/, "the body states the advisory posture");
+  assert.ok(!body.includes("undefined") && !body.includes("[object Object]"), "no malformed interpolation");
+
+  // Availability is stated from the resolved entry, not hardcoded: a corpus
+  // where everything is built reads "available"; an unbuilt corpus reads
+  // "unbuilt" — the body cannot claim a build that does not exist.
+  const unbuilt = toolboxSkillBody(resolveToolboxCatalog({ exists: () => false }));
+  assert.match(unbuilt, /unbuilt/, "an unbuilt corpus must be stated as unbuilt");
+  assert.ok(!unbuilt.includes("(available)"), "no entry may claim availability it does not have");
 });
 
 function readdirNames(dir: string): string[] {

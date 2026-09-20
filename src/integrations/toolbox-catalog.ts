@@ -71,3 +71,34 @@ export function resolveToolboxCatalog(options: {
     return { ...app, transport: "stdio" as const, serverPath, available: exists(serverPath) };
   });
 }
+
+/**
+ * W075: the on-demand skill body, GENERATED from the toolbox catalog — the
+ * catalog manifest is the single source of truth, so the skill cannot drift
+ * from what the hub actually ships. This builds the text only; delivery to
+ * host skill directories is a separately dated decision (the 2026-09-15
+ * hub-owned-enforcement plan keeps native host skill injection off).
+ */
+export function toolboxSkillBody(catalog: readonly ToolboxCatalogEntry[]): string {
+  const entries = catalog
+    .map((entry) => `- **${entry.name}** — ${entry.description} (${entry.available ? "available" : "unbuilt"})`)
+    .join("\n");
+  return [
+    "---",
+    'name: workflow-toolbox',
+    'description: The Workflow hub toolbox — every MCP server the hub can mount, what each is for, and current build state. Load before using hub tools.',
+    'version: 1',
+    "---",
+    "",
+    "# Workflow toolbox",
+    "",
+    "These MCP servers compose the Workflow hub's toolbox. Availability reflects the",
+    "vendored build; the hub's route-class gateway and the guard MCP server own the",
+    "enforcement — this document orients, it never authorizes.",
+    "",
+    "## Connectors",
+    "",
+    entries,
+    "",
+  ].join("\n");
+}

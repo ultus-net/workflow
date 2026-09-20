@@ -6,7 +6,7 @@ import { TaskGraph } from "../src/kernel/task-graph.js";
 import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createRunRegistry } from "../src/integrations/run-registry.js";
-import { advisoryGuidanceFromEnv, buildAdvisoryGuidance } from "../src/integrations/prompt-guidance.js";
+import { advisoryGuidanceFromEnv, buildAdvisoryGuidance, buildOrientation, hubPromptGuidanceFromEnv } from "../src/integrations/prompt-guidance.js";
 
 /**
  * Plan Task G5: completion-claims journal (observability-only port of the
@@ -85,4 +85,41 @@ test("advisoryGuidanceFromEnv composes operator guidance and stays silent when u
   assert.match(both, /Response style \(advisory\): terse/);
   assert.match(both, /Operating notes \(advisory/);
   assert.ok(both.endsWith("\n\n"), "env guidance composes to the same preamble shape");
+});
+
+test("W075: the hub orientation is static, versioned, and interpolates nothing", () => {
+  // Frozen-shape pins: the block is a constant template — the version is
+  // embedded (the run registry's prompt digest binds exactly what the agent
+  // saw), and no task/repo/env value can ever enter it because there is no
+  // input path for one.
+  const block = buildOrientation();
+  assert.match(block, /<hub-orientation source="workflow-hub" version="1">/);
+  assert.match(block, /guard_next_tasks before planning/);
+  assert.match(block, /workflow-toolbox skill/);
+  assert.match(block, /advisory and never a security boundary/);
+  assert.ok(block.endsWith("\n"), "the orientation is a preamble — it ends with separation");
+  assert.ok(!/\$\{/.test(block), "no template placeholders: static by construction");
+  assert.equal(buildOrientation(), block, "two compositions are byte-identical");
+  assert.equal(buildOrientation({ skillName: "custom-tools" }).includes("custom-tools skill"), true, "the only input is the static skill name");
+});
+
+test("W075: hub prompt guidance composes orientation first, advisory second, honors the opt-out", () => {
+  // Default: orientation present.
+  const def = hubPromptGuidanceFromEnv({});
+  assert.match(def!, /<hub-orientation source="workflow-hub" version="1">/);
+  assert.ok(!/Response style/.test(def!), "no advisory env means no advisory block");
+
+  // Opt-out: WORKFLOW_HUB_ORIENTATION=0 removes the block entirely.
+  assert.equal(hubPromptGuidanceFromEnv({ WORKFLOW_HUB_ORIENTATION: "0" }), undefined, "opted out with no advisory env = silence");
+
+  // Orientation first, operator advisory after — one preamble, stable order.
+  const both = hubPromptGuidanceFromEnv({ WORKFLOW_ADVISORY_STYLE: "terse" })!;
+  const orientationEnd = both.indexOf("</hub-orientation>");
+  const advisoryStart = both.indexOf("Response style (advisory)");
+  assert.ok(orientationEnd !== -1 && advisoryStart !== -1 && orientationEnd < advisoryStart, "orientation leads, advisory follows");
+
+  // Opt-out with advisory env keeps the advisory behavior unchanged.
+  const opted = hubPromptGuidanceFromEnv({ WORKFLOW_HUB_ORIENTATION: "0", WORKFLOW_ADVISORY_STYLE: "terse" })!;
+  assert.match(opted, /Response style \(advisory\): terse/);
+  assert.ok(!/hub-orientation/.test(opted), "the opt-out removes the orientation, not the advisory text");
 });
