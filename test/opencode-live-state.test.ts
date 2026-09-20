@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { fetchLiveMcp, fetchSessionStats } from "../src/integrations/opencode-live-state.js";
+import { compactSession, fetchLiveMcp, fetchSessionStats } from "../src/integrations/opencode-live-state.js";
 import { opencodeServerDiscoveryPath, writeOpencodeServerDiscovery } from "../src/integrations/opencode-server-discovery.js";
 
 /**
@@ -123,4 +123,51 @@ test("session stats: unavailable without a daemon, and the reason is the value",
   const state = await fetchSessionStats({ workspace: "/tmp/wf-live-nowhere", stateHome, fetchImpl: stubFetch({}) });
   assert.equal(state.live, false);
   if (!state.live) assert.match(state.reason, /no server topology daemon.*session stats/s);
+});
+
+// W082: the operator-triggered manual compaction (documented
+// POST /api/session/{sessionID}/compact). Per the documented contract the
+// route durably ADMITS the request — { data: Session.Inbox.Compaction } — so
+// a 200 is honestly "queued", never "summarized now".
+test("compaction: a live gateway admits the request and reports the inbox id", async (t) => {
+  const stateHome = mkdtempSync(join(tmpdir(), "wf-live-state-"));
+  t.after(() => rmSync(stateHome, { recursive: true, force: true }));
+  writeOpencodeServerDiscovery(opencodeServerDiscoveryPath(stateHome, discovery.workspace), discovery);
+  const fetchImpl = stubFetch({
+    "/api/info": { version: "2.0.10" },
+    "/api/session/ses_probe_1/compact": { data: { id: "msg_c1", sessionID: "ses_probe_1", type: "compaction", time: { created: 1 }, payload: {}, delivery: "next" } },
+  });
+  const state = await compactSession({ workspace: discovery.workspace, stateHome, sessionId: "ses_probe_1", fetchImpl });
+  assert.equal(state.compacted, true);
+  if (state.compacted) assert.equal(state.inboxId, "msg_c1");
+});
+
+test("compaction: honest failures — unavailable message, gateway refusal, no daemon, malformed id", async (t) => {
+  const stateHome = mkdtempSync(join(tmpdir(), "wf-live-state-"));
+  t.after(() => rmSync(stateHome, { recursive: true, force: true }));
+  writeOpencodeServerDiscovery(opencodeServerDiscoveryPath(stateHome, discovery.workspace), discovery);
+  // The server's own message surfaces verbatim (documented compaction.unavailable).
+  const refused = (async (input: Parameters<typeof fetch>[0]) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/info") return new Response(JSON.stringify({ version: "2.0.10" }), { status: 200, headers: { "content-type": "application/json" } });
+    if (path.endsWith("/compact")) {
+      return new Response(JSON.stringify({ data: { code: "COMPACTION_UNAVAILABLE", message: "Nothing to compact yet" } }), { status: 400, headers: { "content-type": "application/json" } });
+    }
+    return new Response("nope", { status: 404 });
+  }) as typeof fetch;
+  const unavailable = await compactSession({ workspace: discovery.workspace, stateHome, sessionId: "ses_probe_1", fetchImpl: refused });
+  assert.equal(unavailable.compacted, false);
+  if (!unavailable.compacted) assert.match(unavailable.reason, /Nothing to compact yet/);
+
+  const hardFail = await compactSession({ workspace: discovery.workspace, stateHome, sessionId: "ses_probe_1", fetchImpl: stubFetch({ "/api/info": { version: "2.0.10" } }) });
+  assert.equal(hardFail.compacted, false);
+  if (!hardFail.compacted) assert.match(hardFail.reason, /refused the compaction request/);
+
+  const noDaemon = await compactSession({ workspace: "/tmp/wf-live-nowhere", stateHome, sessionId: "ses_probe_1", fetchImpl: stubFetch({}) });
+  assert.equal(noDaemon.compacted, false);
+  if (!noDaemon.compacted) assert.match(noDaemon.reason, /no server topology daemon.*compaction/s);
+
+  const malformed = await compactSession({ workspace: discovery.workspace, stateHome, sessionId: "no-agent-session", fetchImpl: stubFetch({}) });
+  assert.equal(malformed.compacted, false);
+  if (!malformed.compacted) assert.match(malformed.reason, /no agent session id/);
 });

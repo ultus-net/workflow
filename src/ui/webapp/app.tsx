@@ -1486,7 +1486,16 @@ export function ConnectionsSection({ agents, currentAgent, capabilities }: {
 /** Context block, mined from the OpenCode TUI's Context panel: how much of the
  * model's context window the session is using, and what it has spent. Real
  * numbers only — a field the agent never reported stays absent. */
-export function ContextSection({ usage }: { readonly usage: SessionUsage | undefined }) {
+export function ContextSection({ usage, sessionId, onCompactSession }: {
+  readonly usage: SessionUsage | undefined;
+  /** The focused workflow session id — present only when a live parallel
+   * session is focused; the compaction control rides the session registry. */
+  readonly sessionId?: string | undefined;
+  /** Sends the compact request; resolves the honest result copy (the queued
+   * statement or the failure reason). */
+  readonly onCompactSession?: ((id: string) => Promise<string>) | undefined;
+}) {
+  const [compaction, setCompaction] = useState<string | undefined>(undefined);
   if (usage === undefined) return null;
   const used = usage.latestPromptTokens;
   const contextWindow = usage.contextWindowTokens;
@@ -1508,7 +1517,20 @@ export function ContextSection({ usage }: { readonly usage: SessionUsage | undef
         {usage.costUsd !== undefined && (
           <p className="context-row"><span className="context-label">spent</span><span>${usage.costUsd.toFixed(4)}</span></p>
         )}
+        {sessionId !== undefined && onCompactSession !== undefined && (
+          <p className="context-row">
+            <span className="context-label">upkeep</span>
+            <button
+              className="task-action"
+              onClick={() => { void onCompactSession(sessionId).then(setCompaction); }}
+              title="Queue manual compaction over the enforced gateway — it runs at the session's next step boundary"
+            >
+              Compact…
+            </button>
+          </p>
+        )}
       </div>
+      {compaction !== undefined && <p className="context-compaction" role="status">{compaction}</p>}
     </section>
   );
 }
@@ -1535,7 +1557,7 @@ export function McpConnections({ servers }: { readonly servers: readonly McpServ
   );
 }
 
-function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent, capabilities, usage, mcpServers }: {
+function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent, capabilities, usage, mcpServers, focusedSessionId, onCompactSession }: {
   readonly snapshot: Snapshot | undefined;
   readonly refresh: () => Promise<void>;
   readonly worktrees: readonly GitWorktree[] | undefined;
@@ -1545,10 +1567,14 @@ function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent,
   readonly capabilities: CapabilitiesState | undefined;
   readonly usage: SessionUsage | undefined;
   readonly mcpServers: readonly McpServerSetting[];
+  /** The focused parallel session (undefined in single-session servers) —
+   * the compaction control applies to it. */
+  readonly focusedSessionId?: string | undefined;
+  readonly onCompactSession?: ((id: string) => Promise<string>) | undefined;
 }) {
   return (
     <aside className="panels">
-      <ContextSection usage={usage} />
+      <ContextSection usage={usage} sessionId={focusedSessionId} onCompactSession={onCompactSession} />
       <McpConnections servers={mcpServers} />
       <section>
         <h2>Tasks</h2>
@@ -1883,6 +1909,25 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const palettes = useMemo(() => listPalettes(), []);
   const usage = useSessionUsage();
   const sessionStatus = useSessionStatus();
+  /** W082: manual compaction for the focused session over the documented v2
+   * data lane (POST /api/session/{agentSessionId}/compact through the
+   * enforced gateway). The route durably ADMITS the request — it runs at the
+   * session's next step boundary — so the success copy says "queued", and
+   * failures surface the gateway's own reason verbatim. */
+  const compactFocusedSession = useCallback(async (id: string): Promise<string> => {
+    try {
+      const response = await fetch("/api/sessions/compact", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id }),
+      });
+      const payload = await response.json().catch(() => undefined) as { reason?: string; error?: string } | undefined;
+      if (response.ok) return "compaction queued — it runs at the session's next step boundary";
+      return payload?.reason ?? payload?.error ?? `the compaction request failed (${response.status})`;
+    } catch {
+      return "the panel could not reach the control plane";
+    }
+  }, []);
   const enforcementCopy = snapshot === undefined ? undefined : ENFORCEMENT_COPY[snapshot.enforcementLevel];
   // Focus mode state lives here so the header button and the settings dialog
   // read and write one setting (pre-paint application happens in main.tsx).
@@ -2185,7 +2230,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           </ThreadPrimitive.Root>
         </section>
         <aside className="inspector" aria-label="Repository changes and supervision">
-          <Panels snapshot={snapshot} refresh={refresh} worktrees={worktrees} gitStatus={gitStatus} agents={agents} currentAgent={currentAgent} capabilities={capabilities.capabilities} usage={usage} mcpServers={mcp.servers} />
+          <Panels snapshot={snapshot} refresh={refresh} worktrees={worktrees} gitStatus={gitStatus} agents={agents} currentAgent={currentAgent} capabilities={capabilities.capabilities} usage={usage} mcpServers={mcp.servers} focusedSessionId={focusedSessionId} onCompactSession={compactFocusedSession} />
         </aside>
       </div>
       )}

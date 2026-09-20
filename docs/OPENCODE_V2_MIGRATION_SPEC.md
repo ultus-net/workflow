@@ -328,6 +328,28 @@ owns the spawned server and its credential on loopback); anything surfaced to ex
 crosses the enforced gateway under the §2.5 route-class dispositions — no API data reaches a client
 except through a classified `forward`.
 
+**Compaction research note (2026-09-20, W082 box 2 — completed against the pinned v2.0.10 binary
+strings + the v2 docs):** v2 distinguishes two compaction kinds. **`native`** is provider-native
+context management — the binary carries `AI SDK routes cannot replay native provider compaction
+state`, i.e. replay/import cannot reconstruct it, so native compaction state is provider-local and
+ephemeral from v2's perspective. **`summary`** is v2's own checkpoint summary, persisted
+(`compactions` table, `compaction_idx`) and replayable. Per-model config drives both:
+`compaction: { auto, prune, keep/preserve_reserve_tokens, compactThreshold }` (binary-validated
+config field). **When it runs:** with `auto` enabled the session runtime compacts on its own —
+`compactIfNeeded` fires on the session stream and emits `compaction-queued` plus the
+`compaction.started/.ended/.failed/.interrupted/.unavailable/.delta` lifecycle events; this is
+runtime behavior, NOT the HTTP route. **Manual compaction** is `SessionCompaction.compactManual`,
+invoked by the `/compact` slash command ("compact older session context to free space") and by the
+documented HTTP route `POST /api/session/{sessionID}/compact`; with nothing to compact it returns
+`compaction.unavailable` ("Nothing to compact yet"). **The ACP-lane answer (the operator's actual
+regression):** `opencode acp` wraps the same session runtime, so the ACP lane auto-compacts exactly
+when the model's compaction config enables it — no plugin needed, and nothing for Workflow to
+trigger there. What the operator hit was the failure mode when auto is unavailable/unconfigured:
+context overflow surfaces as a `400` (`Context overflow: … Please start a new session or use
+/compact to reduce context.`). The deterministic Workflow-side fix is therefore the manual
+operator control over the documented route through the enforced gateway (W082 box 3, this slice);
+the hub-side auto-trigger remains a separate deterministic gate (box 3 second half, still open).
+
 **Matrix reconciliation (this dated change):** documented reads that were failing closed are now
 `read-only`/`forward` — bare permission reads (`/api/permission/request`, `/api/permission/saved`;
 the §2.5 text always claimed permission reads, the pattern diverged), `GET /api/worktree` (repo
@@ -364,7 +386,7 @@ The documented v2 API (§9) reopens several. Each prior concession, re-examined:
 | Config-defined providers invisible in `/api/provider` + `/api/model/default` ignores the config model (§9) — metered-model resolution risk | v2 provider visibility follows credential activation | `POST /api/session` accepts an explicit `model: Model.Ref`; credential/integration connect + activate routes exist | **Solvable path identified** — probe the credential-activation flow; until then, pin the metered model explicitly on session create rather than trusting defaults |
 | Interactive-TUI sessions unmetered ("the hub never sees those runtimes") | TUI sessions ran in their own process | In the server topology the TUI attaches to the hub-owned server; stats cover every session server-side | **Solvable in the server topology**; ACP interactive sessions stay proxy-metered until the chat-lane consolidation |
 | Chat lane (PWA) on per-session ACP runtimes; consolidation parked | Unmetered-default risk + provider visibility | Explicit model refs on session create remove the worst failure mode | **Partially unlocked, still parked** — full consolidation gated on the provider-visibility probe (W080-adjacent) |
-| Auto-compaction lost in the plugin→hub pivot | Plugin hooks could trigger compaction in-process | `POST /api/session/{id}/compact` + provider `native`/`summary` compaction config | **W080, route decision landed** — compact re-classified deliberately in §2.5 (forward, operator-controlled maintenance); PWA control + hub threshold trigger + live probe remain open, no prompt-side loop and no plugin hook |
+| Auto-compaction lost in the plugin→hub pivot | Plugin hooks could trigger compaction in-process | `POST /api/session/{id}/compact` + provider `native`/`summary` compaction config | **W080 route decision landed; W082 slice in progress (2026-09-20)** — compact re-classified deliberately in §2.5 (forward, operator-controlled maintenance); the §9 research note answers the ACP-lane question (auto-compaction is runtime config behavior, the operator regression is the overflow 400 when auto is unavailable); the PWA manual compaction control rides the enforced gateway in this slice; the hub-side threshold auto-trigger stays open, no prompt-side loop and no plugin hook |
 | fs/shell/pty deny classes through the gateway | Containment: mutations cross Workflow authorization | The API exposes them to *its own* clients | **Keep** — the data lane changes nothing about the mutation boundary |
 | Skill delivery gated (native host skill injection off) | Injection boundary discipline | `GET /api/skill` is list-only; no write surface | **Keep, unchanged** — W078 scoping lands with the delivery decision |
 | Session resume via ACP `session/load` | Probe-proven | `experimental/session/export\|import` exist as data transfers | **Keep**; note export/import as a future migration tool only |

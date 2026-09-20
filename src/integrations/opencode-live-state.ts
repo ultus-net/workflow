@@ -114,6 +114,48 @@ function numeric(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
+/** Operator-triggered manual compaction (W082): the documented
+ * `POST /api/session/{sessionID}/compact` — the HTTP twin of the TUI's
+ * /compact slash command. Per the documented contract the route durably
+ * ADMITS a compaction request (`{ data: Session.Inbox.Compaction }`): the
+ * summarization runs at the session's next step boundary, so the honest
+ * result is "queued", never "summarized now". The sessionId is the AGENT's
+ * v2 session id (the ACP driver's agent session, `^ses`), not the Workflow
+ * session id. Same fail-closed gateway walk as the other live reads. */
+export type LiveCompactionState =
+  | { readonly compacted: true; readonly gatewayUrl: string; readonly inboxId: string | undefined }
+  | { readonly compacted: false; readonly reason: string };
+
+export async function compactSession(options: LiveStateOptions & { readonly sessionId: string }): Promise<LiveCompactionState> {
+  const sessionId = options.sessionId.trim();
+  if (!/^ses\S*$/.test(sessionId)) {
+    return { compacted: false, reason: "no agent session id — the focused session has no opencode runtime session to compact" };
+  }
+  const gateway = await resolveLiveGateway(options, "compaction");
+  if (!gateway.ok) return { compacted: false, reason: gateway.reason };
+  let response: Response;
+  try {
+    response = await gateway.fetchImpl(`${gateway.gatewayUrl}/api/session/${encodeURIComponent(sessionId)}/compact`, {
+      method: "POST",
+      headers: { authorization: gateway.auth },
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    return { compacted: false, reason: `the compaction request failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  if (!response.ok) {
+    // Surface the server's own message when the error envelope carries one
+    // (e.g. compaction.unavailable "Nothing to compact yet", or the documented
+    // overflow 400 telling the operator the same thing).
+    const body = await response.json().catch(() => undefined) as { data?: { message?: unknown } | undefined; message?: unknown } | undefined;
+    const message = typeof body?.data?.message === "string" ? body.data.message : typeof body?.message === "string" ? body.message : undefined;
+    return { compacted: false, reason: `the gateway refused the compaction request (${response.status})${message === undefined ? "" : `: ${message}`}` };
+  }
+  const accepted = await response.json().catch(() => undefined) as { data?: { id?: unknown } | undefined } | undefined;
+  const inboxId = typeof accepted?.data?.id === "string" ? accepted.data.id : undefined;
+  return { compacted: true, gatewayUrl: gateway.gatewayUrl, inboxId };
+}
+
 /** Live session statistics (W079): the documented aggregate
  * `GET /api/experimental/session/stats` — server-side activity, usage, and
  * tool reliability for the topology the hub owns. Same honest contract as the

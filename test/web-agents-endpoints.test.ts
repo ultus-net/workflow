@@ -18,7 +18,7 @@ import { WebSessionManager } from "../src/ui/web-sessions.js";
 // POST /api/sessions/agent): the registry listing and the 403/415/400/503/200
 // branches that manager-level tests cannot reach.
 
-function fakeRuntime(agentId: string): WorkflowAcpRuntime {
+function fakeRuntime(agentId: string | undefined): WorkflowAcpRuntime {
   const driver = {
     start: async (_prompt: unknown, emit: (event: unknown) => void) => {
       emit({ type: "assistant", text: "done" });
@@ -107,4 +107,70 @@ test("POST /api/sessions/agent guards origin, content-type, and agent id, then s
   assert.equal(ok.status, 200);
   assert.ok(launches.includes("cline"), "the manager re-launched on the requested agent");
   await manager.dispose();
+});
+
+// W082: operator-triggered compaction (POST /api/session/{agentSessionId}/
+// compact through the enforced gateway). The workflow session id selects the
+// manager record; the AGENT's v2 session id is what the route takes. Honest
+// branches only: without a manager, without an agent session, and without a
+// server topology — a live-gateway admit is pinned at the live-state layer.
+test("POST /api/sessions/compact: honest refusals without a manager, an agent session, or a topology", async (context) => {
+  // No manager wired → the honest capability message.
+  const bare = createWorkflowWebServer(application());
+  context.after(() => bare.close());
+  const barePort = await listen(bare);
+  const bareUrl = `http://127.0.0.1:${barePort}/api/sessions/compact`;
+  const bareResponse = await post(bareUrl, { contentType: "application/json", body: JSON.stringify({ id: "whatever" }) });
+  assert.equal(bareResponse.status, 409);
+  assert.match((await bareResponse.json() as { error: string }).error, /parallel session manager/);
+
+  const dir = mkdtempSync(join(tmpdir(), "web-compact-endpoint-"));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async (agent) => fakeRuntime(`ses_${agent}_1`),
+  });
+  const server = createWorkflowWebServer(application(), manager);
+  context.after(() => server.close());
+  const port = await listen(server);
+  const url = `http://127.0.0.1:${port}/api/sessions/compact`;
+
+  // Cross-site origin is an untrusted mutation → 403.
+  const crossSite = await post(url, { contentType: "application/json", body: JSON.stringify({ id: "x" }), origin: "http://evil.example" });
+  assert.equal(crossSite.status, 403);
+  // Non-JSON content type → 415; missing id → 400.
+  const wrongType = await post(url, { contentType: "text/plain", body: "id=x" });
+  assert.equal(wrongType.status, 415);
+  const missingId = await post(url, { contentType: "application/json", body: JSON.stringify({}) });
+  assert.equal(missingId.status, 400);
+
+  // An established runtime (fake driver reports a ses_… id) with no server
+  // topology → the gateway walk's honest unavailable reason. create() spawns
+  // the runtime immediately, so the compact path goes straight to the walk.
+  const created = await manager.create();
+  assert.equal(created.kind, "ok");
+  if (created.kind !== "ok") return;
+  const compact = await post(url, { contentType: "application/json", body: JSON.stringify({ id: created.meta.id }) });
+  assert.equal(compact.status, 409);
+  assert.match((await compact.json() as { reason: string }).reason, /no server topology daemon.*compaction/s);
+  await manager.dispose();
+
+  // A driver that never established an agent session → the honest "send a
+  // message first" refusal (the runtime spawned, but its driver has no agent
+  // session id yet).
+  const noSessionManager = new WebSessionManager({
+    registryPath: join(dir, "registry-2.json"),
+    factory: async () => fakeRuntime(undefined),
+  });
+  const second = createWorkflowWebServer(application(), noSessionManager);
+  context.after(() => second.close());
+  const secondPort = await listen(second);
+  const secondUrl = `http://127.0.0.1:${secondPort}/api/sessions/compact`;
+  const secondCreated = await noSessionManager.create();
+  assert.equal(secondCreated.kind, "ok");
+  if (secondCreated.kind !== "ok") return;
+  const noAgentSession = await post(secondUrl, { contentType: "application/json", body: JSON.stringify({ id: secondCreated.meta.id }) });
+  assert.equal(noAgentSession.status, 409);
+  assert.match((await noAgentSession.json() as { error: string }).error, /no agent session yet/);
+  await noSessionManager.dispose();
 });

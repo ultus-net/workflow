@@ -9,7 +9,7 @@ import { promisify } from "node:util";
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { createOpenRouterAnalytics, usageTimeRange, type OpenRouterAnalytics } from "../integrations/openrouter-analytics.js";
-import { fetchLiveMcp, fetchSessionStats } from "../integrations/opencode-live-state.js";
+import { compactSession, fetchLiveMcp, fetchSessionStats } from "../integrations/opencode-live-state.js";
 import { nextCronMatch, type ScheduleDefinition } from "../integrations/hub-scheduler.js";
 import { defaultSettings, mergeSettings, normalizeSettings, readSettingsFile, settingsPaths, writeSettingsFile } from "../integrations/workflow-settings.js";
 import { resolveToolboxCatalog } from "../integrations/toolbox-catalog.js";
@@ -702,6 +702,38 @@ export function createWorkflowWebServer(
       const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
       const live = await fetchSessionStats({ workspace: options?.workspace ?? process.cwd(), stateHome });
       return json(response, 200, live);
+    }
+    // W082: operator-triggered compaction over the documented v2 data lane —
+    // POST /api/session/{agentSessionId}/compact through the enforced gateway
+    // (classified forward in §2.5). The workflow session id selects the
+    // record; the AGENT's v2 session id is what the route takes. The route
+    // durably ADMITS a compaction request — it runs at the session's next
+    // step boundary — so a 200 here means "queued", stated as such by the UI.
+    if (request.method === "POST" && pathname === "/api/sessions/compact") {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      const manager = session instanceof WebSessionManager ? session : undefined;
+      if (manager === undefined) {
+        return json(response, 409, { error: "compaction needs the parallel session manager (single-session servers have no session registry)" });
+      }
+      try {
+        const body = await readJson(request);
+        const rawId = (body as { id?: unknown } | null)?.id;
+        if (typeof rawId !== "string" || rawId.trim().length === 0) {
+          return json(response, 400, { error: "session id is required" });
+        }
+        const agentSessionId = manager.agentSessionIdFor(rawId.trim());
+        if (agentSessionId === undefined) {
+          return json(response, 409, { error: "that session has no agent session yet — send a message first, then compact" });
+        }
+        const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
+        const result = await compactSession({ workspace: options?.workspace ?? process.cwd(), stateHome, sessionId: agentSessionId });
+        return json(response, result.compacted ? 200 : 409, result);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
     }
     // The scheduler's operator surface lives on main's Schedules page (the hub
     // proxy above): a live registry with pause/resume/delete/run-now, which
