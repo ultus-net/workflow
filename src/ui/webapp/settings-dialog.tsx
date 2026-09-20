@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 
+import type { AgentRuntimePreference, McpServerSetting, McpTransport } from "../../integrations/workflow-settings.js";
+import type { LiveMcpState } from "../../integrations/opencode-live-state.js";
 import type { WebConfigOption } from "../web-config-options.js";
 import { ConfigField } from "./config-field.js";
 import { formatTokens } from "./presenters.js";
 import { useSessionState, useSessionUsage } from "./runtime.js";
 import type { PaletteSummary } from "./theme/palettes.js";
-import type { ThemeChoice } from "./theme.js";
 
 /** Structural slices of the app hooks the dialog needs; App passes its own. */
 export interface SettingsPermissions {
@@ -28,10 +29,60 @@ export interface SettingsAgentInfo {
   readonly reason?: string;
 }
 
+/**
+ * The Workflow-owned MCP catalog controller. Servers live in the canonical
+ * settings document (global base + workspace overlay) and are projected into
+ * each agent's launch config when a session starts — never hot-applied, since
+ * ACP fixes `mcpServers` at session creation.
+ */
+export interface SettingsMcpCatalogEntry {
+  readonly name: string;
+  readonly description: string;
+  readonly transport: "stdio";
+  readonly serverPath: string;
+  readonly available: boolean;
+}
+
+export interface SettingsMcp {
+  readonly servers: readonly McpServerSetting[];
+  readonly catalog: readonly SettingsMcpCatalogEntry[];
+  readonly scope: "global" | "workspace";
+  readonly workspaceOverlay: boolean;
+  readonly loading: boolean;
+  readonly error: string | undefined;
+  /** Live server-side MCP state through the enforced gateway (dual data lane);
+   * `undefined` until the read resolves — never a fabricated connection. */
+  readonly live?: LiveMcpState;
+  readonly setScope: (scope: "global" | "workspace") => void;
+  readonly upsert: (server: McpServerSetting) => Promise<void>;
+  readonly remove: (name: string) => Promise<void>;
+  readonly toggle: (name: string, enabled: boolean) => Promise<void>;
+}
+
+/** Environment-dictated routing facts, surfaced read-only in the routing section. */
+export interface RoutingFacts {
+  readonly upstream: string;
+  readonly envModelOpencode: boolean;
+  readonly envModelGoose: boolean;
+  readonly managementKey: boolean;
+}
+
+export interface SettingsRouting {
+  readonly agents: Readonly<Record<string, AgentRuntimePreference>>;
+  readonly facts: RoutingFacts;
+  readonly loading: boolean;
+  readonly error: string | undefined;
+  /** Persists one agent's launch defaults (same doc the runtime consumes).
+   * Resolves `true` only when the save succeeded. */
+  readonly onSave: (agent: string, preference: AgentRuntimePreference) => Promise<boolean>;
+}
+
+// The schedule surface lives on main's Schedules page (hub proxy, live
+// registry with pause/resume/delete/run-now) — the settings section from this
+// branch was superseded and removed in the merge.
+
 export interface SettingsDialogProps {
   readonly onClose: () => void;
-  readonly themeChoice: ThemeChoice;
-  readonly onThemeChoice: (choice: ThemeChoice) => void;
   readonly palette: string | undefined;
   readonly onPalette: (palette: string | undefined) => void;
   readonly palettes: readonly PaletteSummary[];
@@ -39,30 +90,45 @@ export interface SettingsDialogProps {
   readonly onRailsToggle: (off: boolean) => void;
   readonly options: readonly WebConfigOption[];
   readonly setOption: (id: string, value: string | boolean) => void;
+  readonly routing: SettingsRouting;
   readonly permissions: SettingsPermissions;
   readonly capabilities: SettingsCapabilities;
+  readonly mcp: SettingsMcp;
   readonly enforcement: { readonly level: string | undefined; readonly transport: string | undefined; readonly copy: string | undefined };
   readonly agents: readonly SettingsAgentInfo[];
   readonly currentAgent: string;
   readonly onSwitchAgent: (agent: string) => void;
 }
 
+const NAV: readonly { readonly id: string; readonly label: string }[] = [
+  { id: "settings-appearance", label: "Appearance" },
+  { id: "settings-agent", label: "Agent" },
+  { id: "settings-options", label: "Agent options" },
+  { id: "settings-routing", label: "Model routing" },
+  { id: "settings-mcp", label: "MCP servers" },
+  { id: "settings-approvals", label: "Approvals" },
+  { id: "settings-transcript", label: "Transcript" },
+  { id: "settings-notifications", label: "Notifications" },
+  { id: "settings-shortcuts", label: "Shortcuts" },
+  { id: "settings-session", label: "Session" },
+];
+
 /**
- * Every operator-facing preference in one place: appearance and UI layout,
- * all agent-advertised options (model, effort, mode, tool toggles),
- * approvals and capabilities, transcript/notifications, the keyboard map,
- * and the session's authority facts. One surface, one source of truth per
- * setting — each control writes the same state its composer-adjacent twin
- * uses, so the two never diverge.
+ * The fullscreen operator settings page: appearance and UI layout, all
+ * agent-advertised options (model, effort, mode, tool toggles), the
+ * Workflow-owned MCP catalog, approvals and capabilities, transcript and
+ * notifications, the keyboard map, and the session's authority facts. One
+ * surface, one source of truth per setting — each control writes the same
+ * state its composer-adjacent twin uses, so the two never diverge.
  */
 export function SettingsDialog(props: SettingsDialogProps) {
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef<HTMLDivElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
 
   // Open: focus the first control; close: focus returns to the opener.
   useEffect(() => {
     openerRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    dialogRef.current?.querySelector<HTMLElement>("button, select, input")?.focus();
+    pageRef.current?.querySelector<HTMLElement>("button, select, input")?.focus();
     return () => {
       openerRef.current?.focus();
     };
@@ -70,14 +136,14 @@ export function SettingsDialog(props: SettingsDialogProps) {
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
     if (event.key === "Escape") {
-      // This Escape closes the dialog only; the global handler's open-chrome
+      // This Escape closes the page only; the global handler's open-chrome
       // DOM guard is the primary defense against cancelling a running turn.
       event.stopPropagation();
       props.onClose();
       return;
     }
     if (event.key !== "Tab") return;
-    const focusables = dialogRef.current?.querySelectorAll<HTMLElement>(
+    const focusables = pageRef.current?.querySelectorAll<HTMLElement>(
       "button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])",
     );
     if (focusables === undefined || focusables.length === 0) return;
@@ -92,38 +158,52 @@ export function SettingsDialog(props: SettingsDialogProps) {
     }
   };
 
+  const jump = (id: string): void => {
+    pageRef.current?.querySelector<HTMLElement>(`#${id}`)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  };
+
   return (
     <div
-      className="settings-backdrop"
-      onClick={(event) => {
-        if (event.target === event.currentTarget) props.onClose();
-      }}
+      className="settings-dialog settings-page"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="settings-title"
+      ref={pageRef}
+      onKeyDown={onKeyDown}
     >
-      <div
-        className="settings-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="settings-title"
-        ref={dialogRef}
-        onKeyDown={onKeyDown}
-      >
-        <header className="settings-head">
+      <header className="settings-head settings-page-head">
+        <button type="button" className="btn btn-ghost settings-back" onClick={props.onClose}>
+          ← Back to session
+        </button>
+        <div className="settings-page-title">
           <h2 id="settings-title">Settings</h2>
-          <button type="button" className="btn btn-ghost settings-close" aria-label="Close settings" onClick={props.onClose}>
-            ×
-          </button>
-        </header>
-        <div className="settings-body">
-          <AppearanceSection {...props} />
-          <AgentSection agents={props.agents} currentAgent={props.currentAgent} onSwitchAgent={props.onSwitchAgent} />
-          <AgentOptionsSection options={props.options} setOption={props.setOption} />
+          <span className="settings-desc">The control plane's own settings, and what it pushes to each coding agent</span>
+        </div>
+        <button type="button" className="btn btn-ghost settings-close" aria-label="Close settings" onClick={props.onClose}>
+          ×
+        </button>
+      </header>
+      <div className="settings-page-body">
+        <nav className="settings-nav" aria-label="Settings sections">
+          {NAV.map((entry) => (
+            <button type="button" className="settings-nav-item" key={entry.id} onClick={() => jump(entry.id)}>
+              {entry.label}
+            </button>
+          ))}
+        </nav>
+        <div className="settings-content">
+          <div id="settings-appearance"><AppearanceSection {...props} /></div>
+          <div id="settings-agent"><AgentSection agents={props.agents} currentAgent={props.currentAgent} onSwitchAgent={props.onSwitchAgent} /></div>
+          <div id="settings-options"><AgentOptionsSection options={props.options} setOption={props.setOption} patterns={props.permissions.patterns} /></div>
+          <div id="settings-routing"><RoutingSection routing={props.routing} /></div>
+          <div id="settings-mcp"><McpSection mcp={props.mcp} /></div>
           {props.permissions.available && (
-            <ApprovalsSection permissions={props.permissions} capabilities={props.capabilities} />
+            <div id="settings-approvals"><ApprovalsSection permissions={props.permissions} capabilities={props.capabilities} /></div>
           )}
-          <TranscriptSection />
-          <NotificationsSection />
-          <ShortcutsSection />
-          <SessionSection enforcement={props.enforcement} />
+          <div id="settings-transcript"><TranscriptSection /></div>
+          <div id="settings-notifications"><NotificationsSection /></div>
+          <div id="settings-shortcuts"><ShortcutsSection /></div>
+          <div id="settings-session"><SessionSection enforcement={props.enforcement} /></div>
         </div>
       </div>
     </div>
@@ -180,9 +260,7 @@ function Toggle({ checked, disabled, onChange, ariaLabel, inputRef }: {
   );
 }
 
-export function AppearanceSection({ themeChoice, onThemeChoice, palette, onPalette, palettes, railsOff, onRailsToggle }: {
-  readonly themeChoice: ThemeChoice;
-  readonly onThemeChoice: (choice: ThemeChoice) => void;
+export function AppearanceSection({ palette, onPalette, palettes, railsOff, onRailsToggle }: {
   readonly palette: string | undefined;
   readonly onPalette: (palette: string | undefined) => void;
   readonly palettes: readonly PaletteSummary[];
@@ -191,26 +269,6 @@ export function AppearanceSection({ themeChoice, onThemeChoice, palette, onPalet
 }) {
   return (
     <Section title="Appearance">
-      <Row
-        label="Color theme"
-        description="System follows your OS setting"
-        control={
-          <div className="theme-choice" role="radiogroup" aria-label="Color theme">
-            {(["system", "dark", "light"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                role="radio"
-                aria-checked={themeChoice === option}
-                className={`theme-option ${themeChoice === option ? "theme-option-on" : ""}`}
-                onClick={() => onThemeChoice(option)}
-              >
-                {option === "system" ? "System" : option === "dark" ? "Dark" : "Light"}
-              </button>
-            ))}
-          </div>
-        }
-      />
       <Row
         stacked
         label="Palette"
@@ -313,10 +371,14 @@ export function AgentSection({ agents, currentAgent, onSwitchAgent }: {
 }
 
 /** Every advertised agent option, in full — the canonical complete set
- * (operator preference #2). Exported for the UI-surface regression pin. */
-export function AgentOptionsSection({ options, setOption }: {
+ * (operator preference #2). Select options (model, effort, mode, provider)
+ * render as fields; boolean options are grouped as tool toggles with the
+ * remembered per-tool decisions the resolver already holds. Exported for the
+ * UI-surface regression pin. */
+export function AgentOptionsSection({ options, setOption, patterns }: {
   readonly options: readonly WebConfigOption[];
   readonly setOption: (id: string, value: string | boolean) => void;
+  readonly patterns?: { readonly alwaysAllow: readonly string[]; readonly alwaysReject: readonly string[] } | undefined;
 }) {
   if (options.length === 0) {
     return (
@@ -325,11 +387,27 @@ export function AgentOptionsSection({ options, setOption }: {
       </Section>
     );
   }
+  const selects = options.filter((option) => option.type !== "boolean");
+  const toggles = options.filter((option) => option.type === "boolean");
   return (
     <Section title="Agent options">
-      {options.map((option) => {
-        if (option.type === "boolean") {
-          return (
+      {selects.map((option) => (
+        <Row
+          key={option.id}
+          label={option.name}
+          description={option.description}
+          control={
+            <span className="settings-field">
+              <ConfigField option={option} setOption={setOption} />
+            </span>
+          }
+        />
+      ))}
+      {toggles.length > 0 && (
+        <div className="settings-subgroup">
+          <h4>Tools</h4>
+          <p className="settings-desc">Agent-advertised tool toggles. Hard denials stay enforced server-side regardless of this setting.</p>
+          {toggles.map((option) => (
             <Row
               key={option.id}
               label={option.name}
@@ -342,22 +420,413 @@ export function AgentOptionsSection({ options, setOption }: {
                 />
               }
             />
-          );
-        }
+          ))}
+        </div>
+      )}
+      {patterns !== undefined && (patterns.alwaysAllow.length > 0 || patterns.alwaysReject.length > 0) && (
+        <div className="settings-subgroup">
+          <h4>Remembered tool decisions</h4>
+          {patterns.alwaysAllow.length > 0 && (
+            <p className="settings-desc">Always allowed: <span className="settings-pattern-list">{patterns.alwaysAllow.join(", ")}</span></p>
+          )}
+          {patterns.alwaysReject.length > 0 && (
+            <p className="settings-desc">Always rejected: <span className="settings-pattern-list">{patterns.alwaysReject.join(", ")}</span></p>
+          )}
+          <p className="settings-desc">Clear these from Approvals below.</p>
+        </div>
+      )}
+    </Section>
+  );
+}
+
+interface McpDraft {
+  readonly originalName: string | undefined;
+  readonly name: string;
+  readonly transport: McpTransport;
+  readonly command: string;
+  readonly argsText: string;
+  readonly envText: string;
+  readonly url: string;
+  readonly enabled: boolean;
+}
+
+function emptyDraft(): McpDraft {
+  return { originalName: undefined, name: "", transport: "stdio", command: "", argsText: "", envText: "", url: "", enabled: true };
+}
+
+function draftFor(server: McpServerSetting): McpDraft {
+  return {
+    originalName: server.name,
+    name: server.name,
+    transport: server.transport,
+    command: server.command ?? "",
+    argsText: (server.args ?? []).join("\n"),
+    envText: Object.entries(server.env ?? {}).map(([key, value]) => `${key}=${value}`).join("\n"),
+    url: server.url ?? "",
+    enabled: server.enabled,
+  };
+}
+
+function parseArgs(text: string): string[] {
+  return text.split(/[\n,]/).map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+}
+
+function parseEnv(text: string): Record<string, string> | undefined {
+  const entries = text.split("\n").map((line) => line.trim()).filter((line) => line.length > 0).flatMap((line) => {
+    const separator = line.indexOf("=");
+    if (separator <= 0) return [];
+    return [[line.slice(0, separator).trim(), line.slice(separator + 1)] as const];
+  });
+  return entries.length === 0 ? undefined : Object.fromEntries(entries);
+}
+
+function draftToServer(draft: McpDraft): McpServerSetting | string {
+  const name = draft.name.trim();
+  if (name.length === 0) return "a server name is required";
+  if (draft.transport === "stdio") {
+    const command = draft.command.trim();
+    if (command.length === 0) return "a command is required for stdio servers";
+    const args = parseArgs(draft.argsText);
+    const env = parseEnv(draft.envText);
+    return {
+      name,
+      enabled: draft.enabled,
+      transport: "stdio",
+      command,
+      ...(args.length === 0 ? {} : { args }),
+      ...(env === undefined ? {} : { env }),
+    };
+  }
+  const url = draft.url.trim();
+  if (url.length === 0) return "a URL is required for HTTP servers";
+  return { name, enabled: draft.enabled, transport: "http", url };
+}
+
+export function McpSection({ mcp }: { readonly mcp: SettingsMcp }) {
+  const [draft, setDraft] = useState<McpDraft | null>(null);
+  const [formError, setFormError] = useState<string | undefined>(undefined);
+  const editing = draft !== null;
+
+  const save = (): void => {
+    if (draft === null) return;
+    const server = draftToServer(draft);
+    if (typeof server === "string") {
+      setFormError(server);
+      return;
+    }
+    setFormError(undefined);
+    void mcp.upsert(server).then(() => setDraft(null));
+  };
+
+  return (
+    <Section title="MCP servers">
+      <p className="settings-desc">
+        The Workflow-owned catalog. Servers are projected into each agent's launch config — they apply when a
+        session starts, not to the running one. Enabled servers only; the global list is the base and the
+        workspace list overrides on name conflicts.
+      </p>
+      <div className="settings-scope" role="radiogroup" aria-label="MCP settings scope">
+        {(["global", "workspace"] as const).map((scope) => (
+          <button
+            key={scope}
+            type="button"
+            role="radio"
+            aria-checked={mcp.scope === scope}
+            disabled={scope === "workspace" && !mcp.workspaceOverlay}
+            className={`theme-option ${mcp.scope === scope ? "theme-option-on" : ""}`}
+            onClick={() => mcp.setScope(scope)}
+            title={scope === "workspace" && !mcp.workspaceOverlay ? "No workspace root for this service" : undefined}
+          >
+            {scope === "global" ? "Global" : "Workspace"}
+          </button>
+        ))}
+      </div>
+      {mcp.loading && <p className="settings-desc">Loading MCP servers…</p>}
+      {mcp.error !== undefined && <p className="settings-error" role="alert">{mcp.error}</p>}
+      {mcp.servers.length === 0 && !mcp.loading && (
+        <p className="settings-desc">No MCP servers configured. Add one below to expose its tools to the agent.</p>
+      )}
+      {mcp.live !== undefined && (
+        <div className="settings-subgroup">
+          <h4>Live state</h4>
+          {mcp.live.live ? (
+            <>
+              <p className="settings-desc">
+                Server-side MCP state read through the enforced gateway ({mcp.live.gatewayUrl}) — the live
+                view ACP does not expose. States are the server's own.
+              </p>
+              {mcp.live.servers.length === 0 && <p className="settings-desc">No MCP servers are mounted on the running topology.</p>}
+              {mcp.live.servers.map((server) => (
+                <Row key={server.name} label={server.name} description={`live status: ${server.status}`} control={<span className="settings-desc">{server.status}</span>} />
+              ))}
+            </>
+          ) : (
+            <p className="settings-desc">No live MCP state — {mcp.live.reason}. Configured servers apply at the next session.</p>
+          )}
+        </div>
+      )}
+      {mcp.servers.map((server) => (
+        <Row
+          key={server.name}
+          label={server.name}
+          description={
+            server.transport === "stdio"
+              ? `stdio · ${server.command ?? ""} ${(server.args ?? []).join(" ")}`.trim()
+              : `http · ${server.url ?? ""}`
+          }
+          control={
+            <span className="mcp-row-controls">
+              <Toggle
+                checked={server.enabled}
+                onChange={(enabled) => void mcp.toggle(server.name, enabled)}
+                ariaLabel={`Enable ${server.name}`}
+              />
+              <button type="button" className="btn btn-ghost settings-reset" onClick={() => { setFormError(undefined); setDraft(draftFor(server)); }}>
+                Edit
+              </button>
+              <button type="button" className="btn btn-ghost settings-reset" onClick={() => void mcp.remove(server.name)}>
+                Remove
+              </button>
+            </span>
+          }
+        />
+      ))}
+      <ConnectorsSection mcp={mcp} />
+      {!editing && (
+        <button type="button" className="btn btn-ghost settings-reset" onClick={() => { setFormError(undefined); setDraft(emptyDraft()); }}>
+          Add MCP server
+        </button>
+      )}
+      {draft !== null && (
+        <form
+          className="mcp-editor"
+          onSubmit={(event) => { event.preventDefault(); save(); }}
+        >
+          <div className="settings-subgroup">
+            <h4>{draft.originalName === undefined ? "New MCP server" : `Edit ${draft.originalName}`}</h4>
+            <label className="mcp-field">
+              <span>Name</span>
+              <input value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} autoFocus />
+            </label>
+            <label className="mcp-field">
+              <span>Transport</span>
+              <select value={draft.transport} onChange={(event) => setDraft({ ...draft, transport: event.target.value === "http" ? "http" : "stdio" })}>
+                <option value="stdio">stdio (local command)</option>
+                <option value="http">http (remote URL)</option>
+              </select>
+            </label>
+            {draft.transport === "stdio" ? (
+              <>
+                <label className="mcp-field">
+                  <span>Command</span>
+                  <input value={draft.command} onChange={(event) => setDraft({ ...draft, command: event.target.value })} placeholder="node" />
+                </label>
+                <label className="mcp-field">
+                  <span>Arguments (one per line)</span>
+                  <textarea value={draft.argsText} onChange={(event) => setDraft({ ...draft, argsText: event.target.value })} rows={3} />
+                </label>
+                <label className="mcp-field">
+                  <span>Environment (KEY=value per line)</span>
+                  <textarea value={draft.envText} onChange={(event) => setDraft({ ...draft, envText: event.target.value })} rows={3} />
+                </label>
+              </>
+            ) : (
+              <label className="mcp-field">
+                <span>URL</span>
+                <input value={draft.url} onChange={(event) => setDraft({ ...draft, url: event.target.value })} placeholder="https://mcp.example/mcp" />
+              </label>
+            )}
+            <label className="mcp-field mcp-field-inline">
+              <span>Enabled</span>
+              <input type="checkbox" checked={draft.enabled} onChange={(event) => setDraft({ ...draft, enabled: event.target.checked })} />
+            </label>
+            {formError !== undefined && <p className="settings-error" role="alert">{formError}</p>}
+            <span className="mcp-editor-actions">
+              <button type="submit" className="btn">{draft.originalName === undefined ? "Add" : "Save"}</button>
+              <button type="button" className="btn btn-ghost" onClick={() => { setFormError(undefined); setDraft(null); }}>Cancel</button>
+            </span>
+          </div>
+        </form>
+      )}
+    </Section>
+  );
+}
+
+/**
+ * The vendored connector catalog (settings MVP): every mcp-toolbox app, with
+ * truthful build availability, enabled with one toggle. A connector already
+ * present in the configured list shows as added rather than duplicating it —
+ * the configured row above remains the single control for it.
+ */
+function ConnectorsSection({ mcp }: { readonly mcp: SettingsMcp }) {
+  const configured = new Set(mcp.servers.map((server) => server.name));
+  if (mcp.catalog.length === 0) return null;
+  return (
+    <div className="settings-subgroup">
+      <h4>Available connectors</h4>
+      <p className="settings-desc">
+        Vendored Workflow MCP servers. Adding one writes the same launch config the
+        servers above write — it takes effect on the next session.
+      </p>
+      {mcp.catalog.map((entry) => {
+        const added = configured.has(entry.name);
         return (
           <Row
-            key={option.id}
-            label={option.name}
-            description={option.description}
+            key={entry.name}
+            label={entry.name}
+            description={entry.available ? entry.description : `${entry.description} · not built (npm run toolbox:build)`}
             control={
-              <span className="settings-field">
-                <ConfigField option={option} setOption={setOption} />
-              </span>
+              <button
+                type="button"
+                className={`btn btn-ghost settings-reset ${added ? "" : "mcp-catalog-add"}`}
+                disabled={added || !entry.available}
+                onClick={() => {
+                  if (added || !entry.available) return;
+                  void mcp.upsert({
+                    name: entry.name,
+                    enabled: true,
+                    transport: entry.transport,
+                    command: "node",
+                    args: [entry.serverPath],
+                  });
+                }}
+                title={added ? "Already configured — control it in the list above" : undefined}
+              >
+                {added ? "Added" : (entry.available ? "Add" : "Unbuilt")}
+              </button>
             }
           />
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * Model routing: the persisted per-agent launch defaults (model + reasoning
+ * effort) written to the settings document, plus the routing facts the
+ * environment currently dictates, stated read-only and honestly — an env-set
+ * model override wins over the panel default, so it is shown, not hidden.
+ * Launch consumption is claimed per agent, never wholesale: only `model`
+ * reaches a launch config today (OpenCode's metered config, goose's launch);
+ * `thoughtLevel` and the whole cline preference are persisted with no launch
+ * consumer yet.
+ */
+const ROUTING_AGENTS: readonly { readonly id: string; readonly label: string; readonly hint: string }[] = [
+  { id: "opencode", label: "OpenCode", hint: "model is consumed at launch into the metered opencode config" },
+  { id: "goose", label: "Goose", hint: "model is consumed at launch by the contained goose agent" },
+  { id: "cline", label: "Cline", hint: "persisted launch default; no launch-time consumer yet" },
+];
+
+const THOUGHT_LEVELS: readonly string[] = ["none", "low", "medium", "high", "xhigh"];
+
+export function RoutingSection({ routing }: { readonly routing: SettingsRouting }) {
+  return (
+    <Section title="Model routing">
+      <p className="settings-desc">
+        Per-agent launch defaults. The model default is written into the launch
+        config for OpenCode and goose on the next session; reasoning effort is
+        persisted now — no engine consumes it at launch yet. Live changes still
+        ride the agent's own config options.
+      </p>
+      {routing.loading && <p className="settings-desc">Loading routing defaults…</p>}
+      {routing.error !== undefined && <p className="settings-error" role="alert">{routing.error}</p>}
+      {ROUTING_AGENTS.map((agent) => {
+        const preference = routing.agents[agent.id] ?? {};
+        return (
+          <div className="settings-subgroup" key={agent.id}>
+            <h4>{agent.label}</h4>
+            <p className="settings-desc">{agent.hint}</p>
+            <RoutingAgentForm agent={agent.id} preference={preference} onSave={routing.onSave} />
+          </div>
+        );
+      })}
+      <div className="settings-subgroup">
+        <h4>Environment facts</h4>
+        <Row
+          label="Model traffic upstream"
+          description={routing.facts.upstream}
+          control={<span className="settings-desc">set via WORKFLOW_ACP_UPSTREAM</span>}
+        />
+        <Row
+          label="Env model overrides"
+          description={
+            routing.facts.envModelOpencode || routing.facts.envModelGoose
+              ? "present — an env-set model wins over the panel default for that agent"
+              : "none — the panel defaults apply to every agent"
+          }
+          control={<span className="settings-desc">{[routing.facts.envModelOpencode ? "opencode" : "", routing.facts.envModelGoose ? "goose" : ""].filter(Boolean).join(", ") || "—"}</span>}
+        />
+        <Row
+          label="Usage management key"
+          description="WORKFLOW_OPENROUTER_MANAGEMENT_KEY"
+          control={<span className="settings-desc">{routing.facts.managementKey ? "present" : "absent"}</span>}
+        />
+      </div>
     </Section>
+  );
+}
+
+function RoutingAgentForm({ agent, preference, onSave }: {
+  readonly agent: string;
+  readonly preference: AgentRuntimePreference;
+  readonly onSave: (agent: string, preference: AgentRuntimePreference) => Promise<boolean>;
+}) {
+  const [model, setModel] = useState(preference.model ?? "");
+  const [thoughtLevel, setThoughtLevel] = useState(preference.thoughtLevel ?? "");
+  const [saved, setSaved] = useState(false);
+  // Re-sync from the refreshed document after every load/save so the form
+  // reflects what actually persisted, never a stale local draft.
+  useEffect(() => {
+    setModel(preference.model ?? "");
+    setThoughtLevel(preference.thoughtLevel ?? "");
+    setSaved(false);
+  }, [preference.model, preference.thoughtLevel]);
+  const dirty = (preference.model ?? "") !== model.trim() || (preference.thoughtLevel ?? "") !== thoughtLevel;
+  // The merge persists per key and cannot clear: an all-empty save would be
+  // rejected, so it is disabled here and the limitation is stated, not hidden.
+  const persistedAnything = preference.model !== undefined || preference.mode !== undefined || preference.thoughtLevel !== undefined;
+  const clearsEverything = persistedAnything && model.trim() === "" && thoughtLevel === "";
+  return (
+    <div className="mcp-editor" role="group" aria-label={`${agent} launch defaults`}>
+      <label className="mcp-field">
+        <span>Model</span>
+        <input
+          value={model}
+          placeholder="engine default"
+          onChange={(event) => { setModel(event.target.value); setSaved(false); }}
+        />
+      </label>
+      <label className="mcp-field">
+        <span>Reasoning effort</span>
+        <select value={thoughtLevel} onChange={(event) => { setThoughtLevel(event.target.value); setSaved(false); }}>
+          <option value="">engine default</option>
+          {THOUGHT_LEVELS.map((level) => <option key={level} value={level}>{level}</option>)}
+        </select>
+      </label>
+      <span className="mcp-editor-actions">
+        <button
+          type="button"
+          className="btn"
+          disabled={!dirty || clearsEverything}
+          onClick={() => {
+            const next: AgentRuntimePreference = {
+              ...(model.trim() === "" ? {} : { model: model.trim() }),
+              ...(thoughtLevel === "" ? {} : { thoughtLevel }),
+            };
+            void onSave(agent, next).then((ok) => { if (ok) setSaved(true); });
+          }}
+        >
+          {saved ? "Saved" : "Save"}
+        </button>
+      </span>
+      {persistedAnything && (
+        <p className="settings-desc">
+          Saved values merge per key; the panel cannot clear them yet — edit the
+          settings file to return an agent to its engine default.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -535,8 +1004,9 @@ function SessionSection({ enforcement }: {
           </span>
         )}
         {usage !== undefined && (
-          <span title={`${usage.requests} metered model request(s)`}>
-            ↑{formatTokens(usage.promptTokens)} ↓{formatTokens(usage.completionTokens)} tokens · ${usage.costUsd.toFixed(4)}
+          <span title={usage.source === "metered" ? `${usage.requests ?? 0} metered model request(s)` : "agent-reported usage (ACP usage_update)"}>
+            {usage.promptTokens !== undefined && usage.completionTokens !== undefined && <>↑{formatTokens(usage.promptTokens)} ↓{formatTokens(usage.completionTokens)} tokens</>}
+            {usage.costUsd !== undefined && <> · ${usage.costUsd.toFixed(4)}</>}
             {usage.latestPromptTokens !== undefined && <> · context {formatTokens(usage.latestPromptTokens)}</>}
           </span>
         )}

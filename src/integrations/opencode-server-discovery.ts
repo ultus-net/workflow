@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { opencodeServerWorkspaceTag } from "./opencode-server-runtime.js";
+import { probeOpencodeHealth } from "./opencode-health.js";
 
 /**
  * W071 — launcher discovery for the Workflow-owned OpenCode server.
@@ -72,23 +73,17 @@ export function removeOpencodeServerDiscovery(path: string): void {
 }
 
 /**
- * Probes the gateway through its own auth (`/global/health`), so a stale
- * discovery whose daemon is gone fails the probe rather than being trusted.
+ * Probes the gateway through its own auth, so a stale discovery whose daemon
+ * is gone fails the probe rather than being trusted. The probe walks both
+ * health contracts (/api/info on v2, /global/health on v1) because the
+ * enforced gateway only forwards classified routes.
  */
 export async function probeOpencodeServerGateway(
   discovery: OpencodeServerDiscovery,
   fetchImpl: typeof fetch = fetch,
 ): Promise<boolean> {
-  try {
-    const auth = `Basic ${Buffer.from(`${discovery.tuiUsername}:${discovery.tuiPassword}`).toString("base64")}`;
-    const response = await fetchImpl(`${discovery.gatewayUrl}/global/health`, {
-      headers: { authorization: auth },
-      signal: AbortSignal.timeout(2_000),
-    });
-    return response.status === 200;
-  } catch {
-    return false;
-  }
+  const auth = `Basic ${Buffer.from(`${discovery.tuiUsername}:${discovery.tuiPassword}`).toString("base64")}`;
+  return (await probeOpencodeHealth(fetchImpl, discovery.gatewayUrl, auth)) !== undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

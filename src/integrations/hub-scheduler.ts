@@ -350,16 +350,23 @@ export function createHubScheduler(options: {
 
   const fireOnce = async (schedule: ScheduleDefinition): Promise<void> => {
     const runId = `schedule:${schedule.id}:${randomUUID()}`;
+    // The composed prompt is the single source of truth for both the recorded
+    // ask and the turn: the agent must see exactly what the run records, or
+    // the W041 provenance digest binds a prompt the agent never received
+    // (W075 review P1 — the orientation version must be inside the digest so
+    // an orientation change invalidates recorded fingerprints).
+    const prompt = options.promptGuidance === undefined ? schedule.prompt : options.promptGuidance + schedule.prompt;
     try {
       await options.controller.begin({
         runId,
         title: schedule.title,
         ...(schedule.workspace === undefined ? {} : { workspace: schedule.workspace }),
         ...(schedule.requiresReview === false ? { requiresReview: false } : { requiresReview: true }),
-        // W041: the schedule's prompt is the run's ask — the reviewer binds
-        // it into the provenance fingerprint so the same diff under a
-        // different ask never replays this run's approval.
-        taskPrompt: schedule.prompt,
+        // W041: the prompt is the run's ask — the reviewer binds it into the
+        // provenance fingerprint so the same diff under a different ask (or a
+        // different guidance preamble, orientation version included) never
+        // replays this run's approval.
+        taskPrompt: prompt,
       });
     } catch (error) {
       log(`scheduler '${schedule.id}': could not begin run: ${error instanceof Error ? error.message : String(error)}`);
@@ -370,7 +377,7 @@ export function createHubScheduler(options: {
       await options.runTurn({
         runId,
         workspace: schedule.workspace,
-        prompt: options.promptGuidance === undefined ? schedule.prompt : options.promptGuidance + schedule.prompt,
+        prompt,
         budget: schedule.budget,
       });
     } catch (error) {

@@ -11,15 +11,18 @@ import { ActionPart, AttentionPart, CompletionPart, OutcomePart, PlanPart, Think
 import { ConfigField } from "./config-field.js";
 import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
-import { describeActivity, formatElapsed, formatTokens } from "./presenters.js";
-import { useSessionState, useSessionUsage, useAgentIdentity, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
-import { SettingsDialog } from "./settings-dialog.js";
+import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } from "./presenters.js";
+import { useSessionCommands, useSessionState, useSessionStatus, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
+import { SettingsDialog, type RoutingFacts } from "./settings-dialog.js";
 import { AgentsView } from "./agents-view.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
 import { UsageView } from "./usage-view.js";
 import { listPalettes } from "./theme/palettes.js";
-import { usePalette, useTheme } from "./theme.js";
+import { usePalette } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
+import type { AgentRuntimePreference, McpServerSetting } from "../../integrations/workflow-settings.js";
+import type { LiveMcpState } from "../../integrations/opencode-live-state.js";
+import type { ToolboxCatalogEntry } from "../../integrations/toolbox-catalog.js";
 import type { WebConfigOption } from "../web-config-options.js";
 
 interface SnapshotTask {
@@ -156,6 +159,10 @@ export interface AgentInfo {
   readonly containment: "contained" | "advisory";
   readonly available: boolean;
   readonly reason?: string;
+  /** The live ACP handshake version, when the server has one (never fabricated). */
+  readonly version?: string;
+  /** Session management capabilities from the live ACP handshake. */
+  readonly capabilities?: { readonly close: boolean; readonly fork: boolean; readonly list: boolean; readonly resume: boolean };
 }
 
 /** Polls the agents the server can compose (availability + posture). */
@@ -242,6 +249,30 @@ function useOperatorSurfaces() {
 
 function createSession(refresh: () => Promise<void>): void {
   void fetch("/api/sessions", { method: "POST" }).then(() => refresh());
+}
+
+function activateSession(id: string, refresh: () => Promise<void>): void {
+  void fetch("/api/sessions/activate", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id }),
+  }).then(() => refresh());
+}
+
+function dismissSession(id: string, refresh: () => Promise<void>): void {
+  void fetch("/api/sessions/dismiss", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id }),
+  }).then(() => refresh());
+}
+
+function clearUnusedSessions(refresh: () => Promise<void>): void {
+  void fetch("/api/sessions/dismiss", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clearUnused: true }),
+  }).then(() => refresh());
 }
 
 type PermissionDecision = "allow_once" | "allow_always" | "reject_once" | "reject_always";
@@ -336,6 +367,159 @@ function useCapabilities() {
   return { capabilities: state, setCapability };
 }
 
+interface McpState {
+  readonly servers: readonly McpServerSetting[];
+  readonly global: readonly McpServerSetting[];
+  readonly workspace: readonly McpServerSetting[];
+  readonly workspaceOverlay: boolean;
+  readonly catalog?: readonly ToolboxCatalogEntry[];
+}
+
+/** Persists an explicit runtime preference (model/mode/effort) into the
+ * Workflow settings document so the control plane can push it as a launch
+ * default on the next session. Fire-and-forget. */
+function persistAgentPreference(agent: string, preference: { model?: string; mode?: string; thoughtLevel?: string }): void {
+  void fetch("/api/settings/agents", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ agent, preference }),
+  }).catch(() => {});
+}
+
+/** Loads and edits the Workflow-owned MCP catalog. The displayed list is the
+ * effective merge (workspace over global); edits write the selected scope.
+ * Also carries the live data-lane read (W074 follow-up). */
+function useMcpSettings() {
+  const [state, setState] = useState<McpState | undefined>(undefined);
+  const [scope, setScopeState] = useState<"global" | "workspace">("global");
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [live, setLive] = useState<LiveMcpState | undefined>(undefined);
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/settings/mcp");
+      if (!response.ok) return;
+      const loaded = await response.json() as McpState;
+      setState(loaded);
+      setScopeState((current) => (current === "workspace" && !loaded.workspaceOverlay ? "global" : current));
+    } catch {
+      // Keep the last good state; the page retries on the next open.
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  // The live data-lane read (W074 follow-up): honest states only — the hook
+  // never fabricates a connection; undefined until the read resolves.
+  const loadLive = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/settings/mcp/live");
+      if (!response.ok) return;
+      setLive(await response.json() as LiveMcpState);
+    } catch {
+      // Keep the last good state; the page retries on the next open.
+    }
+  }, []);
+  useEffect(() => { void loadLive(); }, [loadLive]);
+
+  const scopeServers = (current: McpState, target: "global" | "workspace"): readonly McpServerSetting[] =>
+    target === "global" ? current.global : current.workspace;
+
+  const commit = useCallback(async (servers: readonly McpServerSetting[], target: "global" | "workspace"): Promise<void> => {
+    setError(undefined);
+    try {
+      const response = await fetch("/api/settings/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ scope: target, servers }),
+      });
+      if (!response.ok) {
+        setError(((await response.json()) as { error?: string }).error ?? "could not save MCP servers");
+        return;
+      }
+      await load();
+    } catch {
+      setError("could not save MCP servers");
+    }
+  }, [load]);
+
+  const upsert = useCallback(async (server: McpServerSetting): Promise<void> => {
+    if (state === undefined) return;
+    const list = scopeServers(state, scope);
+    const index = list.findIndex((entry) => entry.name === server.name);
+    const next = index === -1 ? [...list, server] : list.map((entry) => (entry.name === server.name ? server : entry));
+    await commit(next, scope);
+  }, [commit, scope, state, load]);
+
+  const remove = useCallback(async (name: string): Promise<void> => {
+    if (state === undefined) return;
+    await commit(scopeServers(state, scope).filter((entry) => entry.name !== name), scope);
+  }, [commit, scope, state]);
+
+  const toggle = useCallback(async (name: string, enabled: boolean): Promise<void> => {
+    if (state === undefined) return;
+    await commit(scopeServers(state, scope).map((entry) => (entry.name === name ? { ...entry, enabled } : entry)), scope);
+  }, [commit, scope, state]);
+
+  return {
+    servers: state?.servers ?? [],
+    scope,
+    workspaceOverlay: state?.workspaceOverlay ?? false,
+    catalog: state?.catalog ?? [],
+    loading: state === undefined,
+    error,
+    ...(live === undefined ? {} : { live }),
+    setScope: setScopeState,
+    upsert,
+    remove,
+    toggle,
+  };
+}
+
+/** Loads and edits the persisted per-agent launch defaults (model routing). */
+function useRoutingSettings() {
+  const [agents, setAgents] = useState<Record<string, AgentRuntimePreference> | undefined>(undefined);
+  const [facts, setFacts] = useState<RoutingFacts | undefined>(undefined);
+  const [error, setError] = useState<string | undefined>(undefined);
+
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/settings/agents");
+      if (!response.ok) return;
+      const loaded = await response.json() as { agents: Record<string, AgentRuntimePreference>; facts: RoutingFacts };
+      setAgents(loaded.agents);
+      setFacts(loaded.facts);
+    } catch {
+      // Keep the last good state; the page retries on the next open.
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const save = useCallback(async (agent: string, preference: AgentRuntimePreference): Promise<boolean> => {
+    setError(undefined);
+    try {
+      const response = await fetch("/api/settings/agents", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ agent, preference }),
+      });
+      if (!response.ok) {
+        setError(((await response.json()) as { error?: string }).error ?? "could not save routing defaults");
+        return false;
+      }
+      await load();
+      return true;
+    } catch {
+      setError("could not save routing defaults");
+      return false;
+    }
+  }, [load]);
+
+  return { agents: agents ?? {}, facts: facts ?? { upstream: "…", envModelOpencode: false, envModelGoose: false, managementKey: false }, loading: agents === undefined, error, onSave: save };
+}
+
+// The schedule surface belongs to main's Schedules page (useOperatorSurfaces
+// → the hub proxy): this branch's read-only settings hook was superseded.
+
 /** Polls the agent-advertised session configuration; empty when the agent offers none. */
 /** Last-used value per ACP option, persisted locally so the operator's choices
  * survive reload and the agent reconnecting with its factory default. */
@@ -358,7 +542,7 @@ function writeLastUsed(id: string, value: string | boolean): void {
   }
 }
 
-function useConfigOptions(sessionId: string | undefined) {
+function useConfigOptions(sessionId: string | undefined, agent: string) {
   const [options, setOptions] = useState<WebConfigOption[]>([]);
   // Option ids whose last-used value we already pushed to the agent this
   // session, so a reconnect can't loop restore→default→restore.
@@ -372,6 +556,14 @@ function useConfigOptions(sessionId: string | undefined) {
   const setOption = useCallback((id: string, value: string | boolean): void => {
     // Optimistic: reflect the choice now, reconcile with the server response.
     writeLastUsed(id, value);
+    // Persist model/mode/effort as launch defaults so the control plane pushes
+    // the operator's choice into the agent config on the next session.
+    if (typeof value === "string") {
+      const category = options.find((option) => option.id === id)?.category;
+      if (category === "model") persistAgentPreference(agent, { model: value });
+      else if (category === "mode") persistAgentPreference(agent, { mode: value });
+      else if (category === "thought_level") persistAgentPreference(agent, { thoughtLevel: value });
+    }
     setOptions((previous) => previous.map((option) => option.id === id ? { ...option, currentValue: value } : option));
     void fetch(`/api/config-options${sessionSuffix}`, {
       method: "POST",
@@ -380,7 +572,7 @@ function useConfigOptions(sessionId: string | undefined) {
     }).then(async (response) => {
       if (response.ok) setOptions((await response.json() as { options: WebConfigOption[] }).options);
     }).catch(() => {});
-  }, [sessionSuffix]);
+  }, [sessionSuffix, options, agent]);
   const load = useCallback(async (): Promise<void> => {
     try {
       const response = await fetch(`/api/config-options${sessionSuffix}`);
@@ -510,7 +702,7 @@ export function ConfigChips({ options, setOption }: {
   return (
     <div className="composer-chips">
       {pickers.map((option) => (
-        <span className="config-picker" key={option.id} title={option.description ?? option.name}>
+        <span className="config-picker" data-category={option.category ?? option.id} key={option.id} title={option.description ?? option.name}>
           <ChipIcon category={option.category} />
           <ConfigField option={option} setOption={setOption} />
         </span>
@@ -560,18 +752,27 @@ function PermissionPrompt({ pending, answer, remembered }: {
   );
 }
 
-/** The session's usage readout, rendered inside the status bar (far left):
- * a context-window fill bar plus cumulative tokens and cost. Context fill
- * needs both the latest context input (proxy) and the agent-reported window
- * (ACP usage_update); without the window the used count still shows, honestly. */
-function UsageMeter({ usage }: { readonly usage: SessionUsage }) {
+/** The session's single usage readout (status bar): a context-window
+ * fill bar plus cost, with cumulative token counters when the runtime meters
+ * them (Cline). Unmetered runtimes (OpenCode) show the ACP-reported context
+ * and cost only — unknown counters stay hidden rather than reading as zero.
+ * Exported for the UI-surface regression pin. */
+export function UsageMeter({ usage }: { readonly usage: SessionUsage }) {
   const contextUsed = usage.latestPromptTokens;
   const contextWindow = usage.contextWindowTokens;
   const fillPct = contextUsed !== undefined && contextWindow !== undefined && contextWindow > 0
     ? Math.min(100, Math.round((contextUsed / contextWindow) * 100))
     : undefined;
+  const metered = usage.promptTokens !== undefined && usage.completionTokens !== undefined;
+  // Provenance is keyed off the source marker, never the presence of counters:
+  // agent-sourced readouts now carry a token split too.
+  const title = usage.source === "metered"
+    ? `${usage.requests ?? 0} metered model request(s)`
+    : usage.requests !== undefined
+      ? `${usage.requests} agent turn(s), ACP-reported`
+      : "agent-reported usage (ACP usage_update)";
   return (
-    <div className="usage-meter" title={`${usage.requests} metered model request(s)`}>
+    <div className="usage-meter" title={title}>
       {contextUsed !== undefined && (
         <span
           className="usage-context"
@@ -582,15 +783,19 @@ function UsageMeter({ usage }: { readonly usage: SessionUsage }) {
           <span className="usage-context-bar" aria-hidden="true">
             <span className="usage-context-fill" style={{ "--context-fill-scale": `${(fillPct ?? 0) / 100}` } as React.CSSProperties} />
           </span>
-          Context {formatTokens(contextUsed)}
+          {formatTokens(contextUsed)}
           {contextWindow !== undefined && <> / {formatTokens(contextWindow)}</>}
-          {fillPct !== undefined && <> · {fillPct}%</>}
+          {fillPct !== undefined && <> ({fillPct}%)</>}
         </span>
       )}
-      <span className="usage-tokens" aria-label={`${usage.promptTokens} prompt tokens, ${usage.completionTokens} completion tokens`}>
-        ↑{formatTokens(usage.promptTokens)} ↓{formatTokens(usage.completionTokens)} tokens
-      </span>
-      <span className="usage-cost" aria-label={`${usage.costUsd} US dollars`}>${usage.costUsd.toFixed(4)}</span>
+      {metered && (
+        <span className="usage-tokens" aria-label={`${usage.promptTokens} prompt tokens, ${usage.completionTokens} completion tokens`}>
+          ↑{formatTokens(usage.promptTokens)} ↓{formatTokens(usage.completionTokens)}
+        </span>
+      )}
+      {usage.costUsd !== undefined && (
+        <span className="usage-cost" aria-label={`${usage.costUsd} US dollars`}>${usage.costUsd.toFixed(4)}</span>
+      )}
     </div>
   );
 }
@@ -603,33 +808,45 @@ function currentModelName(options: readonly WebConfigOption[]): string | undefin
   return model.choices?.find((choice) => choice.value === model.currentValue)?.name ?? String(model.currentValue);
 }
 
-/** Bottom status bar: context/tokens far left, model + branch in the middle,
- * the agent's handshake version far right. Live facts only — a slot whose
- * data is unknown renders nothing rather than a placeholder. */
-function StatusBar({ identity, model, branch, usage }: {
-  readonly identity: { readonly agent?: string | undefined; readonly version?: string | undefined };
+/** Bottom status bar, mined from the OpenCode TUI's footer: the left cluster
+ * states who is driving (agent + handshake version, current model); the right
+ * cluster carries the session's usage readout (context fill, tokens, cost),
+ * the repository branch, and the keybinds an operator reaches for mid-turn.
+ * All of it is live fact from the polling hooks; nothing renders when its
+ * data is unknown. */
+export function StatusBar({ agent, model, usage, branch, isRunning }: {
+  readonly agent: (Pick<AgentInfo, "name" | "containment"> & { readonly version?: string }) | undefined;
   readonly model: string | undefined;
-  readonly branch: string | undefined;
   readonly usage: SessionUsage | undefined;
+  readonly branch: string | undefined;
+  readonly isRunning: boolean;
 }) {
   return (
     <footer className="status-bar" aria-label="Session status">
       <div className="status-bar-group">
-        {usage !== undefined && <UsageMeter usage={usage} />}
-        {/* Running is already unmistakable in the composer (stop control) and
-            the thread (live activity line); the bar stays factual. */}
-      </div>
-      <div className="status-bar-group status-bar-middle">
-        {model !== undefined && <span className="status-bar-item status-bar-model" title={model}>{model}</span>}
-        {branch !== undefined && <span className="status-bar-item status-bar-branch" title={branch}>{branch}</span>}
-      </div>
-      <div className="status-bar-group status-bar-right">
-        {identity.agent !== undefined && (
-          <span className="status-bar-item status-bar-agent">
-            {identity.agent}
-            {identity.version !== undefined && <span className="status-bar-version"> {identity.version}</span>}
+        {agent !== undefined && (
+          <span className="status-bar-item status-bar-agent" title={`${agent.name} (${agent.containment === "contained" ? "contained launch" : "advisory transport"})`}>
+            {agent.name}
+            {agent.version !== undefined && <span className="status-bar-version"> {agent.version}</span>}
           </span>
         )}
+        {model !== undefined && (
+          <span className="status-bar-item status-bar-model" title={model}>{model}</span>
+        )}
+      </div>
+      <div className="status-bar-group status-bar-middle">
+        {usage !== undefined && <UsageMeter usage={usage} />}
+      </div>
+      <div className="status-bar-group status-bar-right">
+        {branch !== undefined && (
+          <span className="status-bar-item status-bar-branch" title={branch}>{branch}</span>
+        )}
+        <span className="status-bar-item status-bar-keys">
+          {isRunning && <><kbd>Esc</kbd> cancel</>}
+          <kbd>Ctrl</kbd>+<kbd>P</kbd> commands
+          <kbd>/</kbd> focus
+          <kbd>Ctrl</kbd>+<kbd>,</kbd> settings
+        </span>
       </div>
     </footer>
   );
@@ -660,6 +877,121 @@ function WorktreeRail({ worktrees }: { readonly worktrees: readonly GitWorktree[
         ))}
       </div>
     </details>
+  );
+}
+
+/** One runnable palette entry: an app command, a session switch target, or an
+ * agent-advertised slash command. */
+export interface PaletteCommand {
+  readonly id: string;
+  readonly title: string;
+  readonly group: "command" | "session" | "slash";
+  readonly keybind?: string;
+  /** Right-aligned muted fact (e.g. a session's last activity, a slash
+   * command's description) when no keybind shows. */
+  readonly note?: string;
+  readonly run: () => void;
+}
+
+const GROUP_LABEL: Record<PaletteCommand["group"], string> = {
+  command: "Commands",
+  session: "Sessions",
+  slash: "Slash commands",
+};
+
+/** Command palette, mined from the OpenCode ctrl+p affordance: one filtered
+ * list of app commands and session switches. The input keeps focus while
+ * arrows move the selection; Enter runs, Esc closes (from anywhere inside —
+ * the handler sits on the dialog, not just the input). Every entry rides an
+ * existing action — the palette adds reach, never new behavior. Focus returns
+ * to whatever held it before the palette opened. Exported for the UI-surface
+ * regression pin. */
+export function CommandPalette({ commands, onClose }: {
+  readonly commands: readonly PaletteCommand[];
+  readonly onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [index, setIndex] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  // Focus returns to the previously focused element on close (modal manners).
+  const previousFocusRef = useRef<Element | null>(null);
+  useEffect(() => {
+    previousFocusRef.current = document.activeElement;
+    return () => {
+      if (previousFocusRef.current instanceof HTMLElement) previousFocusRef.current.focus();
+    };
+  }, []);
+  const needle = query.trim().toLowerCase();
+  const visible = needle === "" ? commands : commands.filter((command) => command.title.toLowerCase().includes(needle));
+  const clamped = Math.min(index, Math.max(0, visible.length - 1));
+
+  const runAt = (position: number): void => {
+    const command = visible[position];
+    if (command === undefined) return;
+    onClose();
+    command.run();
+  };
+
+  const onKeyDown = (event: React.KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      // The palette owns this Escape; a running turn must not cancel with it.
+      event.stopPropagation();
+      onClose();
+    } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      setIndex(Math.min(Math.max(clamped + delta, 0), Math.max(0, visible.length - 1)));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      runAt(clamped);
+    }
+  };
+
+  useEffect(() => {
+    listRef.current
+      ?.querySelector(".palette-row-active")
+      ?.scrollIntoView({ block: "nearest" });
+  }, [clamped]);
+
+  let lastGroup: PaletteCommand["group"] | undefined;
+  return (
+    <div className="palette-backdrop" onClick={onClose}>
+      <div className="palette" role="dialog" aria-modal="true" aria-label="Command palette" onClick={(event) => event.stopPropagation()} onKeyDown={onKeyDown}>
+        <input
+          className="palette-input"
+          type="text"
+          placeholder="Type a command or search sessions"
+          aria-label="Command palette search"
+          value={query}
+          autoFocus
+          onChange={(event) => { setQuery(event.target.value); setIndex(0); }}
+        />
+        <div className="palette-list" role="listbox" aria-label="Commands" ref={listRef}>
+          {visible.length === 0 && <p className="muted palette-empty">no matches</p>}
+          {visible.map((command, position) => {
+            const header = command.group !== lastGroup ? <span className="palette-group" aria-hidden="true">{GROUP_LABEL[command.group]}</span> : undefined;
+            lastGroup = command.group;
+            return (
+              <span key={command.id}>
+                {header}
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={position === clamped}
+                  className={`palette-row ${position === clamped ? "palette-row-active" : ""}`}
+                  onMouseEnter={() => setIndex(position)}
+                  onClick={() => runAt(position)}
+                >
+                  <span className="palette-row-title">{command.title}</span>
+                  {command.keybind !== undefined && <kbd className="palette-row-keybind">{command.keybind}</kbd>}
+                  {command.keybind === undefined && command.note !== undefined && <span className="palette-row-note">{command.note}</span>}
+                </button>
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -712,6 +1044,51 @@ function WorkingStatus() {
           every second. */}
       <span className="working-elapsed" aria-hidden="true">{formatElapsed(elapsed)}</span>
     </div>
+  );
+}
+
+/** The active session's title in the header. Double-click renames inline:
+ * session management lives in the command palette, so the header is the one
+ * place the active session's identity stays editable. */
+function SessionTitle({ session, refresh }: { readonly session: SessionMeta | undefined; readonly refresh: () => Promise<void> }) {
+  const [renaming, setRenaming] = useState<string | undefined>(undefined);
+  if (session === undefined) return null;
+  if (renaming !== undefined) {
+    const commit = async (): Promise<void> => {
+      const title = renaming.trim();
+      setRenaming(undefined);
+      if (title.length > 0 && title !== session.title) {
+        await fetch("/api/sessions/rename", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id: session.id, title }),
+        });
+        await refresh();
+      }
+    };
+    return (
+      <input
+        className="shell-session-title shell-session-rename"
+        aria-label="Rename session"
+        value={renaming}
+        autoFocus
+        onChange={(event) => setRenaming(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") void commit();
+          if (event.key === "Escape") setRenaming(undefined);
+        }}
+        onBlur={() => void commit()}
+      />
+    );
+  }
+  return (
+    <span
+      className="shell-session-title"
+      title={`${session.title} (double-click to rename)`}
+      onDoubleClick={() => setRenaming(session.title)}
+    >
+      {session.title}
+    </span>
   );
 }
 
@@ -825,11 +1202,9 @@ function RegenerateAction() {
   if (lastUser === undefined || lastUser.kind !== "user") return null;
   if (last === undefined || (last.kind !== "completion" && last.kind !== "assistant")) return null;
   return (
-    <div className="thread-tail">
-      <button className="btn btn-ghost" onClick={() => queuePrompt(lastUser.text)}>
-        Regenerate
-      </button>
-    </div>
+    <button className="btn btn-ghost regenerate-button" onClick={() => queuePrompt(lastUser.text)}>
+      Regenerate
+    </button>
   );
 }
 
@@ -1053,12 +1428,128 @@ function Composer({ options, setOption }: {
   );
 }
 
-function Panels({ snapshot, refresh }: {
+/** Live agent connections, mined from the OpenCode TUI's right rail (its
+ * MCP/LSP lists). ACP does not advertise an agent's internal tool servers, so
+ * this states only what the surface knows honestly: which agents are
+ * reachable, their posture, the connected agent's handshake version, and the
+ * hub's capability grants. Exported for the UI-surface regression pin. */
+export function ConnectionsSection({ agents, currentAgent, capabilities }: {
+  readonly agents: readonly AgentInfo[];
+  readonly currentAgent: string;
+  readonly capabilities: CapabilitiesState | undefined;
+}) {
+  const available = agents.filter((agent) => agent.available).length;
+  const active = agents.find((agent) => agent.id === currentAgent);
+  return (
+    <details className="panel-disclosure">
+      <summary><span>Connections</span><span className="panel-summary-meta">{available}/{agents.length}</span></summary>
+      <section className="panel-disclosure-body">
+        {agents.length === 0 && <p className="muted">agent registry unavailable</p>}
+        {agents.map((agent) => (
+          <div className="connection-row" key={agent.id}>
+            <span
+              className={`connection-dot ${agent.available ? "connection-dot-ok" : "connection-dot-down"}`}
+              title={agent.available ? "available" : (agent.reason ?? "unavailable")}
+              aria-hidden="true"
+            />
+            <span className="connection-name">
+              {agent.name}
+              {agent.version !== undefined && <span className="connection-version"> {agent.version}</span>}
+            </span>
+            <span className="connection-meta">
+              {agent.id === currentAgent && <span className="connection-active">active</span>}
+              {agent.containment}
+            </span>
+          </div>
+        ))}
+        {capabilities !== undefined && (
+          <p className="connection-grants">
+            acp transport
+            {capabilities.workspaceConfinement ? " · workspace confined" : " · no workspace confinement"}
+            {" · grants "}{capabilities.capabilities.length > 0 ? capabilities.capabilities.join(", ") : "none"}
+          </p>
+        )}
+        {active?.capabilities !== undefined && (
+          <p className="connection-grants">
+            {"session capabilities "}
+            {Object.entries(active.capabilities)
+              .filter(([, supported]) => supported)
+              .map(([name]) => name)
+              .join(" ") || "none"}
+          </p>
+        )}
+      </section>
+    </details>
+  );
+}
+
+/** Context block, mined from the OpenCode TUI's Context panel: how much of the
+ * model's context window the session is using, and what it has spent. Real
+ * numbers only — a field the agent never reported stays absent. */
+export function ContextSection({ usage }: { readonly usage: SessionUsage | undefined }) {
+  if (usage === undefined) return null;
+  const used = usage.latestPromptTokens;
+  const contextWindow = usage.contextWindowTokens;
+  const pct = used !== undefined && contextWindow !== undefined && contextWindow > 0 ? Math.round((used / contextWindow) * 100) : undefined;
+  if (used === undefined && usage.costUsd === undefined) return null;
+  return (
+    <section className="panel-context">
+      <h2>Context</h2>
+      <div className="context-rows">
+        {used !== undefined && (
+          <p className="context-row">
+            <span className="context-label">tokens</span>
+            <span>{formatTokens(used)}{contextWindow !== undefined && <span className="muted"> / {formatTokens(contextWindow)}</span>}</span>
+          </p>
+        )}
+        {pct !== undefined && (
+          <p className="context-row"><span className="context-label">used</span><span>{pct}%</span></p>
+        )}
+        {usage.costUsd !== undefined && (
+          <p className="context-row"><span className="context-label">spent</span><span>${usage.costUsd.toFixed(4)}</span></p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** Configured MCP catalog. ACP does not expose the agent's live MCP servers,
+ * so this states configuration honestly rather than a fabricated "connected". */
+export function McpConnections({ servers }: { readonly servers: readonly McpServerSetting[] }) {
+  const enabled = servers.filter((server) => server.enabled).length;
+  return (
+    <details className="panel-disclosure">
+      <summary><span>MCP</span><span className="panel-summary-meta">{enabled}/{servers.length}</span></summary>
+      <section className="panel-disclosure-body">
+        {servers.length === 0 && <p className="muted">no MCP servers configured</p>}
+        {servers.map((server) => (
+          <div className="connection-row" key={server.name}>
+            <span className={`connection-dot ${server.enabled ? "connection-dot-ok" : "connection-dot-down"}`} aria-hidden="true" />
+            <span className="connection-name">{server.name}</span>
+            <span className="connection-meta">{server.transport} · {server.enabled ? "configured" : "disabled"}</span>
+          </div>
+        ))}
+        <p className="connection-grants">configured in settings · ACP does not expose the agent's live MCP servers</p>
+      </section>
+    </details>
+  );
+}
+
+function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent, capabilities, usage, mcpServers }: {
   readonly snapshot: Snapshot | undefined;
   readonly refresh: () => Promise<void>;
+  readonly worktrees: readonly GitWorktree[] | undefined;
+  readonly gitStatus: GitStatus | undefined;
+  readonly agents: readonly AgentInfo[];
+  readonly currentAgent: string;
+  readonly capabilities: CapabilitiesState | undefined;
+  readonly usage: SessionUsage | undefined;
+  readonly mcpServers: readonly McpServerSetting[];
 }) {
   return (
     <aside className="panels">
+      <ContextSection usage={usage} />
+      <McpConnections servers={mcpServers} />
       <section>
         <h2>Tasks</h2>
         {(snapshot?.tasks ?? []).map((task) => (
@@ -1081,6 +1572,7 @@ function Panels({ snapshot, refresh }: {
         ))}
         <AddTaskForm refresh={refresh} />
       </section>
+      <ConnectionsSection agents={agents} currentAgent={currentAgent} capabilities={capabilities} />
       <details className="panel-disclosure">
         <summary><span>Evidence</span><span className="panel-summary-meta">{snapshot?.evidence.length ?? 0}</span></summary>
         <section className="panel-disclosure-body">
@@ -1104,6 +1596,10 @@ function Panels({ snapshot, refresh }: {
           ))}
         </section>
       </details>
+      {/* Reference panels sit under History, collapsed: the worktree list and
+          working-tree changes are facts to consult, not controls to watch. */}
+      <WorktreeRail worktrees={worktrees} />
+      <GitChanges status={gitStatus} />
     </aside>
   );
 }
@@ -1116,35 +1612,39 @@ const GIT_STATUS_MARK: Record<GitChange["status"], string> = {
   untracked: "?",
 };
 
-function GitRail({ status }: { readonly status: GitStatus | undefined }) {
-  const [open, setOpen] = useState<{ path: string; diff: string | undefined } | undefined>(undefined);
+/** Collapsible working-tree changes for the inspector: branch + change count
+ * in the summary, per-file rows opening a full diff popout in the body. */
+function GitChanges({ status }: { readonly status: GitStatus | undefined }) {
+  const [open, setOpen] = useState(false);
+  const [diff, setDiff] = useState<{ path: string; diff: string | undefined } | undefined>(undefined);
   const diffRequestRef = useRef(0);
   const openDiff = async (path: string): Promise<void> => {
     const request = ++diffRequestRef.current;
-    setOpen({ path, diff: undefined });
+    setDiff({ path, diff: undefined });
     try {
       const response = await fetch(`/api/git/diff?path=${encodeURIComponent(path)}`);
       const nextDiff = response.ok
         ? (await response.json() as { diff: string }).diff
         : `Diff unavailable (HTTP ${response.status})`;
-      if (request === diffRequestRef.current) setOpen({ path, diff: nextDiff });
+      if (request === diffRequestRef.current) setDiff({ path, diff: nextDiff });
     } catch {
-      if (request === diffRequestRef.current) setOpen({ path, diff: "Diff unavailable (network error)" });
+      if (request === diffRequestRef.current) setDiff({ path, diff: "Diff unavailable (network error)" });
     }
   };
   // Closing invalidates any in-flight fetch so a late response cannot reopen
   // the popout the operator just dismissed.
   const closeDiff = (): void => {
     diffRequestRef.current += 1;
-    setOpen(undefined);
+    setDiff(undefined);
   };
   return (
-    <aside className="git-rail" aria-label="Repository changes">
-      <div className="git-rail-head">
-        <span className="git-branch" title={status?.branch}>⌘ {status?.branch ?? "repository"}</span>
-        <span className="git-count">{status?.changes.length ?? 0}</span>
-      </div>
-      <div className="git-changes">
+    <details className="panel-disclosure git-disclosure" open={open} onToggle={(event) => setOpen((event.target as HTMLDetailsElement).open)}>
+      <summary>
+        <span>Changes</span>
+        <span className="panel-summary-meta">{status?.changes.length ?? 0}</span>
+      </summary>
+      <div className="panel-disclosure-body">
+        <p className="git-branch" title={status?.branch}>⌘ {status?.branch ?? "repository"}</p>
         {status !== undefined && status.changes.length === 0 && <p className="muted">working tree clean</p>}
         {(status?.changes ?? []).map((change) => (
           <button key={change.path} className="git-change" aria-haspopup="dialog" onClick={() => void openDiff(change.path)}>
@@ -1153,10 +1653,10 @@ function GitRail({ status }: { readonly status: GitStatus | undefined }) {
           </button>
         ))}
       </div>
-      {open !== undefined && (
-        <DiffDialog path={open.path} diff={open.diff} onClose={closeDiff} />
+      {diff !== undefined && (
+        <DiffDialog path={diff.path} diff={diff.diff} onClose={closeDiff} />
       )}
-    </aside>
+    </details>
   );
 }
 
@@ -1314,8 +1814,10 @@ function EnforcementBadge({ level, transport, copy }: {
 
 /** Top-bar views. Agents (renamed from "Sessions" 2026-09-19) and Schedules
  * are pages (nav slugs); session history stays reachable from the composer
- * via the /agents command, with /sessions kept as an alias. */
-export type AppView = "chat" | "agents" | "schedules" | "usage";
+ * via the /agents command, with /sessions kept as an alias. The settings
+ * panel (W077-era operator surfaces) is reachable from the gear and the
+ * Ctrl/Cmd+, command. */
+export type AppView = "chat" | "agents" | "schedules" | "usage" | "settings";
 
 export function App() {
   // The chat view focuses one parallel session at a time; undefined = the
@@ -1336,6 +1838,10 @@ export function App() {
     }
     if (name === "/usage") {
       setView("usage");
+      return true;
+    }
+    if (name === "/settings") {
+      setView("settings");
       return true;
     }
     if (name === "/chat") {
@@ -1366,17 +1872,18 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   // The registry leads with the default agent (OpenCode); fall back to it while
   // the agents list is still loading so the switcher never marks the wrong one.
   const currentAgent = sessions?.find((session) => session.active)?.agent ?? agents[0]?.id ?? "opencode";
-  const { options, setOption } = useConfigOptions(focusedSessionId);
+  const { options, setOption } = useConfigOptions(focusedSessionId, currentAgent);
   const permissions = usePermissions(focusedSessionId);
   const capabilities = useCapabilities();
-  const { isRunning } = useSessionState();
-  const identity = useAgentIdentity();
-  const theme = useTheme();
+  const mcp = useMcpSettings();
+  const routing = useRoutingSettings();
+  const { isRunning, items, queuePrompt } = useSessionState();
+  const slashCommands = useSessionCommands();
   const { palette, setPalette } = usePalette();
   const palettes = useMemo(() => listPalettes(), []);
   const usage = useSessionUsage();
+  const sessionStatus = useSessionStatus();
   const enforcementCopy = snapshot === undefined ? undefined : ENFORCEMENT_COPY[snapshot.enforcementLevel];
-  const [settingsOpen, setSettingsOpen] = useState(false);
   // Focus mode state lives here so the header button and the settings dialog
   // read and write one setting (pre-paint application happens in main.tsx).
   const [railsOff, setRailsOff] = useState((): boolean => {
@@ -1386,6 +1893,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
       return false;
     }
   });
+  const [paletteOpen, setPaletteOpen] = useState(false);
   useEffect(() => {
     document.documentElement.dataset.rails = railsOff ? "off" : "on";
     try {
@@ -1409,9 +1917,9 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         document.querySelector<HTMLElement>(".composer-input")?.focus();
       } else if (
         event.key === "Escape" && isRunning && !typing &&
-        // Any open chrome (settings dialog, model combobox) owns this Escape;
-        // cancelling a running turn must never ride along with closing it.
-        document.querySelector(".settings-dialog, .config-combobox-pop") === null
+        // Any open chrome (settings page, command palette, model combobox)
+        // owns this Escape; cancelling a running turn must never ride along.
+        document.querySelector(".settings-dialog, .palette, .config-combobox-pop") === null
       ) {
         // Escape cancels the session the operator is viewing, not whichever
         // session the server happens to have focused.
@@ -1425,14 +1933,46 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         createSession(refreshSessions);
       } else if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key === ",") {
         event.preventDefault();
-        setSettingsOpen(true);
+        setView(view === "settings" ? "chat" : "settings");
+      } else if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "p") {
+        // The OpenCode ctrl+p affordance; the browser's print dialog never wins.
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
       }
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [isRunning, refreshSessions, focusedSessionId]);
+  }, [isRunning, refreshSessions, focusedSessionId, view, setView]);
 
-  const activeTitle = sessions?.find((session) => session.active)?.title;
+  const activeSession = sessions?.find((session) => session.active);
+  const hasUnused = (sessions ?? []).some((session) => !session.active && session.title === "New session");
+  // Palette entries ride existing actions only: the palette adds reach, never
+  // new behavior. Session switches list every non-active session by title
+  // (with last activity, so same-titled sessions stay distinguishable).
+  const paletteCommands: readonly PaletteCommand[] = [
+    { id: "new-session", title: "New session", group: "command", keybind: "Alt+N", run: () => createSession(refreshSessions) },
+    { id: "focus-composer", title: "Focus composer", group: "command", keybind: "/", run: () => document.querySelector<HTMLElement>(".composer-input")?.focus() },
+    { id: "open-settings", title: "Open settings", group: "command", keybind: "Ctrl+,", run: () => setView("settings") },
+    { id: "toggle-rails", title: railsOff ? "Show side panels" : "Focus mode: hide side panels", group: "command", run: () => setRailsOff(!railsOff) },
+    ...(isRunning ? [{ id: "cancel-turn", title: "Cancel the running turn", group: "command" as const, keybind: "Esc", run: () => void fetch("/api/cancel", { method: "POST" }) }] : []),
+    { id: "export-session", title: "Export session as markdown", group: "command", run: () => downloadMarkdown(exportMarkdownOf(items)) },
+    ...(activeSession !== undefined ? [{ id: "dismiss-session", title: `Dismiss this session (${activeSession.title})`, group: "command" as const, run: () => dismissSession(activeSession.id, refreshSessions) }] : []),
+    ...(hasUnused ? [{ id: "clear-unused", title: "Clear unused sessions", group: "command" as const, run: () => clearUnusedSessions(refreshSessions) }] : []),
+    ...(sessions ?? []).filter((session) => !session.active).map((session) => ({
+      id: `switch-${session.id}`,
+      title: `Switch to: ${session.title}`,
+      group: "session" as const,
+      note: formatRelativeTime(session.updatedAt),
+      run: () => activateSession(session.id, refreshSessions),
+    })),
+    ...slashCommands.map((command) => ({
+      id: `slash-${command.name}`,
+      title: `/${command.name}`,
+      group: "slash" as const,
+      note: command.description,
+      run: () => queuePrompt(`/${command.name}`),
+    })),
+  ];
 
   const createSessionWithAgent = useCallback((agent: string): void => {
     void fetch("/api/sessions", { method: "POST" }).then((created) => {
@@ -1474,12 +2014,21 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         <div className="shell-header-left">
           <RailsToggle off={railsOff} onToggle={setRailsOff} />
           <h1 className="shell-wordmark">Workflow</h1>
+          <button
+            type="button"
+            className="btn btn-ghost new-thread"
+            title="Start a new thread (Alt+N)"
+            onClick={() => createSession(refreshSessions)}
+          >
+            <span aria-hidden="true">+</span> New
+          </button>
           <nav className="shell-nav" aria-label="Views">
             {([
               ["chat", "Chat", <ChatIcon key="c" />],
               ["agents", "Agents", <AgentsIcon key="s" />],
               ["schedules", "Schedules", <SchedulesIcon key="d" />],
               ["usage", "Usage", <UsageIcon key="u" />],
+              ["settings", "Settings", <GearIcon key="g" />],
             ] as const).map(([slug, label, icon]) => (
               <button
                 key={slug}
@@ -1493,22 +2042,10 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
               </button>
             ))}
           </nav>
-          {view === "chat" && activeTitle !== undefined && (
-            <span className="shell-session-title" title={activeTitle}>{activeTitle}</span>
-          )}
+          {view === "chat" && <SessionTitle session={activeSession} refresh={refreshSessions} />}
         </div>
         <div className="shell-header-actions">
           <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
-          <button
-            type="button"
-            className="btn btn-ghost config-gear"
-            aria-expanded={settingsOpen}
-            aria-haspopup="dialog"
-            aria-label="Settings"
-            onClick={() => setSettingsOpen(true)}
-          >
-            <GearIcon />
-          </button>
         </div>
       </header>
       {view === "agents" ? (
@@ -1578,12 +2115,27 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
         />
       ) : view === "usage" ? (
         <UsageView />
+      ) : view === "settings" ? (
+        <SettingsDialog
+          onClose={() => setView("chat")}
+          palette={palette}
+          onPalette={setPalette}
+          palettes={palettes}
+          railsOff={railsOff}
+          onRailsToggle={setRailsOff}
+          options={options}
+          setOption={setOption}
+          permissions={permissions}
+          capabilities={capabilities}
+          mcp={mcp}
+          routing={routing}
+          enforcement={{ level: snapshot?.enforcementLevel, transport: snapshot?.transport, copy: enforcementCopy }}
+          agents={agents}
+          currentAgent={currentAgent}
+          onSwitchAgent={(agent) => switchAgent(agent, refreshSessions)}
+        />
       ) : (
       <div className="shell-body">
-        <aside className="sidebar" aria-label="Repository changes">
-          <WorktreeRail worktrees={worktrees} />
-          <GitRail status={gitStatus} />
-        </aside>
         <section className="chat-column">
           <ThreadPrimitive.Root className="thread-root">
             <ThreadPrimitive.Viewport className="thread-viewport">
@@ -1605,6 +2157,12 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
               <ThreadPrimitive.Messages>
                 {({ message }) => (message.role === "user" ? <UserMessage /> : <AssistantMessage />)}
               </ThreadPrimitive.Messages>
+              {sessionStatus.error !== undefined && (
+                <div className="session-status-error" role="status">{sessionStatus.error}</div>
+              )}
+              {sessionStatus.state === "stored" && (
+                <div className="session-status-stored" role="status">History snapshot · live agent not running</div>
+              )}
               {permissions.pending !== null && (
                 <PermissionPrompt
                   pending={permissions.pending}
@@ -1612,7 +2170,6 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
                   remembered={permissions.patterns.alwaysAllow.length + permissions.patterns.alwaysReject.length}
                 />
               )}
-              <RegenerateAction />
               <AuiIf condition={(state) => state.thread.isRunning}>
                 <WorkingStatus />
               </AuiIf>
@@ -1621,41 +2178,26 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
               <Composer options={options} setOption={setOption} />
               <QueueIndicator />
               <div className="composer-meta">
+                <RegenerateAction />
                 <ExportSessionButton />
               </div>
             </div>
           </ThreadPrimitive.Root>
         </section>
-        <aside className="inspector" aria-label="Workflow supervision">
-          <Panels snapshot={snapshot} refresh={refresh} />
+        <aside className="inspector" aria-label="Repository changes and supervision">
+          <Panels snapshot={snapshot} refresh={refresh} worktrees={worktrees} gitStatus={gitStatus} agents={agents} currentAgent={currentAgent} capabilities={capabilities.capabilities} usage={usage} mcpServers={mcp.servers} />
         </aside>
       </div>
       )}
       <StatusBar
-        identity={identity}
+        agent={agents.find((entry) => entry.id === currentAgent)}
         model={currentModelName(options)}
         branch={gitStatus?.branch}
         usage={usage}
+        isRunning={isRunning}
       />
-      {settingsOpen && (
-        <SettingsDialog
-          onClose={() => setSettingsOpen(false)}
-          themeChoice={theme.choice}
-          onThemeChoice={theme.setChoice}
-          palette={palette}
-          onPalette={setPalette}
-          palettes={palettes}
-          railsOff={railsOff}
-          onRailsToggle={setRailsOff}
-          options={options}
-          setOption={setOption}
-          permissions={permissions}
-          capabilities={capabilities}
-          enforcement={{ level: snapshot?.enforcementLevel, transport: snapshot?.transport, copy: enforcementCopy }}
-          agents={agents}
-          currentAgent={currentAgent}
-          onSwitchAgent={(agent) => switchAgent(agent, refreshSessions)}
-        />
+      {paletteOpen && (
+        <CommandPalette commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
       )}
     </div>
   );

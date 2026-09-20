@@ -34,6 +34,7 @@ import { createOpenModelMeteringPool, type OpenModelMeteringPool } from "./open-
 import { findOpenModel, openSourcePoolFromEnv } from "./open-source-pool.js";
 import { DEFAULT_OPENCODE_MODEL, OPENCODE_METERED_PROVIDER_ID, type MeteredVendorProvider } from "./opencode-agent-config.js";
 import { loadUpstreamApiKey } from "./upstream-key.js";
+import { enabledMcpServers, type WorkflowSettings } from "./workflow-settings.js";
 
 export interface WorkflowAcpRuntime {
   readonly driver: AcpSessionDriver;
@@ -70,13 +71,20 @@ export function acpAgentKind(): AcpAgentKind {
   throw new Error(`WORKFLOW_ACP_AGENT must be "opencode", "cline", or "goose" (got ${JSON.stringify(raw)})`);
 }
 
+export interface AcpRuntimeOptions {
+  readonly permissionBroker?: PermissionBroker | undefined;
+  readonly agent?: AcpAgentKind | undefined;
+  /** Canonical Workflow settings projected into the agent's launch config. */
+  readonly settings?: WorkflowSettings | undefined;
+}
+
 export async function createConfiguredAcpRuntime(
   application: WorkflowApplication,
   workspace: string,
   taskId: TaskId | (() => TaskId),
   resumeFrom?: string,
   guard?: WorkflowGuardProvider,
-  options: { readonly permissionBroker?: PermissionBroker | undefined; readonly agent?: AcpAgentKind | undefined } = {},
+  options: AcpRuntimeOptions = {},
 ): Promise<WorkflowAcpRuntime> {
   const kind = options.agent ?? acpAgentKind();
   return kind === "opencode"
@@ -126,7 +134,7 @@ async function createOpencodeRuntime(
   taskId: TaskId | (() => TaskId),
   resumeFrom: string | undefined,
   guard: WorkflowGuardProvider | undefined,
-  options: { readonly permissionBroker?: PermissionBroker | undefined },
+  options: AcpRuntimeOptions,
 ): Promise<WorkflowAcpRuntime> {
   const scratchHome = resolve(homedir(), ".workflow", "acp-home");
   mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
@@ -182,10 +190,11 @@ async function createOpencodeRuntime(
       join(configDir, "opencode", "opencode.json"),
       JSON.stringify(meteredOpencodeConfig({
         proxyUrl: proxy.url,
-        model: configModel,
+        model: configModel ?? options.settings?.agents.opencode?.model,
         ...(autoLatest === undefined ? {} : { autoLatest: { aliases: autoLatest.aliases } }),
         ...(openSelection === undefined ? {} : { openSource: openSelection }),
         ...(skillsMount === undefined ? {} : { skills: skillsMount }),
+        ...(options.settings === undefined ? {} : { mcpServers: enabledMcpServers(options.settings) }),
       })),
       { encoding: "utf8", mode: 0o600 },
     );
@@ -234,11 +243,13 @@ async function createOpencodeRuntime(
           XDG_CONFIG_HOME: configDir,
         },
       },
-      authorize: options.permissionBroker === undefined
-        ? application
-        : (action: ProposedToolAction) =>
-          options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
-      workspace,
+       authorize: options.permissionBroker === undefined
+         ? application
+         : (action: ProposedToolAction) =>
+           options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
+        onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
+        onTodoUpdate: (entries) => application.mirrorNativeTodos(entries),
+        workspace,
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
@@ -316,7 +327,7 @@ async function createClineRuntime(
   taskId: TaskId | (() => TaskId),
   resumeFrom: string | undefined,
   guard: WorkflowGuardProvider | undefined,
-  options: { readonly permissionBroker?: PermissionBroker | undefined },
+  options: AcpRuntimeOptions,
 ): Promise<WorkflowAcpRuntime> {
   const scratchHome = resolve(homedir(), ".workflow", "acp-home");
   mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
@@ -357,11 +368,13 @@ async function createClineRuntime(
           CLINE_PROVIDER_SETTINGS_PATH: settingsPath,
         },
       },
-      authorize: options.permissionBroker === undefined
-        ? application
-        : (action: ProposedToolAction) =>
-          options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
-      workspace,
+       authorize: options.permissionBroker === undefined
+         ? application
+         : (action: ProposedToolAction) =>
+           options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
+        onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
+        onTodoUpdate: (entries) => application.mirrorNativeTodos(entries),
+        workspace,
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
@@ -413,7 +426,7 @@ export async function createConfiguredOpencodeAcpRuntime(
   workspace: string,
   taskId: TaskId,
   resumeFrom?: string,
-  options: { readonly permissionBroker?: PermissionBroker | undefined } = {},
+  options: AcpRuntimeOptions = {},
 ): Promise<WorkflowAcpRuntime> {
   return createOpencodeRuntime(application, workspace, taskId, resumeFrom, undefined, options);
 }
@@ -464,13 +477,26 @@ function loadOpencodeUpstreamApiKey(): string {
  * Azure AI Foundry is env-composed direct (endpoint + key env injected;
  * ambient az-CLI and Entra auth cannot survive the scratch-HOME boundary).
  */
+/**
+ * Blends the control plane's persisted goose model preference into the launch
+ * environment as a default. Explicit operator env (`WORKFLOW_GOOSE_MODEL` /
+ * `GOOSE_MODEL`) always wins; settings only fill the gap so a model chosen in
+ * the settings page is pushed on the next session.
+ */
+function gooseLaunchSettingsEnv(env: NodeJS.ProcessEnv, settings: WorkflowSettings | undefined): NodeJS.ProcessEnv {
+  const preferred = settings?.agents.goose?.model;
+  if (preferred === undefined) return env;
+  if ((env.WORKFLOW_GOOSE_MODEL ?? env.GOOSE_MODEL ?? "").trim().length > 0) return env;
+  return { ...env, WORKFLOW_GOOSE_MODEL: preferred };
+}
+
 async function createGooseRuntime(
   application: WorkflowApplication,
   workspace: string,
   taskId: TaskId | (() => TaskId),
   resumeFrom: string | undefined,
   guard: WorkflowGuardProvider | undefined,
-  options: { readonly permissionBroker?: PermissionBroker | undefined },
+  options: AcpRuntimeOptions,
 ): Promise<WorkflowAcpRuntime> {
   const scratchHome = resolve(homedir(), ".workflow", "acp-home");
   mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
@@ -491,9 +517,12 @@ async function createGooseRuntime(
   try {
     mkdirSync(join(configDir, "config"), { recursive: true, mode: 0o700 });
     const skillsMount = resolveSkillsMount();
-    const configYaml = gooseConfigYaml(skillsMount === undefined ? {} : {
-      skillsServerScript: skillsMount.serverScript,
-      skillsDir: skillsMount.skillsDir,
+    const configYaml = gooseConfigYaml({
+      ...(skillsMount === undefined ? {} : {
+        skillsServerScript: skillsMount.serverScript,
+        skillsDir: skillsMount.skillsDir,
+      }),
+      ...(options.settings === undefined ? {} : { mcpServers: enabledMcpServers(options.settings) }),
     });
     // Probe-pending: the config.yaml schema/location under GOOSE_PATH_ROOT
     // is resolved by the gated MOUNT probe (a no-mount outcome is recorded
@@ -528,14 +557,18 @@ async function createGooseRuntime(
           provider,
           configRoot: configDir,
           proxyUrl: proxy?.url,
-          env: process.env,
+          // The control plane's persisted model preference is a launch default
+          // only: an explicit operator env var still wins.
+          env: gooseLaunchSettingsEnv(process.env, options.settings),
         }),
       },
-      authorize: options.permissionBroker === undefined
-        ? application
-        : (action: ProposedToolAction) =>
-          options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
-      workspace,
+       authorize: options.permissionBroker === undefined
+         ? application
+         : (action: ProposedToolAction) =>
+           options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
+        onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
+        onTodoUpdate: (entries) => application.mirrorNativeTodos(entries),
+        workspace,
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),

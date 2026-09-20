@@ -98,7 +98,8 @@ export class OpenCodeSessionDriver implements CodingSessionDriver {
       return;
     }
     if (part?.type !== "tool") return;
-    const tool = stringValue(part.tool);
+    // V2 renamed the tool-part field `name` -> `tool`; accept both shapes.
+    const tool = stringValue(part.tool) ?? stringValue(part.name);
     const state = record(part.state);
     if (tool === undefined || state === undefined) return;
     if (state.status === "running") {

@@ -115,7 +115,8 @@ function isPersistedWorkflow(value: unknown): value is PersistedWorkflow {
     Number.isSafeInteger(state.mutationEpoch) && (state.mutationEpoch as number) >= 0 &&
     (state.allowedCapabilities === undefined || (Array.isArray(state.allowedCapabilities) && state.allowedCapabilities.every(isToolCapability))) &&
     (state.workspaceRoot === undefined || (typeof state.workspaceRoot === "string" && state.workspaceRoot.startsWith("/"))) &&
-    (state.codingSessionCorrelation === undefined || isNonEmptyString(state.codingSessionCorrelation))
+    (state.codingSessionCorrelation === undefined || isNonEmptyString(state.codingSessionCorrelation)) &&
+    (state.steps === undefined || (Array.isArray(state.steps) && state.steps.every(isWorkflowStep)))
   )) return false;
   const taskIds = new Set((state.tasks as Record<string, unknown>[]).map((task) => task.id));
   return taskIds.size === state.tasks.length &&
@@ -126,6 +127,7 @@ function isPersistedWorkflow(value: unknown): value is PersistedWorkflow {
 }
 
 const TASK_STATES = new Set(["BLOCKED", "READY", "IN_PROGRESS", "VERIFYING", "VERIFIED", "FAILED"]);
+const STEP_STATES = new Set(["PENDING", "IN_PROGRESS", "COMPLETED", "CANCELLED"]);
 const EVIDENCE_AUTHORITIES = new Set(["environment", "host", "mcp", "reviewer"]);
 const TOOL_CAPABILITIES = new Set(["read", "mutation", "process", "spawn", "credentials", "network"]);
 
@@ -149,8 +151,19 @@ function isWorkflowTask(value: unknown): boolean {
     });
 }
 
-function isEvidence(value: unknown): boolean {
+function isWorkflowStep(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
+  const step = value as Record<string, unknown>;
+  return isNonEmptyString(step.id) && isNonEmptyString(step.taskId) && isNonEmptyString(step.content) &&
+    STEP_STATES.has(step.state as string) &&
+    Array.isArray(step.requiredEvidence) && step.requiredEvidence.every((requirement) => {
+      if (typeof requirement !== "object" || requirement === null) return false;
+      const record = requirement as Record<string, unknown>;
+      return EVIDENCE_AUTHORITIES.has(record.authority as string) && isNonEmptyString(record.subject);
+    });
+}
+
+function isEvidence(value: unknown): boolean {  if (typeof value !== "object" || value === null) return false;
   const evidence = value as Record<string, unknown>;
   return isNonEmptyString(evidence.id) && isNonEmptyString(evidence.observationId) &&
     EVIDENCE_AUTHORITIES.has(evidence.authority as string) && isNonEmptyString(evidence.subject) &&

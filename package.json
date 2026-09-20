@@ -1,6 +1,6 @@
 {
   "name": "workflow",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
@@ -12,7 +12,8 @@
     }
   },
   "bin": {
-    "workflow": "dist/cli/web-launch.js",
+    "workflow": "dist/cli/workflow.js",
+    "workflow-web": "dist/cli/web-launch.js",
     "workflow-tui": "dist/cli/universal-tui.js",
     "workflow-hub": "dist/cli/hub.js",
     "workflow-admin": "dist/cli/admin.js",

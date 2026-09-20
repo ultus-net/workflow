@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 
 import { describeFailure } from "./failure-copy.js";
-import { DiffText, looksLikeDiff } from "./diff-text.js";
+import { DiffText, EditDiff, looksLikeDiff, parseEditTool } from "./diff-text.js";
 import { useSessionState } from "./runtime.js";
 
 interface ActionData {
@@ -99,9 +99,13 @@ interface ToolData {
   readonly rawOutput?: string | undefined;
 }
 
-/** Typed tool-call card: kind, live status, subjects, and collapsible I/O. */
+/** Typed tool-call card: kind, live status, subjects, and collapsible I/O.
+ * Edit tools render as an OpenCode-style diff (line-numbered, red/green)
+ * instead of a raw JSON blob. */
 export function ToolPart({ data }: { readonly data: ToolData }) {
   const kindLabel = TOOL_KIND_LABELS[data.toolKind] ?? data.toolKind;
+  const edit = data.toolKind === "edit" ? parseEditTool(data.rawInput, data.rawOutput) : undefined;
+  const hasEdit = edit !== undefined && (edit.patch !== undefined || edit.before !== undefined || edit.after !== undefined);
   return (
     <div className={`part part-tool part-tool-${data.status}`}>
       <div className="part-tool-head">
@@ -115,7 +119,9 @@ export function ToolPart({ data }: { readonly data: ToolData }) {
       {data.subjects.length > 0 && (
         <div className="part-subjects">{data.subjects.join("  ")}</div>
       )}
-      {(data.rawInput !== undefined || data.rawOutput !== undefined) && (
+      {hasEdit ? (
+        <EditDiff data={edit} />
+      ) : (data.rawInput !== undefined || data.rawOutput !== undefined) && (
         <details className="part-tool-io">
           <summary>input / output</summary>
           {data.rawInput !== undefined && (

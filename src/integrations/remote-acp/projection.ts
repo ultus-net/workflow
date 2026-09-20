@@ -69,6 +69,8 @@ export function projectSessionUpdate(
       text?: unknown;
       callID?: unknown;
       tool?: unknown;
+      /** V1 shape only: v2 renamed this field to `tool`. */
+      name?: unknown;
       state?: { status?: unknown; input?: unknown; output?: unknown; title?: unknown };
     };
   };
@@ -93,13 +95,16 @@ export function projectSessionUpdate(
     const state = part.state ?? {};
     const sessionUpdate = state.status === "pending" ? "tool_call" : "tool_call_update";
     const locations = inputLocations(state.input);
+    // V2 renamed the tool-part field `name` -> `tool`; resolve either shape once.
+    const toolName = typeof part.tool === "string" ? part.tool
+      : typeof part.name === "string" ? part.name : undefined;
     return {
       sessionId,
       update: {
         sessionUpdate,
         toolCallId: part.callID,
-        title: typeof state.title === "string" ? state.title : (typeof part.tool === "string" ? part.tool : undefined),
-        kind: toolKind(part.tool),
+        title: typeof state.title === "string" ? state.title : toolName,
+        kind: toolKind(toolName),
         status: toolStatus(state.status),
         rawInput: state.input,
         ...(typeof state.output === "string"

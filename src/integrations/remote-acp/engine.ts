@@ -11,6 +11,8 @@
  * spec, section 3.
  */
 
+import { isHealthyOpencodeBody } from "../opencode-health.js";
+
 export type RemoteEngineReply = "once" | "always" | "reject";
 
 export interface RemoteEnginePermissionRequest {
@@ -39,6 +41,8 @@ export interface RemotePart {
   readonly text?: string;
   readonly callID?: string;
   readonly tool?: string;
+  /** V1-shaped tool parts carry the tool name here; v2 uses `tool` (guard handoff §1). */
+  readonly name?: string;
   readonly state?: RemotePartState;
 }
 
@@ -157,10 +161,34 @@ export class HttpRemoteEngine implements RemoteEngine {
   }
 
   async health(): Promise<{ healthy: boolean; version?: string }> {
-    const body = await this.#json("GET", "/global/health", { cwd: this.#defaultCwd });
-    return isRecord(body) && body.healthy === true
-      ? { healthy: true, ...(typeof body.version === "string" ? { version: body.version } : {}) }
-      : { healthy: false };
+    // v2 answers the authenticated liveness envelope on /api/info; v1 answered
+    // {healthy: true} on /global/health (v2 serves its web-UI HTML catch-all
+    // there — a 200 that must never parse as healthy). A 401/403 rejects: a
+    // wrong credential must surface, never degrade to unhealthy.
+    let networkError: unknown;
+    for (const path of ["/api/info", "/global/health"] as const) {
+      let response: Response;
+      try {
+        response = await this.#fetch(this.#url(path, this.#defaultCwd), { method: "GET", headers: this.#headers() });
+      } catch (error) {
+        networkError = error;
+        continue;
+      }
+      networkError = undefined;
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(`remote engine GET ${path} failed (${response.status})`);
+      }
+      if (!response.ok) continue;
+      const body: unknown = await response.json().catch(() => undefined);
+      if (isHealthyOpencodeBody(path, body)) {
+        const version = isRecord(body) && typeof body.version === "string" ? body.version : undefined;
+        return version === undefined ? { healthy: true } : { healthy: true, version };
+      }
+      // 200 non-JSON (the v2 HTML catch-all) or an unexpected envelope: fall
+      // through to the v1 route.
+    }
+    if (networkError !== undefined) throw networkError;
+    return { healthy: false };
   }
 
   async createSession(input: { cwd: string; title?: string }): Promise<{ id: string }> {
@@ -281,11 +309,21 @@ export class HttpRemoteEngine implements RemoteEngine {
   }
 
   async *events(input: { cwd: string; signal: AbortSignal }): AsyncIterable<RemoteEngineEvent> {
-    const response = await this.#fetch(this.#url("/global/event", input.cwd), {
-      method: "GET",
-      headers: { ...this.#headers(), accept: "text/event-stream" },
-      signal: input.signal,
-    });
+    // v2 moved the JSON API (and the SSE stream) under `/api/*`; the bare
+    // `/global/event` spelling is v1 and now answers with the web UI's HTML
+    // catch-all — a 200 that is NOT an event stream. Try the documented v2
+    // route first and fall back to the v1 spelling by content type, so the
+    // subscription is live on either pinned generation.
+    const open = async (path: string): Promise<Response> =>
+      this.#fetch(this.#url(path, input.cwd), {
+        method: "GET",
+        headers: { ...this.#headers(), accept: "text/event-stream" },
+        signal: input.signal,
+      });
+    let response = await open("/api/event");
+    if (!response.ok || !(response.headers.get("content-type") ?? "").includes("text/event-stream")) {
+      response = await open("/global/event");
+    }
     if (!response.ok || response.body === null) {
       throw new Error(`remote engine event stream failed (${response.status})`);
     }

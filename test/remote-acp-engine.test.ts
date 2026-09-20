@@ -40,9 +40,47 @@ test("HttpRemoteEngine sends the directory query and basic auth on requests", as
   });
   const health = await engine.health();
   assert.deepEqual(health, { healthy: true, version: "1.18.31" });
-  assert.match(captured[0]!.url, /^http:\/\/127\.0\.0\.1:4096\/global\/health\?directory=%2Fworkspace$/);
+  // The v2 info route is the primary health contract (v1 fallback below).
+  assert.match(captured[0]!.url, /^http:\/\/127\.0\.0\.1:4096\/api\/info\?directory=%2Fworkspace$/);
   const headers = captured[0]!.init?.headers as Record<string, string>;
   assert.equal(headers.authorization, `Basic ${Buffer.from("operator:secret").toString("base64")}`);
+});
+
+test("HttpRemoteEngine health falls back to the v1 route when /api/info is missing", async () => {
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4097",
+    cwd: "/workspace",
+    username: "operator",
+    password: "secret",
+    fetch: async (url) => String(url).includes("/api/info")
+      ? new Response("not found", { status: 404 })
+      : new Response(JSON.stringify({ healthy: true, version: "1.18.31" }), { status: 200 }),
+  });
+  assert.deepEqual(await engine.health(), { healthy: true, version: "1.18.31" });
+});
+
+test("HttpRemoteEngine health rejects on an auth failure instead of degrading to unhealthy", async () => {
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4098",
+    cwd: "/workspace",
+    username: "operator",
+    password: "wrong",
+    fetch: async () => new Response("unauthorized", { status: 401 }),
+  });
+  await assert.rejects(() => engine.health(), /failed \(401\)/);
+});
+
+test("HttpRemoteEngine health refuses the v2 HTML catch-all served on /global/health", async () => {
+  // Stock v2.x serves the web UI as an SPA fallback on bare paths: a 200 whose
+  // body is HTML must never parse as healthy.
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4099",
+    cwd: "/workspace",
+    fetch: async (url) => String(url).includes("/api/info")
+      ? new Response("not found", { status: 404 })
+      : new Response("<!doctype html><html lang=\"en\"><body>OpenCode</body></html>", { status: 200, headers: { "content-type": "text/html" } }),
+  });
+  assert.deepEqual(await engine.health(), { healthy: false });
 });
 
 test("HttpRemoteEngine posts the prompt and the permission reply to the documented routes", async () => {

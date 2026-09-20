@@ -76,6 +76,23 @@ test("ACP session driver projects a turn through the CodingSessionDriver contrac
   );
 });
 
+test("ACP session driver projects usage, commands, and cumulative token totals", async () => {
+  const { driver, child } = driverFor("rich");
+  const session = new WorkflowCodingSession(driver);
+  try {
+    await driver.connect();
+    await session.submit("measure usage");
+    assert.deepEqual(driver.agentInfo(), { name: "fake-acp-agent", version: "0.0.0" });
+    assert.deepEqual(driver.sessionCapabilities(), { close: true, fork: true, list: true, resume: true });
+    assert.deepEqual(driver.availableCommands(), [{ name: "init", description: "guided setup" }]);
+    assert.deepEqual(driver.acpUsageSnapshot(), { used: 12000, size: 128000, costUsd: 0.03 });
+    assert.deepEqual(driver.turnTokenTotals(), { input: 12000, output: 500, turns: 1 });
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+});
+
 test("ACP session driver projects plan, thinking, typed tool calls, and session titles", async () => {
   const { driver, child } = driverFor("batch2");
   const events: CodingSessionEvent[] = [];

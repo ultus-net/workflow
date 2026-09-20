@@ -66,6 +66,14 @@ function toolPart(callId: string, tool: string, status: string = "pending", inpu
   };
 }
 
+/** V1 part shape: the tool name rides in `name` (v2 renamed the field to `tool`). */
+function v1ToolPart(callId: string, name: string, status: string = "pending", input?: unknown): RemoteEngineEvent {
+  return {
+    type: "message.part.updated",
+    properties: { sessionID: "s1", part: { type: "tool", callID: callId, name, state: { status, input } } },
+  };
+}
+
 function application(workspace: string, capabilities: readonly ToolCapability[]): WorkflowApplication {
   return new WorkflowApplication(
     new TaskGraph([]),
@@ -367,6 +375,20 @@ test("W071 broker (M4): a completed decided mutation advances the mutation epoch
   assert.ok(app2.snapshot().mutationEpoch > epochAfterDecision, "an observed completed mutation must advance the epoch");
 });
 
+test("v2 sync: a v1-shaped tool part (name field) still advances the mutation epoch", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-v1-part-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const app = application(workspace, ["read", "mutation", "process"]);
+  const beforeEpoch = app.snapshot().mutationEpoch;
+  const observed = fakeEngine([
+    permission("r1", "edit", { filePath: join(workspace, "src", "a.ts") }, "c1"),
+    v1ToolPart("c1", "edit", "completed"),
+  ]);
+  const authority = createOpencodeServerAuthority({ engine: observed.engine, application: app, workspace });
+  await authority.start();
+  assert.ok(app.snapshot().mutationEpoch > beforeEpoch, "a v1-shaped completed mutation must still advance the epoch");
+});
+
 test("W071 broker: a completed DENIED mutation neither advances the epoch nor covers later activity (review P1-1)", async (t) => {
   const workspace = mkdtempSync(join(tmpdir(), "wf-broker-deny-obs-"));
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
@@ -486,4 +508,13 @@ test("W071 broker: read_skill matching is exact, not substring (review P3-3)", (
   assert.equal(opencodePermissionCapability("read_skill"), "read");
   assert.equal(opencodePermissionCapability("skills-mcp__read_skill"), "read");
   assert.equal(opencodePermissionCapability("evilread_skill"), undefined);
+});
+
+test("W071 broker: v2 execute/websearch/question tools are capability-mapped (review P2)", () => {
+  assert.equal(opencodePermissionCapability("execute"), "process");
+  assert.equal(opencodePermissionCapability("websearch"), "network");
+  assert.equal(opencodePermissionCapability("question"), "read");
+  // Agent-reported names outside the registry stay unmapped; the adapter's
+  // kind-based classification (conservative) applies instead.
+  assert.equal(opencodePermissionCapability("todowrite"), undefined);
 });

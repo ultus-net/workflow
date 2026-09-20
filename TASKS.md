@@ -975,6 +975,84 @@ real contained launch with a key, the literal interactive TUI operator smoke,
 the `HOST_ADAPTERS.md` verdict row, and the final five-axis review pass. The
 surface remains **`advisory`** — no `enforced` claim until the probes run.
 
+## Phase 14: Roadmap Compliance & Plugin-Retirement Parity (2026-09-19)
+
+### W072 - Three-level decomposition ledger + strict-compliance register
+
+**Objective:** Make the agent's decomposition a **deterministic, operator-gated ledger** —
+roadmap/plan → canonical tasks → canonical steps/todos — so a task cannot be marked done while its
+steps are open, and so goals/work cannot drift from the plan without operator approval. This is the
+capability the operator's "evidence + ledger" requires and the precondition for retiring
+`opencode-workflow-guard` (Checkpoint D).
+
+**Depends on:** W046 (task-command port), W050 (hub-http seam), W071 (standard-TUI authority), and
+Phase G of `docs/superpowers/plans/2026-09-15-hub-owned-enforcement.md`.
+
+**Spec:** `docs/TASK_TODO_LEDGER_PARITY.md` — invariants I-1…I-10, kernel child nodes, evidence-bound
+checkoff, immutable execution-log target, staged bridge→MCP migration, Phase-G retirement parity.
+**V2 target:** `docs/OPENCODE_V2_MIGRATION_SPEC.md` — C/D and the native bridge now target the OpenCode
+v2 HTTP API after qualification; no deeper v1 ACP expansion without a separately approved compatibility fix.
+**Register:** `docs/COMPLIANCE_REGISTER.md` — DRIFT-001…024 obligations (strict compliance; no prose
+promotions).
+**Baseline:** `docs/PLAN_VS_REALITY_AUDIT.md`.
+
+**Acceptance criteria:**
+- [ ] **I-1** Mutations deny without an active canonical step on an `IN_PROGRESS` task (`NO_ACTIVE_STEP`),
+      enforced at the application gate and mirrored in `workflow-guard-mcp`; test proves the deny.
+- [ ] **I-2** Active steps cannot be silently deleted/omitted; test proves the block.
+- [ ] **I-3** Step completion requires fresh typed evidence bound to the step (subject `step:<id>`);
+      an agent cannot complete a step without an intervening authorized/observed action; test proves it.
+- [ ] **I-4** A task/run cannot leave `IN_PROGRESS`/reach `VERIFIED` while any required step is open;
+      a canonical `isRunComplete` predicate refuses completion with any required node open; tests prove both.
+- [ ] **I-5** Secondary review audits the ledger against the diff/evidence; a checked step with no
+      corresponding work yields a P0/P1 and `REQUEST_CHANGES`; pinned by a review test.
+- [ ] **I-6** Immutable plan ledger + **append-only execution log**; canonical state is a deterministic
+      replay/projection of the log (write/read only; permissions deterministic); restart resumes by replay.
+- [ ] **I-7** Every step declares its done-condition before it can start; test proves an undeclared step cannot start.
+- [ ] **I-8** At most one `IN_PROGRESS` step per task; test proves a second concurrent start is rejected.
+- [ ] **I-9** Deterministic validation gates ordered codes→schema→cross-field→**state-diff re-query**→tests;
+      an LLM only classifies; test proves a claimed-but-absent change is rejected.
+- [ ] **I-10** Every execution-log entry carries durable identity (session/agent/task/step).
+- [x] Stage 1 native-`todowrite` bridge keeps the agent's DX while the plugin remains the enforcement
+      seat (per Phase G). Stage 2 hub-owned enforcement; Stage 3 portable MCP step tool; Stage 4 G6 corpus
+      remain future stages.
+- [ ] Drift obligations closed with linked evidence: in particular **DRIFT-003** (GUARD_CORPUS_MAP
+      "Ported (superset)" overclaim), **DRIFT-004** (`workflow-fs-exec-mcp` dead `/before-tool` route),
+      **DRIFT-008/009** (empty `requiredEvidence` escape, missing run-completion predicate),
+      **DRIFT-001/002** (W050/Cline reconciliation, Checkpoint C evidence).
+- [ ] Ledger checks folded into the G6 adversarial corpus; `opencode-workflow-guard` retirement only
+      after the per-pinned-version criteria (a)/(b)/(c) pass — never date-gated.
+- [ ] Focused gates pass (`npm run lint`, `npm run typecheck`, focused tests) and an independent
+      five-axis review is recorded.
+
+**Verification:** kernel/application tests for I-1…I-4, the `isRunComplete` test, the review-audit test,
+the G6 corpus run for the pinned agent version, and the closed `docs/COMPLIANCE_REGISTER.md` rows with
+their linking artifacts.
+
+**Status (2026-09-20, Stage 1 bridge landed; C/D paused for OpenCode v2):** spec, audit, compliance register,
+and v2 migration/qualification spec are committed. Stage 1 kernel/application work plus native ACP
+`todowrite` bridge are implemented and reviewed **APPROVE**. Focused gates: typecheck/lint clean;
+145/145 focused tests; `test/step-ledger.test.ts` now pins ledger, restore, done-condition, ownership,
+and bridge behavior. **Still open:** all-surface enforcement, G6 corpus folding, immutable execution log,
+state-diff evidence, v2 C/D reconciliation, and Phase-G probes. W072 remains **in progress**, not
+complete.
+
+**Addendum (2026-09-20, v2 host-version finding):** stock OpenCode **removed the `todowrite`/`todoread`
+agent tools entirely in v2** (upstream `anomalyco/opencode#42421`, closed **not planned**; verified
+on the pinned v2.0.10 binary — zero tool strings, zero HTTP todo routes; only adjacent experimental
+surface is `instructions/entries`). Consequences: the native-todowrite bridge has **no agent-facing
+input on the pinned OpenCode host version** (it remains valid for hosts that expose native todos —
+goose/cline); the guard's todowrite gate can never be satisfied by a model on OpenCode v2, which
+validates the earlier removal of the todo requirement from the workflow-guard plugin. Decision: do
+NOT pivot tracking to `instructions/entries` (experimental, session-scoped, wrong semantics), and —
+per the operator's no-plugins constraint — do NOT restore a todo tool via the v2 plugin API's
+`ctx.tool.transform` (the richer v2 plugin surface is deliberately not adopted; see the constraint
+recorded in project memory 2026-09-20). The canonical tracking surface is the Workflow step ledger —
+surfacing it in the custom web UI is the accepted track; an upstream-candidate PR (§8) to restore a
+generic todo tool is parked, and the interim advisory workaround is a plan file via
+`WORKFLOW_ADVISORY_NOTES`. Recorded in project memory 2026-09-20.
+
+
 ## Phase 15: Bounded recursive self-improvement (2026-09-19)
 
 ### W073 - Bounded self-improvement loop (Karpathy loop) under Workflow authority
@@ -1123,3 +1201,247 @@ W073 loop and hub scheduler were checked against it. Gaps (honest, tracked):
       page card + `/rsi` surface-handled command) over the `/rsi/*` routes.
 - [ ] Durable/resumable loop registry (atomic `StateAccessor`-style persistence)
       + per-iteration step/token ceilings + completion notification.
+
+## Phase 16: Settings Panel, Launcher Engine Axis, and Hub Orientation (2026-09-20)
+
+The operator panel rollout (selector `13269a9`, connector catalog `c221908`, model routing
+`91ab09f` is **complete**). Remaining slices of the agreed sequence plus the hub-briefing design
+decision (recorded in project memory 2026-09-20).
+
+### W075 - Launcher engine axis: `workflow web --agent <kind>`
+
+**Objective:** Let the operator choose the ACP agent kind (opencode / goose / cline) at launch —
+`workflow web --agent goose` — resolved through `WORKFLOW_ACP_AGENT`, with the panel's agent
+switcher and posture labels driven by `listWebAgents()` (`src/ui/web-agents.ts`). One selector
+implementation covers all surfaces; per-kind probe verdicts in `docs/HOST_ADAPTERS.md` decide what
+each surface may claim.
+
+**Depends on:** the committed selector (`13269a9`); connector catalog (`c221908`); model routing
+(`91ab09f`).
+
+**Acceptance criteria:**
+- [x] `workflow web --agent <kind>` accepts `opencode`, `goose`, `cline`; invalid kinds fail closed
+      with the valid list in the error. (`parseAgentFlag`, pinned in `test/workflow-launcher.test.ts`.)
+- [x] Explicit `--agent` overrides `WORKFLOW_ACP_AGENT`; absence leaves the env default untouched.
+      (`resolveAgentKind` precedence pinned; the launcher writes the same env the runtime reads, so
+      every surface honors one axis. An invalid env value stays `acpAgentKind`'s fail-closed problem.)
+- [x] The webapp surfaces the resolved engine kind and its containment posture (from
+      `listWebAgents()`) honestly — unprobed kinds show their probe-PENDING status, not a green check.
+      (Pre-existing and pinned: status-bar containment title, agent switcher, settings AgentSection,
+      `/api/agents` with availability `reason`; goose/cline render `contained`, opencode `advisory`.)
+- [x] Parsing lives in `src/cli/launcher-args.ts` with focused tests; `npm run typecheck`/`lint` clean;
+      an independent five-axis review is recorded. (Parsing + tests + gates done 2026-09-20. Review
+      round 1: REQUEST_CHANGES — three P2, three P3, no P0/P1; all six fixed in `d2c78cd` (honest
+      launch-consumption copy, truthful save state + disclosed clear limitation, wired precedence,
+      exact-value fact pins, `acpAgentKind` lockstep drift guard). Re-review 2026-09-20: **APPROVE**
+      recorded, 35/35 focused.)
+
+**Verification:** `node --import tsx --test test/workflow-launcher.test.ts` (10/10 after the
+lockstep test; 35/35 across web-settings + webapp-surface + workflow-launcher), typecheck and lint
+clean, five-axis review APPROVED (2026-09-20).
+
+### W076 - Qualification probes: stock opencode web UI behind the hub gateway; v2 config hot-reload
+
+**Objective:** Turn the two remaining experimental seams into probe-gated, dated verdicts: (a) the
+stock opencode web UI projected through the hub gateway as a second surface (per
+`docs/ideas/hub-control-plane.md`); (b) v2 config hot-reload — a routing/settings change reaching a
+live hub session without a restart.
+
+**Depends on:** W075 (engine axis lands before probes exercise multiple agent kinds).
+
+**Acceptance criteria:**
+- [x] A live probe drives the stock opencode web UI behind the hub gateway and records the verdict
+      per pinned version in `docs/HOST_ADAPTERS.md` (gated, skips clean when unset).
+      (`test/opencode-webui-gateway-probe.test.ts`, gate `WORKFLOW_OPENCODE_WEBUI_PROBE=1`; **live
+      green on stock v2.0.10, 2026-09-20** through the enforced gateway. Required a deliberate
+      `app-shell` route class (§2.5 row) and surfaced the version-tolerance repair: v2.x serves the
+      SPA on every bare path, so the health wait walks both contracts via the shared
+      `src/integrations/opencode-health.ts` module (v1 JSON `{healthy:true}` or v2 `/api/info` —
+      landed 2026-09-20 from a concurrent session in this checkout, folded into the W076 commit with
+      attribution); the always-run runtime test (4/4) is repaired. The M1 attach probe's bare-path
+      spellings are stale on v2.0.10 — stated in `docs/HOST_ADAPTERS.md` with the reason;
+      re-qualification open.)
+- [x] A live probe or deterministic test proves config publish → live session pickup (or documents
+      the restart-required limitation honestly in `docs/FEATURES.md`). (Documented: launch-time
+      application only — only `model` reaches a launch config today; reasoning effort has no launch
+      consumer yet; no hot reload, changes reach a *new* session. Pinned by the routing UI copy +
+      focused tests; `docs/FEATURES.md` row "Settings panel: model routing (slice 2)".)
+- [x] No claim upgrades to Complete without the probe evidence; hub config publish remains the
+      single journal of record. (The web-UI row was upgraded only with the live probe; W071's attach
+      surface stays advisory/probe-PENDING with the staleness stated, not silently repaired.)
+
+**Verification:** `WORKFLOW_OPENCODE_WEBUI_PROBE=1 node --import tsx --test
+test/opencode-webui-gateway-probe.test.ts` green (v2.0.10, 2026-09-20); classifier + gateway suites
+82/82; `test/opencode-server-runtime.test.ts` 4/4; typecheck and lint clean; dated rows in
+`docs/HOST_ADAPTERS.md`, `docs/FEATURES.md`, and §2.5.
+
+**Gap follow-ups (2026-09-20, same day — the two named gaps are closed):**
+- **Fresh research** against the brand-new official v2 docs (`opencode.ai/v2/docs/api`, 136
+  operations — §9): the matrix was reconciled with the documented inventory (bare permission/
+  worktree/pty reads unblocked; documented session ops classified — `agent`/`model` switch,
+  experimental `skill`/`wait`, staged-revert family, inbox PATCH; undocumented verbs like `PUT
+  /api/session/{id}` and the speculative `switch` narrowed away), and the dual-lane integration
+  decision (ACP = control lane; v2 HTTP API = data lane, per the operator) is recorded in project
+  memory and §9.
+- **M1 attach probe re-qualified live on v2.0.10** (`WORKFLOW_OPENCODE_SERVER_ATTACH=1`, v2
+  spellings): config loaded and parsed, `/api/session` create through the gateway returns
+  `data.id`, authority split holds, **broker SSE subscribes and intercepts without forwarding**
+  (the engine's event stream now tries `/api/event` by content-type with a `/global/event`
+  fallback). Still advisory — the live permission path needs a model key.
+- **v2 provider-visibility finding** (§9, matching the upstream custom-provider issue class):
+  config-defined providers do not list in `/api/provider` or `/api/model` on v2.0.10, and
+  `/api/model/default` ignores the config `model`; the metered provider is asserted via the loaded
+  config documents. Follow-up: evaluate the `/api/credential/{id}/activate` path for metered
+  visibility.
+- **The stock web UI tab is wired**: `openStockWebTab` (`src/cli/web-launch.ts`) surfaces the
+  gateway-served stock UI as a second `workflow web` tab when the topology daemon is already
+  running (probe-verified, quiet otherwise, foreign-host refused, `WORKFLOW_OPENCODE_STOCK_TAB=0`
+  opt-out); 3/3 focused tests (`test/web-launch-tab.test.ts`).
+
+### W077 - Hub orientation briefing (prompt-level block; skill depth layer behind a dated decision)
+
+**Objective:** Give hub-launched agents a deterministic orientation so toolbox/guard tools are used
+correctly. Design decision recorded 2026-09-20: a static, versioned, provenance-tagged prompt-level
+orientation block is the guaranteed/discovery layer (~100–150 tokens: hub role, tool presence,
+"check `guard_next_tasks` before planning", pointer to the skill); detailed tool data lives in a
+skill body **generated from `toolbox-catalog.ts`** (single source of truth, written as a workspace
+file at session create for OpenCode first). Native host skill injection stays **off** per the
+2026-09-15 hub-owned-enforcement plan — the skill-file route needs an explicit dated supersession or
+a file-provisioning framing before it ships.
+
+**Depends on:** W076 (probes establish the host-version behavior the skill-discovery claim needs).
+
+**Acceptance criteria:**
+- [x] `buildOrientation()` (extending `src/integrations/prompt-guidance.ts`): static template,
+      `ORIENTATION_VERSION` stamp, no interpolation of task/repo/env data, silence-when-unset,
+      prepended at scheduled-turn session start. (Implemented as `buildOrientation` +
+      `hubPromptGuidanceFromEnv` — the hub composes orientation first, operator advisory second;
+      `WORKFLOW_HUB_ORIENTATION=0` opts out. The block is composed once at hub startup and
+      **prepended per scheduled turn** — each scheduled run's session start; bounded ~160 tokens.
+      Version "2" drops the pointer to the not-yet-delivered skill, review P2.)
+- [x] Composition pin + no-interpolation pin in focused tests (scheduler composition like
+      `test/hub-scheduler.test.ts:178`). (Pinned in `test/g5-observability.test.ts`: **full-text
+      frozen pin** — any wording change must fail the test and force a version bump — plus
+      no-placeholder and hedged-tool-presence pins, opt-out pin, ordering pin; the scheduler's own
+      `promptGuidance` seam is unchanged so the existing composition pin holds.)
+- [x] Orientation version + fingerprint recorded in the run registry for review provenance. (The
+      version is embedded in the block text; the scheduler now records the **composed** prompt as
+      the run's `taskPrompt` — pinned by a scheduler test (`begin records the composed prompt`) —
+      so the W041 provenance digest binds exactly what the agent received and an orientation change
+      invalidates recorded fingerprints. Review P1: the original claim was false because `begin`
+      recorded the raw schedule prompt; fixed in the same slice.)
+- [x] Skill body generated from the toolbox catalog with a content-pinning test against the corpus;
+      per-host delivery (OpenCode skill dir; goose/cline) only when that surface qualifies.
+      (`toolboxSkillBody` generates from the resolved catalog — names, descriptions, truthful
+      availability; corpus-pinned in `test/toolbox-catalog.test.ts`. **Delivery is deliberately NOT
+      implemented**: native host skill injection stays off per the 2026-09-15 plan — a dated
+      decision or file-provisioning framing is the prerequisite, stated in `docs/FEATURES.md` —
+      and the orientation block does not reference the skill until it ships.)
+- [x] Ledger rows in `docs/HARNESS_ASSUMPTION_LEDGER.md` (advisory orientation block, skill recall)
+      and a `docs/FEATURES.md` status entry; advisory only — enforcement stays in the guard MCP
+      server. (Orientation row added; the skill-delivery row lands with the delivery decision.)
+
+**Verification:** `test/g5-observability.test.ts` (W077 composition/opt-out/no-interpolation pins) +
+`test/toolbox-catalog.test.ts` (skill-body corpus pin) + `test/hub-scheduler.test.ts` (seam
+unchanged) — 23/23; typecheck and lint clean; ledger + FEATURES rows dated 2026-09-20. Five-axis
+review round 1: REQUEST_CHANGES (P1 provenance claim false — begin recorded the raw prompt; P2
+block pointed at the undelivered skill; three P3s) — all fixed in `c296415` (composed prompt is the
+recorded ask, orientation v2 drops the skill pointer, full-text frozen pin, hedged tool presence,
+precise wording). Re-review 2026-09-20: **APPROVE** recorded.
+
+### W078 - `workflow doctor`: honest self-check of the operator's setup
+
+**Objective:** One command that states the truth about the local setup — settings docs parse,
+credential presence (booleans, never values), hub/gateway reachability, containment posture
+(enforced vs policy-only), and per-surface probe verdicts from `docs/HOST_ADAPTERS.md` — surfaced
+fail-loud, matching the honest-claims culture. Idea adopted from oh-my-openagent's `doctor`
+(pattern only; SUL-1.0 upstream, no code).
+
+**Depends on:** none.
+
+**Acceptance criteria:**
+- [ ] `workflow doctor` checks: settings files parse (global + workspace overlay), credential
+      presence per agent (presence booleans only), hub reachability (discovery + probe), server
+      topology gateway reachability, containment backend report, and prints each surface's
+      probe-PENDING verdicts with their gates.
+- [ ] Every check is pass/warn/fail with an actionable fix line; nothing silently passes.
+- [ ] Focused tests pin the report composition; typecheck and lint clean; five-axis review.
+
+### W079 - Hash-anchored edits: evaluation against the read-fingerprint ledger (design doc)
+
+**Objective:** Evaluate a Hashline-style upgrade (`LINE#ID` content-hash tags on reads, edits
+validated against the tags) for the surfaces where Workflow owns the edit path, against the
+implemented `FileClaimLedger` digest/size/mtime freshness (DRIFT-022). Idea adopted from
+oh-my-openagent / "The Harness Problem"; no upstream code.
+
+**Depends on:** W072 ledger invariants (fresh reads before mutation).
+
+**Acceptance criteria:**
+- [ ] A dated design doc compares content-addressed line identity vs the current digest/size/mtime
+      claim matching: capture points (where reads are surfaced), enforcement point (edit validation
+      through the guard, not prompt text), adversarial cases (same-hash collisions, truncated
+      reads), and a probe plan.
+- [ ] A decision with evidence: adopt, adapt, or reject — recorded in the doc; no code before the
+      decision.
+
+### W080 - Skill-embedded connector scoping (gated on the skill-delivery decision)
+
+**Objective:** Let the generated `workflow-toolbox` skill (W077) declare which connectors it needs,
+mounted on demand for the session and torn down after — the context-budget fix oh-my-openagent
+ships as "skill-embedded MCPs". Hard constraint: skill-scoped mounts still cross the hub-written
+config and guard authorization — scoping, never a bypass lane.
+
+**Depends on:** the dated skill-delivery decision (W077 — native host skill injection stays off
+until it exists).
+
+**Acceptance criteria:**
+- [ ] The skill schema gains an optional `connectors` declaration validated against the toolbox
+      catalog (unknown connector → fail loud).
+- [ ] Delivery (when it ships) mounts only declared connectors, through the existing launch-config
+      path; the guard still owns authorization.
+- [ ] Probe-gated per host version before any claim.
+
+### W081 - Session stats on the Usage page (data-lane read #2)
+
+**Objective:** Surface the documented `GET /api/experimental/session/stats` (per-session activity,
+usage, tool reliability) in the custom web UI's Usage page, read through the enforced gateway when
+the server topology runs — same honest-unavailable pattern as the live MCP state.
+
+**Depends on:** W076 (gateway + app-shell class landed).
+
+**Acceptance criteria:**
+- [ ] `fetchSessionStats` in `src/integrations/opencode-live-state.ts` with the same
+      discovery/probe/loopback/fail-closed contract as `fetchLiveMcp`.
+- [ ] A read-only endpoint + Usage-page block rendering the server's own stats, attributed;
+      honest reasons when unavailable.
+- [ ] Focused tests; typecheck and lint clean.
+
+### W082 - Auto-compaction over the v2 API (restore the plugin-era feature)
+
+**Objective:** Restore context-window maintenance lost in the plugin→hub pivot. OpenCode v2 exposes
+compaction over the documented API (`POST /api/session/{sessionID}/compact`; provider/model config
+distinguishes `native` vs `summary` compaction) **and its runtime already compacts on context
+overflow instead of retrying** — no plugin involved, per the operator's no-plugins constraint. The
+design is hub-owned and deterministic — not a prompt-side loop: (a) classify `compact` in the
+route-class matrix (currently deny by default; it is session maintenance that cannot advance
+canonical state — reclassify deliberately with tests, not by drift), (b) an operator compaction
+control in the custom web UI, (c) a hub-owned auto-trigger at a usage threshold (deterministic
+gate, budget-guard compatible), (d) probe per pinned version. The v2 compaction
+hook (`ctx.session.hook("compaction")`) is explicitly NOT used — no plugins.
+
+**Depends on:** W076 (gateway verdicts); probe gating per `docs/HOST_ADAPTERS.md`.
+
+**Acceptance criteria:**
+- [x] Route-class decision recorded in §2.5 with tests: `compact` is now an explicitly classified
+      forwarded session-input op (operator-controlled maintenance) — classifier row + gateway
+      forward test + upstream stub updated; the §2.5 bullet records the dated reclassification
+      (`fork`/`move`/`remove`/staged-revert remain denied).
+- [ ] Research note: what OpenCode v2 does natively per compaction type (`native` vs `summary`) and
+      whether the ACP lane (`opencode acp`) auto-compacts without the HTTP route — the ACP-lane
+      gap is the actual regression the operator hit. (Partially answered from the v2 docs: the
+      runtime compacts on context overflow instead of retrying, and a `compaction` request hook
+      exists upstream — **not used** per the no-plugins constraint. Live probe still owed.)
+- [ ] The PWA surfaces context pressure and a compaction control (custom UI, per the
+      surface-division decision); the hub-side auto-trigger is deterministic and budget-guard-aware.
+      (**Open** — needs the topology session wiring; deferred to the next compaction slice.)
+- [ ] Live probe evidence per pinned version; no enforced claim without it. (**Open**.)

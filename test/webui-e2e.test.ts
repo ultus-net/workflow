@@ -105,8 +105,8 @@ test("operator UI boots, streams a turn, and stays console-clean in real Chromiu
     // 5. Palette switch: pick Dracula from settings; the html attribute and the
     // computed background token must both change, and the base must return
     // after choosing the amber default.
-    await cdp.evaluate(`document.querySelector('.config-gear')?.click()`);
-    assert.ok(await cdp.waitFor(`!!document.querySelector('.settings-dialog')`, 5_000), "settings dialog must open from the gear");
+    await cdp.evaluate(`[...document.querySelectorAll('.shell-nav-slug')].find((slug) => slug.textContent?.includes('Settings'))?.click()`);
+    assert.ok(await cdp.waitFor(`!!document.querySelector('.settings-dialog')`, 5_000), "settings page must open from the nav slug");
     await cdp.evaluate(`
       (() => {
         const chips = [...document.querySelectorAll('.palette-chip')];

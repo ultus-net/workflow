@@ -3,6 +3,12 @@ import { existsSync, realpathSync } from "node:fs";
 
 import { METERED_PLACEHOLDER_KEY } from "./model-usage-proxy.js";
 import { autoLatestModelCatalog } from "./openrouter-auto-latest.js";
+import {
+  enabledMcpServers,
+  opencodeMcpServers,
+  type McpServerSetting,
+  type WorkflowSettings,
+} from "./workflow-settings.js";
 
 /**
  * Hub-written OpenCode launch configuration. The hub owns the agent's config
@@ -55,6 +61,8 @@ export interface MeteredOpencodeConfigOptions {
    * from XDG_CONFIG_HOME and list_skills returns the fixture skill verbatim).
    */
   readonly skills?: { readonly serverScript: string; readonly skillsDir: string } | undefined;
+/** Workflow-pushed MCP servers (the control plane's settings projection). */
+  readonly mcpServers?: readonly McpServerSetting[] | undefined;
 }
 
 export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Record<string, unknown> {
@@ -103,6 +111,15 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
     options.model !== undefined
       ? `${OPENCODE_METERED_PROVIDER_ID}/${options.model}`
       : options.openSource?.defaultModel ?? `${OPENCODE_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`;
+  // Operator-declared MCP servers ride alongside the hub-owned skills mount.
+  const mcp: Record<string, unknown> = opencodeMcpServers(options.mcpServers ?? []);
+  if (options.skills !== undefined) {
+    mcp["skills-mcp"] = {
+      type: "local",
+      command: [process.execPath, options.skills.serverScript],
+      environment: { SKILLS_MCP_DIR: options.skills.skillsDir },
+    };
+  }
   return {
     $schema: "https://opencode.ai/config.json",
     provider: provider(),
@@ -113,17 +130,24 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
     // `task` is included so subagent spawns are gateable at the hub
     // (subagent probe: the task tool call projected and permission-gated).
     permission: { edit: "ask", bash: "ask", task: "ask" },
-    ...(options.skills === undefined
-      ? {}
-      : {
-          mcp: {
-            "skills-mcp": {
-              type: "local",
-              command: [process.execPath, options.skills.serverScript],
-              environment: { SKILLS_MCP_DIR: options.skills.skillsDir },
-            },
-          },
-        }),
+    ...(Object.keys(mcp).length === 0 ? {} : { mcp }),
+  };
+}
+
+/**
+ * The Workflow settings projection for the direct (unmetered) OpenCode launch:
+ * operator-declared MCP servers plus the persisted model preference. An empty
+ * object means the operator has set nothing, so the launch config stays
+ * minimal rather than writing defaults the operator never chose.
+ */
+export function opencodeSettingsConfig(settings: WorkflowSettings | undefined): Record<string, unknown> {
+  if (settings === undefined) return {};
+  const mcp = opencodeMcpServers(enabledMcpServers(settings));
+  const model = settings.agents.opencode?.model;
+  return {
+    $schema: "https://opencode.ai/config.json",
+    ...(Object.keys(mcp).length === 0 ? {} : { mcp }),
+    ...(model === undefined ? {} : { model }),
   };
 }
 

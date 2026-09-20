@@ -52,6 +52,16 @@ async function stubUpstream(): Promise<StubServer> {
       response.end(JSON.stringify({ permission: { edit: "ask", bash: "ask", task: "ask" } }));
       return;
     }
+    if (pathname === "/api/integration") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ integration: [] }));
+      return;
+    }
+    if (pathname === "/api/session/s/compact" && request.method === "POST") {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: { compacted: true } }));
+      return;
+    }
     if (pathname === "/gzip") {
       // Mirrors real `opencode serve`: gzipped JSON with content-encoding.
       response.writeHead(200, { "content-type": "application/json", "content-encoding": "gzip" });
@@ -250,4 +260,191 @@ test("W071 gateway (enforced): construction fails closed without the broker hook
   } finally {
     void upstream.close();
   }
+});
+
+/**
+ * Route-class qualification through the gateway (spec §2.2): an enforced
+ * gateway is the authority boundary, so a v2 client must not be able to call
+ * mutation/authority routes directly, while read-only observation and the
+ * brokered permission reply stay reachable.
+ */
+
+test("W071 gateway (enforced): read-only observation is forwarded", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    enforced: true,
+    onPermissionReply: () => undefined,
+  });
+  t.after(() => void gateway.close());
+
+  const response = await fetch(gateway.url + "/api/integration", {
+    headers: { authorization: basic("opencode", "tuipw") },
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json() as unknown, { integration: [] });
+});
+
+test("W080 gateway (enforced): compact is a forwarded session-input op (operator-controlled maintenance)", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    enforced: true,
+    onPermissionReply: () => undefined,
+  });
+  t.after(() => void gateway.close());
+
+  const response = await fetch(gateway.url + "/api/session/s/compact", {
+    method: "POST",
+    headers: { authorization: basic("opencode", "tuipw"), "content-type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(response.status, 200, "compact must forward to the upstream in enforced posture");
+});
+
+test("W071 gateway (enforced): mutation route classes are denied and never forwarded", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    enforced: true,
+    onPermissionReply: () => undefined,
+  });
+  t.after(() => void gateway.close());
+  const headers = { authorization: basic("opencode", "tuipw"), "content-type": "application/json" };
+
+  const denied = [
+    ["POST", "/api/experimental/fs/write"],
+    ["POST", "/api/session/s/shell"],
+    ["POST", "/api/mcp"],
+    ["POST", "/api/pty"],
+    ["POST", "/api/session/s/purge"],
+    ["DELETE", "/api/session/s"],
+    ["DELETE", "/api/session/s/message"],
+    ["PUT", "/api/session/s/message"],
+    ["PUT", "/api/session/import"],
+    ["PATCH", "/api/session/import"],
+    ["DELETE", "/api/session/import"],
+    ["POST", "/api/experimental/unknown"],
+    // A read, but denied: the config payload carries provider credentials the
+    // gateway must not hand a client (review P3).
+    ["GET", "/api/config"],
+  ] as const;
+  for (const [method, path] of denied) {
+    const init: RequestInit = { method, headers };
+    if (method === "POST" || method === "PUT" || method === "PATCH") init.body = "{}";
+    const response = await fetch(gateway.url + path, init);
+    assert.equal(response.status, 403, `${method} ${path} must be denied in enforced posture`);
+  }
+  assert.equal(
+    upstream.requests.some((entry) => entry.path.startsWith("/api/")),
+    false,
+    "denied route classes must never reach the upstream under the hub credential",
+  );
+});
+
+test("W071 gateway (enforced): a non-POST verb on the broker reply route is denied, never forwarded", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    enforced: true,
+    onPermissionReply: () => undefined,
+  });
+  t.after(() => void gateway.close());
+  const headers = { authorization: basic("opencode", "tuipw") };
+
+  // The reply route must be broker-only for every verb: a broker disposition
+  // reached without the broker hook fails closed rather than handing the hub
+  // credential to a client-supplied call on the authority route.
+  for (const method of ["GET", "OPTIONS", "PUT", "PATCH", "DELETE"]) {
+    const response = await fetch(gateway.url + "/api/session/s/permission/r/reply", { method, headers });
+    assert.equal(response.status, 403, `${method} on the reply route must be denied in enforced posture`);
+  }
+  assert.equal(
+    upstream.requests.some((entry) => entry.path.startsWith("/api/")),
+    false,
+    "a non-POST reply route must never reach the upstream under the hub credential",
+  );
+});
+
+test("W071 gateway (enforced): qualified read-only routes are forwarded, not blocked", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    enforced: true,
+    onPermissionReply: () => undefined,
+  });
+  t.after(() => void gateway.close());
+  const headers = { authorization: basic("opencode", "tuipw") };
+
+  const reads = ["/api/experimental/fs/read", "/api/integration", "/api/command", "/api/session"];
+  for (const path of reads) {
+    const response = await fetch(gateway.url + path, { headers });
+    assert.notEqual(response.status, 403, `qualified read ${path} must not be denied`);
+    assert.equal(upstream.requests.some((entry) => entry.path === path), true, `${path} must reach the upstream`);
+  }
+});
+
+test("W071 gateway (enforced): the brokered reply route is intercepted, not denied", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const seen: OpencodePermissionReply[] = [];
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    enforced: true,
+    onPermissionReply: (reply) => { seen.push(reply); },
+  });
+  t.after(() => void gateway.close());
+
+  const response = await fetch(gateway.url + "/api/session/sess1/permission/req1/reply", {
+    method: "POST",
+    headers: { authorization: basic("opencode", "tuipw"), "content-type": "application/json" },
+    body: JSON.stringify({ reply: "once" }),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(seen, [{ sessionId: "sess1", requestId: "req1", reply: "once" }]);
+  assert.equal(upstream.requests.some((entry) => entry.path.startsWith("/api/")), false);
+});
+
+test("W071 gateway (advisory): unqualified mutations still pass through, no enforced claim", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+  });
+  t.after(() => void gateway.close());
+
+  // Advisory posture preserves the historical pass-through: the surface is not
+  // labeled enforced, so the route-class denial does not apply.
+  const response = await fetch(gateway.url + "/api/experimental/unknown", {
+    method: "POST",
+    headers: { authorization: basic("opencode", "tuipw") },
+  });
+  assert.equal(response.status, 404);
+  assert.equal(upstream.requests.some((entry) => entry.path === "/api/experimental/unknown"), true);
 });

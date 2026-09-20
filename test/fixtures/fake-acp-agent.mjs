@@ -66,7 +66,10 @@ function handleMessage(message) {
       id: message.id,
       result: {
         protocolVersion: mode === "require-boolean-capability" && !supportsBooleanConfig ? 0 : 1,
-        agentCapabilities: { loadSession: mode !== "no-load" },
+        agentCapabilities: {
+          loadSession: mode !== "no-load",
+          ...(mode === "rich" ? { sessionCapabilities: { close: {}, fork: {}, list: {}, resume: {} } } : {}),
+        },
         ...(mode === "no-agent-info" ? {} : { agentInfo: { name: "fake-acp-agent", version: "0.0.0" } }),
       },
     });
@@ -83,6 +86,19 @@ function handleMessage(message) {
         configOptions,
       },
     });
+    if (mode === "rich") {
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: "fake-session-1",
+          update: {
+            sessionUpdate: "available_commands_update",
+            availableCommands: [{ name: "init", description: "guided setup" }, { name: 42 }],
+          },
+        },
+      });
+    }
   } else if (message.method === "session/set_config_option") {
     // Mirror the ACP schema: boolean values must carry type:"boolean".
     if (typeof message.params.value === "boolean" && message.params.type !== "boolean") {
@@ -115,6 +131,15 @@ function handleMessage(message) {
   } else if (message.method === "session/prompt") {
     cancelled = false;
     activePromptId = message.id;
+    if (mode === "rich") {
+      send({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: { sessionId: message.params.sessionId, update: { sessionUpdate: "usage_update", used: 12000, size: 128000, cost: { amount: 0.03 } } },
+      });
+      send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn", usage: { inputTokens: 12000, outputTokens: 500, totalTokens: 12500 } } });
+      return;
+    }
     if (mode === "batch2") {
       const sessionId = message.params.sessionId;
       const update = (updateBody) => send({

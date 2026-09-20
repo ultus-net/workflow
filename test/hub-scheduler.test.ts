@@ -109,12 +109,17 @@ test("createBudgetGuard cancels the turn on the first violating event", () => {
 // ── Scheduler (C1) ──────────────────────────────────────────────────────────
 
 function stubController() {
-  const calls: Array<{ kind: "begin" | "finish" | "reason"; runId: string; detail?: string }> = [];
+  const calls: Array<{ kind: "begin" | "finish" | "reason"; runId: string; detail?: string; taskPrompt?: string }> = [];
   return {
     calls,
     controller: {
-      async begin(input: { runId: string; title: string; workspace?: string; requiresReview?: boolean }) {
-        calls.push({ kind: "begin", runId: input.runId, detail: input.requiresReview === undefined ? "unset" : String(input.requiresReview) });
+      async begin(input: { runId: string; title: string; workspace?: string; requiresReview?: boolean; taskPrompt?: string }) {
+        calls.push({
+          kind: "begin",
+          runId: input.runId,
+          detail: input.requiresReview === undefined ? "unset" : String(input.requiresReview),
+          ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }),
+        });
       },
       async finish(input: { runId: string; outcome: "verified" | "failed" }) {
         calls.push({ kind: "finish", runId: input.runId, detail: input.outcome });
@@ -184,6 +189,13 @@ test("configured prompt guidance is prepended to every scheduled prompt", async 
 
   assert.equal(turns.length, 1);
   assert.equal(turns[0]!.prompt, `${guidance}nightly audit`, "the schedule's prompt follows the advisory preamble verbatim");
+  // W075 review P1: the run's RECORDED ask must be the composed prompt — the
+  // provenance digest binds what the agent actually received, so an
+  // orientation/guidance change invalidates recorded fingerprints.
+  const guidedAsk = schedulerHarness(t, { schedule: { id: "guided-ask" }, promptGuidance: guidance });
+  await guidedAsk.scheduler.tick(at);
+  const guidedCall = guidedAsk.calls.find(({ kind }) => kind === "begin");
+  assert.equal(guidedCall?.taskPrompt, `${guidance}nightly audit`, "begin records the composed prompt, not the raw schedule prompt");
 
   const bare = schedulerHarness(t, { schedule: { id: "unguided" } });
   await bare.scheduler.tick(at);

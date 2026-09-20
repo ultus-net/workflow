@@ -11,7 +11,7 @@ import { loadCredentialDefinitions } from "../integrations/credential-config.js"
 import { createCredentialBroker } from "../integrations/credentials.js";
 import { createSecretServiceStore } from "../integrations/secret-service.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
-import { advisoryGuidanceFromEnv } from "../integrations/prompt-guidance.js";
+import { hubPromptGuidanceFromEnv } from "../integrations/prompt-guidance.js";
 import { createReviewerFactory, createRunTestRunner } from "../integrations/hub-run-gates.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { canonicalWorkspace } from "../integrations/run-registry.js";
@@ -145,10 +145,12 @@ const testRunner = teamTaskVerificationCommand !== undefined && teamTaskVerifica
 // hub restart. An absent or empty table means no scheduled runs.
 const schedulesPath = process.env.WORKFLOW_HUB_SCHEDULES ?? join(homedir(), ".workflow", "scheduler.json");
 const scheduleRegistry = createScheduleRegistry({ path: schedulesPath });
-// Plan Task G5 wiring: the hub composes scheduled prompts, so the operator's
-// advisory guidance (WORKFLOW_ADVISORY_STYLE / WORKFLOW_ADVISORY_NOTES) is
+// Plan Task G5 + W077 wiring: the hub composes scheduled prompts, so the
+// orientation block (W077 — static, versioned, no interpolation; the agent
+// learns the hub exists and which tools to reach for) and the operator's
+// advisory guidance (WORKFLOW_ADVISORY_STYLE / WORKFLOW_ADVISORY_NOTES) are
 // prepended to every scheduled turn — honestly advisory prompt text.
-const promptGuidance = advisoryGuidanceFromEnv(process.env);
+const promptGuidance = hubPromptGuidanceFromEnv(process.env);
 const schedulerFactory = (handles: WorkflowHubSchedulerHandles) => {
   const scheduler = createHubScheduler({
     controller: handles.controller,

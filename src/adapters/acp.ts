@@ -9,7 +9,8 @@ interface AcpCorrelatedPermission {
     readonly kind?: string;
     readonly capability?: ToolCapability;
     readonly rawInput?: unknown;
-    readonly locations?: readonly { readonly path?: string }[];
+     readonly locations?: readonly { readonly path?: string }[];
+     readonly readFingerprints?: readonly import("../application/host.js").ReadFingerprint[];
   };
 }
 
@@ -33,6 +34,7 @@ export class AcpHostAdapter implements TranslatingHostAdapter<AcpCorrelatedPermi
     this.capabilities = hostCapabilities({
       transport: "acp",
       authoritativePreMutation: options.authoritativePermissions,
+      requireReadFingerprint: options.authoritativePermissions,
     });
   }
 
@@ -63,8 +65,10 @@ export class AcpHostAdapter implements TranslatingHostAdapter<AcpCorrelatedPermi
       capability,
       requiredCapabilities: distinctCapabilities(builtInCapability, input.toolCall.capability),
       mutating,
-      subjects,
-      input: input.toolCall.rawInput,
+       subjects,
+       ...(input.toolCall.readFingerprints === undefined ? {} : { readFingerprints: input.toolCall.readFingerprints }),
+       input: input.toolCall.rawInput,
+
     };
   }
 

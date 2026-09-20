@@ -12,9 +12,8 @@ import { AcpSubprocessClient, type AcpSessionUpdate } from "../src/adapters/acp-
  * OpenCode MCP-mount probe (mirror of the Cline F1/G3-Step2 mount probe).
  * Does OpenCode's ACP surface mount MCP servers from config the hub writes?
  * This is the load-bearing assumption behind "the hub owns agent MCP
- * config" — skills-mcp (F1) and workflow-fs-exec-mcp (G3) are only enforceable
- * single-delivery-path / single-mutation-path if the agent actually mounts
- * them from a config surface the hub controls. OpenCode has two such
+ * config" — skills-mcp (F1) is only enforceable as a single-delivery path if the
+ * agent actually mounts it from a config surface the hub controls. OpenCode has two such
  * surfaces: the project `opencode.json` in the workspace (hub-owned
  * workspace) and the global config resolved through `XDG_CONFIG_HOME`
  * (hub-owned launch env; the config file is

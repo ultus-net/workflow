@@ -19,6 +19,26 @@ export interface PromptImage {
   readonly data: string;
 }
 
+/** The session usage readout served to the webapp. Metered runtimes (Cline
+ * through the usage proxy) carry the full counters; unmetered runtimes
+ * (OpenCode, own provider auth) carry what the agent reports over ACP — the
+ * usage_update context/cost plus the prompt-response token split. Absent
+ * fields stay absent, because unknown is not zero. The `source` marker
+ * matters for restart merges: metered counters are per-process (sum with the
+ * persisted baseline), while agent-reported cost is session-cumulative in the
+ * agent's own store (the live report supersedes the baseline). */
+export interface SessionUsageReadout {
+  readonly source?: "metered" | "agent" | undefined;
+  readonly requests?: number;
+  readonly usageEvents?: number;
+  readonly promptTokens?: number;
+  readonly completionTokens?: number;
+  readonly totalTokens?: number;
+  readonly latestPromptTokens?: number | undefined;
+  readonly costUsd?: number;
+  readonly contextWindowTokens?: number;
+}
+
 /** Bounded FIFO store so images stay fetchable without bloating the polled transcript. */
 class ImageStore {
   #entries = new Map<string, { readonly mediaType: string; readonly data: string }>();
@@ -78,6 +98,12 @@ export interface ConfigCapableDriver {
   acpUsageSnapshot?(): { readonly used?: number; readonly size?: number; readonly costUsd?: number };
   /** The ACP handshake's agent identity (name + version), once connected. */
   agentInfo?(): { readonly name: string; readonly version?: string } | undefined;
+  /** Session management capabilities from the handshake (close/fork/list/resume). */
+  sessionCapabilities?(): { readonly close: boolean; readonly fork: boolean; readonly list: boolean; readonly resume: boolean };
+  /** Slash commands the agent advertised (available_commands_update). */
+  availableCommands?(): readonly { readonly name: string; readonly description: string }[];
+  /** This process's accumulated per-turn token split from prompt responses. */
+  turnTokenTotals?(): { readonly input: number; readonly output: number; readonly turns: number };
   /** The workflow permission-correlation session id (the key parked prompts
    * carry) — distinct from the ACP agent session id. */
   permissionSessionKey?(): string | undefined;
@@ -108,6 +134,8 @@ export class SessionChannel {
   /** Scopes parked permission prompts to this channel's ACP session once the
    * driver knows its id (parallel runtimes park independently). */
   readonly #permissionKey: (() => string | undefined) | undefined;
+  /** Persisted usage from an earlier process, merged so the meter survives restarts. */
+  readonly #baselineUsage: SessionUsageReadout | undefined;
   #agentTitle: string | undefined;
 
   constructor(
@@ -117,12 +145,14 @@ export class SessionChannel {
     broker?: PermissionBroker,
     permissionKey?: () => string | undefined,
     budget?: { readonly mechanism: () => string; readonly violation?: () => string | undefined },
+    baselineUsage?: SessionUsageReadout,
   ) {
     this.#driver = driver;
     this.#usage = usage;
     this.#budget = budget;
     this.#broker = broker;
     this.#permissionKey = permissionKey;
+    this.#baselineUsage = baselineUsage;
     session.subscribe((event) => this.ingest(event));
   }
 
@@ -158,14 +188,86 @@ export class SessionChannel {
     return this.#driver?.agentInfo?.();
   }
 
-  /** Cumulative metering-proxy metrics for the session's runtime, when metered.
-   * The agent-reported context window (ACP usage_update) rides along so the
-   * surface can show how full the window is. */
-  usage(): (ModelUsageMetrics & { readonly contextWindowTokens?: number }) | undefined {
+  /** Session usage for the readout, merged with the persisted baseline so the
+   * numbers survive server restarts. Live sources: metered runtimes (Cline
+   * via the usage proxy) report full per-process counters; unmetered runtimes
+   * (OpenCode) report the ACP usage_update (context/cost, session-cumulative
+   * in the agent's own store) plus the prompt-response token split. Merge
+   * rules: per-process counters sum with the baseline; point-in-time fields
+   * (context used/window) prefer the live report. Cost is source-aware: when
+   * both sides come from the agent's own store (same session, new process),
+   * the live cumulative report supersedes the baseline; when the sources
+   * differ (e.g. the session moved between agents), the spend is disjoint and
+   * the honest total is the sum. */
+  usage(): SessionUsageReadout | undefined {
+    const live = this.#liveUsage();
+    const base = this.#baselineUsage;
+    if (base === undefined) return live;
+    if (live === undefined) return base;
+    const sum = (a: number | undefined, b: number | undefined): number | undefined =>
+      a === undefined && b === undefined ? undefined : (a ?? 0) + (b ?? 0);
+    const requests = sum(live.requests, base.requests);
+    const usageEvents = sum(live.usageEvents, base.usageEvents);
+    const promptTokens = sum(live.promptTokens, base.promptTokens);
+    const completionTokens = sum(live.completionTokens, base.completionTokens);
+    const totalTokens = sum(live.totalTokens, base.totalTokens);
+    const latestPromptTokens = live.latestPromptTokens ?? base.latestPromptTokens;
+    const contextWindowTokens = live.contextWindowTokens ?? base.contextWindowTokens;
+    const cost = live.source === "agent" && base.source === "agent"
+      ? live.costUsd ?? base.costUsd
+      : sum(live.costUsd, base.costUsd);
+    return {
+      source: live.source ?? base.source,
+      ...(requests !== undefined ? { requests } : {}),
+      ...(usageEvents !== undefined ? { usageEvents } : {}),
+      ...(promptTokens !== undefined ? { promptTokens } : {}),
+      ...(completionTokens !== undefined ? { completionTokens } : {}),
+      ...(totalTokens !== undefined ? { totalTokens } : {}),
+      ...(latestPromptTokens !== undefined ? { latestPromptTokens } : {}),
+      ...(contextWindowTokens !== undefined ? { contextWindowTokens } : {}),
+      ...(cost !== undefined ? { costUsd: cost } : {}),
+    };
+  }
+
+  /** The live readout before baseline merging; undefined when nothing has
+   * been reported this process. */
+  #liveUsage(): SessionUsageReadout | undefined {
     const metrics = this.#usage?.();
-    if (metrics === undefined) return undefined;
     const contextWindowTokens = this.#driver?.contextWindowTokens?.();
-    return contextWindowTokens === undefined ? metrics : { ...metrics, contextWindowTokens };
+    if (metrics !== undefined) {
+      return {
+        source: "metered",
+        ...metrics,
+        ...(contextWindowTokens !== undefined ? { contextWindowTokens } : {}),
+      };
+    }
+    const acp = this.#driver?.acpUsageSnapshot?.();
+    const split = this.#driver?.turnTokenTotals?.();
+    const hasSplit = split !== undefined && split.turns > 0;
+    if ((acp === undefined || (acp.used === undefined && acp.costUsd === undefined)) && !hasSplit) return undefined;
+    const window = contextWindowTokens ?? acp?.size;
+    return {
+      source: "agent",
+      ...(hasSplit ? {
+        requests: split.turns,
+        promptTokens: split.input,
+        completionTokens: split.output,
+        totalTokens: split.input + split.output,
+      } : {}),
+      ...(acp?.used !== undefined ? { latestPromptTokens: acp.used } : {}),
+      ...(acp?.costUsd !== undefined ? { costUsd: acp.costUsd } : {}),
+      ...(window !== undefined ? { contextWindowTokens: window } : {}),
+    };
+  }
+
+  /** Slash commands the live agent advertised (available_commands_update). */
+  availableCommands(): readonly { readonly name: string; readonly description: string }[] {
+    return this.#driver?.availableCommands?.() ?? [];
+  }
+
+  /** Session management capabilities the live agent advertised at initialize. */
+  sessionCapabilities(): { readonly close: boolean; readonly fork: boolean; readonly list: boolean; readonly resume: boolean } | undefined {
+    return this.#driver?.sessionCapabilities?.();
   }
 
   /** Operator permission-asking mode (auto when no broker is configured). */

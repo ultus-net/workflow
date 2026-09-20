@@ -392,7 +392,10 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
     const properties: { readonly sessionID?: unknown; readonly part?: unknown } = event.properties;
     const part = isRecord(properties.part) ? properties.part : undefined;
     if (part === undefined || part.type !== "tool") return;
-    const tool = typeof part.tool === "string" ? part.tool : undefined;
+    // V2 renamed the tool-part field `name` -> `tool`; v1-shaped parts
+    // (agent-reported, e.g. ACP) still carry the name in `name`.
+    const tool = typeof part.tool === "string" ? part.tool
+      : typeof part.name === "string" ? part.name : undefined;
     if (tool === undefined) return;
     // The part may carry its own session id; the pinned source prefers the
     // part's id (review P2-1).
@@ -586,9 +589,14 @@ function proposalFromPermission(
  */
 export function opencodePermissionCapability(tool: string): ToolCapability | undefined {
   if (tool === "bash" || tool === "shell") return "process";
-  if (tool === "webfetch" || tool === "fetch") return "network";
+  // Code Mode interpreter (v2 builtin): arbitrary JS that can invoke tools, so
+  // it is at least process-class (review P2: execute was unmapped).
+  if (tool === "execute") return "process";
+  if (tool === "webfetch" || tool === "fetch" || tool === "websearch") return "network";
   if (tool === "task" || tool === "agent" || tool === "subagent") return "spawn";
   if (tool === "read" || tool === "glob" || tool === "grep" || tool === "list") return "read";
+  // Operator elicitation only; no workspace effect.
+  if (tool === "question") return "read";
   if (isReadSkillTool(tool)) return "read";
   if (tool === "edit" || tool === "write" || tool === "patch" || tool === "apply_patch" || tool === "multiedit") return "mutation";
   return undefined;

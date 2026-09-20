@@ -1,110 +1,113 @@
 # Workflow
 
-Workflow is a **control plane for coding-agent hosts**. Models and host SDKs
-are replaceable surfaces that propose work and observe results; Workflow is
-the deterministic authority that owns task state, legal transitions, mutation
-authorization, evidence requirements, and verification. A long-running
-loopback hub (`workflow-hub`) serves every surface — interactive TUI, headless
-CLI, zen, chat connectors, scheduled agents, teams, and desktop — through one
-versioned, SDK-neutral protocol. The core invariant is:
+Deterministic control plane for coding-agent hosts.
+
+## Core contract
 
 ```text
-model proposes -> Workflow authorizes -> tool acts -> environment supplies evidence -> Workflow validates -> state may advance
+model proposes -> Workflow authorizes -> tool acts -> environment supplies evidence -> Workflow validates -> state advances
 ```
 
-Nothing mutates without Workflow authorization; nothing advances without
-fresh evidence. Authorization fails **closed**: no hub, no mutations. Swapping
-the host SDK means adding an adapter and a session driver — the kernel,
-process, and tooling stay put.
+- Kernel owns task state, dependencies, evidence freshness, mutation epochs, and legal transitions.
+- Application owns authorization, capability withholding, workspace confinement, and task correlation.
+- Host adapters translate ACP/OpenCode/goose/Cline events; adapters do not own workflow state.
+- MCP servers provide capabilities or evidence; MCP servers do not own task state.
+- `advisory` means the host cannot guarantee pre-mutation interception.
+- `enforced` requires probe-backed authoritative interception.
+- Unknown or stale safety state fails closed.
 
-See `docs/FEATURES.md` for the honest, per-feature status matrix (including
-what is *not* built yet), `docs/HUB.md` for the hub design, and
-`docs/HUB_PROTOCOL.md` for the versioned, SDK-neutral integration contract.
+## Current qualification state
+
+- Browser UI: OpenCode/ACP lead surface; task, step, evidence, and review state remain Workflow-owned.
+- OpenCode v2: migration and qualification plan in `docs/OPENCODE_V2_MIGRATION_SPEC.md`.
+- Workflow Guard retirement: blocked until Phase-G criteria, G6 corpus parity, and Checkpoint D pass.
+- Step ledger: W072 kernel Stage 1 implemented; native todo bridge maps host todos to canonical steps.
+- Step completion: requires declared evidence; native todo `completed` never self-certifies work.
+- v2.0.10 local probe: `/api/info`, `/api/session`, `/api/experimental/session/stats`, and authenticated `/api/event` pass.
+- OpenCode event replay identity remains probe-pending.
 
 ## Install
 
-Requires Node 22+, pnpm (for mcp-toolbox), and (for containment) Linux with
-bubblewrap.
+Requirements:
+
+- Node.js 22+
+- pnpm for `mcp-toolbox`
+- Linux + Bubblewrap for enforced containment
 
 ```sh
-npm run setup   # npm install -> build -> toolbox -> npm i -g .
+npm run setup
 ```
 
-This installs the five bins (`workflow`, `workflow-tui`, `workflow-hub`,
-`workflow-monitor`, `workflow-shell`) onto PATH and is safe to re-run.
+Installs:
+
+- `workflow` — browser operator UI
+- `workflow-tui` — universal ACP/TUI surface
+- `workflow-hub` — authority daemon
+- `workflow-monitor` — hub snapshot monitor
+- `workflow-shell` — contained shell
 
 ## Commands
 
-| Command | What it is |
-|---|---|
-| `workflow-hub` | the authority daemon every surface needs (discovery + token) |
-| `workflow` | browser operator UI launcher; OpenCode in ACP mode by default, opened in your browser |
-| `workflow-tui` | universal interactive TUI with explicit `cline`, `opencode`, or `acp` driver selection; fallback surface |
-| `workflow-monitor` | Ink monitoring TUI over the hub's canonical snapshot; standalone local authority when the hub is unreachable |
-| `workflow-shell` | interactive contained shell |
-
-## Quickstart
-
 ```sh
-workflow --cwd /path/to/project   # browser UI (OpenCode/ACP); --no-browser or WORKFLOW_NO_BROWSER=1 to skip opening
-workflow-tui --driver acp --cwd /path/to/project  # universal fallback; standalone local authority
-workflow-monitor                  # monitoring TUI over the live hub
-workflow-shell                    # contained shell
+workflow --cwd /path/to/project
+workflow-tui --driver acp --cwd /path/to/project
+workflow-monitor
+workflow-shell
 ```
 
-The hub auto-starts the first time a surface resolves it (spawn candidates:
-`workflow-hub` on PATH, else `<repo>/dist/cli/hub.js`) and stays detached for
-reuse. Set `WORKFLOW_AUTOHUB=0` to restore strict fail-fast resolution, or run
-the daemon manually with `workflow-hub` (source checkout: `npm run hub`). An
-optional systemd user unit lives at `packaging/workflow-hub.service` for
-fully-managed startup.
+Useful environment:
 
-The browser operator UI (`npm run web`, http://127.0.0.1:4173) is installable
-as a PWA and can run as a managed background service via
-`packaging/workflow-web.service`: copy it to `~/.config/systemd/user/`, then
-`systemctl --user daemon-reload && systemctl --user enable --now workflow-web`.
-It restarts on failure and starts with the session; for start-at-boot without
-logging in, run `loginctl enable-linger "$USER"` once.
+- `WORKFLOW_AUTOHUB=0` — disable automatic hub startup.
+- `WORKFLOW_NO_BROWSER=1` — serve UI without opening a browser.
+- `WORKFLOW_ACP_AGENT=opencode|goose|cline` — select ACP agent kind.
+- `WORKFLOW_OPENCODE_ENFORCEMENT=enforced` — request enforced OpenCode server posture; live probes must pass before the claim is valid.
 
-In the monitor TUI: `/` (or Ctrl+P) opens the Workflow options menu — digits
-toggle **mode** (pedagogical gating), **learner profile**, **symbol inspect**,
-and **workflow details** (plus any agent-supplied config options). The menu
-stays open while digits toggle values in place, so modes can be cycled
-repeatedly; `q`/Esc closes. Ctrl+W toggles workflow details directly. Ordinary
-letter and punctuation keys are left to the composer so prompts are never
-changed by hidden first-character shortcuts.
+## Browser UI
 
-## What you get
+- Default URL: `http://127.0.0.1:4173`.
+- Managed unit: `packaging/workflow-web.service`.
+- Full-page Settings with MCP catalog and agent preferences.
+- OpenCode-style command palette: Ctrl/Cmd+P.
+- Two-region layout: chat + inspector.
+- Inspector: Context, configured MCP catalog, Tasks, Connections, Evidence, History, Changes, Worktrees.
+- OpenCode-style edit diffs: line numbers, add/delete colors, patch statistics.
+- Todo/plan output remains advisory; canonical Tasks and Steps remain authoritative.
 
-- **Universal authorization**: one hub gates every tool call on every surface; scheduled runs get their own task and evidence.
-- **Token economy**: lazy MCP tool discovery (schemas on demand), MCP result truncation, a compaction ↔ project-memory bridge, and optional terse styles. Streamed logs are UI-only and never reach the model.
-- **Current-model routing**: the open-source pivot operates at the OpenRouter Auto Router level — the agent default stays `openrouter/auto`, and the operator-configured `~…-latest` alias pool (`WORKFLOW_OPENROUTER_AUTO_ALIASES`, open-source set: DeepSeek Flash, GLM, GLM Flash, Kimi) is resolved against the live catalog and injected as the Auto Router's `allowed_models`, so routing among the pool happens at OpenRouter. As the opt-in cost path, per-vendor direct-endpoint pools (DeepSeek/GLM/Kimi, with verified OpenRouter ids as fallback) engage when a vendor key is configured; every path composes through the hub's loopback metering proxy, so the placeholder key stays inside the agent boundary and the real key never leaves the hub. Per-vendor request shaping is centralized in one `ModelProfile` type and applied at each vendor proxy (`reasoning_effort` low/high/max with task-class defaults; GLM/K3 are never sent `thinking: disabled`). Closed models are not removed — an explicit operator override (`WORKFLOW_OPENCODE_MODEL`) still routes them.
-- **Monitoring**: always-on task and activity panels plus a log-enriched transcript; every MCP server emits leveled logs and progress.
-- **Pedagogy**: five modes from Learn-to-Code to Autonomous with checkpoint gating and a persistent learner profile.
-- **Containment**: bubblewrap-isolated process execution on Linux.
+## Verification
+
+```sh
+npm run typecheck
+npm run lint
+node --import tsx --test test/step-ledger.test.ts
+npm test
+```
+
+Full verification is a release gate. Gated live-agent probes require their documented environment flags.
 
 ## Architecture
 
-`src/kernel/` — deterministic domain (no LLM/LSP/UI deps). `src/application/`
-— command/query boundary (`WorkflowApplication`). `src/integrations/` — hub,
-bridge, memory, styles. `src/pedagogy/` — tutor engine. `src/adapters/` —
-host translations. `src/ui/` — Ink/browser projections. `mcp-toolbox/` — 12
-vendored MCP servers. Cline is reached only through the retained thin stock-ACP
-connector (`src/integrations/cline-launch.ts` resolves the ambient `cline --acp`);
-the vendored `.workflow-cline/` checkout and its Workflow patch were removed in
-W050 step 6 (2026-09-18), and the connector is probe-PENDING on stock 3.0.62.
+- `src/kernel/` — deterministic task graph, evidence, transitions; no LLM/UI/SDK imports.
+- `src/application/` — authorization and command/query boundary.
+- `src/adapters/` — host event translation and classification.
+- `src/integrations/` — ACP, hub, OpenCode server, guard, metering, persistence.
+- `src/ui/` — web/TUI projections; no canonical workflow state.
+- `mcp-toolbox/` — policy, evidence, memory, review, skills, and intelligence MCP products.
+- `docs/TASKS_COMPLETED.md` — append-only archive for verified completed/superseded work.
 
-Security notes: Workflow policy is not itself a sandbox — containment is the
-separate process boundary. `enforced` means authoritative pre-mutation
-interception; `advisory` means it cannot be guaranteed. MCP output is
-untrusted input; evidence admission validates shape, not truth. See
-`THREAT_MODEL.md`, `docs/RUNTIME_CONTAINMENT.md`, and `docs/OPERATOR_GUIDE.md`.
+## Security boundaries
 
-## More docs
+- Workflow policy is not a sandbox; Linux Bubblewrap is the process boundary.
+- MCP output is untrusted input; evidence admission validates shape, authority, subject, freshness, and epoch.
+- Provider credentials remain hub-side; agents receive only the configured placeholder boundary.
+- Read the current claims and residuals in `THREAT_MODEL.md`, `docs/SECURITY_ASSURANCE.md`, and `docs/HOST_ADAPTERS.md`.
 
-`docs/HUB.md` hub design · `docs/HUB_PROTOCOL.md` integration contract ·
-`docs/FEATURES.md` honest feature status · `docs/TUTOR_AND_LEARNING_SPEC.md`
-pedagogy spec · `docs/HOST_ADAPTERS.md` adapter conformance ·
-`docs/MCP_INTEGRATION.md` / `docs/MCP_TOOLBOX.md` MCP boundaries ·
-`docs/TUI_INTEGRATION.md` / `docs/UI_INTEGRATION.md` frontend rules ·
-`docs/OPERATOR_GUIDE.md` operations
+## Documentation
+
+- `TASKS.md` — active roadmap and acceptance criteria.
+- `docs/TASKS_COMPLETED.md` — completed/superseded archive process.
+- `docs/COMPLIANCE_REGISTER.md` — strict drift and parity obligations.
+- `docs/PLAN_VS_REALITY_AUDIT.md` — plan/code drift baseline.
+- `docs/TASK_TODO_LEDGER_PARITY.md` — task/step ledger specification.
+- `docs/OPENCODE_V2_MIGRATION_SPEC.md` — v2 API ownership and qualification.
+- `docs/FEATURES.md` — honest feature status.
+- `docs/GUARD_CORPUS_MAP.md` — plugin-to-control-plane parity map.

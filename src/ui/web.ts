@@ -9,7 +9,10 @@ import { promisify } from "node:util";
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { createOpenRouterAnalytics, usageTimeRange, type OpenRouterAnalytics } from "../integrations/openrouter-analytics.js";
+import { fetchLiveMcp, fetchSessionStats } from "../integrations/opencode-live-state.js";
 import { nextCronMatch, type ScheduleDefinition } from "../integrations/hub-scheduler.js";
+import { defaultSettings, mergeSettings, normalizeSettings, readSettingsFile, settingsPaths, writeSettingsFile } from "../integrations/workflow-settings.js";
+import { resolveToolboxCatalog } from "../integrations/toolbox-catalog.js";
 import { evidenceId, observationId, taskId, type TaskState } from "../kernel/contracts.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
 import { WebSessionManager, type SessionSwitchResult } from "./web-sessions.js";
@@ -41,12 +44,17 @@ export function createWorkflowWebServer(
     /** The OpenRouter management-key analytics client factory; undefined (or
      * returning undefined) means the Usage page reports its setup state. */
     readonly analytics?: () => OpenRouterAnalytics | undefined;
+    /** Workspace root for the per-workspace settings overlay. */
+    readonly workspace?: string | undefined;
+    /** Home root for the global settings file; defaults to the OS home. */
+    readonly home?: string | undefined;
     /**
-     * W074/W073 operator surfaces: the hub discovery directory so the browser
-     * can reach the hub's schedule table and self-improvement loop registry
-     * through this service (the browser itself never holds a hub token). The
-     * hub stays the single writer; the web service is a proxy. Undefined (or a
-     * hub that is not running) means the Schedules page reports unavailable.
+     * W074/W073 operator surfaces (main's scheduled-task manager + RSI loop):
+     * the hub discovery directory so the browser can reach the hub's schedule
+     * table and self-improvement loop registry through this service (the
+     * browser itself never holds a hub token). The hub stays the single
+     * writer; the web service is a proxy. Undefined (or a hub that is not
+     * running) means the Schedules page reports unavailable.
      */
     readonly hubDiscoveryDir?: string;
   },
@@ -57,6 +65,10 @@ export function createWorkflowWebServer(
   const analyticsFactory = options?.analytics ?? ((): OpenRouterAnalytics | undefined => {
     const key = process.env.WORKFLOW_OPENROUTER_MANAGEMENT_KEY;
     return key === undefined || key.length === 0 ? undefined : createOpenRouterAnalytics({ key });
+  });
+  const settingsPathOptions = (): { home?: string; workspace?: string } => ({
+    ...(options?.home === undefined ? {} : { home: options.home }),
+    ...(options?.workspace === undefined ? {} : { workspace: options.workspace }),
   });
 
   /** The hub's operator credential, re-read per request so a hub restart is
@@ -113,9 +125,18 @@ export function createWorkflowWebServer(
     return id !== undefined && manager !== undefined && !manager.knowsSession(id);
   }
 
+  /** Session-scoped channel: `?session=<id>` selects a parallel live session;
+   * without the parameter the operator's focused session answers. Viewing
+   * history must never spawn an agent, so only the focused session (or an
+   * already-live one) gets a runtime here — every other id answers from the
+   * registry's stored transcript via /api/session. */
   async function sessionChannel(url: string | undefined): Promise<SessionChannel | undefined> {
     try {
-      if (manager !== undefined) return await manager.channel(sessionId(url));
+      if (manager !== undefined) {
+        const id = sessionId(url);
+        if (id !== undefined && !manager.isLive(id) && id !== manager.activeId()) return undefined;
+        return await manager.channel(id);
+      }
       return singleChannel;
     } catch {
       // A failed runtime factory must never reject the request listener:
@@ -215,13 +236,19 @@ export function createWorkflowWebServer(
       return json(response, 200, { sessions: manager.list() });
     }
     if (request.method === "GET" && pathname === "/api/agents") {
-      // Annotate each agent with the handshake version any live session's
-      // runtime reported — absent (never fabricated) when unknown.
-      const versions = manager?.liveAgentVersions() ?? new Map();
+      // Annotate each agent with the live handshake facts (version, advertised
+      // session capabilities) any live session's runtime reported — absent
+      // (never fabricated) when unknown. Read paths only: this must never
+      // spawn a runtime just to answer.
+      const facts = manager?.liveAgentFacts() ?? new Map();
       return json(response, 200, {
         agents: listWebAgents().map((agent) => {
-          const version = versions.get(agent.id);
-          return version === undefined ? agent : { ...agent, version };
+          const live = facts.get(agent.id);
+          return live === undefined ? agent : {
+            ...agent,
+            ...(live.version !== undefined ? { version: live.version } : {}),
+            ...(live.capabilities !== undefined ? { capabilities: live.capabilities } : {}),
+          };
         }),
       });
     }
@@ -612,6 +639,130 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
+    // The Workflow-owned MCP catalog: the control plane's canonical MCP server
+    // list, projected into each agent's launch config on the next session. The
+    // global file is the base; a workspace overlay (when the service has a
+    // workspace) can be edited independently. Changes are launch-time by
+    // nature — ACP fixes mcpServers at session creation — so the UI states
+    // that they take effect on the next session.
+    if (pathname === "/api/settings/mcp") {
+      const paths = settingsPaths(settingsPathOptions());
+      if (request.method === "GET") {
+        const global = readSettingsFile(paths.global);
+        const workspace = paths.workspace === undefined ? defaultSettings() : readSettingsFile(paths.workspace);
+        return json(response, 200, {
+          servers: mergeSettings(global, workspace).mcpServers,
+          global: global.mcpServers,
+          workspace: workspace.mcpServers,
+          workspaceOverlay: paths.workspace !== undefined,
+          // The vendored connector catalog: every toolbox MCP the operator can
+          // enable with one toggle instead of hand-typed JSON.
+          catalog: resolveToolboxCatalog(),
+        });
+      }
+      if (request.method === "POST") {
+        if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+        if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+          return json(response, 415, { error: "content-type must be application/json" });
+        }
+        try {
+          const body = await readJson(request);
+          const input = body as { scope?: unknown; servers?: unknown } | null;
+          const scope = input?.scope === "global" || input?.scope === "workspace"
+            ? input.scope
+            : paths.workspace === undefined ? "global" : "workspace";
+          if (scope === "workspace" && paths.workspace === undefined) {
+            return json(response, 409, { error: "workspace scope unavailable: the service has no workspace root" });
+          }
+          if (!Array.isArray(input?.servers)) return json(response, 400, { error: "servers must be an array" });
+          const path = scope === "workspace" ? paths.workspace! : paths.global;
+          const current = readSettingsFile(path);
+          const normalized = normalizeSettings({ mcpServers: input.servers });
+          writeSettingsFile(path, { ...current, mcpServers: normalized.mcpServers, updatedAt: new Date().toISOString() });
+          return json(response, 200, { scope, servers: normalized.mcpServers });
+        } catch {
+          return json(response, 400, { error: "invalid request body" });
+        }
+      }
+    }
+    // Live MCP state (W074 follow-up, dual data lane): when the Workflow-owned
+    // opencode server topology is running for this workspace, its enforced
+    // gateway answers GET /api/mcp — the live server-side state ACP does not
+    // expose. A read, not a mutation: no cross-origin gate needed, and the
+    // honest "unavailable" states are values, never fabricated connections.
+    if (request.method === "GET" && pathname === "/api/settings/mcp/live") {
+      const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
+      const live = await fetchLiveMcp({ workspace: options?.workspace ?? process.cwd(), stateHome });
+      return json(response, 200, live);
+    }
+    // Live session statistics (W079, data lane read #2): the documented
+    // aggregate through the enforced gateway, honest reasons when the
+    // topology is not running. Read-only.
+    if (request.method === "GET" && pathname === "/api/usage/sessions/live") {
+      const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
+      const live = await fetchSessionStats({ workspace: options?.workspace ?? process.cwd(), stateHome });
+      return json(response, 200, live);
+    }
+    // The scheduler's operator surface lives on main's Schedules page (the hub
+    // proxy above): a live registry with pause/resume/delete/run-now, which
+    // supersedes this branch's read-only file-table read.
+    // Persisted agent runtime preferences (model/mode/effort). These are the
+    // launch defaults the control plane pushes into each agent's config on the
+    // next session; live changes still ride ACP `setConfigOption`.
+    if (pathname === "/api/settings/agents") {
+      if (request.method === "GET") {
+        const paths = settingsPaths(settingsPathOptions());
+        const global = readSettingsFile(paths.global);
+        const workspace = paths.workspace === undefined ? defaultSettings() : readSettingsFile(paths.workspace);
+        return json(response, 200, {
+          agents: mergeSettings(global, workspace).agents,
+          // Routing facts the env currently dictates — presence booleans and
+          // the upstream URL only, never secret values.
+          facts: {
+            upstream: process.env.WORKFLOW_ACP_UPSTREAM?.trim() || "https://openrouter.ai",
+            envModelOpencode: (process.env.WORKFLOW_OPENCODE_MODEL ?? "").trim().length > 0,
+            envModelGoose: [
+              process.env.WORKFLOW_GOOSE_MODEL,
+              process.env.GOOSE_MODEL,
+              process.env.AZURE_FOUNDRY_MODEL,
+            ].some((entry) => (entry ?? "").trim().length > 0),
+            managementKey: (process.env.WORKFLOW_OPENROUTER_MANAGEMENT_KEY ?? "").trim().length > 0,
+          },
+        });
+      }
+      if (request.method === "POST") {
+        if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+        if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+          return json(response, 415, { error: "content-type must be application/json" });
+        }
+        try {
+          const paths = settingsPaths(settingsPathOptions());
+          const body = await readJson(request);
+          const input = body as { agent?: unknown; preference?: unknown; scope?: unknown } | null;
+          const agent = typeof input?.agent === "string" && input.agent.trim().length > 0 ? input.agent.trim() : undefined;
+          if (agent === undefined) return json(response, 400, { error: "agent is required" });
+          const normalized = normalizeSettings({ agents: { [agent]: input?.preference } });
+          const preference = normalized.agents[agent];
+          if (preference === undefined) return json(response, 400, { error: "preference must set at least one of model, mode, thoughtLevel" });
+          const scope = input?.scope === "global" || input?.scope === "workspace"
+            ? input.scope
+            : paths.workspace === undefined ? "global" : "workspace";
+          if (scope === "workspace" && paths.workspace === undefined) {
+            return json(response, 409, { error: "workspace scope unavailable: the service has no workspace root" });
+          }
+          const path = scope === "workspace" ? paths.workspace! : paths.global;
+          const current = readSettingsFile(path);
+          writeSettingsFile(path, {
+            ...current,
+            agents: { ...current.agents, [agent]: { ...(current.agents[agent] ?? {}), ...preference } },
+            updatedAt: new Date().toISOString(),
+          });
+          return json(response, 200, { scope, agent, preference });
+        } catch {
+          return json(response, 400, { error: "invalid request body" });
+        }
+      }
+    }
     if (request.method === "GET" && pathname.startsWith("/api/image/")) {
       if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
       const active = await sessionChannel(request.url);
@@ -623,20 +774,33 @@ export function createWorkflowWebServer(
     if (request.method === "GET" && pathname === "/api/session") {
       if (unknownSession(request.url)) return json(response, 404, { error: "unknown session" });
       const active = await sessionChannel(request.url);
-      // The meta answers for the requested session; focused by default.
       const requested = sessionId(request.url);
-      const meta = requested === undefined
+      // History-first: a session with no live runtime serves its persisted
+      // transcript and last-known usage straight from the registry — viewing
+      // history never spawns an agent process.
+      const candidate = active === undefined ? manager?.historyFor(requested) : undefined;
+      const stored = candidate !== undefined && (candidate.items.length > 0 || candidate.usage !== undefined) ? candidate : undefined;
+      const meta = active === undefined ? undefined : (requested === undefined
         ? manager?.activeMeta()
-        : manager?.list().find((entry) => entry.id === requested);
+        : manager?.list().find((entry) => entry.id === requested));
       // The live handshake's version for the requested session, when known.
       const agentVersion = manager?.agentVersion(requested);
+      const spawnError = active === undefined ? manager?.spawnError(requested) : undefined;
       return json(response, 200, {
         available: active !== undefined,
-        ...(meta === undefined ? {} : { id: meta.id, title: meta.title, agent: meta.agent }),
-        ...(agentVersion === undefined ? {} : { agentVersion }),
-        state: active?.state() ?? { state: "unavailable" },
-        items: active?.items() ?? [],
-        ...(active?.usage() !== undefined ? { usage: active.usage() } : {}),
+        ...(spawnError === undefined ? {} : { error: spawnError }),
+        ...(active === undefined
+          ? (candidate === undefined ? {} : { id: candidate.id, title: candidate.title, agent: candidate.agent })
+          : {
+            ...(meta === undefined ? {} : { id: meta.id, title: meta.title, agent: meta.agent }),
+            ...(agentVersion === undefined ? {} : { agentVersion }),
+          }),
+        state: active?.state() ?? (stored === undefined ? { state: "unavailable" } : { state: "stored" }),
+        items: active?.items() ?? stored?.items ?? [],
+        // Slash commands the live agent advertised; absent (never fabricated)
+        // when no runtime is connected.
+        ...(active === undefined ? {} : { commands: active.availableCommands() }),
+        ...((active?.usage() ?? stored?.usage) === undefined ? {} : { usage: active?.usage() ?? stored!.usage }),
         ...(active?.budgetMechanism() === undefined ? {} : {
           budgetMechanism: active.budgetMechanism(),
           ...(active?.budgetViolation() === undefined ? {} : { budgetViolation: active.budgetViolation() }),

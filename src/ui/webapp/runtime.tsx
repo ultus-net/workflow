@@ -7,22 +7,14 @@ import {
 } from "@assistant-ui/react";
 
 import type { OperatorSessionItem } from "../operator-session.js";
+import type { SessionUsageReadout } from "../web-session-channel.js";
 import { convertOperatorItem } from "./messages.js";
 
 const POLL_MS = 1000;
 
-/** Cumulative metering metrics from the hub-side proxy (undefined when unmetered). */
-export interface SessionUsage {
-  readonly requests: number;
-  readonly usageEvents: number;
-  readonly promptTokens: number;
-  readonly completionTokens: number;
-  readonly latestPromptTokens?: number;
-  readonly totalTokens: number;
-  readonly costUsd: number;
-  /** Agent-reported context window size in tokens (ACP usage_update), when advertised. */
-  readonly contextWindowTokens?: number;
-}
+/** Session usage for the readout: full counters when metered (the loopback
+ * usage proxy), only the ACP-reported fields when unmetered (OpenCode). */
+export type SessionUsage = SessionUsageReadout;
 
 interface SessionEnvelope {
   readonly available: boolean;
@@ -30,9 +22,18 @@ interface SessionEnvelope {
   readonly title?: string;
   readonly agent?: string;
   readonly agentVersion?: string;
+  readonly error?: string;
   readonly state: { readonly state: string };
   readonly items: readonly OperatorSessionItem[];
   readonly usage?: SessionUsage;
+  /** Slash commands the agent advertised (ACP available_commands_update). */
+  readonly commands?: readonly SessionCommand[];
+}
+
+/** One agent-advertised slash command (ACP available_commands_update). */
+export interface SessionCommand {
+  readonly name: string;
+  readonly description: string;
 }
 
 const SessionUsageContext = createContext<SessionUsage | undefined>(undefined);
@@ -47,6 +48,20 @@ const AgentIdentityContext = createContext<{ readonly agent?: string | undefined
 
 export function useAgentIdentity(): { readonly agent?: string | undefined; readonly version?: string | undefined } {
   return useContext(AgentIdentityContext);
+}
+
+const SessionCommandsContext = createContext<readonly SessionCommand[]>([]);
+
+/** Slash commands the active agent advertised; empty until/unless it does. */
+export function useSessionCommands(): readonly SessionCommand[] {
+  return useContext(SessionCommandsContext);
+}
+
+const SessionStatusContext = createContext<{ readonly state: string; readonly error?: string }>({ state: "connecting" });
+
+/** The live session's state and any spawn error (why it is unavailable). */
+export function useSessionStatus(): { readonly state: string; readonly error?: string } {
+  return useContext(SessionStatusContext);
 }
 
 const SessionStateContext = createContext<{
@@ -220,9 +235,13 @@ export function WorkflowRuntimeProvider({ children, sessionId, onCommandSession 
     <AssistantRuntimeProvider runtime={runtime}>
       <SessionUsageContext.Provider value={envelope.usage}>
         <AgentIdentityContext.Provider value={{ agent: envelope.agent, version: envelope.agentVersion }}>
-          <SessionStateContext.Provider value={{ isRunning, items: envelope.items, queuedPrompt, discardQueue, queuePrompt, showThinking, setShowThinking }}>
-            {children}
-          </SessionStateContext.Provider>
+          <SessionStatusContext.Provider value={{ state: envelope.state.state, ...(envelope.error === undefined ? {} : { error: envelope.error }) }}>
+            <SessionCommandsContext.Provider value={envelope.commands ?? []}>
+              <SessionStateContext.Provider value={{ isRunning, items: envelope.items, queuedPrompt, discardQueue, queuePrompt, showThinking, setShowThinking }}>
+                {children}
+              </SessionStateContext.Provider>
+            </SessionCommandsContext.Provider>
+          </SessionStatusContext.Provider>
         </AgentIdentityContext.Provider>
       </SessionUsageContext.Provider>
     </AssistantRuntimeProvider>

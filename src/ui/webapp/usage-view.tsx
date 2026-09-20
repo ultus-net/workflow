@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
+import type { LiveStatsState } from "../../integrations/opencode-live-state.js";
+
 /** One analytics row: dimension columns (model, provider) plus whatever
  * metric columns OpenRouter returned (cost, tokens, request_count). */
 export interface UsageRow {
@@ -26,6 +28,59 @@ const RANGES = [
   [7, "7d"],
   [30, "30d"],
 ] as const;
+
+/** Server-side session statistics (W079, data lane): the documented aggregate
+ * read through the enforced gateway when the server topology runs. Honest
+ * states only — null until resolved, the reason is the value when unavailable,
+ * never a fabricated figure. */
+export function LiveTopologyStats(props: { readonly state?: LiveStatsState | undefined }) {
+  const [fetched, setFetched] = useState<LiveStatsState | undefined>(undefined);
+  const state = props.state ?? fetched;
+  useEffect(() => {
+    if (props.state !== undefined) return; // state override (tests)
+    const load = async (): Promise<void> => {
+      try {
+        const response = await fetch("/api/usage/sessions/live");
+        if (!response.ok) return;
+        const loaded = await response.json() as LiveStatsState;
+        setFetched(loaded);
+      } catch {
+        // Honest absence: the block stays hidden rather than showing zeros.
+      }
+    };
+    void load();
+    return () => { /* single load per mount */ };
+  }, [props.state]);
+  if (state === undefined) return null;
+  if (!state.live) {
+    return <p className="muted usage-topology-note">no server-topology stats — {state.reason}</p>;
+  }
+  const stats = state.stats;
+  return (
+    <div className="usage-topology" aria-label="Server topology statistics">
+      <h3>Server topology <span className="muted">({state.gatewayUrl})</span></h3>
+      <table className="usage-table">
+        <tbody>
+          <tr><th scope="row">sessions</th><td>{stats.sessions}</td><th scope="row">prompts</th><td>{stats.prompts}</td><th scope="row">steps</th><td>{stats.steps}</td></tr>
+          <tr>
+            <th scope="row">tokens</th>
+            <td colSpan={5}>
+              in {stats.tokens.input} · out {stats.tokens.output} · reasoning {stats.tokens.reasoning} · cache r/w {stats.tokens.cacheRead}/{stats.tokens.cacheWrite}
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">cost</th>
+            <td>${stats.cost.toFixed(4)}</td>
+            <th scope="row">tools</th>
+            <td colSpan={3}>
+              {stats.tools.calls} calls · {stats.tools.succeeded} ok · {stats.tools.failed} failed · {stats.tools.unfinished} unfinished
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 /** Daily spend strip: square bars, relative height, honest "no spend" when
  * every day is zero. Pure CSS — no chart dependency in the bundle. */
@@ -97,6 +152,7 @@ export function UsageView() {
           ))}
         </div>
       </header>
+      <LiveTopologyStats />
 
       {payload === undefined && <p className="muted usage-empty-note">{loading ? "loading usage…" : ""}</p>}
 

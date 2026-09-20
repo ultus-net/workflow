@@ -6,6 +6,7 @@ import type { CodingSessionDriver, CodingSessionEvent, CodingSessionImage } from
 import type { TaskId, PolicyDecision } from "../kernel/contracts.js";
 import type { ProposedToolAction, ToolCapability } from "../adapters/host.js";
 import type { WorkflowApplication } from "../application/workflow.js";
+import { fingerprintFile } from "../application/file-claim-ledger.js";
 import type { ProcessContainment } from "../containment/contracts.js";
 import { AcpHostAdapter } from "../adapters/acp.js";
 import {
@@ -81,13 +82,20 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #resumeFrom: string | undefined;
   #guard: WorkflowGuardProvider | undefined;
   #onSkillRead: ((skill: string) => void) | undefined;
+  #onToolOutcome: ((sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void) | undefined;
+  #onReadFingerprint: ((fingerprint: import("../application/host.js").ReadFingerprint) => void) | undefined;
+  #onTodoUpdate: ((entries: readonly { readonly id?: string; readonly content: string; readonly status: "pending" | "in_progress" | "completed" | "cancelled" }[]) => void) | undefined;
   #initialized = false;
   #canLoadSession = false;
   #agentInfo?: { readonly name: string; readonly version?: string } | undefined;
+  #sessionCapabilities: Record<string, unknown> = {};
+  #availableCommands: { readonly name: string; readonly description: string }[] = [];
+  #turnTokenTotals = { input: 0, output: 0, turns: 0 };
   #agentSessionId?: string;
   #sessionConfig?: AcpSessionConfig;
   #contextWindowTokens?: number;
   #acpUsage: { used?: number; size?: number; costUsd?: number } = {};
+  readonly #readFingerprints = new Map<string, import("../application/host.js").ReadFingerprint>();
   #toolTitles = new Map<string, string>();
   #toolCalls = new Map<string, { title: string; toolKind: string; subjects: string[]; rawInput?: string }>();
   #assistant: string[] = [];
@@ -104,6 +112,9 @@ export class AcpSessionDriver implements CodingSessionDriver {
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
     onSkillRead?: (skill: string) => void;
+    onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
+    onReadFingerprint?: (fingerprint: import("../application/host.js").ReadFingerprint) => void;
+    onTodoUpdate?: (entries: readonly { readonly id?: string; readonly content: string; readonly status: "pending" | "in_progress" | "completed" | "cancelled" }[]) => void;
   }) {
     const authorize = typeof options.authorize === "function"
       ? options.authorize
@@ -116,6 +127,9 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#resumeFrom = options.resumeFrom;
     this.#guard = options.guard;
     this.#onSkillRead = options.onSkillRead;
+    this.#onToolOutcome = options.onToolOutcome ?? (typeof options.authorize === "function" ? undefined : (sessionId, outcome, tool, reason) => (options.authorize as WorkflowApplication).recordToolOutcome(sessionId, outcome, tool, reason));
+    this.#onReadFingerprint = options.onReadFingerprint ?? (typeof options.authorize === "function" ? undefined : (fingerprint) => (options.authorize as WorkflowApplication).recordReadFingerprint(fingerprint));
+    this.#onTodoUpdate = options.onTodoUpdate ?? (typeof options.authorize === "function" ? undefined : (entries) => (options.authorize as WorkflowApplication).mirrorNativeTodos(entries));
     this.#client = new AcpSubprocessClient({
       child: options.child,
       resolvePermission: (request) => this.#resolvePermission(request),
@@ -163,7 +177,25 @@ export class AcpSessionDriver implements CodingSessionDriver {
         const cost = usage.cost as { amount?: unknown } | undefined;
         if (typeof cost?.amount === "number" && Number.isFinite(cost.amount) && cost.amount >= 0) this.#acpUsage.costUsd = cost.amount;
       }
+      if (update.update.sessionUpdate === "available_commands_update" && Array.isArray(update.update.availableCommands)) {
+        // Slash commands the agent advertises (OpenCode: builtin init/review,
+        // user commands, MCP prompts, skills). Tolerant parse: only
+        // well-formed entries survive.
+        this.#availableCommands = update.update.availableCommands.flatMap((command) => {
+          if (typeof command !== "object" || command === null) return [];
+          const entry = command as { name?: unknown; description?: unknown };
+          return typeof entry.name === "string" && entry.name.length > 0
+            ? [{ name: entry.name, description: typeof entry.description === "string" ? entry.description : "" }]
+            : [];
+        });
+      }
       const event = this.#project(update, this.#assistant);
+      if (event?.type === "tool") {
+        if (event.status === "completed") this.#onToolOutcome?.(this.#workflowSessionId, "succeeded", event.title);
+        else if (event.status === "error" || event.status === "cancelled") {
+          this.#onToolOutcome?.(this.#workflowSessionId, "failed", event.title, event.status);
+        }
+      }
       if (event !== undefined) {
         this.#emit(event);
         for (const listener of this.#listeners) listener(event);
@@ -195,8 +227,10 @@ export class AcpSessionDriver implements CodingSessionDriver {
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
-    onSkillRead?: (skill: string) => void;
-  }): AcpSessionDriver {
+     onSkillRead?: (skill: string) => void;
+      onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
+      onTodoUpdate?: (entries: readonly { readonly id?: string; readonly content: string; readonly status: "pending" | "in_progress" | "completed" | "cancelled" }[]) => void;
+   }): AcpSessionDriver {
     const child = launchContainedAcpAgent(options.containment, options.launch);
     return new AcpSessionDriver({ ...options, child });
   }
@@ -214,6 +248,10 @@ export class AcpSessionDriver implements CodingSessionDriver {
       // The handshake's agentInfo is the authoritative agent identity — the
       // version string the operator surface displays as "opencode vX".
       this.#agentInfo = initialized.agentInfo;
+      const sessionCapabilities = initialized.agentCapabilities["sessionCapabilities"];
+      this.#sessionCapabilities = typeof sessionCapabilities === "object" && sessionCapabilities !== null
+        ? sessionCapabilities as Record<string, unknown>
+        : {};
       this.#initialized = true;
     }
     if (this.#agentSessionId === undefined) {
@@ -254,7 +292,22 @@ export class AcpSessionDriver implements CodingSessionDriver {
       ...(images ?? []).map((image) => ({ type: "image", data: image.data, mimeType: image.mediaType })),
     ];
     const result = (await this.#prompt(agentSessionId, content)) as
-      { stopReason?: string; failClosedReason?: string } | undefined;
+      { stopReason?: string; failClosedReason?: string; usage?: unknown } | undefined;
+    // The prompt response carries this turn's token split (OpenCode:
+    // input/output/thought/cache). Per-turn deltas accumulate into session
+    // totals here; the persisted baseline in the channel carries them across
+    // process restarts.
+    const turnUsage = result?.usage;
+    if (typeof turnUsage === "object" && turnUsage !== null) {
+      const split = turnUsage as Record<string, unknown>;
+      const count = (value: unknown): number | undefined =>
+        typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+      const input = count(split["inputTokens"]);
+      const output = count(split["outputTokens"]);
+      if (input !== undefined) this.#turnTokenTotals.input += input;
+      if (output !== undefined) this.#turnTokenTotals.output += output;
+      if (input !== undefined || output !== undefined) this.#turnTokenTotals.turns += 1;
+    }
     const stopReason = result?.stopReason;
     if (stopReason === "end_turn") {
       emit({ type: "completed", result: this.#assistant.join("") });
@@ -341,6 +394,30 @@ export class AcpSessionDriver implements CodingSessionDriver {
     return { ...this.#acpUsage };
   }
 
+  /** Session management capabilities the agent advertised at initialize
+   * (ACP sessionCapabilities: close/fork/list/resume on OpenCode). */
+  sessionCapabilities(): { readonly close: boolean; readonly fork: boolean; readonly list: boolean; readonly resume: boolean } {
+    const caps = this.#sessionCapabilities;
+    return {
+      close: caps["close"] !== undefined,
+      fork: caps["fork"] !== undefined,
+      list: caps["list"] !== undefined,
+      resume: caps["resume"] !== undefined,
+    };
+  }
+
+  /** Slash commands the agent advertised (available_commands_update); empty
+   * until the agent sends the list. */
+  availableCommands(): readonly { readonly name: string; readonly description: string }[] {
+    return this.#availableCommands;
+  }
+
+  /** This process's accumulated per-turn token split from prompt responses
+   * (deltas only — the channel's persisted baseline carries history). */
+  turnTokenTotals(): { readonly input: number; readonly output: number; readonly turns: number } {
+    return { ...this.#turnTokenTotals };
+  }
+
   /** Mutate configuration on the existing ACP session and retain the agent's complete returned state. */
   async setConfigOption(configId: string, value: AcpConfigOptionValue): Promise<AcpSessionConfig> {
     // Plan Task B2: enforcement-altering options are denied client-side
@@ -397,6 +474,11 @@ export class AcpSessionDriver implements CodingSessionDriver {
       const rawInput = rawWireText(update.update.rawInput);
       this.#toolTitles.set(callId, title);
       this.#toolCalls.set(callId, { title, toolKind, subjects, ...(rawInput !== undefined ? { rawInput } : {}) });
+      try {
+        this.#projectTodoUpdate(title, rawInput);
+      } catch (error) {
+        return { type: "status", status: `todo ledger update rejected: ${error instanceof Error ? error.message : String(error)}` };
+      }
       return {
         type: "tool",
         callId,
@@ -542,8 +624,11 @@ export class AcpSessionDriver implements CodingSessionDriver {
         kind: mutating ? "edit" : "read",
         capability,
         rawInput: params,
-        locations: [{ path }],
-      },
+         locations: [{ path }],
+         ...(mutating && this.#readFingerprints.has(path)
+           ? { readFingerprints: [this.#readFingerprints.get(path)!] }
+           : {}),
+       },
     });
     const decision = await this.#authorize(proposal);
     if (decision.kind !== "allow") {
@@ -574,10 +659,36 @@ export class AcpSessionDriver implements CodingSessionDriver {
       return {};
     }
     if (toolName === "fs/read_text_file") {
-      return { content: await readFile(path, "utf8") };
+      const content = await readFile(path, "utf8");
+      try {
+        const fingerprint = fingerprintFile(path);
+        this.#readFingerprints.set(path, fingerprint);
+        this.#onReadFingerprint?.(fingerprint);
+      } catch { /* the next write gate remains fail-closed */ }
+      return { content };
     }
     const entries = await readdir(path, { withFileTypes: true });
     return { entries: entries.map((entry) => ({ name: entry.name, type: entry.isDirectory() ? "directory" : "file" })) };
+  }
+
+  /** Mirrors OpenCode's native todo tool into the canonical step bridge. */
+  #projectTodoUpdate(title: string, rawInput: string | undefined): void {
+    const tool = AcpSessionDriver.toolNameFromTitle(title).toLowerCase();
+    if (tool !== "todo" && tool !== "todowrite") return;
+    if (rawInput === undefined) return;
+    let parsed: unknown;
+    try { parsed = JSON.parse(rawInput) as unknown; } catch { return; }
+    if (typeof parsed !== "object" || parsed === null) return;
+    const todos = (parsed as Record<string, unknown>).todos;
+    if (!Array.isArray(todos)) return;
+    const entries = todos.flatMap((value) => {
+      if (typeof value !== "object" || value === null) return [];
+      const item = value as Record<string, unknown>;
+      if (typeof item.content !== "string") return [];
+      const status: "pending" | "in_progress" | "completed" | "cancelled" = item.status === "in_progress" || item.status === "completed" || item.status === "cancelled" ? item.status : "pending";
+      return [{ ...(typeof item.id === "string" ? { id: item.id } : {}), content: item.content, status }];
+    });
+    if (entries.length > 0) this.#onTodoUpdate?.(entries);
   }
 
   /**

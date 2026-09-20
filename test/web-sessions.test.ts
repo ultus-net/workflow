@@ -402,7 +402,7 @@ test("session manager syncs agent-provided titles and serves runtime usage", asy
   });
 
   const channel = await manager.channel();
-  assert.deepEqual(channel.usage(), metrics, "the channel exposes the runtime's metering metrics");
+  assert.deepEqual(channel.usage(), { source: "metered", ...metrics }, "the channel exposes the runtime's metering metrics");
   channel.ingest({ type: "session-info", title: "Agent-titled work" });
   const created = await manager.create();
   assert.equal(created.kind, "ok");
@@ -410,7 +410,78 @@ test("session manager syncs agent-provided titles and serves runtime usage", asy
   const titled = manager.list().find((session) => !session.active);
   assert.equal(titled?.title, "Agent-titled work", "session_info_update titles win over the derived title");
   const active = await manager.channel();
-  assert.deepEqual(active.usage(), metrics, "the next runtime's metrics flow through its own channel");
+  assert.deepEqual(active.usage(), { source: "metered", ...metrics }, "the next runtime's metrics flow through its own channel");
+  await manager.dispose();
+});
+
+test("session history is readable from the registry without spawning a runtime", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const registryPath = join(dir, "registry.json");
+  const metrics = { requests: 1, usageEvents: 1, promptTokens: 90, completionTokens: 12, totalTokens: 102, costUsd: 0.004, latestPromptTokens: 90 };
+  let launches = 0;
+  const factory = async () => {
+    launches += 1;
+    const fake = fakeRuntime(`agent-${launches}`);
+    return { ...fake.runtime, usage: () => metrics };
+  };
+  const first = new WebSessionManager({ registryPath, factory });
+  const channel = await first.channel();
+  channel.submit("persist this prompt", []);
+  await settle(channel);
+  await first.dispose();
+  assert.equal(launches, 1);
+
+  const second = new WebSessionManager({ registryPath, factory: async () => {
+    launches += 1;
+    throw new Error("history must not launch an agent");
+  } });
+  const stored = second.historyFor();
+  assert.ok(stored !== undefined);
+  assert.equal(stored.items.some((item) => item.kind === "user" && item.text === "persist this prompt"), true);
+  assert.deepEqual(stored.usage, { source: "metered", ...metrics });
+  assert.equal(launches, 1, "reading history must not create a headless runtime");
+  await second.dispose();
+});
+
+test("failed runtime creation backs off instead of spawning once per poll", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  let launches = 0;
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async () => {
+      launches += 1;
+      throw new Error("agent unavailable");
+    },
+  });
+  await assert.rejects(() => manager.channel(), /agent unavailable/);
+  await assert.rejects(() => manager.channel(), /backing off/);
+  assert.equal(launches, 1, "a failed poll must not create another agent process");
+  await manager.dispose();
+});
+
+test("spawn backoff escalates: the failure count survives cooldown expiry", async (context) => {
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  let launches = 0;
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    spawnCooldownBaseMs: 20,
+    factory: async () => {
+      launches += 1;
+      throw new Error("agent unavailable");
+    },
+  });
+  await assert.rejects(() => manager.channel(), /agent unavailable/);
+  await assert.rejects(() => manager.channel(), /\(1 failed attempt/);
+  // Outlive the 20ms first cooldown; the retry is allowed, fails, and the
+  // count escalates to 2 instead of resetting to 1.
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  await assert.rejects(() => manager.channel(), /agent unavailable/);
+  assert.equal(launches, 2, "exactly one retry after the cooldown");
+  await assert.rejects(() => manager.channel(), /\(2 failed attempt/);
+  assert.equal(launches, 2, "the escalated cooldown still refuses new spawns");
   await manager.dispose();
 });
 

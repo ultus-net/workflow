@@ -4,9 +4,10 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
+import type { OperatorSessionItem } from "./operator-session.js";
 import type { PermissionBroker } from "./permission-broker.js";
 import { DEFAULT_WEB_AGENT, isWebAgentId, type WebAgentId } from "./web-agents.js";
-import { SessionChannel, driverPermissionKey } from "./web-session-channel.js";
+import { SessionChannel, driverPermissionKey, type SessionUsageReadout } from "./web-session-channel.js";
 
 export interface WebSessionMeta {
   readonly id: string;
@@ -30,7 +31,23 @@ interface SessionRecord {
   createdAt: string;
   updatedAt: string;
   agent?: WebAgentId;
+  /** Persisted transcript snapshot (bounded) — history is data, not control:
+   * it stays viewable with no live runtime and no agent process. */
+  items?: OperatorSessionItem[];
+  /** Persisted usage readout; the channel merges it as a restart baseline. */
+  usage?: SessionUsageReadout;
 }
+
+/** Transcript snapshot bound kept in the registry: enough to review a session,
+ * small enough that the throttled persist never writes megabytes. */
+const PERSISTED_ITEM_LIMIT = 100;
+
+/** Failed-spawn backoff: the browser polls session state every ~1s, and a
+ * spawn failure (stale resume, missing binary, crash-looping agent) must
+ * never turn that poll into a re-spawn loop. 5s base, doubling to a 60s cap,
+ * per record; a successful spawn resets it. */
+const SPAWN_COOLDOWN_BASE_MS = 5_000;
+const SPAWN_COOLDOWN_MAX_MS = 60_000;
 
 interface ActiveSession {
   record: SessionRecord;
@@ -76,14 +93,21 @@ export class WebSessionManager {
   /** Boot: the initial spawn (resume most recent, or create the first). */
   #boot: Promise<ActiveSession> | undefined;
   #lastTouchPersist = 0;
+  /** Per-record spawn failures for the poll-storm backoff (see constants). */
+  readonly #spawnFailures = new Map<string, { at: number; count: number; error: string }>();
+  /** Cooldown base, overridable in tests so the doubling schedule is provable
+   * without waiting real seconds. */
+  readonly #spawnCooldownBaseMs: number;
 
   constructor(options: {
     readonly factory: (agent: WebAgentId, resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
     readonly registryPath?: string;
     readonly permissionBroker?: PermissionBroker;
+    readonly spawnCooldownBaseMs?: number;
   }) {
     this.#factory = options.factory;
     this.#permissionBroker = options.permissionBroker;
+    this.#spawnCooldownBaseMs = options.spawnCooldownBaseMs ?? SPAWN_COOLDOWN_BASE_MS;
     this.#registryPath = options.registryPath ?? join(homedir(), ".workflow", "web-sessions.json");
     this.#sessions = loadRegistry(this.#registryPath);
     // Focus continuity across restarts: the most recent record is the one the
@@ -117,6 +141,50 @@ export class WebSessionManager {
     return focused === undefined ? undefined : this.#meta(focused);
   }
 
+  /** The session the operator UI is viewing (undefined when none is known). */
+  activeId(): string | undefined {
+    return this.#focusId;
+  }
+
+  /** Whether a live runtime exists for this session right now (no spawning). */
+  isLive(id: string): boolean {
+    return this.#live.has(id);
+  }
+
+  /** The recorded spawn failure for a session, if it is backing off — the
+   * surface reports WHY the session is unavailable instead of a bare 503. */
+  spawnError(id?: string): string | undefined {
+    const record = (id === undefined ? undefined : this.#sessions.find((entry) => entry.id === id))
+      ?? this.#sessions.find((entry) => entry.id === this.#focusId)
+      ?? this.#sessions[0];
+    return record === undefined ? undefined : this.#spawnFailures.get(record.id)?.error;
+  }
+
+  /** Stored history for a session (focused by default): pure registry data —
+   * transcript snapshot plus last-known usage — served without ever spawning
+   * a runtime. Viewing history is independent of controlling live sessions. */
+  historyFor(id?: string): {
+    readonly id: string;
+    readonly title: string;
+    readonly agent: WebAgentId;
+    readonly live: boolean;
+    readonly items: readonly OperatorSessionItem[];
+    readonly usage?: SessionUsageReadout;
+  } | undefined {
+    const record = (id === undefined ? undefined : this.#sessions.find((entry) => entry.id === id))
+      ?? this.#sessions.find((entry) => entry.id === this.#focusId)
+      ?? this.#sessions[0];
+    if (record === undefined) return undefined;
+    return {
+      id: record.id,
+      title: record.title,
+      agent: record.agent ?? DEFAULT_WEB_AGENT,
+      live: this.#live.has(record.id),
+      items: record.items ?? [],
+      ...(record.usage === undefined ? {} : { usage: record.usage }),
+    };
+  }
+
   /** Handshake version of one session's live runtime (or the focused one).
    * undefined is honest: not connected, or the agent did not report a version. */
   agentVersion(id?: string): string | undefined {
@@ -127,15 +195,21 @@ export class WebSessionManager {
     return this.#live.get(record.id)?.channel.agentInfo()?.version;
   }
 
-  /** Handshake versions by agent id, from every live runtime that reported one. */
-  liveAgentVersions(): ReadonlyMap<WebAgentId, string> {
-    const versions = new Map<WebAgentId, string>();
+  /** Handshake facts by agent id, from every live runtime that reported one:
+   * version and/or the agent's advertised session capabilities. Read paths
+   * only — the /api/agents annotation must never spawn a runtime. */
+  liveAgentFacts(): ReadonlyMap<WebAgentId, { readonly version?: string; readonly capabilities?: { readonly close: boolean; readonly fork: boolean; readonly list: boolean; readonly resume: boolean } }> {
+    const facts = new Map<WebAgentId, { readonly version?: string; readonly capabilities?: { readonly close: boolean; readonly fork: boolean; readonly list: boolean; readonly resume: boolean } }>();
     for (const active of this.#live.values()) {
       const version = active.channel.agentInfo()?.version;
-      if (version === undefined) continue;
-      versions.set(active.record.agent ?? DEFAULT_WEB_AGENT, version);
+      const capabilities = active.channel.sessionCapabilities();
+      if (version === undefined && capabilities === undefined) continue;
+      facts.set(active.record.agent ?? DEFAULT_WEB_AGENT, {
+        ...(version !== undefined ? { version } : {}),
+        ...(capabilities !== undefined ? { capabilities } : {}),
+      });
     }
-    return versions;
+    return facts;
   }
 
   async create(): Promise<SessionSwitchResult> {
@@ -177,6 +251,9 @@ export class WebSessionManager {
     const previousSessionId = target.agentSessionId;
     target.agent = agent;
     delete target.agentSessionId;
+    // A different agent is a different launch: any prior spawn backoff no
+    // longer describes it.
+    this.#spawnFailures.delete(target.id);
     try {
       await this.#relaunch(target);
     } catch (error) {
@@ -222,6 +299,7 @@ export class WebSessionManager {
     const record = this.#sessions.find((entry) => entry.id === id);
     if (record === undefined) return { kind: "unknown" };
     this.#sessions = this.#sessions.filter((entry) => entry.id !== id);
+    this.#spawnFailures.delete(id);
     this.#persist();
     await this.#disposeLive(id, live, "session dismissed");
     if (this.#focusId !== id) return { kind: "ok", meta: { ...this.#meta(record), active: false, live: false, busy: false } };
@@ -284,19 +362,41 @@ export class WebSessionManager {
     return await this.#ensure(record);
   }
 
-  /** One shared spawn per record; concurrent callers await the same promise. */
+  /** One shared spawn per record; concurrent callers await the same promise.
+   * Failures latch a cooldown so the 1s UI poll cannot re-spawn a dead agent
+   * launch over and over. The failure count survives cooldown expiry so the
+   * schedule escalates (5s → 10s → … capped at 60s); only a successful spawn
+   * clears it. */
   async #ensure(record: SessionRecord): Promise<ActiveSession> {
     const existing = this.#live.get(record.id);
     if (existing !== undefined) {
       this.#touch(record);
       return existing;
     }
+    const failure = this.#spawnFailures.get(record.id);
+    if (failure !== undefined) {
+      const cooldown = Math.min(this.#spawnCooldownBaseMs * 2 ** (failure.count - 1), SPAWN_COOLDOWN_MAX_MS);
+      if (Date.now() - failure.at < cooldown) {
+        throw new Error(`agent start backing off (${failure.count} failed attempt(s)): ${failure.error}`);
+      }
+      // Cooldown elapsed: one retry is allowed. The entry deliberately stays —
+      // if this retry fails too, the count escalates instead of resetting.
+    }
     const inFlight = this.#spawning.get(record.id);
     if (inFlight !== undefined) return inFlight;
     const spawned = this.#spawn(record);
     this.#spawning.set(record.id, spawned);
     try {
-      return await spawned;
+      const active = await spawned;
+      this.#spawnFailures.delete(record.id);
+      return active;
+    } catch (error) {
+      const previous = this.#spawnFailures.get(record.id);
+      const count = (previous?.count ?? 0) + 1;
+      const message = error instanceof Error ? error.message : String(error);
+      this.#spawnFailures.set(record.id, { at: Date.now(), count, error: message });
+      console.error(`web session ${record.id}: agent start failed (attempt ${count}, backing off): ${message}`);
+      throw error;
     } finally {
       this.#spawning.delete(record.id);
     }
@@ -305,53 +405,72 @@ export class WebSessionManager {
   async #spawn(record: SessionRecord): Promise<ActiveSession> {
     await this.#enforceLiveCap(record.id);
     try {
-      const runtime = await this.#factory(record.agent ?? DEFAULT_WEB_AGENT, record.agentSessionId);
-      const channel = new SessionChannel(
-        runtime.session,
-        runtime.driver,
-        runtime.usage?.bind(runtime),
-        this.#permissionBroker,
-        // Parked prompts key on the workflow permission-correlation id the
-        // resolver puts on ProposedToolAction.sessionId — never the ACP id.
-        () => driverPermissionKey(runtime.driver),
-        // W045: the hub records the active budget mechanism (and the sticky
-        // violation once crossed) per runtime, served on /api/session.
-        {
-          mechanism: () => runtime.budgetMechanism,
-          ...(runtime.budgetViolation === undefined ? {} : { violation: () => runtime.budgetViolation?.() }),
-        },
-      );
-      // Eagerly establish the ACP session on every spawn, not only on resume:
-      // a fresh session's connect() captures the agent's advertised config
-      // (model/effort/mode options) so the pickers are populated before the
-      // first prompt. On resume the same connect replays history into the
-      // channel through the load subscription. The subscription lasts only
-      // for the connect.
-      const unsubscribe = runtime.driver.subscribe((event) => channel.ingest(event));
-      let timer: NodeJS.Timeout | undefined;
-      try {
-        // Bounded wait: a hung session/new or session/load must not pend the
-        // spawn forever. The session stays usable; the config/replay simply
-        // never arrived. The timer is always cleared.
-        const loading = runtime.driver.connect();
-        await Promise.race([
-          loading,
-          new Promise<void>((resolve) => {
-            timer = setTimeout(resolve, RESUME_LOAD_TIMEOUT_MS);
-          }),
-        ]);
-      } finally {
-        if (timer !== undefined) clearTimeout(timer);
-        unsubscribe();
-      }
-      const active: ActiveSession = { record, runtime, channel };
-      this.#live.set(record.id, active);
-      this.#persist();
-      return active;
+      return await this.#attemptSpawn(record, record.agentSessionId);
     } catch (error) {
+      if (record.agentSessionId === undefined) throw error;
+      // A stale resume link must not brick the session: the agent's session
+      // store lives in the per-runtime scratch HOME, which dispose deletes,
+      // so a stored id cannot survive restarts or runtime eviction. Drop it
+      // and try once as a fresh agent session — history stays readable from
+      // the persisted transcript; control starts a new agent-side store.
+      console.error(`web session ${record.id}: resume of ${record.agentSessionId} failed (${error instanceof Error ? error.message : String(error)}); restarting as a fresh agent session`);
+      delete record.agentSessionId;
       this.#persist();
-      throw error instanceof Error ? error : new Error("session start failed");
+      return await this.#attemptSpawn(record, undefined);
     }
+  }
+
+  async #attemptSpawn(record: SessionRecord, resumeFrom: string | undefined): Promise<ActiveSession> {
+    const runtime = await this.#factory(record.agent ?? DEFAULT_WEB_AGENT, resumeFrom);
+    const channel = new SessionChannel(
+      runtime.session,
+      runtime.driver,
+      runtime.usage?.bind(runtime),
+      this.#permissionBroker,
+      // Parked prompts key on the workflow permission-correlation id the
+      // resolver puts on ProposedToolAction.sessionId — never the ACP id.
+      () => driverPermissionKey(runtime.driver),
+      // W045: the hub records the active budget mechanism (and the sticky
+      // violation once crossed) per runtime, served on /api/session.
+      {
+        mechanism: () => runtime.budgetMechanism,
+        ...(runtime.budgetViolation === undefined ? {} : { violation: () => runtime.budgetViolation?.() }),
+      },
+      // Restart continuity: the record's persisted readout becomes the
+      // channel's baseline, so the meter never blanks between processes.
+      record.usage,
+    );
+    // Eagerly establish the ACP session on every spawn, not only on resume:
+    // a fresh session's connect() captures the agent's advertised config
+    // (model/effort/mode options) so the pickers are populated before the
+    // first prompt. On resume the same connect replays history into the
+    // channel through the load subscription. The subscription lasts only
+    // for the connect.
+    const unsubscribe = runtime.driver.subscribe((event) => channel.ingest(event));
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      // Bounded wait: a hung session/new or session/load must not pend the
+      // spawn forever. The session stays usable; the config/replay simply
+      // never arrived. The timer is always cleared.
+      const loading = runtime.driver.connect();
+      await Promise.race([
+        loading,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, RESUME_LOAD_TIMEOUT_MS);
+        }),
+      ]);
+    } catch (error) {
+      // A failed connect must not leak the just-spawned process tree.
+      await runtime.dispose().catch(() => undefined);
+      throw error;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      unsubscribe();
+    }
+    const active: ActiveSession = { record, runtime, channel };
+    this.#live.set(record.id, active);
+    this.#persist();
+    return active;
   }
 
   /** Disposes a session's runtime and re-spawns it for the record's (new)
@@ -422,7 +541,11 @@ export class WebSessionManager {
     return this.#focusId === undefined ? undefined : this.#live.get(this.#focusId);
   }
 
-  /** Copies volatile facts (agent session id, agent/derived title) into a record. */
+  /** Copies volatile facts (agent session id, agent/derived title) plus the
+   * history snapshot (bounded transcript, last-known usage) into a record.
+   * The snapshot is what makes history independent of runtimes: after the
+   * agent process dies — restart, eviction, crash — the transcript stays
+   * readable and the meter shows its last-known numbers. */
   #capture(record: SessionRecord, active: ActiveSession | undefined): void {
     if (active === undefined) return;
     const agentId = active.runtime.driver.agentSessionId();
@@ -438,6 +561,12 @@ export class WebSessionManager {
         record.title = firstUser.text.length > 60 ? `${firstUser.text.slice(0, 60)}…` : firstUser.text;
       }
     }
+    const items = active.channel.items();
+    record.items = items.length > PERSISTED_ITEM_LIMIT ? items.slice(-PERSISTED_ITEM_LIMIT) : [...items];
+    // The readout already includes the persisted baseline (the channel merges),
+    // so what lands here carries history from earlier processes too.
+    const usage = active.channel.usage();
+    if (usage !== undefined) record.usage = usage;
     record.updatedAt = new Date().toISOString();
   }
 

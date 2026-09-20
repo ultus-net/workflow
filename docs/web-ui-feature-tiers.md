@@ -131,3 +131,43 @@ single-user operator tool; those belong to multi-tenant products.
     {webui-demo-server.ts,cdp-client.mjs}`) is the UI regression net; palette
     AA is gated in `test/webapp-palettes.test.ts` and the usage data path in
     `test/openrouter-analytics.test.ts`.
+
+## Shipped 2026-09-19 — fullscreen settings page + control-plane settings push
+
+The settings modal became a fullscreen page (`settings-dialog.tsx`, class
+`settings-dialog settings-page` retained so the open-chrome guards and the e2e
+selector still match): a section nav plus the same one-source-of-truth
+controls. It surfaces every advertised `configOption` (selects as fields,
+booleans grouped under **Tools** with the remembered per-tool allow/reject
+patterns listed), approvals, capabilities, transcript, notifications,
+shortcuts, and session authority.
+
+New: the Workflow-owned MCP catalog. The control plane owns the settings
+document (`src/integrations/workflow-settings.ts`) — global
+`~/.config/workflow/settings.json` as the base, `<workspace>/.workflow/
+settings.json` as an overlay (workspace wins per server name and per agent
+preference key). The page edits the catalog through guarded endpoints
+(`GET/POST /api/settings/mcp`, `POST /api/settings/agents`), and the runtime
+launch paths **push** the projection into each agent's config on the next
+session:
+
+- OpenCode direct web path: `opencodeSettingsConfig` writes `mcp` + `model`
+  into the scratch `opencode.json` (previously an empty `{}`).
+- OpenCode metered path: `meteredOpencodeConfig` merges operator servers
+  alongside the skills mount.
+- goose: `gooseConfigYaml` appends operator servers as documented
+  `extensions`; the model preference is injected as `WORKFLOW_GOOSE_MODEL`
+  only when explicit env is absent.
+
+Server-side settings (authorization, capabilities, confinement, approval
+mode, remembered patterns) stay authoritative in the application and are
+never delegated to an agent config; MCP/model/tool-posture are pushed only
+because the agent owns those launch surfaces. MCP changes are launch-time by
+construction (ACP fixes `mcpServers` at session creation) and the page states
+so. This supersedes the W050 removal of vendored-Cline self-service MCP
+persistence (that path was Cline-specific; this is host-neutral and
+projected per agent). Tests: `test/workflow-settings.test.ts`,
+`test/web-settings-endpoints.test.ts`, projection pins in
+`test/goose-agent-config.test.ts`, and the UI pin in
+`test/webapp-surface.test.ts`.
+
