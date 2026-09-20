@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 
-import { cliSibling, LAUNCHER_OPTIONS, parseLauncherArgs, resolveSelection } from "./launcher-args.js";
+import { cliSibling, LAUNCHER_OPTIONS, parseAgentFlag, parseLauncherArgs, resolveSelection } from "./launcher-args.js";
 import { openBrowser } from "./open-browser.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 import { runWebLaunch } from "./web-launch.js";
@@ -15,6 +15,9 @@ import { runWebLaunch } from "./web-launch.js";
  *   workflow tui [args]          official opencode TUI attached via the hub gateway
  *   workflow settings [--port n] settings panel only
  *   workflow hub                 hub daemon in the foreground
+ *   --agent <kind>               engine axis: opencode | goose | cline
+ *                                (overrides WORKFLOW_ACP_AGENT; containment
+ *                                stays per-kind, untouched by the flag)
  *
  * Every surface composes the same WorkflowApplication authority in-process;
  * the selector only picks the display. The opencode web UI becomes the web
@@ -33,7 +36,24 @@ function spawnSurface(name: "opencode-attach" | "hub", args: readonly string[], 
   throw new Error("unreachable");
 }
 
-const { verb, rest } = parseLauncherArgs(process.argv.slice(2));
+const initial = parseLauncherArgs(process.argv.slice(2));
+const agentChoice = parseAgentFlag(initial.rest);
+if (agentChoice.error !== undefined) {
+  console.error(agentChoice.error);
+  process.exit(1);
+}
+// The engine axis composes through one mechanism: an explicit `--agent`
+// writes the same env var the runtime reads (`acpAgentKind`), so every
+// surface — web, tui, settings, hub — honors the operator's choice, and the
+// ambient `WORKFLOW_ACP_AGENT` stays authoritative when no flag is given.
+// Containment is decided downstream per kind (`LinuxBubblewrapContainment`);
+// the flag selects the engine, never the isolation boundary.
+if (agentChoice.agent !== undefined) process.env.WORKFLOW_ACP_AGENT = agentChoice.agent;
+// A flag before the verb (`workflow --agent goose web`) still resolves: the
+// post-strip remainder is re-parsed when argv[0] was the flag itself.
+const { verb, rest } = initial.verb === undefined
+  ? parseLauncherArgs(agentChoice.rest)
+  : { verb: initial.verb, rest: agentChoice.rest };
 const workspace = resolveTuiWorkspace(rest, process.cwd());
 
 let selected = verb;

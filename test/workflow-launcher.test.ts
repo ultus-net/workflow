@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   LAUNCHER_OPTIONS,
   cliSibling,
+  parseAgentFlag,
   parseLauncherArgs,
+  resolveAgentKind,
   resolveSelection,
 } from "../src/cli/launcher-args.js";
 
@@ -55,4 +57,34 @@ test("sibling CLI resolution: dist is a plain compiled sibling", () => {
   assert.deepEqual(tui.execArgv, []);
   const hub = cliSibling("file:///repo/dist/cli/workflow.js", "hub");
   assert.equal(hub.script, "/repo/dist/cli/hub.js");
+});
+
+test("the engine axis parses --agent in both forms and strips it from downstream args", () => {
+  const spaced = parseAgentFlag(["--agent", "goose", "--port", "4173"]);
+  assert.equal(spaced.agent, "goose");
+  assert.deepEqual(spaced.rest, ["--port", "4173"]);
+  const inline = parseAgentFlag(["--agent=cline", "--no-browser"]);
+  assert.equal(inline.agent, "cline");
+  assert.deepEqual(inline.rest, ["--no-browser"]);
+  const absent = parseAgentFlag(["--port", "4173"]);
+  assert.equal(absent.agent, undefined);
+  assert.deepEqual(absent.rest, ["--port", "4173"]);
+});
+
+test("the engine axis fails closed on unknown or valueless --agent", () => {
+  const unknown = parseAgentFlag(["--agent", "gpt5"]);
+  assert.match(unknown.error ?? "", /opencode \| goose \| cline/);
+  assert.deepEqual(unknown.rest, ["--agent", "gpt5"], "the malformed argv is returned untouched");
+  const valueless = parseAgentFlag(["--agent"]);
+  assert.match(valueless.error ?? "", /--agent needs a value/);
+});
+
+test("an explicit --agent overrides the ambient env; absence leaves the env default", () => {
+  assert.equal(resolveAgentKind("goose", "cline"), "goose");
+  assert.equal(resolveAgentKind(undefined, "goose"), "goose");
+  assert.equal(resolveAgentKind(undefined, "  opencode  "), "opencode");
+  // An invalid env value is not the launcher's to interpret — it stays
+  // undefined here and `acpAgentKind` fails closed at composition time.
+  assert.equal(resolveAgentKind(undefined, "gpt5"), undefined);
+  assert.equal(resolveAgentKind(undefined, undefined), undefined);
 });

@@ -27,6 +27,67 @@ export function parseLauncherArgs(argv: readonly string[]): { verb?: LauncherVer
   return { verb, rest: argv.slice(1) };
 }
 
+/** The engine axis: which ACP agent kind every surface composes. Kept as a
+ * literal union here (mirroring `AcpAgentKind` in acp-runtime and `WebAgentId`
+ * in web-agents — the established pattern) so this module stays import-free. */
+export type LauncherAgentKind = "opencode" | "cline" | "goose";
+
+const LAUNCHER_AGENT_KINDS: readonly LauncherAgentKind[] = ["opencode", "cline", "goose"];
+
+function isLauncherAgentKind(value: string): value is LauncherAgentKind {
+  return (LAUNCHER_AGENT_KINDS as readonly string[]).includes(value);
+}
+
+export interface ParsedAgentFlag {
+  /** The explicitly requested engine; `undefined` = leave the env default. */
+  readonly agent?: LauncherAgentKind;
+  /** argv with the flag removed so downstream parsers never see it. */
+  readonly rest: readonly string[];
+  /** Set when the flag is malformed or the kind is unknown — fail closed. */
+  readonly error?: string;
+}
+
+/** Extracts `--agent <kind>` / `--agent=<kind>`; unknown values fail closed
+ * with the valid list rather than being passed through to a child process. */
+export function parseAgentFlag(rest: readonly string[]): ParsedAgentFlag {
+  let agent: LauncherAgentKind | undefined;
+  const remainder: string[] = [];
+  for (let index = 0; index < rest.length; index += 1) {
+    const entry = rest[index]!;
+    if (entry === "--agent") {
+      const value = rest[index + 1];
+      if (value === undefined || value.startsWith("-")) {
+        return { rest, error: "--agent needs a value (opencode | goose | cline)" };
+      }
+      if (!isLauncherAgentKind(value)) {
+        return { rest, error: `unknown agent '${value}' (expected opencode | goose | cline)` };
+      }
+      agent = value;
+      index += 1;
+      continue;
+    }
+    if (entry.startsWith("--agent=")) {
+      const value = entry.slice("--agent=".length);
+      if (!isLauncherAgentKind(value)) {
+        return { rest, error: `unknown agent '${value}' (expected opencode | goose | cline)` };
+      }
+      agent = value;
+      continue;
+    }
+    remainder.push(entry);
+  }
+  return { ...(agent === undefined ? {} : { agent }), rest: remainder };
+}
+
+/** Precedence: an explicit `--agent` beats the ambient env; an unparseable
+ * env value returns `undefined` here and stays the runtime's fail-closed
+ * problem (`acpAgentKind` throws on invalid `WORKFLOW_ACP_AGENT`). */
+export function resolveAgentKind(flag?: LauncherAgentKind, envValue?: string): LauncherAgentKind | undefined {
+  if (flag !== undefined) return flag;
+  const raw = envValue?.trim();
+  return raw !== undefined && raw !== "" && isLauncherAgentKind(raw) ? raw : undefined;
+}
+
 /** Maps picker input (number or verb) to a surface; `undefined` = unparseable. */
 export function resolveSelection(input: string): LauncherVerb | undefined {
   const trimmed = input.trim().toLowerCase();

@@ -1042,3 +1042,85 @@ and v2 migration/qualification spec are committed. Stage 1 kernel/application wo
 and bridge behavior. **Still open:** all-surface enforcement, G6 corpus folding, immutable execution log,
 state-diff evidence, v2 C/D reconciliation, and Phase-G probes. W072 remains **in progress**, not
 complete.
+
+## Phase 15: Settings Panel, Launcher Engine Axis, and Hub Orientation (2026-09-20)
+
+The operator panel rollout (selector `13269a9`, connector catalog `c221908`, model routing
+`91ab09f` is **complete**). Remaining slices of the agreed sequence plus the hub-briefing design
+decision (recorded in project memory 2026-09-20).
+
+### W073 - Launcher engine axis: `workflow web --agent <kind>`
+
+**Objective:** Let the operator choose the ACP agent kind (opencode / goose / cline) at launch —
+`workflow web --agent goose` — resolved through `WORKFLOW_ACP_AGENT`, with the panel's agent
+switcher and posture labels driven by `listWebAgents()` (`src/ui/web-agents.ts`). One selector
+implementation covers all surfaces; per-kind probe verdicts in `docs/HOST_ADAPTERS.md` decide what
+each surface may claim.
+
+**Depends on:** the committed selector (`13269a9`); connector catalog (`c221908`); model routing
+(`91ab09f`).
+
+**Acceptance criteria:**
+- [x] `workflow web --agent <kind>` accepts `opencode`, `goose`, `cline`; invalid kinds fail closed
+      with the valid list in the error. (`parseAgentFlag`, pinned in `test/workflow-launcher.test.ts`.)
+- [x] Explicit `--agent` overrides `WORKFLOW_ACP_AGENT`; absence leaves the env default untouched.
+      (`resolveAgentKind` precedence pinned; the launcher writes the same env the runtime reads, so
+      every surface honors one axis. An invalid env value stays `acpAgentKind`'s fail-closed problem.)
+- [x] The webapp surfaces the resolved engine kind and its containment posture (from
+      `listWebAgents()`) honestly — unprobed kinds show their probe-PENDING status, not a green check.
+      (Pre-existing and pinned: status-bar containment title, agent switcher, settings AgentSection,
+      `/api/agents` with availability `reason`; goose/cline render `contained`, opencode `advisory`.)
+- [ ] Parsing lives in `src/cli/launcher-args.ts` with focused tests; `npm run typecheck`/`lint` clean;
+      an independent five-axis review is recorded. (Parsing + tests + gates done 2026-09-20;
+      **review pending**.)
+
+**Verification:** `node --import tsx --test test/workflow-launcher.test.ts` (9/9, includes the
+web-agents posture suite companion run 14/14), typecheck and lint clean (2026-09-20).
+
+### W074 - Qualification probes: stock opencode web UI behind the hub gateway; v2 config hot-reload
+
+**Objective:** Turn the two remaining experimental seams into probe-gated, dated verdicts: (a) the
+stock opencode web UI projected through the hub gateway as a second surface (per
+`docs/ideas/hub-control-plane.md`); (b) v2 config hot-reload — a routing/settings change reaching a
+live hub session without a restart.
+
+**Depends on:** W073 (engine axis lands before probes exercise multiple agent kinds).
+
+**Acceptance criteria:**
+- [ ] A live probe drives the stock opencode web UI behind the hub gateway and records the verdict
+      per pinned version in `docs/HOST_ADAPTERS.md` (gated on `WORKFLOW_ACP_*`, skips clean when unset).
+- [ ] A live probe or deterministic test proves config publish → live session pickup (or documents
+      the restart-required limitation honestly in `docs/FEATURES.md`).
+- [ ] No claim upgrades to Complete without the probe evidence; hub config publish remains the
+      single journal of record.
+
+**Verification:** the gated probe tests run green with the gate set; `docs/HOST_ADAPTERS.md` and
+`docs/FEATURES.md` rows updated with dated verdicts.
+
+### W075 - Hub orientation briefing (prompt-level block; skill depth layer behind a dated decision)
+
+**Objective:** Give hub-launched agents a deterministic orientation so toolbox/guard tools are used
+correctly. Design decision recorded 2026-09-20: a static, versioned, provenance-tagged prompt-level
+orientation block is the guaranteed/discovery layer (~100–150 tokens: hub role, tool presence,
+"check `guard_next_tasks` before planning", pointer to the skill); detailed tool data lives in a
+skill body **generated from `toolbox-catalog.ts`** (single source of truth, written as a workspace
+file at session create for OpenCode first). Native host skill injection stays **off** per the
+2026-09-15 hub-owned-enforcement plan — the skill-file route needs an explicit dated supersession or
+a file-provisioning framing before it ships.
+
+**Depends on:** W074 (probes establish the host-version behavior the skill-discovery claim needs).
+
+**Acceptance criteria:**
+- [ ] `buildOrientation()` (extending `src/integrations/prompt-guidance.ts`): static template,
+      `ORIENTATION_VERSION` stamp, no interpolation of task/repo/env data, silence-when-unset,
+      prepended once at session start (scheduled turns first).
+- [ ] Composition pin + no-interpolation pin in focused tests (scheduler composition like
+      `test/hub-scheduler.test.ts:178`).
+- [ ] Orientation version + fingerprint recorded in the run registry for review provenance.
+- [ ] Skill body generated from the toolbox catalog with a content-pinning test against the corpus;
+      per-host delivery (OpenCode skill dir; goose/cline) only when that surface qualifies.
+- [ ] Ledger rows in `docs/HARNESS_ASSUMPTION_LEDGER.md` (advisory orientation block, skill recall)
+      and a `docs/FEATURES.md` status entry; advisory only — enforcement stays in the guard MCP server.
+
+**Verification:** focused prompt-guidance/scheduler tests, catalog-pinning test, and the ledger/doc
+rows; no live-probe claim without the W074 gates.
