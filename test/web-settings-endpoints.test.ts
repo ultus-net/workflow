@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +19,7 @@ import {
 } from "../src/integrations/workflow-settings.js";
 import { opencodeServerWorkspaceTag } from "../src/integrations/opencode-server-runtime.js";
 import { writeOpencodeServerDiscovery } from "../src/integrations/opencode-server-discovery.js";
+import { saveSchedulesTable } from "../src/integrations/hub-scheduler.js";
 
 /** Starts the web server against a throwaway home + workspace so the settings
  * files never touch the operator's real config. */
@@ -239,10 +240,11 @@ test("schedules endpoint: the shared table reads with the hub's own contract, er
   assert.equal(empty.schedulesPath, schedulesPath, "the echoed path is the table the hub actually reads");
   assert.equal(typeof empty.hub.reachable, "boolean", "hub reachability is an honest probe result");
 
-  // A real table reads through with its definitions.
-  writeFileSync(schedulesPath, JSON.stringify([{
+  // A real table reads through with its definitions (written via the real
+  // saver so the fixture follows the versioned envelope exactly).
+  saveSchedulesTable(schedulesPath, [{
     id: "nightly", title: "Nightly audit", cron: "0 9 * * *", prompt: "audit the repo", requiresReview: true,
-  }]), "utf8");
+  }]);
   const loaded = await fetch(`${base}/api/schedules`).then((response) => response.json()) as {
     schedules: readonly { id: string; title: string; cron: string; prompt: string }[];
   };
