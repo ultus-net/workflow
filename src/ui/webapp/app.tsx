@@ -20,6 +20,7 @@ import { listPalettes } from "./theme/palettes.js";
 import { usePalette } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
 import type { AgentRuntimePreference, McpServerSetting } from "../../integrations/workflow-settings.js";
+import type { LiveMcpState } from "../../integrations/opencode-live-state.js";
 import type { ToolboxCatalogEntry } from "../../integrations/toolbox-catalog.js";
 import type { WebConfigOption } from "../web-config-options.js";
 
@@ -356,11 +357,13 @@ function persistAgentPreference(agent: string, preference: { model?: string; mod
 }
 
 /** Loads and edits the Workflow-owned MCP catalog. The displayed list is the
- * effective merge (workspace over global); edits write the selected scope. */
+ * effective merge (workspace over global); edits write the selected scope.
+ * Also carries the live data-lane read (W074 follow-up). */
 function useMcpSettings() {
   const [state, setState] = useState<McpState | undefined>(undefined);
   const [scope, setScopeState] = useState<"global" | "workspace">("global");
   const [error, setError] = useState<string | undefined>(undefined);
+  const [live, setLive] = useState<LiveMcpState | undefined>(undefined);
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -374,6 +377,19 @@ function useMcpSettings() {
     }
   }, []);
   useEffect(() => { void load(); }, [load]);
+
+  // The live data-lane read (W074 follow-up): honest states only — the hook
+  // never fabricates a connection; undefined until the read resolves.
+  const loadLive = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/settings/mcp/live");
+      if (!response.ok) return;
+      setLive(await response.json() as LiveMcpState);
+    } catch {
+      // Keep the last good state; the page retries on the next open.
+    }
+  }, []);
+  useEffect(() => { void loadLive(); }, [loadLive]);
 
   const scopeServers = (current: McpState, target: "global" | "workspace"): readonly McpServerSetting[] =>
     target === "global" ? current.global : current.workspace;
@@ -421,6 +437,7 @@ function useMcpSettings() {
     catalog: state?.catalog ?? [],
     loading: state === undefined,
     error,
+    ...(live === undefined ? {} : { live }),
     setScope: setScopeState,
     upsert,
     remove,

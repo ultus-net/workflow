@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref } from "react";
 
 import type { AgentRuntimePreference, McpServerSetting, McpTransport } from "../../integrations/workflow-settings.js";
+import type { LiveMcpState } from "../../integrations/opencode-live-state.js";
 import type { WebConfigOption } from "../web-config-options.js";
 import { ConfigField } from "./config-field.js";
 import { formatTokens } from "./presenters.js";
@@ -49,6 +50,9 @@ export interface SettingsMcp {
   readonly workspaceOverlay: boolean;
   readonly loading: boolean;
   readonly error: string | undefined;
+  /** Live server-side MCP state through the enforced gateway (dual data lane);
+   * `undefined` until the read resolves — never a fabricated connection. */
+  readonly live?: LiveMcpState;
   readonly setScope: (scope: "global" | "workspace") => void;
   readonly upsert: (server: McpServerSetting) => Promise<void>;
   readonly remove: (name: string) => Promise<void>;
@@ -537,6 +541,25 @@ export function McpSection({ mcp }: { readonly mcp: SettingsMcp }) {
       {mcp.error !== undefined && <p className="settings-error" role="alert">{mcp.error}</p>}
       {mcp.servers.length === 0 && !mcp.loading && (
         <p className="settings-desc">No MCP servers configured. Add one below to expose its tools to the agent.</p>
+      )}
+      {mcp.live !== undefined && (
+        <div className="settings-subgroup">
+          <h4>Live state</h4>
+          {mcp.live.live ? (
+            <>
+              <p className="settings-desc">
+                Server-side MCP state read through the enforced gateway ({mcp.live.gatewayUrl}) — the live
+                view ACP does not expose. States are the server's own.
+              </p>
+              {mcp.live.servers.length === 0 && <p className="settings-desc">No MCP servers are mounted on the running topology.</p>}
+              {mcp.live.servers.map((server) => (
+                <Row key={server.name} label={server.name} description={`live status: ${server.status}`} control={<span className="settings-desc">{server.status}</span>} />
+              ))}
+            </>
+          ) : (
+            <p className="settings-desc">No live MCP state — {mcp.live.reason}. Configured servers apply at the next session.</p>
+          )}
+        </div>
       )}
       {mcp.servers.map((server) => (
         <Row

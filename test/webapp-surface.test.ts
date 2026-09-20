@@ -328,3 +328,37 @@ test("settings routing section edits per-agent launch defaults and states env fa
   assert.ok(markup.includes("present"), "the management key fact must show presence, never the value");
 });
 
+test("the MCP section renders live gateway state and keeps the launch-time copy honest without it", () => {
+  const base = {
+    servers: [{ name: "guard", enabled: true, transport: "stdio" as const, command: "node" }],
+    catalog: [],
+    scope: "workspace" as const,
+    workspaceOverlay: true,
+    loading: false,
+    error: undefined,
+    setScope: noop,
+    upsert: async () => {},
+    remove: async () => {},
+    toggle: async () => {},
+  };
+  // Live through the gateway: the server's own states render, attributed.
+  const live = renderToStaticMarkup(createElement(McpSection, {
+    mcp: { ...base, live: { live: true as const, gatewayUrl: "http://127.0.0.1:4699", servers: [
+      { name: "guard", status: "connected" },
+      { name: "skills-mcp", status: "failed" },
+    ] } },
+  }));
+  assert.ok(live.includes("Live state"), "the live subgroup must render");
+  assert.ok(live.includes("enforced gateway"), "live state must state its source (the enforced gateway)");
+  assert.ok(live.includes("guard") && live.includes("connected"), "the live server must render with its status");
+  assert.ok(live.includes("failed"), "every live server's state renders, including failures");
+
+  // No live state: the honest reason is the value; launch-time copy intact.
+  const unavailable = renderToStaticMarkup(createElement(McpSection, {
+    mcp: { ...base, live: { live: false as const, reason: "no server topology daemon is running for this workspace" } },
+  }));
+  assert.match(unavailable, /No live MCP state/, "the unavailable state must render");
+  assert.match(unavailable, /no server topology daemon/, "the honest reason renders as the value");
+  assert.ok(unavailable.includes("apply when a") && unavailable.includes("session starts"), "the launch-time statement stays");
+});
+

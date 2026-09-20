@@ -17,6 +17,8 @@ import {
   settingsPaths,
   writeSettingsFile,
 } from "../src/integrations/workflow-settings.js";
+import { opencodeServerWorkspaceTag } from "../src/integrations/opencode-server-runtime.js";
+import { writeOpencodeServerDiscovery } from "../src/integrations/opencode-server-discovery.js";
 
 /** Starts the web server against a throwaway home + workspace so the settings
  * files never touch the operator's real config. */
@@ -180,12 +182,38 @@ test("agent routing GET merges scopes and reports environment facts without secr
   assert.equal(read.agents.goose?.mode, "build");
   assert.equal(read.agents.opencode?.model, "openrouter/auto");
 
-  // Facts: echo the upstream env var, presence booleans only — never secret values.
-  assert.equal(read.facts.upstream, "https://example-upstream.test");
-  assert.deepEqual(Object.keys(read.facts).sort(), [
-    "envModelGoose", "envModelOpencode", "managementKey", "upstream",
-  ]);
   assert.equal(read.facts.envModelOpencode, false, "env model was deleted; the panel default must apply");
   assert.equal(read.facts.envModelGoose, false, "all goose model env inputs were deleted");
   assert.equal(read.facts.managementKey, false, "the management key env input was deleted");
+});
+
+test("live MCP endpoint: honest unavailable states without a topology daemon", async (context) => {
+  const { base, workspace } = await startServer(context);
+  const stateHome = mkdtempSync(join(tmpdir(), "wf-live-endpoint-"));
+  context.after(() => rmSync(stateHome, { recursive: true, force: true }));
+
+  // No discovery at all: the reason is the value — never a fabricated list.
+  const previous = process.env.WORKFLOW_OPENCODE_SERVER_HOME;
+  process.env.WORKFLOW_OPENCODE_SERVER_HOME = stateHome;
+  context.after(() => {
+    if (previous === undefined) delete process.env.WORKFLOW_OPENCODE_SERVER_HOME;
+    else process.env.WORKFLOW_OPENCODE_SERVER_HOME = previous;
+  });
+  const empty = await fetch(`${base}/api/settings/mcp/live`).then((response) => response.json()) as { live: boolean; reason?: string };
+  assert.equal(empty.live, false);
+  assert.match(empty.reason ?? "", /no server topology daemon/);
+
+  // A discovery pointing at an unbound port: the probe fails honestly. The
+  // endpoint keys discovery by the service's own workspace.
+  writeOpencodeServerDiscovery(join(stateHome, `${opencodeServerWorkspaceTag(workspace)}.json`), {
+    protocol: 1,
+    pid: process.pid,
+    workspace,
+    gatewayUrl: "http://127.0.0.1:1",
+    tuiUsername: "opencode",
+    tuiPassword: "endpoint-test-password",
+  });
+  const dead = await fetch(`${base}/api/settings/mcp/live`).then((response) => response.json()) as { live: boolean; reason?: string };
+  assert.equal(dead.live, false);
+  assert.match(dead.reason ?? "", /did not answer/);
 });

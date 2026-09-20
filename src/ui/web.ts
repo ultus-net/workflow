@@ -1,11 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { createOpenRouterAnalytics, usageTimeRange, type OpenRouterAnalytics } from "../integrations/openrouter-analytics.js";
+import { fetchLiveMcp } from "../integrations/opencode-live-state.js";
 import { defaultSettings, mergeSettings, normalizeSettings, readSettingsFile, settingsPaths, writeSettingsFile } from "../integrations/workflow-settings.js";
 import { resolveToolboxCatalog } from "../integrations/toolbox-catalog.js";
 import { evidenceId, observationId, taskId, type TaskState } from "../kernel/contracts.js";
@@ -538,6 +541,16 @@ export function createWorkflowWebServer(
           return json(response, 400, { error: "invalid request body" });
         }
       }
+    }
+    // Live MCP state (W074 follow-up, dual data lane): when the Workflow-owned
+    // opencode server topology is running for this workspace, its enforced
+    // gateway answers GET /api/mcp — the live server-side state ACP does not
+    // expose. A read, not a mutation: no cross-origin gate needed, and the
+    // honest "unavailable" states are values, never fabricated connections.
+    if (request.method === "GET" && pathname === "/api/settings/mcp/live") {
+      const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
+      const live = await fetchLiveMcp({ workspace: options?.workspace ?? process.cwd(), stateHome });
+      return json(response, 200, live);
     }
     // Persisted agent runtime preferences (model/mode/effort). These are the
     // launch defaults the control plane pushes into each agent's config on the
