@@ -445,3 +445,66 @@ test("W084: git tag publish flows are release operations, not branch mutations",
   // A real tag-to-tag publish keeps its exemption.
   assert.equal(checkPolicy({ action: "shell", command: "git push origin refs/tags/v1:refs/tags/v1", currentBranch: "feature/wip" }).decision, "allow");
 });
+
+test("W087: host-supplied live control-plane paths replace segment matching for guard-tamper", () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-guard-w087-draft-"));
+  const live = mkdtempSync(join(tmpdir(), "workflow-guard-w087-live-"));
+  const tool = ["open", "code"].join("");
+  const draftTarget = `repo/.config/${tool}/agent/x.md`;
+
+  // Absent the fact, the legacy segment rule stays fail-closed (upstream pin).
+  assert.equal(checkPolicy({ action: "shell", command: `touch ${draftTarget}`, workspaceRoot: root }).policy, "guard-tamper");
+
+  // With the live root declared, a config-shaped DRAFT inside the workspace is
+  // a T2 draft, not tamper: the F3 false positive is gone even though the
+  // destination carries the `.config/opencode` segment.
+  const draft = checkPolicy({ action: "shell", command: `cp ${live}/agent/x.md ${draftTarget}`, workspaceRoot: root, liveConfigPaths: [live] });
+  assert.equal(draft.decision, "allow", draft.reason);
+
+  // A mutation under the declared live root is T0 tamper at either end.
+  const intoLive = checkPolicy({ action: "shell", command: `cp ${draftTarget} ${live}/agent/x.md`, workspaceRoot: root, liveConfigPaths: [live] });
+  assert.equal(intoLive.decision, "deny");
+  assert.equal(intoLive.policy, "guard-tamper");
+  const liveConfigWrite = checkPolicy({ action: "shell", command: `touch ${live}/${tool}.jsonc`, workspaceRoot: root, liveConfigPaths: [live] });
+  assert.equal(liveConfigWrite.decision, "deny");
+  assert.equal(liveConfigWrite.policy, "guard-tamper");
+
+  // Symlink-aware: a draft-looking path resolving into the live root is tamper.
+  const aliasRoot = mkdtempSync(join(tmpdir(), "workflow-guard-w087-alias-"));
+  mkdirSync(join(aliasRoot, "repo", ".config"), { recursive: true });
+  symlinkSync(live, join(aliasRoot, "repo", ".config", tool), "dir");
+  const throughSymlink = checkPolicy({ action: "shell", command: `touch repo/.config/${tool}/${tool}.jsonc`, workspaceRoot: aliasRoot, liveConfigPaths: [live] });
+  assert.equal(throughSymlink.decision, "deny");
+  assert.equal(throughSymlink.policy, "guard-tamper");
+});
+
+test("W087: unusable declared live roots fall back to fail-closed segment matching", () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-guard-w087-badroot-"));
+  const live = mkdtempSync(join(tmpdir(), "workflow-guard-w087-live2-"));
+  const tool = ["open", "code"].join("");
+  const draftTarget = `repo/.config/${tool}/agent/x.md`;
+  const deny = (liveConfigPaths: string[]) =>
+    checkPolicy({ action: "shell", command: `touch ${draftTarget}`, workspaceRoot: root, liveConfigPaths });
+
+  // Sanity: a valid absolute root enters fact mode and allows the draft.
+  assert.equal(deny([live]).decision, "allow");
+  // A relative root cannot be evaluated safely -> fact set rejected.
+  assert.equal(deny(["relative/dir"]).policy, "guard-tamper");
+  // An unresolved variable cannot be expanded -> fact set rejected.
+  assert.equal(deny(["$WORKFLOW_NOT_SET_XYZ/x"]).policy, "guard-tamper");
+  // One unusable root rejects the whole set: partial facts are never trusted.
+  assert.equal(deny([live, "relative/dir"]).policy, "guard-tamper");
+});
+
+test("W087: tilde-declared live roots expand before matching", () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-guard-w087-tilde-"));
+  const tool = ["open", "code"].join("");
+  const result = checkPolicy({
+    action: "shell",
+    command: `touch ~/.config/${tool}/${tool}.jsonc`,
+    workspaceRoot: root,
+    liveConfigPaths: [`~/.config/${tool}`],
+  });
+  assert.equal(result.decision, "deny");
+  assert.equal(result.policy, "guard-tamper");
+});

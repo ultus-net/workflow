@@ -14,6 +14,16 @@ export interface GuardCheckInput {
   command?: string;
   path?: string;
   workspaceRoot?: string;
+  /**
+   * Host-supplied absolute paths of the LIVE control plane (e.g. the runtime
+   * `~/.config/opencode`, the guard's own install/source). When present, the
+   * guard-tamper rule classifies by these runtime-consumption facts instead of
+   * filename segments: only mutations under a declared live root are denied
+   * (T0); config-shaped drafts elsewhere — dotfiles `.config/opencode`,
+   * worktrees — are allowed (T2). Absent => fail-closed segment matching,
+   * unchanged.
+   */
+  liveConfigPaths?: string[];
   content?: string;
   patchText?: string;
   currentBranch?: string;
@@ -66,7 +76,7 @@ export function checkPolicy(input: GuardCheckInput): GuardDecision {
 
 function evaluatePolicy(input: GuardCheckInput): GuardDecision {
   if ((input.action === "shell" || input.action === "git") && input.command?.trim()) {
-    const boundary = checkBoundaryPolicy(input.command, input.workspaceRoot);
+    const boundary = checkBoundaryPolicy(input.command, input.workspaceRoot, 0, input.liveConfigPaths);
     if (boundary) return boundary;
   }
   if ((input.action === "shell" || input.action === "git") && input.command?.trim()) {
