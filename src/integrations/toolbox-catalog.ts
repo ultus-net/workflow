@@ -232,9 +232,10 @@ export function skillConnectorMounts(
  * W080 delivery (file-provisioning framing, 2026-09-21): provision the
  * generated `workflow-toolbox` skill into the hub-owned delivery store —
  * `<skillsDir>/workflow-toolbox/SKILL.md`, the directory `skills-mcp` scans.
- * This is NOT native host skill injection: the host's native skill tool stays
- * permission-denied, and the model reaches the content only through the
- * journaled `read_skill` (the F1 single delivery path). Writes only on
+ * This is NOT native host skill injection: the model reaches the content only
+ * through the journaled `read_skill` (the F1 single delivery path), and the
+ * hub-written config composes the native skill-tool denial
+ * (`"skill": "deny"` — probe-gated live). Writes only on
  * create or content drift (byte-compare — no churn on every session); the
  * store directory is created when missing. IO is injectable for tests.
  */

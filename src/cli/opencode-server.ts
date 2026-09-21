@@ -132,6 +132,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const mode = authorityModeFromEnv(process.env);
   const enforcement = enforcementFromEnv(process.env);
 
+  const disabledConnectors = resolveDaemonDisabledConnectors(workspace);
   const runtime = await createOpencodeServerRuntime({
     workspace,
     stateHome,
@@ -143,7 +144,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     ...(resolveDaemonAutoCompact(workspace) ? { autoCompact: true } : {}),
     // W080 (the operator-disable precedence on this lane): connector names
     // the operator explicitly disabled never mount from the declaration.
-    ...(resolveDaemonDisabledConnectors(workspace).length === 0 ? {} : { skillConnectorsDisabled: resolveDaemonDisabledConnectors(workspace) }),
+    ...(disabledConnectors.length === 0 ? {} : { skillConnectorsDisabled: disabledConnectors }),
   });
   // Authority broker: the background policy decision point. It subscribes to
   // the server's SSE and answers every permission request through

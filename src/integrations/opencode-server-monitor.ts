@@ -117,7 +117,7 @@ export function createSessionCompactionMonitor(options: CompactionMonitorOptions
       return { evaluated: 0, fired, skipped, errors: ["the session read returned an unexpected shape"] };
     }
 
-        const vetoReason = options.veto?.();
+    const vetoReason = options.veto?.();
     let evaluated = 0;
     const seen = new Set<string>();
     for (const entry of body.data) {

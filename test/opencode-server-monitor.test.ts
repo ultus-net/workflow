@@ -137,3 +137,66 @@ test("a malformed session-read shape fails closed with an error, never a fire", 
   assert.deepEqual(result.fired, []);
   assert.match(result.errors[0]!, /unexpected shape/);
 });
+
+test("a re-entrant tick is skipped while the previous one is in flight", async () => {
+  let releaseInFlight: (() => void) | undefined;
+  const monitor = createSessionCompactionMonitor({
+    baseUrl: "http://127.0.0.1:1",
+    username: "opencode",
+    password: "pw",
+    thresholdTokens: 1_000,
+    fetchImpl: (async (input: RequestInfo | URL) => {
+      const url = String(input);
+      // Hold only the session LIST read open until the test releases it; the
+      // compact POST (fired during the first tick) resolves immediately.
+      if (url.endsWith("/api/session")) {
+        await new Promise<void>((resolve) => { releaseInFlight = () => resolve(); });
+        return new Response(sessionJson([{ id: "ses_slow", tokens: usage(2_000) }]), { status: 200 });
+      }
+      return new Response(JSON.stringify({ data: { id: `msg_${url}`, type: "compaction" } }), { status: 200 });
+    }) as typeof fetch,
+  });
+  const inFlight = monitor.tick();
+  // Give the first tick a microtask to enter, then attempt re-entry.
+  await new Promise((resolve) => setImmediate(resolve));
+  const reentrant = await monitor.tick();
+  assert.match(reentrant.errors[0]!, /previous tick is still in flight/);
+  assert.equal(reentrant.fired.length, 0);
+  releaseInFlight?.();
+  const completed = await inFlight;
+  assert.deepEqual(completed.fired, ["ses_slow"]);
+});
+
+test("sessions that vanish from the list leave no stale armed state behind", async () => {
+  let sessions: readonly FixtureSession[] = [{ id: "ses_ghost", tokens: usage(2_000) }];
+  const fixture = harness({ sessions: () => sessions, stamp: 1_000_000 });
+  const first = await fixture.tick();
+  assert.deepEqual(first.fired, ["ses_ghost"]);
+  // The session disappears: the next tick evaluates nothing, and a later
+  // re-appearance of the SAME id starts a fresh hysteresis epoch.
+  sessions = [];
+  const second = await fixture.tick();
+  assert.equal(second.evaluated, 0);
+  sessions = [{ id: "ses_ghost", tokens: usage(2_000) }];
+  const third = await fixture.tick();
+  assert.deepEqual(third.fired, ["ses_ghost"], "pruned state means a re-appearing session fires again");
+});
+
+test("a top-level error message surfaces verbatim, not just the status code", async () => {
+  const monitor = createSessionCompactionMonitor({
+    baseUrl: "http://127.0.0.1:1",
+    username: "opencode",
+    password: "pw",
+    thresholdTokens: 1_000,
+    fetchImpl: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/api/session")) {
+        return new Response(sessionJson([{ id: "ses_msg", tokens: usage(2_000) }]), { status: 200 });
+      }
+      return new Response(JSON.stringify({ message: "the compact lane is disabled by the operator" }), { status: 503 });
+    }) as typeof fetch,
+  });
+  const result = await monitor.tick();
+  assert.deepEqual(result.fired, []);
+  assert.match(result.errors[0]!, /the compact lane is disabled by the operator/);
+});

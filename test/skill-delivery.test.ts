@@ -21,8 +21,9 @@ import {
  * composes ONLY the skill's declared connectors into the launch config — the
  * hub-critical floor, never a wholesale mount, never an operator-disable
  * override. The store write is NOT native host skill injection: the host's
- * native skill tool stays denied and the model reaches content only through
- * the journaled `read_skill`.
+ * native skill tool is denied via the hub-written config's composed
+ * `"skill": "deny"` (probe-gated live), and the model reaches content only
+ * through the journaled `read_skill`.
  */
 
 test("declared connectors are the built hub-critical floor, nothing more", () => {
@@ -74,8 +75,6 @@ test("provisioning writes the skill into the delivery store exactly once per con
   assert.match(body, /^---\nname: workflow-toolbox\n/);
   assert.match(body, /connectors:\n {2}- workflow-guard-mcp\n {2}- skills-mcp\n---/, "the delivered skill carries its declared connectors");
 
-  // The store is scanned by skills-mcp: the directory name IS the skill name,
-  // the frontmatter description is the metadata (skills.ts contract).
   // The store is scanned by skills-mcp: run the REAL scanner against the
   // provisioned store — the directory name is the skill name and the
   // frontmatter description is the metadata (the skills.ts contract).
