@@ -105,10 +105,13 @@ export function checkAgentCredentials(): readonly DoctorCheck[] {
   });
 }
 
-/** Hub daemon reachability: the registry and scheduler live there. */
-export async function checkHub(): Promise<DoctorCheck> {
+/** Hub daemon reachability: the registry and scheduler live there. The
+ * DoctorOptions.home seam scopes the discovery read like the settings/fleet/
+ * posture checks do, so scoped (test/embedded) runs never read the
+ * operator's real home. */
+export async function checkHub(options: DoctorOptions = {}): Promise<DoctorCheck> {
   const name = "hub daemon";
-  const discovery = readHubDiscovery(resolveHubDiscoveryPath(join(homedir(), ".workflow")));
+  const discovery = readHubDiscovery(resolveHubDiscoveryPath(join(options.home ?? homedir(), ".workflow")));
   if (discovery === undefined) {
     return {
       name,
@@ -331,7 +334,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<readonly D
   const checks: DoctorCheck[] = [];
   checks.push(checkSettingsDocs(options));
   checks.push(...checkAgentCredentials());
-  checks.push(await checkHub());
+  checks.push(await checkHub(options));
   checks.push(await checkTopologyGateway(options));
   checks.push(checkContainment());
   checks.push(checkProbeVerdicts());
