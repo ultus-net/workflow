@@ -262,7 +262,7 @@ export function createShellMeasure(options: {
  * `.git/config` still runs during `git add -A`, so committed content can
  * differ from the diff the reviewer saw; the enforcement for not pointing the
  * loop at untrusted repositories stays with the operator and the guard.
- * Anything beyond the six verbs the W073 workspace needs is refused.
+ * Anything beyond the seven verbs the W073 workspace needs is refused.
  */
 export function createContainedGitRunner(options: {
   readonly shell: (command: string, cwd: string) => Promise<string>;
