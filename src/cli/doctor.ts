@@ -136,7 +136,11 @@ export async function checkHub(options: DoctorOptions = {}): Promise<DoctorCheck
 export async function checkTopologyGateway(options: DoctorOptions = {}): Promise<DoctorCheck> {
   const name = "server topology gateway";
   const workspace = options.workspace ?? process.cwd();
-  const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
+  // The env seam stays authoritative when set; otherwise the declared
+  // DoctorOptions.home scopes the discovery read like the settings/fleet/
+  // posture/hub checks do, so scoped (test/embedded) runs never read the
+  // operator's real home.
+  const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(options.home ?? homedir(), ".workflow", "opencode-server");
   const discovery = readOpencodeServerDiscovery(opencodeServerDiscoveryPath(stateHome, workspace));
   if (discovery === undefined) {
     return {
