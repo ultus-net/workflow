@@ -27,13 +27,20 @@ import { runWebLaunch } from "./web-launch.js";
  * surface resolution lives in `./launcher-args.js`.
  */
 
-function spawnSurface(name: "opencode-attach" | "hub", args: readonly string[], cwd: string): never {
+function spawnSurface(name: "opencode-attach" | "hub", args: readonly string[], cwd: string): void {
   const { script, execArgv } = cliSibling(import.meta.url, name);
   const child = spawn(process.execPath, [...execArgv, script, ...args], { stdio: "inherit", cwd });
   child.on("exit", (code) => process.exit(code ?? 0));
-  // The child owns the terminal; parent exits only when it does.
+  // A failed spawn emits `error`, never `exit` — exit eagerly instead of
+  // leaving a childless parent hanging on its live event loop.
+  child.on("error", () => process.exit(1));
+  // The child owns the terminal; the parent stays alive only for the child's
+  // lifetime and forwards lifecycle signals. Repeat delivery is expected
+  // (group signal + forward), so this is only safe because every spawned
+  // child tears down idempotently: the hub guards its shutdown (hub.ts) and
+  // the attach launcher kills its detached client group (opencode-attach.ts).
   process.on("SIGINT", () => child.kill("SIGINT"));
-  throw new Error("unreachable");
+  process.on("SIGTERM", () => child.kill("SIGTERM"));
 }
 
 const initial = parseLauncherArgs(process.argv.slice(2));

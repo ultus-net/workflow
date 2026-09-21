@@ -213,6 +213,22 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       terminateProcessGroup(child.pid);
       resolveExit();
     });
+    // Idempotent teardown (launcher-loop LESS-0001): lifecycle signals reach
+    // this process directly (terminal Ctrl+C to the foreground group, systemd
+    // stop) and again via the launcher's forward. The detached client lives in
+    // its own process group and receives neither, so without this handler the
+    // attach process dies by default action and the TUI client is orphaned.
+    // Kill the client group and exit; the guarded flag makes repeat
+    // deliveries (direct + forwarded) no-ops.
+    let tornDown = false;
+    const teardown = (): void => {
+      if (tornDown) return;
+      tornDown = true;
+      terminateProcessGroup(child.pid);
+      process.exit(process.exitCode ?? 0);
+    };
+    process.on("SIGINT", teardown);
+    process.on("SIGTERM", teardown);
   });
 }
 
