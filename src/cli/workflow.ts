@@ -15,6 +15,8 @@ import { runWebLaunch } from "./web-launch.js";
  *   workflow tui [args]          official opencode TUI attached via the hub gateway
  *   workflow settings [--port n] settings panel only
  *   workflow hub                 hub daemon in the foreground
+ *   workflow doctor              state the local setup honestly (W076)
+ *   workflow install fleet       deploy the vendored fleet payload (W086)
  *   --agent <kind>               engine axis: opencode | goose | cline
  *                                (overrides WORKFLOW_ACP_AGENT; containment
  *                                stays per-kind, untouched by the flag)
@@ -101,6 +103,11 @@ if (selected === "web") {
   // Exit 1 only on hard failures; warns (a hub not running, no topology) are
   // expected states, not failures.
   process.exitCode = checks.some((check) => check.status === "fail") ? 1 : 0;
+} else if (selected === "install") {
+  // W086: the operator-invoked fleet deployment (the ask-gate). Never runs
+  // unattended; never touches the host config document.
+  const { runInstall } = await import("./install.js");
+  process.exitCode = await runInstall(rest);
 } else if (selected === "settings") {
   const { startWorkflowWeb } = await import("./web-service.js");
   const service = await startWorkflowWeb({ workspace });

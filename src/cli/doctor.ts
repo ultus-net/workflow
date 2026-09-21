@@ -5,6 +5,13 @@ import { join } from "node:path";
 import { probeHub, readHubDiscovery } from "./hub-client.js";
 import { resolveHubDiscoveryPath } from "../integrations/workflow-hub.js";
 import {
+  compareFleet,
+  fleetCopyCommand,
+  fleetAssetsRoot,
+  loadFleetManifest,
+  type FleetStatus,
+} from "../integrations/fleet-payload.js";
+import {
   opencodeServerDiscoveryPath,
   probeOpencodeServerGateway,
   readOpencodeServerDiscovery,
@@ -41,6 +48,8 @@ export interface DoctorOptions {
   readonly home?: string | undefined;
   readonly workspace?: string | undefined;
   readonly fetchImpl?: typeof fetch | undefined;
+  /** W086 test seam: the package root holding `assets/opencode-fleet` (defaults to this install). */
+  readonly root?: string | undefined;
 }
 
 const PASS = "✓";
@@ -224,6 +233,100 @@ export function checkProbeVerdicts(options: { root?: string } = {}): DoctorCheck
   };
 }
 
+/**
+ * W086 — the fleet payload check: are the vendored OpenCode agents, commands,
+ * and repo docs installed, and do they match the committed sha256 manifest?
+ * Existence alone is not "installed" — a stale or hand-edited copy reports
+ * `differs`, because the whole point is that the control plane's versioned
+ * payload is what actually runs. The fix line carries the sanctioned path
+ * both ways: the one-command installer, and the exact `cp` commands for an
+ * operator who prefers to do it by hand (the doctor itself never writes).
+ */
+export function checkFleetPayload(options: DoctorOptions = {}): DoctorCheck {
+  const name = "fleet payload (agents · commands · docs)";
+  const fleetOptions = {
+    ...(options.home === undefined ? {} : { home: options.home }),
+    ...(options.workspace === undefined ? {} : { workspace: options.workspace }),
+    ...(options.root === undefined ? {} : { root: options.root }),
+  };
+  let statuses: readonly FleetStatus[];
+  try {
+    loadFleetManifest(fleetOptions);
+    statuses = compareFleet(fleetOptions);
+  } catch (error) {
+    return {
+      name,
+      status: "fail",
+      detail: `the fleet manifest failed validation (fail closed): ${error instanceof Error ? error.message : String(error)}`,
+      fix: `regenerate it from the vendored assets: node ${join(fleetAssetsRoot(), "..", "..", "scripts", "generate-fleet-manifest.mjs")}`,
+    };
+  }
+  const missing = statuses.filter((status) => status.state === "missing");
+  const differs = statuses.filter((status) => status.state === "differs");
+  const current = statuses.filter((status) => status.state === "current");
+  if (missing.length === 0 && differs.length === 0) {
+    return { name, status: "pass", detail: `${current.length}/${statuses.length} entries installed and matching the committed manifest` };
+  }
+  const missingNames = missing.map((status) => status.entry.id).join(", ");
+  const differsNames = differs.map((status) => status.entry.id).join(", ");
+  const manual = missing.map((status) => fleetCopyCommand(status)).join("; ");
+  const detailParts = [
+    `${current.length}/${statuses.length} entries current`,
+    ...(missing.length > 0 ? [`missing: ${missingNames}`] : []),
+    ...(differs.length > 0 ? [`differs from the vendored version: ${differsNames} (agents/commands: a local edit or an older copy; docs: repo-owned living files)`] : []),
+  ];
+  const fixParts = [
+    "workflow install fleet" + (differs.some((status) => status.entry.kind !== "doc") ? " --force (only if the local agent/command edits are disposable)" : ""),
+    ...(manual.length > 0 ? [`or by hand: ${manual}`] : []),
+    ...(differs.some((status) => status.entry.kind === "doc") ? ["differing repo docs are NEVER overwritten by the installer — reconcile them by hand"] : []),
+  ];
+  return {
+    name,
+    status: missing.length > 0 ? "fail" : "warn",
+    detail: detailParts.join(" — "),
+    fix: fixParts.join("; "),
+  };
+}
+
+/**
+ * W086 — the enforcement-posture check for the plugin-free control plane:
+ * the hub injects the guard into every runtime it launches, so the host
+ * config needs no plugin — but a recorded plugin entry means the operator is
+ * still carrying the old posture, and RAW (non-hub) launches have never been
+ * probe-verified against hub-launched enforcement. Honest wording: this
+ * check reports the recorded state; it never claims parity the probe
+ * register does not carry. The host config document is the permission
+ * surface — this check only reads it; removing an entry is an operator edit.
+ */
+export function checkGuardPosture(options: DoctorOptions = {}): DoctorCheck {
+  const name = "guard enforcement posture";
+  const configPath = join(options.home ?? homedir(), ".config", "opencode", "opencode.jsonc");
+  let text: string;
+  try {
+    text = readFileSync(configPath, "utf8");
+  } catch {
+    return {
+      name,
+      status: "pass",
+      detail: `no host config document at ${configPath} — nothing to flag; hub-launched sessions carry the guard at launch, raw host launches are the operator's own surface`,
+    };
+  }
+  const pluginLines = text.split("\n").filter((line) => line.includes("plugins") && /workflow-guard/i.test(line));
+  if (pluginLines.length === 0) {
+    return {
+      name,
+      status: "pass",
+      detail: "plugin-free posture — hub-launched sessions are guarded at launch by the hub; raw host launches are unguarded by design (operator's choice)",
+    };
+  }
+  return {
+    name,
+    status: "warn",
+    detail: `the host config still registers the workflow-guard plugin (${pluginLines.map((line) => line.trim()).join(" ")}); the control-plane aim is plugin-free enforcement at launch, and raw-launch parity is not yet probe-verified`,
+    fix: "once the plugin-parity probe records its verdict (docs/PROBE_VERDICTS.json + docs/HOST_ADAPTERS.md), remove the plugins entry — an operator edit in the host config; the control plane never rewrites that file",
+  };
+}
+
 export async function runDoctor(options: DoctorOptions = {}): Promise<readonly DoctorCheck[]> {
   const checks: DoctorCheck[] = [];
   checks.push(checkSettingsDocs(options));
@@ -232,6 +335,8 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<readonly D
   checks.push(await checkTopologyGateway(options));
   checks.push(checkContainment());
   checks.push(checkProbeVerdicts());
+  checks.push(checkFleetPayload(options));
+  checks.push(checkGuardPosture(options));
   return checks;
 }
 

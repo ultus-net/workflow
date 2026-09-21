@@ -26,6 +26,7 @@
   "postinstall": "node scripts/prepare-tool.mjs",
   "files": [
     "dist",
+    "assets",
     "README.md",
     "THREAT_MODEL.md",
     "docs",
