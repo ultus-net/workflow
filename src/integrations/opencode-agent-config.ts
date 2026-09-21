@@ -162,7 +162,13 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
     // through WorkflowApplication.authorize (G1 probe: denials honored).
     // `task` is included so subagent spawns are gateable at the hub
     // (subagent probe: the task tool call projected and permission-gated).
-    permission: { edit: "ask", bash: "ask", task: "ask" },
+    // `skill` is denied per the 2026-09-15 single-delivery-path rule —
+    // skills reach the model only through the journaled read_skill. Honest
+    // posture: the composed denial's live honoring on the pinned version is
+    // probe-gated (the skills-delivery family, pending); the invariant's
+    // PROVEN enforcement today is structural (the store lives outside every
+    // agent workspace, so the workspace-confined fs lane cannot reach it).
+    permission: { edit: "ask", bash: "ask", task: "ask", skill: "deny" },
     // W082 config-side auto-compaction trigger: only composed when the
     // operator opted in — absent means the runtime's ambient compaction
     // defaults apply, exactly as before this option existed.

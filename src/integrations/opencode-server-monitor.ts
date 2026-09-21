@@ -80,8 +80,24 @@ export function createSessionCompactionMonitor(options: CompactionMonitorOptions
    * cooling down) — cleared when usage drops below the threshold. */
   const armed = new Map<string, { at: number; failures: number }>();
   let timer: ReturnType<typeof setInterval> | undefined;
+  /** Re-entry guard: a slow tick (several 15s-bounded compact POSTs can
+   * exceed the poll interval) must not overlap the next one — a second tick
+   * could double-admit a compaction turn before the first records its state. */
+  let ticking = false;
 
   const tick = async (): Promise<CompactionTickResult> => {
+    if (ticking) {
+      return { evaluated: 0, fired: [], skipped: [], errors: ["the previous tick is still in flight — skipped this pass"] };
+    }
+    ticking = true;
+    try {
+      return await tickOnce();
+    } finally {
+      ticking = false;
+    }
+  };
+
+  const tickOnce = async (): Promise<CompactionTickResult> => {
     const fired: string[] = [];
     const skipped: { sessionId: string; reason: string }[] = [];
     const errors: string[] = [];
@@ -101,14 +117,16 @@ export function createSessionCompactionMonitor(options: CompactionMonitorOptions
       return { evaluated: 0, fired, skipped, errors: ["the session read returned an unexpected shape"] };
     }
 
-    const vetoReason = options.veto?.();
+        const vetoReason = options.veto?.();
     let evaluated = 0;
+    const seen = new Set<string>();
     for (const entry of body.data) {
       if (typeof entry !== "object" || entry === null) continue;
       const session = entry as Record<string, unknown>;
       const id = typeof session.id === "string" ? session.id : undefined;
       if (id === undefined) continue;
       evaluated += 1;
+      seen.add(id);
       const usage = usageOf(session);
 
       // Re-arm: usage below threshold (compaction freed context) resets the
@@ -148,15 +166,24 @@ export function createSessionCompactionMonitor(options: CompactionMonitorOptions
       }
       if (!compactResponse.ok) {
         const payload = await compactResponse.json().catch(() => undefined) as { data?: { message?: unknown } | undefined; message?: unknown } | undefined;
-        const message = typeof payload?.data?.message === "string" ? payload.data.message : undefined;
+        const message = typeof payload?.data?.message === "string" ? payload.data.message : typeof payload?.message === "string" ? payload.message : undefined;
         armed.set(id, { at: stamp, failures: (state?.failures ?? 0) + 1 });
         errors.push(`${id}: the gateway refused the compaction request (${compactResponse.status})${message === undefined ? "" : `: ${message}`}`);
         continue;
       }
       // The documented 200 IS the durable admission; anything else is an
-      // error counted above, never a fabricated success.
+      // error counted above, never a fabricated success. Note the refire
+      // cadence: compaction only QUEUES at the session's next step boundary,
+      // so a session whose usage stays above threshold re-fires on the
+      // cooldown cadence — spend is bounded by the budget veto and the
+      // operator's threshold; state this in the fire-path probe when it is
+      // designed.
       armed.set(id, { at: stamp, failures: 0 });
       fired.push(id);
+    }
+    // Vanished sessions leave no stale state behind.
+    for (const id of [...armed.keys()]) {
+      if (!seen.has(id)) armed.delete(id);
     }
     return { evaluated, fired, skipped, errors };
   };

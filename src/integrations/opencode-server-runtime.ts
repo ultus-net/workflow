@@ -9,7 +9,7 @@ import { launchContainedAcpAgent } from "../adapters/acp-contained-agent.js";
 import type { ProcessContainment } from "../containment/contracts.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import { resolveSkillsMount } from "./acp-runtime.js";
-import { provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts } from "./toolbox-catalog.js";
+import { connectorReadablePaths, provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts } from "./toolbox-catalog.js";
 import { createModelUsageProxy, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
 import { globalOpencodeBinary, meteredOpencodeConfig, resolveOpencodeLaunch } from "./opencode-agent-config.js";
 import { probeOpencodeHealth } from "./opencode-health.js";
@@ -49,6 +49,12 @@ export interface OpencodeServerRuntimeOptions {
    * operator's `agents.opencode.autoCompact` setting (default off).
    */
   readonly autoCompact?: boolean | undefined;
+  /**
+   * W080 (the operator-disable precedence on this lane): connector names the
+   * operator explicitly disabled in settings — the declaration never mounts
+   * them here either. The CLI resolves the names from the settings doc.
+   */
+  readonly skillConnectorsDisabled?: readonly string[] | undefined;
   /** Upstream API key; defaults to `loadUpstreamApiKey()` (throws when absent). */
   readonly apiKey?: string | undefined;
   /** Loopback port; defaults to a free port. Injectable for tests. */
@@ -130,7 +136,10 @@ export async function createOpencodeServerRuntime(
       try {
         const catalog = resolveToolboxCatalog();
         provisionToolboxSkill(skillsMount.skillsDir, catalog);
-        skillConnectors = skillConnectorMounts(catalog, { alreadyMounted: ["skills-mcp"] });
+        skillConnectors = skillConnectorMounts(catalog, {
+          ...(options.skillConnectorsDisabled === undefined ? {} : { disabled: options.skillConnectorsDisabled }),
+          alreadyMounted: ["skills-mcp"],
+        });
       } catch (error) {
         console.error(`workflow-toolbox skill delivery failed for the topology (continuing without it): ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -171,6 +180,11 @@ export async function createOpencodeServerRuntime(
               resolve(dirname(skillsMount.serverScript), "..", "node_modules"),
               resolve(dirname(skillsMount.serverScript), "..", "..", "..", "node_modules"),
               skillsMount.skillsDir,
+              // W080: the declared connectors' stdio entrypoints need the
+              // same two-level pnpm binds (dist + app node_modules +
+              // toolbox node_modules) or the server's spawned MCP child
+              // dies with ERR_MODULE_NOT_FOUND inside the boundary.
+              ...connectorReadablePaths(skillConnectors.map((mount) => mount.serverPath)),
             ],
           }),
       environment: {

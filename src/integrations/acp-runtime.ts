@@ -35,7 +35,7 @@ import { findOpenModel, openSourcePoolFromEnv } from "./open-source-pool.js";
 import { DEFAULT_OPENCODE_MODEL, OPENCODE_METERED_PROVIDER_ID, type MeteredVendorProvider } from "./opencode-agent-config.js";
 import { loadUpstreamApiKey } from "./upstream-key.js";
 import { enabledMcpServers, type WorkflowSettings } from "./workflow-settings.js";
-import { provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts } from "./toolbox-catalog.js";
+import { connectorReadablePaths, provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts } from "./toolbox-catalog.js";
 
 export interface WorkflowAcpRuntime {
   readonly driver: AcpSessionDriver;
@@ -262,6 +262,11 @@ async function createOpencodeRuntime(
                 resolve(dirname(skillsMount.serverScript), "..", "..", "..", "node_modules"),
                 skillsMount.skillsDir,
                 realpathSync(skillsMount.skillsDir),
+                // W080: the declared connectors' stdio entrypoints need the
+                // same two-level pnpm binds (dist + app node_modules +
+                // toolbox node_modules) or the agent's spawned MCP child
+                // dies with ERR_MODULE_NOT_FOUND inside the boundary.
+                ...connectorReadablePaths(skillConnectors.map((mount) => mount.serverPath)),
               ],
             }),
         environment: {

@@ -93,7 +93,7 @@ describe("W082 live: the config-side auto-compaction trigger reaches the pinned 
     provider?: Record<string, unknown>;
   };
   assert.deepEqual(configFile.compaction, { auto: true }, "the composed config carries compaction: { auto: true }");
-  assert.deepEqual(configFile.permission, { edit: "ask", bash: "ask", task: "ask" }, "the trigger composes alongside the authority ruleset, never instead of it");
+  assert.deepEqual(configFile.permission, { edit: "ask", bash: "ask", task: "ask", skill: "deny" }, "the trigger composes alongside the authority ruleset (including the single-delivery-path skill denial), never instead of it");
 
   const upstreamHeaders = { authorization: basic(runtime.username, runtime.password) };
 
@@ -160,6 +160,23 @@ describe("W082 live: the data-lane compaction monitor reads the documented sessi
   // no turns, so its usage is 0 — the monitor must evaluate it and NOT fire.
   const created = await fetch(`${runtime.url}/api/session`, { method: "POST", headers, body: JSON.stringify({}) });
   assert.equal(created.status, 200, `session create returned ${created.status}`);
+  const createdBody = await created.json().catch(() => undefined) as { data?: { id?: string } } | undefined;
+  const createdId = createdBody?.data?.id;
+  assert.ok(createdId !== undefined && createdId.startsWith("ses"), "the documented create returns the v2 data.id envelope");
+
+  // Pin the usage-read shape the monitor depends on: the session entry on
+  // the documented list carries the `tokens` object (the same shape the
+  // runtime's own overflow check uses). Without this pin the tick would
+  // pass even if entries carried no tokens at all — the monitor would read
+  // zero for every session and never fire.
+  const list = await fetch(`${runtime.url}/api/session`, { headers });
+  assert.equal(list.status, 200, `session list returned ${list.status}`);
+  const listBody = await list.json() as { data?: readonly unknown[] } | undefined;
+  const entry = (listBody?.data ?? []).find((entry) => (entry as { id?: string }).id === createdId) as Record<string, unknown> | undefined;
+  assert.notEqual(entry, undefined, "the created session must appear on the documented list");
+  const tokens = entry?.tokens as Record<string, unknown> | undefined;
+  assert.ok(typeof tokens === "object" && tokens !== null, "the session entry carries the tokens object the monitor reads");
+  assert.ok(typeof tokens.input === "number" && typeof tokens.output === "number" && typeof (tokens.cache as Record<string, unknown> | undefined)?.read === "number", "the tokens shape has input/output and cache.read — the overflow-total fields");
 
   // The monitor's deterministic tick against the LIVE server: the usage read
   // rides the session entries' tokens (live-verified shape), the empty

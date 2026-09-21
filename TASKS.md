@@ -1477,7 +1477,9 @@ until it exists).
       file-provisioning decision (dated addendum in
       `docs/superpowers/plans/2026-09-15-hub-owned-enforcement.md`): `provisionToolboxSkill`
       provisions the generated skill into the hub-owned `SKILLS_MCP_DIR` store (write-on-create/
-      drift, idempotent), and `skillConnectorMounts` composes the declared floor
+      drift, idempotent; the store stays outside agent workspaces and the hub-written config now
+      composes `"skill": "deny"` for the native skill tool — composed-but-probe-gated, honoring
+      unverified live), and `skillConnectorMounts` composes the declared floor
       (`workflow-guard-mcp` + `skills-mcp`, built-filtered) into the hub-written config's mcp map —
       never duplicating the delivery mount or operator-enabled servers, and an explicit operator
       disable always wins over the declaration. Wired into BOTH lanes (ACP subprocess composition

@@ -181,6 +181,30 @@ export interface SkillConnectorMount {
 }
 
 /**
+ * The readable-path set a connector's stdio entrypoint needs inside the
+ * containment boundary — the pnpm two-level lesson from the F1 skills mount:
+ * the dist directory itself, the app-level node_modules (package symlinks),
+ * and the toolbox-level node_modules (the .pnpm store one level further up).
+ * Without these binds the agent's spawned MCP child dies with
+ * ERR_MODULE_NOT_FOUND inside the sandbox (the exact failure the F1 comment
+ * records for skills-mcp). Deduplicated, order-stable.
+ */
+export function connectorReadablePaths(serverPaths: readonly string[]): readonly string[] {
+  const paths: string[] = [];
+  for (const serverPath of serverPaths) {
+    const distDir = dirname(serverPath);
+    for (const candidate of [
+      distDir,
+      resolve(distDir, "..", "node_modules"),
+      resolve(distDir, "..", "..", "..", "node_modules"),
+    ]) {
+      if (!paths.includes(candidate)) paths.push(candidate);
+    }
+  }
+  return paths;
+}
+
+/**
  * W080: the stdio mounts a session composes for the skill's declared
  * connectors — built entries only, minus anything the operator explicitly
  * disabled in settings (an explicit operator disable always wins over a

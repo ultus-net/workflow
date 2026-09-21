@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { scanSkills } from "../mcp-toolbox/apps/skills-mcp/src/skills.js";
+
 import {
+  connectorReadablePaths,
   declaredSkillConnectors,
   provisionToolboxSkill,
   resolveToolboxCatalog,
@@ -39,6 +42,15 @@ test("skill connector mounts respect the operator disable and never double-mount
   assert.deepEqual(mounts.map((mount) => mount.name), ["workflow-guard-mcp"]);
   assert.match(mounts[0]!.serverPath, /workflow-guard-mcp\/dist\/server\.js$/);
 
+  // The containment binds (review P1 fix): dist + both pnpm node_modules
+  // levels, deduplicated across connectors.
+  const readable = connectorReadablePaths(mounts.map((mount) => mount.serverPath));
+  assert.ok(readable.some((path) => path.endsWith("apps/workflow-guard-mcp/dist")));
+  assert.ok(readable.some((path) => path.endsWith("apps/workflow-guard-mcp/node_modules")));
+  assert.ok(readable.some((path) => path.endsWith("mcp-toolbox/node_modules")));
+  const again = connectorReadablePaths([...mounts.map((mount) => mount.serverPath), ...mounts.map((mount) => mount.serverPath)]);
+  assert.deepEqual(again, readable, "duplicate mounts add no duplicate binds");
+
   // An explicit operator disable always wins over the declaration.
   const disabled = skillConnectorMounts(catalog, { disabled: ["workflow-guard-mcp"], alreadyMounted: ["skills-mcp"] });
   assert.deepEqual(disabled, []);
@@ -64,8 +76,13 @@ test("provisioning writes the skill into the delivery store exactly once per con
 
   // The store is scanned by skills-mcp: the directory name IS the skill name,
   // the frontmatter description is the metadata (skills.ts contract).
-  const entries = readdirSync(skillsDir, { withFileTypes: true }).map((entry) => entry.name);
-  assert.ok(entries.includes("workflow-toolbox"));
+  // The store is scanned by skills-mcp: run the REAL scanner against the
+  // provisioned store — the directory name is the skill name and the
+  // frontmatter description is the metadata (the skills.ts contract).
+  const scanned = scanSkills(skillsDir);
+  const entry = scanned.find((skill) => skill.name === "workflow-toolbox");
+  assert.notEqual(entry, undefined, "the provisioned skill must scan into skills-mcp metadata");
+  assert.match(entry!.description, /workflow hub toolbox/i);
 
   // Idempotent: same content → no write churn on every session.
   const second = provisionToolboxSkill(skillsDir, catalog);

@@ -53,7 +53,7 @@ test("meteredOpencodeConfig composes the compaction block only on an explicit op
 
   // The block rides beside the existing hub-owned surface, never replacing it.
   const full = meteredOpencodeConfig({ proxyUrl: "http://127.0.0.1:61999", autoCompact: true });
-  assert.deepEqual(full.permission, { edit: "ask", bash: "ask", task: "ask" });
+  assert.deepEqual(full.permission, { edit: "ask", bash: "ask", task: "ask", skill: "deny" });
 });
 
 test("the topology daemon resolves the operator autoCompact preference fail-soft", (t) => {

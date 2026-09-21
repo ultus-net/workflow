@@ -56,6 +56,22 @@ export function resolveDaemonAutoCompactAtTokens(workspace: string): number | un
   }
 }
 
+/**
+ * W080 (the operator-disable precedence on the topology lane): the connector
+ * names the operator explicitly disabled in settings — the skill
+ * declaration never mounts them here either. Fail-soft like the other
+ * daemon reads.
+ */
+export function resolveDaemonDisabledConnectors(workspace: string): readonly string[] {
+  try {
+    return loadSettings({ workspace })
+      .mcpServers.filter((server) => server.enabled === false)
+      .map((server) => server.name);
+  } catch {
+    return [];
+  }
+}
+
 export function authorityModeFromEnv(env: NodeJS.ProcessEnv): OpencodeAuthorityMode {
   const raw = env.WORKFLOW_OPENCODE_AUTHORITY_MODE?.trim();
   if (raw === undefined || raw === "" || raw === "auto-resolve") return "auto-resolve";
@@ -125,6 +141,9 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     // opt-in, so an unreadable settings document degrades to the honest
     // default (off) rather than refusing the topology.
     ...(resolveDaemonAutoCompact(workspace) ? { autoCompact: true } : {}),
+    // W080 (the operator-disable precedence on this lane): connector names
+    // the operator explicitly disabled never mount from the declaration.
+    ...(resolveDaemonDisabledConnectors(workspace).length === 0 ? {} : { skillConnectorsDisabled: resolveDaemonDisabledConnectors(workspace) }),
   });
   // Authority broker: the background policy decision point. It subscribes to
   // the server's SSE and answers every permission request through

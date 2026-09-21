@@ -361,19 +361,40 @@ delivery, never adherence (prompts are not a security boundary).
 > `workflow-toolbox` skill file into `SKILLS_MCP_DIR` (`provisionToolboxSkill`,
 > `src/integrations/toolbox-catalog.ts`) is writing to the **hub's own delivery
 > store** — the directory `skills-mcp` scans and serves through the journaled
-> `read_skill` — not host-native injection: the host's native `skill` tool
-> stays permission-denied (`"skill": "deny"`), the store stays outside every
-> agent workspace (the structural bypass closure above is untouched), and
-> `list_skills`/`read_skill` remain the single content path with journaling
-> on allow. What stays **off** is anything that would teach a host to inject
-> skills outside this path (host skill directories inside the workspace,
-> prompt-side skill content, native `skill`-tool enablement). The delivered
-> skill's frontmatter declares its connectors (W080): the hub-critical pair
-> (`workflow-guard-mcp`, `skills-mcp`) filtered to built entries — a floor,
-> not a wholesale mount; operator settings still own every other connector,
-> an explicit operator disable always wins over the declaration, and the
-> declared mounts cross the same hub-written config and application/guard
-> authorization as any other MCP server (scoping, never a bypass lane).
+> `read_skill` — not host-native injection: the store stays outside every
+> agent workspace, and `list_skills`/`read_skill` remain the single content
+> path with journaling on allow. What stays **off** is anything that would
+> teach a host to inject skills outside this path (host skill directories
+> inside the workspace, prompt-side skill content, native `skill`-tool
+> enablement).
+>
+> **The single-delivery-path invariant's enforcement, stated honestly:**
+> (1) **Structural (proven):** the store lives outside every agent workspace,
+> so the workspace-confined fs lane cannot reach it — the raw `read_file`
+> bypass the 2026-09-15 step-2 decision closed. (2) **Composed (probe-gated):**
+> the hub-written opencode config now carries `"skill": "deny"` in its
+> permission map for the host's native skill tool; its live honoring on the
+> pinned version is NOT yet verified — it is part of the pending
+> skills-delivery probe family (`WORKFLOW_ACP_OPENCODE_SKILLS`), and until
+> that probe runs no claim is made that the denial fires.
+> (3) **Residual risk (recorded, not hidden):** the delivery mount binds the
+> store readable INSIDE the containment boundary (the skills-mcp child needs
+> it), so an operator-GRANTED shell call (`bash` is ask-gated) could read
+> skill bytes without the `read_skill` journal — operator-approved, but not
+> journaled as a skill read. That residual is accepted with this framing; a
+> future hardening could route shell reads under skill paths through the
+> same journal.
+>
+> **The delivered skill's frontmatter declares its connectors (W080):** the
+> hub-critical pair (`workflow-guard-mcp`, `skills-mcp`) filtered to built
+> entries — a floor, not a wholesale mount; operator settings still own every
+> other connector, an explicit operator disable always wins over the
+> declaration on BOTH lanes (the topology lane resolves the disabled names
+> from the settings doc), and the declared mounts cross the same hub-written
+> config and application/guard authorization as any other MCP server
+> (scoping, never a bypass lane). The declared connectors' stdio entrypoints
+> are bound readable into the containment boundary (the same two-level pnpm
+> binds the skills mount taught).
 
 ### Task F2: Availability gating by learner level
 
