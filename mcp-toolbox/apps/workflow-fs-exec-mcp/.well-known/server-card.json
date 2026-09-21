@@ -1,0 +1,43 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "workflow-fs-exec-mcp",
+  "version": "0.1.0",
+  "description": "Hub-owned file edits and shell execution over MCP (plan Task G3): built-in host mutation tools are denied; the model's only mutation path authorizes through the hub first.",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "workflow_write",
+      "description": "Create or overwrite a file inside the workspace. Authorizes through the Workflow hub first (fail closed).",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "workflow_edit",
+      "description": "Replace one exact string occurrence in a workspace file. Authorizes through the Workflow hub first (fail closed).",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "workflow_bash",
+      "description": "Run a shell command through the Workflow hub's contained execution (fail closed without the hub).",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 2326,
+    "toolIndexBytes": 572
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}
