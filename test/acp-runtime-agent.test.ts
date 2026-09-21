@@ -69,7 +69,7 @@ test("meteredOpencodeConfig points the agent at the proxy with only the placehol
   assert.equal(config.model, `${OPENCODE_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`);
   const models = provider.models as Record<string, unknown>;
   assert.ok(DEFAULT_OPENCODE_MODEL in models, "the default model must be exposed through the provider");
-  assert.deepEqual(config.permission, { edit: "ask", bash: "ask", task: "ask" });
+  assert.deepEqual(config.permission, { edit: "ask", bash: "ask", task: "ask", skill: "deny" });
 });
 
 test("meteredOpencodeConfig honors an explicit model override", () => {

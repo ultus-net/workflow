@@ -87,7 +87,7 @@ test("W071 runtime: launches through an injected boundary and writes the pinned 
     model?: string;
     provider?: Record<string, unknown>;
   };
-  assert.deepEqual(config.permission, { edit: "ask", bash: "ask", task: "ask" });
+  assert.deepEqual(config.permission, { edit: "ask", bash: "ask", task: "ask", skill: "deny" });
   assert.equal(config.model, "workflow-metered/openrouter/auto");
   assert.notEqual(config.provider?.["workflow-metered"], undefined);
 

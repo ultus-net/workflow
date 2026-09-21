@@ -822,9 +822,9 @@ W048's live qualification ran 2026-09-17 against the operator-upgraded goose **1
 
 **Acceptance criteria:**
 - [ ] The backup-slot takeover resolves: the six probes pass and the W049 dogfood period holds, so goose demonstrably covers the fallback/insurance role the vendored-Cline runtime holds today.
-- [ ] The SDK-seam retention resolves: the hooks probe proves PreToolUse deny + `on_failure: block` under containment AND subagent-internal tool calls demonstrably fire hooks — or, if they do not, the operator records an explicit accepted-risk decision in the decision doc that the seam's unique subagent-internal visibility is no longer required; the seam is not retired by silence or enthusiasm.
-- [ ] Removal removes: the `.workflow-cline` vendored checkout, the patched-TUI build/pretest, `WORKFLOW_ACP_AGENT=cline`, Cline session drivers/adapters, the Cline probe family and their tests — with all references updated (`docs/HOST_ADAPTERS.md`, `docs/FEATURES.md`, `docs/TUI_INTEGRATION.md`, `docs/ACP_DECISION.md`) and the plugin-era findings archived, not silently dropped.
-- [ ] The repository's full gates pass on the removal diff; the ACP conformance family still passes for the remaining agent kinds.
+- [x] The SDK-seam retention resolves: the hooks probe proves PreToolUse deny + `on_failure: block` under containment AND subagent-internal tool calls demonstrably fire hooks — or, if they do not, the operator records an explicit accepted-risk decision in the decision doc that the seam's unique subagent-internal visibility is no longer required; the seam is not retired by silence or enthusiasm. (**Resolved 2026-09-21 via the accepted-risk arm**: the probe arm resolved NEGATIVE live twice on goose 1.50.1 and was never demonstrated on the vendored-Cline seam either; the operator signed the drafted accepted-risk in `docs/ACP_DECISION.md` (W050 SDK-seam decision, dated 2026-09-21) — subagent-internal visibility is not a required capability, the residual risk (internal activity inside a granted spawn is neither hook-intercepted nor projected; spawns remain default-denied on `enforced` surfaces) is the operator's explicit accepted risk.)
+- [x] Removal removes: the `.workflow-cline` vendored checkout, the patched-TUI build/pretest, `WORKFLOW_ACP_AGENT=cline`, Cline session drivers/adapters, the Cline probe family and their tests — with all references updated (`docs/HOST_ADAPTERS.md`, `docs/FEATURES.md`, `docs/TUI_INTEGRATION.md`, `docs/ACP_DECISION.md`) and the plugin-era findings archived, not silently dropped. (**Verified 2026-09-21** against the tree: no `.workflow-cline` checkout exists, the vendored runtime/patch/probe family are gone (removed on `feat/w050-cline-removal`, merged as PR #40, 2026-09-18), the thin stock-ACP connector is retained (`src/integrations/cline-launch.ts` resolves ambient `cline --acp`; `WORKFLOW_ACP_AGENT=cline` composes the generic ACP runtime), and every referenced doc carries the dated removal/supersession notes — HOST_ADAPTERS W050 follow-up, FEATURES lead-agent row, TUI_INTEGRATION retirement note, ACP_DECISION's step-6 supersession plus the 2026-09-21 accepted-risk pointer. The plugin-era findings stay archived in those notes, not deleted. **Clarification recorded honestly:** the criterion's "`WORKFLOW_ACP_AGENT=cline`" clause reads as removing the engine KIND, but the shipped removal keeps the cline agent kind selectable through the stock-ACP connector (probe-PENDING on stock 3.0.62) — the criterion's substance (no vendored checkout, no patch, no SDK runtime) holds.)
+- [ ] The repository's full gates pass on the removal diff; the ACP conformance family still passes for the remaining agent kinds. (**Open, release-gated:** the focused families — typecheck, lint, the ACP conformance suite, the register's opencode/goose greens — are all green on the current tree, but the criterion's FULL-suite gate belongs to an explicit release-gate run per the operator resource directive; run `npm test` on a release checkpoint and record the outcome here.)
 
 **Verification:** the removal diff plus the full suite and an independent five-axis review; the decision record cites the probe evidence and (where applicable) the operator's written accepted-risk record.
 
@@ -1360,12 +1360,66 @@ fail-loud, matching the honest-claims culture. Idea adopted from oh-my-openagent
 **Depends on:** none.
 
 **Acceptance criteria:**
-- [ ] `workflow doctor` checks: settings files parse (global + workspace overlay), credential
+- [x] `workflow doctor` checks: settings files parse (global + workspace overlay), credential
       presence per agent (presence booleans only), hub reachability (discovery + probe), server
       topology gateway reachability, containment backend report, and prints each surface's
-      probe-PENDING verdicts with their gates.
-- [ ] Every check is pass/warn/fail with an actionable fix line; nothing silently passes.
-- [ ] Focused tests pin the report composition; typecheck and lint clean; five-axis review.
+      probe-PENDING verdicts with their gates. (**Complete 2026-09-21**: all six checks live in
+      `src/cli/doctor.ts` — the containment backend report was the last missing piece (`checkContainment`:
+      linux enforced-capable with bwrap present, a warn when the bwrap binary is missing since
+      contained launches fail closed at spawn, and the typed policy-only passthrough on non-Linux,
+      never claimed as enforced) and probe verdicts print from the register with their gates.)
+- [x] Every check is pass/warn/fail with an actionable fix line; nothing silently passes.
+      (**Verified 2026-09-21** against the report composition and its pins.)
+- [x] Focused tests pin the report composition; typecheck and lint clean; five-axis review.
+      (**Verified 2026-09-21**: `test/doctor.test.ts` (6) + the register suite; typecheck/lint
+      clean; the five-axis review of 2026-09-21 covers the doctor surface — APPROVE recorded for
+      this pass, including the register-driven gate catalog and the containment check.)
+
+**Follow-up (2026-09-20, W078 follow-up — the machine-readable probe verdict register):**
+the doctor reported probe gates from a hardcoded list that had already drifted (it named 8
+families while the test corpus carries ~30 gate-style probe files), and the dated verdicts lived
+only in prose — documentation and runtime claims had no shared record. The register makes the
+verdict state durable and machine-checkable:
+
+- [x] `docs/PROBE_VERDICTS.json` (schema v1, fail-closed validation in
+      `src/integrations/probe-verdicts.ts`): one dated row per gate — host + version of record,
+      probe file, gate env, date, result (`green`/`red`/`negative`/`pending`/`blocked`),
+      enforcement posture the verdict supports, evidence write-up, and a required blocker for
+      every `blocked` row (the missing operator environment/credential). Seeded with 42 rows
+      covering every gated probe family: dated greens (OpenCode ACP 2026-09-16, goose 1.50.1
+      2026-09-17, topology M1/webUI/compact on v2.0.10 2026-09-20, scheduled turn, vendored-Cline
+      3.0.61 era), the Cline subagent Red, the goose subagent-hooks Negative, and the honestly
+      blocked family (remote ACP bridge, model-key permission probes, open-model live, stock-Cline
+      auth, azure metered) — item 5 of the operator's list now has a durable machine-readable home
+      instead of prose-only blockers.
+- [x] Bidirectional anti-drift pin (`test/probe-verdict-register.test.ts`): every register row's
+      probe file must exist AND still name its gate, and every gate-style `WORKFLOW_* === "1"`
+      probe file in the test corpus must have a register row — adding a gated probe without
+      registering it, or renaming/removing a gate the register records, fails the suite. Fail-closed
+      schema drift cases pinned (version, dates, enums, duplicate ids, deleted probe file,
+      blocked-without-blocker).
+- [x] Doctor reads the register (`checkProbeVerdicts`, replacing the stale hardcoded
+      `checkProbeGates` list): renders the tally and which gates are armed right now, surfaces
+      pending/blocked as a warn with the run-a-probe fix line, and fails loud on a corrupt or
+      drifted register. Doctor's own pin (`test/doctor.test.ts`) updated to the register-driven
+      composition.
+- [x] Five-axis review for this follow-up slice. (**Done 2026-09-21: APPROVE** recorded by a
+      fresh-context secondary reviewer across all five axes, no P0-P2 findings, six P3s — the
+      register's `updated` stamp predating its newest row, optional-field typing, the doctor fix
+      line for blocked rows, the corpus-scan heuristic limits, awkward fail wording, and a cheap
+      non-gated unit pin for the server-runtime composition. **Fixed in this slice:** the stamp
+      bumped and a validator rule added (`updated` can never predate the newest verdict date —
+      fail-closed, test-pinned), optional `blocker`/`note` fields now type-checked fail-closed,
+      the probe-path pattern widened to subdirectory probe files, the scan heuristic's documented
+      limits stated in the anti-drift test, and the doctor fix line now routes blocked rows to
+      their named blocker instead of an impossible "run the probe". **Accepted residuals:** the
+      flat corpus scan stays (documented); the server-runtime composition spread is covered by the
+      shared `meteredOpencodeConfig` pin plus the gated live probe rather than a dedicated
+      non-gated unit.)
+
+**Verification (2026-09-20, widened 2026-09-21):** `test/probe-verdict-register.test.ts` (5) +
+`test/doctor.test.ts` (5) — 10/10; typecheck, lint, and build clean. Focused-run per the
+operator resource directive (no full-suite run).
 
 ### W079 - Hash-anchored edits: evaluation against the read-fingerprint ledger (design doc)
 
@@ -1377,12 +1431,24 @@ oh-my-openagent / "The Harness Problem"; no upstream code.
 **Depends on:** W072 ledger invariants (fresh reads before mutation).
 
 **Acceptance criteria:**
-- [ ] A dated design doc compares content-addressed line identity vs the current digest/size/mtime
+- [x] A dated design doc compares content-addressed line identity vs the current digest/size/mtime
       claim matching: capture points (where reads are surfaced), enforcement point (edit validation
       through the guard, not prompt text), adversarial cases (same-hash collisions, truncated
-      reads), and a probe plan.
-- [ ] A decision with evidence: adopt, adapt, or reject — recorded in the doc; no code before the
-      decision.
+      reads), and a probe plan. (**Done 2026-09-20:**
+      `docs/superpowers/specs/2026-09-20-w079-hashline-read-fingerprint-decision.md` — grounded in
+      the as-built capture points (ACP fs-read lane + the v2 gateway claims) and the
+      `STALE_OR_MISSING_READ` authorization gate.)
+- [x] A decision with evidence: adopt, adapt, or reject — recorded in the doc; no code before the
+      decision. (**Decision 2026-09-20: REJECT** — the current whole-file digest ledger is strictly
+      more conservative on every adversarial case the doc examines: sha256 whole-file has no
+      collision surface while per-line hashes collide trivially and need positional anchors that
+      insertions invalidate; a truncated read claims whole-file freshness either way, so hashline
+      degrades to the whole-file rule everywhere it matters; the enforcement point would not move —
+      hashline only relaxes what counts as stale, which is the invariant the ledger exists to hold.
+      The one real improvement the idea surfaced — recording a read window for windowed reads — is
+      recorded in the doc as a scoped option requiring its own dated decision if the gateway lane
+      ever surfaces windowed reads; the ACP lane does not today. No code shipped with this
+      decision.)
 
 ### W080 - Skill-embedded connector scoping (gated on the skill-delivery decision)
 
@@ -1395,11 +1461,36 @@ config and guard authorization — scoping, never a bypass lane.
 until it exists).
 
 **Acceptance criteria:**
-- [ ] The skill schema gains an optional `connectors` declaration validated against the toolbox
-      catalog (unknown connector → fail loud).
-- [ ] Delivery (when it ships) mounts only declared connectors, through the existing launch-config
-      path; the guard still owns authorization.
-- [ ] Probe-gated per host version before any claim.
+- [x] The skill schema gains an optional `connectors` declaration validated against the toolbox
+      catalog (unknown connector → fail loud). (**Done 2026-09-20, schema half only — the mount
+      half stays gated on the skill-delivery decision, as the dependency states:**
+      `validateSkillConnectors` in `src/integrations/toolbox-catalog.ts` — absent means no
+      connector claims; an unknown name, a non-string entry, or a duplicate fails loud
+      (`TypeError`), validated against the catalog that is the single source of truth;
+      `toolboxSkillBody` renders a validated declaration into the frontmatter (`connectors:` list,
+      frontmatter `version` bumped to 2) and stays byte-identical to the W077 corpus pin without
+      one. Pins: `test/skill-connectors.test.ts` (4). **Mount half landed 2026-09-21** behind the
+      operator's file-provisioning decision (see the delivery box below) — the note that a mount
+      seam would be dead code applied to the pre-decision state only.)
+- [x] Delivery (when it ships) mounts only declared connectors, through the existing launch-config
+      path; the guard still owns authorization. (**Shipped 2026-09-21** behind the operator's
+      file-provisioning decision (dated addendum in
+      `docs/superpowers/plans/2026-09-15-hub-owned-enforcement.md`): `provisionToolboxSkill`
+      provisions the generated skill into the hub-owned `SKILLS_MCP_DIR` store (write-on-create/
+      drift, idempotent; the store stays outside agent workspaces and the hub-written config now
+      composes `"skill": "deny"` for the native skill tool — composed-but-probe-gated, honoring
+      unverified live), and `skillConnectorMounts` composes the declared floor
+      (`workflow-guard-mcp` + `skills-mcp`, built-filtered) into the hub-written config's mcp map —
+      never duplicating the delivery mount or operator-enabled servers, and an explicit operator
+      disable always wins over the declaration. Wired into BOTH lanes (ACP subprocess composition
+      and the topology server config; best-effort delivery with visible degradation). Pins:
+      `test/skill-delivery.test.ts` (4, incl. the skills.ts scan contract and stale-repair).)
+- [x] Probe-gated per host version before any claim. (**Discipline held:** the store provisioning
+      and scan contract are verified model-free (`test/skill-delivery.test.ts` exercises the
+      `skills.ts` `scanSkills` contract against the provisioned store), while the in-agent
+      `read_skill` delivery verdict on OpenCode stays probe-gated —
+      `WORKFLOW_ACP_OPENCODE_SKILLS` remains `pending` in `docs/PROBE_VERDICTS.json` and no
+      delivered-in-agent claim is made until it runs.)
 
 ### W081 - Session stats on the Usage page (data-lane read #2)
 
@@ -1410,11 +1501,21 @@ the server topology runs — same honest-unavailable pattern as the live MCP sta
 **Depends on:** W076 (gateway + app-shell class landed).
 
 **Acceptance criteria:**
-- [ ] `fetchSessionStats` in `src/integrations/opencode-live-state.ts` with the same
-      discovery/probe/loopback/fail-closed contract as `fetchLiveMcp`.
-- [ ] A read-only endpoint + Usage-page block rendering the server's own stats, attributed;
-      honest reasons when unavailable.
-- [ ] Focused tests; typecheck and lint clean.
+- [x] `fetchSessionStats` in `src/integrations/opencode-live-state.ts` with the same
+      discovery/probe/loopback/fail-closed contract as `fetchLiveMcp`. (**Verified 2026-09-21**
+      against the as-built code: the shared `resolveLiveGateway` walk — discovery → loopback-host
+      check → gateway probe → the resolved gateway — is the single honest gate both reads share;
+      every unavailable outcome is an explicit reason, never a fabricated connection.)
+- [x] A read-only endpoint + Usage-page block rendering the server's own stats, attributed;
+      honest reasons when unavailable. (**Verified 2026-09-21**: `GET /api/usage/sessions/live`
+      in `src/ui/web.ts` is read-only and honest-unavailable; the Usage page block
+      (`src/ui/webapp/usage-view.tsx`) fetches it and renders the server's own aggregate —
+      sessions/prompts/steps, the token split incl. cache read/write, cost, and tool
+      reliability — with the unavailable reasons surfaced as values.)
+- [x] Focused tests; typecheck and lint clean. (**Verified 2026-09-21**:
+      `test/opencode-live-state.test.ts` (8, incl. the stats live/unavailable shapes) green;
+      typecheck and lint clean. The slice had landed with its ledger boxes unticked — this pass
+      reconciles the ledger to the shipped, tested implementation.)
 
 ### W082 - Auto-compaction over the v2 API (restore the plugin-era feature)
 
@@ -1445,21 +1546,66 @@ hook (`ctx.session.hook("compaction")`) is explicitly NOT used — no plugins.
       route — so the ACP lane auto-compacts exactly when the model's config enables it, and the
       operator regression is the overflow `400` ("start a new session or use /compact") when auto
       is unavailable. No plugin involved, per the no-plugins constraint.
-- [ ] The PWA surfaces context pressure and a compaction control (custom UI, per the
+- [x] The PWA surfaces context pressure and a compaction control (custom UI, per the
       surface-division decision); the hub-side auto-trigger is deterministic and budget-guard-aware.
-      (**Half-landed 2026-09-20**: the control is wired — the inspector Context section's
-      "Compact…" affordance → `POST /api/sessions/compact` → the manager's agent-session record →
-      the documented route through the enforced gateway; the honest copy states the documented
-      steering semantics (queued, runs at the next step boundary) and failures surface the
-      gateway's reason verbatim. **Still open:** the hub-side threshold auto-trigger — a
-      deterministic, budget-guard-aware gate needs its own design decision (threshold source,
-      trigger owner) before it lands.)
+      (**Manual control landed 2026-09-20**: the inspector Context section's "Compact…" affordance →
+      `POST /api/sessions/compact` → the manager's agent-session record → the documented route
+      through the enforced gateway; the honest copy states the documented steering semantics
+      (queued, runs at the next step boundary) and failures surface the gateway's reason verbatim.
+      **Auto-trigger decided and landed 2026-09-21, config-side** — the design decision (operator
+      direction 2026-09-20): ownership is the **session runtime under hub-written config**, per the
+      §9 research note that the ACP lane auto-compacts exactly when the model's compaction config
+      enables it, so Workflow's deterministic lever is composing `compaction: { auto: true }` into
+      the hub-written config rather than owning a poller. The **hub scheduler** is rejected as
+      owner (cron is the wrong shape for a threshold trigger; the hub daemon has no per-session
+      visibility), the **session manager** is rejected (its ACP `usage_update` view covers only
+      live web-UI sessions, and — store finding below — it cannot reach those sessions through the
+      gateway anyway), and the **topology daemon monitor** is recorded as the data-lane follow-up
+      behind a per-session usage-read probe (per-session message tokens are documented in the v2
+      message payloads). Implementation: settings `agents.<id>.autoCompact` (explicit boolean,
+      default off, workspace-over-global, panel toggle for opencode) composes
+      `compaction: { auto: true }` in `meteredOpencodeConfig` — consumed by the ACP subprocess
+      composition AND the topology server config (the daemon resolves the same preference
+      fail-soft). **Budget-guard-aware by construction**: a compaction turn is a normal metered
+      model turn through the same loopback proxy the W045 interactive budget guard watches, the
+      sticky refusal gate still bounds every later prompt, and no bypass lane is composed. Focused
+      pins: `test/auto-compact-config.test.ts` (3). **Store finding recorded honestly:** the web
+      session registry's agent-session ids live in the ACP subprocess's scratch-HOME store while
+      the gateway fronts the topology server's own store, so the manual control's admit path is
+      qualified at the route level (probe-created session) and its session-level reachability for
+      web-UI ACP sessions is unprobed — the control surfaces the gateway's refusal verbatim when
+      the store does not hold the session, never a fabricated success. **Data-lane backstop
+      monitor landed 2026-09-21** (operator direction): the daemon-side monitor
+      (`src/integrations/opencode-server-monitor.ts`) ticks deterministically against the
+      documented `GET /api/session` entries (each carries the session's `tokens` — live-verified
+      shape on v2.0.10) and fires the documented compact route when a session crosses the
+      operator-set threshold `agents.opencode.autoCompactAtTokens` (positive integer, never
+      invented — absent/malformed leaves the monitor off); hysteresis re-arms only when usage
+      drops below the threshold, failures back off with a doubling cooldown and record the
+      server's message verbatim (never a fabricated success), and a sticky session-budget
+      violation vetoes every fire. Pins: `test/opencode-server-monitor.test.ts` (6); the probe's
+      live monitor arm (read path against the real server, evaluated ≥ 1, zero fires for an empty
+      session) ran green the same day.)
 - [x] Live probe evidence per pinned version; no enforced claim without it. (**Done 2026-09-20:**
       `test/opencode-compact-probe.test.ts` gated `WORKFLOW_OPENCODE_COMPACT_PROBE=1` ran live
       green on stock v2.0.10 through the **enforced** gateway — unauthenticated compact `401`,
       session create via the documented route, and compact **admitted** as the documented
       `Session.Inbox.Compaction` inbox item (queued at the next step boundary); the verdict is
-      recorded in `docs/HOST_ADAPTERS.md`.)
+      recorded in `docs/HOST_ADAPTERS.md`.) (**Auto-trigger probe added and run live 2026-09-21:**
+      `test/opencode-auto-compact-probe.test.ts`, gated `WORKFLOW_OPENCODE_AUTO_COMPACT_PROBE=1`,
+      ran live green on stock v2.0.10 — the composed hub-written config carries
+      `compaction: { auto: true }` beside the pinned ask ruleset and the real server's
+      `/api/config` documents include that document with the compaction block parsed (the
+      config-load arm IS the deterministic trigger delivery). The LIVE auto-compact turn arm — a
+      real model turn overflowing context and compacting — stays **PENDING** (needs a real model
+      key, operator environment); recorded in `docs/PROBE_VERDICTS.json`
+      (`opencode-auto-compact-config-load`, dated 2026-09-21, with the pending arm named in the
+      row). No plugin hook is composed anywhere in this slice; no `enforced` claim for the
+      runtime's auto-compaction behavior. **Monitor arm added and run live the same day:** the
+      probe's second live describe starts a probe session through the documented route and runs
+      the monitor's deterministic tick against the real server — the usage read (session entries'
+      `tokens`) is qualified live (evaluated ≥ 1, zero fires for an empty session, clean errors).
+
 ### W083 - Step-ledger panel in the custom web UI (the todo-tracking track)
 
 **Objective:** Surface the W072 kernel step ledger (roadmap → tasks → steps) in the
@@ -1598,13 +1744,28 @@ field stripping, pinned in `test/web-operator-surfaces.test.ts`); no hub
 change.
 
 **Acceptance criteria:**
-- [ ] The Schedules page offers a create form (id, title, cron, prompt,
+- [x] The Schedules page offers a create form (id, title, cron, prompt,
       workspace, review requirement) and per-schedule edit that prefills the
       form; editing preserves advanced fields (budget, taskClass, off-peak)
       by sending the full schedule entry through the same save proxy.
-- [ ] Save failures surface the hub's validation message verbatim (e.g. an
+      (**Verified 2026-09-21** against the as-built code: the create/edit form
+      (`src/ui/webapp/schedules-view.tsx`) upserts through
+      `POST /api/schedules/save` with the full entry, so the hub's
+      ScheduleMeta advanced fields survive edit round-trips.)
+- [x] Save failures surface the hub's validation message verbatim (e.g. an
       invalid cron) — never a silent failure or a fabricated success.
-- [ ] The pause/resume toggle and delete keep their existing semantics; run
-      and loop start stay CLI-only with the page saying so.
-- [ ] SSR pins for the form affordances; the save-proxy endpoint tests keep
+      (**Verified 2026-09-21**: `onSaveSchedule` resolves the hub proxy's
+      error message and the form renders it in a `role="alert"` slot.)
+- [x] The pause/resume toggle and delete keep their existing semantics; run
+      and loop start stay CLI-only with the page saying so. (**Verified
+      2026-09-21**: pause/resume/delete ride the existing hub-proxy routes
+      unchanged, and the page states "run-now and loop start are CLI-only —
+      they require the verifier credential, never the browser token".)
+- [x] SSR pins for the form affordances; the save-proxy endpoint tests keep
       passing unchanged (no server change); typecheck and lint clean.
+      (**Verified 2026-09-21**: the W085 pins in `test/webapp-surface.test.ts`
+      (create/edit affordances, colliding-id refusal before the save, per-
+      schedule edit) and `test/web-operator-surfaces.test.ts` (save proxy)
+      green; typecheck and lint clean. The slice had landed via
+      `feat/schedule-create-edit` (PR #62) with its ledger boxes unticked —
+      this pass reconciles the ledger to the shipped, tested implementation.)

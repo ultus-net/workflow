@@ -87,7 +87,7 @@ test("W071 live (v2 spellings): runtime + gateway authority split against real o
     permission?: Record<string, string>;
     provider?: Record<string, unknown>;
   };
-  assert.deepEqual(configFile.permission, { edit: "ask", bash: "ask", task: "ask" });
+  assert.deepEqual(configFile.permission, { edit: "ask", bash: "ask", task: "ask", skill: "deny" });
   assert.notEqual(configFile.provider?.["workflow-metered"], undefined);
   // …and the real server loads it: the config document list includes the
   // hub-written config with the provider parsed. (v2.0.10 observation, per

@@ -40,6 +40,32 @@ export interface AgentRuntimePreference {
   readonly model?: string;
   readonly mode?: string;
   readonly thoughtLevel?: string;
+  /**
+   * W082 (config-side auto-compaction trigger): when true, the hub-written
+   * launch config composes `compaction: { auto: true }` for this agent — the
+   * session runtime then compacts on its own at the documented threshold
+   * (per-model runtime behavior; the §9 research note: the ACP lane
+   * auto-compacts exactly when the model's compaction config enables it).
+   * The default is OFF (absent or false — no invented runtime defaults;
+   * current behavior is unchanged). An explicit `false` persists as the
+   * operator's choice so an uncheck sticks through the per-key merge.
+   * Launch-time applied like the other agent preferences: a change reaches a
+   * NEW session. Budget-guard compatible by
+   * construction: a compaction turn is a normal metered model turn through
+   * the same loopback proxy the W045 interactive budget guard watches, and
+   * the sticky refusal gate still bounds every later prompt — auto-compaction
+   * composes no bypass lane.
+   */
+  readonly autoCompact?: boolean;
+  /**
+   * W082 (the data-lane backstop monitor): the deterministic threshold in
+   * tokens at which the topology daemon fires the documented compact route
+   * for a gateway-driven session whose context usage crossed it. Never
+   * invented: absent/malformed means the monitor stays off (the config-side
+   * trigger composes the runtime's own threshold instead). A sticky
+   * session-budget violation vetoes every monitor fire.
+   */
+  readonly autoCompactAtTokens?: number;
 }
 
 export function defaultSettings(): WorkflowSettings {
@@ -114,11 +140,24 @@ export function normalizeSettings(value: unknown): WorkflowSettings {
       const model = normalizeString(raw.model);
       const mode = normalizeString(raw.mode);
       const thoughtLevel = normalizeString(raw.thoughtLevel);
-      if (model === undefined && mode === undefined && thoughtLevel === undefined) continue;
+      // W082: an explicit boolean persists as the operator's choice (so an
+      // uncheck can stick in the merge); a non-boolean is dropped fail-closed.
+      // Only `=== true` ever arms the trigger — the composition sites treat
+      // everything else as the honest default (off).
+      const autoCompact = typeof raw.autoCompact === "boolean" ? raw.autoCompact : undefined;
+      // W082 (the monitor threshold): a positive integer only — absent or a
+      // malformed value means the monitor stays off, never a guessed limit.
+      const rawAtTokens = raw.autoCompactAtTokens;
+      const autoCompactAtTokens = typeof rawAtTokens === "number" && Number.isInteger(rawAtTokens) && rawAtTokens > 0
+        ? rawAtTokens
+        : undefined;
+      if (model === undefined && mode === undefined && thoughtLevel === undefined && autoCompact === undefined && autoCompactAtTokens === undefined) continue;
       agents[id] = {
         ...(model === undefined ? {} : { model }),
         ...(mode === undefined ? {} : { mode }),
         ...(thoughtLevel === undefined ? {} : { thoughtLevel }),
+        ...(autoCompact === undefined ? {} : { autoCompact }),
+        ...(autoCompactAtTokens === undefined ? {} : { autoCompactAtTokens }),
       };
     }
   }

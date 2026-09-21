@@ -11,6 +11,7 @@ import {
 } from "../integrations/opencode-server-discovery.js";
 import { listWebAgents } from "../ui/web-agents.js";
 import { normalizeSettings, settingsPaths } from "../integrations/workflow-settings.js";
+import { loadProbeVerdicts, type ProbeVerdictRegister, type ProbeVerdictResult } from "../integrations/probe-verdicts.js";
 
 /**
  * W076 — `workflow doctor`: one command that states the truth about the
@@ -18,6 +19,12 @@ import { normalizeSettings, settingsPaths } from "../integrations/workflow-setti
  * Every check is pass/warn/fail; nothing silently passes (the honest-claims
  * culture applied to diagnostics). Idea adopted from oh-my-openagent's
  * `doctor` (pattern only; SUL-1.0 upstream — no code).
+ *
+ * W078 follow-up: the gated live-probe check is driven by the
+ * machine-readable probe verdict register (`docs/PROBE_VERDICTS.json`) —
+ * host/version, probe + gate, date, result, enforcement posture, and
+ * evidence per row — so documentation and runtime claims share one record
+ * instead of drifting between a hardcoded gate list and prose verdicts.
  */
 
 export type DoctorStatus = "pass" | "warn" | "fail";
@@ -139,27 +146,81 @@ export async function checkTopologyGateway(options: DoctorOptions = {}): Promise
   return { name, status: "pass", detail: `gateway live at ${discovery.gatewayUrl} (workspace ${discovery.workspace})` };
 }
 
-/** The gated live-probe families: which could run right now, and where the
- * dated verdicts live. Doctor states the gates; it never fabricates verdicts. */
-export function checkProbeGates(): DoctorCheck {
-  const name = "gated live probes";
-  const gates: readonly { readonly env: string; readonly label: string }[] = [
-    { env: "WORKFLOW_ACP_OPENCODE_SUBAGENT", label: "OpenCode ACP subagent projection" },
-    { env: "WORKFLOW_ACP_OPENCODE_MCP_MOUNT", label: "OpenCode ACP MCP mount" },
-    { env: "WORKFLOW_ACP_OPENCODE_RESUME", label: "OpenCode ACP session resume" },
-    { env: "WORKFLOW_ACP_GOOSE_SUBAGENT", label: "goose subagent projection" },
-    { env: "WORKFLOW_ACP_GOOSE_METERED", label: "goose metered turn" },
-    { env: "WORKFLOW_OPENCODE_SERVER_ATTACH", label: "standard-TUI server topology (M1)" },
-    { env: "WORKFLOW_OPENCODE_WEBUI_PROBE", label: "stock web UI behind the enforced gateway" },
-    { env: "WORKFLOW_OPENCODE_V2_PROBE", label: "opencode v2 route qualification" },
-  ];
-  const ready = gates.filter((gate) => process.env[gate.env] === "1");
+/**
+ * The containment backend report (the last missing W078 check): what
+ * isolation the agent launches will actually get on this machine, stated
+ * with the same enforced/policy-only distinction the containment layer
+ * guarantees at the type level. Linux is enforced-capable only when the
+ * bwrap binary exists at the compiled-in path — a missing binary is a warn
+ * (contained launches fail closed at spawn, which is safe but useless)
+ * rather than a silent pass; non-Linux is the honest policy-only passthrough
+ * the platform layer documents, with its limitation stated.
+ */
+export function checkContainment(options: { platform?: NodeJS.Platform; bwrapPath?: string } = {}): DoctorCheck {
+  const name = "containment backend";
+  const platform = options.platform ?? process.platform;
+  if (platform !== "linux") {
+    return {
+      name,
+      status: "warn",
+      detail: `no process isolation on ${platform} — launches run with policy gating only (the typed policy-only marker, never claimed as enforced)`,
+      fix: "full isolation is Linux-only today (bubblewrap); on this platform every contained launch is visibly marked policy-only",
+    };
+  }
+  const bwrapPath = options.bwrapPath ?? "/usr/bin/bwrap";
+  if (!existsSync(bwrapPath)) {
+    return {
+      name,
+      status: "warn",
+      detail: `linux is enforced-capable, but bwrap was not found at ${bwrapPath} — contained agent launches will fail closed at spawn`,
+      fix: "install bubblewrap (the bwrap binary) so agent processes get the enforced filesystem boundary",
+    };
+  }
+  return { name, status: "pass", detail: `bubblewrap present at ${bwrapPath} — contained launches run the enforced filesystem boundary` };
+}
+
+/**
+ * W078 follow-up: the machine-readable probe verdict register
+ * (`docs/PROBE_VERDICTS.json`) is the doctor's gate catalog — no second
+ * hardcoded gate list to drift. The register row is the durable record
+ * (host/version, probe + gate, date, result, enforcement posture, evidence);
+ * the doctor renders its state honestly: green/red/negative are recorded
+ * verdicts, pending/blocked are honest open states (blocked ones name the
+ * missing operator environment/credential), and an armed gate whose verdict
+ * is still undecided is surfaced rather than hidden. Parse/validation
+ * failures fail loud — a corrupt register is drift, never an empty list.
+ */
+export function checkProbeVerdicts(options: { root?: string } = {}): DoctorCheck {
+  const name = "probe verdict register";
+  let register: ProbeVerdictRegister;
+  try {
+    register = loadProbeVerdicts(options);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      name,
+      status: "fail",
+      detail: `the probe verdict register failed validation (fail-closed): ${message}`,
+      fix: "repair docs/PROBE_VERDICTS.json — version 1, one dated row per gate (host/version, probe file, gate, result, posture, evidence); probe files must exist",
+    };
+  }
+  const tally = { green: 0, red: 0, negative: 0, pending: 0, blocked: 0 } as Record<ProbeVerdictResult, number>;
+  for (const verdict of register.verdicts) tally[verdict.result] += 1;
+  const armed = register.verdicts.filter((verdict) => process.env[verdict.gate] === "1");
+  const undecided = register.verdicts.filter((verdict) => verdict.result === "pending" || verdict.result === "blocked");
+  const blocked = undecided.filter((verdict) => verdict.result === "blocked");
   return {
     name,
-    status: "pass",
-    detail: `${ready.length}/${gates.length} gates armed (${
-      ready.length > 0 ? ready.map((gate) => gate.env).join(", ") : "none"
-    }) — dated verdicts live in docs/HOST_ADAPTERS.md; run a gated probe with WORKFLOW_<GATE>=1 node --import tsx --test test/<probe>.test.ts`,
+    status: undecided.length > 0 ? "warn" : "pass",
+    detail: `${register.verdicts.length} verdicts — ${tally.green} green, ${tally.red} red, ${tally.negative} negative, ${tally.pending} pending, ${tally.blocked} blocked; ${
+      armed.length > 0 ? `${armed.length} gate(s) armed now: ${[...new Set(armed.map((verdict) => verdict.gate))].join(", ")}` : "no gates armed"
+    } — register: docs/PROBE_VERDICTS.json; dated write-ups: docs/HOST_ADAPTERS.md`,
+    ...(undecided.length === 0 ? {} : {
+      // Blocked rows cannot be "run" — their fix is the named operator
+      // environment/credential in the register row, so the fix line says so
+      // instead of telling an operator to run an impossible probe.
+      fix: `pending rows: run a gated probe with WORKFLOW_<GATE>=1 node --import tsx --test test/<probe>.test.ts; blocked rows: the missing operator environment/credential is named in the register row's blocker — record every dated verdict in docs/PROBE_VERDICTS.json and docs/HOST_ADAPTERS.md (${undecided.length} still open: ${undecided.slice(0, 4).map((verdict) => verdict.id).join(", ")}${undecided.length > 4 ? ", …" : ""}${blocked.length > 0 ? `; ${blocked.length} blocked on the operator environment` : ""})`,
+    }),
   };
 }
 
@@ -169,7 +230,8 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<readonly D
   checks.push(...checkAgentCredentials());
   checks.push(await checkHub());
   checks.push(await checkTopologyGateway(options));
-  checks.push(checkProbeGates());
+  checks.push(checkContainment());
+  checks.push(checkProbeVerdicts());
   return checks;
 }
 

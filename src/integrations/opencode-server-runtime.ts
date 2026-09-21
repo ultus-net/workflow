@@ -9,6 +9,7 @@ import { launchContainedAcpAgent } from "../adapters/acp-contained-agent.js";
 import type { ProcessContainment } from "../containment/contracts.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import { resolveSkillsMount } from "./acp-runtime.js";
+import { connectorReadablePaths, provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts } from "./toolbox-catalog.js";
 import { createModelUsageProxy, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
 import { globalOpencodeBinary, meteredOpencodeConfig, resolveOpencodeLaunch } from "./opencode-agent-config.js";
 import { probeOpencodeHealth } from "./opencode-health.js";
@@ -40,6 +41,20 @@ export interface OpencodeServerRuntimeOptions {
   readonly upstream?: string | undefined;
   /** Metered model id; defaults to the hub OpenCode default. */
   readonly model?: string | undefined;
+  /**
+   * W082 (config-side auto-compaction trigger): when true, the hub-written
+   * server config composes `compaction: { auto: true }` so sessions driven
+   * through this topology get the same deterministic maintenance the ACP
+   * lane composes from the settings preference. The CLI resolves it from the
+   * operator's `agents.opencode.autoCompact` setting (default off).
+   */
+  readonly autoCompact?: boolean | undefined;
+  /**
+   * W080 (the operator-disable precedence on this lane): connector names the
+   * operator explicitly disabled in settings — the declaration never mounts
+   * them here either. The CLI resolves the names from the settings doc.
+   */
+  readonly skillConnectorsDisabled?: readonly string[] | undefined;
   /** Upstream API key; defaults to `loadUpstreamApiKey()` (throws when absent). */
   readonly apiKey?: string | undefined;
   /** Loopback port; defaults to a free port. Injectable for tests. */
@@ -111,13 +126,35 @@ export async function createOpencodeServerRuntime(
   try {
     const autoLatest = autoLatestConfigFromEnv({ upstream });
     const skillsMount = resolveSkillsMount();
+    // W080 mount half: provision the workflow-toolbox skill into the hub-owned
+    // delivery store and compose the declared-connector mounts (the daemon has
+    // no operator settings doc; the declaration's built filter applies, and
+    // the delivery mount dedupes skills-mcp). Best-effort orientation: a
+    // failed provisioning degrades to no delivery, never a failed daemon.
+    let skillConnectors: readonly { readonly name: string; readonly serverPath: string }[] = [];
+    if (skillsMount !== undefined) {
+      try {
+        const catalog = resolveToolboxCatalog();
+        provisionToolboxSkill(skillsMount.skillsDir, catalog);
+        skillConnectors = skillConnectorMounts(catalog, {
+          ...(options.skillConnectorsDisabled === undefined ? {} : { disabled: options.skillConnectorsDisabled }),
+          alreadyMounted: ["skills-mcp"],
+        });
+      } catch (error) {
+        console.error(`workflow-toolbox skill delivery failed for the topology (continuing without it): ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
     writeFileSync(
       join(configDir, "opencode", "opencode.json"),
       JSON.stringify(meteredOpencodeConfig({
         proxyUrl: proxy.url,
         model: options.model ?? process.env.WORKFLOW_OPENCODE_MODEL,
+        // W082: the daemon carries the same config-side auto-compaction
+        // trigger the ACP lane composes (settings `agents.opencode.autoCompact`).
+        ...(options.autoCompact === true ? { autoCompact: true } : {}),
         ...(autoLatest === undefined ? {} : { autoLatest: { aliases: autoLatest.aliases } }),
         ...(skillsMount === undefined ? {} : { skills: skillsMount }),
+        ...(skillConnectors.length === 0 ? {} : { skillConnectors }),
       })),
       { encoding: "utf8", mode: 0o600 },
     );
@@ -143,6 +180,11 @@ export async function createOpencodeServerRuntime(
               resolve(dirname(skillsMount.serverScript), "..", "node_modules"),
               resolve(dirname(skillsMount.serverScript), "..", "..", "..", "node_modules"),
               skillsMount.skillsDir,
+              // W080: the declared connectors' stdio entrypoints need the
+              // same two-level pnpm binds (dist + app node_modules +
+              // toolbox node_modules) or the server's spawned MCP child
+              // dies with ERR_MODULE_NOT_FOUND inside the boundary.
+              ...connectorReadablePaths(skillConnectors.map((mount) => mount.serverPath)),
             ],
           }),
       environment: {

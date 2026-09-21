@@ -7,7 +7,8 @@ import test from "node:test";
 import {
   checkSettingsDocs,
   checkAgentCredentials,
-  checkProbeGates,
+  checkProbeVerdicts,
+  checkContainment,
   renderDoctorReport,
 } from "../src/cli/doctor.js";
 import { parseLauncherArgs } from "../src/cli/launcher-args.js";
@@ -56,18 +57,43 @@ test("doctor: credential checks state availability with reasons, never values", 
   for (const check of unavailable) assert.match(check.detail, /unavailable — /);
 });
 
-test("doctor: probe gates list the families and which are armed", (t) => {
-  const previous = process.env.WORKFLOW_OPENCODE_WEBUI_PROBE;
-  process.env.WORKFLOW_OPENCODE_WEBUI_PROBE = "1";
-  t.after(() => {
-    if (previous === undefined) delete process.env.WORKFLOW_OPENCODE_WEBUI_PROBE;
-    else process.env.WORKFLOW_OPENCODE_WEBUI_PROBE = previous;
-  });
-  const check = checkProbeGates();
-  assert.equal(check.status, "pass");
-  assert.match(check.detail, /1\/8 gates armed/);
-  assert.match(check.detail, /WORKFLOW_OPENCODE_WEBUI_PROBE/);
-  assert.match(check.detail, /docs\/HOST_ADAPTERS\.md/, "verdicts are pointed at, never fabricated");
+test("doctor: the probe verdict register check states the honest register state", () => {
+  // Driven by the shipped register (anti-drift is pinned in
+  // test/probe-verdict-register.test.ts); this pin holds the doctor
+  // composition: the register is named, the write-up doc stays pointed at,
+  // and nothing is fabricated.
+  const check = checkProbeVerdicts();
+  assert.ok(["pass", "warn"].includes(check.status));
+  assert.match(check.detail, /docs\/PROBE_VERDICTS\.json/);
+  assert.match(check.detail, /docs\/HOST_ADAPTERS\.md/);
+  assert.doesNotMatch(check.detail, /sk-[A-Za-z0-9]{8,}/, "never a credential value");
+});
+
+test("doctor: the containment backend report states enforced-capable, missing-bwrap, and policy-only honestly", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-doctor-bwrap-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // Linux with a real bwrap binary at the probed path → enforced-capable.
+  const bwrap = join(dir, "bwrap");
+  writeFileSync(bwrap, "");
+  const enforced = checkContainment({ platform: "linux", bwrapPath: bwrap });
+  assert.equal(enforced.status, "pass");
+  assert.match(enforced.detail, /bubblewrap present/);
+  assert.match(enforced.detail, /enforced filesystem boundary/);
+
+  // Linux without bwrap is a WARN (contained launches fail closed at spawn),
+  // never a silent pass — the actionable fix names the package.
+  const missing = checkContainment({ platform: "linux", bwrapPath: join(dir, "absent-bwrap") });
+  assert.equal(missing.status, "warn");
+  assert.match(missing.detail, /bwrap was not found/);
+  assert.match(missing.detail, /fail closed at spawn/);
+  assert.match(missing.fix ?? "", /install bubblewrap/);
+
+  // Non-Linux is the typed policy-only passthrough, stated with its limit.
+  const policyOnly = checkContainment({ platform: "darwin", bwrapPath: bwrap });
+  assert.equal(policyOnly.status, "warn");
+  assert.match(policyOnly.detail, /policy gating only/);
+  assert.match(policyOnly.detail, /never claimed as enforced/);
+  assert.match(policyOnly.fix ?? "", /Linux-only/);
 });
 
 test("doctor: the report renders icons, fixes, and never truncates a failure", () => {

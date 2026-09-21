@@ -25,10 +25,12 @@ test("the catalog covers exactly the vendored mcp-toolbox apps", () => {
   assert.deepEqual([...manifest].sort(), [...onDisk].sort());
 });
 
-test("every catalog description matches the vendored package.json (except the artifact-only server)", () => {
+test("every catalog description matches the vendored package.json", () => {
   for (const app of TOOLBOX_CATALOG) {
     const manifestPath = join(packageRoot(), "mcp-toolbox", "apps", app.name, "package.json");
-    if (!existsSync(manifestPath)) continue; // workflow-fs-exec-mcp ships dist-only
+    // No skip case: the retired workflow-fs-exec-mcp is out of the manifest
+    // (f525b35's retirement completed 2026-09-21), so every listed app is a
+    // real vendored package whose description must stay in lockstep.
     const description = JSON.parse(readFileSync(manifestPath, "utf8")).description as string | undefined;
     assert.equal(description, app.description, `${app.name} description drifted from its package.json`);
   }

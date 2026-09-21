@@ -56,7 +56,7 @@ Gap dispositions from W036:
 ## Consequences
 
 - Implementation phase (post-decision), landed 2026-09-14/15: session lifecycle wired into hub `authorize` by `AcpSessionDriver` (`src/integrations/acp-session.ts`, per-request permission resolution → `WorkflowApplication.authorize` with fail-closed title classification), whole-agent containment as the default spawn path (`AcpSessionDriver.contained` → `launchContainedAcpAgent`), protocol-native active-session config mutation, and a clean terminal surface over the ACP projection (`src/cli/acp-tui.tsx`, `npm run tui:acp`; `WORKFLOW_ACP_RESUME=<sessionId>` resumes). Migrate daily use off patched Cline after dogfooding.
-- **SDK seam retention (explicit):** the SDK fallback is load-bearing insurance, not legacy. `src/adapters/cline.ts`, `src/integrations/cline-{plugin,runtime,session,shell-executor,tui-bridge}.ts`, their unit tests (`test/cline-*.test.ts`), the real-model integration regressions (`test/integration/cline-coding-session.mjs`, `cline-runtime.mjs`, `cline-resume.mjs`), the pinned patch `patches/cline-cli-v3.0.61-workflow.patch`, and its regeneration scripts (`scripts/build-cline-tui.mjs` — which runs as `pretest` on every suite run — and `scripts/bump-cline-tag.mjs`) are all retained and continuously exercised. If the ACP path hits a blocking limitation, the fallback must be a working tree, not an archeology project; patch re-pinning happens whenever the fallback needs a newer Cline, not only at migration time. **Post-pivot (2026-09-16) the vendored-ACP Cline runtime is the same kind of insurance:** selectable with `WORKFLOW_ACP_AGENT=cline`, exercised on demand by its gated probes, retained for the host-hook interception capability (full internal tool visibility) that no ACP projection provides.
+- **SDK seam retention (explicit):** the SDK fallback is load-bearing insurance, not legacy. `src/adapters/cline.ts`, `src/integrations/cline-{plugin,runtime,session,shell-executor,tui-bridge}.ts`, their unit tests (`test/cline-*.test.ts`), the real-model integration regressions (`test/integration/cline-coding-session.mjs`, `cline-runtime.mjs`, `cline-resume.mjs`), the pinned patch `patches/cline-cli-v3.0.61-workflow.patch`, and its regeneration scripts (`scripts/build-cline-tui.mjs` — which runs as `pretest` on every suite run — and `scripts/bump-cline-tag.mjs`) are all retained and continuously exercised. If the ACP path hits a blocking limitation, the fallback must be a working tree, not an archeology project; patch re-pinning happens whenever the fallback needs a newer Cline, not only at migration time. **Post-pivot (2026-09-16) the vendored-ACP Cline runtime is the same kind of insurance:** selectable with `WORKFLOW_ACP_AGENT=cline`, exercised on demand by its gated probes, retained for the host-hook interception capability (full internal tool visibility) that no ACP projection provides. **Superseded 2026-09-21:** the seam-retention-on-that-ground decision was REVOKED by the operator's signed accepted-risk (the W050 SDK-seam decision below) — the subagent-internal visibility is accepted as not required; the vendored runtime itself was removed earlier (W050 step 6 supersession note below).
 - **Subagent-internal hook visibility — evidence note (2026-09-17, W050 SDK-seam input):** the W050 granted-spawn probe (`test/acp-goose-subagent-hooks-probe.test.ts`, live twice against goose 1.50.1) resolved the arm NEGATIVE on the takeover surface: the delegated subagent's file-write fired NO PreToolUse record and projected NO ACP tool_call update — only the top-level session's calls and the `delegate` spawn itself intercept (the spy plugin logged the top-level todo_write ×2, the delegate spawn, and one agent-attribution-ambiguous shell `cat` verify; the write-shaped classifier was tightened twice against the real payloads and re-validated offline against both preserved logs). This retention rationale's "full internal tool visibility" therefore remains UNDEMONSTRATED LIVE on both surfaces — goose demonstrably lacks it, and the vendored-Cline seam has never proven subagent-internal hook firing either (SubagentStart/Stop never emitted by the adapter). W050's seam decision can now rest on evidence: either a live Cline-side proof lands, or the operator records the explicit accepted-risk that this visibility is not required — silence retires nothing.
 - ~~OpenCode integration is capped at advisory transport unless a future launch mode proves complete permission coverage~~ **Superseded by the 2026-09-16 pivot:** the ask-configured launch mode proves permission coverage (requests emitted, denials honored — G1 probe), spawn gateability (subagent probe), hub-owned config (mount probe), and resume fidelity (resume probe), so OpenCode is the lead `enforced`-eligible surface. Its remaining conformance evidence (fs/terminal delegation, auto-approve exposure, contained bypass under bwrap) is deferred unless reconsidered.
 - Follow-ups: wire the skills-mcp mount into the OpenCode runtime config (F1 — needs skills-dir semantics and `readablePaths` threading for the server script), surface G1 metrics in the hub UI + budget enforcement on recorded usage, per-prompt task decomposition (today every proposal authorizes against the single session task), error-surfacing improvements (G5), context/compaction (G7). G1 alternatives worth revisiting: OpenRouter supports **per-key credit limits** (key creation at openrouter.ai/keys) for server-side budget caps, and the official `@openrouter/sdk` client exists for any future hub-side model calls (the metering proxy stays the pass-through for agent traffic; the SDK is for hub-as-caller).
@@ -116,7 +116,7 @@ silently rewritten.
     original follow-up line at :58 keeps its dated wording; this note
     supersedes its decomposition clause.
 
-## W050 SDK-seam decision — PROPOSED, awaiting operator signature (2026-09-18)
+## W050 SDK-seam decision — ACCEPTED (operator signature recorded 2026-09-21)
 
 **Decision required (TASKS W050 criterion 2):** whether the vendored-Cline SDK
 seam is retained for its unique capability — host-hook visibility into
@@ -160,15 +160,17 @@ this is reachable only through an operator-granted spawn.
 vendored-Cline removal (criterion 3) proceeds only once criterion 1 holds and
 this criterion-2 signature is recorded.
 
-**Status:** PROPOSED — the seam is not retired by silence or by this draft.
-Operator signature below closes criterion 2; absent it, the seam stays retained.
+**Status:** ~~PROPOSED~~ **ACCEPTED — the operator signed the accepted-risk on 2026-09-21**
+(in interactive session, selecting "SDK-seam: record accepted-risk"). The seam is not
+retained on the subagent-internal-visibility ground; the residual risk above is the
+operator's explicit accepted risk. Criterion 2 of TASKS W050 is closed by this signature.
 
 Operator decision:
 
-- [ ] accept the accepted-risk (the seam is not required)
+- [x] accept the accepted-risk (the seam is not required) — **accepted 2026-09-21**
 - [ ] reject (retain the seam; commission a live Cline-side subagent-internal proof)
 
-Signed: __________ Date: __________
+Signed: operator (via agent session ses_f417829e3ffeM6sfHp0CeF06Rd) Date: 2026-09-21
 
 **Supersession note (2026-09-18, W050 step 6).** The vendored-Cline SDK runtime,
 its `.workflow-cline/` checkout, and its Workflow patch were removed on branch

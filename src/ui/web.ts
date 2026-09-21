@@ -874,7 +874,7 @@ export function createWorkflowWebServer(
           if (agent === undefined) return json(response, 400, { error: "agent is required" });
           const normalized = normalizeSettings({ agents: { [agent]: input?.preference } });
           const preference = normalized.agents[agent];
-          if (preference === undefined) return json(response, 400, { error: "preference must set at least one of model, mode, thoughtLevel" });
+          if (preference === undefined) return json(response, 400, { error: "preference must set at least one of model, mode, thoughtLevel, autoCompact" });
           const scope = input?.scope === "global" || input?.scope === "workspace"
             ? input.scope
             : paths.workspace === undefined ? "global" : "workspace";

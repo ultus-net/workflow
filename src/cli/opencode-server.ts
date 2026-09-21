@@ -19,8 +19,58 @@ import {
   writeOpencodeServerDiscovery,
 } from "../integrations/opencode-server-discovery.js";
 import { createOpencodeServerRuntime } from "../integrations/opencode-server-runtime.js";
+import { createSessionCompactionMonitor } from "../integrations/opencode-server-monitor.js";
 import { HttpRemoteEngine } from "../integrations/remote-acp/engine.js";
+import { loadSettings } from "../integrations/workflow-settings.js";
 import { sessionBudgetFromEnv } from "../integrations/session-budget.js";
+
+/**
+ * W082: whether the daemon's hub-written server config composes the
+ * config-side auto-compaction trigger — the operator's
+ * `agents.opencode.autoCompact` setting (workspace overlay over global).
+ * Fail-soft by design: the trigger is an opt-in, so an unreadable settings
+ * document degrades to the honest default (off) instead of refusing the
+ * topology; a launch failure over a compaction preference would invert the
+ * priority.
+ */
+export function resolveDaemonAutoCompact(workspace: string): boolean {
+  try {
+    return loadSettings({ workspace }).agents.opencode?.autoCompact === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * W082 (the data-lane backstop monitor): the operator's deterministic
+ * threshold in tokens (`agents.opencode.autoCompactAtTokens`) — the monitor
+ * never invents one, so absent/malformed means disabled. Same fail-soft
+ * posture as the boolean above.
+ */
+export function resolveDaemonAutoCompactAtTokens(workspace: string): number | undefined {
+  try {
+    const threshold = loadSettings({ workspace }).agents.opencode?.autoCompactAtTokens;
+    return typeof threshold === "number" && Number.isInteger(threshold) && threshold > 0 ? threshold : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * W080 (the operator-disable precedence on the topology lane): the connector
+ * names the operator explicitly disabled in settings — the skill
+ * declaration never mounts them here either. Fail-soft like the other
+ * daemon reads.
+ */
+export function resolveDaemonDisabledConnectors(workspace: string): readonly string[] {
+  try {
+    return loadSettings({ workspace })
+      .mcpServers.filter((server) => server.enabled === false)
+      .map((server) => server.name);
+  } catch {
+    return [];
+  }
+}
 
 export function authorityModeFromEnv(env: NodeJS.ProcessEnv): OpencodeAuthorityMode {
   const raw = env.WORKFLOW_OPENCODE_AUTHORITY_MODE?.trim();
@@ -82,7 +132,20 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const mode = authorityModeFromEnv(process.env);
   const enforcement = enforcementFromEnv(process.env);
 
-  const runtime = await createOpencodeServerRuntime({ workspace, stateHome });
+  const disabledConnectors = resolveDaemonDisabledConnectors(workspace);
+  const runtime = await createOpencodeServerRuntime({
+    workspace,
+    stateHome,
+    // W082: the daemon carries the operator's autoCompact preference into the
+    // hub-written server config (same trigger the ACP lane composes). A
+    // settings read failure must not block the daemon — the trigger is
+    // opt-in, so an unreadable settings document degrades to the honest
+    // default (off) rather than refusing the topology.
+    ...(resolveDaemonAutoCompact(workspace) ? { autoCompact: true } : {}),
+    // W080 (the operator-disable precedence on this lane): connector names
+    // the operator explicitly disabled never mount from the declaration.
+    ...(disabledConnectors.length === 0 ? {} : { skillConnectorsDisabled: disabledConnectors }),
+  });
   // Authority broker: the background policy decision point. It subscribes to
   // the server's SSE and answers every permission request through
   // WorkflowApplication; the gateway intercepts client replies so the stock TUI
@@ -123,6 +186,18 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   });
   budgetWatcher?.start();
   console.log(`[authority] budget mechanism: ${budget === undefined ? "server-side: provider account spend/credit limits (no local caps)" : "local session-budget watcher on metering-proxy usage"}`);
+  // W082 (the data-lane backstop): when the operator set a deterministic
+  // threshold, the monitor reads each session's context usage from the
+  // documented API and fires the compact route on crossing — vetoed by a
+  // sticky budget violation, hysteresis-armed, never inventing a threshold.
+  const monitorThreshold = resolveDaemonAutoCompactAtTokens(workspace);
+  const compactionMonitor = monitorThreshold === undefined ? undefined : createSessionCompactionMonitor({
+    baseUrl: runtime.url,
+    username: runtime.username,
+    password: runtime.password,
+    thresholdTokens: monitorThreshold,
+    ...(budgetWatcher === undefined ? {} : { veto: () => budgetWatcher.violation() }),
+  });
   const shutdownRequested = { requested: false };
   let requestShutdown: () => void = () => undefined;
   const shutdown = new Promise<void>((resolveShutdown) => {
@@ -187,6 +262,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   });
   console.log(`Workflow OpenCode server gateway at ${gateway.url} for ${workspace}`);
   console.log(`Discovery file: ${discoveryPath}`);
+  if (compactionMonitor !== undefined) {
+    compactionMonitor.start();
+    console.log(`[compaction-monitor] armed at ${monitorThreshold} tokens (sticky budget violation vetoes firing)`);
+  }
 
   // Process guards (review P2-3): a stray rejection must never crash the
   // daemon and orphan the contained server without cleanup.
@@ -197,6 +276,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     console.error(`[daemon] uncaught exception: ${error.message}`);
     void (async () => {
       budgetWatcher?.stop();
+      compactionMonitor?.stop();
       await authority.stop();
       if (gateway !== undefined) await gateway.close();
       await runtime.dispose();
@@ -209,6 +289,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   process.once("SIGTERM", requestShutdown);
   await shutdown;
   budgetWatcher?.stop();
+  compactionMonitor?.stop();
   await authority.stop();
   await gateway.close();
   await runtime.dispose();

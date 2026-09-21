@@ -40,6 +40,18 @@ export interface MeteredOpencodeConfigOptions {
   readonly proxyUrl: string;
   readonly model?: string | undefined;
   /**
+   * W082 (config-side auto-compaction trigger): when true, the composed
+   * config carries `compaction: { auto: true }` — the session runtime then
+   * compacts on its own at the documented threshold (per-model runtime
+   * behavior on the session stream, not the HTTP route; the §9 research
+   * note). Deliberate operator opt-in (settings `agents.<id>.autoCompact`),
+   * default off: no invented runtime defaults, current behavior unchanged
+   * when unset. Budget-guard compatible by construction — a compaction turn
+   * is a normal metered model turn through the same loopback proxy the W045
+   * interactive budget guard watches.
+   */
+  readonly autoCompact?: boolean | undefined;
+  /**
    * When set, the `~...-latest` alias pool is exposed as additional selectable
    * models in the ACP model picker (the Auto Router stays the default).
    */
@@ -63,6 +75,17 @@ export interface MeteredOpencodeConfigOptions {
   readonly skills?: { readonly serverScript: string; readonly skillsDir: string } | undefined;
 /** Workflow-pushed MCP servers (the control plane's settings projection). */
   readonly mcpServers?: readonly McpServerSetting[] | undefined;
+  /**
+   * W080 mount half: stdio mounts for the delivered skill's DECLARED
+   * connectors (validated + built-filtered + operator-disabled-filtered by
+   * the caller via `skillConnectorMounts`). Composed into the hub-written
+   * config's mcp map only for names not already present (skills-mcp itself
+   * arrives through the delivery mount), so the session's tool surface is
+   * exactly the declared floor plus the operator's settings — and every
+   * entry crosses the same application/guard authorization as any other MCP
+   * server. Absent composes nothing.
+   */
+  readonly skillConnectors?: readonly { readonly name: string; readonly serverPath: string }[] | undefined;
 }
 
 export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Record<string, unknown> {
@@ -120,6 +143,16 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
       environment: { SKILLS_MCP_DIR: options.skills.skillsDir },
     };
   }
+  // W080 mount half: the delivered skill's declared connectors — only names
+  // not already present (the delivery mount and operator settings win), each
+  // a stdio entry over the vendored built entrypoint.
+  for (const connector of options.skillConnectors ?? []) {
+    if (mcp[connector.name] !== undefined) continue;
+    mcp[connector.name] = {
+      type: "local",
+      command: [process.execPath, connector.serverPath],
+    };
+  }
   return {
     $schema: "https://opencode.ai/config.json",
     provider: provider(),
@@ -129,7 +162,17 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
     // through WorkflowApplication.authorize (G1 probe: denials honored).
     // `task` is included so subagent spawns are gateable at the hub
     // (subagent probe: the task tool call projected and permission-gated).
-    permission: { edit: "ask", bash: "ask", task: "ask" },
+    // `skill` is denied per the 2026-09-15 single-delivery-path rule —
+    // skills reach the model only through the journaled read_skill. Honest
+    // posture: the composed denial's live honoring on the pinned version is
+    // probe-gated (the skills-delivery family, pending); the invariant's
+    // PROVEN enforcement today is structural (the store lives outside every
+    // agent workspace, so the workspace-confined fs lane cannot reach it).
+    permission: { edit: "ask", bash: "ask", task: "ask", skill: "deny" },
+    // W082 config-side auto-compaction trigger: only composed when the
+    // operator opted in — absent means the runtime's ambient compaction
+    // defaults apply, exactly as before this option existed.
+    ...(options.autoCompact === true ? { compaction: { auto: true } } : {}),
     ...(Object.keys(mcp).length === 0 ? {} : { mcp }),
   };
 }
