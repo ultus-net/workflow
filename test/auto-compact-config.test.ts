@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { meteredOpencodeConfig } from "../src/integrations/opencode-agent-config.js";
 import { normalizeSettings } from "../src/integrations/workflow-settings.js";
-import { resolveDaemonAutoCompact } from "../src/cli/opencode-server.js";
+import { resolveDaemonAutoCompact, resolveDaemonAutoCompactAtTokens } from "../src/cli/opencode-server.js";
 
 /**
  * W082 — the config-side automatic compaction trigger. The deterministic
@@ -69,6 +69,7 @@ test("the topology daemon resolves the operator autoCompact preference fail-soft
 
   // No settings at all → the honest default (off), never a throw.
   assert.equal(resolveDaemonAutoCompact(workspace), false);
+  assert.equal(resolveDaemonAutoCompactAtTokens(workspace), undefined, "the monitor never invents a threshold");
 
   // Global setting arms; the workspace overlay wins over the global doc.
   mkdirSync(join(home, ".config", "workflow"), { recursive: true });
@@ -79,9 +80,19 @@ test("the topology daemon resolves the operator autoCompact preference fail-soft
   writeFileSync(join(workspace, ".workflow", "settings.json"), JSON.stringify({ agents: { opencode: { autoCompact: false } } }));
   assert.equal(resolveDaemonAutoCompact(workspace), false, "workspace overlay wins per key");
 
+  // The monitor threshold: a positive integer only — malformed values leave
+  // the monitor off, never a guessed limit.
+  writeFileSync(join(home, ".config", "workflow", "settings.json"), JSON.stringify({ agents: { opencode: { autoCompactAtTokens: 150_000 } } }));
+  assert.equal(resolveDaemonAutoCompactAtTokens(workspace), 150_000);
+  writeFileSync(join(home, ".config", "workflow", "settings.json"), JSON.stringify({ agents: { opencode: { autoCompactAtTokens: -5 } } }));
+  assert.equal(resolveDaemonAutoCompactAtTokens(workspace), undefined);
+  writeFileSync(join(home, ".config", "workflow", "settings.json"), JSON.stringify({ agents: { opencode: { autoCompactAtTokens: "huge" } } }));
+  assert.equal(resolveDaemonAutoCompactAtTokens(workspace), undefined);
+
   // An unreadable settings document degrades to off — an opt-in trigger must
   // not refuse the topology over a preference read.
   mkdirSync(join(home, ".config", "workflow"), { recursive: true });
   writeFileSync(join(home, ".config", "workflow", "settings.json"), "{corrupt");
   assert.equal(resolveDaemonAutoCompact(workspace), false);
+  assert.equal(resolveDaemonAutoCompactAtTokens(workspace), undefined);
 });

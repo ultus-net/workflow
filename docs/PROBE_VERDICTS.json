@@ -11,8 +11,8 @@
       "date": "2026-09-14",
       "result": "green",
       "posture": "advisory",
-      "evidence": "docs/HOST_ADAPTERS.md Cline row; docs/ACP_RESEARCH.md \u00a711",
-      "note": "Earned on the vendored pinned entry, removed in W050 step 6 (2026-09-18); superseded \u2014 the stock connector is probe-PENDING on 3.0.62 (see acp-cline-stock-auth)."
+      "evidence": "docs/HOST_ADAPTERS.md Cline row; docs/ACP_RESEARCH.md §11",
+      "note": "Earned on the vendored pinned entry, removed in W050 step 6 (2026-09-18); superseded — the stock connector is probe-PENDING on 3.0.62 (see acp-cline-stock-auth)."
     },
     {
       "id": "acp-cline-env-auth",
@@ -23,7 +23,7 @@
       "date": "2026-09-14",
       "result": "green",
       "posture": "advisory",
-      "evidence": "docs/HOST_ADAPTERS.md Cline row; docs/ACP_RESEARCH.md \u00a711",
+      "evidence": "docs/HOST_ADAPTERS.md Cline row; docs/ACP_RESEARCH.md §11",
       "note": "Env-auth arm of the same probe file; vendored surface removed."
     },
     {
@@ -236,7 +236,7 @@
       "date": "2026-09-17",
       "result": "green",
       "posture": "enforced",
-      "evidence": "docs/HOST_ADAPTERS.md goose row (every mutating call asked with full options; hub denials honored \u2014 pre-mutation interception proven)"
+      "evidence": "docs/HOST_ADAPTERS.md goose row (every mutating call asked with full options; hub denials honored — pre-mutation interception proven)"
     },
     {
       "id": "acp-goose-subagent",
@@ -327,7 +327,7 @@
       "result": "green",
       "posture": "enforced",
       "evidence": "docs/GOOSE_DOGFOOD.md (five cells green or green-with-finding; two runtime-path fixes pinned by tests)",
-      "note": "MCP read-policy finding recorded honestly: skills-mcp__list_skills denied by default authorization \u2014 an operator decision, not a defect."
+      "note": "MCP read-policy finding recorded honestly: skills-mcp__list_skills denied by default authorization — an operator decision, not a defect."
     },
     {
       "id": "acp-remote-sse",
@@ -435,7 +435,7 @@
       "result": "green",
       "posture": "advisory",
       "evidence": "docs/HOST_ADAPTERS.md W074a entry (v2 re-qualification: config loaded, session create via documented route, authority split holds, broker SSE intercepts without forwarding)",
-      "note": "Still advisory: the live permission.asked \u2192 authorize \u2192 reply path needs a model key."
+      "note": "Still advisory: the live permission.asked → authorize → reply path needs a model key."
     },
     {
       "id": "opencode-webui-gateway",
@@ -469,7 +469,7 @@
       "date": "2026-09-20",
       "result": "green",
       "posture": "advisory",
-      "evidence": "docs/HOST_ADAPTERS.md W082 entry + docs/OPENCODE_V2_MIGRATION_SPEC.md \u00a79 (route-level admit as Session.Inbox.Compaction, queued at the next step boundary)",
+      "evidence": "docs/HOST_ADAPTERS.md W082 entry + docs/OPENCODE_V2_MIGRATION_SPEC.md §9 (route-level admit as Session.Inbox.Compaction, queued at the next step boundary)",
       "note": "Route-level qualification; the operator manual control rides this path. No auto-compaction claim is earned by this record."
     },
     {
@@ -494,7 +494,7 @@
       "result": "green",
       "posture": "advisory",
       "evidence": "docs/HOST_ADAPTERS.md W082 auto-trigger entry (config-load arm live green: the composed config carries compaction: { auto: true } beside the pinned ask ruleset, and /api/config lists the hub-written document with the compaction block parsed)",
-      "note": "The config-load arm is the deterministic trigger delivery (config-owned, no plugin, no prompt-side loop). The LIVE auto-compact turn arm \u2014 a real model turn overflowing context and compacting on the pinned version \u2014 stays PENDING (needs a real model key); no enforced claim for the runtime's auto-compaction behavior is earned by this row."
+      "note": "The config-load arm is the deterministic trigger delivery (config-owned, no plugin, no prompt-side loop). The monitor's live read arm (documented session-entries tokens read + threshold evaluation against the real server) is also green on this date (opencode-server-monitor.ts, data-lane backstop). The LIVE auto-compact turn arm — a real model turn overflowing context and compacting on the pinned version — stays PENDING (needs a real model key); no enforced claim for the runtime's auto-compaction behavior is earned by this row."
     }
   ]
 }

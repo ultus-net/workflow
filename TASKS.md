@@ -1572,7 +1572,18 @@ hook (`ctx.session.hook("compaction")`) is explicitly NOT used — no plugins.
       the gateway fronts the topology server's own store, so the manual control's admit path is
       qualified at the route level (probe-created session) and its session-level reachability for
       web-UI ACP sessions is unprobed — the control surfaces the gateway's refusal verbatim when
-      the store does not hold the session, never a fabricated success.)
+      the store does not hold the session, never a fabricated success. **Data-lane backstop
+      monitor landed 2026-09-21** (operator direction): the daemon-side monitor
+      (`src/integrations/opencode-server-monitor.ts`) ticks deterministically against the
+      documented `GET /api/session` entries (each carries the session's `tokens` — live-verified
+      shape on v2.0.10) and fires the documented compact route when a session crosses the
+      operator-set threshold `agents.opencode.autoCompactAtTokens` (positive integer, never
+      invented — absent/malformed leaves the monitor off); hysteresis re-arms only when usage
+      drops below the threshold, failures back off with a doubling cooldown and record the
+      server's message verbatim (never a fabricated success), and a sticky session-budget
+      violation vetoes every fire. Pins: `test/opencode-server-monitor.test.ts` (6); the probe's
+      live monitor arm (read path against the real server, evaluated ≥ 1, zero fires for an empty
+      session) ran green the same day.)
 - [x] Live probe evidence per pinned version; no enforced claim without it. (**Done 2026-09-20:**
       `test/opencode-compact-probe.test.ts` gated `WORKFLOW_OPENCODE_COMPACT_PROBE=1` ran live
       green on stock v2.0.10 through the **enforced** gateway — unauthenticated compact `401`,
@@ -1588,7 +1599,10 @@ hook (`ctx.session.hook("compaction")`) is explicitly NOT used — no plugins.
       key, operator environment); recorded in `docs/PROBE_VERDICTS.json`
       (`opencode-auto-compact-config-load`, dated 2026-09-21, with the pending arm named in the
       row). No plugin hook is composed anywhere in this slice; no `enforced` claim for the
-      runtime's auto-compaction behavior.)
+      runtime's auto-compaction behavior. **Monitor arm added and run live the same day:** the
+      probe's second live describe starts a probe session through the documented route and runs
+      the monitor's deterministic tick against the real server — the usage read (session entries'
+      `tokens`) is qualified live (evaluated ≥ 1, zero fires for an empty session, clean errors).
 
 ### W083 - Step-ledger panel in the custom web UI (the todo-tracking track)
 

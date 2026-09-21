@@ -57,6 +57,15 @@ export interface AgentRuntimePreference {
    * composes no bypass lane.
    */
   readonly autoCompact?: boolean;
+  /**
+   * W082 (the data-lane backstop monitor): the deterministic threshold in
+   * tokens at which the topology daemon fires the documented compact route
+   * for a gateway-driven session whose context usage crossed it. Never
+   * invented: absent/malformed means the monitor stays off (the config-side
+   * trigger composes the runtime's own threshold instead). A sticky
+   * session-budget violation vetoes every monitor fire.
+   */
+  readonly autoCompactAtTokens?: number;
 }
 
 export function defaultSettings(): WorkflowSettings {
@@ -136,12 +145,19 @@ export function normalizeSettings(value: unknown): WorkflowSettings {
       // Only `=== true` ever arms the trigger — the composition sites treat
       // everything else as the honest default (off).
       const autoCompact = typeof raw.autoCompact === "boolean" ? raw.autoCompact : undefined;
-      if (model === undefined && mode === undefined && thoughtLevel === undefined && autoCompact === undefined) continue;
+      // W082 (the monitor threshold): a positive integer only — absent or a
+      // malformed value means the monitor stays off, never a guessed limit.
+      const rawAtTokens = raw.autoCompactAtTokens;
+      const autoCompactAtTokens = typeof rawAtTokens === "number" && Number.isInteger(rawAtTokens) && rawAtTokens > 0
+        ? rawAtTokens
+        : undefined;
+      if (model === undefined && mode === undefined && thoughtLevel === undefined && autoCompact === undefined && autoCompactAtTokens === undefined) continue;
       agents[id] = {
         ...(model === undefined ? {} : { model }),
         ...(mode === undefined ? {} : { mode }),
         ...(thoughtLevel === undefined ? {} : { thoughtLevel }),
         ...(autoCompact === undefined ? {} : { autoCompact }),
+        ...(autoCompactAtTokens === undefined ? {} : { autoCompactAtTokens }),
       };
     }
   }

@@ -381,6 +381,17 @@ recorded the same day: the web session registry's agent-session ids live in the 
 scratch-HOME session store while the gateway fronts the topology server's own store, so the manual
 control's admit path is route-qualified and its session-level reachability for web-UI ACP sessions
 is unprobed — the control surfaces the gateway's refusal verbatim, never a fabricated success.
+**Data-lane monitor addendum (2026-09-21, operator direction):** the backstop monitor is LANDED —
+`src/integrations/opencode-server-monitor.ts`: the daemon ticks deterministically against the
+documented `GET /api/session` entries (each carries the session's `tokens`, the same shape the
+runtime's own overflow check uses — live-verified on v2.0.10) and fires the documented compact
+route when a session crosses the operator-set `agents.opencode.autoCompactAtTokens` threshold
+(positive integer, never invented — absent/malformed leaves the monitor off). Hysteresis re-arms
+only when usage drops below the threshold; failures back off with a doubling cooldown and surface
+the server's message verbatim; a sticky session-budget violation vetoes every fire (a compaction
+turn spends money; the budget is the operator's stop). Tests:
+`test/opencode-server-monitor.test.ts` (6, deterministic ticks with injected fetch/clock); the
+probe's live monitor arm (read path against the real server) ran green the same day.
 
 **Matrix reconciliation (this dated change):** documented reads that were failing closed are now
 `read-only`/`forward` — bare permission reads (`/api/permission/request`, `/api/permission/saved`;

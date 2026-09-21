@@ -8,6 +8,7 @@ import { test } from "node:test";
 import type { ProcessContainment } from "../src/containment/contracts.js";
 import { globalOpencodeBinary } from "../src/integrations/opencode-agent-config.js";
 import type { ModelUsageProxy } from "../src/integrations/model-usage-proxy.js";
+import { createSessionCompactionMonitor } from "../src/integrations/opencode-server-monitor.js";
 import { createOpencodeServerRuntime } from "../src/integrations/opencode-server-runtime.js";
 
 /**
@@ -120,4 +121,61 @@ describe("W082 live: the config-side auto-compaction trigger reaches the pinned 
   // runs, the register records this family PENDING and no enforced claim is
   // made for the runtime's auto-compaction behavior itself.
   console.log("opencode-auto-compact-probe: config-load arm green; the live auto-compact turn arm stays PENDING (needs a real model turn — docs/PROBE_VERDICTS.json)");
+});
+
+describe("W082 live: the data-lane compaction monitor reads the documented session state", { skip: gated && globalOpencodeBinary() === undefined, timeout: 120_000 }, async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-compact-monitor-ws-"));
+  const stateHome = mkdtempSync(join(tmpdir(), "wf-compact-monitor-state-"));
+  t.after(() => { rmSync(workspace, { recursive: true, force: true }); rmSync(stateHome, { recursive: true, force: true }); });
+
+  const boundary: ProcessContainment = {
+    isolation: "enforced",
+    async execute() { throw new Error("not used"); },
+    spawn(request) {
+      return spawn(request.executable, [...request.args], {
+        ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+        env: { ...process.env, ...request.environment },
+      });
+    },
+  };
+  const proxy = {
+    url: "http://127.0.0.1:9/api/v1",
+    metrics: () => ({ requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0 }),
+    close: async () => undefined,
+  } as unknown as ModelUsageProxy;
+
+  const runtime = await createOpencodeServerRuntime({
+    workspace,
+    stateHome,
+    containment: boundary,
+    apiKey: "test-key-not-used",
+    createProxy: async () => proxy,
+    model: "openrouter/auto",
+    healthTimeoutMs: 30_000,
+  });
+  t.after(() => runtime.dispose());
+  const headers = { authorization: `Basic ${Buffer.from(`${runtime.username}:${runtime.password}`).toString("base64")}`, "content-type": "application/json" };
+
+  // A probe session through the documented route (the M1 spellings); it has
+  // no turns, so its usage is 0 — the monitor must evaluate it and NOT fire.
+  const created = await fetch(`${runtime.url}/api/session`, { method: "POST", headers, body: JSON.stringify({}) });
+  assert.equal(created.status, 200, `session create returned ${created.status}`);
+
+  // The monitor's deterministic tick against the LIVE server: the usage read
+  // rides the session entries' tokens (live-verified shape), the empty
+  // session is below any threshold, so the honest result is evaluated ≥ 1
+  // and zero fires — the read path is qualified; the FIRE path against a
+  // real overflow turn stays PENDING (needs a real model turn).
+  const monitor = createSessionCompactionMonitor({
+    baseUrl: runtime.url,
+    username: runtime.username,
+    password: runtime.password,
+    thresholdTokens: 1_000,
+  });
+  const result = await monitor.tick();
+  assert.equal(result.errors.length, 0, `the monitor tick must be clean: ${JSON.stringify(result.errors)}`);
+  assert.ok(result.evaluated >= 1, `the monitor must evaluate the created session (evaluated ${result.evaluated})`);
+  assert.deepEqual(result.fired, [], "an empty session is below the threshold — never a fire");
+  assert.equal(result.skipped.length, 0, "below-threshold sessions re-arm silently, no skip noise");
+  console.log(`opencode-auto-compact-probe: monitor read arm green (evaluated ${result.evaluated}, fired 0); the fire path stays PENDING on a real model turn`);
 });
