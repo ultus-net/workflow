@@ -120,7 +120,7 @@ export async function checkHub(options: DoctorOptions = {}): Promise<DoctorCheck
       fix: "start the hub daemon: workflow hub",
     };
   }
-  const reachable = await probeHub(discovery);
+  const reachable = await probeHub(discovery, options.fetchImpl);
   if (!reachable) {
     return {
       name,
