@@ -22,6 +22,12 @@ import {
 } from "../integrations/hub-scheduler.js";
 import { createScheduleRegistry } from "../integrations/schedule-registry.js";
 import { createSelfImprovementRegistry } from "../integrations/self-improvement-registry.js";
+import {
+  createAgentDrivenRunLoop,
+  createContainedGitRunner,
+  type AgentTurnRunner,
+} from "../integrations/self-improvement-agent.js";
+import { createAuthorityGate } from "../integrations/self-improvement-loop.js";
 import { createWorkflowHub, type WorkflowHubSchedulerHandles } from "../integrations/workflow-hub.js";
 import { taskId, type TaskId } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
@@ -151,6 +157,93 @@ const scheduleRegistry = createScheduleRegistry({ path: schedulesPath });
 // advisory guidance (WORKFLOW_ADVISORY_STYLE / WORKFLOW_ADVISORY_NOTES) are
 // prepended to every scheduled turn — honestly advisory prompt text.
 const promptGuidance = hubPromptGuidanceFromEnv(process.env);
+
+// Checkpoint F: the self-improvement loop's agent seams. `WORKFLOW_RSI_AGENT=0`
+// keeps the old fail-closed stub (explicit opt-out); the default composes the
+// production loop from real agent turns. Prompt templates and the measure
+// command are operator seams (host agent-config surfaces may own them):
+// WORKFLOW_RSI_PROPOSAL_PROMPT / WORKFLOW_RSI_APPLY_PROMPT replace the module
+// defaults, WORKFLOW_RSI_MEASURE_COMMAND scores candidates (prints one number).
+const rsiAgentDisabled = process.env.WORKFLOW_RSI_AGENT === "0";
+const rsiProposalPromptTemplate = process.env.WORKFLOW_RSI_PROPOSAL_PROMPT?.trim();
+const rsiApplyPromptTemplate = process.env.WORKFLOW_RSI_APPLY_PROMPT?.trim();
+const rsiMeasureCommand = process.env.WORKFLOW_RSI_MEASURE_COMMAND?.trim();
+// Commit messages are staged hub-side (0600, removed after the attempt) so
+// repo-controlled text never enters a shell command (contained git runner).
+const rsiMessageDir = join(homedir(), ".workflow", "rsi-commit-messages");
+
+// Proposal turns run before any run exists; they get a read-only application
+// bound to the loop workspace (the reviewer-factory pattern). One per
+// workspace, reused across the loop's iterations.
+const rsiProposalApplications = new Map<string, WorkflowApplication>();
+const rsiProposalApplicationFor = (target: string): WorkflowApplication => {
+  const canonical = canonicalWorkspace(target);
+  let bound = rsiProposalApplications.get(canonical);
+  if (bound === undefined) {
+    bound = new WorkflowApplication(graph, application.host, [], new Set(["read"]), canonical);
+    const proposalTaskId: TaskId = taskId(`rsi-proposal:${randomUUID()}`);
+    bound.addTask({ id: proposalTaskId, title: "RSI proposal session", dependencies: [], requiredEvidence: [] });
+    bound.transition(proposalTaskId, "IN_PROGRESS");
+    bound.selectActiveTask(proposalTaskId);
+    rsiProposalApplications.set(canonical, bound);
+  }
+  return bound;
+};
+
+const rsiAgentTurn = (handles: WorkflowHubSchedulerHandles): AgentTurnRunner => async (input) => {
+  const turnApplication = input.runId === undefined
+    ? rsiProposalApplicationFor(input.workspace)
+    : handles.resolve(input.workspace, input.runId);
+  const turnTaskId: TaskId = input.runId === undefined
+    ? taskId(`rsi-${input.kind}:${randomUUID()}`)
+    : taskId(`run:${input.runId}`);
+  const runtime = await createConfiguredAcpRuntime(turnApplication, input.workspace, turnTaskId, undefined, guard);
+  console.log(`rsi ${input.kind} turn budget mechanism: ${runtime.budgetMechanism}`);
+  try {
+    await runtime.session.submit(input.prompt);
+    const snapshot = runtime.session.snapshot();
+    if (snapshot.state !== "completed" || typeof snapshot.result !== "string") {
+      const reason = snapshot.state === "failed" && typeof snapshot.reason === "string" ? `: ${snapshot.reason}` : "";
+      throw new Error(`rsi ${input.kind} turn did not complete (state: ${snapshot.state}${reason})`);
+    }
+    const usage = runtime.metrics?.();
+    if (input.runId !== undefined && usage !== undefined) {
+      // W044 (open clause): record the turn's metering-proxy totals for the
+      // canonical run BEFORE the runtime dies with its proxy.
+      handles.recordRunUsage({
+        runId: input.runId,
+        usage: {
+          requests: usage.requests,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          totalTokens: usage.totalTokens,
+          costUsd: usage.costUsd,
+        },
+      });
+    }
+    return { result: snapshot.result, costUsd: usage?.costUsd ?? 0 };
+  } finally {
+    await runtime.dispose();
+  }
+};
+
+const selfImprovementFactory = (handles: WorkflowHubSchedulerHandles) =>
+  createSelfImprovementRegistry({
+    runLoop: rsiAgentDisabled
+      ? async () => {
+        throw new Error("self-improvement agent wiring is disabled on this hub (WORKFLOW_RSI_AGENT=0)");
+      }
+      : createAgentDrivenRunLoop({
+        authority: createAuthorityGate(handles.controller),
+        turn: rsiAgentTurn(handles),
+        gitRun: createContainedGitRunner({ shell: containedShell(true), messageDir: rsiMessageDir }),
+        ...(rsiMeasureCommand === undefined ? {} : { measure: { shell: containedShell(true), command: rsiMeasureCommand } }),
+        ...(promptGuidance === undefined ? {} : { promptPrefix: promptGuidance }),
+        ...(rsiProposalPromptTemplate === undefined ? {} : { proposalPromptTemplate: rsiProposalPromptTemplate }),
+        ...(rsiApplyPromptTemplate === undefined ? {} : { applyPromptTemplate: rsiApplyPromptTemplate }),
+      }),
+  });
+
 const schedulerFactory = (handles: WorkflowHubSchedulerHandles) => {
   const scheduler = createHubScheduler({
     controller: handles.controller,
@@ -221,15 +314,13 @@ try {
     ...(testRunner === undefined ? {} : { testRunner }),
     schedulerFactory,
     schedules: scheduleRegistry,
-    // W073 trigger surface: the registry and its routes exist, but the
-    // production LoopRunner (live proposal source + agent applier + measure)
-    // is Checkpoint F work. It fails closed with that message rather than
-    // pretending a loop ran — /rsi/start surfaces the error as a client error.
-    selfImprovement: createSelfImprovementRegistry({
-      runLoop: async () => {
-        throw new Error("no production self-improvement loop runner is configured on this hub yet (Checkpoint F)");
-      },
-    }),
+    // W073 trigger surface / Checkpoint F: the registry is composed lazily
+    // against the run-registry handles so the production loop (agent proposal
+    // source + agent applier + measure) drives the real controller. With
+    // WORKFLOW_RSI_AGENT=0 the runner stays fail-closed (explicit opt-out) —
+    // it refuses with that message rather than pretending a loop ran;
+    // /rsi/start surfaces the error as a client error.
+    selfImprovementFactory,
     reviewerFactory,
     ...(requestLogPath === undefined ? {} : {
       observeRequest: (path) => appendFileSync(requestLogPath, `${path}\n`, { mode: 0o600 }),

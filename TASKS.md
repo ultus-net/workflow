@@ -1191,9 +1191,9 @@ W073 loop and hub scheduler were checked against it. Gaps (honest, tracked):
 
 ### Checkpoint F - bounded self-improvement loop landed
 
-- [ ] Wire a live proposal source (agent turn) and a production `measure` at a
+- [x] Wire a live proposal source (agent turn) and a production `measure` at a
       composition root.
-- [ ] Containment-wrap the git command runner (or route commits through the
+- [x] Containment-wrap the git command runner (or route commits through the
       contained shell executor) and record the residual closure.
 - [ ] Point the loop at a second repository to prove the workspace-parameterized
       control-plane capability end to end.
@@ -1201,6 +1201,39 @@ W073 loop and hub scheduler were checked against it. Gaps (honest, tracked):
       page card + `/rsi` surface-handled command) over the `/rsi/*` routes.
 - [ ] Durable/resumable loop registry (atomic `StateAccessor`-style persistence)
       + per-iteration step/token ceilings + completion notification.
+
+**Checkpoint F status (2026-09-21, boxes 1–2 implemented on
+`feat/checkpoint-f-rsi-agent-wiring`):** `src/integrations/self-improvement-agent.ts`
+composes the production loop (`createAgentDrivenRunLoop`): an agent-driven
+proposal source over the full iteration history, an agent applier whose change
+detection stays with `git status --porcelain` (an agent's claim can never
+fabricate or suppress a change), a measure over a hub-executed command
+(`WORKFLOW_RSI_MEASURE_COMMAND` must print one finite number; anything else
+rejects the candidate fail-closed), and the git runner routed through the
+hub's contained shell executor with constant command strings — commit messages
+travel via `git commit -F <hub-staged file>` (0600, removed after the attempt)
+so repo-controlled text never enters a shell string; that closes the
+"git command runner runs outside containment" residual from the W073 plan.
+`cli/hub.ts` composes the registry lazily through the new
+`createWorkflowHub` `selfImprovementFactory` handles seam (the same pattern as
+`schedulerFactory`), with `WORKFLOW_RSI_AGENT=0` restoring the fail-closed
+refusal, and prompt templates (`WORKFLOW_RSI_PROPOSAL_PROMPT` /
+`WORKFLOW_RSI_APPLY_PROMPT`) plus the measure command are the operator/host
+config seams — the module defaults are versioned source, and `{{placeholder}}`
+rendering fails closed naming the known placeholder set. Honesty notes: the
+budget supplier counts proposal+apply turn cost only (reviewer/test gate cost
+is metered by the hub's own run usage — recorded residual); per-iteration
+step/token ceilings, the durable registry, and completion notification remain
+the box-5 gaps; the web UI projection (box 4) and the second-repository proof
+(box 3) are open. Verification: `test/self-improvement-agent.test.ts` (16
+tests: template rendering/parse fail-closed, mutator defers to git, measure
+strictness, contained-git constant-command/-F staging + refusal of unexpected
+verbs, and the composed loop's accept/verify/commit path, budget cap,
+boundary-scoped cancel, proposal-failure and authority-refusal fail-closed
+stops, prompt prefix), `test/hub-rsi.test.ts` (6 tests, incl. the factory
+composition pinning that the registry is built against the real run-registry
+controller), regression on `test/self-improvement-loop.test.ts` (32/32);
+typecheck and lint clean.
 
 ## Phase 16: Settings Panel, Launcher Engine Axis, and Hub Orientation (2026-09-20)
 
