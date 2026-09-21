@@ -40,11 +40,16 @@ npm run setup
 
 Installs:
 
-- `workflow` — browser operator UI
+- `workflow` — launcher: browser operator UI over a shared hub (verbs: web / tui / settings / hub / doctor / install fleet)
 - `workflow-tui` — universal ACP/TUI surface
 - `workflow-hub` — authority daemon
+- `workflow-web` — browser operator UI service (the `workflow web` surface, runnable standalone)
+- `workflow-admin` — credential admin control plane
 - `workflow-monitor` — hub snapshot monitor
 - `workflow-shell` — contained shell
+- `workflow-opencode-server` — OpenCode server topology daemon
+- `workflow-opencode` — attach the official OpenCode TUI through the hub gateway
+- `workflow-rsi` — RSI loop trigger client (start/status/cancel via the hub)
 
 ## Commands
 
@@ -54,6 +59,8 @@ workflow-tui --driver acp --cwd /path/to/project
 workflow-monitor
 workflow-shell
 ```
+
+`workflow doctor` states the local setup honestly (settings, credentials, hub, topology, containment, probe verdicts, the vendored fleet payload, and the guard enforcement posture). `workflow install fleet` deploys the vendored OpenCode agent fleet (`workflow install fleet --force` to overwrite locally modified agent/command files).
 
 Useful environment:
 
