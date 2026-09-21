@@ -8,9 +8,10 @@ import { WorkflowApplication } from "../src/application/workflow.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
 import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
-import { createWorkflowHub, resolveHubDiscoveryPath } from "../src/integrations/workflow-hub.js";
+import { createWorkflowHub, resolveHubDiscoveryPath, type WorkflowHubSchedulerHandles } from "../src/integrations/workflow-hub.js";
 import { createSelfImprovementRegistry } from "../src/integrations/self-improvement-registry.js";
 import type { LoopOutcome } from "../src/integrations/self-improvement-loop.js";
+import type { SelfImprovementSpec } from "../src/integrations/self-improvement-registry.js";
 
 /**
  * W073 trigger surface: the hub exposes operator-token `/rsi/start|status|cancel`
@@ -42,7 +43,7 @@ async function post(url: string, token: string, path: string, body?: unknown) {
   return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 
-async function setupHub(t: { after: (fn: () => void) => void }, withRegistry: boolean) {
+async function setupHub(t: { after: (fn: () => void) => void }, withRegistry: boolean | "factory") {
   const graph = new TaskGraph(tasks.map((task) => ({ ...task })));
   const workspace = mkdtempSync(join(tmpdir(), "wf-hub-rsi-ws-"));
   const dir = mkdtempSync(join(tmpdir(), "wf-hub-rsi-"));
@@ -55,16 +56,38 @@ async function setupHub(t: { after: (fn: () => void) => void }, withRegistry: bo
   );
   const gate = deferred<LoopOutcome>();
   const registry = createSelfImprovementRegistry({ runLoop: () => gate.promise });
+  // Checkpoint F: factory-mode composition captures the handles and the start
+  // spec so the test can assert the production runner is wired to the real
+  // run-registry controller. A holder object (not bare lets) so the caller
+  // sees assignments that happen after this function returns.
+  const factoryRef: {
+    handles?: WorkflowHubSchedulerHandles;
+    spec?: SelfImprovementSpec;
+  } = {};
   const hub = await createWorkflowHub(application, {
     discoveryDir: dir,
     graph,
-    ...(withRegistry ? { selfImprovement: registry } : {}),
+    ...(withRegistry === "factory"
+      ? {
+        selfImprovementFactory: (handles) => {
+          factoryRef.handles = handles;
+          return createSelfImprovementRegistry({
+            runLoop: (spec) => {
+              factoryRef.spec = spec;
+              return gate.promise;
+            },
+          });
+        },
+      }
+      : withRegistry === true
+        ? { selfImprovement: registry }
+        : {}),
   });
   t.after(() => hub.close());
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
   const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8")) as { token: string };
-  return { hub, token, registry, gate, workspace, verificationToken: hub.verificationToken };
+  return { hub, token, registry, gate, workspace, verificationToken: hub.verificationToken, factoryRef };
 }
 
 const SPEC = { objective: "reduce flaky tests", maxIterations: 3 };
@@ -137,4 +160,28 @@ test("the rsi routes 404 when no self-improvement registry is configured", async
   assert.equal((await post(hub.url, verificationToken, "/rsi/start", { workspace: process.cwd(), ...SPEC })).status, 404);
   assert.equal((await post(hub.url, token, "/rsi/status", {})).status, 404);
   assert.equal((await post(hub.url, token, "/rsi/cancel", {})).status, 404);
+});
+
+test("a selfImprovementFactory composes the registry against the run-registry handles", async (t) => {
+  const { hub, token, verificationToken, gate, workspace, factoryRef } = await setupHub(t, "factory");
+
+  // Checkpoint F: the factory receives the real run-registry surfaces so the
+  // production loop runner can drive the canonical controller.
+  assert.equal(typeof factoryRef.handles?.controller.begin, "function");
+  assert.equal(typeof factoryRef.handles?.controller.finish, "function");
+  assert.equal(typeof factoryRef.handles?.resolve, "function");
+
+  const started = await post(hub.url, verificationToken, "/rsi/start", { workspace, ...SPEC });
+  assert.equal(started.status, 200, "the factory-built registry serves /rsi/start under the verifier credential");
+  assert.equal(factoryRef.spec?.workspace, workspace, "the factory-built runner received the start spec");
+  assert.equal(factoryRef.spec?.objective, SPEC.objective);
+
+  const loopId = (started.body.loop as { id: string }).id;
+  const cancelled = await post(hub.url, token, "/rsi/cancel", { id: loopId });
+  assert.equal(cancelled.status, 200);
+  assert.equal(cancelled.body.cancelled, true);
+  gate.resolve(outcome("stopped", "cancelled by operator"));
+  await new Promise((resolve) => setImmediate(resolve));
+  const after = await post(hub.url, token, "/rsi/status", { id: loopId });
+  assert.equal((after.body.loop as { state: string }).state, "cancelled");
 });

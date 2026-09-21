@@ -192,3 +192,31 @@ an adversarial review (dated; several were fixed, the rest are stated here):
    explicit operator ask), while review gating and run budgets still apply.
    Cost double-spend is bounded by the per-run budget only if one is
    configured; the loop-level budget (when wired) is separate.
+
+## 2026-09-21 — Checkpoint F wiring (agent-driven proposal source, applier, measure, contained git runner)
+
+The production self-improvement loop wiring landed
+(`src/integrations/self-improvement-agent.ts`, Checkpoint F boxes 1–2). New
+residuals and closures, stated precisely:
+
+7. **Commit-time hook execution is disabled; repo-configured clean filters
+   remain an unmitigated smuggling surface.** The loop's commit runs with
+   `--no-verify` and `core.hooksPath=/dev/null`, so an agent cannot execute a
+   planted pre-commit hook at commit time. But `git add -A` still runs any
+   clean filter configured by the candidate-authored `.gitattributes` or
+   `.git/config`, so committed content can differ from the diff the reviewer
+   approved (the same content-mismatch family as residual 2). Recorded, not
+   solved: the enforcement for not pointing the loop at untrusted
+   repositories is operator discipline plus the guard's deny — not this
+   wiring. Commit identity rides on `git -c user.name/email` flags from
+   operator env (`WORKFLOW_RSI_GIT_AUTHOR_NAME/EMAIL`) because the
+   containment sandbox clears the environment; the staged message file lives
+   under the workspace `.git/` (0600, removed after the attempt), the only
+   path the containment backend mounts.
+8. **The loop budget counts successful turns only.** A failed agent turn's
+   spend is recorded in the run-usage ledger (the turn runner records usage
+   in `finally`) but does not increment the loop's budget supplier;
+   reviewer/test gate cost is metered by the hub's own run usage. Under
+   budget pressure a loop can therefore spend slightly more than
+   `budgetUsd` across its final iterations. Recorded, not solved
+   (per-iteration ceilings are the box-5 gap).

@@ -64,6 +64,17 @@ export async function createWorkflowHub(
      */
     selfImprovement?: SelfImprovementRegistry;
     /**
+     * Checkpoint F: when provided instead of (or with) `selfImprovement`, the
+     * factory receives the run-registry handles so the composition root can
+     * build the production loop runner against the real controller — the same
+     * lazy-handles pattern as `schedulerFactory`. Takes precedence over
+     * `selfImprovement` when both are provided. Like `schedulerFactory`, the
+     * factory needs the run registry, which exists only when a `graph` is
+     * provided; with no graph the factory is silently unused and the routes
+     * 404 (fail closed — no registry, no loop).
+     */
+    selfImprovementFactory?: (handles: WorkflowHubSchedulerHandles) => SelfImprovementRegistry;
+    /**
      * W074 scheduled-task manager: when provided, the hub exposes
      * operator-token `/schedule/list|save|delete|run-now` routes backed by this
      * registry. Absent means the routes 404.
@@ -94,6 +105,19 @@ export async function createWorkflowHub(
         recordRunUsage: runs.recordRunUsage,
       })
       : undefined;
+    // Checkpoint F: the self-improvement registry may be composed lazily
+    // against the run-registry handles so its loop runner can drive the real
+    // controller. A factory beats a pre-built registry; absent both, the
+    // routes 404.
+    const selfImprovement = options.selfImprovementFactory !== undefined && runs !== undefined
+      ? options.selfImprovementFactory({
+        resolve: runs.resolve,
+        controller: runs.controller,
+        recordBlockingReason: runs.recordBlockingReason,
+        recordCompletionClaim: runs.recordCompletionClaim,
+        recordRunUsage: runs.recordRunUsage,
+      })
+      : options.selfImprovement;
     // W074: connect the schedule registry's run-now to the live scheduler so
     // the operator route fires the same gated run path the clock uses. Done
     // here (not in each composition root) so any caller wiring a registry and
@@ -108,7 +132,7 @@ export async function createWorkflowHub(
       runs?.controller,
       options.observeRequest,
       options.guard,
-      options.selfImprovement,
+      selfImprovement,
       options.schedules,
     );
     options.observeBridgeStarted?.(bridge.url);

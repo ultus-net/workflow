@@ -352,3 +352,90 @@ the remaining new branches (rev-parse failure, throwing `usageUsd`, throwing
 `onIteration`, and the both-rollbacks-failed reason) are pinned too. Combined
 rollback-failure reporting now names both failures instead of the first only.
 Suite is 27 tests, green; lint and typecheck clean.
+
+## Checkpoint F wiring — agent-driven proposal source, applier, measure (2026-09-21)
+
+Boxes 1–2 of the Checkpoint F ledger (`TASKS.md`) are implemented on
+`feat/checkpoint-f-rsi-agent-wiring`. New module
+`src/integrations/self-improvement-agent.ts` composes the W073 loop from real
+seams; `cli/hub.ts` composes the registry lazily through the new
+`createWorkflowHub` `selfImprovementFactory` handles seam (the
+`schedulerFactory` pattern), replacing the throwing Checkpoint-F stub.
+
+- **Proposal source (agent turn):** the model sees the operator objective, the
+  iteration number, accepted/rejected counts, the incumbent best, and the full
+  iteration history, and replies with one JSON proposal (last fenced-json
+  block wins; bare JSON accepted). Parsing fails closed — a reply without a
+  parseable proposal stops the loop, it never mutates.
+- **Agent applier:** the apply turn runs inside the canonical run (bound via
+  the run-registry `resolve(workspace, runId)` application, `run:<runId>` task
+  — the same discipline as scheduled turns). Change detection stays with
+  `git status --porcelain`: the mutator deliberately returns `undefined`, so
+  an agent's claim can neither fabricate nor suppress a change.
+- **Production measure:** `WORKFLOW_RSI_MEASURE_COMMAND` executes hub-side
+  through the contained shell and must print a single finite number; anything
+  else rejects the candidate. Without a configured measure the loop keeps the
+  W073 default (first verified candidate ends the loop). Direction and
+  baseline come from the start spec (`--direction`, `--baseline`).
+- **Containment (box 2 residual closed, review-hardened):** the git runner
+  goes through the hub's contained shell executor with constant command
+  strings only; commit messages are staged INSIDE the workspace `.git/`
+  directory (0600, removed after the attempt — the only path the sandbox
+  mounts, so `git commit -F` actually reads it in the sandbox) and never
+  enter a shell string. The commit carries hub-side identity on
+  `git -c user.name/email` flags (the sandbox clears the environment, so
+  global gitconfig is unreachable — the independent review's P0 caught the
+  first version staging the message outside the mount, where the commit
+  could never complete) and disables hook execution (`--no-verify` plus
+  `core.hooksPath=/dev/null`) so a planted pre-commit hook cannot run at
+  commit time. Recorded residual: a repo-configured clean filter
+  (`.gitattributes`/`.git/config`) still runs during `git add -A`, so
+  committed content can differ from the diff the reviewer saw (THREAT_MODEL
+  2026-09-21 §7); the enforcement for not pointing the loop at untrusted
+  repositories stays with the operator and the guard. Anything beyond the
+  seven verbs the workspace needs is refused.
+- **Operator/host-config seams:** `WORKFLOW_RSI_PROPOSAL_PROMPT` and
+  `WORKFLOW_RSI_APPLY_PROMPT` replace the versioned module defaults;
+  `{{placeholder}}` rendering fails closed on the TEMPLATE only (unknown
+  names name the known set), so agent- or objective-authored `{{...}}`
+  content passes through as data. `WORKFLOW_RSI_AGENT` is strict-parsed —
+  unset/`1` composes the production loop, `0` restores the fail-closed
+  refusal, anything else refuses hub startup. The hub orientation/advisory
+  guidance is prepended to loop turns like scheduled turns. These seams are
+  where the separate prompt-design effort (agent prompts/settings wired
+  through host agent config) plugs in.
+- **Honesty notes:** the budget supplier accumulates SUCCESSFUL
+  proposal+apply turn cost only — a failed turn's spend is recorded in the
+  run-usage ledger (the turn runner records usage in `finally`) but not
+  budget-counted, and reviewer/test gate cost is metered by the hub's own
+  run usage (both recorded residuals); per-iteration step/token ceilings,
+  the durable/resumable registry, and completion notification remain open
+  (box 5); the web UI projection (box 4) and a second-repository proof
+  (box 3) remain open. Ruler integrity: the loop must never be pointed at
+  the guard/policy source or live credentials — the enforcement is the
+  guard's non-overridable deny; this wiring adds no bypass and documents
+  the expectation (module doc, "Ruler integrity").
+- **Verification:** `test/self-improvement-agent.test.ts` (18 tests —
+  template/parse fail-closed paths + value-passthrough, mutator defers to
+  git, measure strictness, contained-git constant-command allowlist +
+  `.git`-staged `-F` message + hook hardening, composed accept/verify/commit
+  path, budget cap, boundary-scoped cancel, proposal-failure and
+  authority-refusal fail-closed stops, prompt prefix, and the real-backend
+  contained-commit end-to-end pin);
+  `test/hub-rsi.test.ts` 6/6 incl. the factory-composition pin;
+  `test/self-improvement-loop.test.ts` 32/32 regression; typecheck and lint
+  clean.
+
+**Review round (2026-09-21, independent five-axis reviewer):**
+`[REQUEST_CHANGES]` — 1×P0, 4×P2, 5×P3, all recorded. P0 (contained commit
+path non-functional: message file outside the mount, identity unreachable)
+fixed and pinned end to end on the real backend; P2s fixed (usage recorded
+in `finally`, dead `createShellMeasure` composed instead of the inline
+duplicate, template check moved to the template so value content passes
+through, hook smuggling hardened `--no-verify` + `core.hooksPath` with the
+clean-filter residual recorded); P3s fixed (parse precedence doc,
+factory-drop-without-graph doc, strict `WORKFLOW_RSI_AGENT`, quoted `-F`
+path, inline import type, 2-space indentation). Remaining honest residuals:
+failed-turn spend not budget-counted; clean-filter smuggling (operator
+discipline); `rsiAgentTurn`'s runtime composition exercised only through the
+factory-level tests (the `cli/hub.ts` env mapping is typecheck-verified).
