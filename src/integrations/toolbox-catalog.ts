@@ -17,6 +17,13 @@ const writeFileSyncReal = writeFileSync;
  * manifest against the real `mcp-toolbox/apps` tree (names, descriptions,
  * built entrypoints) so it cannot silently drift from the corpus, matching
  * the toolbox-corpus-stays-executable discipline.
+ *
+ * 2026-09-21: the manifest dropped `workflow-fs-exec-mcp`, completing the
+ * retirement that `f525b35`/`ea52a9e` recorded (the standalone substitution
+ * posted the removed `/before-tool` hub route and could never satisfy G3;
+ * the live substitution is the in-process ACP fs server) — the retirement
+ * had missed this manifest entry, which made every fresh checkout fail the
+ * corpus pins while the operator's checkout passed on an untracked dist.
  */
 
 export interface ToolboxApp {
@@ -26,7 +33,6 @@ export interface ToolboxApp {
 
 export const TOOLBOX_CATALOG: readonly ToolboxApp[] = [
   { name: "workflow-guard-mcp", description: "Cross-client MCP policy checks for safer agentic coding workflows." },
-  { name: "workflow-fs-exec-mcp", description: "Hub-owned file edits and shell execution over MCP (plan Task G3): built-in host mutation tools are denied; the model's only mutation path authorizes through the hub first." },
   { name: "skills-mcp", description: "Hub-owned skills delivery over MCP: metadata-only discovery plus on-demand content (plan Task F1)." },
   { name: "project-context-mcp", description: "Bounded read-only repository task and planning context discovery over MCP." },
   { name: "project-memory-mcp", description: "Bounded durable project memory for coding agents over MCP." },

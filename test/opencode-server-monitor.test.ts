@@ -188,7 +188,7 @@ test("a top-level error message surfaces verbatim, not just the status code", as
     username: "opencode",
     password: "pw",
     thresholdTokens: 1_000,
-    fetchImpl: (async (input: RequestInfo | URL, init?: RequestInit) => {
+    fetchImpl: (async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/api/session")) {
         return new Response(sessionJson([{ id: "ses_msg", tokens: usage(2_000) }]), { status: 200 });
