@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "agent:decompose",
+      "kind": "agent",
+      "file": "decompose.md",
+      "sha256": "6d3d172c18d021306c4cf5a7405a7e5f56e2512823015c0bf2893d9bf788177c"
+    },
+    {
+      "id": "agent:executor",
+      "kind": "agent",
+      "file": "executor.md",
+      "sha256": "ec17d2f80d65dfe9cb64968cc93d13b0b3ed8781988cc51f988d753d5db1d7a5"
+    },
+    {
+      "id": "agent:retrospective",
+      "kind": "agent",
+      "file": "retrospective.md",
+      "sha256": "499946d6dac802001ed26aa6b4d8c970c068e5ebf783d0152bcf81dc79ad9369"
+    },
+    {
+      "id": "agent:reviewer",
+      "kind": "agent",
+      "file": "reviewer.md",
+      "sha256": "9a2f41a048db2cbf3ce35cf4d1b134878032aedea91b35011339eb00d8ef0265"
+    },
+    {
+      "id": "command:decompose",
+      "kind": "command",
+      "file": "decompose.md",
+      "sha256": "9bfa589835f24ac3f0b7a6270633db20bcfb8c56fd0c0a189f6bde3f7ce8321c"
+    },
+    {
+      "id": "command:retro",
+      "kind": "command",
+      "file": "retro.md",
+      "sha256": "a3e85f541e0902e9bedcb81fbbdddfab9c27745b4cca8b3f667313f8cf139ff4"
+    },
+    {
+      "id": "command:review-diff",
+      "kind": "command",
+      "file": "review-diff.md",
+      "sha256": "1aba1b3bdb4b1b0210e095ebe0e66d3bd50a6ad2bf8e2f2e7f1354c27ee84b04"
+    },
+    {
+      "id": "command:rsi-loop",
+      "kind": "command",
+      "file": "rsi-loop.md",
+      "sha256": "adf4b17246285ffc817be45a6820beb5c507ce987275192ad0b37fa55cacc198"
+    },
+    {
+      "id": "doc:README",
+      "kind": "doc",
+      "file": "README.md",
+      "sha256": "7cf7576d7f0d83d9389481c8b99744317c05a854cf38ae9d55dccebdc4d42d73"
+    },
+    {
+      "id": "doc:lessons",
+      "kind": "doc",
+      "file": "lessons.md",
+      "sha256": "cb2579353d04e494254af16f2d4880d3ef6d31f02e5a5cf970add1712ecc3e5f"
+    },
+    {
+      "id": "doc:policy-review",
+      "kind": "doc",
+      "file": "policy-review.md",
+      "sha256": "62961f3aac1fa601e7f892832a1054ba0f0e9df56a7717181a056732177d7c93"
+    },
+    {
+      "id": "doc:prompt-design",
+      "kind": "doc",
+      "file": "prompt-design.md",
+      "sha256": "8fa4c8848275bd5d85a1621d3bf79788eb09948de235f8712694311a8d1299f6"
+    },
+    {
+      "id": "doc:reading-list",
+      "kind": "doc",
+      "file": "reading-list.md",
+      "sha256": "3b00ab918208312663bb6c23e2dfc23a11fbcbe70ade7da63e3a04042241d093"
+    },
+    {
+      "id": "doc:rsi-loop-playbook",
+      "kind": "doc",
+      "file": "rsi-loop-playbook.md",
+      "sha256": "f868751e8dbc41a368ae9572827a7793caeb84d3b0a7a66a3933bc70c895d86e"
+    },
+    {
+      "id": "doc:task-decomposition",
+      "kind": "doc",
+      "file": "task-decomposition.md",
+      "sha256": "5ec63382be690cd8ba6c637c21221f1571f6e16a37a5ad607ea04aaf8633548f"
+    }
+  ]
+}
