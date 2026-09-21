@@ -6,12 +6,14 @@ import test from "node:test";
 
 import {
   checkHub,
+  checkTopologyGateway,
   checkSettingsDocs,
   checkAgentCredentials,
   checkProbeVerdicts,
   checkContainment,
   renderDoctorReport,
 } from "../src/cli/doctor.js";
+import { opencodeServerDiscoveryPath } from "../src/integrations/opencode-server-discovery.js";
 import { parseLauncherArgs } from "../src/cli/launcher-args.js";
 
 /**
@@ -96,6 +98,42 @@ test("doctor: the hub check probes through the declared fetchImpl seam, never th
   assert.equal(calls.length, 1, "the injected fetch answers the one /health probe");
   assert.match(calls[0]?.url ?? "", /\/health$/);
   assert.equal(calls[0]?.authorization, "Bearer test-token");
+});
+
+test("doctor: the topology check reads the declared home seam when the env seam is unset", async (t) => {
+  // DoctorOptions.home scopes every doctor check that reads a home; the
+  // topology check honored only the WORKFLOW_OPENCODE_SERVER_HOME env seam
+  // and fell back to the real homedir, so a scoped run could never see (or
+  // avoid) its own topology discovery. This pin deletes the env var (saved
+  // and restored) to pin the DEFAULT path deterministically: a discovery
+  // file for a fresh temp workspace exists only in the FAKE home, so a
+  // stale gateway (injected fetch answering 503) must be reported as fail —
+  // pre-fix the check read the real home and found nothing (warn).
+  const savedEnv = process.env.WORKFLOW_OPENCODE_SERVER_HOME;
+  delete process.env.WORKFLOW_OPENCODE_SERVER_HOME;
+  t.after(() => {
+    if (savedEnv !== undefined) process.env.WORKFLOW_OPENCODE_SERVER_HOME = savedEnv;
+  });
+  const home = mkdtempSync(join(tmpdir(), "wf-doctor-topo-"));
+  const workspace = mkdtempSync(join(tmpdir(), "wf-doctor-topo-ws-"));
+  t.after(() => { rmSync(home, { recursive: true, force: true }); rmSync(workspace, { recursive: true, force: true }); });
+  // The state-home root composes as <home>/.workflow/opencode-server (the
+  // env seam's value is consumed the same way); the discovery file is keyed
+  // per workspace inside it.
+  const stateHome = join(home, ".workflow", "opencode-server");
+  mkdirSync(stateHome, { recursive: true });
+  writeFileSync(opencodeServerDiscoveryPath(stateHome, workspace), JSON.stringify({
+    protocol: 1,
+    pid: 4242,
+    workspace,
+    gatewayUrl: "http://127.0.0.1:1",
+    tuiUsername: "tui",
+    tuiPassword: "pw",
+  }));
+  const stale = await checkTopologyGateway({ home, workspace, fetchImpl: async () => new Response(null, { status: 503 }) });
+  assert.equal(stale.status, "fail");
+  assert.match(stale.detail, /http:\/\/127\.0\.0\.1:1/);
+  assert.match(stale.detail, /nothing answered/);
 });
 
 test("doctor: credential checks state availability with reasons, never values", () => {
