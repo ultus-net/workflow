@@ -134,6 +134,22 @@ test("doctor: the topology check reads the declared home seam when the env seam 
   assert.equal(stale.status, "fail");
   assert.match(stale.detail, /http:\/\/127\.0\.0\.1:1/);
   assert.match(stale.detail, /nothing answered/);
+  // The hub-check lesson: a dead-port gateway alone cannot pin the
+  // fetchImpl forwarding (a dropped seam would still fail via real-network
+  // refusal), so the same discovery also proves the LIVE path — the
+  // injected fetch answers 200 on the dead port, and only the forwarded
+  // seam can produce a pass.
+  let topologyProbed = 0;
+  const liveTopology = async (): Promise<Response> => {
+    topologyProbed += 1;
+    // The gateway health contract (W072): GET /api/info answers
+    // {version, ...} — the v1 /global/health fallback is never reached.
+    return Response.json({ version: "test" }, { status: 200 });
+  };
+  const live = await checkTopologyGateway({ home, workspace, fetchImpl: liveTopology });
+  assert.equal(live.status, "pass", live.detail);
+  assert.match(live.detail, /gateway live at http:\/\/127\.0\.0\.1:1/);
+  assert.equal(topologyProbed, 1, "the injected fetch answered the one gateway probe");
 });
 
 test("doctor: credential checks state availability with reasons, never values", () => {
