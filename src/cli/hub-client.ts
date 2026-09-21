@@ -41,9 +41,9 @@ export function readHubDiscovery(discoveryPath: string): HubDiscovery | undefine
   }
 }
 
-export async function probeHub(discovery: HubDiscovery): Promise<boolean> {
+export async function probeHub(discovery: HubDiscovery, fetchImpl: typeof fetch = fetch): Promise<boolean> {
   try {
-    const response = await fetch(`${discovery.endpoint}/health`, {
+    const response = await fetchImpl(`${discovery.endpoint}/health`, {
       method: "POST",
       headers: { authorization: `Bearer ${discovery.token}` },
       signal: AbortSignal.timeout(2_000),

@@ -68,6 +68,36 @@ test("doctor: the hub check reads the declared home seam, not the operator's rea
   assert.match(stale.fix ?? "", /stale discovery file/);
 });
 
+test("doctor: the hub check probes through the declared fetchImpl seam, never the raw network", async (t) => {
+  // DoctorOptions.fetchImpl is declared on the options and adopted by the
+  // topology check; the hub check must honor it too (same seam contract as
+  // the home seam above). The pin simulates a LIVE hub on a dead port: the
+  // injected fetch answers 200, so `pass` can only come from the injected
+  // dependency — the real network would refuse port 1, and pre-fix the
+  // injected fetch is never called at all, so this is red regardless of
+  // what the operator's machine does with the connection.
+  const home = mkdtempSync(join(tmpdir(), "wf-doctor-hubfetch-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  mkdirSync(join(home, ".workflow", "hub"), { recursive: true });
+  writeFileSync(join(home, ".workflow", "hub", "discovery.json"), JSON.stringify({
+    hubId: "test-hub",
+    endpoint: "http://127.0.0.1:1",
+    token: "test-token",
+  }));
+  const calls: Array<{ url: string; authorization: string | undefined }> = [];
+  const liveHub = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const headers = new Headers(init?.headers);
+    calls.push({ url: String(input), authorization: headers.get("authorization") ?? undefined });
+    return new Response(null, { status: 200 });
+  };
+  const reachable = await checkHub({ home, fetchImpl: liveHub });
+  assert.equal(reachable.status, "pass", reachable.detail);
+  assert.match(reachable.detail, /reachable at http:\/\/127\.0\.0\.1:1/);
+  assert.equal(calls.length, 1, "the injected fetch answers the one /health probe");
+  assert.match(calls[0]?.url ?? "", /\/health$/);
+  assert.equal(calls[0]?.authorization, "Bearer test-token");
+});
+
 test("doctor: credential checks state availability with reasons, never values", () => {
   const checks = checkAgentCredentials();
   assert.equal(checks.length, 3, "one check per switcher agent");
