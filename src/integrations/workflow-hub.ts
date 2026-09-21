@@ -68,7 +68,10 @@ export async function createWorkflowHub(
      * factory receives the run-registry handles so the composition root can
      * build the production loop runner against the real controller — the same
      * lazy-handles pattern as `schedulerFactory`. Takes precedence over
-     * `selfImprovement` when both are provided.
+     * `selfImprovement` when both are provided. Like `schedulerFactory`, the
+     * factory needs the run registry, which exists only when a `graph` is
+     * provided; with no graph the factory is silently unused and the routes
+     * 404 (fail closed — no registry, no loop).
      */
     selfImprovementFactory?: (handles: WorkflowHubSchedulerHandles) => SelfImprovementRegistry;
     /**

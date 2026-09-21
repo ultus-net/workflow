@@ -158,19 +158,27 @@ const scheduleRegistry = createScheduleRegistry({ path: schedulesPath });
 // prepended to every scheduled turn — honestly advisory prompt text.
 const promptGuidance = hubPromptGuidanceFromEnv(process.env);
 
-// Checkpoint F: the self-improvement loop's agent seams. `WORKFLOW_RSI_AGENT=0`
-// keeps the old fail-closed stub (explicit opt-out); the default composes the
-// production loop from real agent turns. Prompt templates and the measure
-// command are operator seams (host agent-config surfaces may own them):
+// Checkpoint F: the self-improvement loop's agent seams. `WORKFLOW_RSI_AGENT`
+// is strict-parsed like WORKFLOW_ACP_AGENT: unset or "1" composes the
+// production loop from real agent turns; "0" keeps the old fail-closed stub
+// (explicit opt-out); anything else refuses to start the hub rather than
+// silently enabling a loop. Prompt templates and the measure command are
+// operator seams (host agent-config surfaces may own them):
 // WORKFLOW_RSI_PROPOSAL_PROMPT / WORKFLOW_RSI_APPLY_PROMPT replace the module
-// defaults, WORKFLOW_RSI_MEASURE_COMMAND scores candidates (prints one number).
-const rsiAgentDisabled = process.env.WORKFLOW_RSI_AGENT === "0";
+// defaults, WORKFLOW_RSI_MEASURE_COMMAND scores candidates (prints one
+// number), WORKFLOW_RSI_GIT_AUTHOR_NAME/EMAIL set the loop's commit identity
+// (the containment sandbox clears the environment, so global gitconfig is
+// unreachable and the identity rides on `git -c` flags).
+const rsiAgentEnv = process.env.WORKFLOW_RSI_AGENT?.trim();
+if (rsiAgentEnv !== undefined && rsiAgentEnv !== "0" && rsiAgentEnv !== "1") {
+  throw new Error(`WORKFLOW_RSI_AGENT must be "0" or "1" (got ${JSON.stringify(rsiAgentEnv)})`);
+}
+const rsiAgentDisabled = rsiAgentEnv === "0";
 const rsiProposalPromptTemplate = process.env.WORKFLOW_RSI_PROPOSAL_PROMPT?.trim();
 const rsiApplyPromptTemplate = process.env.WORKFLOW_RSI_APPLY_PROMPT?.trim();
 const rsiMeasureCommand = process.env.WORKFLOW_RSI_MEASURE_COMMAND?.trim();
-// Commit messages are staged hub-side (0600, removed after the attempt) so
-// repo-controlled text never enters a shell command (contained git runner).
-const rsiMessageDir = join(homedir(), ".workflow", "rsi-commit-messages");
+const rsiAuthorName = process.env.WORKFLOW_RSI_GIT_AUTHOR_NAME?.trim() ?? "Workflow Self-Improvement Loop";
+const rsiAuthorEmail = process.env.WORKFLOW_RSI_GIT_AUTHOR_EMAIL?.trim() ?? "[EMAIL]";
 
 // Proposal turns run before any run exists; they get a read-only application
 // bound to the loop workspace (the reviewer-factory pattern). One per
@@ -207,9 +215,14 @@ const rsiAgentTurn = (handles: WorkflowHubSchedulerHandles): AgentTurnRunner => 
       throw new Error(`rsi ${input.kind} turn did not complete (state: ${snapshot.state}${reason})`);
     }
     const usage = runtime.metrics?.();
+    return { result: snapshot.result, costUsd: usage?.costUsd ?? 0 };
+  } finally {
+    // Failed turns still spent money: the run-usage ledger records whatever
+    // the metering proxy saw even when the turn did not complete (the loop's
+    // budget supplier only counts successful turns — recorded residual), and
+    // the runtime dies with its proxy, so this must happen before dispose.
+    const usage = runtime.metrics?.();
     if (input.runId !== undefined && usage !== undefined) {
-      // W044 (open clause): record the turn's metering-proxy totals for the
-      // canonical run BEFORE the runtime dies with its proxy.
       handles.recordRunUsage({
         runId: input.runId,
         usage: {
@@ -221,8 +234,6 @@ const rsiAgentTurn = (handles: WorkflowHubSchedulerHandles): AgentTurnRunner => 
         },
       });
     }
-    return { result: snapshot.result, costUsd: usage?.costUsd ?? 0 };
-  } finally {
     await runtime.dispose();
   }
 };
@@ -236,7 +247,7 @@ const selfImprovementFactory = (handles: WorkflowHubSchedulerHandles) =>
       : createAgentDrivenRunLoop({
         authority: createAuthorityGate(handles.controller),
         turn: rsiAgentTurn(handles),
-        gitRun: createContainedGitRunner({ shell: containedShell(true), messageDir: rsiMessageDir }),
+        gitRun: createContainedGitRunner({ shell: containedShell(true), authorName: rsiAuthorName, authorEmail: rsiAuthorEmail }),
         ...(rsiMeasureCommand === undefined ? {} : { measure: { shell: containedShell(true), command: rsiMeasureCommand } }),
         ...(promptGuidance === undefined ? {} : { promptPrefix: promptGuidance }),
         ...(rsiProposalPromptTemplate === undefined ? {} : { proposalPromptTemplate: rsiProposalPromptTemplate }),
