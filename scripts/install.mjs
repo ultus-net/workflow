@@ -1,8 +1,10 @@
 import { execFileSync } from "node:child_process";
-import { dirname, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 
 function step(label, command, args) {
   console.log(`setup: ${label}`);
@@ -21,5 +23,5 @@ step("toolbox install", "pnpm", ["--dir", "mcp-toolbox", "install"]);
 step("toolbox build", "pnpm", ["--dir", "mcp-toolbox", "run", "build"]);
 step("global install", "npm", ["install", "-g", "."]);
 
-console.log("\nInstalled bins: workflow, workflow-tui, workflow-hub, workflow-monitor, workflow-shell");
+console.log(`\nInstalled bins: ${Object.keys(pkg.bin).join(", ")}`);
 console.log("Run: workflow --cwd <path>  (browser UI, OpenCode/ACP by default; --no-browser skips opening)");
