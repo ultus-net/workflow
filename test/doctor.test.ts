@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
+  checkHub,
   checkSettingsDocs,
   checkAgentCredentials,
   checkProbeVerdicts,
@@ -44,6 +45,27 @@ test("doctor: settings check parses both scopes and reports the honest detail", 
   assert.equal(broken.status, "fail");
   assert.match(broken.detail, /do not parse/);
   assert.match(broken.fix ?? "", /fix the JSON/);
+});
+
+test("doctor: the hub check reads the declared home seam, not the operator's real home", async (t) => {
+  // The DoctorOptions.home seam is the doctor's declared way to scope every
+  // check to a fake/embedded home; the hub check must honor it like the
+  // settings/fleet/posture checks do, so a discovery file in the FAKE home
+  // pointing at a dead port is reported as stale — never the operator's
+  // real hub state leaking into (or out of) a scoped run.
+  const home = mkdtempSync(join(tmpdir(), "wf-doctor-hub-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  mkdirSync(join(home, ".workflow", "hub"), { recursive: true });
+  writeFileSync(join(home, ".workflow", "hub", "discovery.json"), JSON.stringify({
+    hubId: "test-hub",
+    endpoint: "http://127.0.0.1:1",
+    token: "test-token",
+  }));
+  const stale = await checkHub({ home });
+  assert.equal(stale.status, "fail");
+  assert.match(stale.detail, /http:\/\/127\.0\.0\.1:1/);
+  assert.match(stale.detail, /nothing answered \/health/);
+  assert.match(stale.fix ?? "", /stale discovery file/);
 });
 
 test("doctor: credential checks state availability with reasons, never values", () => {
