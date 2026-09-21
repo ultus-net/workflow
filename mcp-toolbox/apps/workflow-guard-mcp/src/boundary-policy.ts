@@ -196,7 +196,42 @@ export function shellHasFileMutation(command: string, depth = 0): boolean {
 // not exempt, and the exemption is per-candidate: a lexical path inside
 // plans/ that resolves through a symlink into a config-shaped realpath is
 // still denied (the realpath candidate is checked independently).
-function isGuardConfigurationPath(path: string, workspaceRoot?: string): boolean {
+function isWithinAnyRoot(candidate: string, roots: readonly string[]): boolean {
+  return roots.some((root) => {
+    const realRoot = realPathWithMissingTail(resolve(root)) ?? resolve(root);
+    const rel = relative(realRoot, candidate);
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  });
+}
+
+// W087 tier port step 1 (memory ec383547 F2/F3): the guard-tamper rule has two modes.
+//   - Legacy (no `liveConfigPaths` supplied): filename-segment matching against
+//     the OpenCode/workflow-guard configuration vocabulary. Fail-closed and
+//     unchanged — this is what the upstream adversarial pins exercise.
+//   - Fact-based (host supplies `liveConfigPaths`): a path is the live control
+//     plane (T0) only when it resolves under one of the declared live roots;
+//     config-shaped paths elsewhere (a versioned draft such as dotfiles'
+//     `.config/opencode`, or a worktree) are T2 drafts and are not tamper. This
+//     replaces segment matching with runtime-consumption facts, the port
+//     requirement from the tier model. Symlink-aware in both modes.
+// Normalize the host-declared live control-plane roots. A declared root is
+// usable only when it expands (no unresolved `$VAR`) AND is absolute — a
+// relative or unresolved root cannot be evaluated safely, and guessing would
+// silently turn the live control plane into a "draft" (fail-open). On ANY
+// unusable root the whole fact set is rejected, so classification falls back to
+// the fail-closed legacy segment mode rather than trusting partial facts.
+function normalizeLiveRoots(liveConfigPaths?: readonly string[]): readonly string[] | undefined {
+  if (!liveConfigPaths || liveConfigPaths.length === 0) return undefined;
+  const roots: string[] = [];
+  for (const raw of liveConfigPaths) {
+    const expanded = expandedTarget(raw);
+    if (expanded === undefined || !isAbsolute(expanded)) return undefined;
+    roots.push(resolve(expanded));
+  }
+  return roots;
+}
+
+function isGuardConfigurationPath(path: string, workspaceRoot?: string, liveConfigPaths?: readonly string[]): boolean {
   const guarded = (candidate: string): boolean => {
     if (candidate.toLowerCase().includes(`/.${TOOL}/plans/`)) return false;
     return TOOL_JSON_RE.test(candidate) || /(?:^|\/)workflow-guard\.jsonc?$/i.test(candidate) || TOOL_DIR_RE.test(candidate) || TOOL_CONFIG_RE.test(candidate);
@@ -204,6 +239,12 @@ function isGuardConfigurationPath(path: string, workspaceRoot?: string): boolean
   const expanded = expandedTarget(path);
   if (expanded === undefined) return true;
   const lexical = resolve(workspaceRoot ?? process.cwd(), expanded).replaceAll("\\", "/");
+  const liveRoots = normalizeLiveRoots(liveConfigPaths);
+  if (liveRoots) {
+    if (isWithinAnyRoot(lexical, liveRoots)) return true;
+    const realLive = realPathWithMissingTail(lexical);
+    return realLive !== undefined && realLive !== lexical && isWithinAnyRoot(realLive.replaceAll("\\", "/"), liveRoots);
+  }
   if (guarded(lexical)) return true;
   // Preserve the symlink-awareness the secret/protected-path checks already
   // have: checking only the lexical path reopens bypasses through symlinked
@@ -212,7 +253,7 @@ function isGuardConfigurationPath(path: string, workspaceRoot?: string): boolean
   return real !== undefined && real !== lexical && guarded(real.replaceAll("\\", "/"));
 }
 
-export function checkBoundaryPolicy(command: string, workspaceRoot?: string, depth = 0): { policy: string; decision: "deny"; reason: string } | undefined {
+export function checkBoundaryPolicy(command: string, workspaceRoot?: string, depth = 0, liveConfigPaths?: readonly string[]): { policy: string; decision: "deny"; reason: string } | undefined {
   if (depth >= 16) return { decision: "deny", policy: "workspace-boundary", reason: "Nested shell depth exceeds deterministic inspection limit." };
   const normalized = decodeShellEscapes(command).replace(/'([^']*)'/g, "$1").replace(/"([^"]*)"/g, "$1").replace(new RegExp(`${TOOL}\\.jso[?]|${TOOL}\\.[?*]`, "gi"), `${TOOL}.json`);
   const toolCommand = new RegExp(`(?:^|\\s)${TOOL}\\s+(?:-[^|;&]*\\s+)*(?:auth|config|permission)\\b`, "i");
@@ -228,7 +269,7 @@ export function checkBoundaryPolicy(command: string, workspaceRoot?: string, dep
     if (/^(?:ba|z|da|k)?sh$/i.test(executable)) {
       const commandFlag = words.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
       if (commandFlag >= 0 && words[commandFlag + 1]) {
-        const nested = checkBoundaryPolicy(words[commandFlag + 1]!, workspaceRoot, depth + 1);
+        const nested = checkBoundaryPolicy(words[commandFlag + 1]!, workspaceRoot, depth + 1, liveConfigPaths);
         if (nested) return nested;
       }
     }
@@ -237,7 +278,7 @@ export function checkBoundaryPolicy(command: string, workspaceRoot?: string, dep
       if (checkSecretPath(source, workspaceRoot)) return { decision: "deny", policy: "secret-source-transfer", reason: `Shell command would copy, move, or link sensitive file '${source}' under a non-secret name.` };
     }
     for (const path of [...targets, ...moveSources]) {
-      if (isGuardConfigurationPath(path, workspaceRoot)) return { decision: "deny", policy: "guard-tamper", reason: "Modifying host or workflow-guard configuration from the agent is not allowed." };
+      if (isGuardConfigurationPath(path, workspaceRoot, liveConfigPaths)) return { decision: "deny", policy: "guard-tamper", reason: "Modifying host or workflow-guard configuration from the agent is not allowed." };
       if (checkProtectedPath(path, workspaceRoot)) return { decision: "deny", policy: "protected-shell-path", reason: `Shell mutation targets protected path '${path}'.` };
       if (workspaceRoot && isPathOutsideWorkspace(path, workspaceRoot)) return { decision: "deny", policy: "workspace-boundary", reason: `Shell mutation targets '${path}' outside workspace '${workspaceRoot}'.` };
     }

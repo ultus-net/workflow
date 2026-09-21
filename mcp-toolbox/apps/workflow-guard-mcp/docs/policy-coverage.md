@@ -28,6 +28,7 @@ This matrix classifies the upstream `opencode-workflow-guard` behavior by where 
 - File claims, stale-write fingerprints, concurrent tool lifecycle, and mutation journaling.
 - Verification/review evidence freshness and executing configured verification or post-edit validation commands.
 - Reading body files, Git diffs, changed paths, project configuration, or other runtime facts needed by deterministic preflight rules.
+- Declaring the LIVE control-plane roots (`liveConfigPaths`: runtime config, auth, the guard's own install/source) so guard-tamper classifies by runtime consumption rather than filename segments. Roots must be absolute; `~`/`$HOME` are expanded, and any unusable root (relative or unresolved) rejects the whole fact set so classification falls back to fail-closed segment matching rather than trusting partial facts.
 
 ## Outside `guard_check`
 
@@ -82,3 +83,19 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
     target's first space (pre-existing truncation class in both the pre-port
     regex and upstream); the comment in shell.ts states the first-word scope
     honestly.
+
+- **2026-09-21 (W087, control-plane tier port step 1):** added the host-supplied
+  `liveConfigPaths` fact. When a host declares its live control-plane roots, the
+  guard-tamper configuration rule classifies by runtime consumption instead of
+  filename segments (memory ec383547 F2/F3): a target resolving under a declared
+  live root is T0 and denied (symlink-aware), while config-shaped paths
+  elsewhere — dotfiles `.config/opencode`, worktrees — are T2 drafts and allowed,
+  removing the live false positive where `cp <dotfiles draft> <repo draft>` was
+  blocked on the destination segment (repro record 290ec890). The default with
+  no fact is unchanged: fail-closed segment matching against the
+  OpenCode/workflow-guard vocabulary, so every upstream adversarial pin
+  (`.opencode/`, `~/.config/opencode/`, `workflow-guard.jsonc`) still holds.
+  This is an intentional EXTENSION beyond upstream, not a port: upstream carries
+  no live-path fact and keeps segment matching. The T1 ask-gate for promotion
+  into live paths and the `opencode.jsonc`=ask nuance from the tier model are NOT
+  yet implemented — this step covers T0-vs-T2 classification only.

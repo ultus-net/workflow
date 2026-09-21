@@ -40,6 +40,7 @@ server.registerTool(
       command: z.string().optional(),
       path: z.string().optional(),
       workspaceRoot: z.string().optional(),
+      liveConfigPaths: z.array(z.string()).optional(),
       content: z.string().optional(),
       patchText: z.string().optional(),
       currentBranch: z.string().optional(),
