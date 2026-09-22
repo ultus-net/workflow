@@ -195,3 +195,33 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   file_write content for tamper payloads (content is secrets-only on both)
   — the #158 payload-mode idea remains UNMERGED upstream work, recorded for
   the operator's awareness, not a parity item.
+
+- **2026-09-22 (W091):** the T1 promotion gate (frontier G3 part 1). Upstream
+  has no counterpart — this is a Workflow-side extension closing the
+  guard-invisibility finding from the agents-research assessment: from an
+  agent seat, `workflow install fleet [--force]` was baseline-allow while
+  the equivalent `cp` into a live root is guard-tamper-denied. The vendored
+  core now recognizes the sanctioned promotion command in command position
+  (post-unwrap: wrappers stripped; argument data like `echo workflow install`
+  is not execution) and returns **ask** with policy `promotion-gate` — the
+  T1 tier's decision (promotion = operator approval, never agent-auto-allow).
+  Documented limitation (the T1 gate covers the sanctioned shape only):
+  indirection (`npx workflow install`), nested shells and eval
+  (`sh -c 'workflow install fleet'` — the recognizer does not recurse,
+  unlike the interactive detector), and case variants (`Workflow install`)
+  are NOT recognized. For those forms the promotion is unguarded AT THE
+  SHELL LANE; the W090 fact-mode T0 deny covers only the agent performing
+  equivalent writes DIRECTLY into declared live roots — the installer's own
+  in-process writes are tool-invisible to the guard (review-round-1 P2:
+  the original backstop attribution overstated this). Ordering: the
+  promotion ask is evaluated after the deny-class policies so a compound
+  whose other segment is a deny reports that deny, not the ask (pinned).
+  Seat behavior is unchanged by design: seats without an operator channel
+  collapse the ask to deny-with-remedy (the fail-closed direction —
+  agent-initiated promotion now requires the operator's keyboard, exactly
+  the T1 property); the ask channel itself (routing the ask to a human
+  surface) is G3 part 2.
+  Pinned red→green (1 new-failing test + command-position and backstop
+  guards green pre-change; the compound-attribution pin red before the
+  reorder); suites 59/0; dist rebuilt (LESS-0010 hazard); repo
+  lint/typecheck exit 0.
