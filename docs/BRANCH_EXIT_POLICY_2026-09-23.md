@@ -88,10 +88,12 @@ branch FROM another branch are caught only on the push lane:
 have already drifted. Any position that widens one must widen both, with
 pins.
 
-The W099 pins froze rows 1–5, 7, 8 and the feature-target member of row 9
+The W099 pins froze rows 1–4, 7, 8 and the feature-target member of row 9
 (`switch -C feat/g5` allow) as-found — precisely and ONLY those (round 2
 verified: rows 16, 17, 18 and the row-6 member have no pins anywhere in the
-suite, so this position adds NEW characterization pins for them). Rows 6,
+suite, so this position adds NEW characterization pins for them; row 5's
+deny rides the same matcher clause as row 4's pin but has no explicit
+sha-form pin — §4.1's watch-item adds one). Rows 6,
 9–15, 22–25, 28 were discovered by THIS iteration's probe and by the
 frontier rounds — the F1 disease's allow side is not cosmetic: it admits
 every protected-branch pointer write that the checkout spelling denies.
@@ -207,9 +209,10 @@ form (row 25) — both recorded in item 6 with queued companion fixes.**
    characterization pins for them rather than "re-asserting" pins that do
    not exist); the cross-branch rows the position FIXES are 22–24, plus 6
    and 9–15 under facts per item 3; the W099 pins stay red-free under this
-   design (they pin rows 1–5, 7, 8, the row-9 feature-target member, and
+   design (they pin rows 1–4, 7, 8, the row-9 feature-target member, and
    the no-facts rows 4/7 forms — all classes whose classification is
-   unchanged).
+   unchanged; row 5's sha form is unpinned and gets the §4.1 watch-item
+   pin).
 5. **Pin discipline**: every changed row gets a red-first pin whose red
    assertion IS the probe-recorded as-found verdict (rows 6, 9–15, 22–24);
    unchanged rows re-asserted; no existing pin weakens (never edit tests to
@@ -249,8 +252,9 @@ form (row 25) — both recorded in item 6 with queued companion fixes.**
 - Pins, by bucket: rows 6, 9–15, 22–24 red-first (the red assertion IS the
   probe-recorded as-found verdict); rows 16–18 + 19–21 NEW characterization
   pins (as-found — no pins exist for them today, round 2 verified); rows
-  1–5, 7, 8, 9-feature-member re-asserted via the EXISTING W099 pins
-  (unchanged); row 25's HEAD form + row 28's residual pinned as-found
+  1–4, 7, 8, 9-feature-member re-asserted via the EXISTING W099 pins
+  (row 5 rides the same clause; its explicit sha-form pin is this bucket's
+  round-3 watch-item); row 25's HEAD form + row 28's residual pinned as-found
   documentation. Round 3 watch-items folded in: one EXPLICIT `git checkout
   <sha>` pin (deny with facts / allow factless — row 5's verdict currently
   rides the clause-level standard and a future token-discriminating matcher
