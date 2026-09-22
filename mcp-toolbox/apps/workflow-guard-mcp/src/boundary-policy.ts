@@ -231,7 +231,7 @@ function normalizeLiveRoots(liveConfigPaths?: readonly string[]): readonly strin
   return roots;
 }
 
-function isGuardConfigurationPath(path: string, workspaceRoot?: string, liveConfigPaths?: readonly string[]): boolean {
+export function isGuardConfigurationPath(path: string, workspaceRoot?: string, liveConfigPaths?: readonly string[]): boolean {
   const guarded = (candidate: string): boolean => {
     if (candidate.toLowerCase().includes(`/.${TOOL}/plans/`)) return false;
     return TOOL_JSON_RE.test(candidate) || /(?:^|\/)workflow-guard\.jsonc?$/i.test(candidate) || TOOL_DIR_RE.test(candidate) || TOOL_CONFIG_RE.test(candidate);

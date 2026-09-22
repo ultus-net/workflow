@@ -157,3 +157,41 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   single-level: `busybox env top`, `busybox timeout top`, `busybox sh -c top`
   stay allowed while their non-busybox forms ask (pre-existing asymmetry,
   now visible).
+
+- **2026-09-22 (W089):** correction to the #158 classification above plus a
+  mainline-parity port. Correction: **#158 (`c377cb9`, policy-port-rules) is
+  NOT merged into `origin/main`** — it exists only on the stale side branch
+  `origin/fix/worktree-fingerprint`, so mainline carries no payload-mode
+  tamper scan and no markdown-only payload exemption; the F2/F3 substance
+  landed on mainline via #159 (live control-plane paths) and part of F1 via
+  #175. The parity target remains mainline, so #158's unmerged semantics are
+  recorded as upstream side-branch material, not a portable backlog item.
+  Port: upstream's edit/write handler classifies targets with
+  `isProtectedPath` — the same guard-config vocabulary (plans-file
+  exemption, realpath awareness, live-root facts) the vendored shell side
+  already carries as `isGuardConfigurationPath` — but the vendored
+  `file_write` path consulted only the system/secret check, so a host
+  enforcing `guard_check` verdicts would let a file write replace the
+  guard's own configuration. W089 wires `isGuardConfigurationPath` into the
+  `file_write` path loop and the interpreter-payload write-target loop
+  (policy `guard-tamper` / `interpreter-guard-tamper`, deny), with upstream
+  precedence: the tamper classification runs BEFORE the system/secret
+  checks, so a config-shaped path keeps its own policy name even where a
+  realpath would also match a system rule (observed live on this ostree
+  host: `/home` is a symlink to `/var/home`, so user-level absolute paths
+  realpath under `/var` — the pre-existing `/var` rule would otherwise mask
+  the classification). Pinned red→green: 3 new tests (direct writes incl.
+  the token-substring and plans-directory edges, live-root fact-mode with
+  symlink-into-live, interpreter smuggled writes incl. tilde and relative
+  forms; benign writes unchanged); suites 55/0, guard typecheck OK, repo
+  lint/typecheck exit 0. Discovered divergences, recorded: (1) the vendored
+  `checkProtectedPath` `/var` rule flags every absolute user-home write on
+  ostree hosts (`/home` → `/var/home` realpath) — a false-positive class
+  mainline does not have (its isProtectedPath has no `/var` rule); queued
+  candidate; (2) mainline checks neither tamper nor secrets on the
+  file_write PATH for reads, and its token-level interpreter scan is
+  secrets-only — the vendored token loop is stricter there (kept as-is,
+  recorded); (3) neither mainline nor the vendored core classifies
+  file_write content for tamper payloads (content is secrets-only on both)
+  — the #158 payload-mode idea remains UNMERGED upstream work, recorded for
+  the operator's awareness, not a parity item.
