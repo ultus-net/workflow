@@ -2,7 +2,7 @@ import { checkShellPolicy } from "./shell-policy.js";
 import { checkProtectedPath, secretIn } from "./path-policy.js";
 import { checkGitPolicy, hasGitMutation, protectedBranchWriteReason } from "./git-policy.js";
 import { checkInterpreterPolicy } from "./interpreter-policy.js";
-import { checkBoundaryPolicy, isPathOutsideWorkspace, shellHasFileMutation } from "./boundary-policy.js";
+import { checkBoundaryPolicy, isGuardConfigurationPath, isPathOutsideWorkspace, shellHasFileMutation } from "./boundary-policy.js";
 import { mcpMutationTarget } from "./mcp-policy.js";
 import { checkPrCreatePreflight } from "./pr-policy.js";
 import { redirectGuidance } from "./redirect.js";
@@ -80,7 +80,7 @@ function evaluatePolicy(input: GuardCheckInput): GuardDecision {
     if (boundary) return boundary;
   }
   if ((input.action === "shell" || input.action === "git") && input.command?.trim()) {
-    const interpreter = checkInterpreterPolicy(input.command, input.workspaceRoot);
+    const interpreter = checkInterpreterPolicy(input.command, input.workspaceRoot, input.liveConfigPaths);
     if (interpreter) return interpreter;
   }
   if ((input.action === "shell" || input.action === "git") && input.command?.trim()) {
@@ -109,6 +109,14 @@ function evaluatePolicy(input: GuardCheckInput): GuardDecision {
   const paths = [input.path?.trim() ?? "", ...(input.action === "file_write" && input.patchText ? extractPatchPaths(input.patchText) : [])].filter(Boolean);
 
   for (const path of paths) {
+    // Upstream precedence (edit/write handler): the guard-tamper
+    // classification runs BEFORE the system/secret checks, so a
+    // config-shaped path is reported as guard-tamper even where a realpath
+    // would also match a system rule (e.g. ostree hosts where /home
+    // resolves under /var).
+    if (input.action === "file_write" && isGuardConfigurationPath(path, input.workspaceRoot, input.liveConfigPaths)) {
+      return { decision: "deny", policy: "guard-tamper", reason: "Writing host or workflow-guard configuration from the agent is not allowed." };
+    }
     const protectedReason = checkProtectedPath(path, input.workspaceRoot);
     if (protectedReason) {
       return {
