@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { decodeShellEscapes, dynamicShellSyntaxIn, executableIn, shellWords, splitShellSegments, unwrapShellWords } from "./shell.js";
 
 const W_DELETE = ["del", "ete"].join("");
@@ -113,9 +114,23 @@ function interactiveReason(command: string, depth = 0): string | undefined {
     const unwrapped = unwrapShellWords(segment);
     const executable = executableIn(segment);
     if (words.includes("sudo")) return "sudo may wait for an interactive password prompt";
-    if (/^(?:nano|vim?|emacs|pico|joe|micro|less|more|most|htop|btop|atop|glances)$/i.test(executable)) return "interactive terminal command can hang an agent session";
-    if (executable === "busybox" && /^(?:less|more)$/i.test(unwrapped[1] ?? "")) return "terminal pager can hang an agent session";
-    if (executable === "top" && !words.some((word) => /^(?:--batch|-[A-Za-z]*b[A-Za-z]*)$/.test(word))) return "interactive process monitor can hang an agent session";
+    // Ported from upstream opencode-workflow-guard ea3cab7 (PR #165, W088):
+    // interactive detection is executable-position based — the unwrap-first
+    // executableIn already provides that — and the busybox applet form
+    // (`busybox top`) names the same command. The candidate is lowercased so
+    // matching is case-insensitive like the class regex, while a monitor name
+    // as argument data (`echo top`, `az ... --name top`) stays non-execution.
+    const busyboxApplet = /^busybox$/i.test(executable) ? unwrapped[1] : undefined;
+    const candidate = (busyboxApplet !== undefined ? basename(busyboxApplet ?? "") : executable).toLowerCase();
+    if (/^(?:nano|vim?|emacs|pico|joe|micro|less|more|most|htop|btop|atop|glances)$/i.test(candidate)) return "interactive terminal command can hang an agent session";
+    if (candidate === "top") {
+      // The batch-mode exemption is the monitor's own flag, not a wrapper's:
+      // a batch-shaped flag on a wrapper (the degenerate `env -b top` /
+      // `timeout -b top` shapes; `sudo` never reaches this check — its rule
+      // returns first) no longer suppresses the monitor rule.
+      const ownArgs = busyboxApplet !== undefined ? unwrapped.slice(2) : unwrapped.slice(1);
+      if (!ownArgs.some((word) => /^(?:--batch|-[A-Za-z]*b[A-Za-z]*)$/.test(word))) return "interactive process monitor can hang an agent session";
+    }
     if (/^(?:ba|z|da|k)?sh$/i.test(executable)) {
       const commandFlag = unwrapped.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
       if (commandFlag >= 0 && unwrapped[commandFlag + 1] && interactiveReason(unwrapped[commandFlag + 1]!, depth + 1)) return "nested shell command can open an interactive terminal program";

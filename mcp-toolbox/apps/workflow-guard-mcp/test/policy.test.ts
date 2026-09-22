@@ -508,3 +508,52 @@ test("W087: tilde-declared live roots expand before matching", () => {
   assert.equal(result.decision, "deny");
   assert.equal(result.policy, "guard-tamper");
 });
+
+// ---- W088: upstream opencode-workflow-guard parity drift (2026-09-22, ea3cab7 / PR #165) ----
+// Upstream made monitor detection executable-position-based; the vendored
+// rewrite was already there (unwrap-first executableIn), but three upstream-
+// covered classes still slipped through: busybox applet forms, case variants,
+// and batch flags belonging to a wrapper instead of the monitor.
+
+test("W088: busybox applet forms of interactive commands are detected", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "busybox top" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "busybox htop" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "busybox vi build.log" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "busybox nano notes.md" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "BusyBox less README.md" }).decision, "ask");
+});
+
+test("W088: busybox batch mode and benign busybox usage stay allowed", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "busybox top -b -n 1" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "busybox echo top" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "busybox grep -c top access.log" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "busybox ls top-level-dir" }).decision, "allow");
+});
+
+test("W088: monitor names are case-insensitive in executable position only", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "TOP" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "Top -b" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "echo Top" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "az keyvault secret show --vault-name v --name top" }).decision, "allow");
+});
+
+test("W088: the batch-mode exemption is the monitor's own flag, not a wrapper's", () => {
+  // The scoping delta's real exemplars: a wrapper's batch-shaped flag used to
+  // bleed into the raw-word check and suppress the monitor rule entirely.
+  // `env -b` and `timeout -b` are not valid wrapper flags, so these were
+  // allowed before the port and are monitor asks now (red→green verified via
+  // stash choreography). `sudo -b top` is NOT an exemplar: the sudo rule
+  // returns before the monitor check, so its ask decision never depended on
+  // the scoping.
+  assert.equal(checkPolicy({ action: "shell", command: "env -b top" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "timeout -b top" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "sudo -b top" }).decision, "ask");
+  // A real batch flag on the monitor itself stays allowed.
+  assert.equal(checkPolicy({ action: "shell", command: "top --batch" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "cat x | top -b" }).decision, "allow");
+  // Wrappers and indirection stay detected (regression guards for the port).
+  assert.equal(checkPolicy({ action: "shell", command: "timeout 5 top" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "cat file | top" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c top" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "eval htop" }).decision, "ask");
+});
