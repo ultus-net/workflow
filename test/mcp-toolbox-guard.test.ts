@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createCredentialBroker, InMemorySecretStore } from "../src/integrations/credentials.js";
 import { guardInputFromToolCall, guardPolicyEvidence } from "../src/integrations/mcp-toolbox-guard.js";
-import { createWorkflowGuardMcpProvider } from "../src/integrations/mcp-toolbox-guard.js";
+import { createGuardFactsResolver, createWorkflowGuardMcpProvider } from "../src/integrations/mcp-toolbox-guard.js";
 
 const serverPath = resolve(process.cwd(), "mcp-toolbox", "apps", "workflow-guard-mcp", "dist", "server.js");
 
@@ -114,4 +114,161 @@ test("guardInputFromToolCall maps every host family to guard actions", () => {
   assert.equal(guardInputFromToolCall("search_codebase", { query: "x" }), undefined);
   // workspaceRoot scoping applies to every mapped action
   assert.deepEqual(guardInputFromToolCall("write", { filePath: "a.ts", content: "x" }, "/repo"), { action: "file_write", path: "a.ts", content: "x", workspaceRoot: "/repo" });
+});
+
+// ── W090: the seat supplies workspace-derivable guard facts (frontier G2) ───
+// The frontier assessment's single largest correction: the hub feeds the
+// vendored core no facts, so protected-branch discipline is dead in
+// hub-seated sessions and the W087 fact mode never engages. The provider
+// enriches guarded calls with workspace-derivable facts; caller-supplied
+// facts always win; a missing workspace enriches nothing.
+
+function initTempRepo(): string {
+  const repo = mkdtempSync(join(tmpdir(), "workflow-w090-repo-"));
+  execFileSync("git", ["init", "-b", "main"], { cwd: repo, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@test.local"], { cwd: repo, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Test Runner"], { cwd: repo, stdio: "ignore" });
+  writeFileSync(join(repo, "seed.txt"), "base\n");
+  execFileSync("git", ["add", "seed.txt"], { cwd: repo, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "base"], { cwd: repo, stdio: "ignore" });
+  return repo;
+}
+
+test("W090: resolveGuardFacts discovers the branch and the live runtime-config root", async () => {
+  const repo = initTempRepo();
+  const home = mkdtempSync(join(tmpdir(), "workflow-w090-home-"));
+  mkdirSync(join(home, ".config", "opencode"), { recursive: true });
+
+  const facts = await createGuardFactsResolver({ homeDir: home })(repo);
+  assert.equal(facts.currentBranch, "main");
+  assert.deepEqual(facts.protectedBranches, ["main", "master"]);
+  assert.deepEqual(facts.liveConfigPaths, [join(home, ".config", "opencode")]);
+});
+
+test("W090: facts fail open — git failure and an absent runtime-config root omit, never guess", async () => {
+  const plain = mkdtempSync(join(tmpdir(), "workflow-w090-plain-"));
+  const home = mkdtempSync(join(tmpdir(), "workflow-w090-barehome-"));
+  const resolver = createGuardFactsResolver({
+    homeDir: home,
+    runGit: async () => {
+      throw new Error("git unavailable");
+    },
+  });
+  const facts = await resolver(plain);
+  assert.equal(facts.currentBranch, undefined);
+  assert.deepEqual(facts.protectedBranches, ["main", "master"]);
+  assert.equal(facts.liveConfigPaths, undefined);
+  // Detached HEAD (empty `git branch --show-current` output) omits too.
+  const detached = await createGuardFactsResolver({ homeDir: home, runGit: async () => "" })(plain);
+  assert.equal(detached.currentBranch, undefined);
+});
+
+test("W090: hub-seated writes on a protected branch are denied; feature branches and caller-supplied facts win", async (t) => {
+  ensureBuilt();
+  const repo = initTempRepo();
+  const home = mkdtempSync(join(tmpdir(), "workflow-w090-home2-"));
+  const provider = await createWorkflowGuardMcpProvider({
+    serverPath,
+    facts: createGuardFactsResolver({ homeDir: home }),
+  });
+  t.after(() => provider.close());
+
+  const onMain = await provider.guardCheck({ action: "file_write", path: "src/a.ts", workspaceRoot: repo, content: "x" });
+  assert.equal(onMain.decision, "deny");
+  assert.equal(onMain.policy, "protected-branch-write");
+
+  execFileSync("git", ["switch", "-c", "feat/branch-facts"], { cwd: repo, stdio: "ignore" });
+  const onFeature = await provider.guardCheck({ action: "file_write", path: "src/a.ts", workspaceRoot: repo, content: "x" });
+  assert.equal(onFeature.decision, "allow");
+
+  // Caller-supplied facts win over discovery — the discriminating shape: the
+  // repo sits on a feature branch (discovery would allow), but the caller
+  // declares the protected branch, so the deny must come from the CALLER's
+  // fact.
+  const callerSupplied = await provider.guardCheck({
+    action: "file_write",
+    path: "src/a.ts",
+    workspaceRoot: repo,
+    content: "x",
+    currentBranch: "main",
+  });
+  assert.equal(callerSupplied.decision, "deny");
+  assert.equal(callerSupplied.policy, "protected-branch-write");
+});
+
+test("W090: the live-root fact engages T0 on the write lane through the seat", async (t) => {
+  ensureBuilt();
+  const repo = mkdtempSync(join(tmpdir(), "workflow-w090-t0-"));
+  const bareHome = mkdtempSync(join(tmpdir(), "workflow-w090-t0bare-"));
+  const withFacts = await createWorkflowGuardMcpProvider({
+    serverPath,
+    facts: async () => ({ liveConfigPaths: [repo] }),
+  });
+  // Deterministic fact-less baseline: a bare home omits liveConfigPaths, so
+  // this provider runs legacy segment mode regardless of the host layout.
+  const withoutFacts = await createWorkflowGuardMcpProvider({
+    serverPath,
+    facts: createGuardFactsResolver({ homeDir: bareHome }),
+  });
+  t.after(() => withFacts.close());
+  t.after(() => withoutFacts.close());
+
+  // A write under the declared live root is T0 with facts…
+  const t0 = await withFacts.guardCheck({ action: "shell", command: `touch ${join(repo, "scratch.txt")}`, workspaceRoot: repo });
+  assert.equal(t0.decision, "deny");
+  assert.equal(t0.policy, "guard-tamper");
+  // …and plain baseline-allow without them (the pre-W090 hub behavior).
+  const legacy = await withoutFacts.guardCheck({ action: "shell", command: `touch ${join(repo, "scratch.txt")}`, workspaceRoot: repo });
+  assert.equal(legacy.decision, "allow");
+});
+
+test("W090: enrichment is strictly input-workspace-driven — no facts for workspaceRoot-less calls", async (t) => {
+  ensureBuilt();
+  const repo = initTempRepo();
+  let resolverCalls = 0;
+  const provider = await createWorkflowGuardMcpProvider({
+    serverPath,
+    workspace: repo,
+    facts: async (workspaceRoot) => {
+      resolverCalls += 1;
+      return createGuardFactsResolver({ homeDir: mkdtempSync(join(tmpdir(), "workflow-w090-spyhome-")) })(workspaceRoot);
+    },
+  });
+  t.after(() => provider.close());
+  // The hub shape (provider carries `workspace`), but the call carries no
+  // workspaceRoot (the containment seat's shape): enriching it from the
+  // provider workspace would bind branch facts to the hub root while
+  // executing in a per-call cwd — the removed vector. The resolver must not
+  // be consulted at all.
+  const decision = await provider.guardCheck({ action: "shell", command: "echo hi" });
+  assert.equal(decision.decision, "allow");
+  assert.equal(resolverCalls, 0);
+});
+
+test("W090: with a live runtime config present, project drafts classify as T2 (the designed flip)", async (t) => {
+  ensureBuilt();
+  const repo = mkdtempSync(join(tmpdir(), "workflow-w090-t2-"));
+  const homeWithRoot = mkdtempSync(join(tmpdir(), "workflow-w090-t2home-"));
+  mkdirSync(join(homeWithRoot, ".config", "opencode"), { recursive: true });
+  const homeWithoutRoot = mkdtempSync(join(tmpdir(), "workflow-w090-t2bare-"));
+
+  const withRoot = await createWorkflowGuardMcpProvider({
+    serverPath,
+    facts: createGuardFactsResolver({ homeDir: homeWithRoot }),
+  });
+  const withoutRoot = await createWorkflowGuardMcpProvider({
+    serverPath,
+    facts: createGuardFactsResolver({ homeDir: homeWithoutRoot }),
+  });
+  t.after(() => withRoot.close());
+  t.after(() => withoutRoot.close());
+
+  const tool = ["open", "code"].join("");
+  // Legacy segment mode (no usable live-root fact): the draft write is tamper.
+  const without = await withoutRoot.guardCheck({ action: "file_write", path: `.${tool}/agents/x.md`, workspaceRoot: repo, content: "x" });
+  assert.equal(without.decision, "deny");
+  assert.equal(without.policy, "guard-tamper");
+  // Fact mode (a usable runtime-config root declared): the same draft is T2.
+  const withFacts = await withRoot.guardCheck({ action: "file_write", path: `.${tool}/agents/x.md`, workspaceRoot: repo, content: "x" });
+  assert.equal(withFacts.decision, "allow");
 });

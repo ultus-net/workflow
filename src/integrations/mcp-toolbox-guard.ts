@@ -1,6 +1,9 @@
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -21,6 +24,13 @@ export interface GuardCheckInput {
   command?: string;
   path?: string;
   workspaceRoot?: string;
+  /**
+   * Host-supplied absolute paths of the LIVE control plane (W087 tier fact):
+   * runtime config, auth, the guard's own install. When present, the vendored
+   * guard classifies guard-tamper by runtime consumption instead of filename
+   * segments.
+   */
+  liveConfigPaths?: string[];
   content?: string;
   patchText?: string;
   currentBranch?: string;
@@ -53,6 +63,8 @@ export async function createWorkflowGuardMcpProvider(options: {
   credentialBroker?: CredentialBroker;
   credentialBindings?: readonly McpCredentialBinding[];
   workspace?: string;
+  /** W090: facts supplier enriching workspace-carrying guarded calls. Defaults to `createGuardFactsResolver()`. */
+  facts?: GuardFactsResolver;
 }): Promise<WorkflowGuardProvider> {
   const env = options.credentialBindings === undefined || options.credentialBindings.length === 0
     ? undefined
@@ -68,6 +80,7 @@ export async function createWorkflowGuardMcpProvider(options: {
     stderr: "pipe",
   });
   const client = new Client({ name: "workflow", version: "0.0.0" });
+  const factsResolver = options.facts ?? createGuardFactsResolver();
   await client.connect(transport);
 
   const tools = await client.listTools();
@@ -86,7 +99,23 @@ export async function createWorkflowGuardMcpProvider(options: {
       return result.structuredContent ?? result.content;
     },
     async guardCheck(input: GuardCheckInput): Promise<GuardDecision> {
-      const result = await client.callTool({ name: "guard_check", arguments: input as unknown as Record<string, unknown> });
+      // Enrichment is strictly input-workspace-driven: the four
+      // workspace-carrying seats set `workspaceRoot`, so facts describe the
+      // workspace the call is actually about. Calls without a workspace (the
+      // containment seat — its sandbox is the boundary) enrich nothing; a
+      // `options.workspace` fallback here would bind branch facts to the hub
+      // root while executing in a per-call cwd — a false deny/allow vector.
+      let checked = input;
+      if (input.workspaceRoot !== undefined && (input.action === "shell" || input.action === "git" || input.action === "file_write") && (input.currentBranch === undefined || input.protectedBranches === undefined || input.liveConfigPaths === undefined)) {
+        const facts = await factsResolver(input.workspaceRoot);
+        checked = {
+          ...input,
+          ...(input.currentBranch === undefined && facts.currentBranch !== undefined ? { currentBranch: facts.currentBranch } : {}),
+          ...(input.protectedBranches === undefined && facts.protectedBranches !== undefined ? { protectedBranches: [...facts.protectedBranches] } : {}),
+          ...(input.liveConfigPaths === undefined && facts.liveConfigPaths !== undefined ? { liveConfigPaths: [...facts.liveConfigPaths] } : {}),
+        };
+      }
+      const result = await client.callTool({ name: "guard_check", arguments: checked as unknown as Record<string, unknown> });
       const structured = result.structuredContent;
       if (typeof structured === "object" && structured !== null) {
         const value = structured as Record<string, unknown>;
@@ -145,6 +174,66 @@ export function guardPolicyEvidence(decision: GuardDecision, mutationEpoch: numb
     },
     mutationEpoch,
   );
+}
+
+// W090 (frontier G2, part 1): the hub seat supplies workspace-derivable facts
+// to the vendored guard. `guardInputFromToolCall` is pure, so the facts live at
+// the provider boundary: every guarded shell/git/file_write call that carries a
+// workspace is enriched with the current branch, the protected-branch default,
+// and the live runtime-config root. Caller-supplied facts always win;
+// undiscoverable facts are omitted (fail-open to the fact-less behavior, never
+// guessed). `trustedRole` is deliberately NOT supplied here — seat-level role
+// semantics are a separate design decision (queued).
+
+export interface GuardFacts {
+  currentBranch?: string;
+  protectedBranches?: readonly string[];
+  liveConfigPaths?: readonly string[];
+}
+
+export type GuardFactsResolver = (workspaceRoot: string) => Promise<GuardFacts>;
+
+/**
+ * Hub default, mirroring the vendored plugin's default project config; a
+ * configured source is follow-up work. Today the fact is inert
+ * future-proofing — the vendored git-policy hard-codes main/master when the
+ * fact is absent — but supplying it keeps the seat contract ready for a
+ * configured source.
+ */
+export const DEFAULT_PROTECTED_BRANCHES: readonly string[] = ["main", "master"];
+
+export interface GuardFactsResolverOptions {
+  /** HOME used to derive the runtime-config root; tests inject a temp dir. */
+  homeDir?: string;
+  /** Git runner seam; tests inject failures or stubs. Default: read-only `git` exec. */
+  runGit?: (args: readonly string[], cwd: string) => Promise<string>;
+}
+
+export function createGuardFactsResolver(options: GuardFactsResolverOptions = {}): GuardFactsResolver {
+  const home = options.homeDir ?? homedir();
+  const runGit = options.runGit ?? (async (args: readonly string[], cwd: string): Promise<string> => {
+    const exec = promisify(execFile);
+    const { stdout } = await exec("git", [...args], { cwd, encoding: "utf8" });
+    return stdout;
+  });
+  const runtimeConfigRoot = join(home, ".config", "opencode");
+  return async (workspaceRoot: string): Promise<GuardFacts> => {
+    let currentBranch: string | undefined;
+    try {
+      currentBranch = (await runGit(["branch", "--show-current"], workspaceRoot)).trim() || undefined;
+    } catch {
+      currentBranch = undefined;
+    }
+    // A nonexistent root is not a live root: declaring one would claim
+    // consumption that does not exist. Existing-and-absolute is usable, so the
+    // vendored normalizeLiveRoots accepts the set.
+    const liveConfigPaths = existsSync(runtimeConfigRoot) ? [runtimeConfigRoot] : undefined;
+    return {
+      ...(currentBranch !== undefined ? { currentBranch } : {}),
+      protectedBranches: DEFAULT_PROTECTED_BRANCHES,
+      ...(liveConfigPaths !== undefined ? { liveConfigPaths } : {}),
+    };
+  };
 }
 
 // Plan Task G2: one shared tool-call → guard-input mapping, used by the

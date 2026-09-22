@@ -262,3 +262,37 @@ session; §1–§8 above remain pinned to `671625c` byte state)
 - G2–G5 remain open exactly as listed in §6; G5 (branch-exit consistency
   pins) was consciously not folded into W089's guard test touch — one
   change per iteration.
+
+## 10. Status addendum 2 (2026-09-22, after W090 landed — appended by the
+W089/W090 session; §1–§9 above keep their byte-state pins)
+
+- **G2 part 1 is CLOSED** by W090 (`feat/w090-guard-fact-supply`): the
+  provider's `guardCheck` enriches every guarded shell/git/file_write call
+  carrying a workspace with `currentBranch` (read-only git discovery,
+  fail-open to omitted), `protectedBranches` (hub default `["main",
+  "master"]` mirroring the vendored plugin's default project config), and
+  `liveConfigPaths` (the runtime-config root when it exists). Caller-
+  supplied facts win; no workspace → no enrichment. Effect: protected-
+  branch discipline engages in hub-seated sessions (on-main writes deny
+  `protected-branch-write`), and the W087 fact mode engages for the first
+  time in hub-seated sessions (T0 on declared roots; the designed T2 flip
+  for project drafts is pinned as such). The seat contract now carries
+  `liveConfigPaths` at all.
+- **G2 part 2 remains open**: `trustedRole` is deliberately not supplied —
+  seat-level role semantics need their own design. The containment seat's
+  workspaceRoot-less calls enrich nothing — enrichment is strictly
+  input-workspace-driven (the review's round-1 P2: an `options.workspace`
+  fallback would have bound branch facts to the hub root while executing in
+  a per-call cwd — removed); its sandbox is the boundary, and passing
+  workspaceRoot there is queued with care (it would additionally activate
+  workspace-boundary denies for legitimate HOME-cache writes).
+- **Residual recorded (review P2)**: in fact mode, workspace-internal
+  guard-config files (`workflow-guard.jsonc`, the vendored guard's own
+  source/dist when the hub runs on this repo) flip deny→allow because only
+  the runtime-config root is declared — the designed T2 semantic; the
+  boundary is promotion (T1 ask-gate, G3), and this residual must be
+  re-classified before any runtime consumes workspace-level guard config.
+- En-route finding: the vendored guard `dist/` was stale (built pre-W089),
+  so hub-side tests ran an old core — the file_write tamper lane was
+  absent from the artifact. Rebuilt for W090; dist-freshness pinning is
+  queued.
