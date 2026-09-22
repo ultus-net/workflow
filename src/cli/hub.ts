@@ -350,8 +350,9 @@ console.log(`Discovery file: ${hub.discoveryPath}`);
 
 await new Promise<void>((resolveShutdown) => {
   // Idempotent teardown (launcher-loop LESS-0001): a process-group signal —
-  // a terminal Ctrl+C or systemd KillMode=control-group stop — reaches this
-  // child directly AND again via the launcher's forward. `process.once`
+  // a terminal Ctrl+C, a terminal close/SSH hangup as SIGHUP, or a systemd
+  // KillMode=control-group stop — reaches this child directly AND again via
+  // the launcher's forward. `process.once`
   // restores the default disposition after the first delivery, so the second
   // signal hard-kills the process mid-close, skipping the discovery/lock
   // unlink below and orphaning the guard child. A guarded `on` makes repeat
@@ -364,6 +365,7 @@ await new Promise<void>((resolveShutdown) => {
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+  process.on("SIGHUP", shutdown);
 });
 await hub.close();
 await guard.close();

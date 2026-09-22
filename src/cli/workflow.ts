@@ -43,6 +43,7 @@ function spawnSurface(name: "opencode-attach" | "hub", args: readonly string[], 
   // the attach launcher kills its detached client group (opencode-attach.ts).
   process.on("SIGINT", () => child.kill("SIGINT"));
   process.on("SIGTERM", () => child.kill("SIGTERM"));
+  process.on("SIGHUP", () => child.kill("SIGHUP"));
 }
 
 const initial = parseLauncherArgs(process.argv.slice(2));
