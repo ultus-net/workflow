@@ -385,3 +385,33 @@ readiness-held spawn lock, and post-violation budget abort behavior remain
 covered. The final review's P3-4 (serial ask-me SSE holds) and P3-7 (forwarded
 body cap/alternate reply routes) remain explicitly accepted residuals pending
 live probe evidence.
+## Addendum (2026-09-22, W092 — guard asks join the operator hold)
+
+The M3 ask-me hold set now includes **guard asks**: when a guard provider is
+wired, a guard `ask` verdict (e.g. the W091 `promotion-gate`) maps to a held
+allow that the operator answers through the existing gateway-intercepted
+reply path — approve delivers once, reject/timeout fail closed (tighten,
+never loosen). In `auto-resolve` mode a guard ask fails closed to deny with
+the ask provenance (no operator is attached to answer). Scope honesty: the
+authority path is implemented and pinned, but the stock daemon constructor
+(`src/cli/opencode-server.ts`) does not yet pass a guard provider — daemon
+guard-wiring is the top queued item. Residual note: a held guard ask blocks
+the SSE loop up to the hold window (the pre-existing serial-hold residual
+widens — delayed alarms, not false ones).
+
+## Addendum (2026-09-22, W094 — daemon guard-wiring landed; supersedes the
+scope-honesty sentence above)
+
+The stock daemon now **does** pass a guard provider:
+`src/cli/opencode-server.ts` composes the vendored guard fail-closed
+(`createOpencodeServerGuard(workspace)` — a guard startup failure rejects
+`main`, so the daemon refuses to run guard-less, mirroring the hub's
+"no hub, no mutations" posture), passes it to the authority, and reaps it
+explicitly on every failure path (runtime creation, enforced-ruleset
+refusal, gateway failure, uncaughtException) and at shutdown. The composed
+guard is pinned through the REAL vendored server: `workflow install fleet`
+asks `promotion-gate` (the W091 rule + W090 enrichment live in the daemon's
+guard). Credential note: the daemon's guard is composed without the hub's
+credential broker — inert today (the vendored guard consumes only HOME), and
+if `mcp:workflow-guard` credentials are ever configured the daemon must
+compose the broker like the hub does.

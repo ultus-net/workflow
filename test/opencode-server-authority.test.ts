@@ -16,6 +16,7 @@ import {
   type OpencodeAuthorityDecision,
 } from "../src/integrations/opencode-server-authority.js";
 import type { RemoteEngine, RemoteEngineEvent, RemoteEnginePermissionRequest } from "../src/integrations/remote-acp/engine.js";
+import type { WorkflowGuardProvider } from "../src/integrations/mcp-toolbox-guard.js";
 
 /**
  * W071 M2 — the OpenCode server authority broker.
@@ -517,4 +518,113 @@ test("W071 broker: v2 execute/websearch/question tools are capability-mapped (re
   // Agent-reported names outside the registry stay unmapped; the adapter's
   // kind-based classification (conservative) applies instead.
   assert.equal(opencodePermissionCapability("todowrite"), undefined);
+});
+
+// ── W092 (frontier G3 part 2): the guard's ask joins the operator hold ──────
+// A guard `ask` is a "human decides" verdict, not a deny. In ask-me mode it
+// joins the existing operator hold (approve answers the ask; reject/timeout
+// fail closed); in auto-resolve mode it stays a documented deny (no operator
+// is attached to answer). The W091 promotion gate is the named producer.
+
+function fakeGuard(decision: { decision: "allow" | "deny" | "ask"; policy: string; reason: string }): WorkflowGuardProvider {
+  return {
+    capabilities: async () => [{ name: "guard_check" }],
+    invoke: async () => decision,
+    guardCheck: async () => decision,
+    guardStatus: async () => ({ mode: "policy-advisor", enforcement: "host-dependent", executesActions: false }),
+    close: async () => undefined,
+  };
+}
+
+test("W092 broker (ask-me): a guard ask joins the operator hold and approve answers it", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-w092-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const fake = fakeEngine([permission("r1", "bash", {})]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    mode: "ask-me",
+    guard: fakeGuard({ decision: "ask", policy: "promotion-gate", reason: "operator approval required (T1 promotion)" }),
+  });
+  const running = authority.start();
+  await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  assert.equal(authority.pendingOperatorReplies, 1, "the guard ask must be held for the operator");
+  await authority.handleOperatorReply({ sessionId: "s1", requestId: "r1", reply: "once" });
+  await running;
+  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "once" }]);
+  assert.match(authority.decisions()[0]?.reason ?? "", /guard ask 'promotion-gate'/);
+});
+
+test("W092 broker (ask-me): the operator can reject a guard ask (tighten)", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-w092-reject-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const fake = fakeEngine([permission("r1", "bash", {})]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    mode: "ask-me",
+    guard: fakeGuard({ decision: "ask", policy: "promotion-gate", reason: "operator approval required (T1 promotion)" }),
+  });
+  const running = authority.start();
+  await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  assert.equal(authority.pendingOperatorReplies, 1, "the guard ask must be held for the operator");
+  await authority.handleOperatorReply({ sessionId: "s1", requestId: "r1", reply: "reject" });
+  await running;
+  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+});
+
+test("W092 broker (ask-me): an unanswered guard ask times out to reject (fail closed)", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-w092-timeout-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const fake = fakeEngine([permission("r1", "bash", {})]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    mode: "ask-me",
+    operatorReplyTimeoutMs: 20,
+    guard: fakeGuard({ decision: "ask", policy: "promotion-gate", reason: "operator approval required (T1 promotion)" }),
+  });
+  const running = authority.start();
+  await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+  assert.equal(authority.pendingOperatorReplies, 1, "the guard ask must be held before the timeout");
+  await new Promise((resolveWait) => setTimeout(resolveWait, 60));
+  await running;
+  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+});
+
+test("W092 broker (auto-resolve): a guard ask fails closed to deny (no operator attached)", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-w092-auto-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const fake = fakeEngine([permission("r1", "bash", {})]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    guard: fakeGuard({ decision: "ask", policy: "promotion-gate", reason: "operator approval required (T1 promotion)" }),
+  });
+  await authority.start();
+  assert.equal(authority.pendingOperatorReplies, 0);
+  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  assert.equal(authority.decisions()[0]?.decision, "deny");
+  assert.match(authority.decisions()[0]?.reason ?? "", /auto-resolve/);
+});
+
+test("W092 broker: a guard deny is answered immediately, never held", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-w092-deny-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const fake = fakeEngine([permission("r1", "bash", {})]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    mode: "ask-me",
+    guard: fakeGuard({ decision: "deny", policy: "guard-tamper", reason: "modifying live configuration is not allowed" }),
+  });
+  await authority.start();
+  assert.equal(authority.pendingOperatorReplies, 0);
+  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  assert.match(authority.decisions()[0]?.reason ?? "", /guard-tamper/);
 });

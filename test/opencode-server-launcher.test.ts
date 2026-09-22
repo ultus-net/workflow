@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { chmodSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { test } from "node:test";
+
+import { createOpencodeServerGuard } from "../src/cli/opencode-server.js";
 
 import {
   ensureDiscovery,
@@ -167,4 +170,38 @@ test("W071 daemon: env mode parsers accept defaults and reject malformed values 
   assert.equal(enforcementFromEnv({}), "advisory");
   assert.equal(enforcementFromEnv({ WORKFLOW_OPENCODE_ENFORCEMENT: "enforced" }), "enforced");
   assert.throws(() => enforcementFromEnv({ WORKFLOW_OPENCODE_ENFORCEMENT: "on" }), /must be "advisory" or "enforced"/);
+});
+// ── W094: the daemon's guard composition is the production ask-hold path ───
+// The daemon composes the vendored guard fail-closed (hub precedent: a guard
+// that cannot start refuses the surface). Through the REAL vendored server,
+// the composed guard carries the W091 promotion rule and the W090 enrichment.
+
+function ensureGuardBuilt(): void {
+  const guardServerPath = resolve(process.cwd(), "mcp-toolbox", "apps", "workflow-guard-mcp", "dist", "server.js");
+  if (existsSync(guardServerPath)) return;
+  execFileSync("pnpm", ["--dir", "mcp-toolbox", "--filter", "workflow-guard-mcp", "run", "build"], { stdio: "inherit" });
+}
+
+test("W094: the daemon's guard composition carries the production promotion ask", async (t) => {
+  ensureGuardBuilt();
+  const workspace = mkdtempSync(join(tmpdir(), "wf-w094-guard-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const guard = await createOpencodeServerGuard(workspace);
+  t.after(() => guard.close());
+  const promotion = await guard.guardCheck({ action: "shell", command: "workflow install fleet", workspaceRoot: workspace });
+  assert.equal(promotion.decision, "ask");
+  assert.equal(promotion.policy, "promotion-gate");
+});
+
+test("W094: main() actually wires the guard into the authority (live-artifact anti-drift pin)", () => {
+  // The composition pin above proves the helper works; THIS pin proves main()
+  // passes it to the authority — the exact regression where the daemon runs
+  // silently guard-less (the W092 lesson: implemented ≠ wired). A
+  // source-artifact pin, the LESS-0004 precedent: the production composition
+  // has no other automated verifier.
+  const daemonSource = readFileSync(resolve(process.cwd(), "src", "cli", "opencode-server.ts"), "utf8");
+  assert.match(daemonSource, /const guard = await createOpencodeServerGuard\(workspace\);/, "main must compose the guard");
+  assert.match(daemonSource, /createOpencodeServerAuthority\(\{[^}]*\n\s*guard,\n/, "main must pass the guard into the authority options");
+  assert.match(daemonSource, /await guard\.close\(\);/, "the guard must be reaped on teardown");
+  assert.match(daemonSource, /await guard\.close\(\);\s*\n\s*throw error;/, "failure paths must reap the guard before rethrowing");
 });

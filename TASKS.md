@@ -2111,3 +2111,209 @@ approval), never agent-auto-allow.
       G2 part 2 (`trustedRole`), G5 branch-exit pins, G4 matched-surface
       field, ostree `/var`-home fix, dist-freshness pin, `npm pack`
       verifier debt (human-gated).
+
+### W092 - The ask channel part 1: guard asks join the operator hold on the primary seat (frontier G3 part 2) (2026-09-22)
+
+**Objective:** close the ask-collapse half of frontier G3 for the primary
+transport: the opencode-server authority's `ask-me` mode already holds
+policy-allowed asks for the operator (M3: parked holds, fail-closed timeout,
+gateway-intercepted operator replies reconciled tighten-never-loosen) — but
+the **guard's** `ask` short-circuited to deny before the hold could apply.
+The change: in `ask-me` mode a guard `ask` joins the operator hold (mapped
+to a held allow the operator answers — approve = the T1 ask answered,
+reject/timeout = fail-closed tighten); in `auto-resolve` mode it stays a
+documented deny (no operator is attached to answer). **Scope honesty
+(review-round-1 P2): the authority path is complete and pinned, but the
+stock daemon does not yet receive guard asks** — the only production
+constructor (`src/cli/opencode-server.ts`) passes no guard provider, so
+**daemon guard-wiring is the top queued item**; the W091 promotion gate is
+the named producer once wired. The ask branch also generalizes beyond
+promotion-gate by design (e.g. the network `external-side-effect` ask now
+holds in ask-me mode instead of instantly denying).
+
+**Where:** `src/integrations/opencode-server-authority.ts` (the `decide`
+guard branch only). The other four seats' ask collapse is queued
+(documented per-seat).
+
+**Acceptance criteria:**
+- [x] ask-me: guard `ask` is held (`pendingOperatorReplies` = 1); operator
+      approve → delivered allow/once with the guard policy in the reason;
+      operator reject → delivered reject; timeout → reject (fail closed).
+- [x] auto-resolve: guard `ask` fails closed to deny with the ask
+      provenance and the no-operator-channel statement; `pendingOperatorReplies`
+      stays 0.
+- [x] Guard deny is answered immediately, never held (both modes).
+- [x] Verifier: W092 pins RED against the unmodified tree (27 pass/4 fail —
+      all four hold-behavior tests), GREEN after the edit (31/0); held-out
+      suites 51/0 (opencode-server-gateway, hub-guard-interception,
+      guarded-process); repo lint/typecheck exit 0.
+- [ ] Queued (one change per iteration): **daemon guard-wiring** (the stock
+      `opencode-server` constructor passes no guard provider — the top item),
+      the ask channel on the other four seats, the pending-ask surface in
+      the operator UI (plane 3′), G2 part 2 (`trustedRole`), G5 branch-exit
+      pins, G4 matched-surface field, ostree `/var`-home fix,
+      dist-freshness pin, `npm pack` verifier debt (human-gated).
+- [x] Residuals recorded (review round 1): a held guard ask blocks the SSE
+      loop up to the hold window (delayed alarms, not false ones — the
+      pre-existing serial-hold residual widens; noted in
+      `docs/OPENCODE_SERVER_AUTHORITY.md`); the ask branch generalizes
+      beyond promotion-gate (network `external-side-effect` asks now hold
+      in ask-me); the guard-deny-never-held pin covers ask-me only (the
+      deny branch is mode-independent by construction).
+
+### W093 - Serverless hosting option for the control plane (AZ Function) (Planned — intent recorded, design queued)
+
+**Operator intent (2026-09-22):** the control plane will likely run as an
+Azure Function — a serverless hosting option alongside the local daemon.
+
+**Status: intent + constraints only. No design, no claims.** The hub today
+is a local daemon: plane 3 binds loopback-only (`127.0.0.1`, discovery-file
+tokens), plane 3′ is the uncredentialed browser channel
+(`THREAT_MODEL.md`-accepted **loopback** posture), agent transports are
+local stdio/ACP, containment is bwrap, and durable state is local files.
+Remote hosting re-opens each of these as a design question, per the
+protocol-planes doc (`docs/PROTOCOL_PLANES_2026-09-22.md`):
+
+- **Auth becomes mandatory**: off-loopback, plane 3's bearer-token classes
+  (operator vs verifier) become network credentials; the plane-3′
+  uncredentialed channel cannot exist remotely and needs a credentialed
+  replacement or explicit scope removal.
+- **Agent transports**: stdio ACP runtimes are local; hosted agents go
+  through the remote-ACP bridge (draft, advisory — `OPENCODE_REMOTE_ACP_
+  SPEC.md`) or stay local while the control plane is remote.
+- **Containment**: bwrap is a local-runtime primitive; contained-shell
+  semantics (`/bash`, run gates) need a runtime decision (Azure container
+  jobs? drop to advisory?).
+- **Durable state**: local JSON stores → a durable remote store decision
+  (per `DURABLE_STATE_INVENTORY.md` writer authorities).
+- **Long-running loops**: the RSI loop and scheduler tick are
+  long-lived/periodic — a consumption-based function needs durable-function
+  or timer-trigger shaping.
+
+**Acceptance criteria:**
+- [ ] A hosting assessment (AZ Function vs container-app vs stay-local,
+      per the four-plane map) with the THREAT_MODEL re-read — before any
+      hosting code.
+- [ ] The plane map re-stated for the hosted topology (what moves, what
+      stays local, what the credential model becomes).
+- [ ] Operator decision recorded before implementation.
+
+### W094 - Daemon guard wiring: the ask-hold becomes reachable on the stock server (frontier G3 part 2, wiring) (2026-09-22)
+
+**Objective:** close W092's top queued item: the authority's guard-ask hold
+(W092) is implemented and pinned but the stock daemon constructor
+(`src/cli/opencode-server.ts`) passed no guard provider, so guard asks never
+reached the hold in production. Wire the vendored guard into the daemon
+(hub-precedent fail-closed composition, `src/cli/hub.ts` "no guard → refuse
+to run"): the daemon composes `createDefaultToolboxGuardProvider` with its
+workspace and passes it to `createOpencodeServerAuthority`.
+
+**Where:** `src/cli/opencode-server.ts` (main() composition + an exported
+`createOpencodeServerGuard(workspace)` helper for the composition pin).
+
+**Acceptance criteria:**
+- [x] The daemon composes the guard fail-closed: a guard startup failure
+      rejects main() (the daemon refuses to run guard-less — the hub's
+      "no hub, no mutations" posture).
+- [x] The composed guard is the production path: through the REAL vendored
+      server, `workflow install fleet` asks `promotion-gate` (the W091 rule
+      + W090 enrichment live in the daemon's guard) — pinned via the
+      exported helper.
+- [x] Module-level guard behavior on the authority is already pinned
+      (W092: hold/approve/reject/timeout/auto-resolve); the daemon-level
+      end-to-end pin (spawn + permission.asked → hold) is queued with the
+      dist-freshness pin.
+- [x] Verifier: composition pin RED (the helper did not exist) then GREEN;
+      daemon/authority/gateway suites green; repo lint/typecheck exit 0.
+      Review round 1 [REVISE] fixed: a live-artifact anti-drift pin now
+      proves main() wires the guard into the authority (the production
+      composition had no other automated verifier - deleting the guard pass
+      from the authority options fails the pin); guard.close() added to ALL
+      post-composition failure paths (runtime creation, enforced-ruleset
+      refusal, gateway failure, uncaughtException reap) - the hub precedent
+      mandates explicit reaping, child self-reaps-on-EOF is inferred
+      semantics; the component-doc addendum superseded the stale
+      does-not-yet-pass-a-guard-provider claim with the dated W094 landing
+      note; the credential-less composition residual recorded (inert today -
+      the vendored guard consumes only HOME; the daemon must compose the
+      broker if guard credentials are ever configured). Review round 2
+      [APPROVE].
+- [ ] Queued (one change per iteration): daemon-level end-to-end ask pin,
+      the ask channel on the other four seats, the plane-3′ pending-ask
+      surface, G2 part 2 (`trustedRole`), G5 branch-exit pins, G4
+      matched-surface field, ostree `/var`-home fix, dist-freshness pin,
+      `npm pack` verifier debt (human-gated).
+### W095 - Local model-routing policy at the metering proxy (Planned - shape + constraints) (2026-09-22)
+
+**Operator question:** "readdress the mixture-of-experts local router idea -
+would it be a good idea to classify things before handing them to
+OpenRouter?" - i.e. a local MoE-style classifier/router between the agent
+runtimes and the OpenRouter upstream.
+
+**Position (this ledger entry is the recorded shape, not a claim of landed
+work):**
+- **Yes to a local ROUTER; no to content-classification-as-MoE.** The
+  routing decision that matters is ALREADY made upstream of the request by
+  the thing that understands the work: the agent fleet's task decomposition
+  (decompose -> executor -> reviewer roles; task-decomposition.md strong/
+  weak routing with acceptance checks - the cheap-model-error-leakage
+  mitigation). That IS the working mixture-of-experts: roles are the
+  experts, and the classifier is structured and reviewable. A per-request
+  content classifier would guess what the decomposition already knows, adds
+  a model call (latency/cost/failure modes), and mis-classification sends
+  edits to weak models - the exact leakage class the fleet discipline
+  exists to prevent.
+- **OpenRouter's Auto Router stays the default for general traffic** - it is
+  a vendor router with more routing data; do not duplicate it. The hub
+  already constrains it deterministically (the openrouter-auto-latest
+  seam: alias resolution + allowed_models pool injection + cost-tier
+  bands).
+- **The local router's right shape: POLICY-driven routing at the
+  metering-proxy seam, keyed to metadata the control plane already holds -
+  never prompt content.** Concretely: (a) task-class routing
+  (model-profile.ts already carries coding/general/batch classes and
+  per-family reasoning-effort) - hub-composed agent configs can set
+  per-role models today; (b) budget-driven downgrades (a session nearing
+  its W045 caps routes remaining turns to the cheap pool - deterministic,
+  auditable); (c) schedule-driven routing (batch/off-peak pools - the
+  DeepSeek off-peak opportunity already in AI_LANDSCAPE_RESEARCH.md item
+  176); (d) failover (OpenRouter outage -> local fallback pool). All
+  rule-based, testable, logged - HOME-A/B per the migration-boundary rule
+  (routing policy that gates cost/authority is control-plane owned).
+- **Rejection recorded:** prompt-content classification as a gate is
+  rejected for now - it duplicates the vendor router, blurs the metering
+  proxy's pass-through posture, and its errors are quality-authority errors
+  the acceptance-check discipline would have to catch after the fact.
+
+**Acceptance criteria:**
+- [ ] A routing-policy design note (the four metadata keys, the pool
+      matrix, the precedence: task-class -> budget -> schedule -> failover)
+      before any code.
+- [ ] The metering-proxy seam shaped for policy routing (the
+      autoLatest-style transform point) without changing the pass-through
+      posture for unclassified traffic.
+- [ ] The fleet's per-role models verified end-to-end (the de-facto MoE)
+      before building anything new.
+- [ ] Frontier verification of the design note (same pattern as #78/#82).
+
+### W096 - Serverless hosting option for the control plane (AZ Function) (Planned - intent + constraints only)
+
+**Operator intent (2026-09-22):** the control plane will likely run as an
+Azure Function - a serverless hosting option alongside the local daemon.
+**Status: intent recorded; design queued.** Remote hosting re-opens, per
+docs/PROTOCOL_PLANES_2026-09-22.md: plane 3 auth (off-loopback, the
+operator/verifier credential classes become network credentials), the
+plane-3-prime uncredentialed browser channel (cannot exist remotely -
+credentialed replacement or explicit scope removal), agent transports (stdio
+ACP runtimes stay local or go through the advisory remote-ACP bridge),
+containment (bwrap is local-runtime; /bash and run gates need a runtime
+decision), durable state (local JSON stores -> durable remote store per the
+DURABLE_STATE_INVENTORY.md writer authorities), and long-running loops
+(RSI/scheduler -> durable-function or timer-trigger shaping).
+
+**Acceptance criteria:**
+- [ ] A hosting assessment (AZ Function vs container-app vs stay-local,
+      per the plane map) with the THREAT_MODEL re-read - before any
+      hosting code.
+- [ ] The plane map re-stated for the hosted topology.
+- [ ] Operator decision recorded before implementation.
