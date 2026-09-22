@@ -245,6 +245,34 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
             reason: `guard unavailable (fail closed): ${error instanceof Error ? error.message : String(error)}`,
           };
         }
+        if (guardDecision.decision === "ask") {
+          // W092 (frontier G3 part 2): a guard `ask` is a "human decides"
+          // verdict, not a deny. In ask-me mode it joins the operator hold —
+          // the operator's reply answers the ask (approve → once; reject →
+          // reject; timeout fails closed), and the hold's reconciliation can
+          // only tighten. In auto-resolve mode there is no operator attached
+          // to answer: fail closed to deny with the ask provenance.
+          if (mode === "ask-me") {
+            return {
+              ...base,
+              tool: proposal.tool,
+              ...(proposal.capability === undefined ? {} : { capability: proposal.capability }),
+              subjects: proposal.subjects,
+              decision: "allow",
+              reply: "once",
+              reason: `guard ask '${guardDecision.policy}' held for the operator: ${guardDecision.reason}`,
+            };
+          }
+          return {
+            ...base,
+            tool: proposal.tool,
+            ...(proposal.capability === undefined ? {} : { capability: proposal.capability }),
+            subjects: proposal.subjects,
+            decision: "deny",
+            reply: "reject",
+            reason: `guard ask '${guardDecision.policy}' requires operator approval (no operator channel in auto-resolve mode): ${guardDecision.reason}`,
+          };
+        }
         if (guardDecision.decision !== "allow") {
           return {
             ...base,
