@@ -726,3 +726,53 @@ test("W097: another user's home and .ssh outside the home stay denied", () => {
   assert.match(checkProtectedPath("/var/home/otheruser/x") ?? "MISSING", /protected system or credential/);
   assert.match(checkProtectedPath("/root/.ssh/id_rsa") ?? "MISSING", /protected system or credential/);
 });
+
+// ---- W099/G5: branch-exit classifications pinned as found (frontier G5) ----
+// The agents-research assessment (§2 F1, §6 G5) found F1's
+// identical-intents-matched-inconsistently disease surviving its fix in a new
+// spelling: `git checkout <branch>` is denied on a protected branch while the
+// intent-identical `git switch <branch>` is allowed, and the case-sensitive
+// `(?!-b\b)` lookahead (src/git-policy.ts:7) denies `git checkout -B` while
+// `git switch -C` is allowed. These pins freeze the AS-FOUND classifications
+// so the spelling-decided verdicts cannot shift silently — unifying them is a
+// queued policy decision, not drift.
+
+test("W099/G5: the allowed branch-exit spellings on a protected branch (as-found, not an endorsement)", () => {
+  // The redirect names `git checkout -b`; the switch spellings of the same
+  // intents are already outside gitWriteRe entirely. These are AS-FOUND
+  // allows — including the switch force-create form — see the asymmetry pin
+  // below for the spelling-decided verdicts this set sits against.
+  assert.equal(checkPolicy({ action: "shell", command: "git checkout -b feat/g5", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git switch -c feat/g5", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git switch feat/g5", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git switch -C feat/g5", currentBranch: "main" }).decision, "allow");
+  // Switching TO the protected branch is an exit, not a write on it.
+  assert.equal(checkPolicy({ action: "shell", command: "git switch main", currentBranch: "feat/g5" }).decision, "allow");
+});
+
+test("W099/G5: the checkout spelling of the same intents is denied on a protected branch (F1 residual, pinned as found)", () => {
+  const plain = checkPolicy({ action: "shell", command: "git checkout feat/g5", currentBranch: "main" });
+  assert.equal(plain.decision, "deny");
+  assert.equal(plain.policy, "protected-branch-write");
+  // Case-sensitive lookahead: `-b` is exempt, `-B` is not — while the
+  // intent-identical `git switch -C` is allowed (pinned above).
+  const forceCreate = checkPolicy({ action: "shell", command: "git checkout -B feat/g5", currentBranch: "main" });
+  assert.equal(forceCreate.decision, "deny");
+  assert.equal(forceCreate.policy, "protected-branch-write");
+  // The load-bearing member of the same clause: `checkout --` discards
+  // working-tree state, a real mutation the creation exemption must never
+  // cover.
+  const discard = checkPolicy({ action: "shell", command: "git checkout -- src/a.ts", currentBranch: "main" });
+  assert.equal(discard.decision, "deny");
+  assert.equal(discard.policy, "protected-branch-write");
+});
+
+test("W099/G5: off a protected branch the checkout spellings are allowed (the gate targets writes, not exits)", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "git checkout feat/other", currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git checkout -B feat/g5", currentBranch: "feat/g5" }).decision, "allow");
+});
+
+test("W099/G5: without branch facts the protected-branch gate cannot engage (W090 fail-open)", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "git checkout feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git checkout -- src/a.ts" }).decision, "allow");
+});
