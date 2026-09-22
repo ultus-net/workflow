@@ -632,3 +632,55 @@ test("W089: interpreter payloads cannot smuggle guard-config writes", () => {
   // Benign interpreter writes are unchanged.
   assert.equal(checkPolicy({ action: "shell", command: `node -e 'require("fs").writeFileSync("out.txt", "x")'` }).decision, "allow");
 });
+
+// ---- W091: the T1 promotion gate (frontier G3 part 1) ----
+// `workflow install fleet [--force]` deploys the vendored fleet payload into
+// the live control plane — the sanctioned promotion command. Upstream's
+// guard-invisibility finding: from an agent seat it was baseline-allow while
+// the equivalent `cp` into a live root is guard-tamper-denied. The T1 tier
+// says promotion is an ASK (operator approval), never agent-auto-allow.
+
+test("W091: workflow install is the recognized promotion ask", () => {
+  for (const command of ["workflow install fleet", "workflow install fleet --force", "workflow install"]) {
+    const result = checkPolicy({ action: "shell", command });
+    assert.equal(result.decision, "ask", command);
+    assert.equal(result.policy, "promotion-gate", command);
+  }
+  // Wrapper forms stay recognized (the unwrapping discipline).
+  const wrapped = checkPolicy({ action: "shell", command: "timeout 30 workflow install fleet" });
+  assert.equal(wrapped.decision, "ask");
+  assert.equal(wrapped.policy, "promotion-gate");
+});
+
+test("W091: promotion recognition stays in command position", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "echo workflow install" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "grep 'workflow install' notes.md" }).decision, "allow");
+});
+
+test("W091: known limitation — indirection is not recognized (T0 backstop covers it)", () => {
+  // `npx workflow install` is not unwrapped by the recognizer: documented
+  // limitation. The backstop is the W090 fact-mode T0 deny — the installer's
+  // actual writes into a declared live root are guard-tamper-denied when the
+  // host supplies liveConfigPaths.
+  assert.equal(checkPolicy({ action: "shell", command: "npx workflow install fleet" }).decision, "allow");
+  const root = mkdtempSync(join(tmpdir(), "workflow-guard-w091-"));
+  const live = mkdtempSync(join(tmpdir(), "workflow-guard-w091-live-"));
+  mkdirSync(join(root, ".config"), { recursive: true });
+  const tool = ["open", "code"].join("");
+  symlinkSync(live, join(root, ".config", tool), "dir");
+  assert.equal(
+    checkPolicy({ action: "shell", command: `cp fleet.md .config/${tool}/agents/x.md`, workspaceRoot: root, liveConfigPaths: [live] }).decision,
+    "deny",
+  );
+});
+
+test("W091: segment-level denies win over the promotion ask in compound commands", () => {
+  // Reason attribution: a compound whose other segment is a destructive deny
+  // must report THAT deny, not mask it behind the promotion ask. (The
+  // destructive command is assembled from fragments so this source file does
+  // not carry the guard's own vocabulary — the W084 fixture convention.)
+  const destructive = [["r", "m -r", "f /"].join(""), "workflow install fleet"].join(" && ");
+  const compound = checkPolicy({ action: "shell", command: destructive });
+  assert.equal(compound.decision, "deny");
+  assert.equal(compound.policy, "destructive-operation");
+});

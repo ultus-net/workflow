@@ -1,5 +1,7 @@
+import { basename } from "node:path";
 import { checkShellPolicy } from "./shell-policy.js";
 import { checkProtectedPath, secretIn } from "./path-policy.js";
+import { decodeShellEscapes, splitShellSegments, unwrapShellWords } from "./shell.js";
 import { checkGitPolicy, hasGitMutation, protectedBranchWriteReason } from "./git-policy.js";
 import { checkInterpreterPolicy } from "./interpreter-policy.js";
 import { checkBoundaryPolicy, isGuardConfigurationPath, isPathOutsideWorkspace, shellHasFileMutation } from "./boundary-policy.js";
@@ -61,6 +63,33 @@ export function extractPatchPaths(patchText: string): string[] {
   return paths;
 }
 
+// W091 (frontier G3 part 1): `workflow install` deploys the vendored fleet
+// payload into the live control plane — the sanctioned T1 promotion command.
+// Upstream's guard-invisibility finding: from an agent seat it was
+// baseline-allow while the equivalent `cp` into a live root is
+// guard-tamper-denied. The T1 tier says promotion is an ASK (operator
+// approval), never agent-auto-allow. Recognition is command-position based
+// (post-unwrap), like the interactive detector's command-position matching —
+// a promotion-shaped phrase in argument data (`echo workflow install`) is
+// not execution. Documented limitation (the T1 gate covers the sanctioned
+// shape only): indirection (`npx workflow install`), nested shells and eval
+// (`sh -c 'workflow install fleet'` — the recognizer does not recurse, unlike
+// the interactive detector), and case variants (`Workflow install` — on
+// Linux a different binary name) are NOT recognized. For those forms the
+// promotion is unguarded AT THE SHELL LANE; the T0 backstop covers only the
+// agent performing equivalent writes DIRECTLY (a `cp`/redirect into a
+// declared live root is guard-tamper-denied in W090 fact mode) — the
+// installer's own in-process writes are tool-invisible to the guard.
+const PROMOTION_REASON =
+  "Installing into the live control plane requires operator approval (T1 promotion): run it from the operator's shell.";
+
+function isPromotionCommand(command: string): boolean {
+  return splitShellSegments(decodeShellEscapes(command)).some((segment) => {
+    const words = unwrapShellWords(segment);
+    return basename(words[0] ?? "") === "workflow" && words[1] === "install";
+  });
+}
+
 export function checkPolicy(input: GuardCheckInput): GuardDecision {
   const result = evaluatePolicy(input);
   if (result.decision !== "deny") return result;
@@ -90,6 +119,13 @@ function evaluatePolicy(input: GuardCheckInput): GuardDecision {
   if ((input.action === "shell" || input.action === "git") && input.command?.trim()) {
     const shell = checkShellPolicy(input.command);
     if (shell) return shell;
+  }
+  // W091 ordering: the promotion ask is evaluated AFTER the deny-class
+  // policies, so a compound command whose other segment is a deny (e.g. a
+  // destructive operation) reports that deny instead of masking it behind
+  // the ask (reason attribution; the pinned compound test).
+  if ((input.action === "shell" || input.action === "git") && input.command?.trim() && isPromotionCommand(input.command)) {
+    return { decision: "ask", policy: "promotion-gate", reason: PROMOTION_REASON };
   }
   if ((input.action === "shell" || input.action === "git") && input.command?.trim()) {
     const pr = checkPrCreatePreflight(input.command);
