@@ -398,3 +398,20 @@ authority path is implemented and pinned, but the stock daemon constructor
 guard-wiring is the top queued item. Residual note: a held guard ask blocks
 the SSE loop up to the hold window (the pre-existing serial-hold residual
 widens — delayed alarms, not false ones).
+
+## Addendum (2026-09-22, W094 — daemon guard-wiring landed; supersedes the
+scope-honesty sentence above)
+
+The stock daemon now **does** pass a guard provider:
+`src/cli/opencode-server.ts` composes the vendored guard fail-closed
+(`createOpencodeServerGuard(workspace)` — a guard startup failure rejects
+`main`, so the daemon refuses to run guard-less, mirroring the hub's
+"no hub, no mutations" posture), passes it to the authority, and reaps it
+explicitly on every failure path (runtime creation, enforced-ruleset
+refusal, gateway failure, uncaughtException) and at shutdown. The composed
+guard is pinned through the REAL vendored server: `workflow install fleet`
+asks `promotion-gate` (the W091 rule + W090 enrichment live in the daemon's
+guard). Credential note: the daemon's guard is composed without the hub's
+credential broker — inert today (the vendored guard consumes only HOME), and
+if `mcp:workflow-guard` credentials are ever configured the daemon must
+compose the broker like the hub does.

@@ -19,6 +19,7 @@ import {
   writeOpencodeServerDiscovery,
 } from "../integrations/opencode-server-discovery.js";
 import { createOpencodeServerRuntime } from "../integrations/opencode-server-runtime.js";
+import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 import { createSessionCompactionMonitor } from "../integrations/opencode-server-monitor.js";
 import { HttpRemoteEngine } from "../integrations/remote-acp/engine.js";
 import { loadSettings } from "../integrations/workflow-settings.js";
@@ -124,28 +125,52 @@ export function parseDaemonArgs(argv: readonly string[]): OpencodeServerDaemonAr
   return { workspace: workspace ?? process.cwd() };
 }
 
+// W094: the daemon's guard dispatcher — hub-style fail-closed composition
+// (src/cli/hub.ts: "if it cannot start, the hub refuses to run — a silently
+// guardless authority would issue permissive decisions no operator asked
+// for"). The composed guard carries the W091 promotion rule and the W090
+// workspace-facts enrichment, making the W092 ask-hold reachable on the
+// stock daemon.
+export async function createOpencodeServerGuard(workspace: string) {
+  return createDefaultToolboxGuardProvider({ workspace });
+}
+
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   const args = parseDaemonArgs(argv);
   const workspace = resolve(args.workspace);
+  // W094: fail-closed composition — if the vendored guard cannot start, the
+  // daemon refuses to run guard-less (the hub's "no hub, no mutations"
+  // posture; a guardless authority issues permissive decisions no operator
+  // asked for).
+  const guard = await createOpencodeServerGuard(workspace);
   const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? resolve(homedir(), ".workflow", "opencode-server");
   const discoveryPath = opencodeServerDiscoveryPath(stateHome, workspace);
   const mode = authorityModeFromEnv(process.env);
   const enforcement = enforcementFromEnv(process.env);
 
   const disabledConnectors = resolveDaemonDisabledConnectors(workspace);
-  const runtime = await createOpencodeServerRuntime({
-    workspace,
-    stateHome,
-    // W082: the daemon carries the operator's autoCompact preference into the
-    // hub-written server config (same trigger the ACP lane composes). A
-    // settings read failure must not block the daemon — the trigger is
-    // opt-in, so an unreadable settings document degrades to the honest
-    // default (off) rather than refusing the topology.
-    ...(resolveDaemonAutoCompact(workspace) ? { autoCompact: true } : {}),
-    // W080 (the operator-disable precedence on this lane): connector names
-    // the operator explicitly disabled never mount from the declaration.
-    ...(disabledConnectors.length === 0 ? {} : { skillConnectorsDisabled: disabledConnectors }),
-  });
+  // W094 (review P3-3): every failure path after composition reaps the guard
+  // explicitly — the hub precedent closes its guard on composition failure,
+  // and "the child self-reaps on EOF" is inferred semantics, not a mandate.
+  let runtime;
+  try {
+    runtime = await createOpencodeServerRuntime({
+      workspace,
+      stateHome,
+      // W082: the daemon carries the operator's autoCompact preference into the
+      // hub-written server config (same trigger the ACP lane composes). A
+      // settings read failure must not block the daemon — the trigger is
+      // opt-in, so an unreadable settings document degrades to the honest
+      // default (off) rather than refusing the topology.
+      ...(resolveDaemonAutoCompact(workspace) ? { autoCompact: true } : {}),
+      // W080 (the operator-disable precedence on this lane): connector names
+      // the operator explicitly disabled never mount from the declaration.
+      ...(disabledConnectors.length === 0 ? {} : { skillConnectorsDisabled: disabledConnectors }),
+    });
+  } catch (error) {
+    await guard.close();
+    throw error;
+  }
   // Authority broker: the background policy decision point. It subscribes to
   // the server's SSE and answers every permission request through
   // WorkflowApplication; the gateway intercepts client replies so the stock TUI
@@ -166,7 +191,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   // Enforcement contract (M3): an enforced surface verifies the pinned `ask`
   // ruleset at startup and refuses to serve a permissive engine.
   if (enforcement === "enforced") {
-    assertAskRuleset(await engine.config({ cwd: workspace }));
+    try {
+      assertAskRuleset(await engine.config({ cwd: workspace }));
+    } catch (error) {
+      await guard.close();
+      throw error;
+    }
   }
   console.log(`[authority] mode=${mode} enforcement=${enforcement} workspace=${workspace}`);
   // Session budget (M4): the W045 caps, adapted to the server path. Crossing a
@@ -211,6 +241,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     engine,
     application,
     workspace,
+    guard,
     mode,
     enforcement,
     onDecision: (decision) => {
@@ -248,6 +279,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   } catch (error) {
     await authority.stop();
     await runtime.dispose();
+    await guard.close();
     throw error;
   }
 
@@ -280,6 +312,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       await authority.stop();
       if (gateway !== undefined) await gateway.close();
       await runtime.dispose();
+      await guard.close();
       removeOpencodeServerDiscovery(discoveryPath);
       process.exit(1);
     })();
@@ -293,6 +326,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   await authority.stop();
   await gateway.close();
   await runtime.dispose();
+  await guard.close();
   removeOpencodeServerDiscovery(discoveryPath);
   console.log("[metering]", JSON.stringify(runtime.usage()));
 }

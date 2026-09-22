@@ -2160,3 +2160,86 @@ guard branch only). The other four seats' ask collapse is queued
       beyond promotion-gate (network `external-side-effect` asks now hold
       in ask-me); the guard-deny-never-held pin covers ask-me only (the
       deny branch is mode-independent by construction).
+
+### W093 - Serverless hosting option for the control plane (AZ Function) (Planned — intent recorded, design queued)
+
+**Operator intent (2026-09-22):** the control plane will likely run as an
+Azure Function — a serverless hosting option alongside the local daemon.
+
+**Status: intent + constraints only. No design, no claims.** The hub today
+is a local daemon: plane 3 binds loopback-only (`127.0.0.1`, discovery-file
+tokens), plane 3′ is the uncredentialed browser channel
+(`THREAT_MODEL.md`-accepted **loopback** posture), agent transports are
+local stdio/ACP, containment is bwrap, and durable state is local files.
+Remote hosting re-opens each of these as a design question, per the
+protocol-planes doc (`docs/PROTOCOL_PLANES_2026-09-22.md`):
+
+- **Auth becomes mandatory**: off-loopback, plane 3's bearer-token classes
+  (operator vs verifier) become network credentials; the plane-3′
+  uncredentialed channel cannot exist remotely and needs a credentialed
+  replacement or explicit scope removal.
+- **Agent transports**: stdio ACP runtimes are local; hosted agents go
+  through the remote-ACP bridge (draft, advisory — `OPENCODE_REMOTE_ACP_
+  SPEC.md`) or stay local while the control plane is remote.
+- **Containment**: bwrap is a local-runtime primitive; contained-shell
+  semantics (`/bash`, run gates) need a runtime decision (Azure container
+  jobs? drop to advisory?).
+- **Durable state**: local JSON stores → a durable remote store decision
+  (per `DURABLE_STATE_INVENTORY.md` writer authorities).
+- **Long-running loops**: the RSI loop and scheduler tick are
+  long-lived/periodic — a consumption-based function needs durable-function
+  or timer-trigger shaping.
+
+**Acceptance criteria:**
+- [ ] A hosting assessment (AZ Function vs container-app vs stay-local,
+      per the four-plane map) with the THREAT_MODEL re-read — before any
+      hosting code.
+- [ ] The plane map re-stated for the hosted topology (what moves, what
+      stays local, what the credential model becomes).
+- [ ] Operator decision recorded before implementation.
+
+### W094 - Daemon guard wiring: the ask-hold becomes reachable on the stock server (frontier G3 part 2, wiring) (2026-09-22)
+
+**Objective:** close W092's top queued item: the authority's guard-ask hold
+(W092) is implemented and pinned but the stock daemon constructor
+(`src/cli/opencode-server.ts`) passed no guard provider, so guard asks never
+reached the hold in production. Wire the vendored guard into the daemon
+(hub-precedent fail-closed composition, `src/cli/hub.ts` "no guard → refuse
+to run"): the daemon composes `createDefaultToolboxGuardProvider` with its
+workspace and passes it to `createOpencodeServerAuthority`.
+
+**Where:** `src/cli/opencode-server.ts` (main() composition + an exported
+`createOpencodeServerGuard(workspace)` helper for the composition pin).
+
+**Acceptance criteria:**
+- [x] The daemon composes the guard fail-closed: a guard startup failure
+      rejects main() (the daemon refuses to run guard-less — the hub's
+      "no hub, no mutations" posture).
+- [x] The composed guard is the production path: through the REAL vendored
+      server, `workflow install fleet` asks `promotion-gate` (the W091 rule
+      + W090 enrichment live in the daemon's guard) — pinned via the
+      exported helper.
+- [x] Module-level guard behavior on the authority is already pinned
+      (W092: hold/approve/reject/timeout/auto-resolve); the daemon-level
+      end-to-end pin (spawn + permission.asked → hold) is queued with the
+      dist-freshness pin.
+- [x] Verifier: composition pin RED (the helper did not exist) then GREEN;
+      daemon/authority/gateway suites green; repo lint/typecheck exit 0.
+      Review round 1 [REVISE] fixed: a live-artifact anti-drift pin now
+      proves main() wires the guard into the authority (the production
+      composition had no other automated verifier - deleting the guard pass
+      from the authority options fails the pin); guard.close() added to ALL
+      post-composition failure paths (runtime creation, enforced-ruleset
+      refusal, gateway failure, uncaughtException reap) - the hub precedent
+      mandates explicit reaping, child self-reaps-on-EOF is inferred
+      semantics; the component-doc addendum superseded the stale
+      does-not-yet-pass-a-guard-provider claim with the dated W094 landing
+      note; the credential-less composition residual recorded (inert today -
+      the vendored guard consumes only HOME; the daemon must compose the
+      broker if guard credentials are ever configured). Review round 2
+      [APPROVE].
+- [ ] Queued (one change per iteration): daemon-level end-to-end ask pin,
+      the ask channel on the other four seats, the plane-3′ pending-ask
+      surface, G2 part 2 (`trustedRole`), G5 branch-exit pins, G4
+      matched-surface field, ostree `/var`-home fix, dist-freshness pin,
+      `npm pack` verifier debt (human-gated).
