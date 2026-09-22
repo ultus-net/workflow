@@ -296,3 +296,28 @@ W089/W090 session; §1–§9 above keep their byte-state pins)
   so hub-side tests ran an old core — the file_write tamper lane was
   absent from the artifact. Rebuilt for W090; dist-freshness pinning is
   queued.
+
+## 11. Status addendum 3 (2026-09-23, after W091/W092/W097/W098 — appended by
+## the W099 session; §1–§10 above keep their byte-state pins)
+
+- **G3 is CLOSED** by W091 + W092 (PRs #83/#84): `workflow install fleet
+  [--force]` is recognized as the T1 promotion ask (deny-class policies
+  ordered before the ask so compound commands keep reason attribution), and
+  the guard ask joins the operator hold in ask-me mode on the authority path
+  (held-allow mapping; auto-resolve fails closed to deny). §6's ask-channel
+  prerequisite and §10's "guard-visible promotion recognition" half are both
+  satisfied. Honest scope note from LESS-0014 still stands: the stock daemon
+  constructor passed no guard provider at W092 time; the production wiring
+  landed separately as W094 (e767638 + 3668229).
+- **G5 is CLOSED** by W099 (feat/w099-g5-branch-exit-pins): the branch-exit
+  classification set is pinned AS FOUND (vendored policy.test.ts + 
+  redirect.test.ts; characterization pins, green on first run). The pins
+  document the F1 asymmetry residual verbatim — `git checkout <branch>` and
+  `git checkout -B` denied on a protected branch while the intent-identical
+  `git switch`/`switch -C` forms are allowed (the case-sensitive `(?!-b\b)`
+  lookahead at `src/git-policy.ts:7`) — so any change now requires a
+  decision, not drift. Unifying the spellings is queued as its own iteration;
+  the `checkout --` working-tree-discard deny and the W090 no-facts fail-open
+  are pinned as load-bearing as-found behavior.
+- **G2 part 2 (`trustedRole`)** and **G4 (decision-record matched-surface
+  field)** remain open as listed in §6.

@@ -37,3 +37,13 @@ test("unknown policies get the generic tool-class redirect", () => {
   assert.equal(redirectGuidance("policy-that-does-not-exist"), DEFAULT_REDIRECT);
   assert.match(DEFAULT_REDIRECT, /tool class/);
 });
+
+test("W099/G5: the protected-branch-write redirect names a checkout exit the matcher partly blocks", () => {
+  // The redirect tells the model to create or switch to a feature branch via
+  // `git checkout -b` — the ONE checkout spelling the protected-branch-write
+  // matcher exempts (W099/G5 pins the as-found asymmetry: plain
+  // `checkout <branch>` is denied while `switch <branch>` is allowed). If
+  // either the matcher or this guidance changes, this pin forces both to
+  // move together.
+  assert.match(redirectGuidance("protected-branch-write"), /git checkout -b/);
+});
