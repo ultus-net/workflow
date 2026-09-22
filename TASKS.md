@@ -2243,3 +2243,77 @@ workspace and passes it to `createOpencodeServerAuthority`.
       surface, G2 part 2 (`trustedRole`), G5 branch-exit pins, G4
       matched-surface field, ostree `/var`-home fix, dist-freshness pin,
       `npm pack` verifier debt (human-gated).
+### W095 - Local model-routing policy at the metering proxy (Planned - shape + constraints) (2026-09-22)
+
+**Operator question:** "readdress the mixture-of-experts local router idea -
+would it be a good idea to classify things before handing them to
+OpenRouter?" - i.e. a local MoE-style classifier/router between the agent
+runtimes and the OpenRouter upstream.
+
+**Position (this ledger entry is the recorded shape, not a claim of landed
+work):**
+- **Yes to a local ROUTER; no to content-classification-as-MoE.** The
+  routing decision that matters is ALREADY made upstream of the request by
+  the thing that understands the work: the agent fleet's task decomposition
+  (decompose -> executor -> reviewer roles; task-decomposition.md strong/
+  weak routing with acceptance checks - the cheap-model-error-leakage
+  mitigation). That IS the working mixture-of-experts: roles are the
+  experts, and the classifier is structured and reviewable. A per-request
+  content classifier would guess what the decomposition already knows, adds
+  a model call (latency/cost/failure modes), and mis-classification sends
+  edits to weak models - the exact leakage class the fleet discipline
+  exists to prevent.
+- **OpenRouter's Auto Router stays the default for general traffic** - it is
+  a vendor router with more routing data; do not duplicate it. The hub
+  already constrains it deterministically (the openrouter-auto-latest
+  seam: alias resolution + allowed_models pool injection + cost-tier
+  bands).
+- **The local router's right shape: POLICY-driven routing at the
+  metering-proxy seam, keyed to metadata the control plane already holds -
+  never prompt content.** Concretely: (a) task-class routing
+  (model-profile.ts already carries coding/general/batch classes and
+  per-family reasoning-effort) - hub-composed agent configs can set
+  per-role models today; (b) budget-driven downgrades (a session nearing
+  its W045 caps routes remaining turns to the cheap pool - deterministic,
+  auditable); (c) schedule-driven routing (batch/off-peak pools - the
+  DeepSeek off-peak opportunity already in AI_LANDSCAPE_RESEARCH.md item
+  176); (d) failover (OpenRouter outage -> local fallback pool). All
+  rule-based, testable, logged - HOME-A/B per the migration-boundary rule
+  (routing policy that gates cost/authority is control-plane owned).
+- **Rejection recorded:** prompt-content classification as a gate is
+  rejected for now - it duplicates the vendor router, blurs the metering
+  proxy's pass-through posture, and its errors are quality-authority errors
+  the acceptance-check discipline would have to catch after the fact.
+
+**Acceptance criteria:**
+- [ ] A routing-policy design note (the four metadata keys, the pool
+      matrix, the precedence: task-class -> budget -> schedule -> failover)
+      before any code.
+- [ ] The metering-proxy seam shaped for policy routing (the
+      autoLatest-style transform point) without changing the pass-through
+      posture for unclassified traffic.
+- [ ] The fleet's per-role models verified end-to-end (the de-facto MoE)
+      before building anything new.
+- [ ] Frontier verification of the design note (same pattern as #78/#82).
+
+### W096 - Serverless hosting option for the control plane (AZ Function) (Planned - intent + constraints only)
+
+**Operator intent (2026-09-22):** the control plane will likely run as an
+Azure Function - a serverless hosting option alongside the local daemon.
+**Status: intent recorded; design queued.** Remote hosting re-opens, per
+docs/PROTOCOL_PLANES_2026-09-22.md: plane 3 auth (off-loopback, the
+operator/verifier credential classes become network credentials), the
+plane-3-prime uncredentialed browser channel (cannot exist remotely -
+credentialed replacement or explicit scope removal), agent transports (stdio
+ACP runtimes stay local or go through the advisory remote-ACP bridge),
+containment (bwrap is local-runtime; /bash and run gates need a runtime
+decision), durable state (local JSON stores -> durable remote store per the
+DURABLE_STATE_INVENTORY.md writer authorities), and long-running loops
+(RSI/scheduler -> durable-function or timer-trigger shaping).
+
+**Acceptance criteria:**
+- [ ] A hosting assessment (AZ Function vs container-app vs stay-local,
+      per the plane map) with the THREAT_MODEL re-read - before any
+      hosting code.
+- [ ] The plane map re-stated for the hosted topology.
+- [ ] Operator decision recorded before implementation.
