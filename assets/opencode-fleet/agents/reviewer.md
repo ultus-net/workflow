@@ -50,9 +50,10 @@ Review the diff against the prediction it claimed (if one was registered):
 3. **Honesty check** — any test loosened, assertion weakened, acceptance
    command bypassed, evaluator touched, or skipped? This invalidates the
    change regardless of green checks.
-4. **Evidence rule** — report only what you verified by reading code or
-   running read-only commands. Cite file:line for every claim. "Looks fine"
-   is not a finding.
+4. **Evidence rule** — report only what you verified by reading or
+   inspecting files (read/glob/grep). This agent has no shell, so do not
+   claim command output; cite file:line for every claim. "Looks fine" is not
+   a finding.
 
 Report findings in severity order: **blocker**, **warning**, **note**.
 End with exactly one line:

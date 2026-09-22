@@ -4,6 +4,9 @@
 > `rsi-loop-playbook.md`. Source taxonomy:
 > [lobehub/awesome-rsi](https://github.com/lobehub/awesome-rsi) — recheck
 > upstream quarterly.
+>
+> Every entry below was re-verified against its primary source on
+> 2026-09-22; see [Verification status](#verification-status-2026-09-22).
 
 ## Start here (synthesis)
 
@@ -48,6 +51,14 @@
   agent designs; "agent design as a search problem."
 - **Promptbreeder** (2309.16797, ICML 2024) — evolves task prompts *and*
   the mutation prompts; a clean two-timescale example.
+- **AHE — "Agentic Harness Engineering"** (2604.25850) — observability-
+  driven automatic evolution of coding-agent harnesses. Harness edits are
+  *confined to the workspace* (runs/tracer/verifier/LLM-config read-only)
+  and gated by a versioned manifest plus next-round verification; every edit
+  carries a self-declared prediction. The bounded-editable-surface and
+  decision-observability basis of this guide. The paper does **not** claim
+  "workspace edits free, deployment gated" and is explicit that it is not a
+  complete guardrail stack — see the correction in `policy-review.md` (F2).
 
 ## Memory & context
 
@@ -78,7 +89,7 @@
 ## Safety & drift
 
 - "Your Agent May Misevolve" (2509.26354, ICLR 2026) — harmful drift across
-  memory/tool/workflow evolution; source of the term *misevolution*.
+  model/memory/tool/workflow evolution; source of the term *misevolution*.
 - "Evaluating Goal Drift in Language Model Agents" (2505.02709) —
   long-horizon agents quietly deviate from objectives; why metrics freeze +
   goal audits.
@@ -87,8 +98,9 @@
 - "Self-Modification of Policy and Utility Function in Rational Agents"
   (1605.03142, AGI 2016) — formal conditions for goal-preserving
   self-modification.
-- Weng — "Reward Hacking in LLMs" (2024) — the loop optimizes whatever you
-  measure. https://lilianweng.github.io/posts/2024-11-28-reward-hacking/
+- Weng — "Reward Hacking in Reinforcement Learning" (2024) — the loop
+  optimizes whatever you measure.
+  https://lilianweng.github.io/posts/2024-11-28-reward-hacking/
 - "Why LLMs Aren't Scientists Yet" (2601.03315) — six recurring
   autonomous-research failure modes (over-optimism, implementation drift,
   stale defaults, context degradation…) → the extended failure-mode table.
@@ -99,14 +111,15 @@
   (2608.12307) — strong builder models construct harnesses that transfer
   capability to weaker targets without weight updates. The theoretical
   basis of `task-decomposition.md`.
-- **"Harness updating vs harness benefit"** (2605.30621) — a 9B-class model
-  can *write* harness edits as well as frontier models, but *benefiting*
-  from harnesses requires capability; mid-tier models gain the most →
-  route execution, keep integration/review strong.
+- **"Harness Updating Is Not Harness Benefit"** (2605.30621) — a 9B-class
+  model can *write* harness edits as well as frontier models, but benefit is
+  non-monotonic: weakest models gain least, mid-tier most, frontier less
+  than mid → route execution mid-tier, keep integration/review strong.
 - **Autodata** (2606.25996) — weak solver / strong solver / verifier roles
   around generated tasks; the same weak/strong split applied to data
   generation.
-- **METR Task-Completion Time Horizon** (2503.14499, NeurIPS 2025) —
+- **METR — "Measuring AI Ability to Complete Long Software Tasks"**
+  (2503.14499, NeurIPS 2025) — defines the *task-completion time horizon*:
   capability as task-duration at a success probability; a useful lens for
   "how long a subtask can a cheap model hold?"
 
@@ -120,3 +133,36 @@
 - **SWE-bench Verified** — the human-validated subset; adopt the Verified
   discipline (validate tasks before trusting loop gains) for any self-built
   eval.
+
+## Verification status (2026-09-22)
+
+Every entry above was independently re-checked against its primary source
+(arXiv abstract pages, OpenReview, publisher/blog URLs) on 2026-09-22:
+titles, first author, arXiv-ID↔title correspondence, stated venue, and the
+attributed claim. All entries resolve to the cited work. Corrections
+applied in the same pass:
+
+- Weng's reward-hacking post is titled "Reward Hacking in Reinforcement
+  Learning" (not "…in LLMs").
+- The METR paper is "Measuring AI Ability to Complete Long Software Tasks";
+  "task-completion time horizon" is the metric it defines, not its title.
+- **AHE (2604.25850) was added** — it is load-bearing in
+  `prompt-design.md`/`rsi-loop-playbook.md` but was missing from this list.
+- The AHE annotation was corrected: the paper confines harness edits to a
+  workspace and gates each edit with a versioned manifest + next-round
+  verification; it does not describe "workspace edits free, deployment
+  gated" and explicitly disclaims being a complete guardrail stack.
+  `policy-review.md` F2 was fixed in the same pass.
+- "Your Agent May Misevolve" covers four evolution pathways (model, memory,
+  tool, workflow), not three.
+- The harness-benefit finding is non-monotonic (weakest < mid-tier >
+  frontier), not simply "requires capability".
+- Minor: "A Survey of Self-Evolving Agents" is a short title (full title:
+  "…What, When, How, and Where to Evolve on the Path to Artificial Super
+  Intelligence"); the previously-cited shorthand "Harness updating vs harness
+  benefit" was corrected to the verbatim "Harness Updating Is Not Harness
+  Benefit".
+
+Method note: verification was done with external web lookups against the
+primary sources, not from model memory. Re-run this pass when entries are
+added or upstream is rechecked quarterly.

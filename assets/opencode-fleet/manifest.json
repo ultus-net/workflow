@@ -17,13 +17,13 @@
       "id": "agent:retrospective",
       "kind": "agent",
       "file": "retrospective.md",
-      "sha256": "499946d6dac802001ed26aa6b4d8c970c068e5ebf783d0152bcf81dc79ad9369"
+      "sha256": "743c83784ad4e97e41e14d922a4c7a1b9379b4a37b239975535afbb6000ff664"
     },
     {
       "id": "agent:reviewer",
       "kind": "agent",
       "file": "reviewer.md",
-      "sha256": "9a2f41a048db2cbf3ce35cf4d1b134878032aedea91b35011339eb00d8ef0265"
+      "sha256": "dfb2dc17c3d005198ca6e134d97ca8edbc8ebf6e7b0661d90c1d5f6562eac7db"
     },
     {
       "id": "command:decompose",
@@ -53,19 +53,19 @@
       "id": "doc:README",
       "kind": "doc",
       "file": "README.md",
-      "sha256": "7cf7576d7f0d83d9389481c8b99744317c05a854cf38ae9d55dccebdc4d42d73"
+      "sha256": "6df17fa7d162f9044a4567e27ea5f92a6de15ac3dd55a4cc571fc1a57a027d17"
     },
     {
       "id": "doc:lessons",
       "kind": "doc",
       "file": "lessons.md",
-      "sha256": "cb2579353d04e494254af16f2d4880d3ef6d31f02e5a5cf970add1712ecc3e5f"
+      "sha256": "8f4245832057418ff9ea3a522b6374f9fdf9c457338e0506a0efc78aa1b59cd8"
     },
     {
       "id": "doc:policy-review",
       "kind": "doc",
       "file": "policy-review.md",
-      "sha256": "62961f3aac1fa601e7f892832a1054ba0f0e9df56a7717181a056732177d7c93"
+      "sha256": "dd48a2efa1acc32a402151c727e4e095cb14247a6eb1ddc50811d33e7536d01e"
     },
     {
       "id": "doc:prompt-design",
@@ -77,19 +77,19 @@
       "id": "doc:reading-list",
       "kind": "doc",
       "file": "reading-list.md",
-      "sha256": "3b00ab918208312663bb6c23e2dfc23a11fbcbe70ade7da63e3a04042241d093"
+      "sha256": "dfaa9c33376e7d9d7486b7a609806ca44b7b57015060a80585ec0d658598df6b"
     },
     {
       "id": "doc:rsi-loop-playbook",
       "kind": "doc",
       "file": "rsi-loop-playbook.md",
-      "sha256": "f868751e8dbc41a368ae9572827a7793caeb84d3b0a7a66a3933bc70c895d86e"
+      "sha256": "eb2c01da8345ecf9928871bdd7c55d9a61db0d617c99393149502d94f9307dfd"
     },
     {
       "id": "doc:task-decomposition",
       "kind": "doc",
       "file": "task-decomposition.md",
-      "sha256": "5ec63382be690cd8ba6c637c21221f1571f6e16a37a5ad607ea04aaf8633548f"
+      "sha256": "ce14057e936b4755ee7a6414ef18175a1833347d6d9d187e40b024530243057d"
     }
   ]
 }

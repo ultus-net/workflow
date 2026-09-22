@@ -191,7 +191,7 @@ Substrates already here:
 - `.config/opencode/` — the agent fleet: `decompose`, `executor`,
   `reviewer`, `retrospective`, each with permission boundaries and `steps`
   caps. Agents carry roles, not model IDs — model routing is upstream — and
-  subagents run in their own context via the task tool. The slash commands
+  subagents run in their own context via the `subagent` tool. The slash commands
   `/decompose`, `/review-diff`, `/retro`, and `/rsi-loop` make the loop
   invocable manually.
 - `.config/goose/config.yaml` — goose provider/model wiring.
