@@ -45,10 +45,18 @@ commits/edits/pushes, not the exit.
 PR-reviewed draft of the config) were blocked identically to live-config
 writes.
 
-**Research conflict:** AHE's model is *workspace edits free, deployment
-gated* — DGM lets the agent modify its harness in a workspace and gates at
-validation; STOP sandboxes self-modification. The safety boundary in the
-literature is the **promotion step**, not the drafting step.
+**Research conflict:** the literature separates *drafting* from *promotion*,
+but drafting is not unattended. AHE (2604.25850) confines harness edits to a
+workspace with runs/tracer/verifier/LLM-config read-only and gates every edit
+with a versioned manifest plus next-round verification — and explicitly does
+not claim a complete guardrail stack. DGM evolves harness code under
+sandboxed evaluation; STOP sandboxes self-modification. The safety boundary
+is the **promotion step**, not the drafting step — but the drafting
+environment must still confine writes to the draft surface.
+
+> Correction (2026-09-22 sanity check): this section previously attributed
+> "workspace edits free, deployment gated" to AHE. The paper says the
+> opposite about write freedom — see `reading-list.md` → Verification status.
 
 **Counterproductive effects observed:** sanctioned work was forced into
 manual copy-paste, bypassing PR review, the pre-commit secret scanner, and
@@ -57,7 +65,8 @@ chat-dump fallback is the least auditable channel available.
 
 **Port rule:** gate the promotion (`cp`/`symlink` into live paths, service
 reload) as an ask-gate that "allow always" can never persist for; allow
-versioned drafts freely.
+versioned drafts freely — draft writes stay on the draft surface (repo tree
+or scratch), never the live path.
 
 ### F3 — Path-segment matching in scratch dirs, no sanctioned alternative · severity: medium
 **Observed:** `/tmp/opencode/fleet-draft/opencode.jsonc` — a scratch file

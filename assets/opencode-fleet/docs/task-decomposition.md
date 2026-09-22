@@ -75,7 +75,7 @@ given, but *judging* and *integrating* still need capability.
   structurally: `decompose` (planner), `executor` (cheap-tier role),
   `reviewer`, `retrospective`. No agent pins a model — routing is upstream —
   so tiers are role assignments, not hardcoded IDs. Subagents spawned via
-  the task tool run in their own context (subtask noise stays out of the
+  the `subagent` tool run in their own context (subtask noise stays out of the
   main thread), and `steps` caps bound runaway spend.
 - **goose** — same split: planning stays on the session's routed model;
   mechanical fan-out goes to opencode subagents.

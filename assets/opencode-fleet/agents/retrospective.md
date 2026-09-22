@@ -8,7 +8,7 @@ permissions:
     resource: "*"
     effect: deny
   - action: edit
-    resource: "*docs/agents/lessons.md"
+    resource: "docs/agents/lessons.md"
     effect: allow
   - action: subagent
     resource: "*"
