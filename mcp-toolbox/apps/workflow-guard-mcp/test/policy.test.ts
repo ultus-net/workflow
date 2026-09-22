@@ -737,9 +737,11 @@ test("W097: another user's home and .ssh outside the home stay denied", () => {
 // so the spelling-decided verdicts cannot shift silently — unifying them is a
 // queued policy decision, not drift.
 
-test("W099/G5: the sanctioned branch-exit spellings stay allowed on a protected branch", () => {
+test("W099/G5: the allowed branch-exit spellings on a protected branch (as-found, not an endorsement)", () => {
   // The redirect names `git checkout -b`; the switch spellings of the same
-  // intents are already outside gitWriteRe entirely.
+  // intents are already outside gitWriteRe entirely. These are AS-FOUND
+  // allows — including the switch force-create form — see the asymmetry pin
+  // below for the spelling-decided verdicts this set sits against.
   assert.equal(checkPolicy({ action: "shell", command: "git checkout -b feat/g5", currentBranch: "main" }).decision, "allow");
   assert.equal(checkPolicy({ action: "shell", command: "git switch -c feat/g5", currentBranch: "main" }).decision, "allow");
   assert.equal(checkPolicy({ action: "shell", command: "git switch feat/g5", currentBranch: "main" }).decision, "allow");
