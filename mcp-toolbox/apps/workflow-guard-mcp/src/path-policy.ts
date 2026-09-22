@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { homedir } from "node:os";
 
 const SAFE_ENV_FIXTURE_RE = /\.env\.(example|sample|template|dist|schema)(\.[\w-]+)*$/i;
 
@@ -38,9 +39,24 @@ export function checkProtectedPath(path: string, workspaceRoot?: string): string
   const candidates = [lexical];
   const real = workspaceRoot || isAbsolute(path) ? realPathWithMissingTail(lexical) : undefined;
   if (real && real !== lexical) candidates.push(real);
+  // W097: the user's real home is user space, not system space. On ostree
+  // hosts /home is a symlink to /var/home, so every home-anchored path
+  // realpaths under /var and the naive prefix rule denied every write —
+  // including workspace-relative file_writes whose lexical candidate
+  // resolves into the home mount. Home-covered candidates still fire the
+  // .ssh and secret-name rules (credentials live in the home); they only
+  // escape the /etc//usr//var system-space prefixes.
+  const home = homedir();
+  const realHome = realPathWithMissingTail(home) ?? home;
+  const isUnderRealHome = (candidate: string): boolean => {
+    const rel = relative(realHome, candidate);
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  };
   for (const candidate of candidates) {
     const normalized = candidate.replaceAll("\\", "/");
-    if (/^\/etc(?:\/|$)/.test(normalized) || /^\/usr(?:\/|$)/.test(normalized) || /^\/var(?:\/|$)/.test(normalized) || /(?:^|\/)\.ssh(?:\/|$)/.test(normalized)) return "protected system or credential path";
+    const inUserHome = isUnderRealHome(normalized);
+    if (!inUserHome && (/^\/etc(?:\/|$)/.test(normalized) || /^\/usr(?:\/|$)/.test(normalized) || /^\/var(?:\/|$)/.test(normalized))) return "protected system or credential path";
+    if (/(?:^|\/)\.ssh(?:\/|$)/.test(normalized)) return "protected system or credential path";
     if (isSecretName(candidate)) return "secret credential path";
   }
   return undefined;

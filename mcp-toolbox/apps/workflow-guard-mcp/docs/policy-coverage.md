@@ -225,3 +225,20 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   guards green pre-change; the compound-attribution pin red before the
   reorder); suites 59/0; dist rebuilt (LESS-0010 hazard); repo
   lint/typecheck exit 0.
+
+- **2026-09-23 (W097):** the ostree `/var`-home false positive FIXED. The
+  W089-era "queued candidate" is closed: on ostree hosts (/home is a
+  symlink to /var/home), every home-anchored path — including
+  workspace-relative file_writes whose lexical candidate resolves into the
+  home mount — realpaths under /var and the `/etc//usr//var` prefix rule
+  denied it. `checkProtectedPath` now classifies the user's REAL home
+  (realpath-resolved) as user space: the system-space prefixes skip
+  home-covered candidates while the `.ssh` and secret-name rules fire
+  unconditionally (credentials live in the home). Another user's home,
+  `/root/.ssh`, and genuine `/etc//usr//var` paths stay denied (pinned).
+  Residual recorded: `homedir()` is trusted without a sanity clamp — a
+  poisoned `HOME=/var` would neuter the `/var` rule (`/etc`/`/usr` still
+  fire; `.ssh`/secret rules unconditional); host-side env only, agents
+  cannot set it. Live probe before the fix recorded the deny for
+  workspace-relative writes; after the fix the same probe returns allow
+  with `/var/log` and `.ssh` still protected.
