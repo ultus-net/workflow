@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { checkPolicy, extractPatchPaths } from "../src/policy.js";
+import { checkProtectedPath } from "../src/path-policy.js";
 import { shellHasFileMutation } from "../src/boundary-policy.js";
 import { evaluateClaudePreToolUse } from "../src/claude-hook.js";
 
@@ -633,6 +634,37 @@ test("W089: interpreter payloads cannot smuggle guard-config writes", () => {
   assert.equal(checkPolicy({ action: "shell", command: `node -e 'require("fs").writeFileSync("out.txt", "x")'` }).decision, "allow");
 });
 
+// ---- W097: the /var system rule must not claim the user's real home ----
+// On ostree hosts /home is a symlink to /var/home, so EVERY path under the
+// user's home realpaths under /var and the pre-W097 system rule
+// (^\/var) denied every absolute write — including workspace-relative
+// file_writes (the lexical candidate resolves into /var/home/...). The
+// user's real home is user space, not system space: the /etc//usr//var
+// rules are skipped for home-covered candidates; the .ssh and
+// secret-name rules still fire there.
+
+test("W097: the user's real home is user space, not /var system space", () => {
+  const home = homedir();
+  // Absolute home-anchored write (the ostree false-positive class).
+  assert.equal(checkProtectedPath(join(home, "src", "a.ts")), undefined);
+  assert.equal(checkProtectedPath(join(home, "notes.md")), undefined);
+  // Workspace-relative write with a workspaceRoot under the home.
+  assert.equal(checkProtectedPath("src/a.ts", home), undefined);
+});
+
+test("W097: genuine /var and /etc paths stay protected", () => {
+  assert.match(checkProtectedPath("/var/log/x") ?? "", /protected system/);
+  assert.match(checkProtectedPath("/var/lib/data") ?? "", /protected system/);
+  assert.match(checkProtectedPath("/etc/passwd") ?? "", /protected system/);
+  assert.match(checkProtectedPath("/usr/local/bin/x") ?? "", /protected system/);
+});
+
+test("W097: credential rules still fire inside the user's home", () => {
+  const home = homedir();
+  assert.match(checkProtectedPath(join(home, ".ssh", "id_rsa")) ?? "MISSING", /protected system or credential/);
+  assert.match(checkProtectedPath(join(home, ".env")) ?? "MISSING", /secret credential/);
+});
+
 // ---- W091: the T1 promotion gate (frontier G3 part 1) ----
 // `workflow install fleet [--force]` deploys the vendored fleet payload into
 // the live control plane — the sanctioned promotion command. Upstream's
@@ -683,4 +715,14 @@ test("W091: segment-level denies win over the promotion ask in compound commands
   const compound = checkPolicy({ action: "shell", command: destructive });
   assert.equal(compound.decision, "deny");
   assert.equal(compound.policy, "destructive-operation");
+});
+
+test("W097: another user's home and .ssh outside the home stay denied", () => {
+  // The exemption is scoped to THIS user's real home: another user's home
+  // (lexical /home/<other> and realpath /var/home/<other> forms) escapes
+  // isUnderRealHome and the /var prefix fires; .ssh outside the home is
+  // caught by the unconditional .ssh rule.
+  assert.match(checkProtectedPath("/home/otheruser/x") ?? "MISSING", /protected system or credential/);
+  assert.match(checkProtectedPath("/var/home/otheruser/x") ?? "MISSING", /protected system or credential/);
+  assert.match(checkProtectedPath("/root/.ssh/id_rsa") ?? "MISSING", /protected system or credential/);
 });

@@ -2330,3 +2330,50 @@ DURABLE_STATE_INVENTORY.md writer authorities), and long-running loops
 - [x] Credential rules still fire inside the home: .ssh and secret-name rules unchanged (credentials live in the home).
 - [x] Verifier: W097 pins RED against the unmodified tree (52 pass/1 fail - exactly the user-home test; the genuine-/var and credential tests green pre-change as they assert existing protection), GREEN after the fix (62/0 across policy+mcp+redirect); guard typecheck OK; dist rebuilt and the LIVE probe re-run post-fix (home-abs: undefined; ws-relative: undefined; var-log: protected; ssh: protected); repo lint/typecheck exit 0.
 - [ ] Queued (one change per iteration): the ask channel on the other four seats, the plane-3-prime pending-ask surface, daemon-level end-to-end ask pin, G2 part 2 (trustedRole), G5 branch-exit pins, G4 matched-surface field, dist-freshness pin, npm pack verifier debt (human-gated).
+
+### W098 - Control-plane caching posture: cache-enabling + affinity, never response-caching (Planned - position recorded) (2026-09-23)
+
+**Operator question:** "should we be doing caching on the control
+plane/router as well? This would complement the provider-side caching done
+at OpenRouter's end."
+
+**Position (recorded, design queued):**
+- **Yes - but the control plane's caching role is cache-ENABLING, not
+  response-caching.** Provider-side prompt caches reward STABLE prefixes;
+  the hub composes the largest prefixes (system prompts, fleet guidance,
+  tool definitions, per-role model config), so its discipline decides hit
+  rates: (a) cache-aware composition - stable per-session prefixes,
+  append-only per-turn content, stable tool-list serialization; (b) a
+  cache-bust audit of everything the hub prepends per turn (the W073
+  orientation/advisory guidance is the first thing to check); (c)
+  cache-control marker injection at the transformBody seam for
+  anthropic-wire pools (Anthropic requires explicit markers; OpenAI-family
+  auto-caches) - a concrete, small complement OpenRouter cannot do
+  per-workspace.
+- **Model affinity as a routing key modifier**: pin consecutive turns of a
+  session to the same vendor/model so provider-side prefix caches actually
+  hit - Auto Router may bounce providers per request, losing cache state.
+  Cost tradeoff recorded: affinity gives up per-request optimization for
+  cache-hit savings; for long sessions with large stable prefixes the
+  cache wins. This is a modifier on the W095 role key (narrow the pool,
+  don't add a fifth key).
+- **Deterministic-resource caching with TTL (already exists, the model to
+  follow)**: the OpenRouter catalog cache in openrouter-auto-latest.ts
+  (6h success / 60s failure backoff) - cache deterministic, versioned
+  resources; never agentic turns.
+- **Response caching is REJECTED**: agentic turns are nondeterministic and
+  state-dependent (a cached response is by definition not fresh
+  observation - the kernel's fresh-evidence rule), and serving from cache
+  would corrupt the metering trail (recorded usage is the budget/billing
+  evidence; phantom-free turns break its truthfulness). Same four-home
+  logic as W095.
+
+**Acceptance criteria:**
+- [ ] A cache-bust audit of hub-composed prefixes (orientation/guidance,
+      system prompts, tool serialization) - before any affinity work.
+- [ ] Cache-control marker injection at transformBody for anthropic-wire
+      pools (opt-in per pool via model-profile.ts).
+- [ ] Affinity routing specced as a W095 key-1 modifier (pool narrowing),
+      with the cost tradeoff recorded and the metering trail verified
+      unaffected.
+- [ ] Frontier verification of the design (same pattern as #82/#85).
