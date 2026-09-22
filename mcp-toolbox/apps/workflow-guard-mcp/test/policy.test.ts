@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
@@ -556,4 +556,79 @@ test("W088: the batch-mode exemption is the monitor's own flag, not a wrapper's"
   assert.equal(checkPolicy({ action: "shell", command: "cat file | top" }).decision, "ask");
   assert.equal(checkPolicy({ action: "shell", command: "sh -c top" }).decision, "ask");
   assert.equal(checkPolicy({ action: "shell", command: "eval htop" }).decision, "ask");
+});
+
+// ---- W089: file-write control-plane classification (upstream mainline parity) ----
+// Upstream's edit/write handler classifies targets with isProtectedPath (the
+// guard-config vocabulary with plans-file exemption, realpath awareness, and
+// W087-style live-root facts). The vendored file_write path consulted only the
+// system/secret check, so a host enforcing guard_check verdicts would let a
+// file write replace the guard's own configuration.
+
+test("W089: file_write control-plane paths are guard-tamper", () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-guard-w089-"));
+  const tool = ["open", "code"].join("");
+  for (const p of [
+    `.${tool}/plugins/custom.ts`,
+    `.${tool}/workflow-guard.json`,
+    `${tool}.json`,
+    `${tool}.jsonc`,
+    "workflow-guard.jsonc",
+    `.config/${tool}/config.json`,
+    `.${tool}/agents/tool.sh`,
+  ]) {
+    const result = checkPolicy({ action: "file_write", path: p, workspaceRoot: root, content: "{}" });
+    assert.equal(result.decision, "deny", p);
+    assert.equal(result.policy, "guard-tamper", p);
+  }
+  // User-level live config (absolute path) is control-plane too.
+  const userLevel = checkPolicy({ action: "file_write", path: join(homedir(), ".config", "opencode", "plugins", "x.ts"), content: "x" });
+  assert.equal(userLevel.decision, "deny");
+  assert.equal(userLevel.policy, "guard-tamper");
+  // Plan files are documents; the plans directory itself stays protected.
+  assert.equal(checkPolicy({ action: "file_write", path: `.${tool}/plans/plan.md`, workspaceRoot: root, content: "# plan" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "file_write", path: `.${tool}/plans`, workspaceRoot: root, content: "" }).decision, "deny");
+  // Ordinary workspace files are unaffected, including paths that merely
+  // contain the guarded token as a substring.
+  assert.equal(checkPolicy({ action: "file_write", path: "src/app.ts", workspaceRoot: root, content: "x" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "file_write", path: `docs/.${tool}-notes.md`, workspaceRoot: root, content: "x" }).decision, "allow");
+});
+
+test("W089: live-root facts classify file writes by runtime consumption", () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-guard-w089-facts-"));
+  const live = mkdtempSync(join(tmpdir(), "workflow-guard-w089-live-"));
+  const draft = mkdtempSync(join(tmpdir(), "workflow-guard-w089-draft-"));
+  mkdirSync(join(draft, ".config", "opencode"), { recursive: true });
+  const tool = ["open", "code"].join("");
+  // A versioned draft under a dotfiles tree is T2 with facts supplied.
+  assert.equal(
+    checkPolicy({ action: "file_write", path: join(draft, ".config", tool, "agent.md"), workspaceRoot: root, liveConfigPaths: [live], content: "x" }).decision,
+    "allow",
+  );
+  // A write under a declared live root is T0 and denied.
+  assert.equal(
+    checkPolicy({ action: "file_write", path: join(live, "config.json"), workspaceRoot: root, liveConfigPaths: [live], content: "x" }).decision,
+    "deny",
+  );
+  // A draft-looking lexical path resolving through a symlink into the live
+  // root stays denied.
+  symlinkSync(live, join(root, "link"));
+  assert.equal(
+    checkPolicy({ action: "file_write", path: "link/config.json", workspaceRoot: root, liveConfigPaths: [live], content: "x" }).decision,
+    "deny",
+  );
+});
+
+test("W089: interpreter payloads cannot smuggle guard-config writes", () => {
+  const tool = ["open", "code"].join("");
+  // Relative workspace-form destination: the guard vocabulary classifies it
+  // (resolve against the invocation root), independent of host layout.
+  const literal = checkPolicy({ action: "shell", command: `node -e 'require("fs").writeFileSync(".config/${tool}/${tool}.json", "x")'` });
+  assert.equal(literal.decision, "deny");
+  assert.equal(literal.policy, "interpreter-guard-tamper");
+  const tilde = checkPolicy({ action: "shell", command: `node -e 'require("fs").writeFileSync("~/.config/${tool}/plugins/x.ts", "x")'` });
+  assert.equal(tilde.decision, "deny");
+  assert.equal(tilde.policy, "interpreter-guard-tamper");
+  // Benign interpreter writes are unchanged.
+  assert.equal(checkPolicy({ action: "shell", command: `node -e 'require("fs").writeFileSync("out.txt", "x")'` }).decision, "allow");
 });

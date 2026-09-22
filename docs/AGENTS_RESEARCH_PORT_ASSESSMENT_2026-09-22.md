@@ -228,3 +228,37 @@ critique round). The frontier critique's findings were themselves
 re-verified against the code before incorporation — external verification
 is not deferred to; it is checked. All guard-src citations describe
 `671625c`; the W089 in-flight diff is dated and never cited as landed.
+
+## 9. Status addendum (2026-09-22, after W089 landed — appended by the W089
+session; §1–§8 above remain pinned to `671625c` byte state)
+
+- **G1 (file_write-lane T0) is CLOSED** by W089: commit `84df813`
+  (`feat/w089-file-write-classification`, PR #77; the pre-rebase form of the
+  same change was the in-flight diff §1–§8 refer to as `95421ea` on
+  `feat/w089-file-write-tamper`, which was superseded after PR #78 merged
+  because a force-push of the rebased branch is guard-blocked). The
+  file_write lane and the interpreter-payload write-target loop now
+  classify targets with `isGuardConfigurationPath` — the same
+  guard-config vocabulary, plans-file exemption, realpath awareness, and
+  live-root fact-mode the shell lane already carried — ordered
+  tamper-before-system/secret per upstream precedence (which also removes
+  an ostree-specific policy-label masking: `/home` realpaths under `/var`
+  on this host, so the pre-existing `/var` rule fired first). Pins red→green
+  (43/3 → 55/0), fresh-eyes five-axis review [APPROVE] recorded. Of the
+  retirement-precondition list in §1, **file_write T0 is done core-side;
+  branch facts (G2), the ask channel (G3), and guard-visible promotion
+  recognition (G3) remain open**.
+- **Correction to §2 F5's upstream claim**: "Upstream closed this in #158"
+  is imprecise — #158 (`c377cb9`, policy-port-rules) is **not merged into
+  `origin/main`** (side branch `origin/fix/worktree-fingerprint` only;
+  verified via `merge-base --is-ancestor` and v1.15.0 npm source content).
+  Mainline closed the write-lane hole long before #158 via its own
+  `isProtectedPath` edit/write classification (which is exactly what the
+  vendored W089 port mirrors); #158's payload-mode tamper scan and
+  markdown-only exemption remain unmerged upstream side-branch material.
+  The dated, append-only record of this correction lives in the vendored
+  guard's parity log (`mcp-toolbox/apps/workflow-guard-mcp/docs/
+  policy-coverage.md`, W088 + W089 entries).
+- G2–G5 remain open exactly as listed in §6; G5 (branch-exit consistency
+  pins) was consciously not folded into W089's guard test touch — one
+  change per iteration.

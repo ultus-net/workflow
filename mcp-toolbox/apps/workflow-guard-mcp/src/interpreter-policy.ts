@@ -1,4 +1,5 @@
 import { checkProtectedPath } from "./path-policy.js";
+import { isGuardConfigurationPath } from "./boundary-policy.js";
 
 function interpreterPayloads(segment: string): string[] {
   const payloads: string[] = [];
@@ -31,7 +32,7 @@ const writeTargetPatterns = [
   /[>]{1,2}\s*["']?([^\s;&"'|)]+)/g,
 ];
 
-export function checkInterpreterPolicy(command: string, workspaceRoot?: string): { policy: string; decision: "deny"; reason: string } | undefined {
+export function checkInterpreterPolicy(command: string, workspaceRoot?: string, liveConfigPaths?: readonly string[]): { policy: string; decision: "deny"; reason: string } | undefined {
   for (const payload of interpreterPayloads(command)) {
     if (fileVerb.test(payload)) {
       for (const token of payload.match(/["'][^"']*["']|[^\s(){}[\];,|&<>]+/g) ?? []) {
@@ -43,6 +44,10 @@ export function checkInterpreterPolicy(command: string, workspaceRoot?: string):
     for (const pattern of writeTargetPatterns) {
       for (const match of payload.matchAll(pattern)) {
         if (!match[1] || /^\/dev\/(?:null|stdout|stderr|tty|fd\/\d+)$/.test(match[1])) continue;
+        // Upstream precedence: the tamper classification runs before the
+        // system/secret check, so a config-shaped destination keeps its own
+        // policy name even where a realpath would also match a system rule.
+        if (isGuardConfigurationPath(match[1], workspaceRoot, liveConfigPaths)) return { decision: "deny", policy: "interpreter-guard-tamper", reason: `Interpreter payload writes guarded control-plane path '${match[1]}'.` };
         const protectedPath = checkProtectedPath(match[1], workspaceRoot);
         if (protectedPath) return { decision: "deny", policy: "interpreter-protected-write", reason: `Interpreter payload writes protected path '${match[1]}'.` };
       }
