@@ -99,3 +99,61 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   no live-path fact and keeps segment matching. The T1 ask-gate for promotion
   into live paths and the `opencode.jsonc`=ask nuance from the tier model are NOT
   yet implemented — this step covers T0-vs-T2 classification only.
+
+- **2026-09-22 (W088):** upstream drift assessment `ed09c84..03fbdcf`
+  (2026-09-20 → 2026-09-22, PRs #153–#176, upstream v1.15.0), continuation of
+  the W084 parity program. All 24 merge PRs in the window classified:
+  **converged:** #159 (`d240134`, opt-in host-supplied live control-plane
+  paths) is upstream's own landing of the same design as the W087 step above —
+  identical semantics (absolute-or-rejected roots, fail-closed fallback,
+  symlink-aware, verb patterns unaffected); the T1 ask-gate and
+  `opencode.jsonc`=ask nuance remain deferred on BOTH sides, so nothing to
+  fold in. **converged by rewrite:** #165 (`ea3cab7`, interactive monitors only
+  in command position) — the vendored rewrite was already command-position
+  based (`executableIn` over unwrapped words), so upstream's false-positive fix
+  (`az keyvault ... --name top`, `echo top`) could not reproduce here; the
+  residual deltas upstream's fix covers — busybox applet forms (`busybox top`,
+  `busybox vi`), case variants (`TOP`), and the batch-mode exemption scoped to
+  the monitor's own arguments — were PORTED this iteration
+  (shell-policy `interactiveReason`; pinned in test/policy.test.ts W088
+  section). The busybox and case deltas are red→green verified (pins red
+  against the unmodified tree); the batch-scoping delta has its own
+  distinguishing pins (`env -b top`, `timeout -b top`: a wrapper's
+  batch-shaped flag used to suppress the monitor rule through the raw-word
+  check; red→green via stash choreography — `sudo -b top` is NOT an exemplar,
+  the sudo rule returns before the monitor check in both trees). The class
+  regex change is decision-neutral for every non-busybox non-`top` command
+  (the regex was already `/i`). **partially assessed → queued:** #158
+  (`c377cb9`, policy-port-rules, 2026-09-21): tamper anchoring to live config
+  consumption surfaces aligns with the #159/W087 direction, but its
+  payload-mode tamper scan (segment fallback, expanded inner-layer checks,
+  markdown-scoped payload exemption) has no counterpart in the vendored
+  `checkPolicy` file_write path, which scans write content for secrets only —
+  a new portable-candidate class queued for the next iteration's semantic
+  diff, NOT classified converged. **host-side only, deliberately not
+  portable** (plugin/TUI/verification runtime responsibilities; Workflow ships
+  no plugins): #154 TUI slot-render degrade, #156 verify worktree fingerprint
+  fail-open-per-entry, #161 PR preflight binding + worktree no-rollback,
+  #164 stale-write observation seeding, #166 worktree-cleanup idempotence,
+  #169 stale file-claim takeover, #170 plugin version visibility, #175
+  (`14a07f1`) branch-creation freshness start points (executes git ancestry)
+  and its TUI badge fix, #174 guard_status git-hygiene snapshot (executes
+  git — the portable core evaluates host-supplied facts; the Workflow hub
+  itself could adopt the snapshot as an extension if wanted). **release-only,
+  no policy content:** #153/#155/#157/#160/#162/#168/#176 (changeset-release
+  merges). **test-only upstream:** #171 rubric default-bases asserts (nothing
+  to port). **queued candidates (not taken this iteration, one change per
+  iteration):** the #158 payload-mode tamper scan semantic diff, boundary
+  deny-reason cause attribution for workspace escapes (#172 unresolvable-
+  variable cause, #173 scratch-directory cause — deterministic
+  message-quality port), opt-in `requireSubagentReview` strict recorder mode
+  (#167 — Workflow-side review-gate analog), and a stated divergence: the
+  hub reviewer sources `git diff HEAD` (uncommitted working tree) while
+  upstream's rubric reviews the committed branch range
+  (`<base>...HEAD`); upstream #163's `--`-before-revision empty-diff bug does
+  not exist in the hub implementation. Known limitation, unchanged on both
+  sides: monitor/pager indirection (`watch`/`xargs`/`man`, `find -exec`/
+  `su -c`, shell loop bodies) is not modeled — and the busybox port is
+  single-level: `busybox env top`, `busybox timeout top`, `busybox sh -c top`
+  stay allowed while their non-busybox forms ask (pre-existing asymmetry,
+  now visible).
