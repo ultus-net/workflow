@@ -11,6 +11,7 @@ import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { EditDiff, parseEditTool } from "../src/ui/webapp/diff-text.js";
 import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection, RoutingSection, SettingsDialog } from "../src/ui/webapp/settings-dialog.js";
 import { LiveTopologyStats } from "../src/ui/webapp/usage-view.js";
+import { InvariantsPanel } from "../src/ui/webapp/invariants-panel.js";
 import { listPalettes } from "../src/ui/webapp/theme/palettes.js";
 import { DEFAULT_WEB_AGENT, listWebAgents } from "../src/ui/web-agents.js";
 import type { WebConfigOption } from "../src/ui/web-config-options.js";
@@ -554,5 +555,21 @@ test("the step-ledger row renders the canonical step with only kernel-legal acti
   }));
   assert.ok(done.includes("completed"), "the terminal state must render");
   assert.ok(!done.includes("Complete") && !done.includes("Cancel"), "a terminal step offers no actions");
+});
+
+test("W107 C2: the invariants panel renders the judged population and the could-not-discriminate distinction", () => {
+  const rows = [
+    { id: "state-legality", label: "Task states are legal", verdict: "passed" as const, judged: 3 },
+    { id: "verified-evidence-fresh", label: "Verified tasks hold fresh passing evidence", verdict: "could-not-discriminate" as const, judged: 0 },
+    { id: "evidence-record-shape", label: "Evidence records are well-formed", verdict: "failed" as const, judged: 2, failures: ["e7"] },
+  ];
+  const markup = renderToStaticMarkup(createElement(InvariantsPanel, { rows }));
+  // Pass rows name their judged population — an all-clear is never vacuous.
+  assert.ok(markup.includes("3"), "the judged population must render beside the pass");
+  // The empty population is the amux distinction: could-not-discriminate,
+  // never a silent pass.
+  assert.ok(markup.includes("could not discriminate"), "an empty population must say it judged nothing");
+  // A failure names the offending subjects.
+  assert.ok(markup.includes("e7"), "a failed invariant names the offending subject");
 });
 

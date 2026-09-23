@@ -2,6 +2,7 @@ import type { HostCapabilities, ProposedToolAction, ToolCapability } from "./hos
 import { NO_ACTIVE_TASK_ID } from "./task-commands.js";
 import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { evaluateTaskGraphInvariants } from "../kernel/invariants.js";
 import type {
   Evidence,
   EvidenceRequirement,
@@ -422,6 +423,17 @@ export class WorkflowApplication {
       })),
       evidence: this.#graph.evidence(),
       history: [...this.#history],
+    };
+  }
+
+  /** W107 (amux C2): kernel-evaluated invariant rows with their judged
+   * populations. The evaluation lives in the kernel (pure state
+   * inspection); this surface relays it — the UI never self-derives
+   * agreement from client-observed state. */
+  invariants() {
+    return {
+      invariants: evaluateTaskGraphInvariants({ tasks: this.#graph.tasks(), evidence: this.#graph.evidence() }),
+      mutationEpoch: this.#graph.mutationEpoch,
     };
   }
 

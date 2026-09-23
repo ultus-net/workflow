@@ -226,10 +226,42 @@ export function createWorkflowWebServer(
           analytics.queryDaily(startIso, endIso),
           analytics.credits(),
         ]);
-        return json(response, 200, { available: true, days, credits, byModel, byDay });
+        // W107 (amux C1): response-honesty coverage — every fact here is
+        // SERVER-computed (never client-derived), and unknown fields stay
+        // absent rather than fabricated. The amux anti-pattern this closes:
+        // an all-clear that silently coerced its window or truncated its
+        // population ("0 5xx" covering 1.1% of traffic).
+        return json(response, 200, {
+          available: true,
+          days,
+          credits,
+          byModel,
+          byDay,
+          coverage: {
+            requestedDaysParam: requestedDays,
+            days,
+            ...(requestedDays !== null && days !== Number(requestedDays)
+              ? { ignoredParams: [`days=${requestedDays}`] }
+              : {}),
+            window: { startIso, endIso },
+            byModel: { rows: byModel.rows.length, truncated: byModel.truncated, limit: 100 },
+            byDay: {
+              rows: byDay.rows.length,
+              truncated: byDay.truncated,
+              limit: 120,
+              ...(byDay.granularityAvailable !== undefined ? { granularityAvailable: byDay.granularityAvailable } : {}),
+            },
+            creditsAvailable: credits !== undefined,
+          },
+        });
       } catch (error) {
         return json(response, 503, { error: error instanceof Error ? error.message : "OpenRouter analytics unavailable" });
       }
+    }
+    if (request.method === "GET" && pathname === "/api/invariants") {
+      // W107 (amux C2): kernel-evaluated invariant rows relayed verbatim —
+      // the evaluation stays kernel-side; this surface only relays it.
+      return json(response, 200, application.invariants());
     }
     if (request.method === "GET" && pathname === "/api/sessions") {
       if (manager === undefined) return json(response, 503, { error: "session management unavailable" });

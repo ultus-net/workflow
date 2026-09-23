@@ -1176,3 +1176,79 @@ test("web UI guards session rename, task retry/add, and evidence recording", asy
     { result: "passed", freshness: "fresh" },
   );
 });
+
+test("W107 C1: the usage route carries server-computed coverage metadata, including ignored params", async (context) => {
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const row = { model: "deepseek/deepseek-v4.1-flash", cost: 0.00217 };
+  const fakeAnalytics = {
+    async meta() { return { metrics: [], dimensions: [], granularities: [{ name: "day", display_label: "Day" }] }; },
+    async queryByModel() { return { rows: [row], truncated: false }; },
+    async queryDaily() { return { rows: [{ date__day: "2026-09-18T00:00:00.000Z", cost: 0.00217 }], truncated: true, granularityAvailable: true }; },
+    async credits() { return undefined; },
+  };
+  const server = createWorkflowWebServer(application, undefined, undefined, { analytics: () => fakeAnalytics });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const port = (server.address() as AddressInfo).port;
+
+  // A days value outside the whitelist is NOT silently coerced: the response
+  // says what was requested, what was used, and which params were ignored.
+  const coerced = await fetch(`http://127.0.0.1:${port}/api/usage?days=14`);
+  assert.equal(coerced.status, 200);
+  const coercedBody = await coerced.json() as {
+    coverage?: { requestedDaysParam: string | null; days: number; ignoredParams: string[]; window?: { startIso: string; endIso: string }; byModel?: { rows: number; truncated?: boolean; limit: number }; byDay?: { rows: number; truncated?: boolean; limit: number }; creditsAvailable: boolean };
+  };
+  assert.deepEqual(coercedBody.coverage?.requestedDaysParam, "14");
+  assert.deepEqual(coercedBody.coverage?.days, 7);
+  assert.deepEqual(coercedBody.coverage?.ignoredParams, ["days=14"]);
+  // The actual queried window is the server's own time range, carried through.
+  assert.match(coercedBody.coverage?.window?.startIso ?? "", /Z$/);
+  assert.match(coercedBody.coverage?.window?.endIso ?? "", /Z$/);
+  // Per-source coverage tells: row counts against their limits plus truncation.
+  assert.deepEqual(coercedBody.coverage?.byModel, { rows: 1, truncated: false, limit: 100 });
+  assert.deepEqual(coercedBody.coverage?.byDay, { rows: 1, truncated: true, limit: 120, granularityAvailable: true });
+  assert.deepEqual(coercedBody.coverage?.creditsAvailable, false);
+
+  // The bare (no analytics) route carries no coverage — absent, never fabricated.
+  const bare = createWorkflowWebServer(application, undefined, undefined, { analytics: () => undefined });
+  await new Promise<void>((resolve) => bare.listen(0, "127.0.0.1", resolve));
+  context.after(() => bare.close());
+  const barePort = (bare.address() as AddressInfo).port;
+  const bareBody = await fetch(`http://127.0.0.1:${barePort}/api/usage`).then((response) => response.json()) as { coverage?: unknown };
+  assert.equal("coverage" in bareBody, false);
+});
+
+test("W107 C2: the invariants route reports kernel-evaluated rows with their judged populations", async (context) => {
+  const tasks: WorkflowTask[] = [{
+    id: taskId("A"), title: "Web task", state: "BLOCKED", dependencies: [], requiredEvidence: [],
+  }];
+  const application = new WorkflowApplication(
+    new TaskGraph(tasks),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, undefined, undefined, {});
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const port = (server.address() as AddressInfo).port;
+
+  const empty = await fetch(`http://127.0.0.1:${port}/api/invariants`);
+  assert.equal(empty.status, 200);
+  const emptyBody = await empty.json() as {
+    invariants: { id: string; verdict: string; judged: number }[];
+    mutationEpoch: number;
+  };
+  // One task exists: state-legality judges it; the evidence-derived rows have
+  // empty populations and must say so (could-not-discriminate), never pass.
+  assert.equal(emptyBody.mutationEpoch, 0);
+  const stateLegality = emptyBody.invariants.find((row) => row.id === "state-legality");
+  assert.ok(stateLegality);
+  assert.equal(stateLegality.verdict, "passed");
+  assert.equal(stateLegality.judged, 1);
+  const verifiedFresh = emptyBody.invariants.find((row) => row.id === "verified-evidence-fresh");
+  assert.ok(verifiedFresh);
+  assert.equal(verifiedFresh.verdict, "could-not-discriminate");
+  assert.equal(verifiedFresh.judged, 0);
+});

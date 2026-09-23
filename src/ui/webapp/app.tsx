@@ -17,6 +17,7 @@ import { SettingsDialog, type RoutingFacts } from "./settings-dialog.js";
 import { AgentsView } from "./agents-view.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
 import { UsageView } from "./usage-view.js";
+import { InvariantsPanel } from "./invariants-panel.js";
 import { listPalettes } from "./theme/palettes.js";
 import { usePalette } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
@@ -1672,6 +1673,7 @@ function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent,
         </p>
       </section>
       <ConnectionsSection agents={agents} currentAgent={currentAgent} capabilities={capabilities} />
+      <InvariantsPanel />
       <details className="panel-disclosure">
         <summary><span>Evidence</span><span className="panel-summary-meta">{snapshot?.evidence.length ?? 0}</span></summary>
         <section className="panel-disclosure-body">
