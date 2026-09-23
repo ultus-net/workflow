@@ -2718,3 +2718,57 @@ security-assurance checker 7/0.
       genuinely queued edges are the exotic interpreter names (busybox
       sh, xsh), the zsh EQUALS caveat, and the fused-bundle shapes the
       review rounds continue to harden.
+
+### W103 - The W101/W102 residual closures: alias-push resolution + symbolic-ref gate line (Complete - residuals #22 and #21 resolved, red→green pinned, dist probed) (2026-09-23)
+
+**Source:** the pain-point queue's items 2+3 (one guard-touch iteration,
+same file, same region as W102): SECURITY_ASSURANCE #22 (HEAD-alias
+pushes from a protected seat) and #21 (the symbolic-ref protected-NAME
+matcher line), both queued by the W101/W102 records.
+
+**What landed (vendored guard core + dist rebuilt):**
+- Push lane: HEAD/`@` refspecs and the default push (no refspec beyond
+  the remote slot) resolve against the `currentBranch` fact — a
+  protected seat's alias/default push denies `protected-branch-push`;
+  a feature seat's stays the normal publish flow. FACTLESS seats keep
+  the as-found allow (the documented W090 fail-open class; the round-8
+  bare-pull symmetry; the W102-era transparency principle — the alias
+  destination is fact-shaped, not base-set-shaped). The `--mirror`/
+  `--all` sweep hoisted per segment (the no-remote-argument form never
+  ran it before; a #24 edge). Honest config edge recorded: push.default
+  =upstream toward a differently-named protected upstream stays
+  repo-config-dependent (recorded in #22, not guessed at).
+- Target gate: `symbolic-ref` joins `parseUpdateRef` (sub-aware mode) —
+  the two-operand write form checks BOTH names (the protected NAME and
+  the referent it is aimed at: a symref aimed AT a protected branch
+  routes later commits through it), while the HEAD-form repoint stays
+  the row-25 exit-class allow, the one-operand form stays a read, and
+  --short/-q are enumerated so benign reads do not newly fail closed;
+  --delete and -m fail closed on parse uncertainty. The `.git/`
+  filesystem-route half of #21 remains the open residual (part 2).
+- Twin matcher: hasGitMutation's extras gain symbolic-ref ≥2-token
+  forms (write/delete) — the gate and the twin widen together (§2.3).
+- SECURITY_ASSURANCE #21 (RESOLVED PART 1, part 2 kept open) and #22
+  (RESOLVED, edges stated); parity-log W103 entry; the W101 round-5
+  as-found allow pin flipped WITH a resolution note (the residual
+  pre-registered its own successor).
+
+**Evidence:** pre-change live probe (24-row matrix against src) captured
+every as-found allow; pins authored red-first ran 79/4 with EXACTLY the
+four expected failures (the two new W103 blocks, the flipped pin, the
+twin additions) and zero collateral; green 93/0 (policy 83 + redirect 5
++ mcp 5) after the src edits; dist rebuilt and the dist probe re-run
+(src≡dist); vendored typecheck OK; repo lint/typecheck exit 0;
+security-assurance checker 7/0.
+
+**Acceptance criteria:**
+- [x] Alias/default pushes from a protected seat deny; from a feature
+      seat and a factless seat they keep their classification; mixed
+      refspecs, plus-forms, and wrapped variants pinned.
+- [x] symbolic-ref protected-NAME writes deny factlessly and through
+      wrappers; the HEAD-form, reads, and benign writes keep their
+      classification; unenumerated shapes fail closed.
+- [x] The --mirror/--all zero-argument edge fails closed.
+- [x] The as-found pin moved only as the residual's pre-registered
+      resolution, with the note in place; SECURITY_ASSURANCE and the
+      parity log record the honest factless and config edges.

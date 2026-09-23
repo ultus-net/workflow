@@ -445,3 +445,60 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   getopt-enumeration lesson: the sh-family value options are small and
   enumerable (-o/-O/+o/+O) — LESS-0020 records that the general fix is a
   complete enumeration, not per-finding patches.
+
+  ---- W103 (2026-09-23): the queued W101/W102 residuals #22 and #21 ----
+
+  SECURITY_ASSURANCE #22 (HEAD-alias push resolution) and #21 (the
+  symbolic-ref matcher line) closed in one guard-touch iteration, per the
+  pain-point recommendation (items 2+3: small, same file, same region as
+  W102). Pre-change probe captured the as-found allow for EVERY shape
+  (24-row matrix against src, not inferred): alias/default pushes allow
+  from the protected seat, push with mirror or all flags but NO
+  remote/refspec arguments allow (the round-8 #24 sweep sat INSIDE the
+  refspec loop and a zero-arg push never ran it), symbolic-ref
+  protected-NAME writes allow even factless and even through sh -c
+  wrappers, and symrefs aimed AT a protected branch allow.
+
+  Fixed in src/git-policy.ts: (1) the push lane resolves HEAD/@ refspecs
+  and the default push (no refspec beyond the remote slot — git's grammar
+  makes the first non-option argument the repository) against the
+  currentBranch fact; protected seat → deny/protected-branch-push,
+  feature seat → allow, and a FACTLESS seat keeps the as-found allow —
+  the deliberate divergence from round 4's factless fail-closed, because
+  the alias destination is fact-shaped (only the fact names it), not
+  base-set-shaped: these forms are the documented W090 fail-open class,
+  symmetric with the pinned bare-pull factless allow (round 8) and the
+  W102-era transparency principle. Honest config edge recorded in #22:
+  push.default=upstream aiming a feature branch at a differently-named
+  protected upstream is repo-config-dependent and stays unresolvable.
+  (2) The --mirror/--all sweep hoisted per SEGMENT (the zero-arg edge
+  above closes; the pre-existing with-remote pins stay green).
+  (3) symbolic-ref joins parseUpdateRef in the target gate: the
+  two-operand write form checks BOTH names — the protected NAME (the
+  queued one-liner) AND the referent it is aimed at (a symref
+  feat→main routes later commits through main; the rows-11-13
+  both-operands principle) — while the HEAD-form repoint stays the
+  deliberate row-25 exit-class allow, the one-operand form stays a read,
+  and --short/-q are enumerated so benign reads do not newly fail closed
+  (--delete and -m fail closed on parse uncertainty). (4) The twin
+  matcher widens in the same change (§2.3): hasGitMutation's extras carry
+  symbolic-ref >=2-token forms (write/delete) for the read-only-role
+  lane; the one-operand read is not a mutation.
+
+  Evidence: pins authored red-first (the two new W103 blocks + the
+  flipped as-found pin + the twin additions ran 79/4 against the
+  pre-fix tree — EXACTLY the four expected failures, no collateral;
+  pre-fix classification live-probed via a scratch probe script, plus a
+  pre-probe of the force-alias shape via the shell lane's
+  destructive-operation attribution), then green 93/0 (policy 83 +
+  redirect 5 + mcp 5) after the src edits; dist rebuilt + the dist probe
+  re-run (src≡dist: every predicted flip landed, every preserved
+  classification survived — feature/factless alias allows, HEAD-form,
+  reads, benign writes); vendored typecheck OK; repo lint/typecheck
+  exit 0; security-assurance checker 7/0. The W101-era as-found allow
+  pin flipped in the round-5 test block WITH a resolution note (the
+  residual pre-registered its own successor) — a pin move as the
+  sanctioned closure, not test-weakening. LESS-0021 records the
+  factless-design decision and the fixture-convention note (the
+  scanner blocked a literal force-fragment in the probe script until it
+  was constructed at runtime).
