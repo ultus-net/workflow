@@ -3361,7 +3361,10 @@ be tightened by a guard deny — the M3 posture, fail-closed).
   building blocks are the opencode-server authority's single-use
   consumption maps and the provenance-store's fingerprint discipline.
   The degraded-hub behavior is mostly moot (the approval path is
-  in-process, not hub-proxied) — recorded.
+  in-process, not hub-proxied) — recorded. Transport note (review round
+  1 P3): the full input ships over the 1 s permission poll UNCAPPED at
+  transport (the 64 KiB cap is render-side only) — a transport cap
+  belongs to the evidence-endpoint governance item's scope.
 
 **Evidence:** the broker pin (the parked request carries the full
 payload — taskId/mutating/requiredCapabilities/readFingerprints mapped
@@ -3371,6 +3374,18 @@ rendering Allow disabled pre-confirmation; the oversized payload
 NOT-APPROVABLE-WITH-REASON with deny available), 85/0 across the
 touched suites (permission-broker + web + surface + web-sessions +
 step-ledger + operator-surfaces); typecheck/lint exit 0.
+   CORRECTION (review round 1, 2026-09-24): the "typecheck/lint exit 0"
+claim was FALSE at the reviewed tip — lint FAILED (the dead `rendered`
+pre-computation assigned but never used) and the same line was a
+reachable render crash (`payloadRenderText(undefined)` throws on an
+optional ACP rawInput; the card has no error boundary). Both fixed in
+this iteration's follow-up commit (the payload text computes INLINE in
+the guarded render branch), the pin weaknesses the reviewer flagged
+fixed (both allow affordances asserted gated), and the records
+corrected here. Second lesson recorded: the pins caught the missing
+render but NOT the dead variable — a pin proves what it asserts, never
+that the rest of the file is clean; lint is the verifier for dead code
+and must run at every tip.
 
 **Acceptance criteria:**
 - [x] The approval card renders the complete proposal payload (the full
