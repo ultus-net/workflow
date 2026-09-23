@@ -273,6 +273,12 @@ const schedulerFactory = (handles: WorkflowHubSchedulerHandles) => {
       // per-key backstop) alongside the schedule's own run budget.
       console.log(`run ${runId} session budget mechanism: ${runtime.budgetMechanism}`);
       let budgetGuard: BudgetGuard | undefined;
+      // Iteration 21: collect the turn's advisory reasoning-claim findings so
+      // the run registry can surface them (observability-only).
+      const reasoningClaimFindings: string[] = [];
+      const unsubscribeReasoningClaims = runtime.session.subscribe((event) => {
+        if (event.type === "reasoning-claim") reasoningClaimFindings.push(event.sentence);
+      });
       try {
         if (budget !== undefined) {
           budgetGuard = createBudgetGuard({
@@ -293,6 +299,11 @@ const schedulerFactory = (handles: WorkflowHubSchedulerHandles) => {
           handles.recordCompletionClaim({ runId, claim: snapshot.result });
         }
       } finally {
+        unsubscribeReasoningClaims();
+        handles.noteReasoningClaimMonitor({ runId });
+        for (const sentence of reasoningClaimFindings) {
+          handles.recordReasoningClaim({ runId, sentence });
+        }
         // W044 (open clause): record the turn's metering-proxy totals for
         // hub-attached monitors (per-session usage aggregation) BEFORE the
         // runtime dies with its proxy.

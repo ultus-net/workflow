@@ -18,6 +18,19 @@ export interface HubGateObservability {
   readonly blockingReasons: Record<string, string>;
   readonly completionClaims: Record<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }>;
   /**
+   * Iteration 21: advisory reasoning-claim findings from the monitor
+   * (observability-only; optional: hubs without the feed omit the field).
+   */
+  readonly reasoningClaims?: Record<string, { readonly runId: string; readonly sentence: string; readonly observedAt: string }>;
+  /** Iteration 21: honest monitor metrics (recall/time-to-response explicitly unmeasured). */
+  readonly reasoningClaimMetrics?: {
+    readonly monitoredRuns: number;
+    readonly flaggedRuns: number;
+    readonly findings: number;
+    readonly recall: "unmeasured";
+    readonly timeToResponseMs: "unmeasured";
+  };
+  /**
    * W044 (open clause): per-run metering-proxy totals, recorded hub-side at
    * run-turn end. Optional: hubs older than the aggregation omit the field.
    */

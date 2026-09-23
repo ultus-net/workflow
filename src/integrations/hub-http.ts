@@ -238,6 +238,9 @@ async function handleRequest(
         reviewOutcomes: Object.fromEntries(gates.reviewOutcomes),
         blockingReasons: Object.fromEntries(gates.blockingReasons),
         completionClaims: Object.fromEntries(gates.completionClaims),
+        // Iteration 21: advisory reasoning-claim findings (observation only).
+        ...(gates.reasoningClaims === undefined ? {} : { reasoningClaims: Object.fromEntries(gates.reasoningClaims) }),
+        ...(gates.reasoningClaimMetrics === undefined ? {} : { reasoningClaimMetrics: gates.reasoningClaimMetrics }),
         // W044 (open clause): per-run metering-proxy totals ride to
         // hub-attached monitors (observation only, like the other gates).
         ...(gates.runUsage === undefined ? {} : { usage: Object.fromEntries(gates.runUsage) }),
