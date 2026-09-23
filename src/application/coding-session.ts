@@ -4,6 +4,7 @@ import {
   type ToolExpectedTurnScope,
   type ToolExpectedTurnStats,
 } from "./tool-expected-turn.js";
+import { createReasoningClaimMonitor, type ReasoningClaimFlag } from "./reasoning-claims.js";
 
 export type CodingSessionEvent =
   | { readonly type: "user"; readonly text: string }
@@ -24,6 +25,17 @@ export type CodingSessionEvent =
     }
   | { readonly type: "plan"; readonly entries: readonly PlanEntry[] }
   | { readonly type: "thought"; readonly text: string }
+  | {
+      /**
+       * Advisory reasoning-claim flag (control-plane observability): streamed
+       * model text asserted completed verification while the turn observed no
+       * successful tool call. A lexical heuristic, never a verdict, never
+       * evidence; rationale and citations live in reasoning-claims.ts.
+       */
+      readonly type: "reasoning-claim";
+      readonly sentence: string;
+      readonly successfulToolCalls: number;
+    }
   | { readonly type: "session-info"; readonly title: string }
   | { readonly type: "decision-brief"; readonly brief: DecisionBrief }
   | { readonly type: "tutor-checkpoint"; readonly opportunity: LearningOpportunity }
@@ -86,6 +98,13 @@ export class WorkflowCodingSession {
   #queue: readonly { readonly prompt: string; readonly images: readonly CodingSessionImage[] }[] = [];
   readonly #toolExpectedTurn: ReturnType<typeof createToolExpectedTurnSteering> | undefined;
   readonly #toolExpectedPolicy: ToolExpectedTurnPolicyOptions | undefined;
+  // Reasoning-claim monitoring (iteration 17): per-turn successful tool-call
+  // count, a one-flag-per-turn bound, and advisory counters. Never enforcement.
+  #turnToolSuccesses = 0;
+  #turnClaimFlagged = false;
+  readonly #reasoningClaims = createReasoningClaimMonitor();
+  #reasoningClaimFlags = 0;
+  #reasoningClaimTurns = 0;
 
   constructor(
     readonly driver: CodingSessionDriver,
@@ -123,6 +142,20 @@ export class WorkflowCodingSession {
   /** W070b slice 4b counters for monitor visibility (undefined when steering is off). */
   toolExpectedTurnStats(): ToolExpectedTurnStats | undefined {
     return this.#toolExpectedTurn?.stats();
+  }
+
+  /** Advisory reasoning-claim counters for monitor visibility (always available). */
+  reasoningClaimStats(): { readonly flags: number; readonly flaggedTurns: number } {
+    return { flags: this.#reasoningClaimFlags, flaggedTurns: this.#reasoningClaimTurns };
+  }
+
+  /** Emit a reasoning-claim flag once per turn and bump the advisory counters. */
+  #flagReasoningClaim(flag: ReasoningClaimFlag): void {
+    if (this.#turnClaimFlagged) return;
+    this.#turnClaimFlagged = true;
+    this.#reasoningClaimFlags += 1;
+    this.#reasoningClaimTurns += 1;
+    this.#emit({ type: "reasoning-claim", sentence: flag.sentence, successfulToolCalls: flag.successfulToolCalls });
   }
 
   subscribe(listener: (event: CodingSessionEvent) => void): () => void {
@@ -164,10 +197,22 @@ export class WorkflowCodingSession {
     this.#state = { state: "running" };
     let currentPrompt = prompt;
     for (;;) {
+      // Each loop iteration is a fresh turn: reset per-turn reasoning-claim state.
+      this.#turnToolSuccesses = 0;
+      this.#turnClaimFlagged = false;
+      this.#reasoningClaims.reset();
       let sawToolCall = false;
       try {
         await this.driver.start(currentPrompt, (event) => {
           if (event.type === "tool" || event.type === "tool-proposal") sawToolCall = true;
+          if (event.type === "tool" && event.status === "completed") this.#turnToolSuccesses += 1;
+          if (event.type === "tool-outcome" && event.outcome === "succeeded") this.#turnToolSuccesses += 1;
+          // Drivers stream delta fragments: the streaming monitor accumulates
+          // them and evaluates each completed clause exactly once.
+          if ((event.type === "thought" || event.type === "assistant") && !this.#turnClaimFlagged) {
+            const flag = this.#reasoningClaims.push({ stream: event.type, text: event.text, successfulToolCalls: this.#turnToolSuccesses });
+            if (flag !== undefined) this.#flagReasoningClaim(flag);
+          }
           this.#emit(event);
         }, images);
       } catch (error) {
@@ -175,6 +220,12 @@ export class WorkflowCodingSession {
           this.#emit({ type: "failed", reason: error instanceof Error ? error.message : "coding session failed" });
         }
         return;
+      }
+      // Turn end: evaluate any final unterminated clause (a streamed claim with
+      // no punctuation) before it is discarded by the next turn's reset.
+      if (this.snapshot().state !== "cancelled") {
+        const tail = this.#reasoningClaims.flush(this.#turnToolSuccesses);
+        if (tail !== undefined) this.#flagReasoningClaim(tail);
       }
       const steering = this.#toolExpectedTurn;
       if (steering === undefined) return;

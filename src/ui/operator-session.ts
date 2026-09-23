@@ -37,6 +37,12 @@ export function projectOperatorSessionEvent(event: CodingSessionEvent): Operator
   if (event.type === "assistant") return { kind: "assistant", text: event.text };
   if (event.type === "plan") return { kind: "plan", entries: event.entries };
   if (event.type === "thought") return { kind: "thinking", text: event.text };
+  if (event.type === "reasoning-claim") {
+    return {
+      kind: "attention",
+      text: `reasoning claim without an observed action this turn: "${event.sentence}" (advisory — lexical heuristic, not a verdict)`,
+    };
+  }
   if (event.type === "tool") {
     return {
       kind: "tool",

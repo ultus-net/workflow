@@ -35,6 +35,16 @@ export interface WorkflowRunController {
     reviewOutcomes: ReadonlyMap<string, { readonly reviewerRunId: string; readonly verdict: string; readonly recorded: boolean; readonly summary: string; readonly parseFailure?: string }>;
     blockingReasons: ReadonlyMap<string, string>;
     completionClaims: ReadonlyMap<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }>;
+    /** Iteration 21: advisory reasoning-claim findings (observability-only; never evidence). */
+    reasoningClaims?: ReadonlyMap<string, { readonly runId: string; readonly sentence: string; readonly observedAt: string }>;
+    /** Iteration 21: honest monitor metrics (recall/time-to-response explicitly unmeasured). */
+    reasoningClaimMetrics?: {
+      readonly monitoredRuns: number;
+      readonly flaggedRuns: number;
+      readonly findings: number;
+      readonly recall: "unmeasured";
+      readonly timeToResponseMs: "unmeasured";
+    };
     /** W044 (open clause): per-run usage from the metering proxy (hub-side aggregation). */
     runUsage?: ReadonlyMap<string, import("./run-registry.js").RunUsageSummary>;
   };

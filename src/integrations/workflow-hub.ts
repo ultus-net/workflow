@@ -41,6 +41,10 @@ export interface WorkflowHubSchedulerHandles {
   recordBlockingReason: (input: { readonly runId: string; readonly reason: string }) => void;
   /** Plan Task G5: journal a scheduled run's completion claim (observability-only). */
   recordCompletionClaim: (input: { readonly runId: string; readonly claim: string }) => void;
+  /** Iteration 21: journal an advisory reasoning-claim finding (observability-only). */
+  recordReasoningClaim: (input: { readonly runId: string; readonly sentence: string }) => void;
+  /** Iteration 21: declare that the monitor observed a run (coverage denominator). */
+  noteReasoningClaimMonitor: (input: { readonly runId: string }) => void;
   /** W044 (open clause): record a run turn's metering-proxy totals for the monitor. */
   recordRunUsage: (input: { readonly runId: string; readonly usage: { readonly requests: number; readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number; readonly costUsd: number } }) => void;
 }
@@ -102,6 +106,8 @@ export async function createWorkflowHub(
         controller: runs.controller,
         recordBlockingReason: runs.recordBlockingReason,
         recordCompletionClaim: runs.recordCompletionClaim,
+        recordReasoningClaim: runs.recordReasoningClaim,
+        noteReasoningClaimMonitor: runs.noteReasoningClaimMonitor,
         recordRunUsage: runs.recordRunUsage,
       })
       : undefined;
@@ -115,6 +121,8 @@ export async function createWorkflowHub(
         controller: runs.controller,
         recordBlockingReason: runs.recordBlockingReason,
         recordCompletionClaim: runs.recordCompletionClaim,
+        recordReasoningClaim: runs.recordReasoningClaim,
+        noteReasoningClaimMonitor: runs.noteReasoningClaimMonitor,
         recordRunUsage: runs.recordRunUsage,
       })
       : options.selfImprovement;

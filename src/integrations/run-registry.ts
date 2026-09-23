@@ -48,6 +48,35 @@ export interface RunUsageSummary {
   readonly recordedAt: string;
 }
 
+/** One advisory reasoning-claim finding (observability-only; never evidence). */
+export interface ReasoningClaimFinding {
+  readonly runId: string;
+  readonly sentence: string;
+  readonly observedAt: string;
+}
+
+/**
+ * Cross-run monitor metrics. `recall` and `timeToResponseMs` are explicitly
+ * UNMEASURED: recall needs misbehavior labels the hub does not have, and
+ * time-to-response needs a responder action no consumer performs yet. Reporting
+ * them as measured would be the overclaim this repo forbids.
+ */
+export interface ReasoningClaimMetrics {
+  /**
+   * Scheduled-lane run-turns the monitor actually observed (the coverage
+   * denominator for the lane that feeds the monitor). Other registry lanes
+   * (RSI, reviewer, external /run/begin) are NOT counted, so this is never a
+   * cross-lane coverage claim.
+   */
+  readonly monitoredRuns: number;
+  /** Runs with at least one advisory finding (monotonic; may exceed visible feed entries after eviction). */
+  readonly flaggedRuns: number;
+  /** Total advisory findings recorded (monotonic, not bounded by the journal). */
+  readonly findings: number;
+  readonly recall: "unmeasured";
+  readonly timeToResponseMs: "unmeasured";
+}
+
 /**
  * The single canonicalization discipline for surface-declared workspaces
  * (`docs/HUB_PROTOCOL.md` §3): declarations must be absolute existing
@@ -102,6 +131,13 @@ export function createRunRegistry(
   /** W044 (open clause): per-run usage recorded from the runtime's metering-proxy metrics. */
   recordRunUsage(input: { readonly runId: string; readonly usage: Omit<RunUsageSummary, "recordedAt"> }): void;
   runUsage(): ReadonlyMap<string, RunUsageSummary>;
+  /** Iteration 21: journal an advisory reasoning-claim finding (observability-only). */
+  recordReasoningClaim(input: { readonly runId: string; readonly sentence: string }): void;
+  /** Iteration 21: declare that the monitor observed a run (scheduled lane only; coverage denominator). */
+  noteReasoningClaimMonitor(input: { readonly runId: string }): void;
+  reasoningClaims(): ReadonlyMap<string, ReasoningClaimFinding>;
+  /** Iteration 21: honest cross-run monitor metrics (recall/TTR explicitly unmeasured). */
+  reasoningClaimMetrics(): ReasoningClaimMetrics;
 } {
   const workspaceApplications = new Map<string, WorkflowApplication>();
   const runs = new Map<string, WorkflowApplication>();
@@ -159,6 +195,39 @@ export function createRunRegistry(
       runUsage.delete(oldest);
     }
   };
+  // Iteration 21: reasoning-claims accountability feed (advisory-only), mirroring
+  // the completion-claims journal's shape and bounds. A finding is the monitor's
+  // advisory observation that a run's streamed text claimed completed
+  // verification with no observed action; it never blocks, never mutates state,
+  // and never becomes evidence. Metrics are honest about what cannot be measured.
+  const reasoningClaims = new Map<string, ReasoningClaimFinding>();
+  let reasoningClaimFindings = 0;
+  let reasoningClaimFlaggedRuns = 0;
+  let monitoredRuns = 0;
+  // Deduped, bounded coverage bookkeeping. Only the scheduled lane declares
+  // observation (noteReasoningClaimMonitor); other registry lanes (RSI,
+  // reviewer, external /run/begin) do NOT feed the monitor and are not counted.
+  const monitoredRunIds = new Set<string>();
+  const rememberMonitoredRun = (runId: string): void => {
+    if (monitoredRunIds.has(runId)) return;
+    monitoredRunIds.add(runId);
+    monitoredRuns += 1;
+    while (monitoredRunIds.size > 512) {
+      const oldest = monitoredRunIds.values().next().value;
+      if (oldest === undefined) break;
+      monitoredRunIds.delete(oldest);
+    }
+  };
+  const rememberReasoningClaim = (runId: string, sentence: string): void => {
+    if (!reasoningClaims.has(runId)) reasoningClaimFlaggedRuns += 1;
+    reasoningClaimFindings += 1;
+    reasoningClaims.set(runId, { runId, sentence, observedAt: new Date().toISOString() });
+    while (reasoningClaims.size > 64) {
+      const oldest = reasoningClaims.keys().next().value;
+      if (oldest === undefined) break;
+      reasoningClaims.delete(oldest);
+    }
+  };
 
   const workspaceApplication = (
     workspace: string | undefined,
@@ -198,6 +267,14 @@ export function createRunRegistry(
         blockingReasons,
         completionClaims,
         runUsage,
+        reasoningClaims,
+        reasoningClaimMetrics: {
+          monitoredRuns,
+          flaggedRuns: reasoningClaimFlaggedRuns,
+          findings: reasoningClaimFindings,
+          recall: "unmeasured" as const,
+          timeToResponseMs: "unmeasured" as const,
+        },
       };
     },
     async begin({ runId, title, workspace, requiresReview, taskPrompt }) {
@@ -440,6 +517,29 @@ export function createRunRegistry(
     },
     runUsage(): ReadonlyMap<string, RunUsageSummary> {
       return runUsage;
+    },
+    /**
+     * Iteration 21: journal an advisory reasoning-claim finding for a run.
+     * Observability-only — never blocks, never mutates state, never evidence.
+     * Unknown runs are accepted (the feed is not authorization).
+     */
+    recordReasoningClaim(input: { readonly runId: string; readonly sentence: string }): void {
+      rememberReasoningClaim(input.runId, input.sentence);
+    },
+    noteReasoningClaimMonitor(input: { readonly runId: string }): void {
+      rememberMonitoredRun(input.runId);
+    },
+    reasoningClaims(): ReadonlyMap<string, ReasoningClaimFinding> {
+      return reasoningClaims;
+    },
+    reasoningClaimMetrics(): ReasoningClaimMetrics {
+      return {
+        monitoredRuns,
+        flaggedRuns: reasoningClaimFlaggedRuns,
+        findings: reasoningClaimFindings,
+        recall: "unmeasured",
+        timeToResponseMs: "unmeasured",
+      };
     },
   };
 }

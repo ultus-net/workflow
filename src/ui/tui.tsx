@@ -964,6 +964,8 @@ function SessionActivityPanel({
     .filter(([, claim]) => claim.verifiedAtClaim === false);
   // W044 (open clause): hub-side per-run usage from the metering proxy.
   const runUsage = Object.entries(gateObservability?.usage ?? {});
+  // Iteration 21: advisory reasoning-claim findings (observation only).
+  const reasoningClaims = Object.entries(gateObservability?.reasoningClaims ?? {});
   const sessionState = state?.state;
   const stateAccent = sessionStateAccent(sessionState);
   return (
@@ -1012,6 +1014,14 @@ function SessionActivityPanel({
           ))}
         </Box>
       ) : null}
+      {reasoningClaims.length > 0 ? (
+        <Box flexDirection="column">
+          <Text dimColor>  reasoning claims ({reasoningClaims.length}, advisory — not a verdict)</Text>
+          {reasoningClaims.slice(-3).map(([runId, finding]) => (
+            <Text key={runId} color={ACCENT_WARNING}>    [reasoning claim] {shortRun(runId)}: {finding.sentence.slice(0, 90)}</Text>
+          ))}
+        </Box>
+      ) : null}
       {runUsage.length > 0 ? (
         <Box flexDirection="column">
           <Text dimColor>  run usage (hub metering, last {Math.min(runUsage.length, 3)})</Text>
@@ -1020,7 +1030,7 @@ function SessionActivityPanel({
           ))}
         </Box>
       ) : null}
-      {pendingTools.length === 0 && recentLogs.length === 0 && openFollowUps.length === 0 && blockedRuns.length === 0 && verdicts.length === 0 && unverifiedClaims.length === 0 && runUsage.length === 0 ? <Text dimColor>No live activity.</Text> : null}
+      {pendingTools.length === 0 && recentLogs.length === 0 && openFollowUps.length === 0 && blockedRuns.length === 0 && verdicts.length === 0 && unverifiedClaims.length === 0 && runUsage.length === 0 && reasoningClaims.length === 0 ? <Text dimColor>No live activity.</Text> : null}
     </Box>
   );
 }
@@ -1188,6 +1198,9 @@ function projectSessionEvent(event: CodingSessionEvent, assistantLabel: string):
   }
   if (event.type === "session-info") return { label: "[session]", text: event.title, dim: true };
   if (event.type === "completed") return { label: "completed", text: event.result };
+  if (event.type === "reasoning-claim") {
+    return { label: "[reasoning-claim]", text: event.sentence, dim: false };
+  }
   return { label: "failed", text: (event as { type: "failed"; reason: string }).reason };
 }
 
