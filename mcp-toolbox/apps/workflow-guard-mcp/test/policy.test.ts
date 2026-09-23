@@ -754,17 +754,18 @@ test("W099/G5: the checkout spelling of the same intents is denied on a protecte
   const plain = checkPolicy({ action: "shell", command: "git checkout feat/g5", currentBranch: "main" });
   assert.equal(plain.decision, "deny");
   assert.equal(plain.policy, "protected-branch-write");
-  // Case-sensitive lookahead: `-b` is exempt, `-B` is not — while the
-  // intent-identical `git switch -C` is allowed (pinned above).
-  const forceCreate = checkPolicy({ action: "shell", command: "git checkout -B feat/g5", currentBranch: "main" });
-  assert.equal(forceCreate.decision, "deny");
-  assert.equal(forceCreate.policy, "protected-branch-write");
   // The load-bearing member of the same clause: `checkout --` discards
   // working-tree state, a real mutation the creation exemption must never
   // cover.
   const discard = checkPolicy({ action: "shell", command: "git checkout -- src/a.ts", currentBranch: "main" });
   assert.equal(discard.decision, "deny");
   assert.equal(discard.policy, "protected-branch-write");
+  // W101 supersession note: this test originally ALSO pinned `git checkout
+  // -B feat/g5` on main as-found DENY. docs/BRANCH_EXIT_POLICY_2026-09-23.md
+  // (frontier-ACCEPT, W100) unified that classification by target instead of
+  // spelling — force-creating a feature branch on the protected branch is now
+  // the allow its intent-identical `switch -C` spelling already had. The
+  // superseding assertion lives in the W101 row-8 unification pin below.
 });
 
 test("W099/G5: off a protected branch the checkout spellings are allowed (the gate targets writes, not exits)", () => {
@@ -775,4 +776,296 @@ test("W099/G5: off a protected branch the checkout spellings are allowed (the ga
 test("W099/G5: without branch facts the protected-branch gate cannot engage (W090 fail-open)", () => {
   assert.equal(checkPolicy({ action: "shell", command: "git checkout feat/g5" }).decision, "allow");
   assert.equal(checkPolicy({ action: "shell", command: "git checkout -- src/a.ts" }).decision, "allow");
+});
+
+// ---- W101: the protected-target gate (docs/BRANCH_EXIT_POLICY_2026-09-23.md §4) ----
+// RED-FIRST pins: each changed row asserts the TARGET verdict from the
+// probed as-found table — the reds below are the position's promise, the
+// implementation turns them green. Classification is by git SEMANTIC, not
+// spelling: force/rename/copy/delete/update-ref/fetch-destination forms
+// deny when the PARSED TARGET is a protected branch (always-on
+// {main, master} base ∪ W090 facts) from ANY current branch; pure exits,
+// creates, and feature-target recovery flows stay allowed; the
+// factless posture splits by class per §4.3.
+
+test("W101 row 9: switch -C resetting the protected branch is denied from any branch", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "git switch -C main abc123def", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git switch -C main abc123def", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git switch -C main abc123def" }).decision, "deny");
+});
+
+test("W101 rows 10/22: branch -f/-D targeting the protected branch is denied from any branch", () => {
+  for (const currentBranch of ["main", "feat/g5"]) {
+    assert.equal(checkPolicy({ action: "shell", command: "git branch -f main abc123def", currentBranch }).decision, "deny", currentBranch);
+    assert.equal(checkPolicy({ action: "shell", command: "git branch -D main", currentBranch }).decision, "deny", currentBranch);
+  }
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -f main abc123def" }).decision, "deny");
+  // The feature-target recovery flow stays allowed (the gate targets writes).
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -f feat/g5 abc123def", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -f feat/g5 abc123def" }).decision, "allow");
+});
+
+test("W101 rows 11-14: branch renames and force-copies are target-classified (both operands)", () => {
+  // Two-arg rename: the protected operand may be the SOURCE or the DESTINATION.
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m main renamed", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m main renamed", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m x main", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch --move main renamed", currentBranch: "main" }).decision, "deny");
+  // One-arg rename targets the CURRENT branch — needs the fact; factless fails closed.
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m renamed", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m renamed" }).decision, "deny");
+  // Force-copy overwrites the destination.
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -C feat main", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -cf feat main", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -C feat main" }).decision, "deny");
+  // All of the above factless deny via the always-on {main, master} base set.
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m main renamed" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m x main" }).decision, "deny");
+});
+
+test("W101: the rename/copy parser handles separators and uncertain shapes fail-closed", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -f -- main abc123def", currentBranch: "feat/g5" }).decision, "deny");
+  // An unknown option shape cannot be classified — fail closed.
+  assert.equal(checkPolicy({ action: "shell", command: "git branch --mystery-flag -f main abc123def", currentBranch: "feat/g5" }).decision, "deny");
+});
+
+test("W101 rows 23: cross-branch update-ref of the protected ref is denied (factless too)", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "git update-ref refs/heads/main abc123def", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git update-ref refs/heads/main abc123def" }).decision, "deny");
+  // The feature ref keeps its current classification (plumbing own-branch fix-ups).
+  assert.equal(checkPolicy({ action: "shell", command: "git update-ref refs/heads/feat/g5 abc123def", currentBranch: "feat/g5" }).decision, "allow");
+});
+
+test("W101 row 24: fetch destination refspecs targeting the protected branch are denied", () => {
+  // The plus sign is constructed at runtime — the W084 fixture convention
+  // (LESS-0017): the force-refspec shape must not appear in source files.
+  const plus = String.fromCharCode(43);
+  for (const refspec of ["main:main", `${plus}main:main`]) {
+    assert.equal(checkPolicy({ action: "shell", command: `git fetch origin ${refspec}`, currentBranch: "feat/g5" }).decision, "deny", refspec);
+    assert.equal(checkPolicy({ action: "shell", command: `git fetch origin ${refspec}` }).decision, "deny", `factless ${refspec}`);
+  }
+  // A bare fetch (no colon refspec) does not move any branch pointer.
+  assert.equal(checkPolicy({ action: "shell", command: "git fetch origin main", currentBranch: "feat/g5" }).decision, "allow");
+});
+
+test("W101 rows 6/15: switch detach and discard forms join the fact-gated classes", () => {
+  // Detach mirrors row 5's checkout treatment: denied on the protected
+  // branch, allowed without facts (a detach target is a sha, never a
+  // protected ref — the target gate cannot classify it).
+  assert.equal(checkPolicy({ action: "shell", command: "git switch -d abc123def", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git switch --detach abc123def", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git switch -d abc123def" }).decision, "allow");
+  // Discards mirror row 7's checkout treatment (data-loss class, fact-gated).
+  assert.equal(checkPolicy({ action: "shell", command: "git switch -f main", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git switch --discard-changes main", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git switch -f feat/g5" }).decision, "allow");
+});
+
+test("W101 row 8 unification: checkout -B is target-gated, not spelling-gated", () => {
+  // The protected target keeps its deny (row 8, unchanged verdict)...
+  assert.equal(checkPolicy({ action: "shell", command: "git checkout -B main abc123def", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git checkout -B main abc123def" }).decision, "deny");
+  // ...while force-CREATING a feature branch on the protected branch becomes
+  // the allow its intent-identical `switch -C` spelling already has (the
+  // position's deliberate with-facts unification, recorded in the parity log).
+  assert.equal(checkPolicy({ action: "shell", command: "git checkout -B feat/g5", currentBranch: "main" }).decision, "allow");
+});
+
+test("W101: classification runs per segment so compounds cannot smuggle the protected target", () => {
+  const compound = checkPolicy({ action: "shell", command: "git switch -c feat/g5 && git branch -f main abc123def", currentBranch: "main" });
+  assert.equal(compound.decision, "deny");
+  assert.equal(compound.policy, "protected-branch-write");
+});
+
+test("W101: recorded residuals keep their as-found shape (queued companion fixes)", () => {
+  // Row 25: the HEAD form of symbolic-ref is an exit-class allow; the exotic
+  // protected-NAME form is the recorded residual with a queued one-line fix.
+  assert.equal(checkPolicy({ action: "shell", command: "git symbolic-ref HEAD refs/heads/main", currentBranch: "feat/g5" }).decision, "allow");
+  // Row 27: worktree add checks a branch out into a NEW worktree — no pointer move.
+  assert.equal(checkPolicy({ action: "shell", command: "git worktree add ../wt main", currentBranch: "feat/g5" }).decision, "allow");
+  // Row 28 residual: the shell-wrapper lane stays open until the queued
+  // companion fix extends the deny path's recursion (hasGitMutation already
+  // recurses; checkGitPolicy does not).
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c 'git branch -f main abc123def'", currentBranch: "feat/g5" }).decision, "allow");
+  // Row 5 explicit pins (the round-3 watch-item: a future token-discriminating
+  // matcher edit must not move the detach deny silently).
+  assert.equal(checkPolicy({ action: "shell", command: "git checkout abc123def", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git checkout abc123def" }).decision, "allow");
+  // Row 27's sibling sanity + rows 16-18 unchanged (characterization).
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -M main renamed", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -D feat/g5", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch main abc123def", currentBranch: "main" }).decision, "allow");
+});
+
+test("W101 review round: the parser's value-option consumption and wildcard fail-closed (review P0/P1/P2)", () => {
+  // P0: a space-form value option consumes its value — the phantom shape
+  // bound HEAD to --points-at and force-created main at the sha (allow today
+  // before the fix, mis-selecting the first operand as the target).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const phantom = checkPolicy({ action: "shell", command: "git branch -f --points-at HEAD main abc123def", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(phantom.decision, "deny", String(currentBranch));
+  }
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m --format x renamed", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -D --points-at HEAD main", currentBranch: "feat/g5" }).decision, "deny");
+  // P1: wildcard branch destinations map ALL heads including protected ones.
+  const pushGlob = checkPolicy({ action: "shell", command: "git push origin refs/heads/*:refs/heads/*", currentBranch: "feat/g5" });
+  assert.equal(pushGlob.decision, "deny");
+  assert.equal(pushGlob.policy, "protected-branch-push");
+  assert.equal(checkPolicy({ action: "shell", command: "git fetch origin refs/heads/*:refs/heads/*", currentBranch: "feat/g5" }).decision, "deny");
+  // Tag globs keep their W084 release-operation exemption.
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin refs/tags/*:refs/tags/*", currentBranch: "feat/g5" }).decision, "allow");
+  // P2: --force-create must not over-match the discard-class --force.
+  assert.equal(checkPolicy({ action: "shell", command: "git switch --force-create feat/g5", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git switch --force main", currentBranch: "main" }).decision, "deny");
+});
+
+test("W101 review: the spelling lanes stay intact where the gate is silent", () => {
+  // Row 16's target-blind conservative deny is preserved even when the gate
+  // allows the (non-protected) target: branch -M/-d on a protected current
+  // branch deny via the unchanged -[dDM] clause.
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -M feat/g5 x", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m feat/g5 feat2", currentBranch: "main" }).decision, "allow");
+  // Unknown flags WITHOUT pointer flags keep today's behavior (git errors on
+  // them at runtime anyway).
+  assert.equal(checkPolicy({ action: "shell", command: "git branch --mystery" }).decision, "allow");
+});
+
+test("W101 review round 2: the fetch lane checks every refspec destination", () => {
+  // A benign first refspec, a URL remote, or an option value must not
+  // shield a later protected-branch destination (git processes multiple
+  // refspecs in one fetch; all pre-fix shapes classified allow).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const shield = checkPolicy({ action: "shell", command: "git fetch origin dev:refs/heads/tmp main:refs/heads/main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(shield.decision, "deny", String(currentBranch));
+  }
+  assert.equal(checkPolicy({ action: "shell", command: "git fetch https://example.com/repo.git main:refs/heads/main", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git fetch -o a:b origin main:refs/heads/main", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git fetch -j 4 origin main:refs/heads/main", currentBranch: "feat/g5" }).decision, "deny");
+  // Benign multi-refspec fetches stay allowed (no protected destination).
+  assert.equal(checkPolicy({ action: "shell", command: "git fetch origin dev:refs/heads/tmp feat:refs/heads/feat/g5", currentBranch: "feat/g5" }).decision, "allow");
+  // The create/force-create modes are mutually exclusive; the combination
+  // cannot be classified and fails closed (last-wins would slip the target
+  // check past the created branch).
+  assert.equal(checkPolicy({ action: "shell", command: "git switch --create x --force-create main", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git checkout -b x -B main", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git switch -c feat/g5", currentBranch: "main" }).decision, "allow");
+});
+
+test("W101 review round 3: --refmap values are refspecs the fetch lane never inspects", () => {
+  // --refmap is the prune mapping: its value is a real refspec, and with
+  // --prune a mapped absent source DELETES the mapped local destination.
+  // Both spellings fail closed (deliberately not a consumed value).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const equals = checkPolicy({ action: "shell", command: "git fetch --prune --refmap=refs/heads/gone:refs/heads/main origin", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(equals.decision, "deny", String(currentBranch));
+    const space = checkPolicy({ action: "shell", command: "git fetch --prune --refmap refs/heads/gone:refs/heads/main origin", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(space.decision, "deny", String(currentBranch));
+  }
+  // The bundled -c/-C combination stays fail-closed (round-2 watch-item pin).
+  assert.equal(checkPolicy({ action: "shell", command: "git switch -c x -C main", currentBranch: "main" }).decision, "deny");
+  // Benign refmap-less prune fetches stay allowed.
+  assert.equal(checkPolicy({ action: "shell", command: "git fetch --prune origin", currentBranch: "feat/g5" }).decision, "allow");
+});
+
+test("W101 review round 4: the one-arg rename writes BOTH names", () => {
+  // `git branch (-m|-M) <new>` renames the current branch to <new>: the
+  // destination operand force-overwrites a protected branch when it names
+  // one (from a feature branch, `git branch -M main` destroys
+  // refs/heads/main), and the source (the current branch) is renamed away.
+  // Both names are checked; a factless seat fails closed (row 12).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const rename = checkPolicy({ action: "shell", command: "git branch -M main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(rename.decision, "deny", String(currentBranch));
+    const soft = checkPolicy({ action: "shell", command: "git branch -m main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(soft.decision, "deny", String(currentBranch));
+  }
+  // Renaming a non-protected branch to a non-protected name stays allowed.
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m feat2", currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m renamed", currentBranch: "main" }).decision, "deny");
+});
+
+test("W101 review round 5: branch delete is variadic — every operand is a written target", () => {
+  // git-branch(1): `git branch [-r] (-d | -D) <branchname>…` — the delete
+  // grammar is variadic, so `git branch -D feat2 main` deletes BOTH. The
+  // pre-fix gate kept only the first operand and classified allow (captured
+  // red live against the pre-fix dist).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const variadic = checkPolicy({ action: "shell", command: "git branch -D feat2 main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(variadic.decision, "deny", String(currentBranch));
+    const long = checkPolicy({ action: "shell", command: "git branch --delete feat2 main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(long.decision, "deny", String(currentBranch));
+    const separated = checkPolicy({ action: "shell", command: "git branch -D -- feat2 main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(separated.decision, "deny", String(currentBranch));
+  }
+  // Bundled conflicting modes (round-6 watch-item) fail closed — real git
+  // rejects the combination and the conservative direction costs nothing
+  // valid.
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -dc main feat2", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -md x main", currentBranch: "feat/g5" }).decision, "deny");
+  // Round 8: the pull spelling shares the fetch lane's destination sweep —
+  // `git pull` runs git fetch with the same arguments, so its colon
+  // refspecs write local branches (captured red live against the pre-fix
+  // dist: allow), and the merge half into a protected CURRENT branch is
+  // the gitWriteRe pull clause's job.
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const pullRefspec = checkPolicy({ action: "shell", command: "git pull origin main:refs/heads/main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(pullRefspec.decision, "deny", String(currentBranch));
+  }
+  const pullMerge = checkPolicy({ action: "shell", command: "git pull . feat/g5", currentBranch: "main" });
+  assert.equal(pullMerge.decision, "deny");
+  assert.equal(pullMerge.policy, "protected-branch-write");
+  const pullForce = checkPolicy({ action: "shell", command: `git pull --force origin ${String.fromCharCode(43)}feat/g5:refs/heads/main`, currentBranch: "feat/g5" });
+  assert.equal(pullForce.decision, "deny");
+  // Benign pulls keep their classification (rebase form recognized; bare
+  // pull factless stays allow — the merge target is the unknowable current
+  // branch).
+  assert.equal(checkPolicy({ action: "shell", command: "git pull --rebase origin feat/g5", currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git pull" }).decision, "allow");
+  // Round 8: --mirror/--all pushes update/delete ALL remote refs including
+  // the protected ones — fail closed (recorded residual #24).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const mirror = checkPolicy({ action: "shell", command: "git push --mirror origin", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(mirror.decision, "deny", String(currentBranch));
+    assert.equal(mirror.policy, "protected-branch-push", String(currentBranch));
+    assert.equal(checkPolicy({ action: "shell", command: "git push --all origin", ...(currentBranch ? { currentBranch } : {}) }).decision, "deny", String(currentBranch));
+  }
+  // Reordered protected-first still denies; the on-main target-blind
+  // conservative deny is unchanged (row 16 — ANY delete while ON a
+  // protected branch denies); the factless all-feature delete stays allow
+  // (the gate adds denies, never loosens).
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -d main feat2", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -D feat2 feat3", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -D feat2 feat3" }).decision, "allow");
+  // The recorded push HEAD-alias residual (pre-existing push lane, queued
+  // resolution): from a protected seat the bare alias form updates the
+  // remote protected branch under allow — the colon form is pinned deny.
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin HEAD", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin HEAD:main", currentBranch: "feat/g5" }).decision, "deny");
+  // Round 7: the colon-less plus-prefixed refspec force-updates the remote
+  // protected branch exactly like its colon twin. The shell lane already
+  // denied the shape as destructive-operation (the force-push rule catches
+  // any plus refspec), so the round-7 reviewer's allow claim was FALSIFIED
+  // by probe — the landed fix is an ATTRIBUTION improvement: the push lane
+  // now names the protected destination itself (protected-branch-push)
+  // instead of the shell lane's coarser destructive-operation. The
+  // plus-prefixed push to a FEATURE branch stays an over-deny watch-item
+  // (the shell rule ignores destinations; pre-existing, recorded in the
+  // parity log).
+  const plus2 = String.fromCharCode(43);
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const forced = checkPolicy({ action: "shell", command: `git push origin ${plus2}main`, ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(forced.decision, "deny", String(currentBranch));
+    assert.equal(forced.policy, "protected-branch-push", String(currentBranch));
+    assert.equal(checkPolicy({ action: "shell", command: `git push origin ${plus2}refs/heads/main`, ...(currentBranch ? { currentBranch } : {}) }).policy, "protected-branch-push");
+  }
+});
+
+test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {
+  const { hasGitMutation } = await import("../src/git-policy.js");
+  assert.equal(hasGitMutation("git branch -f main abc123def"), true);
+  assert.equal(hasGitMutation("git branch -m main renamed"), true);
+  assert.equal(hasGitMutation("git branch -C feat main"), true);
+  assert.equal(hasGitMutation(`git fetch origin ${String.fromCharCode(43)}main:main`), true);
+  // Bare fetch and config-only branch forms stay non-mutations for this gate.
+  assert.equal(hasGitMutation("git fetch origin"), false);
 });

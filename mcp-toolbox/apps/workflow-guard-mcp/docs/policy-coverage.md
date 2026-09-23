@@ -242,3 +242,128 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   cannot set it. Live probe before the fix recorded the deny for
   workspace-relative writes; after the fix the same probe returns allow
   with `/var/log` and `.ssh` still protected.
+
+- **2026-09-23 (W101):** the branch-exit/branch-pointer family UNIFIED by
+  semantic target, deliberately DIVERGING from upstream v1.15.x
+  (verified at `origin/main` 03fbdcf, `src/policies/git.ts:126` — no
+  `switch` write clause, a `-[dDM]` class missing `-f/-m/-C`, no
+  fetch-refspec rule, and the same current-branch-shaped gate; upstream's
+  `GIT_BRANCH_CREATE_RE`, git.ts:35, recognizes the sanctioned creates but
+  only for the branch-freshness gate). The W100 position
+  (docs/BRANCH_EXIT_POLICY_2026-09-23.md, frontier-ACCEPT at round 3)
+  found the as-found classification admitting protected-branch pointer
+  writes the checkout spelling denies — `switch -C <protected> [sha]`,
+  `branch -f <protected>`, the three `branch -m` danger shapes (one-arg,
+  TO-protected, and the `-m` lowercase the `-[dDM]` class never covered),
+  force-copy `-C`/`-cf`, `switch --detach/-d`, cross-branch
+  `branch -D <protected>` / `update-ref refs/heads/<protected>` / fetch
+  destination refspecs, plus `switch -f/--discard-changes` (the discard
+  twin of `checkout --`). The unified gate: force/rename/copy/delete/
+  update-ref/fetch-destination forms are target-classified from ANY
+  branch against the always-on `{main, master}` base ∪ W090 facts; renames
+  check BOTH operands; the one-arg rename targets the current branch and
+  fails closed factless; parse-uncertain shapes fail closed; detach and
+  discard forms join the fact-gated spelling classes. The ONE deliberate
+  with-facts loosening, recorded here for parity honesty: `git checkout
+  -B <feature>` on a protected branch flips as-found DENY → allow — the
+  unification of an identical intent with the `switch -C` spelling's
+  pinned allow (the as-found deny was spelling-shaped over-reach); the
+  superseded W099 characterization pin carries a supersession note and the
+  superseding assertion lives in the W101 unification pin. `hasGitMutation`
+  widened identically (twin-matcher drift discipline, §2.3).
+  Upstream-port candidate queued for the plugin's own repo. Residuals
+  recorded in SECURITY_ASSURANCE: the shell-wrapper bypass of the whole
+  deny class (`sh -c` — queued companion fix) and the exotic symbolic-ref
+  form. Live re-probe of the 28-row family inventory against the REBUILT
+  dist: all 56 probe rows (facts + factless, on-branch + cross-branch,
+  fixes + residuals) match the position; suites 79/0 (policy 69 + redirect
+  5 + mcp 5); dist rebuilt (LESS-0010 hazard).
+
+  Review round 1 (fresh-eyes) found three real gate defects — a P0
+  value-option phantom bypass (space-form `--points-at`/`--format` values
+  shifted the first-operand target selection, phantom-allowing a protected
+  pointer move factless), a P1 wildcard branch-glob refspec destination gap
+  in BOTH the fetch lane and the pre-existing push lane, and a P2
+  `--force\b` over-match on `--force-create` that re-introduced the exact
+  spelling-vs-intent asymmetry the change removes. All three fixed and
+  pinned (value consumption in the operand walk; wildcard branch-glob
+  destinations fail closed in both lanes with tag-glob exemptions kept;
+  `--force(?!-create)\b` lookahead); pre-fix verdicts captured live against
+  the pre-fix dist (allow/allow/allow/allow/deny) and post-fix green.
+  Suites 81/0.
+
+  Review round 2 (re-review) — REVISE: parseFetch's first-colon-operand
+  early return let a benign first refspec, a URL remote, or an unconsumed
+  `-o`/`-j` short value shield a later protected-branch destination
+  (multiple refspecs per fetch are valid git; pre-fix shapes captured
+  live as allow). Fixed: every branch destination checked (deny on ANY
+  protected), `-j`/`-o` values consumed, the create/force-create mode
+  combination fails closed for both spellings, and the reviewer's
+  falsified "dead entries removed" claim honored by removing them.
+  Suites 82/0; 55-row re-probe + all round-2 shapes green against the
+  REBUILT dist.
+
+  Review round 3 (re-review) — REVISE: --refmap's value is itself a
+  refspec (the prune mapping) — with --prune a mapped absent source
+  deletes the mapped local destination, and both spellings slipped the
+  gate (the equals form never reached the walker's callback; the space
+  form was consumed as a value). Fixed: parseFetch fails closed on ANY
+  --refmap spelling before parsing; benign prune fetches stay allow;
+  the -c/-C combination watch-item pinned. Pre-fix verdict captured
+  live (allow); suites 83/0; 55-row re-probe + round-2 shapes green
+  against the REBUILT dist.
+
+  Review round 4 (re-review) — REVISE: the one-arg rename writes BOTH
+  names — the position's row-12 framing covered only the SOURCE half;
+  the destination operand force-overwrites a protected branch when it
+  names one (git branch -M main from a feature branch destroys
+  refs/heads/main — valid git). Fixed: the one-arg form checks BOTH the
+  destination operand and the current branch (fact-gated source);
+  factless stays fail-closed. Pre-fix verdicts captured live
+  (allow, allow); suites 84/0; 55-row re-probe + round-2/3 shapes green
+  against the REBUILT dist.
+
+  Review round 5 (re-review) — REVISE: the delete grammar is variadic
+  (git-branch(1): (-d|-D) <branchname>...) and the gate's delete arm kept
+  only the first operand — git branch -D feat2 main classified allow
+  while git deletes BOTH. Fixed: delete targets are ALL operands (force-
+  set keeps first-operand-only). Recorded residual #22 (pre-existing
+  push lane): push origin HEAD / @ / bare push from a protected seat
+  update the remote protected branch under allow (colon form pinned
+  deny) — queued resolution via the currentBranch fact. Pre-fix
+  verdicts captured live (allow x3); suites 85/0; 55-row re-probe +
+  round-2 shapes green against the REBUILT dist.
+
+  Review round 7 (re-review) — the blocker claim FALSIFIED by probe: the
+  reviewer traced the push lane only and claimed the colon-less
+  plus-prefixed refspec classified allow, but the shape was ALREADY
+  DENIED by the shell lane's pre-existing force-push rule (shell-policy
+  matches ANY plus push refspec as destructive-operation, ignoring
+  destinations). The landed fix is an attribution improvement (the push
+  lane names protected destinations protected-branch-push instead of the
+  shell lane's coarser destructive-operation; the pin asserts the policy
+  label). Watch-item recorded: the shell rule over-denies legitimate
+  force-pushes to feature branches (destination-blind) — pre-existing,
+  noted for the shell-policy's own queue. LESS-0018: a reviewer trace of
+  ONE lane is not a verdict — probe before implementing.
+
+  Review round 8 (re-review) — REVISE: the pull spelling shares the
+  fetch lane's grammar but no lane classified it (allow across every
+  seat; the merge intent git merge denies, the row-24 fetch-refspec
+  deny, and the force-refspec destructive catch all bypassed by the
+  composite spelling; pre-fix verdicts captured live: allow across
+  facts and branches). Fixed: the pull subcommand shares parseFetch
+  (destination sweep + --refmap veto, pull's integration options
+  recognized) and gitWriteRe gains a current-branch-gated pull clause.
+  --mirror/--all pushes fail closed (residual #24, as-found allow
+  captured). Suites 85/0; 55-row re-probe + round-2 shapes green
+  against the REBUILT dist.
+
+  Review round 6 (re-review) — no new bypass found (all shapes trace
+  fail-closed or harmless; the round-5 variadic fix confirmed in src and
+  dist); the one open watch-item — bundled conflicting branch modes
+  (a -dc/-md short bundle) — is now hardened: multi-mode bundles fail
+  closed (real git rejects the combination). Pinned; suites 85/0; all
+  probes green. The reviewer's remaining REVISE grounds were execution
+  and docs attestation beyond its shell-less toolset; the primary
+  session's executed evidence covers those (this record).

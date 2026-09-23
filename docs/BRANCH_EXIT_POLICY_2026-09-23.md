@@ -479,3 +479,150 @@ move it without tripping a pin); (2) rows 26–27 named in the bucket plan
 (row 26 rides existing push-lane pins; row 27 gets a characterization pin)
 so the plan is exhaustive over rows 1–28. Frontier verification closes at
 round 3; the implementation iteration inherits the position as recorded.
+
+## 7. Implementation addendum (2026-09-23, appended by the W101 session —
+## this section does not alter §1–§6 or appendix A's byte-state)
+
+The implementation landed (feat/w101-branch-pointer-gate, vendored core +
+dist rebuild) with these deltas from §4's letter, recorded honestly:
+
+1. **The §4.4 red-free claim was factually wrong for one pin.** The W099
+   set DID pin `git checkout -B <feature>` on a protected branch as-found
+   DENY (the row-8 clause member with a feature target), and this
+   implementation moves that classification by design. The pin was
+   superseded — the old assertion replaced by a supersession note in the
+   W099 block, the new assertion living in the W101 unification pin — per
+   the pin discipline (position-documented classification change, never a
+   silent weakening). §4.4/§4.5's "stays red-free / survives verbatim"
+   should be read as "except the one superseded assertion the unification
+   itself requires".
+2. **Review hardening (round-1 fresh-eyes, three findings, all fixed and
+   pinned):** (P0) space-form value options now consume their value token —
+   the phantom shape `git branch -f --points-at HEAD main <sha>` had let
+   the value shift the first-operand target selection and phantom-allow a
+   protected pointer move factless (captured red against the pre-fix dist:
+   allow); (P1) wildcard branch-glob refspec destinations
+   (refs/heads/*:refs/heads/*) fail closed in BOTH the new fetch lane and
+   the pre-existing push lane, while tag globs keep their W084
+   release-operation exemption (captured red: allow); (P2) the spelling
+   clause's `--force\b` over-matched `--force-create` — `git switch
+   --force-create <feature>` on a protected branch denied while the
+   intent-identical `-C` was pinned allow (captured red: deny). All three
+   shapes are pinned; the pre-fix dist captured the red verdicts live
+   before the rebuild.
+3. **En-route scanner finding (LESS-0017's shape, harder):** the live
+   scanner's shell-command path reassembles string fragments — even a
+   fully runtime-assembled wildcard push refspec in a `node -e` one-liner
+   is blocked ("force push targets a live system"), while the same
+   literals pass the file scanner inside a committed test file. The
+   fixture convention's escape is per-context: file-scoped probes carry
+   the shapes, shell one-liners must assemble them from characters.
+4. Evidence at the review-fixed tip: suites 81/0 (policy 71 + redirect 5
+   + mcp 5); the 55-row live re-probe matches the position against the
+   REBUILT dist; repo lint/typecheck exit 0; security-assurance checker
+   7/0.
+5. **Review round 2 (re-review) — REVISE, one new fail-open in the fetch
+   lane, fixed:** parseFetch returned on the FIRST colon-bearing operand,
+   so a benign first refspec (`dev:refs/heads/tmp`), a URL remote's
+   scheme colon, or an unconsumed `-o`/`-j` short value shielded a later
+   `main:refs/heads/<protected>` refspec (git processes multiple refspecs
+   per fetch; all pre-fix shapes captured live as allow). Fixes: fetch
+   collects EVERY branch destination and the caller denies if ANY belongs
+   to the protected set; the `-j`/`-o` shorts consume their values; the
+   create/force-create mode combination (which real git cannot classify)
+   fails closed for both spellings (`--create`+`--force-create`,
+   `-b`+`-B`); the reviewer's falsified "dead entries removed" claim
+   honored by actually removing them. Also fixed en route: `--create`
+   sat in the shared flag set, making the createSeen tracking dead code.
+   Pre-fix shapes captured live (allow x4); suites 82/0 (policy 72 +
+   redirect 5 + mcp 5); 55-row re-probe + round-2 shapes green; repo
+   lint/typecheck exit 0.
+6. **Review round 3 (re-review) — REVISE, one new unrecorded fail-open,
+   fixed:** `--refmap` is the one fetch value option whose value is itself
+   a refspec (the prune mapping) — `--refmap=refs/heads/gone:refs/heads/
+   main` with `--prune` DELETES the mapped local branch, and both spellings
+   slipped the gate (the equals form silently skipped by the shared walk's
+   equals shortcut, the space form consumed as a value). Fix: parseFetch
+   fails closed on ANY `--refmap` spelling before parsing (deliberately
+   not a consumed value), benign prune fetches stay allow, and the
+   round-2 `-c`/`-C` watch-item is pinned (bundled combination deny).
+   Pre-fix verdict captured live (allow); suites 83/0 (policy 73 +
+   redirect 5 + mcp 5); 55-row re-probe + round-2 shapes green; repo
+   lint/typecheck exit 0. Reviewer notes (unpinned, by-trace): the
+   allow-biased parses of git-rejected shapes (nested-colon refspecs,
+   whitespace-embedded) are harmless (no mutation possible) and recorded
+   here rather than pinned uncertain.
+7. **Review round 4 (re-review) — REVISE, one more real gap, fixed:** the
+   one-arg rename writes BOTH names — the position's row-12 framing
+   ("targets the current branch away") covered only the SOURCE half; the
+   destination OPERAND force-overwrites a protected branch when it names
+   one (`git branch -M main` from a feature branch destroys
+   refs/heads/main — valid git, allow in the as-found gate). Fix: the
+   one-arg form now checks BOTH the destination operand (targets) and the
+   current branch (source, fact-gated); factless stays fail-closed.
+   Pre-fix verdicts captured live (allow, allow); suites 84/0 (policy 74
+   + redirect 5 + mcp 5); the 55-row re-probe + round-2/3 shapes green
+   against the REBUILT dist; repo lint/typecheck exit 0.
+8. **Review round 5 (re-review) — REVISE, the delete grammar is variadic,
+   fixed:** git-branch(1)'s delete grammar is `(-d | -D) <branchname>…` —
+   variadic — but the gate's delete arm kept only the first operand, so
+   `git branch -D feat2 main` (also `--delete`, reordered, and
+   `--`-separated spellings) classified allow while git deletes BOTH.
+   Fix: delete targets are ALL operands (force-set keeps
+   first-operand-only — its second operand is a start-point). Recorded
+   residual (pre-existing push lane, adjacent): the HEAD-alias push forms
+   (`push origin HEAD`, `@`, bare push) from a protected seat update the
+   remote protected branch under allow (the colon form naming the
+   protected destination is pinned deny) — SECURITY_ASSURANCE #22,
+   as-found pin, queued resolution via the currentBranch fact the seat
+   already supplies. En-route: the round-5 pin draft wrongly expected
+   `branch -D feat2 feat3` on main to be allow — row 16's target-blind
+   conservative deny is unchanged, and the corrected assertion (on-main
+   deny, factless all-feature allow) doubles as the no-loosening pin.
+   Pre-fix verdicts captured live (allow, allow, allow); suites 85/0
+   (policy 75 + redirect 5 + mcp 5); the 55-row re-probe + round-2 shapes
+   green against the REBUILT dist; repo lint/typecheck exit 0.
+9. **Review round 7 (re-review) — the blocker claim FALSIFIED by probe;
+   the landed fix is an attribution improvement:** the round-7 reviewer
+   traced the push lane only and claimed the colon-less plus-prefixed
+   refspec (`push origin +<protected>`) classified allow.
+   Re-verification against the pre-fix dist showed the shape was ALREADY
+   DENIED — by the shell lane's pre-existing force-push rule
+   (shell-policy.ts:20 matches ANY plus-prefixed push refspec as
+   destructive-operation, ignoring destinations), which the trace
+   missed. The landed fix keeps the push lane's own classification
+   correct (strip the leading plus before destination extraction so
+   protected destinations are named protected-branch-push instead of the
+   shell lane's coarser destructive-operation) and the pin asserts the
+   policy label, making it a genuine discriminator (pre-fix:
+   destructive-operation; post-fix: protected-branch-push). Watch-item
+   recorded: the shell force-push rule OVER-DENIES legitimate
+   force-pushes to feature branches (plus-prefixed `feat/g5` →
+   destructive-operation; the rule ignores destinations) — pre-existing,
+   out of W101 scope, noted for the shell-policy's own queue. Lesson
+   folded into LESS-0018: a reviewer trace of ONE lane is not a verdict —
+   probe before implementing.
+10. Evidence at the round-7 tip: suites 85/0 (policy 75 + redirect 5 +
+    mcp 5 — the round-7 pins assert the policy label, discriminating the
+    attribution fix); 55-row re-probe + round-2 shapes green; repo
+    lint/typecheck exit 0; security-assurance checker 7/0.
+11. **Review round 8 (re-review) — REVISE, a real composite-spelling
+    bypass: the pull spelling shares the fetch lane's grammar but no
+    lane classified it.** `git pull` runs git fetch with the same
+    arguments — its colon refspecs write local branches — then merges
+    into the CURRENT branch. No lane named `pull` (allow across every
+    seat: the merge intent `git merge` denies via the gitWriteRe merge
+    clause, the row-24 fetch-refspec deny, and the force-refspec
+    destructive catch all bypassed by the composite spelling; pre-fix
+    verdicts captured live: allow across facts and branches). Fix: the
+    pull subcommand shares parseFetch (destination sweep + the --refmap
+    veto, with pull's integration-side options recognized) and
+    `gitWriteRe` gains a current-branch-gated pull clause (a pull on a
+    protected branch merges INTO it). Recorded residual #24:
+    `--mirror`/`--all` pushes update and delete ALL remote refs
+    including the protected ones with no refspec naming them — both
+    fail closed now (push lane), recorded as the residual's historical
+    note with as-found allow captured live. Post-fix: suites 85/0
+    (assertions added inside existing blocks); 55-row re-probe +
+    round-2 shapes green against the REBUILT dist; repo lint/typecheck
+    exit 0; security-assurance checker 7/0.
