@@ -570,15 +570,39 @@ dist rebuild) with these deltas from §4's letter, recorded honestly:
    `--`-separated spellings) classified allow while git deletes BOTH.
    Fix: delete targets are ALL operands (force-set keeps
    first-operand-only — its second operand is a start-point). Recorded
-   residual (pre-existing push lane, adjacent): `git push origin HEAD` /
-   `@` / bare `git push` from a protected seat update the remote
-   protected branch under allow (the colon form `HEAD:main` is pinned
-   deny) — SECURITY_ASSURANCE #22, as-found pin, queued resolution via
-   the currentBranch fact the seat already supplies. En-route: the
-   round-5 pin draft wrongly expected `branch -D feat2 feat3` on main to
-   be allow — row 16's target-blind conservative deny is unchanged, and
-   the corrected assertion (on-main deny, factless all-feature allow)
-   doubles as the no-loosening pin. Pre-fix verdicts captured live
-   (allow, allow, allow); suites 85/0 (policy 75 + redirect 5 + mcp 5);
-   the 55-row re-probe + round-2 shapes green against the REBUILT dist;
-   repo lint/typecheck exit 0.
+   residual (pre-existing push lane, adjacent): the HEAD-alias push forms
+   (`push origin HEAD`, `@`, bare push) from a protected seat update the
+   remote protected branch under allow (the colon form naming the
+   protected destination is pinned deny) — SECURITY_ASSURANCE #22,
+   as-found pin, queued resolution via the currentBranch fact the seat
+   already supplies. En-route: the round-5 pin draft wrongly expected
+   `branch -D feat2 feat3` on main to be allow — row 16's target-blind
+   conservative deny is unchanged, and the corrected assertion (on-main
+   deny, factless all-feature allow) doubles as the no-loosening pin.
+   Pre-fix verdicts captured live (allow, allow, allow); suites 85/0
+   (policy 75 + redirect 5 + mcp 5); the 55-row re-probe + round-2 shapes
+   green against the REBUILT dist; repo lint/typecheck exit 0.
+9. **Review round 7 (re-review) — the blocker claim FALSIFIED by probe;
+   the landed fix is an attribution improvement:** the round-7 reviewer
+   traced the push lane only and claimed the colon-less plus-prefixed
+   refspec (`push origin +<protected>`) classified allow.
+   Re-verification against the pre-fix dist showed the shape was ALREADY
+   DENIED — by the shell lane's pre-existing force-push rule
+   (shell-policy.ts:20 matches ANY plus-prefixed push refspec as
+   destructive-operation, ignoring destinations), which the trace
+   missed. The landed fix keeps the push lane's own classification
+   correct (strip the leading plus before destination extraction so
+   protected destinations are named protected-branch-push instead of the
+   shell lane's coarser destructive-operation) and the pin asserts the
+   policy label, making it a genuine discriminator (pre-fix:
+   destructive-operation; post-fix: protected-branch-push). Watch-item
+   recorded: the shell force-push rule OVER-DENIES legitimate
+   force-pushes to feature branches (plus-prefixed `feat/g5` →
+   destructive-operation; the rule ignores destinations) — pre-existing,
+   out of W101 scope, noted for the shell-policy's own queue. Lesson
+   folded into LESS-0018: a reviewer trace of ONE lane is not a verdict —
+   probe before implementing.
+10. Evidence at the round-7 tip: suites 85/0 (policy 75 + redirect 5 +
+    mcp 5 — the round-7 pins assert the policy label, discriminating the
+    attribution fix); 55-row re-probe + round-2 shapes green; repo
+    lint/typecheck exit 0; security-assurance checker 7/0.

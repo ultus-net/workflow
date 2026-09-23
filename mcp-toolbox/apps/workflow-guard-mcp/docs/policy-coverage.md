@@ -334,6 +334,19 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   verdicts captured live (allow x3); suites 85/0; 55-row re-probe +
   round-2 shapes green against the REBUILT dist.
 
+  Review round 7 (re-review) — the blocker claim FALSIFIED by probe: the
+  reviewer traced the push lane only and claimed the colon-less
+  plus-prefixed refspec classified allow, but the shape was ALREADY
+  DENIED by the shell lane's pre-existing force-push rule (shell-policy
+  matches ANY plus push refspec as destructive-operation, ignoring
+  destinations). The landed fix is an attribution improvement (the push
+  lane names protected destinations protected-branch-push instead of the
+  shell lane's coarser destructive-operation; the pin asserts the policy
+  label). Watch-item recorded: the shell rule over-denies legitimate
+  force-pushes to feature branches (destination-blind) — pre-existing,
+  noted for the shell-policy's own queue. LESS-0018: a reviewer trace of
+  ONE lane is not a verdict — probe before implementing.
+
   Review round 6 (re-review) — no new bypass found (all shapes trace
   fail-closed or harmless; the round-5 variadic fix confirmed in src and
   dist); the one open watch-item — bundled conflicting branch modes

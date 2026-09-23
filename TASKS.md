@@ -2589,7 +2589,16 @@ from a protected seat update the remote protected branch under allow
 (colon form pinned deny) — queued resolution via the currentBranch
 fact. Pre-fix verdicts captured live (allow x3); suites 85/0 (policy 75
 + redirect 5 + mcp 5); 55-row re-probe + round-2 shapes green against
-the REBUILT dist; repo lint/typecheck exit 0. Review round 6
+the REBUILT dist; repo lint/typecheck exit 0. Review round 7
+(re-review) — the blocker claim FALSIFIED by probe: the colon-less
+plus-prefixed refspec shape was already denied by the shell lane's
+pre-existing force-push rule (destructive-operation, ignoring
+destinations); the landed fix is an attribution improvement (protected
+destinations named protected-branch-push by the push lane; the pin
+asserts the policy label). Watch-item recorded: the shell rule
+over-denies legitimate force-pushes to feature branches — pre-existing,
+noted for the shell-policy queue. LESS-0018: a reviewer trace of ONE
+lane is not a verdict — probe before implementing. Review round 6
 (re-review) — no new bypass found (all shapes trace fail-closed or
 harmless; the variadic fix confirmed in src and dist); the one open
 watch-item — bundled conflicting branch modes (a -dc/-md short bundle)

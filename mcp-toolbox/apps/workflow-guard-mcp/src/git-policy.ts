@@ -104,7 +104,12 @@ function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>
       // be resolved to a concrete branch.
       if (tagPublishRefspecIn(refspec)) continue;
       if (refspec.includes("*")) return "wildcard-refspec";
-      const destination = refspec.includes(":") ? refspec.slice(refspec.lastIndexOf(":") + 1) : refspec;
+      // W101 review round 7: strip a leading + from a colon-less refspec —
+      // `git push origin +main` force-updates the protected remote branch
+      // exactly like its colon twin `+main:main` (pinned deny), and the
+      // un-stripped token defeated both the refs/heads/ strip and the
+      // protected-set lookup.
+      const destination = (refspec.includes(":") ? refspec.slice(refspec.lastIndexOf(":") + 1) : refspec).replace(/^\+/, "");
       const normalizedDestination = destination.replace(/^refs\/heads\//, "");
       if (protectedBranches.has(normalizedDestination)) return normalizedDestination;
     }

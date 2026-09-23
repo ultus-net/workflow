@@ -1014,6 +1014,23 @@ test("W101 review round 5: branch delete is variadic — every operand is a writ
   // remote protected branch under allow — the colon form is pinned deny.
   assert.equal(checkPolicy({ action: "shell", command: "git push origin HEAD", currentBranch: "main" }).decision, "allow");
   assert.equal(checkPolicy({ action: "shell", command: "git push origin HEAD:main", currentBranch: "feat/g5" }).decision, "deny");
+  // Round 7: the colon-less plus-prefixed refspec force-updates the remote
+  // protected branch exactly like its colon twin. The shell lane already
+  // denied the shape as destructive-operation (the force-push rule catches
+  // any plus refspec), so the round-7 reviewer's allow claim was FALSIFIED
+  // by probe — the landed fix is an ATTRIBUTION improvement: the push lane
+  // now names the protected destination itself (protected-branch-push)
+  // instead of the shell lane's coarser destructive-operation. The
+  // plus-prefixed push to a FEATURE branch stays an over-deny watch-item
+  // (the shell rule ignores destinations; pre-existing, recorded in the
+  // parity log).
+  const plus2 = String.fromCharCode(43);
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const forced = checkPolicy({ action: "shell", command: `git push origin ${plus2}main`, ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(forced.decision, "deny", String(currentBranch));
+    assert.equal(forced.policy, "protected-branch-push", String(currentBranch));
+    assert.equal(checkPolicy({ action: "shell", command: `git push origin ${plus2}refs/heads/main`, ...(currentBranch ? { currentBranch } : {}) }).policy, "protected-branch-push");
+  }
 });
 
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {
