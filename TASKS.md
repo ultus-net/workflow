@@ -3299,10 +3299,19 @@ environment-supplied and kernel-validated.
   follow-on item this legibility unblocks.
 
 **Evidence:** red-first (the two kernel pins failed against the generic
-prose, zero collateral) then green — kernel 11/11, the web 409 round
-trip carries the structured `missing` + the enriched reason, the
-surface pin renders the verbatim reason with the per-entry artifacts;
-62/0 across task-graph + web + webapp-surface; typecheck/lint exit 0.
+prose) then green — kernel 11/11, the web 409 round trip carries the
+structured `missing` + the enriched reason, the surface pin renders the
+verbatim reason with the per-entry artifacts; 62/0 across task-graph +
+web + webapp-surface; typecheck/lint exit 0.
+   CORRECTION (review round 1, 2026-09-24): the "zero collateral" claim
+was WRONG — the web.test.ts append SILENTLY DELETED the pre-existing
+W107 C2 pin (`assert.equal(stateLegality.judged, 1)`), a gratuitous
+test weakening the fresh-eyes reviewer caught by running the base file
+against current src with the assertion restored (21/21 passes). The
+assertion is RESTORED in this iteration's follow-up commit; the
+zero-collateral discipline means the diff touching an existing test
+block must re-include every line it did not intend to change — count
+the lines you remove, not just the failures you add.
 
 **Acceptance criteria:**
 - [x] A withheld transition renders WHY: the kernel's refusal carries

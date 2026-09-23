@@ -1246,6 +1246,7 @@ test("W107 C2: the invariants route reports kernel-evaluated rows with their jud
   const stateLegality = emptyBody.invariants.find((row) => row.id === "state-legality");
   assert.ok(stateLegality);
   assert.equal(stateLegality.verdict, "passed");
+  assert.equal(stateLegality.judged, 1);
   const verifiedFresh = emptyBody.invariants.find((row) => row.id === "verified-evidence-fresh");
   assert.ok(verifiedFresh);
   assert.equal(verifiedFresh.verdict, "could-not-discriminate");
