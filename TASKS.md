@@ -2702,7 +2702,10 @@ security-assurance checker 7/0.
       LESS-0019, the W100 doc §7 item 12, and here (this line). The
       genuinely queued edges are the exotic interpreter names (busybox
       sh, xsh), the zsh EQUALS caveat, and the fused-bundle shapes the
-      review rounds continue to harden.
+      review rounds continue to harden. (Review rounds 3-4 appended:
+      the -o bundle consumption and the -O/+O shopt family — see the
+      parity-log W102 rounds 3-4; the duplicate correction block that
+      stood here was a splice artifact, deduped.)
       CORRECTION (review round 1, 2026-09-23): the queued env-prefix
       item above was FALSIFIED — env/timeout/assignment prefixes are
       consumed by the unwrapper and prefixed wrappers were always

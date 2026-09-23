@@ -388,9 +388,9 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   redirect 5 + mcp 5); dist rebuilt (LESS-0010 hazard); the W100-era
   46-row inventory re-probe green against the REBUILT dist; repo
   lint/typecheck exit 0; security-assurance checker 7/0. NOTE: the
-  env-prefixed-wrapper sentence below is STALE — falsified by review
-  round 1 (prefixed wrappers were always detected); see the correction
-  appended to this entry.
+  env-prefixed-wrapper sentence ABOVE this note is STALE — falsified by
+  review round 1 (prefixed wrappers were always detected); see the
+  correction appended to this entry.
 
   Review round 1 on W102 (fresh-eyes) — REVISE: the fused -c-quote
   spelling (`bash -c'git commit -m x'`) bypassed both matchers (captured
@@ -406,3 +406,42 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   asserting blanket factless denies corrected per LESS-0019's own first
   point). Suites 89/0 (policy 79 + redirect 5 + mcp 5); 46-row re-probe
   green; lint/typecheck exit 0; checker 7/0.
+
+  Review round 3 on W102 (fresh-eyes) — REVISE, B1: the -o bundle
+  consumption was not getopt-aware — the walk died at the non-dash value
+  word before reaching -c (`bash -euo pipefail -c 'git commit -m x'`
+  classified allow on a protected branch; captured red live with facts
+  and factless). Fixed: a bundle ENDING in o consumes the next word; a
+  fused -opipefail correctly does not. Also recorded: W1 (TASKS.md
+  carried the falsified env-prefix claim at three sites — the fourth
+  site of the four-site correction was missed — corrected with dated
+  notes), N1 (an inline stale-sentence marker on this entry's initial
+  env sentence), N2 (the code comment's precedent note made precise —
+  the boundary/shell precedents are non-capturing next-word finders, and
+  this walker additionally handles the fused form). The transparency
+  principle re-learned from the pins: the factless variants of
+  spelling-lane shapes inherit the inner factless allow (the W090
+  fail-open class); only target-gated shapes deny factlessly via the
+  base set — the round-3 pin draft asserted blanket factless denies and
+  was corrected by the pins themselves (LESS-0019's own first point,
+  re-learned). Suites 90/0 (policy 80 + redirect 5 + mcp 5); the 46-row
+  re-probe green against the REBUILT dist.
+
+  Review round 4 on W102 (fresh-eyes) — REVISE, B2: the -O/+O shopt
+  family. bash's `-O <shopt>` (and the opposite-sense `+O`/`+o`) consume
+  a spaced argument and option parsing CONTINUES — the walk died at
+  "extglob" and `git commit -m x` ran on main under allow (captured red
+  live with facts and factless, four spellings). Fixed: value
+  consumption extended to `-O`/`+O`/`+o` endings, and the walk treats
+  plus-prefixed words as option-shaped (bash's plus-options are the
+  opposite-sense shopt set), not positionals. The reviewer ALSO
+  falsified the round-4 probe's own candidate: `bash -eu pipefail -c
+  'echo hi'` is NOT a bypass — bash stops startup-option parsing at the
+  first positional, the walk dying there is semantically faithful
+  ("pipefail" ENOENT), pinned as empirical documentation opposite the
+  -O family. Transparency: benign -O usage keeps its inner
+  classification. Suites 91/0 (policy 81 + redirect 5 + mcp 5); the
+  46-row re-probe green; lint/typecheck exit 0; checker 7/0. The
+  getopt-enumeration lesson: the sh-family value options are small and
+  enumerable (-o/-O/+o/+O) — LESS-0020 records that the general fix is a
+  complete enumeration, not per-finding patches.

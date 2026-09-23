@@ -418,7 +418,7 @@ export function wrapperCommands(command: string): string[] {
     for (let i = 1; i < words.length; i++) {
       const word = words[i]!;
       if (word === "--") return [];
-      if (!word.startsWith("-")) return [];
+      if (!/^[+-]/.test(word)) return [];
       // W102 review round 2: getopt does not stop at the word head — a
       // bundle containing a `c` option consumes the REST of the word as
       // -c's option-argument (`-ec'cmd'`, `-xc`…), and the spaced `-ec
@@ -440,8 +440,14 @@ export function wrapperCommands(command: string): string[] {
       // '...'` — the walk died at the non-dash value word before reaching
       // -c); a fused `-opipefail` is correctly NOT a value-consumer since o
       // is not the last option char. For the sh-family, `-o <name>` is the
-      // value option in common use.
-      if (/^-[a-zA-Z]*o$/.test(word) && words[i + 1]) i += 1;
+      // value option in common use. W102 review round 4 (B2): -O is also a
+      // value option (bash shopt: `-O <shopt>` sets, `+O`/`+o` unset —
+      // captured red live: allow on main pre-fix), and the plus-family
+      // (`+O`, `+o`) is option-shaped too — bash's plus-options are the
+      // opposite-sense shopt set, so the walk must treat them as options,
+      // not positionals.
+      if (/^-[a-zA-Z]*[oO]$/.test(word) && words[i + 1]) i += 1;
+      if (/^\+[a-zA-Z]*[oO]$/.test(word) && words[i + 1]) i += 1;
     }
     return [];
   });

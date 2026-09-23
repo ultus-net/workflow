@@ -1176,6 +1176,29 @@ test("W102 review round 3: the -o bundle consumption is getopt-aware (B1 closure
   assert.equal(checkPolicy({ action: "shell", command: "bash -opipefail -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
 });
 
+test("W102 review round 4: the -O/+O shopt family and the faithful positional stop", () => {
+  // bash's -O <shopt> (and the plus-sense +O/+o) consume a spaced argument
+  // and option parsing CONTINUES — the walk died at "extglob" and
+  // `git commit -m x` ran on main (captured red live: allow with facts and
+  // factless).
+  for (const currentBranch of ["main", undefined]) {
+    const context = currentBranch ? { currentBranch } : {};
+    assert.equal(checkPolicy({ action: "shell", command: "bash -O extglob -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `O extglob commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "bash -eO extglob -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `eO commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "bash +O extglob -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `plusO commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "bash +o extglob -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `pluso commit ${String(currentBranch)}`);
+  }
+  // Transparency: benign -O usage keeps its inner classification.
+  assert.equal(checkPolicy({ action: "shell", command: "bash -O extglob -c 'echo hi'", currentBranch: "feat/g5" }).decision, "allow");
+  // The reviewer's falsified candidate, pinned as EMPIRICAL documentation:
+  // bash stops startup-option parsing at the first positional — `bash -eu
+  // pipefail -c 'echo hi'` never reaches -c ("pipefail" is the script
+  // name; ENOENT). The walk dying there is semantically faithful, NOT a
+  // bypass — the exact opposite of the -O family, where the non-dash word
+  // is a consumed option-argument and parsing continues.
+  assert.equal(checkPolicy({ action: "shell", command: "bash -eu pipefail -c 'echo hi'", currentBranch: "main" }).decision, "allow");
+});
+
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {
   const { hasGitMutation } = await import("../src/git-policy.js");
   assert.equal(hasGitMutation("git branch -f main abc123def"), true);
