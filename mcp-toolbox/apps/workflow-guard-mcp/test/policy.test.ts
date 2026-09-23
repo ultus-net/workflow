@@ -883,10 +883,12 @@ test("W101: recorded residuals keep their as-found shape (queued companion fixes
   assert.equal(checkPolicy({ action: "shell", command: "git symbolic-ref HEAD refs/heads/main", currentBranch: "feat/g5" }).decision, "allow");
   // Row 27: worktree add checks a branch out into a NEW worktree — no pointer move.
   assert.equal(checkPolicy({ action: "shell", command: "git worktree add ../wt main", currentBranch: "feat/g5" }).decision, "allow");
-  // Row 28 residual: the shell-wrapper lane stays open until the queued
-  // companion fix extends the deny path's recursion (hasGitMutation already
-  // recurses; checkGitPolicy does not).
-  assert.equal(checkPolicy({ action: "shell", command: "sh -c 'git branch -f main abc123def'", currentBranch: "feat/g5" }).decision, "allow");
+  // Row 28 residual: the shell-wrapper bypass was CLOSED by W102's
+  // deny-path recursion (this assertion originally pinned the as-found
+  // allow as a queued-companion-fix residual — superseded; the wrapped
+  // pointer write now classifies through the wrapper, see the W102 block).
+  // The symbolic-ref exotic form and the HEAD-alias push residual remain
+  // as-found (queued separately).
   // Row 5 explicit pins (the round-3 watch-item: a future token-discriminating
   // matcher edit must not move the detach deny silently).
   assert.equal(checkPolicy({ action: "shell", command: "git checkout abc123def", currentBranch: "main" }).decision, "deny");
@@ -1058,6 +1060,56 @@ test("W101 review round 5: branch delete is variadic — every operand is a writ
     assert.equal(forced.policy, "protected-branch-push", String(currentBranch));
     assert.equal(checkPolicy({ action: "shell", command: `git push origin ${plus2}refs/heads/main`, ...(currentBranch ? { currentBranch } : {}) }).policy, "protected-branch-push");
   }
+});
+
+// ---- W102: the deny-path wrapper recursion (residual #20's closure) ----
+// W100 §4.6 recorded the residual: every git deny class was bypassable by
+// wrapping (`sh -c 'git reset --hard <sha>'` classified allow because
+// checkGitPolicy did not recurse; hasGitMutation already did, feeding only
+// the read-only-role gate). The fix extends the SAME recursion discipline to
+// the deny path: sh/bash/zsh/dash/ksh -c wrappers are transparent to the
+// full git classification (alias, push, target gate, spelling lanes), depth-
+// capped like the mutation matcher. RED-FIRST: every pin below asserted the
+// deny direction against the pre-fix tree (allow as-found, captured live in
+// the W101 round-5 residual pins).
+
+test("W102: wrapped git pointer writes are classified through the wrapper (residual #20 closure)", () => {
+  // The wrapper is TRANSPARENT to the inner classification — not
+  // deny-everything: the wrapper inherits exactly the verdict the inner
+  // command would have earned unwrapped, with the same seat facts (the
+  // wrapper executes in the same repository).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const context = currentBranch ? { currentBranch } : {};
+    // Reset from a feature branch is today's allow (the residual's original
+    // example denied only on the protected CURRENT branch, W101 round-5
+    // probe); the wrapper changes nothing.
+    assert.equal(checkPolicy({ action: "shell", command: "sh -c 'git reset --hard abc123def'", ...(currentBranch ? { currentBranch } : {}) }).decision, "allow");
+    // Target-shaped denials fire through the wrapper from any branch and
+    // factless (the gate's base-set coverage).
+    const pointer = checkPolicy({ action: "shell", command: "sh -c 'git branch -f main abc123def'", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(pointer.decision, "deny", String(currentBranch));
+    assert.equal(pointer.policy, "protected-branch-write", String(currentBranch));
+    const bash = checkPolicy({ action: "shell", command: "bash -c 'git update-ref refs/heads/main abc123def'", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(bash.decision, "deny", String(currentBranch));
+    // The push lane's deny recurses too (the wrapper cannot launder a
+    // protected-branch push).
+    const push = checkPolicy({ action: "shell", command: "sh -c 'git push origin main'", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(push.decision, "deny", String(currentBranch));
+    assert.equal(push.policy, "protected-branch-push", String(currentBranch));
+  }
+});
+
+test("W102: nested wrappers recurse with the depth cap", () => {
+  const nested = checkPolicy({ action: "shell", command: "sh -c 'sh -c \"git commit -m x\"'", currentBranch: "main" });
+  assert.equal(nested.decision, "deny");
+  assert.equal(nested.policy, "protected-branch-write");
+  // The inner verdict applies with the same facts: off-protected wrappers
+  // of benign commands stay transparent.
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c 'echo hi'" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c 'git switch feat/g5'", currentBranch: "main" }).decision, "allow");
+  // A wrapper without a -c command string is not recursed (script contents
+  // are unknowable — unchanged behavior, the file-scanner's territory).
+  assert.equal(checkPolicy({ action: "shell", command: "sh script.sh" }).decision, "allow");
 });
 
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {

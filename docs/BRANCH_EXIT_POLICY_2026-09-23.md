@@ -626,3 +626,20 @@ dist rebuild) with these deltas from §4's letter, recorded honestly:
     (assertions added inside existing blocks); 55-row re-probe +
     round-2 shapes green against the REBUILT dist; repo lint/typecheck
     exit 0; security-assurance checker 7/0.
+12. **The §4.6 companion fix DELIVERED (W102, feat/w102-wrapper-recursion):**
+    the shell-wrapper bypass residual (#20) is closed — `checkGitPolicy`
+    recurses into sh/bash/zsh/dash/ksh `-c` wrappers with the same seat
+    facts and a depth-16 fail-closed cap, sharing the detection verbatim
+    with `hasGitMutation` (the twin matchers' scope is now identical, and
+    the wrapped command classifies through the FULL git pipeline: alias,
+    push, target gate, spelling lanes). The design direction the
+    implementation settled on: wrapper TRANSPARENCY, not a
+    deny-everything blanket — a wrapped benign command (feature-branch
+    reset, `echo`) keeps its inner classification, because the wrapper
+    executes in the same repository with the same facts; the first
+    draft's deny-everything expectation was wrong and the corrected pins
+    assert wrapper ≡ inner. The as-found allow residual pin was
+    superseded with a note (residual closure, documented);
+    SECURITY_ASSURANCE #20 marks the resolution including the
+    env-prefixed-wrapper limitation (shared with `hasGitMutation`,
+    queued) — the remaining honest edge, not a silently-closed bypass.

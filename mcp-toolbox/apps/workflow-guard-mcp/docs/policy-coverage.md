@@ -334,6 +334,15 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   verdicts captured live (allow x3); suites 85/0; 55-row re-probe +
   round-2 shapes green against the REBUILT dist.
 
+  Review round 6 (re-review) — no new bypass found (all shapes trace
+  fail-closed or harmless; the round-5 variadic fix confirmed in src and
+  dist); the one open watch-item — bundled conflicting branch modes
+  (a -dc/-md short bundle) — is now hardened: multi-mode bundles fail
+  closed (real git rejects the combination). Pinned; suites 85/0; all
+  probes green. The reviewer's remaining REVISE grounds were execution
+  and docs attestation beyond its shell-less toolset; the primary
+  session's executed evidence covers those (this record).
+
   Review round 7 (re-review) — the blocker claim FALSIFIED by probe: the
   reviewer traced the push lane only and claimed the colon-less
   plus-prefixed refspec classified allow, but the shape was ALREADY
@@ -359,11 +368,23 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   captured). Suites 85/0; 55-row re-probe + round-2 shapes green
   against the REBUILT dist.
 
-  Review round 6 (re-review) — no new bypass found (all shapes trace
-  fail-closed or harmless; the round-5 variadic fix confirmed in src and
-  dist); the one open watch-item — bundled conflicting branch modes
-  (a -dc/-md short bundle) — is now hardened: multi-mode bundles fail
-  closed (real git rejects the combination). Pinned; suites 85/0; all
-  probes green. The reviewer's remaining REVISE grounds were execution
-  and docs attestation beyond its shell-less toolset; the primary
-  session's executed evidence covers those (this record).
+- **2026-09-23 (W102):** the shell-wrapper bypass residual (#20) CLOSED —
+  `checkGitPolicy` recurses into sh/bash/zsh/dash/ksh `-c` wrappers with
+  the same seat facts and a depth-16 fail-closed cap (W100 §4.6's queued
+  companion fix). The wrapper is TRANSPARENT to the full inner
+  classification (alias, push, target gate, spelling lanes) — a wrapped
+  benign command keeps its inner classification; the design direction is
+  classification passthrough, not a deny-everything blanket (the first
+  draft's deny-everything expectation was corrected by the pins:
+  wrapper ≡ inner). The detection is shared verbatim with
+  `hasGitMutation`, making the twin matchers' wrapper scope identical;
+  env-prefixed wrappers (`env sh -c '...'`) remain outside BOTH matchers'
+  scope — the honest edge, recorded rather than silently closed. The
+  as-found allow residual pin superseded with a note; SECURITY_ASSURANCE
+  #20 marks the resolution. Live verification: wrapped pointer writes
+  deny through the wrapper (branch -f/update-ref/push from any seat
+  where the inner command denies), wrapped benign commands allow, nested
+  wrappers recurse, depth cap fails closed; suites 87/0 (policy 77 +
+  redirect 5 + mcp 5); dist rebuilt (LESS-0010 hazard); the W100-era
+  46-row inventory re-probe green against the REBUILT dist; repo
+  lint/typecheck exit 0; security-assurance checker 7/0.

@@ -401,7 +401,25 @@ function checkPointerTarget(words: string[], protectedBranches: Set<string>, con
   return undefined;
 }
 
-export function checkGitPolicy(command: string, context: GitPolicyContext): { policy: string; decision: "deny"; reason: string } | undefined {
+export function wrapperCommands(command: string): string[] {
+  // The hasGitMutation detection discipline, shared verbatim: sh-family
+  // interpreters with a -c command flag expose their command string to the
+  // deny path. `sh script.sh` is NOT a wrapper (script contents are
+  // unknowable — the file-scanner's territory), and env-prefixed wrappers
+  // share the same documented limitation as the mutation matcher.
+  return splitShellSegments(command).flatMap((segment) => {
+    const words = unwrapShellWords(segment);
+    if (!/^(?:ba|z|da|k)?sh$/i.test(basename(words[0] ?? ""))) return [];
+    const commandFlag = words.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
+    if (commandFlag < 0 || !words[commandFlag + 1]) return [];
+    return [words[commandFlag + 1]!];
+  });
+}
+
+export function checkGitPolicy(command: string, context: GitPolicyContext, depth = 0): { policy: string; decision: "deny"; reason: string } | undefined {
+  // W102 (residual #20's closure): depth-capped like hasGitMutation — at the
+  // cap the classification is unresolvable and fails closed.
+  if (depth >= 16) return { decision: "deny", policy: "protected-branch-write", reason: "Git command nesting depth exceeded; failing closed." };
   if (hasUnsafeGitAlias(command)) return { decision: "deny", policy: "unsafe-git-alias", reason: "Inline Git aliases can hide policy-relevant operations." };
   const protectedBranches = protectedBranchesIn(context);
   const pushed = pushedProtectedBranchIn(command, protectedBranches);
@@ -424,6 +442,16 @@ export function checkGitPolicy(command: string, context: GitPolicyContext): { po
   const normalized = normalizedGitSegments(command).join(" ; ");
   if (protectedBranchWriteReason(context) && gitWriteRe.test(normalized)) {
     return { decision: "deny", policy: "protected-branch-write", reason: `Git mutations on protected branch '${context.currentBranch}' are not allowed.` };
+  }
+  // W102: the wrapper recursion — the deny class must not be bypassable by
+  // wrapping. sh-family -c wrappers are transparent to the FULL git
+  // classification with the same seat facts (a wrapper executes in the same
+  // repository, so the currentBranch fact applies to the inner command).
+  // Direct-segment evidence keeps reason-attribution primacy; the recursion
+  // runs last.
+  for (const inner of wrapperCommands(command)) {
+    const verdict = checkGitPolicy(inner, context, depth + 1);
+    if (verdict) return verdict;
   }
   return undefined;
 }
