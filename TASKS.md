@@ -3321,7 +3321,8 @@ the lines you remove, not just the failures you add.
       (structured + prose) and the UI relays.
 - [x] The claim-shaped evidence endpoint discovered and queued as its
       own governance item with the guard's citation.
-unchanged (the 409 bodies were already structured — the UI now
+- [x] The refusal transport for /api/transition and /api/tasks/retry
+      unchanged (the 409 bodies were already structured — the UI now
       reads them).
 
 ### W111 - Web-UI C4: the backend-measured cost headline + the per-session rollup + the lane-coverage disclosure (Complete - the honest slice; per-task attribution queued on the turn-boundary mechanism) (2026-09-24)

@@ -1291,8 +1291,6 @@ test("W110: the transition route surfaces the kernel's refusal with the missing 
   assert.equal(body.code, "EVIDENCE_REQUIRED");
   // The refusal names each missing artifact with its per-requirement why —
   // the kernel computes it; the client never derives it.
-  // The refusal names each missing artifact with its per-requirement why —
-  // the kernel computes it; the client never derives it.
   assert.deepEqual(body.missing, [
     { authority: "environment", subject: "typecheck", why: "no evidence observed" },
     { authority: "reviewer", subject: "design-review", why: "no evidence observed" },
