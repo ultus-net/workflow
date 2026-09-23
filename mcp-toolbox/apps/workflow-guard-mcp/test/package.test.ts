@@ -16,8 +16,17 @@ test("packed npm artifact exposes both binaries and launches the MCP server", as
       cwd: process.cwd(),
       encoding: "utf8",
     });
-    const [{ filename }] = JSON.parse(packOutput) as [{ filename: string }];
-    const tarball = join(temp, filename);
+    // W104: npm 12 changed `npm pack --json` from the legacy array to a
+    // keyed object (keyed by package name). Extract THIS package's entry
+    // either way so the test stays version-portable, and pin the entry's
+    // name — the old array destructure never checked which entry it got.
+    const parsed = JSON.parse(packOutput) as
+      | Array<{ filename: string; name?: string }>
+      | Record<string, { filename: string; name?: string }>;
+    const entry = Array.isArray(parsed) ? parsed[0] : parsed["workflow-guard-mcp"];
+    assert.ok(entry, "npm pack --json returned no entry for workflow-guard-mcp");
+    assert.equal(entry.name, "workflow-guard-mcp");
+    const tarball = join(temp, entry.filename);
     const consumer = join(temp, "consumer");
 
     mkdirSync(consumer);
