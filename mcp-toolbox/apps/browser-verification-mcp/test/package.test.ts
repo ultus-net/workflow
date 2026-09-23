@@ -15,7 +15,17 @@ test("packed npm artifact runs the browser-verification binary against a CDP end
   const temp = mkdtempSync(join(tmpdir(), "browser-verification-package-"));
   const fake = await startFakeCdpServer(createBrowserModel({ elements: { "#greet": {} } }));
   try {
-    const [{ filename }] = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", temp], { cwd: process.cwd(), encoding: "utf8" })) as [{ filename: string }];
+    // W104: npm 12 changed `npm pack --json` from the legacy array to a
+    // keyed object (keyed by package name). Extract THIS package's entry
+    // either way so the test stays version-portable, and pin the entry's
+    // name — the old array destructure never checked which entry it got.
+    const parsed = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", temp], { cwd: process.cwd(), encoding: "utf8" })) as
+      | Array<{ filename: string; name?: string }>
+      | Record<string, { filename: string; name?: string }>;
+    const entry = Array.isArray(parsed) ? parsed[0] : parsed["browser-verification-mcp"];
+    assert.ok(entry, "npm pack --json returned no entry for browser-verification-mcp");
+    assert.equal(entry.name, "browser-verification-mcp");
+    const filename = entry.filename;
     const consumer = join(temp, "consumer");
     mkdirSync(consumer);
     execFileSync("npm", ["init", "--yes"], { cwd: consumer, stdio: "ignore" });
