@@ -1279,15 +1279,27 @@ test("W103 residual #22: push aliases (HEAD/@/default) resolve against the curre
     assert.equal(denied.decision, "deny", command);
     assert.equal(denied.policy, "protected-branch-push", command);
   }
-  // Review round 1 P2: tags-only and deletion flag pushes are NOT the
-  // default branch push — --tags/--follow-tags push no branch refs (the
-  // W084 release lane), and --delete/-d make the single non-option
-  // argument a deletion refspec (its destination is checked by the
-  // literal loop). Both were mis-modeled as default pushes in the first
-  // cut (protected-seat flips captured red live).
+  // Review round 1 P2: deletion flag pushes are NOT the default branch
+  // push — --delete/-d make the single non-option argument a deletion
+  // refspec (its destination is checked by the literal loop). CORRECTED
+  // in round 3: --tags alone pushes no branch refs (executed dry-run:
+  // only tag refs fire), but --follow-tags pushes the DEFAULT REFS TOO
+  // (the man page: "all the refs that would be pushed without this
+  // option") — the round-1/2 allow for follow-tags was a false premise,
+  // flipped here with the falsification note.
   assert.equal(checkPolicy({ action: "shell", command: "git push --tags", currentBranch: "main" }).decision, "allow");
   assert.equal(checkPolicy({ action: "shell", command: "git push origin --tags", currentBranch: "main" }).decision, "allow");
-  assert.equal(checkPolicy({ action: "shell", command: "git push --follow-tags", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push --follow-tags", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --follow-tags", currentBranch: "main" }).decision, "deny");
+  // The combined shape: --follow-tags makes the default push fire even
+  // beside --tags (round-3 P3, folded into the same scoping).
+  assert.equal(checkPolicy({ action: "shell", command: "git push --tags --follow-tags", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git push --follow-tags", currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push --follow-tags" }).decision, "allow");
+  // Review round 1 P2: deletion flag pushes are NOT the default branch
+  // push — --delete/-d make the single non-option argument a deletion
+  // refspec (its destination is checked by the literal loop). Captured
+  // red live in round 1.
   assert.equal(checkPolicy({ action: "shell", command: "git push --delete feat2", currentBranch: "main" }).decision, "allow");
   assert.equal(checkPolicy({ action: "shell", command: "git push --delete main", currentBranch: "feat/g5" }).decision, "deny");
   // Review round 2 P1: the tags-only exclusion scopes to the DEFAULT-PUSH

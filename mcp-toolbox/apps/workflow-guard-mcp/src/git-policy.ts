@@ -147,14 +147,21 @@ function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>
     // Review round 1 P2: a single non-option argument is the REMOTE only
     // when no refspec-shaping flag precedes it — --delete/-d make it the
     // deletion refspec (its destination is checked by the literal loop
-    // above), and --tags/--follow-tags push no branch refs at all (the
-    // W084 release lane). Review round 2 P1: the tags-only exclusion
-    // scopes to the DEFAULT-PUSH readings ONLY — an explicit HEAD/@
-    // refspec beside tags flags is still a branch push and must resolve
-    // (the first cut gated the whole disjunction behind !tagsOnly and
-    // re-opened the hole; captured red live).
+    // above), and --tags pushes no branch refs at all (executed dry-run:
+    // only tag refs fire — the W084 release lane). CORRECTED in review
+    // round 3 (P1, falsified by a git dry-run): --follow-tags is NOT
+    // tags-only — the man page has it push "all the refs that would be
+    // pushed without this option", so the DEFAULT PUSH fires and the
+    // default-push reading applies (the round-1/2 allow was a false
+    // premise; endorsed in the round-2 record without a grammar probe).
+    // The tags-only reading therefore requires --tags WITHOUT
+    // --follow-tags, which also models the combined shape. Review round
+    // 2 P1 (kept): the tags-only exclusion scopes to the DEFAULT-PUSH
+    // readings ONLY — an explicit HEAD/@ refspec beside tags flags is
+    // still a branch push and must resolve (the round-1 cut gated the
+    // whole disjunction behind !tagsOnly and re-opened the hole).
     const refspecShaped = flags.some((word) => word === "--delete" || word === "-d");
-    const tagsOnly = flags.some((word) => word === "--tags" || word === "--follow-tags");
+    const tagsOnly = flags.some((word) => word === "--tags") && !flags.some((word) => word === "--follow-tags");
     const aliasPush = (args.length === 0 && !tagsOnly) || (args.length === 1 && !refspecShaped && !tagsOnly) || refspecs.some((refspec) => {
       const token = refspec.replace(/^\+/, "");
       return token === "HEAD" || token === "@";

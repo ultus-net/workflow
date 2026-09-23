@@ -564,3 +564,26 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   green 93/0; dist rebuilt and probed (8 round-2 cells match, including
   the corrected no-remote cell); repo lint/typecheck exit 0; checker
   7/0.
+
+  Review round 3 on W103 (the same reviewer's continuation, final
+  confirmation before the bind) — [REQUEST_CHANGES], one P1: the
+  round-1/2 premise "--follow-tags is tags-only" was FALSIFIED by the
+  reviewer's git dry-run (git 2.55.0) — the man page has --follow-tags
+  push "all the refs that would be pushed without this option", so the
+  DEFAULT PUSH fires and `git push --follow-tags` from a protected seat
+  was re-opening the #22 hole under allow (3c2e46f had denied it
+  correctly; the mis-modeling entered in 20361b6; the round-2 record
+  had endorsed the allow pin without a grammar probe — recorded here as
+  the falsification, not hidden). Fixed: the tags-only reading requires
+  `--tags` WITHOUT `--follow-tags` (which also folds the round-3 P3
+  combined-flags shape in); the follow-tags pins flipped with a
+  falsification note; the false premise corrected in the src comment,
+  the test comment, #22's sentence, and this log. All round-3 cells
+  executed end-to-end on src and dist: follow-tags protected-seat forms
+  deny, tags-only forms allow (correct per git), the corrected no-remote
+  cell accepted by the reviewer (their round-2 deny expectation was
+  inconsistent with their own formula — the pin, not the src, was
+  corrected), the twin matrix 8/8, LESS-0021 confirmed appended (the
+  P2-a chain closed). Suites 93/0 (policy 83, redirect 5, mcp 5); dist
+  fresh and probed (11 cells match); repo lint/typecheck exit 0;
+  checker 7/0.

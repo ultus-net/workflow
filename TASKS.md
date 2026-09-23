@@ -2789,6 +2789,23 @@ no branch refs). Re-verified: 81/2 red (exactly the round-2 pins) then
 lint/typecheck exit 0, checker 7/0. Round 3 re-binds the verdict to the
 final tip.
 
+**Review round 3 (the same reviewer's continuation):**
+[REQUEST_CHANGES] with one P1, falsified by the reviewer's executed git
+dry-run (git 2.55.0): `--follow-tags` is NOT tags-only — the man page
+has it push "all the refs that would be pushed without this option"
+(the default push fires), so the round-1/2 allow for `git push
+--follow-tags` from a protected seat was a false premise re-opening the
+#22 hole (the round-2 record had endorsed that allow pin without a
+grammar probe — recorded as the falsification, not hidden). Fixed: the
+tags-only reading requires `--tags` WITHOUT `--follow-tags` (folding
+the round-3 P3 combined-flags shape in); the follow-tags pins flipped
+with the falsification note; the false premise corrected in the src
+comment, the test comment, #22's sentence, the parity log, and
+LESS-0021's dated correction. Re-verified: 82/1 red (exactly the
+flipped pin) then 93/0 green, dist rebuilt and probed (11 cells match),
+repo lint/typecheck exit 0, checker 7/0. Round 4 re-binds the verdict
+to the final tip.
+
 **Acceptance criteria:**
 - [x] Alias/default pushes from a protected seat deny; from a feature
       seat and a factless seat they keep their classification; mixed
