@@ -11,7 +11,18 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 test("packed npm artifact independently records and searches memory", async () => {
   const temp = mkdtempSync(join(tmpdir(), "project-memory-package-"));
   try {
-    const [{ filename }] = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", temp], { cwd: process.cwd(), encoding: "utf8" })) as [{ filename: string }];
+    const packOutput = execFileSync("npm", ["pack", "--json", "--pack-destination", temp], { cwd: process.cwd(), encoding: "utf8" });
+    // W105: npm 12 changed `npm pack --json` from the legacy array to a
+    // keyed object (keyed by package name). Extract THIS package's entry
+    // either way so the test stays version-portable, and pin the entry's
+    // name — the old array destructure never checked which entry it got.
+    const parsed = JSON.parse(packOutput) as
+      | Array<{ filename: string; name?: string }>
+      | Record<string, { filename: string; name?: string }>;
+    const entry = Array.isArray(parsed) ? parsed[0] : parsed["project-memory-mcp"];
+    assert.ok(entry, "npm pack --json returned no entry for project-memory-mcp");
+    assert.equal(entry.name, "project-memory-mcp");
+    const filename = entry.filename;
     const consumer = join(temp, "consumer");
     const workspace = join(temp, "workspace");
     const dataRoot = join(temp, "data");

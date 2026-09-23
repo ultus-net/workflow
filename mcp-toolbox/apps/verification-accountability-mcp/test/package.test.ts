@@ -31,7 +31,18 @@ async function rawMcpCall(binary: string, cwd: string, env: Record<string, strin
 test("packed npm artifact transfers verification evidence across independent MCP sessions", async () => {
   const temp = mkdtempSync(join(tmpdir(), "verification-accountability-package-"));
   try {
-    const [{ filename }] = JSON.parse(execFileSync("npm", ["pack", "--json", "--pack-destination", temp], { cwd: process.cwd(), encoding: "utf8" })) as [{ filename: string }];
+    const packOutput = execFileSync("npm", ["pack", "--json", "--pack-destination", temp], { cwd: process.cwd(), encoding: "utf8" });
+    // W105: npm 12 changed `npm pack --json` from the legacy array to a
+    // keyed object (keyed by package name). Extract THIS package's entry
+    // either way so the test stays version-portable, and pin the entry's
+    // name — the old array destructure never checked which entry it got.
+    const parsed = JSON.parse(packOutput) as
+      | Array<{ filename: string; name?: string }>
+      | Record<string, { filename: string; name?: string }>;
+    const entry = Array.isArray(parsed) ? parsed[0] : parsed["verification-accountability-mcp"];
+    assert.ok(entry, "npm pack --json returned no entry for verification-accountability-mcp");
+    assert.equal(entry.name, "verification-accountability-mcp");
+    const filename = entry.filename;
     const consumer = join(temp, "consumer"); const workspace = join(temp, "workspace"); const dataRoot = join(temp, "data"); mkdirSync(consumer); mkdirSync(workspace);
     execFileSync("npm", ["init", "--yes"], { cwd: consumer, stdio: "ignore" }); execFileSync("npm", ["install", "--ignore-scripts", join(temp, filename)], { cwd: consumer, stdio: "ignore" });
     const installed = JSON.parse(readFileSync(join(consumer, "node_modules", "verification-accountability-mcp", "package.json"), "utf8")) as { bin?: Record<string, string>; dependencies?: Record<string, string> };

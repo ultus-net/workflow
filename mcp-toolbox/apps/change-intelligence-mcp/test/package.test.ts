@@ -12,7 +12,17 @@ test("packed npm artifact installs independently and launches without primitive 
   const temp = mkdtempSync(join(tmpdir(), "change-intelligence-package-"));
   try {
     const packOutput = execFileSync("npm", ["pack", "--json", "--pack-destination", temp], { cwd: process.cwd(), encoding: "utf8" });
-    const [{ filename }] = JSON.parse(packOutput) as [{ filename: string }];
+    // W105: npm 12 changed `npm pack --json` from the legacy array to a
+    // keyed object (keyed by package name). Extract THIS package's entry
+    // either way so the test stays version-portable, and pin the entry's
+    // name — the old array destructure never checked which entry it got.
+    const parsed = JSON.parse(packOutput) as
+      | Array<{ filename: string; name?: string }>
+      | Record<string, { filename: string; name?: string }>;
+    const entry = Array.isArray(parsed) ? parsed[0] : parsed["change-intelligence-mcp"];
+    assert.ok(entry, "npm pack --json returned no entry for change-intelligence-mcp");
+    assert.equal(entry.name, "change-intelligence-mcp");
+    const filename = entry.filename;
     const consumer = join(temp, "consumer");
     mkdirSync(consumer);
     execFileSync("npm", ["init", "--yes"], { cwd: consumer, stdio: "ignore" });
