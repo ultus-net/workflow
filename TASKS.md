@@ -2389,6 +2389,17 @@ at OpenRouter's end."
       Messages SCHEMA requires explicit markers; whether the three
       anthropic-compatible endpoints (deepseek/glm/kimi) accept them is
       UNPROBED — the opt-in stays dark until per-vendor probes land.
+      PART 1 LANDED (2026-09-24, feat/w098-proposal-prompt-cache-order):
+      the loop-prefix slice — the default RSI proposal prompt reordered to
+      stable preamble -> append-only history -> changing counters (the
+      per-iteration counters previously rendered BEFORE the history,
+      busting the provider prefix cache right before the bulk of every
+      proposal turn); the W098 ordering pin freezes the invariant.
+      Honest scope: verified structurally (the ordering pin +
+      formatHistory's append-only serialization); the provider cache-hit
+      improvement is NOT yet measured on live traffic. Remaining audit
+      scope: the hub-composed orientation block, per-turn advisory
+      guidance, MCP mounts, and the host-composed prefixes.
 - [x] Cache-control marker injection at transformBody for anthropic-wire
       pools (opt-in per pool via model-profile.ts). LANDED in W109
       (machinery + pins, wire-gated, absent-never-fabricated) — with the
