@@ -388,3 +388,18 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   redirect 5 + mcp 5); dist rebuilt (LESS-0010 hazard); the W100-era
   46-row inventory re-probe green against the REBUILT dist; repo
   lint/typecheck exit 0; security-assurance checker 7/0.
+
+  Review round 1 on W102 (fresh-eyes) — REVISE: the fused -c-quote
+  spelling (`bash -c'git commit -m x'`) bypassed both matchers (captured
+  red live: allow on main), and the recorded env-prefix limitation was
+  FALSIFIED (env/timeout/assignment prefixes were always consumed — the
+  records corrected at all four sites; hasGitMutation now SHARES
+  wrapperCommands). Round 2 on W102 — REVISE: the bundled-flag family
+  (`-ec`/`-xc`/`-vc`, the `-o <value> -c` detour, the common spaced
+  `bash -ec '...'`) — getopt consumes the rest of the word as -c's
+  option-argument; the generalized -Xc matcher the boundary and shell
+  lanes already use closes it, with transparency applied per seat
+  (factless variants inherit the inner factless allow — the pin draft
+  asserting blanket factless denies corrected per LESS-0019's own first
+  point). Suites 89/0 (policy 79 + redirect 5 + mcp 5); 46-row re-probe
+  green; lint/typecheck exit 0; checker 7/0.

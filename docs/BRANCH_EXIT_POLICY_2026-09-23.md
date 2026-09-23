@@ -647,4 +647,12 @@ dist rebuild) with these deltas from §4's letter, recorded honestly:
     unwrapper consumes env/timeout/assignment prefixes — prefixed
     wrappers were always detected); the remaining honest edge is exotic
     interpreter names (busybox sh, xsh), pinned as-found and queued — the
-    remaining edge, not a silently-closed bypass.
+    remaining edge, not a silently-closed bypass. Review round 2 closed
+    the bundled-flag wrapper family (`-ec`/`-xc`/`-vc` bundles, the
+    `-o <value> -c` detour, and the common spaced `bash -ec '...'` form —
+    getopt consumes the rest of the word as -c's option-argument; the
+    generalized -Xc matcher the boundary and shell lanes already use),
+    with the transparency principle applied per seat (factless variants
+    inherit the inner factless allow; target-gated shapes deny
+    factlessly via the base set) and the zsh EQUALS-expansion caveat
+    queued with the exotic-interpreter edge.
