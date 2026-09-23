@@ -623,8 +623,8 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   attributes first; a compound mixing the post-push rules — kubectl and
   later — with a force push now attributes the earlier rule first: an
   attribution-order shift, recorded). Scoping note: residual #23's text
-  had recorded only the plus-refspec instance; the W105-era exploration
-  flagged the flag spelling as equally blind and the resolution covers
+  had recorded only the plus-refspec instance; the W108 iteration's
+  exploration pass flagged the flag spelling as equally blind and the resolution covers
   BOTH (the class heading was always "destination-blind").
 
   Deliberate behavior change, pinned: forced tag publishes classify

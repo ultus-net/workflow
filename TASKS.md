@@ -3036,7 +3036,7 @@ never rendered. Recorded as the correction, not hidden.
 **Source:** the pain-point queue's item 4 — SECURITY_ASSURANCE
 residual #23 (the W101 round-7 watch-item): the shell lane's
 force-push rules were destination-blind — any plus-prefixed push
-refspec (and, discovered by the W105-era exploration, the
+refspec (and, discovered by the W108 iteration's exploration pass, the
 `--force`/`--force-with-lease`/`-f` flag rule equally) classified
 deny/destructive-operation even to the agent's own feature branch.
 
@@ -3063,7 +3063,11 @@ deny/destructive-operation even to the agent's own feature branch.
   them). The destination-aware check runs after the generic destructive
   patterns (a compound's earlier destructive match still attributes
   first; the attribution-order shift for compounds mixing the
-  post-push rules with a force push is recorded).
+  post-push rules with a force push is recorded). Attribution corner
+  (review round 1 P3): a command carrying BOTH force shapes (a
+  plus-refspec and the force flag together) attributes the flag reason
+  where the pre-fix pattern order attributed the plus reason — decision
+  and policy unchanged, both reasons accurate.
 - SECURITY_ASSURANCE #23 resolved-in-place (scoping corrected to both
   spellings); BRANCH_EXIT_POLICY's round-7 watch-item superseded with
   the stale shell-policy.ts cite corrected; the parity-log W108 entry.
