@@ -466,3 +466,39 @@ test("the prompt prefix is prepended to every loop turn", async (t) => {
   assert.match(DEFAULT_PROPOSAL_PROMPT_TEMPLATE, /\{\{objective\}\}/);
   assert.match(DEFAULT_PROPOSAL_PROMPT_TEMPLATE, /\{\{history\}\}/);
 });
+// W098 (criterion 1, cache-bust audit): the proposal prompt cacheable prefix.
+// Provider prompt caches are keyed on the longest shared token PREFIX across
+// calls. The loop-state counters (iteration/accepted/rejected/best) change
+// every iteration, so they must sit AFTER the append-only history - putting
+// them before the history busts the cache right before the bulk of every
+// prompt. The history is a prefix-superset across iterations (formatHistory
+// serializes append-only), so history-then-counters makes the cacheable
+// prefix grow monotonically.
+
+test("W098: the proposal prompt keeps the growing history ahead of the changing counters", async () => {
+  const fake = fakeTurn(() => ({ result: '{"hypothesis": "next"}', costUsd: 0.01 }));
+  const source = createAgentProposalSource({ turn: fake.turn, workspace: "/repo" });
+  await source.next({
+    iteration: 3,
+    objective: "obj",
+    accepted: 1,
+    rejected: 1,
+    best: undefined,
+    history: [
+      { iteration: 1, proposalId: "p1", hypothesis: "h1", changed: true, runId: "r1", verdict: "accepted", reason: "verified", observedAt: "now" },
+      { iteration: 2, proposalId: "p2", hypothesis: "h2", changed: false, runId: "r2", verdict: "rejected", reason: "not verified", observedAt: "now" },
+    ],
+  });
+  const prompt = fake.calls[0]?.prompt ?? "";
+  const countersAt = prompt.indexOf("iteration: 3");
+  const acceptedAt = prompt.indexOf("accepted candidates: 1");
+  const bestAt = prompt.indexOf("incumbent best: none yet");
+  const firstHistoryAt = prompt.indexOf("#1 accepted");
+  assert.ok(firstHistoryAt !== -1, "the history must render");
+  assert.ok(countersAt !== -1 && acceptedAt !== -1 && bestAt !== -1, "the counters must render");
+  assert.ok(countersAt > firstHistoryAt && acceptedAt > firstHistoryAt && bestAt > firstHistoryAt, "the changing counters must sit AFTER the append-only history (provider prefix-cache discipline)");
+  const taskAt = prompt.indexOf("Task: propose");
+  const historyHeaderAt = prompt.indexOf("iteration history:");
+  assert.ok(taskAt !== -1 && historyHeaderAt !== -1, "the task block and history header must render");
+  assert.ok(taskAt < historyHeaderAt, "the stable task block must precede the growing history");
+});
