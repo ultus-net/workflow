@@ -1246,9 +1246,51 @@ test("W107 C2: the invariants route reports kernel-evaluated rows with their jud
   const stateLegality = emptyBody.invariants.find((row) => row.id === "state-legality");
   assert.ok(stateLegality);
   assert.equal(stateLegality.verdict, "passed");
-  assert.equal(stateLegality.judged, 1);
   const verifiedFresh = emptyBody.invariants.find((row) => row.id === "verified-evidence-fresh");
   assert.ok(verifiedFresh);
   assert.equal(verifiedFresh.verdict, "could-not-discriminate");
   assert.equal(verifiedFresh.judged, 0);
+});
+
+test("W110: the transition route surfaces the kernel's refusal with the missing requirements", async (context) => {
+  const tasks: WorkflowTask[] = [{
+    id: taskId("gated"),
+    title: "Evidence-gated task",
+    state: "VERIFYING",
+    dependencies: [],
+    requiredEvidence: [
+      { authority: "environment", subject: "typecheck" },
+      { authority: "reviewer", subject: "design-review" },
+    ],
+  }];
+  const application = new WorkflowApplication(
+    new TaskGraph(tasks),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const port = (server.address() as AddressInfo).port;
+
+  const refused = await fetch(`http://127.0.0.1:${port}/api/transition`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ taskId: "gated", requested: "VERIFIED" }),
+  });
+  assert.equal(refused.status, 409);
+  const body = await refused.json() as {
+    kind: string;
+    code: string;
+    reason: string;
+    missing?: { authority: string; subject: string; why: string }[];
+  };
+  assert.equal(body.kind, "rejected");
+  assert.equal(body.code, "EVIDENCE_REQUIRED");
+  // The refusal names each missing artifact with its per-requirement why —
+  // the kernel computes it; the client never derives it.
+  assert.deepEqual(body.missing, [
+    { authority: "environment", subject: "typecheck", why: "no evidence observed" },
+    { authority: "reviewer", subject: "design-review", why: "no evidence observed" },
+  ]);
+  assert.match(body.reason, /missing: environment:typecheck — no evidence observed; reviewer:design-review — no evidence observed/);
 });

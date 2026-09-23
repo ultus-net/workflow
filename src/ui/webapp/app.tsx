@@ -174,12 +174,60 @@ function useGitStatus() {
   return status;
 }
 
-function advance(taskId: string, requested: string, refresh: () => Promise<void>): void {
-  void fetch("/api/transition", {
+// W110 (amux C3 — refusal legibility): transition and retry refusals are
+// RETURNED, not discarded — the 409 body is the kernel's structured refusal
+// (code, reason, and for evidence gates the missing requirements with the
+// per-requirement why). The Tasks panel renders it verbatim; the UI never
+// self-derives the refusal.
+export interface TaskRefusal {
+  readonly code: string;
+  readonly reason: string;
+  readonly missing?: readonly { readonly authority: string; readonly subject: string; readonly why: string }[];
+}
+
+async function requestTransition(taskId: string, requested: string): Promise<TaskRefusal | undefined> {
+  const response = await fetch("/api/transition", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ taskId, requested }),
-  }).then(() => refresh());
+  });
+  return refusalFrom(response, taskId);
+}
+
+async function requestRetry(taskId: string): Promise<TaskRefusal | undefined> {
+  const response = await fetch("/api/tasks/retry", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ taskId }),
+  });
+  return refusalFrom(response, taskId);
+}
+
+async function refusalFrom(response: Response, taskId: string): Promise<TaskRefusal | undefined> {
+  if (response.ok) return undefined;
+  const body = (await response.json().catch(() => ({}))) as { kind?: string; code?: string; reason?: string; missing?: TaskRefusal["missing"] };
+  if (body.kind === "rejected" && typeof body.code === "string" && typeof body.reason === "string") {
+    return { code: body.code, reason: body.reason, ...(body.missing !== undefined ? { missing: body.missing } : {}) };
+  }
+  return { code: `HTTP ${response.status}`, reason: `the transition for ${taskId} was refused` };
+}
+
+export function TaskRefusal(props: { readonly refusal: TaskRefusal }) {
+  return (
+    <span className="task-refusal" role="alert">
+      {props.refusal.reason}
+      {props.refusal.missing !== undefined && props.refusal.missing.length > 0 && (
+        <span className="task-refusal-missing">
+          {props.refusal.missing.map((entry) => (
+            <span key={`${entry.authority}:${entry.subject}`} className="task-refusal-missing-item">
+              missing {entry.authority}:{entry.subject} — {entry.why}
+            </span>
+          ))}
+        </span>
+      )}
+      <span className="muted"> [{props.refusal.code}]</span>
+    </span>
+  );
 }
 
 export interface SessionMeta {
@@ -1630,6 +1678,29 @@ function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent,
   readonly refreshSteps: () => Promise<void>;
 }) {
   const ledgerByTask = new Map((ledger?.tasks ?? []).map((entry) => [entry.id, entry]));
+  // W110 (refusal legibility): the kernel's structured refusals, per task —
+  // rendered verbatim until the next attempt succeeds.
+  const [refusals, setRefusals] = useState<Record<string, TaskRefusal>>({});
+  const recordRefusal = (taskId: string, refusal: TaskRefusal | undefined): void => {
+    setRefusals((current) => {
+      const next = { ...current };
+      if (refusal === undefined) delete next[taskId];
+      else next[taskId] = refusal;
+      return next;
+    });
+  };
+  const advanceTask = (id: string, requested: string): void => {
+    void requestTransition(id, requested).then((refusal) => {
+      recordRefusal(id, refusal);
+      return refresh();
+    });
+  };
+  const retry = (id: string): void => {
+    void requestRetry(id).then((refusal) => {
+      recordRefusal(id, refusal);
+      return refresh();
+    });
+  };
   return (
     <aside className="panels">
       <ContextSection usage={usage} sessionId={focusedSessionId} onCompactSession={onCompactSession} />
@@ -1646,13 +1717,14 @@ function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent,
                 {task.title}
                 {task.blockers.length > 0 && <span className="task-blockers">blocked by {task.blockers.join(", ")}</span>}
               </span>
+              {refusals[task.id] !== undefined && <TaskRefusal refusal={refusals[task.id]!} />}
               {NEXT_STATE[task.state] !== undefined && (
-                <button className="task-action" onClick={() => advance(task.id, NEXT_STATE[task.state]!, refresh)}>
+                <button className="task-action" onClick={() => advanceTask(task.id, NEXT_STATE[task.state]!)}>
                   {NEXT_STATE_ACTION[task.state]}
                 </button>
               )}
               {task.state === "FAILED" && (
-                <button className="task-action" onClick={() => retryTask(task.id, refresh)}>Retry</button>
+                <button className="task-action" onClick={() => retry(task.id)}>Retry</button>
               )}
               {ledgerTask !== undefined && ledgerTask.steps.length > 0 && (
                 <ul className="step-ledger">
@@ -1811,14 +1883,6 @@ function DiffDialog({ path, diff, onClose }: {
       </div>
     </div>
   );
-}
-
-function retryTask(taskId: string, refresh: () => Promise<void>): void {
-  void fetch("/api/tasks/retry", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ taskId }),
-  }).then(() => refresh());
 }
 
 const STEP_LABEL: Record<StepRow["state"], string> = {

@@ -2580,6 +2580,11 @@ body {
 .task-state-completed { color: var(--ok); }
 .task-blockers { display: block; color: var(--text-muted); font-size: 0.8rem; }
 .task-title { grid-column: 1 / -1; overflow-wrap: break-word; }
+/* W110 (refusal legibility): the kernel's structured refusal, rendered
+   verbatim with the missing requirements as the artifact list. */
+.task-refusal { grid-column: 1 / -1; display: block; color: var(--fail); font-size: 0.8rem; overflow-wrap: break-word; }
+.task-refusal-missing { display: block; color: var(--text-muted); }
+.task-refusal-missing-item { display: block; }
 
 /* W083: the canonical step ledger, nested under each task card. */
 .step-ledger {
