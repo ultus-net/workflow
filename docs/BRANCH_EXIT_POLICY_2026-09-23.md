@@ -537,3 +537,18 @@ dist rebuild) with these deltas from §4's letter, recorded honestly:
    Post-fix: suites 82/0 (policy 72 + redirect 5 + mcp 5); the 55-row
    re-probe and all round-2 shapes green against the REBUILT dist; repo
    lint/typecheck exit 0; security-assurance checker 7/0.
+6. **Review round 3 (re-review) — REVISE, one new unrecorded fail-open,
+   fixed:** `--refmap` is the one fetch value option whose value is itself
+   a refspec (the prune mapping) — `--refmap=refs/heads/gone:refs/heads/
+   main` with `--prune` DELETES the mapped local branch, and both spellings
+   slipped the gate (the equals form silently skipped by the shared walk's
+   equals shortcut, the space form consumed as a value). Fix: parseFetch
+   fails closed on ANY `--refmap` spelling before parsing (deliberately
+   not a consumed value), benign prune fetches stay allow, and the
+   round-2 `-c`/`-C` watch-item is pinned (bundled combination deny).
+   Pre-fix verdict captured live (allow); suites 83/0 (policy 73 +
+   redirect 5 + mcp 5); 55-row re-probe + round-2 shapes green; repo
+   lint/typecheck exit 0. Reviewer notes (unpinned, by-trace): the
+   allow-biased parses of git-rejected shapes (nested-colon refspecs,
+   whitespace-embedded) are harmless (no mutation possible) and recorded
+   here rather than pinned uncertain.

@@ -290,8 +290,7 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   destinations fail closed in both lanes with tag-glob exemptions kept;
   `--force(?!-create)\b` lookahead); pre-fix verdicts captured live against
   the pre-fix dist (allow/allow/allow/allow/deny) and post-fix green.
-  Suites 81/0; the 55-row re-probe matches the position; see the W100
-  doc's §7 implementation addendum for the record.
+  Suites 81/0.
 
   Review round 2 (re-review) — REVISE: parseFetch's first-colon-operand
   early return let a benign first refspec, a URL remote, or an unconsumed
@@ -303,3 +302,13 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   falsified "dead entries removed" claim honored by removing them.
   Suites 82/0; 55-row re-probe + all round-2 shapes green against the
   REBUILT dist.
+
+  Review round 3 (re-review) — REVISE: --refmap's value is itself a
+  refspec (the prune mapping) — with --prune a mapped absent source
+  deletes the mapped local destination, and both spellings slipped the
+  gate (the equals form never reached the walker's callback; the space
+  form was consumed as a value). Fixed: parseFetch fails closed on ANY
+  --refmap spelling before parsing; benign prune fetches stay allow;
+  the -c/-C combination watch-item pinned. Pre-fix verdict captured
+  live (allow); suites 83/0; 55-row re-probe + round-2 shapes green
+  against the REBUILT dist.

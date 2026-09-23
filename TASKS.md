@@ -2563,9 +2563,16 @@ return let a benign first refspec, a URL remote, or an unconsumed
 destination checked (deny on ANY protected), `-j`/`-o` values consumed,
 the create/force-create mode combination fails closed for both
 spellings, and the falsified "dead entries removed" claim honored by
-removing them. Suites 82/0 (policy 72 + redirect 5 + mcp 5); the 55-row
-live re-probe + all round-2 shield shapes green against the REBUILT
-dist; repo lint/typecheck exit 0; security-assurance checker 7/0.
+removing them. Review round 3 (re-review) — REVISE with one new
+unrecorded fail-open: `--refmap`'s value is itself a refspec (the prune
+mapping — with `--prune` a mapped absent source DELETES the mapped
+local destination) and both spellings slipped the gate; parseFetch now
+fails closed on ANY `--refmap` spelling before parsing; the `-c`/`-C`
+combination watch-item pinned; benign prune fetches stay allow (pre-fix
+verdict captured live as allow). Suites 83/0 (policy 73 + redirect 5 +
+mcp 5); the 55-row live re-probe + all round-2/3 shield shapes green
+against the REBUILT dist; repo lint/typecheck exit 0;
+security-assurance checker 7/0.
 
 **Acceptance criteria:**
 - [x] Both matchers widened in the same change (`gitWriteRe` lanes +

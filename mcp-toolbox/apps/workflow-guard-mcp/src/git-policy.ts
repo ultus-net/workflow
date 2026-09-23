@@ -137,8 +137,13 @@ interface PointerInvocation {
 const branchValueOptions = new Set(["--format", "--sort", "--points-at"]);
 const switchCheckoutFlags = new Set(["-t", "--track", "--no-track", "-m", "--merge", "-g", "--guess", "--no-guess", "--orphan", "--overwrite-ignore", "--no-overwrite-ignore", "--overlay", "--no-overlay", "--ignore-other-worktrees", "--ignore-skip-worktree-bits", "--pathspec-file-nul", "--recurse-submodules", "--no-recurse-submodules", "-p", "--patch"]);
 const updateRefFlags = new Set(["--no-deref", "-z", "--worktree", "--strict"]);
-const fetchValueOptions = new Set(["--depth", "--deepen", "--shallow-since", "--shallow-exclude", "--negotiation-tip", "-j", "--jobs", "-o", "--server-option", "--upload-pack", "--submodule-prefix", "--refmap"]);
+const fetchValueOptions = new Set(["--depth", "--deepen", "--shallow-since", "--shallow-exclude", "--negotiation-tip", "-j", "--jobs", "-o", "--server-option", "--upload-pack", "--submodule-prefix"]);
 const fetchFlags = new Set(["-p", "--prune", "-n", "--no-tags", "-t", "--tags", "--all", "--multiple", "--dry-run", "--atomic", "--force", "--refetch", "-q", "--quiet", "-v", "--verbose", "--progress", "--ipv4", "--ipv6", "-4", "-6", "--auto-maintenance", "--auto-gc", "--write-fetch-head", "--no-write-fetch-head", "--unshallow", "--update-shallow"]);
+// W101 review round 3: --refmap is the one fetch value option whose value is
+// itself a refspec (the prune mapping) — `--refmap=refs/heads/gone:refs/
+// heads/main` with --prune deletes the mapped local branch — so it is
+// deliberately NOT a consumed value: both spellings fall into the uncertain
+// bucket and fail closed (deliberately absent from fetchValueOptions).
 
 function normalizeBranchRef(token: string): string {
   return token.replace(/^refs\/heads\//, "");
@@ -283,6 +288,12 @@ function parseUpdateRef(words: string[]): PointerInvocation | undefined {
 }
 
 function parseFetch(words: string[]): PointerInvocation | undefined {
+  // W101 review round 3: --refmap (either spelling) is a hidden refspec —
+  // its value is the prune mapping, and with --prune a mapped absent source
+  // DELETES the mapped local destination. Fail closed before any parsing
+  // (the equals-form skip in the shared walk would otherwise never surface
+  // it).
+  if (words.some((word) => word.startsWith("--refmap"))) return { targets: [], uncertain: true, needsCurrentBranch: false };
   const walk = walkWords(
     words,
     (ch) => "vqtnp46".includes(ch),

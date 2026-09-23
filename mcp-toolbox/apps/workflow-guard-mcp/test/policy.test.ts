@@ -951,6 +951,22 @@ test("W101 review round 2: the fetch lane checks every refspec destination", () 
   assert.equal(checkPolicy({ action: "shell", command: "git switch -c feat/g5", currentBranch: "main" }).decision, "allow");
 });
 
+test("W101 review round 3: --refmap values are refspecs the fetch lane never inspects", () => {
+  // --refmap is the prune mapping: its value is a real refspec, and with
+  // --prune a mapped absent source DELETES the mapped local destination.
+  // Both spellings fail closed (deliberately not a consumed value).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const equals = checkPolicy({ action: "shell", command: "git fetch --prune --refmap=refs/heads/gone:refs/heads/main origin", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(equals.decision, "deny", String(currentBranch));
+    const space = checkPolicy({ action: "shell", command: "git fetch --prune --refmap refs/heads/gone:refs/heads/main origin", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(space.decision, "deny", String(currentBranch));
+  }
+  // The bundled -c/-C combination stays fail-closed (round-2 watch-item pin).
+  assert.equal(checkPolicy({ action: "shell", command: "git switch -c x -C main", currentBranch: "main" }).decision, "deny");
+  // Benign refmap-less prune fetches stay allowed.
+  assert.equal(checkPolicy({ action: "shell", command: "git fetch --prune origin", currentBranch: "feat/g5" }).decision, "allow");
+});
+
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {
   const { hasGitMutation } = await import("../src/git-policy.js");
   assert.equal(hasGitMutation("git branch -f main abc123def"), true);
