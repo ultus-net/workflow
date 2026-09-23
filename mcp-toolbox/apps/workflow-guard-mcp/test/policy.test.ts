@@ -1002,6 +1002,33 @@ test("W101 review round 5: branch delete is variadic — every operand is a writ
   // valid.
   assert.equal(checkPolicy({ action: "shell", command: "git branch -dc main feat2", currentBranch: "feat/g5" }).decision, "deny");
   assert.equal(checkPolicy({ action: "shell", command: "git branch -md x main", currentBranch: "feat/g5" }).decision, "deny");
+  // Round 8: the pull spelling shares the fetch lane's destination sweep —
+  // `git pull` runs git fetch with the same arguments, so its colon
+  // refspecs write local branches (captured red live against the pre-fix
+  // dist: allow), and the merge half into a protected CURRENT branch is
+  // the gitWriteRe pull clause's job.
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const pullRefspec = checkPolicy({ action: "shell", command: "git pull origin main:refs/heads/main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(pullRefspec.decision, "deny", String(currentBranch));
+  }
+  const pullMerge = checkPolicy({ action: "shell", command: "git pull . feat/g5", currentBranch: "main" });
+  assert.equal(pullMerge.decision, "deny");
+  assert.equal(pullMerge.policy, "protected-branch-write");
+  const pullForce = checkPolicy({ action: "shell", command: `git pull --force origin ${String.fromCharCode(43)}feat/g5:refs/heads/main`, currentBranch: "feat/g5" });
+  assert.equal(pullForce.decision, "deny");
+  // Benign pulls keep their classification (rebase form recognized; bare
+  // pull factless stays allow — the merge target is the unknowable current
+  // branch).
+  assert.equal(checkPolicy({ action: "shell", command: "git pull --rebase origin feat/g5", currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git pull" }).decision, "allow");
+  // Round 8: --mirror/--all pushes update/delete ALL remote refs including
+  // the protected ones — fail closed (recorded residual #24).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const mirror = checkPolicy({ action: "shell", command: "git push --mirror origin", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(mirror.decision, "deny", String(currentBranch));
+    assert.equal(mirror.policy, "protected-branch-push", String(currentBranch));
+    assert.equal(checkPolicy({ action: "shell", command: "git push --all origin", ...(currentBranch ? { currentBranch } : {}) }).decision, "deny", String(currentBranch));
+  }
   // Reordered protected-first still denies; the on-main target-blind
   // conservative deny is unchanged (row 16 — ANY delete while ON a
   // protected branch denies); the factless all-feature delete stays allow

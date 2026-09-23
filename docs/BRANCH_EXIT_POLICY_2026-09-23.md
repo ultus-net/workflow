@@ -606,3 +606,23 @@ dist rebuild) with these deltas from §4's letter, recorded honestly:
     mcp 5 — the round-7 pins assert the policy label, discriminating the
     attribution fix); 55-row re-probe + round-2 shapes green; repo
     lint/typecheck exit 0; security-assurance checker 7/0.
+11. **Review round 8 (re-review) — REVISE, a real composite-spelling
+    bypass: the pull spelling shares the fetch lane's grammar but no
+    lane classified it.** `git pull` runs git fetch with the same
+    arguments — its colon refspecs write local branches — then merges
+    into the CURRENT branch. No lane named `pull` (allow across every
+    seat: the merge intent `git merge` denies via the gitWriteRe merge
+    clause, the row-24 fetch-refspec deny, and the force-refspec
+    destructive catch all bypassed by the composite spelling; pre-fix
+    verdicts captured live: allow across facts and branches). Fix: the
+    pull subcommand shares parseFetch (destination sweep + the --refmap
+    veto, with pull's integration-side options recognized) and
+    `gitWriteRe` gains a current-branch-gated pull clause (a pull on a
+    protected branch merges INTO it). Recorded residual #24:
+    `--mirror`/`--all` pushes update and delete ALL remote refs
+    including the protected ones with no refspec naming them — both
+    fail closed now (push lane), recorded as the residual's historical
+    note with as-found allow captured live. Post-fix: suites 85/0
+    (assertions added inside existing blocks); 55-row re-probe +
+    round-2 shapes green against the REBUILT dist; repo lint/typecheck
+    exit 0; security-assurance checker 7/0.

@@ -13,7 +13,7 @@ import { splitShellSegments, unwrapShellWords } from "./shell.js";
 // (mirroring rows 5 and 7's checkout treatments): switch -C/-c stay OUT of
 // the spelling lane so the target gate decides and the sanctioned
 // feature-target force-create keeps its W099-pinned allow.
-const gitWriteRe = /\bgit\s+(?:add|rm|mv|commit|merge|rebase|cherry-pick|revert|stash\s+pop|apply|am|restore|reset|update-ref|filter-branch)\b|\bgit\s+tag\s+(?!--?list\b|-l\b)(?:[^|;&]*\s)?(?:-d\b|--delete\b)|\bgit\s+checkout\s+(?!-b\b|-B\b)|\bgit\s+switch\s+(?:-d\b|--detach\b|-f\b|--force(?!-create)\b|--discard-changes\b)|\bgit\s+branch\s+(?:[^|;&]*\s)?-[dDM]\b/;
+const gitWriteRe = /\bgit\s+(?:add|rm|mv|commit|merge|rebase|cherry-pick|revert|stash\s+pop|apply|am|restore|reset|update-ref|filter-branch)\b|\bgit\s+tag\s+(?!--?list\b|-l\b)(?:[^|;&]*\s)?(?:-d\b|--delete\b)|\bgit\s+checkout\s+(?!-b\b|-B\b)|\bgit\s+switch\s+(?:-d\b|--detach\b|-f\b|--force(?!-create)\b|--discard-changes\b)|\bgit\s+branch\s+(?:[^|;&]*\s)?-[dDM]\b|\bgit\s+pull\b/;
 const gitValueOptions = new Set(["-C", "--git-dir", "--work-tree", "-c", "--config-env", "--namespace"]);
 const gitBooleanOptions = new Set(["--version", "--help", "--no-pager", "-p", "--paginate", "--bare", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--exec-path"]);
 
@@ -52,7 +52,7 @@ export function hasGitMutation(command: string, depth = 0): boolean {
   // W101 (W100 §2.3 twin-matcher discipline): the branch class widens for the
   // pointer family (-f/-m/-M/-C/-c and their long forms) and fetch gains a
   // colon-refspec clause, in the SAME change as the target gate below.
-  const extras = /\bgit\s+branch\s+(?:[^|;&]*\s)?-(?:[dDfMCcm]|--force\b|--move\b|--copy\b|--delete\b)|\bgit\s+fetch\s+[^|;&]*:\S/;
+  const extras = /\bgit\s+branch\s+(?:[^|;&]*\s)?-(?:[dDfMCcm]|--force\b|--move\b|--copy\b|--delete\b)|\bgit\s+fetch\s+[^|;&]*:\S|\bgit\s+pull\b/;
   if (gitWriteRe.test(normalized) || extras.test(normalized) || /\bgit\s+(?:switch|checkout)\b/.test(normalized)) return true;
   return splitShellSegments(command).some((segment) => {
     const words = unwrapShellWords(segment);
@@ -98,6 +98,11 @@ function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>
     const words = normalized.split(" ");
     if (words[1] !== "push") continue;
     for (const refspec of words.slice(2).filter((word) => !word.startsWith("-"))) {
+      // W101 review round 8: --mirror/--all pushes update and delete ALL
+      // remote refs including the protected ones — no refspec names them,
+      // so the per-refspec destination match cannot see them. Fail closed
+      // (recorded as SECURITY_ASSURANCE #24).
+      if (words.slice(2).some((word) => word === "--mirror" || word === "--all")) return "wildcard-refspec";
       // W084 tag-publish exemption first (tag globs stay release operations),
       // then the W101 review P1 wildcard fail-closed: a branch-glob
       // destination maps ALL heads including the protected ones and cannot
@@ -144,8 +149,10 @@ interface PointerInvocation {
 const branchValueOptions = new Set(["--format", "--sort", "--points-at"]);
 const switchCheckoutFlags = new Set(["-t", "--track", "--no-track", "-m", "--merge", "-g", "--guess", "--no-guess", "--orphan", "--overwrite-ignore", "--no-overwrite-ignore", "--overlay", "--no-overlay", "--ignore-other-worktrees", "--ignore-skip-worktree-bits", "--pathspec-file-nul", "--recurse-submodules", "--no-recurse-submodules", "-p", "--patch"]);
 const updateRefFlags = new Set(["--no-deref", "-z", "--worktree", "--strict"]);
-const fetchValueOptions = new Set(["--depth", "--deepen", "--shallow-since", "--shallow-exclude", "--negotiation-tip", "-j", "--jobs", "-o", "--server-option", "--upload-pack", "--submodule-prefix"]);
-const fetchFlags = new Set(["-p", "--prune", "-n", "--no-tags", "-t", "--tags", "--all", "--multiple", "--dry-run", "--atomic", "--force", "--refetch", "-q", "--quiet", "-v", "--verbose", "--progress", "--ipv4", "--ipv6", "-4", "-6", "--auto-maintenance", "--auto-gc", "--write-fetch-head", "--no-write-fetch-head", "--unshallow", "--update-shallow"]);
+const fetchValueOptions = new Set(["--depth", "--deepen", "--shallow-since", "--shallow-exclude", "--negotiation-tip", "-j", "--jobs", "-o", "--server-option", "--upload-pack", "--submodule-prefix", "-s", "--strategy", "-X", "--strategy-option", "-S", "--gpg-sign"]);
+const fetchFlags = new Set(["-p", "--prune", "-n", "--no-tags", "-t", "--tags", "--all", "--multiple", "--dry-run", "--atomic", "--force", "--refetch", "-q", "--quiet", "-v", "--verbose", "--progress", "--ipv4", "--ipv6", "-4", "-6", "--auto-maintenance", "--auto-gc", "--write-fetch-head", "--no-write-fetch-head", "--unshallow", "--update-shallow", "--no-tags", "--rebase", "-r", "--autostash", "--ff", "--no-ff", "--ff-only", "--commit", "--no-commit", "--verify-signatures", "--no-verify", "--stat", "--no-stat", "--log", "--no-edit", "--edit", "--allow-unrelated-histories", "--squash", "--no-squash"]);
+// Pull shares the fetch walker (round 8): its integration-side options are
+// known flags or consumed values; --refmap stays vetoed (shared walk).
 // W101 review round 3: --refmap is the one fetch value option whose value is
 // itself a refspec (the prune mapping) — `--refmap=refs/heads/gone:refs/
 // heads/main` with --prune deletes the mapped local branch — so it is
@@ -324,13 +331,13 @@ function parseFetch(words: string[]): PointerInvocation | undefined {
   if (words.some((word) => word.startsWith("--refmap"))) return { targets: [], uncertain: true, needsCurrentBranch: false };
   const walk = walkWords(
     words,
-    (ch) => "vqtnp46".includes(ch),
+    (ch) => "vqtnp46r".includes(ch),
     (word) => {
       if (fetchFlags.has(word)) return "flag";
       if (fetchValueOptions.has(word)) return "value";
       return "unknown";
     },
-    new Set(["j", "o"]), // -j/--jobs and -o/--server-option consume a value
+    new Set(["j", "o", "s", "S", "X"]), // -j/-o/-s/-S/-X consume a value
   );
   if (walk.uncertain) return { targets: [], uncertain: true, needsCurrentBranch: false };
   // Fail-closed across EVERY colon-bearing operand (review round 2): a
@@ -361,7 +368,14 @@ function checkPointerTarget(words: string[], protectedBranches: Set<string>, con
   if (sub === "branch") invocation = parseBranch(words);
   else if (sub === "checkout" || sub === "switch") invocation = parseForceCreate(words, sub === "checkout" ? "B" : "C");
   else if (sub === "update-ref") invocation = parseUpdateRef(words);
-  else if (sub === "fetch") invocation = parseFetch(words);
+  else if (sub === "fetch" || sub === "pull") {
+    // W101 review round 8: pull runs git fetch with the same arguments —
+    // its colon refspecs are fetch refspecs writing local branches, so the
+    // pull spelling shares the fetch lane's destination sweep (and the
+    // --refmap veto). The merge half (into the current branch) is the
+    // gitWriteRe pull clause's current-branch-gated job.
+    invocation = parseFetch(words);
+  }
   if (!invocation) return undefined;
   if (invocation.uncertain) {
     return { decision: "deny", policy: "protected-branch-write", reason: "Git pointer command could not be safely parsed; failing closed." };
@@ -392,7 +406,7 @@ export function checkGitPolicy(command: string, context: GitPolicyContext): { po
   const protectedBranches = protectedBranchesIn(context);
   const pushed = pushedProtectedBranchIn(command, protectedBranches);
   if (pushed === "wildcard-refspec") {
-    return { decision: "deny", policy: "protected-branch-push", reason: "Wildcard push refspec destinations cannot be resolved to concrete branches; failing closed." };
+    return { decision: "deny", policy: "protected-branch-push", reason: "Push could not be resolved to concrete branch destinations (wildcard refspec, --mirror, or --all); failing closed." };
   }
   if (pushed) return { decision: "deny", policy: "protected-branch-push", reason: `Direct pushes to protected branch '${pushed}' are not allowed.` };
   // W101: the semantic target gate runs per segment BEFORE the

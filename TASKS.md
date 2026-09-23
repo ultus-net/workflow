@@ -2598,7 +2598,18 @@ destinations named protected-branch-push by the push lane; the pin
 asserts the policy label). Watch-item recorded: the shell rule
 over-denies legitimate force-pushes to feature branches — pre-existing,
 noted for the shell-policy queue. LESS-0018: a reviewer trace of ONE
-lane is not a verdict — probe before implementing. Review round 6
+lane is not a verdict — probe before implementing. Review round 8
+(re-review) — REVISE: the pull spelling shares the fetch lane's grammar
+but no lane classified it (allow across every seat — the merge intent,
+the row-24 fetch-refspec deny, and the force-refspec destructive catch
+all bypassed by the composite spelling; pre-fix verdicts captured live:
+allow across facts and branches). Fixed: pull shares parseFetch
+(destination sweep + --refmap veto; pull's integration options
+recognized) and gitWriteRe gains a current-branch-gated pull clause.
+--mirror/--all pushes fail closed (residual #24, as-found allow
+captured). Suites 85/0 (assertions added inside existing blocks);
+55-row re-probe + round-2 shapes green against the REBUILT dist; repo
+lint/typecheck exit 0; security-assurance checker 7/0. Review round 6
 (re-review) — no new bypass found (all shapes trace fail-closed or
 harmless; the variadic fix confirmed in src and dist); the one open
 watch-item — bundled conflicting branch modes (a -dc/-md short bundle)

@@ -102,7 +102,7 @@ from fingerprinted provenance, never from stale approvals
   `docs/OPENCODE_QUALIFICATION.md`, `docs/GOOSE_RESEARCH.md`) get dated
   supersession notes; history is never silently rewritten.
 - **Residual risks stay stated** — `docs/SECURITY_ASSURANCE.md` keeps its
-  residual risks on record (23 as of the W101 git-pointer work), and its
+  residual risks on record (24 as of the W101 git-pointer work), and its
   checker pins the honesty statements.
 - Probe-gated, never date-gated: an agent version bump without a re-run of
   its probes caps that surface `advisory`.

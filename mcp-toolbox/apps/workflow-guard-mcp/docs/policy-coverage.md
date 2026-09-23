@@ -347,6 +347,18 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   noted for the shell-policy's own queue. LESS-0018: a reviewer trace of
   ONE lane is not a verdict — probe before implementing.
 
+  Review round 8 (re-review) — REVISE: the pull spelling shares the
+  fetch lane's grammar but no lane classified it (allow across every
+  seat; the merge intent git merge denies, the row-24 fetch-refspec
+  deny, and the force-refspec destructive catch all bypassed by the
+  composite spelling; pre-fix verdicts captured live: allow across
+  facts and branches). Fixed: the pull subcommand shares parseFetch
+  (destination sweep + --refmap veto, pull's integration options
+  recognized) and gitWriteRe gains a current-branch-gated pull clause.
+  --mirror/--all pushes fail closed (residual #24, as-found allow
+  captured). Suites 85/0; 55-row re-probe + round-2 shapes green
+  against the REBUILT dist.
+
   Review round 6 (re-review) — no new bypass found (all shapes trace
   fail-closed or harmless; the round-5 variadic fix confirmed in src and
   dist); the one open watch-item — bundled conflicting branch modes
