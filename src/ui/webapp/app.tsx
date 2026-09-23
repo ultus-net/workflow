@@ -375,6 +375,13 @@ interface PendingPermission {
   readonly capability?: string;
   readonly subjects: readonly string[];
   readonly inputPreview?: string;
+  /** W112 (amux C5): the full untruncated payload + the authorization-
+   * relevant metadata the broker now retains. */
+  readonly input?: unknown;
+  readonly taskId?: string;
+  readonly mutating?: boolean;
+  readonly requiredCapabilities?: readonly string[];
+  readonly readFingerprints?: readonly string[];
 }
 
 interface PermissionsState {
@@ -803,23 +810,45 @@ export function ConfigChips({ options, setOption }: {
   );
 }
 
+/** W112 (amux C5): the payload inspection cap. An input beyond it cannot be
+ * rendered for review — the approval is NOT-APPROVABLE-WITH-REASON (never
+ * approvable-with-warning): Allow is disabled and the reason states the cap
+ * verbatim; Deny stays available. */
+const PAYLOAD_INSPECTION_CAP = 64 * 1024;
+
+function payloadRenderText(input: unknown): { readonly text: string; readonly overCap: boolean } {
+  const text = typeof input === "string" ? input : JSON.stringify(input, null, 2);
+  if (text.length > PAYLOAD_INSPECTION_CAP) return { text: `${text.slice(0, PAYLOAD_INSPECTION_CAP)}\n… (${text.length - PAYLOAD_INSPECTION_CAP} more bytes withheld)`, overCap: true };
+  return { text: text === "" || text === "{}" || text === "[]" ? "" : text, overCap: false };
+}
+
 /** In-thread permission prompt card; the hub parks a request until answered.
  * The authorization boundary is the loudest card in the thread: focus lands
  * on Allow when it appears, the groups read as allow-vs-deny, and the
- * "always" choices state their scope. */
-function PermissionPrompt({ pending, answer, remembered }: {
+ * "always" choices state their scope.
+ * W112 (amux C5): the card renders the COMPLETE proposal payload (mutating,
+ * capability, taskId, the full input up to the inspection cap), requires the
+ * explicit "I have reviewed the full payload" confirmation before Allow, and
+ * is NOT-APPROVABLE-WITH-REASON when the payload cannot be fully rendered —
+ * never approvable-with-warning. The confirmation is a UI affordance gating
+ * the existing answer() route only; it produces no kernel evidence. */
+export function PermissionPrompt({ pending, answer, remembered }: {
   readonly pending: PendingPermission;
   readonly answer: (id: string, decision: PermissionDecision) => Promise<void>;
   readonly remembered: number;
 }) {
   const allowRef = useRef<HTMLButtonElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  const [reviewed, setReviewed] = useState(false);
   useEffect(() => {
     // A parked prompt is a blocking decision: bring it into view and put
     // focus where the answer starts. Focus also announces it to screen readers.
     cardRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     allowRef.current?.focus();
   }, [pending.id]);
+  const rendered = payloadRenderText(pending.input);
+  const notApprovable = pending.input !== undefined && payloadRenderText(pending.input).overCap;
+  const allowDisabled = notApprovable || !reviewed;
   return (
     <div className="part part-permission" role="alertdialog" aria-label={`Permission request for ${pending.tool}`} ref={cardRef}>
       <div className="part-permission-head">
@@ -827,12 +856,35 @@ function PermissionPrompt({ pending, answer, remembered }: {
         <code className="part-permission-tool">{pending.tool}</code>
         {remembered > 0 && <span className="part-permission-remembered">{remembered} remembered</span>}
       </div>
+      <div className="part-permission-meta">
+        {pending.mutating !== undefined && <span className="part-permission-meta">{pending.mutating ? "mutating" : "read-only"}</span>}
+        {pending.capability !== undefined && <span className="part-permission-meta">capability: {pending.capability}</span>}
+        {pending.taskId !== undefined && <span className="part-permission-meta">task: {pending.taskId}</span>}
+        {pending.requiredCapabilities !== undefined && pending.requiredCapabilities.length > 0 && <span className="part-permission-meta">requires: {pending.requiredCapabilities.join(", ")}</span>}
+        {pending.readFingerprints !== undefined && pending.readFingerprints.length > 0 && <span className="part-permission-meta">reads: {pending.readFingerprints.join(", ")}</span>}
+      </div>
       {pending.subjects.length > 0 && <div className="part-subjects">{pending.subjects.join("  ")}</div>}
-      {pending.inputPreview !== undefined && <pre className="part-permission-input">{pending.inputPreview}</pre>}
+      {pending.inputPreview !== undefined && pending.input === undefined && <pre className="part-permission-input">{pending.inputPreview}</pre>}
+      {pending.input !== undefined && (() => {
+        const { text, overCap } = payloadRenderText(pending.input);
+        if (text.length === 0) return null;
+        return <pre className={"part-permission-input part-permission-input-full" + (overCap ? " part-permission-input-overcap" : "")}>{text}</pre>;
+      })()}
+      {notApprovable && (
+        <p className="part-permission-not-approvable" role="alert">
+          NOT-APPROVABLE-WITH-REASON: the full payload exceeds the {PAYLOAD_INSPECTION_CAP / 1024} KiB inspection cap and cannot be reviewed here — allow from the agent's own surface after reviewing it there, or deny.
+        </p>
+      )}
+      {!notApprovable && (
+        <label className="part-permission-reviewed">
+          <input type="checkbox" checked={reviewed} onChange={(event) => setReviewed(event.target.checked)} />
+          I have reviewed the full payload
+        </label>
+      )}
       <div className="part-permission-actions">
         <div className="part-permission-group">
-          <button ref={allowRef} className="btn" onClick={() => void answer(pending.id, "allow_once")}>Allow</button>
-          <button className="btn btn-ghost" title={`Don't ask again for ${pending.tool} (policy still applies)`} onClick={() => void answer(pending.id, "allow_always")}>Always allow this tool</button>
+          <button ref={allowRef} className="btn" disabled={allowDisabled} title={allowDisabled ? "Review the full payload first (the confirmation is required)" : undefined} onClick={() => void answer(pending.id, "allow_once")}>Allow</button>
+          <button className="btn btn-ghost" disabled={allowDisabled} title={`Don't ask again for ${pending.tool} (policy still applies)`} onClick={() => void answer(pending.id, "allow_always")}>Always allow this tool</button>
         </div>
         <span className="part-permission-separator" aria-hidden="true" />
         <div className="part-permission-group">
