@@ -3,7 +3,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 
-import { createModelUsageProxy, METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
+import { composeBodyTransforms, createModelUsageProxy, METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
 
 interface FakeUpstream {
   readonly url: string;
@@ -464,4 +464,32 @@ test("model usage proxy still forwards the session placeholder and absent creden
     await proxy.close();
     await upstream.close();
   }
+});
+
+// ---- W109 (W095 c2): the transformBody seam shaped for policy routing —
+// the composition helper lets a second consumer (the budget-downgrade
+// rewrite the W095 design note names) attach in order, with the SAME
+// pass-through posture: no transforms or all-non-record returns leave the
+// body untouched. ----
+
+test("W109: composeBodyTransforms chains transforms in order with per-stage fail-open", () => {
+  const first = (body: Record<string, unknown>) => ({ ...body, stage: 1 });
+  const second = (body: Record<string, unknown>) => ({ ...body, stage: 2 });
+  const composed = composeBodyTransforms([first, second]);
+  assert.deepEqual(composed({ original: true }), { original: true, stage: 2 });
+  // A misbehaving stage (non-record return) is skipped; the chain continues
+  // with the last good body — the proxy's own fail-open semantics, per
+  // stage.
+  const broken = (): string => "not a record";
+  assert.deepEqual(composeBodyTransforms([first, broken as unknown as typeof second, second])({ original: true }), { original: true, stage: 2 });
+  assert.deepEqual(composeBodyTransforms([broken as unknown as typeof first, first])({ original: true }), { original: true, stage: 1 });
+  // A THROWING stage is contained too (frontier round 1 P2): the fail-open
+  // extends to exceptions, so a buggy policy consumer cannot 502 the pool.
+  const thrower = (): Record<string, unknown> => {
+    throw new Error("policy stage bug");
+  };
+  assert.deepEqual(composeBodyTransforms([first, thrower, second])({ original: true }), { original: true, stage: 2 });
+  assert.deepEqual(composeBodyTransforms([thrower])({ original: true }), { original: true });
+  // No transforms: the body passes through untouched.
+  assert.deepEqual(composeBodyTransforms([])({ original: true }), { original: true });
 });

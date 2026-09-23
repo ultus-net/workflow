@@ -10,8 +10,8 @@
  * `resolveOpenModelRoute`); nothing here guesses an id or invents a key.
  */
 
-import { createModelUsageProxy, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
-import { modelProfile, shapeRequestBody, type ModelFamily, type ModelTaskClass } from "./model-profile.js";
+import { composeBodyTransforms, createModelUsageProxy, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
+import { applyCacheMarkers, modelProfile, shapeRequestBody, type ModelFamily, type ModelTaskClass } from "./model-profile.js";
 import { DEFAULT_OPEN_SOURCE_POOL, type OpenModelDefinition } from "./open-source-pool.js";
 
 export interface OpenModelProvider {
@@ -34,6 +34,12 @@ export interface CreateOpenModelMeteringPoolOptions {
   readonly upstreamOverride?: (def: OpenModelDefinition) => string | undefined;
   /** Task class driving each profile's effort default; coding is the default. */
   readonly taskClass?: ModelTaskClass;
+  /**
+   * W109 (W098 c2): the per-pool prompt-cache opt-in. True enables the
+   * cache-control marker pass (`applyCacheMarkers`) for this pool's
+   * anthropic-wire profiles; absent stays absent.
+   */
+  readonly cacheMarkers?: boolean;
   readonly onUsage?: (family: ModelFamily, usage: Record<string, unknown>) => void;
 }
 
@@ -87,18 +93,41 @@ export async function createOpenModelMeteringPool(options: CreateOpenModelMeteri
       const profiles = new Map(
         defs.map((def) => [
           def.model,
-          modelProfile({ family, model: def.model, ...(options.taskClass === undefined ? {} : { taskClass: options.taskClass }) }),
+          modelProfile({
+            family,
+            model: def.model,
+            // W109: the definition's wire reaches the profile — the pool
+            // definition declares the wire, and an anthropic-wire pool must
+            // shape and mark on that wire. The pre-change composer dropped
+            // the wire, which made anthropic-wire profiles unconstructible;
+            // threading it is ONE PREREQUISITE of several for such pools to
+            // function end-to-end (frontier round 1 P1: the messages-lane
+            // transform+metering governance, a production opt-in
+            // composition, and probed vendor support are the others —
+            // queued in the W109 ledger item).
+            wire: def.wire,
+            ...(options.taskClass === undefined ? {} : { taskClass: options.taskClass }),
+            ...(options.cacheMarkers === undefined ? {} : { cacheMarkers: options.cacheMarkers }),
+          }),
         ]),
       );
       const proxy = await createModelUsageProxy({
         upstream,
         apiKey: key,
-        transformBody: (body) => {
-          const model = body.model;
-          if (typeof model !== "string") return body;
-          const profile = profiles.get(model);
-          return profile === undefined ? body : shapeRequestBody(profile, body);
-        },
+        transformBody: composeBodyTransforms([
+          (body) => {
+            const model = body.model;
+            if (typeof model !== "string") return body;
+            const profile = profiles.get(model);
+            return profile === undefined ? body : shapeRequestBody(profile, body);
+          },
+          (body) => {
+            const model = body.model;
+            if (typeof model !== "string") return body;
+            const profile = profiles.get(model);
+            return profile === undefined ? body : applyCacheMarkers(profile, body);
+          },
+        ]),
         ...(options.onUsage === undefined
           ? {}
           : { onUsage: (usage: Record<string, unknown>) => options.onUsage?.(family, usage) }),

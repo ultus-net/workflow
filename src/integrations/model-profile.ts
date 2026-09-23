@@ -79,6 +79,10 @@ export interface ModelProfile {
   readonly taskClass: ModelTaskClass;
   readonly reasoningEffort: ReasoningEffort;
   readonly defaultEffort: ReasoningEffort;
+  /** W109 (W098 c2): the pool's prompt-cache opt-in. True enables the
+   * cache-control marker pass for the anthropic wire (`applyCacheMarkers`);
+   * absent stays absent — the openai wire auto-caches upstream. */
+  readonly cacheMarkers?: boolean;
 }
 
 export interface ModelProfileInput {
@@ -88,6 +92,10 @@ export interface ModelProfileInput {
   readonly wire?: WireProtocol;
   readonly endpoint?: string;
   readonly reasoningEffort?: ReasoningEffort;
+  /** W109 (W098 c2): the per-pool prompt-cache opt-in ("opt-in per pool via
+   * model-profile.ts" — the pools set it at composition; the marker pass
+   * itself is `applyCacheMarkers` below). */
+  readonly cacheMarkers?: boolean;
 }
 
 /**
@@ -120,6 +128,7 @@ export function modelProfile(input: ModelProfileInput): ModelProfile {
     taskClass,
     reasoningEffort: input.reasoningEffort ?? reasoningEffortFor(input.family, taskClass),
     defaultEffort: defaults.defaultEffort,
+    ...(input.cacheMarkers !== undefined ? { cacheMarkers: input.cacheMarkers } : {}),
   };
 }
 
@@ -138,11 +147,26 @@ export function shapeRequestBody(profile: ModelProfile, body: Record<string, unk
         : { ...shaped, thinking: { type: "enabled" }, reasoning_effort: profile.reasoningEffort };
     case "glm":
       // `disabled` is a hard error on GLM-5.3: force enabled, never passthrough.
-      return { ...shaped, thinking: { type: "enabled" }, reasoning_effort: profile.reasoningEffort };
+      // W109 (frontier round 1 P1): the GLM anthropic-wire shape is UNPROBED —
+      // the openai-wire fields (thinking.enabled, reasoning_effort) are not
+      // valid Messages-schema fields, so on the anthropic wire they are
+      // SCRUBBED (including caller-supplied ones — the module invariant says
+      // GLM never carries thinking.type:"disabled" on any wire) rather than
+      // an invented shape passed through. Wiring the verified anthropic
+      // thinking shape for GLM is queued.
+      return profile.wire === "anthropic"
+        ? omitKey(omitKey(shaped, "thinking"), "reasoning_effort")
+        : { ...shaped, thinking: { type: "enabled" }, reasoning_effort: profile.reasoningEffort };
     case "kimi":
       // K3 reasons unconditionally; `thinking` is not a valid K3 field, so a
       // GPT-era `thinking: { type: "disabled" }` must be dropped, not sent.
-      return { ...omitKey(shaped, "thinking"), reasoning_effort: profile.reasoningEffort };
+      // W109 (frontier round 1 P1 + review round 1 P2-1): the K3 anthropic-
+      // wire shape is unprobed — both openai-wire fields are scrubbed (the
+      // nested omits: a second flat spread would re-add the caller-supplied
+      // thinking the first omit removed).
+      return profile.wire === "anthropic"
+        ? omitKey(omitKey(shaped, "thinking"), "reasoning_effort")
+        : { ...omitKey(shaped, "thinking"), reasoning_effort: profile.reasoningEffort };
   }
 }
 
@@ -176,6 +200,49 @@ function omitKey(body: Record<string, unknown>, key: string): Record<string, unk
   const result: Record<string, unknown> = {};
   for (const [name, value] of Object.entries(body)) {
     if (name !== key) result[name] = value;
+  }
+  return result;
+}
+
+// ---- W109 (W098 c2): the cache-control marker pass ----
+
+const EPHEMERAL_MARKER: { readonly type: "ephemeral" } = { type: "ephemeral" };
+
+function withMarker(block: unknown): unknown {
+  if (!isRecord(block) || block.cache_control !== undefined) return block;
+  return { ...block, cache_control: { ...EPHEMERAL_MARKER } };
+}
+
+/**
+ * W109 (W098 c2): injects the anthropic prompt-cache breakpoints on the
+ * STABLE composition-time prefixes — the system block and the last tool
+ * definition. The hub composes those per session (stable per-session
+ * prefixes in W098's position); the per-turn message lane is append-only
+ * and its boundary policy is deliberately NOT decided here (the frontier
+ * verification of the caching design shapes it). Opt-in per pool
+ * (`profile.cacheMarkers`) and wire-gated to the anthropic Messages wire
+ * (the OpenAI-family wire auto-caches upstream). Returns a new object;
+ * never mutates its input; a body without stable prefixes passes through
+ * with nothing added.
+ */
+export function applyCacheMarkers(profile: ModelProfile, body: Record<string, unknown>): Record<string, unknown> {
+  if (profile.cacheMarkers !== true || profile.wire !== "anthropic") return body;
+  let result = body;
+  const system = body.system;
+  if (typeof system === "string" && system.length > 0) {
+    result = { ...result, system: [{ type: "text", text: system, cache_control: { ...EPHEMERAL_MARKER } }] };
+  } else if (Array.isArray(system) && system.length > 0) {
+    const blocks = system.map((block) => block);
+    const last = blocks.length - 1;
+    blocks[last] = withMarker(blocks[last]);
+    result = { ...result, system: blocks };
+  }
+  const tools = body.tools;
+  if (Array.isArray(tools) && tools.length > 0) {
+    const marked = tools.map((tool) => tool);
+    const last = marked.length - 1;
+    marked[last] = withMarker(marked[last]);
+    result = { ...result, tools: marked };
   }
   return result;
 }
