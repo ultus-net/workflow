@@ -2555,10 +2555,17 @@ on the W100 doc (the -B feature-on-main pin supersession always moved one
 pin; the doc's red-free claim missed it — the supersession is disclosed
 in the pin comment, the parity log, and here).
 
-**Evidence (final, at the review-fixed tip):** suites 81/0 (policy 71 +
-redirect 5 + mcp 5); the 55-row live re-probe matches the position
-against the REBUILT dist; repo lint/typecheck exit 0; security-assurance
-checker 7/0.
+**Evidence (final, at the review-fixed tip):** review round 2 (re-review)
+— REVISE with one new fail-open: parseFetch's first-colon-operand early
+return let a benign first refspec, a URL remote, or an unconsumed
+`-o`/`-j` short value shield a later protected-branch destination
+(pre-fix shapes captured live as allow). Fixed: every branch
+destination checked (deny on ANY protected), `-j`/`-o` values consumed,
+the create/force-create mode combination fails closed for both
+spellings, and the falsified "dead entries removed" claim honored by
+removing them. Suites 82/0 (policy 72 + redirect 5 + mcp 5); the 55-row
+live re-probe + all round-2 shield shapes green against the REBUILT
+dist; repo lint/typecheck exit 0; security-assurance checker 7/0.
 
 **Acceptance criteria:**
 - [x] Both matchers widened in the same change (`gitWriteRe` lanes +

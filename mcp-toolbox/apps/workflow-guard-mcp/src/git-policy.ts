@@ -135,7 +135,7 @@ interface PointerInvocation {
 }
 
 const branchValueOptions = new Set(["--format", "--sort", "--points-at"]);
-const switchCheckoutFlags = new Set(["-c", "--create", "-t", "--track", "--no-track", "-m", "--merge", "-g", "--guess", "--no-guess", "--orphan", "--overwrite-ignore", "--no-overwrite-ignore", "--overlay", "--no-overlay", "--ignore-other-worktrees", "--ignore-skip-worktree-bits", "--pathspec-file-nul", "--recurse-submodules", "--no-recurse-submodules", "-p", "--patch"]);
+const switchCheckoutFlags = new Set(["-t", "--track", "--no-track", "-m", "--merge", "-g", "--guess", "--no-guess", "--orphan", "--overwrite-ignore", "--no-overwrite-ignore", "--overlay", "--no-overlay", "--ignore-other-worktrees", "--ignore-skip-worktree-bits", "--pathspec-file-nul", "--recurse-submodules", "--no-recurse-submodules", "-p", "--patch"]);
 const updateRefFlags = new Set(["--no-deref", "-z", "--worktree", "--strict"]);
 const fetchValueOptions = new Set(["--depth", "--deepen", "--shallow-since", "--shallow-exclude", "--negotiation-tip", "-j", "--jobs", "-o", "--server-option", "--upload-pack", "--submodule-prefix", "--refmap"]);
 const fetchFlags = new Set(["-p", "--prune", "-n", "--no-tags", "-t", "--tags", "--all", "--multiple", "--dry-run", "--atomic", "--force", "--refetch", "-q", "--quiet", "-v", "--verbose", "--progress", "--ipv4", "--ipv6", "-4", "-6", "--auto-maintenance", "--auto-gc", "--write-fetch-head", "--no-write-fetch-head", "--unshallow", "--update-shallow"]);
@@ -157,6 +157,7 @@ function walkWords(
   words: string[],
   onShortChar: (ch: string) => boolean, // true = known flag char
   onLong: (word: string) => "flag" | "value" | "unknown",
+  shortValueChars?: Set<string>, // short chars whose NEXT token is their value
 ): WordWalk {
   const operands: string[] = [];
   let uncertain = false;
@@ -177,9 +178,15 @@ function walkWords(
       continue;
     }
     if (word.startsWith("-") && word.length > 1) {
+      let consumesNext = false;
       for (const ch of word.slice(1)) {
+        if (shortValueChars?.has(ch)) { consumesNext = true; continue; }
         if (!onShortChar(ch)) uncertain = true;
       }
+      // A bundled short-value form consumes the following word; a value
+      // fused into the token (`-j2`) still marks the token unknown (the
+      // value chars are not flag chars) and fails closed.
+      if (consumesNext && i + 1 < words.length) i += 1;
       continue;
     }
     operands.push(word);
@@ -204,7 +211,7 @@ function parseBranch(words: string[]): PointerInvocation | undefined {
       if (word === "--force" || word === "--delete") { targetish = true; known = true; return "flag"; }
       if (word === "--move") { renameish = true; known = true; return "flag"; }
       if (word === "--copy") { copyish = true; known = true; return "flag"; }
-      if (word === "--set-upstream-to" || word === "--edit-description" || word === "--show-current" || word === "--list" || word === "--omit-empty" || word === "--ignore-case" || word === "--create-reflog" || word === "--no-abbrev" || word === "--track" || word === "--no-track" || word === "--recurse-submodules" || word === "--color" || word === "--column" || word === "--abbrev" || word === "-i" || word === "-q" || word === "--quiet" || word === "-v" || word === "--verbose" || word === "-a" || word === "--all" || word === "-r" || word === "--remotes" || word === "-l") return "flag";
+      if (word === "--set-upstream-to" || word === "--edit-description" || word === "--show-current" || word === "--list" || word === "--omit-empty" || word === "--ignore-case" || word === "--create-reflog" || word === "--no-abbrev" || word === "--track" || word === "--no-track" || word === "--recurse-submodules" || word === "--color" || word === "--column" || word === "--abbrev" || word === "--quiet" || word === "--verbose" || word === "--all" || word === "--remotes") return "flag";
       return "unknown";
     },
   );
@@ -229,20 +236,28 @@ function parseBranch(words: string[]): PointerInvocation | undefined {
 // the position's class split — a detach target is a sha, never a protected
 // ref, so the target gate cannot classify it).
 function parseForceCreate(words: string[], forceShort: string): PointerInvocation | undefined {
-  let force = false;
+  let force = false, createSeen = false;
   const walk = walkWords(
     words,
     (ch) => {
       if (ch === forceShort) { force = true; return true; }
-      return "bdfmtp".includes(ch) || (words[1] === "switch" && (ch === "c" || ch === "g"));
+      if (words[1] === "switch" && ch === "c") { createSeen = true; return true; }
+      if (words[1] === "checkout" && ch === "b") { createSeen = true; return true; }
+      return "bdfmtpg".includes(ch);
     },
     (word) => {
       if (switchCheckoutFlags.has(word) || word === "--force" || word === "--discard-changes" || word === "--detach") return "flag";
+      if (word === "--create") { createSeen = true; return "flag"; }
+      if (word === "--force-create") { force = true; return "flag"; }
       if (words[1] === "checkout" && word === "--orphan") return "flag";
-      if (words[1] === "switch" && word === "--force-create") { force = true; return "flag"; }
       return "unknown";
     },
   );
+  // The create and force-create modes are mutually exclusive in real git;
+  // a command carrying both cannot be classified (review round 2
+  // watch-item: last-wins semantics would let `-c x -C main` slip the
+  // target check past the created branch).
+  if (force && createSeen) return { targets: [], uncertain: true, needsCurrentBranch: false };
   if (!force) return undefined;
   if (walk.uncertain || walk.endOpts || walk.operands.length === 0) return { targets: [], uncertain: true, needsCurrentBranch: false };
   return { targets: [walk.operands[0]!], uncertain: false, needsCurrentBranch: false };
@@ -270,19 +285,22 @@ function parseUpdateRef(words: string[]): PointerInvocation | undefined {
 function parseFetch(words: string[]): PointerInvocation | undefined {
   const walk = walkWords(
     words,
-    (ch) => "vqtnp46jo".includes(ch),
+    (ch) => "vqtnp46".includes(ch),
     (word) => {
       if (fetchFlags.has(word)) return "flag";
       if (fetchValueOptions.has(word)) return "value";
       return "unknown";
     },
+    new Set(["j", "o"]), // -j/--jobs and -o/--server-option consume a value
   );
   if (walk.uncertain) return { targets: [], uncertain: true, needsCurrentBranch: false };
+  // Fail-closed across EVERY colon-bearing operand (review round 2): a
+  // benign first refspec, a URL remote, or an option value must not shield
+  // a later `main:refs/heads/<protected>` refspec — git processes multiple
+  // refspecs in one fetch, so every destination is checked and the caller
+  // denies if ANY belongs to the protected set.
+  const destinations: string[] = [];
   for (const refspec of walk.operands) {
-    // Every operand is a candidate refspec (an operand that happens to be a
-    // URL remote carries colons but its post-colon text is never a protected
-    // BRANCH name, so the check is safe to run on all of them). A colon-less
-    // refspec (`git fetch origin main`) does not move any branch pointer.
     const colon = refspec.lastIndexOf(":");
     if (colon < 0) continue;
     const destination = refspec.slice(colon + 1);
@@ -292,9 +310,10 @@ function parseFetch(words: string[]): PointerInvocation | undefined {
     // including the protected ones and fails closed (review P1).
     if (destination.startsWith("refs/tags/")) continue;
     if (destination.includes("*")) return { targets: [], uncertain: true, needsCurrentBranch: false };
-    return { targets: [destination], uncertain: false, needsCurrentBranch: false };
+    destinations.push(destination);
   }
-  return undefined;
+  if (destinations.length === 0) return undefined;
+  return { targets: destinations, uncertain: false, needsCurrentBranch: false };
 }
 
 function checkPointerTarget(words: string[], protectedBranches: Set<string>, context: GitPolicyContext): { decision: "deny"; policy: string; reason: string } | undefined {

@@ -292,3 +292,14 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   the pre-fix dist (allow/allow/allow/allow/deny) and post-fix green.
   Suites 81/0; the 55-row re-probe matches the position; see the W100
   doc's §7 implementation addendum for the record.
+
+  Review round 2 (re-review) — REVISE: parseFetch's first-colon-operand
+  early return let a benign first refspec, a URL remote, or an unconsumed
+  `-o`/`-j` short value shield a later protected-branch destination
+  (multiple refspecs per fetch are valid git; pre-fix shapes captured
+  live as allow). Fixed: every branch destination checked (deny on ANY
+  protected), `-j`/`-o` values consumed, the create/force-create mode
+  combination fails closed for both spellings, and the reviewer's
+  falsified "dead entries removed" claim honored by removing them.
+  Suites 82/0; 55-row re-probe + all round-2 shapes green against the
+  REBUILT dist.

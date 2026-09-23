@@ -930,6 +930,27 @@ test("W101 review: the spelling lanes stay intact where the gate is silent", () 
   assert.equal(checkPolicy({ action: "shell", command: "git branch --mystery" }).decision, "allow");
 });
 
+test("W101 review round 2: the fetch lane checks every refspec destination", () => {
+  // A benign first refspec, a URL remote, or an option value must not
+  // shield a later protected-branch destination (git processes multiple
+  // refspecs in one fetch; all pre-fix shapes classified allow).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const shield = checkPolicy({ action: "shell", command: "git fetch origin dev:refs/heads/tmp main:refs/heads/main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(shield.decision, "deny", String(currentBranch));
+  }
+  assert.equal(checkPolicy({ action: "shell", command: "git fetch https://example.com/repo.git main:refs/heads/main", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git fetch -o a:b origin main:refs/heads/main", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git fetch -j 4 origin main:refs/heads/main", currentBranch: "feat/g5" }).decision, "deny");
+  // Benign multi-refspec fetches stay allowed (no protected destination).
+  assert.equal(checkPolicy({ action: "shell", command: "git fetch origin dev:refs/heads/tmp feat:refs/heads/feat/g5", currentBranch: "feat/g5" }).decision, "allow");
+  // The create/force-create modes are mutually exclusive; the combination
+  // cannot be classified and fails closed (last-wins would slip the target
+  // check past the created branch).
+  assert.equal(checkPolicy({ action: "shell", command: "git switch --create x --force-create main", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git checkout -b x -B main", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git switch -c feat/g5", currentBranch: "main" }).decision, "allow");
+});
+
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {
   const { hasGitMutation } = await import("../src/git-policy.js");
   assert.equal(hasGitMutation("git branch -f main abc123def"), true);

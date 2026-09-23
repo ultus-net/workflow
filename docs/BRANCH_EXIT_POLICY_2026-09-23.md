@@ -521,3 +521,19 @@ dist rebuild) with these deltas from §4's letter, recorded honestly:
    + mcp 5); the 55-row live re-probe matches the position against the
    REBUILT dist; repo lint/typecheck exit 0; security-assurance checker
    7/0.
+5. **Review round 2 (re-review) — REVISE, one new fail-open in the fetch
+   lane, fixed:** parseFetch returned on the FIRST colon-bearing operand,
+   so a benign first refspec (`dev:refs/heads/tmp`), a URL remote's
+   scheme colon, or an unconsumed `-o`/`-j` short value shielded a later
+   `main:refs/heads/<protected>` refspec (git processes multiple refspecs
+   per fetch; all pre-fix shapes captured live as allow). Fixes: fetch
+   collects EVERY branch destination and the caller denies if ANY belongs
+   to the protected set; the `-j`/`-o` shorts consume their values; the
+   create/force-create mode combination (which real git cannot classify)
+   fails closed for both spellings (`--create`+`--force-create`,
+   `-b`+`-B`); the reviewer's falsified "dead entries removed" claim
+   honored by actually removing them. Also fixed en route: `--create`
+   sat in the shared flag set, making the createSeen tracking dead code.
+   Post-fix: suites 82/0 (policy 72 + redirect 5 + mcp 5); the 55-row
+   re-probe and all round-2 shapes green against the REBUILT dist; repo
+   lint/typecheck exit 0; security-assurance checker 7/0.
