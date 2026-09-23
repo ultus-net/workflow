@@ -13,6 +13,16 @@ export interface UsageCredits {
   readonly totalUsage: number;
 }
 
+export interface UsageCoverage {
+  readonly requestedDaysParam: string | null;
+  readonly days: number;
+  readonly ignoredParams?: readonly string[];
+  readonly window?: { readonly startIso: string; readonly endIso: string };
+  readonly byModel?: { readonly rows: number; readonly truncated?: boolean; readonly limit: number };
+  readonly byDay?: { readonly rows: number; readonly truncated?: boolean; readonly limit: number; readonly granularityAvailable?: boolean };
+  readonly creditsAvailable?: boolean;
+}
+
 export interface UsagePayload {
   readonly available: boolean;
   readonly reason?: string;
@@ -20,6 +30,9 @@ export interface UsagePayload {
   readonly credits?: { readonly totalCredits: number; readonly totalUsage: number };
   readonly byModel?: { readonly rows: readonly UsageRow[]; readonly truncated: boolean };
   readonly byDay?: { readonly rows: readonly UsageRow[]; readonly truncated: boolean };
+  /** W107 (amux C1): server-computed coverage metadata — rendered inline so
+   * every number states what population and window it actually judged. */
+  readonly coverage?: UsageCoverage;
   readonly error?: string;
 }
 
@@ -28,6 +41,34 @@ const RANGES = [
   [7, "7d"],
   [30, "30d"],
 ] as const;
+
+/** W107 (amux C1): the response-honesty line — what population and window
+ * each rendered number actually judged, all facts server-supplied. Rendered
+ * inline beside the numbers; the amux anti-pattern was an all-clear whose
+ * window or population differed silently from its label. */
+function UsageCoverageLine(props: { readonly coverage: UsageCoverage }) {
+  const { coverage } = props;
+  const parts: string[] = [];
+  parts.push(coverage.window !== undefined
+    ? `window ${coverage.window.startIso} → ${coverage.window.endIso}`
+    : `window ${coverage.days}d`);
+  if (coverage.byModel !== undefined) {
+    parts.push(`${coverage.byModel.rows} model rows / limit ${coverage.byModel.limit}${coverage.byModel.truncated === true ? " · TRUNCATED" : ""}`);
+  }
+  if (coverage.byDay !== undefined) {
+    parts.push(`${coverage.byDay.rows} daily rows / limit ${coverage.byDay.limit}${coverage.byDay.truncated === true ? " · TRUNCATED" : ""}`);
+    if (coverage.byDay.granularityAvailable === false) {
+      parts.push("daily granularity unavailable upstream — the empty series is a coverage fact, not an all-clear");
+    }
+  }
+  if (coverage.creditsAvailable !== undefined) {
+    parts.push(coverage.creditsAvailable ? "credits included" : "credits unavailable");
+  }
+  if (coverage.ignoredParams !== undefined && coverage.ignoredParams.length > 0) {
+    parts.push(`ignored params: ${coverage.ignoredParams.join(", ")}`);
+  }
+  return <p className="muted usage-note usage-coverage" aria-label="Usage coverage">{parts.join(" · ")}</p>;
+}
 
 /** Server-side session statistics (W079, data lane): the documented aggregate
  * read through the enforced gateway when the server topology runs. Honest
@@ -162,6 +203,7 @@ export function UsageView() {
 
       {payload !== undefined && payload.available === true && (
         <div className="usage-body">
+          {payload.coverage !== undefined && <UsageCoverageLine coverage={payload.coverage} />}
           {payload.credits !== undefined && (
             <div className="usage-credits">
               <span className="usage-credit-item">

@@ -22,6 +22,10 @@ export interface AnalyticsRow {
 export interface AnalyticsResult {
   readonly rows: readonly AnalyticsRow[];
   readonly truncated: boolean;
+  /** W107 (amux C1): whether the day granularity was available at all — the
+   * honest empty-series tell. Absent when the source did not say (e.g. test
+   * fakes), never fabricated. */
+  readonly granularityAvailable?: boolean;
 }
 
 export interface CreditSummary {
@@ -117,14 +121,19 @@ export function createOpenRouterAnalytics(options: {
     const metrics = wantedMetrics(advertised.metrics);
     if (metrics.length === 0) throw new Error("OpenRouter analytics advertises no usable metrics");
     if (!advertised.granularities.some((granularity) => granularity.name === "day")) {
-      return { rows: [], truncated: false };
+      // W107 (amux C1): the honest empty-series tell — the granularity was
+      // unavailable, so the empty rows are a coverage fact, not an all-clear.
+      return { rows: [], truncated: false, granularityAvailable: false };
     }
-    return await query({
-      metrics,
-      granularity: "day",
-      time_range: { start: startIso, end: endIso },
-      limit: 120,
-    });
+    return {
+      ...(await query({
+        metrics,
+        granularity: "day",
+        time_range: { start: startIso, end: endIso },
+        limit: 120,
+      })),
+      granularityAvailable: true,
+    };
   }
 
   async function credits(): Promise<CreditSummary | undefined> {
