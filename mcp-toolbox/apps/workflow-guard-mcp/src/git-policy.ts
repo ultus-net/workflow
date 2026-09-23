@@ -419,15 +419,21 @@ export function wrapperCommands(command: string): string[] {
       const word = words[i]!;
       if (word === "--") return [];
       if (!word.startsWith("-")) return [];
-      if (word === "-c") {
-        return words[i + 1] ? [words[i + 1]!] : [];
+      // W102 review round 2: getopt does not stop at the word head — a
+      // bundle containing a `c` option consumes the REST of the word as
+      // -c's option-argument (`-ec'cmd'`, `-xc`…), and the spaced `-ec
+      // 'cmd'` and `-o <value> -c` forms were the same bypass. The
+      // generalized -Xc matcher is the precedent the boundary and shell
+      // lanes already use. After the c option: a non-empty remainder is
+      // the fused command; an empty remainder means the command is the
+      // next word.
+      const cMatch = /^-[a-zA-Z]*c(.*)$/s.exec(word);
+      if (cMatch) {
+        const fused = cMatch[1]!.replace(/^['"]|['"]$/g, "");
+        return fused.length > 0 ? [fused] : (words[i + 1] ? [words[i + 1]!] : []);
       }
-      // The fused getopt form: `-c` at the word head, the option-argument
-      // glued on (`-c'cmd'` tokenizes as "-c" glued to the command).
-      if (word.startsWith("-c") && word.length > 2) {
-        const fused = word.slice(2).replace(/^['"]|['"]$/g, "");
-        return fused.length > 0 ? [fused] : [];
-      }
+      // -o consumes its value (the sh-family value option in common use).
+      if (word === "-o" && words[i + 1]) i += 1;
     }
     return [];
   });

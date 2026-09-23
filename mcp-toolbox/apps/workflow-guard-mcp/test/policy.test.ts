@@ -1127,8 +1127,32 @@ test("W102 review round 1: fused -c spellings are detected; the env-prefix note 
   assert.equal(checkPolicy({ action: "shell", command: "VAR=val sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
   assert.equal(checkPolicy({ action: "shell", command: "timeout 30 sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
   // The honest residual edge that REMAINS: exotic interpreter names
-  // (busybox sh, xsh) are outside the sh-family detection — queued.
+  // (busybox sh, xsh) are outside the sh-family detection — queued; and
+  // the zsh-only EQUALS expansion (`zsh -c='git commit -m x'` executes
+  // =git via zsh's default equals expansion) is a parser-consistent allow
+  // queued with it (sh/bash harmlessly reject the command).
   assert.equal(checkPolicy({ action: "shell", command: "busybox sh -c 'git commit -m x'", currentBranch: "main" }).decision, "allow");
+});
+
+test("W102 review round 2: bundled-flag wrappers are detected (the getopt -Xc family)", () => {
+  // getopt does not stop at the word head: a bundle carrying a c option
+  // consumes the rest of the word as -c's option-argument (captured red
+  // live: allow pre-fix on main). The spaced -ec form and the value-form
+  // -o detour are the same family. TRANSPARENCY applies per seat: the
+  // with-facts protected-seat variants deny (the inner command denies
+  // unwrapped), the factless variants inherit the inner factless allow
+  // (the W090 fail-open class, unchanged) — except the target-gated
+  // shapes, whose base-set deny fires factlessly too.
+  for (const currentBranch of ["main", undefined]) {
+    const context = currentBranch ? { currentBranch } : {};
+    assert.equal(checkPolicy({ action: "shell", command: "sh -ec'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "bash -ec 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `spaced commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "sh -xc'git reset --hard abc123def'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `reset ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "sh -vc'git branch -f main abc'", ...(currentBranch ? { currentBranch } : {}) }).decision, "deny", `branch -f ${String(currentBranch)}`);
+  }
+  assert.equal(checkPolicy({ action: "shell", command: "bash -o vi -c'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  // Benign bundles stay transparent.
+  assert.equal(checkPolicy({ action: "shell", command: "bash -ex 'echo hi'", currentBranch: "main" }).decision, "allow");
 });
 
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {
