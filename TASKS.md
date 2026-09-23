@@ -2491,3 +2491,66 @@ own item):**
       wrong rounds preserved).
 - [x] Upstream divergence basis verified at a pinned ref (read-only).
 - [x] LESS-0017 recorded; LESS-0016 stands from W099.
+
+### W101 - The protected-target gate: unified branch-pointer classification (Complete - implemented, pinned red→green, live-probed; wrapper + symbolic-ref residuals recorded) (2026-09-23)
+
+**Source:** the W100 position (docs/BRANCH_EXIT_POLICY_2026-09-23.md,
+frontier-ACCEPT, PR #88 merged) — its §4.1 implementation sketch.
+
+**What landed (vendored guard core + dist rebuilt):**
+- `gitWriteRe` widened: the checkout clause exempts `-B` (the force form is
+  target-gated now, not spelling-gated); a switch clause joins for the
+  fact-gated detach/discard classes (`-d/--detach/-f/--force/
+  --discard-changes`); the branch clause stays `-[dDM]` (row 16's
+  conservative target-blind deny untouched). `hasGitMutation` widened
+  identically per the twin-matcher discipline (branch pointer forms +
+  fetch colon-refspec).
+- NEW protected-target gate in `checkGitPolicy` (runs per segment, before
+  the current-branch-gated lanes, after alias/push): force/rename/copy/
+  delete forms target-classified from ANY branch against the always-on
+  `{main, master}` base ∪ W090 facts; renames check BOTH operands; the
+  one-arg rename targets the current branch and fails closed factless
+  (row 12); parse-uncertain shapes fail closed; `update-ref refs/heads/
+  <T>` and fetch destination refspecs (incl. the force-prefixed source
+  form) target-shaped. Pure exits/creates/feature-target recovery flows
+  stay allowed (row 10's `branch -f <feature>` recovery flow pinned).
+- **One deliberate with-facts loosening, recorded for parity honesty:**
+  `git checkout -B <feature>` on a protected branch flips as-found DENY →
+  allow — unifying the identical intent with the `switch -C` spelling's
+  pinned allow. The superseded W099 characterization pin carries a
+  supersession note (append-only comment); the superseding assertion is
+  the W101 unification pin. Upstream divergence recorded in the parity
+  log (W101 entry) with the upstream-port candidate queued.
+- SECURITY_ASSURANCE residuals #20 (shell-wrapper bypass of the deny
+  class — queued companion fix: deny-path `sh -c` recursion) and #21
+  (exotic symbolic-ref form + ref-adjacent filesystem routes) recorded;
+  the security-assurance checker stays green (7/0).
+
+**Evidence:** red-first — the 11 new W101 pin blocks ran 59/10 against the
+unmodified tree (exactly the position's promised changes), then green
+79/0 (policy 69 + redirect 5 + mcp 5) with TWO gate bugs caught by the
+pins and fixed before commit (the one-arg rename's currentBranch check
+was unreachable through the empty-targets loop; the factless fail-closed
+deny was dropped in the rewrite) — the pins caught both; the W099 pin
+collisions resolved by supersession + probe, never by weakening. Live
+re-probe of the 28-row family inventory against the REBUILT dist: all 56
+probe rows match the position (facts + factless, on-branch +
+cross-branch, fixes + residuals). Repo lint/typecheck in this
+iteration's evidence below.
+
+**Acceptance criteria:**
+- [x] Both matchers widened in the same change (`gitWriteRe` lanes +
+      `hasGitMutation` extras), per §2.3's drift discipline.
+- [x] The target gate closes rows 6/9–15/22–24 (with facts and, for
+      pointer forms, factless via the base set) without loosening anything
+      except the documented row-8-class unification.
+- [x] Red-first pins for every changed row; W099 set survives except the
+      one position-superseded assertion (supersession note recorded);
+      characterization pins added for rows 16–21 + the round-3 watch-items
+      (explicit `checkout <sha>`, row 27).
+- [x] dist rebuilt + live re-probe green (56/56 rows).
+- [x] Parity-log W101 divergence entry; SECURITY_ASSURANCE residuals #20/#21;
+      repo lint/typecheck exit 0 (below).
+- [x] Queued (NOT this iteration): the deny-path `sh -c` recursion
+      companion fix; the exotic symbolic-ref matcher line; the
+      `localBranches` fact for row 4's disambiguation (separately queued).

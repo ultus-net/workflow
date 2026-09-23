@@ -242,3 +242,39 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   cannot set it. Live probe before the fix recorded the deny for
   workspace-relative writes; after the fix the same probe returns allow
   with `/var/log` and `.ssh` still protected.
+
+- **2026-09-23 (W101):** the branch-exit/branch-pointer family UNIFIED by
+  semantic target, deliberately DIVERGING from upstream v1.15.x
+  (verified at `origin/main` 03fbdcf, `src/policies/git.ts:126` — no
+  `switch` write clause, a `-[dDM]` class missing `-f/-m/-C`, no
+  fetch-refspec rule, and the same current-branch-shaped gate; upstream's
+  `GIT_BRANCH_CREATE_RE`, git.ts:35, recognizes the sanctioned creates but
+  only for the branch-freshness gate). The W100 position
+  (docs/BRANCH_EXIT_POLICY_2026-09-23.md, frontier-ACCEPT at round 3)
+  found the as-found classification admitting protected-branch pointer
+  writes the checkout spelling denies — `switch -C <protected> [sha]`,
+  `branch -f <protected>`, the three `branch -m` danger shapes (one-arg,
+  TO-protected, and the `-m` lowercase the `-[dDM]` class never covered),
+  force-copy `-C`/`-cf`, `switch --detach/-d`, cross-branch
+  `branch -D <protected>` / `update-ref refs/heads/<protected>` / fetch
+  destination refspecs, plus `switch -f/--discard-changes` (the discard
+  twin of `checkout --`). The unified gate: force/rename/copy/delete/
+  update-ref/fetch-destination forms are target-classified from ANY
+  branch against the always-on `{main, master}` base ∪ W090 facts; renames
+  check BOTH operands; the one-arg rename targets the current branch and
+  fails closed factless; parse-uncertain shapes fail closed; detach and
+  discard forms join the fact-gated spelling classes. The ONE deliberate
+  with-facts loosening, recorded here for parity honesty: `git checkout
+  -B <feature>` on a protected branch flips as-found DENY → allow — the
+  unification of an identical intent with the `switch -C` spelling's
+  pinned allow (the as-found deny was spelling-shaped over-reach); the
+  superseded W099 characterization pin carries a supersession note and the
+  superseding assertion lives in the W101 unification pin. `hasGitMutation`
+  widened identically (twin-matcher drift discipline, §2.3).
+  Upstream-port candidate queued for the plugin's own repo. Residuals
+  recorded in SECURITY_ASSURANCE: the shell-wrapper bypass of the whole
+  deny class (`sh -c` — queued companion fix) and the exotic symbolic-ref
+  form. Live re-probe of the 28-row family inventory against the REBUILT
+  dist: all 56 probe rows (facts + factless, on-branch + cross-branch,
+  fixes + residuals) match the position; suites 79/0 (policy 69 + redirect
+  5 + mcp 5); dist rebuilt (LESS-0010 hazard).
