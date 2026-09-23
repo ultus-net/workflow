@@ -502,3 +502,42 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   factless-design decision and the fixture-convention note (the
   scanner blocked a literal force-fragment in the probe script until it
   was constructed at runtime).
+
+  Review round 1 on W103 (fresh-eyes completion reviewer, executed
+  evidence) — [APPROVE] across all five axes, recorded via record_review
+  against 3c2e46f: the reviewer reproduced red-first (79/4, only the four
+  expected blocks) against a reverted src, executed a 108-cell
+  classification matrix (32 allow→deny flips, ZERO deny→allow — the
+  no-loosening invariant held), reconciled the counts, re-ran every gate
+  (vendored typecheck, repo lint/typecheck, checker 7/0), and verified
+  dist≡src by executing the compiled dist. Three P2s + one P3, all
+  addressed in this iteration's follow-up commit:
+  (P2-a) the entry below referenced LESS-0021 before it existed — the
+  append happened in the REMEMBER step, closing the chain;
+  (P2-b) the first-cut alias condition modeled ANY <=1-non-arg push as
+  the default branch push: --tags/--follow-tags (tags-only release
+  pushes, the W084 lane) and --delete/-d (whose single non-option
+  argument is the deletion REFSPEC, not the remote) mis-flipped to deny
+  from the protected seat — fixed: a refspec-shaping flag (--delete/-d)
+  excludes the single-arg default-push reading (its destination is
+  already checked by the literal loop) and tags-only flags are not
+  default pushes at all; the round-1 pins ran red-first (81/2 — exactly
+  the tags/delete/twin blocks) then green; the orchestrator's first
+  refine also DROPPED the bare-args case (git push itself) — its own red
+  pin caught it before any dist run;
+  (P2-c) the twin's coarse >=2-token pattern flagged one-operand reads
+  (--short/-q HEAD) as mutations, contradicting the comment and #21 —
+  fixed with a flags-skipping two-operand pattern plus an explicit
+  --delete clause (the flags group would swallow its single operand),
+  and the first operand position refuses a dash because the engine's
+  zero-iteration backtrack would otherwise still match flag+operand;
+  (P3-d) `git push origin :HEAD` (empty-source deletion of the remote
+  HEAD alias) classifies allow — pre-existing (executed), adjacent to
+  the closed #22 family, recorded here as a queued deliberate pass, and
+  pinned as-found in the W103 test block. Final suites 93/0 (policy 83
+  + redirect 5 + mcp 5); dist rebuilt AFTER the fixes and re-probed
+  (the intermediate dist-probe run caught a stale-dist divergence — the
+  LESS-0010 hazard discipline applied mid-iteration; the one probe-line
+  discrepancy was a scratch-script fragment bug producing a malformed
+  flag, re-verified allow with the correct shape); repo lint/typecheck
+  exit 0; checker 7/0.

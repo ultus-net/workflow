@@ -1223,6 +1223,11 @@ test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", 
   assert.equal(hasGitMutation("git symbolic-ref --delete refs/heads/main"), true);
   assert.equal(hasGitMutation("sh -c 'git symbolic-ref refs/heads/main abc123def'"), true);
   assert.equal(hasGitMutation("git symbolic-ref HEAD"), false);
+  // Review round 1 P2: flagged one-operand reads (--short/-q) are not
+  // mutations — the twin's pattern skips leading flags (the first cut
+  // flagged them; captured red live).
+  assert.equal(hasGitMutation("git symbolic-ref --short HEAD"), false);
+  assert.equal(hasGitMutation("git symbolic-ref -q HEAD"), false);
 });
 
 // ---- W103: the queued W101/W102 residuals #22 and #21 (SECURITY_ASSURANCE) ----
@@ -1270,6 +1275,21 @@ test("W103 residual #22: push aliases (HEAD/@/default) resolve against the curre
     assert.equal(denied.decision, "deny", command);
     assert.equal(denied.policy, "protected-branch-push", command);
   }
+  // Review round 1 P2: tags-only and deletion flag pushes are NOT the
+  // default branch push — --tags/--follow-tags push no branch refs (the
+  // W084 release lane), and --delete/-d make the single non-option
+  // argument a deletion refspec (its destination is checked by the
+  // literal loop). Both were mis-modeled as default pushes in the first
+  // cut (protected-seat flips captured red live).
+  assert.equal(checkPolicy({ action: "shell", command: "git push --tags", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --tags", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push --follow-tags", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push --delete feat2", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push --delete main", currentBranch: "feat/g5" }).decision, "deny");
+  // Review round 1 P3 (recorded as-found, NOT changed here): the
+  // empty-source deletion of the remote HEAD alias allows — pre-existing,
+  // adjacent to the #22 family; queued for a deliberate pass.
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin :HEAD" }).decision, "allow");
   // The wrapper recursion inherits the resolved classification (W102
   // transparency — a wrapper cannot launder the alias).
   const wrapped = checkPolicy({ action: "shell", command: "sh -c 'git push origin HEAD'", currentBranch: "main" });

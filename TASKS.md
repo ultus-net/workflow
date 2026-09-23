@@ -2761,6 +2761,20 @@ twin additions) and zero collateral; green 93/0 (policy 83 + redirect 5
 (src≡dist); vendored typecheck OK; repo lint/typecheck exit 0;
 security-assurance checker 7/0.
 
+**Review round 1 (fresh-eyes completion reviewer, executed evidence):**
+[APPROVE] across all five axes (recorded via record_review) — red-first
+reproduced (79/4), a 108-cell matrix showed 32 allow→deny flips and ZERO
+deny→allow, all gates re-run, dist≡src verified by execution. Three P2s
+addressed in the follow-up commit with red→green re-verification
+(tags-only and --delete/-d refspec-shaping flags excluded from the
+default-push reading; the twin's read-flagging fixed with a
+flags-skipping two-operand pattern; the dangling LESS-0021 reference
+resolved by the append) and one P3 recorded as-found (`:`-sourced remote
+HEAD deletion stays allow, pinned). Final: suites 93/0, dist re-probed
+after the post-fix rebuild (a mid-iteration stale-dist divergence was
+caught by the dist probe itself), repo lint/typecheck exit 0, checker
+7/0.
+
 **Acceptance criteria:**
 - [x] Alias/default pushes from a protected seat deny; from a feature
       seat and a factless seat they keep their classification; mixed
