@@ -105,6 +105,63 @@ test("verification requires fresh passing evidence admitted at a valid mutation 
   assert.equal(graph.transition(taskId("A"), "VERIFIED").kind, "accepted");
 });
 
+// W110 (amux C3 — refusal legibility): the EVIDENCE_REQUIRED rejection names
+// the UNSATISFIED requirements with a per-requirement why, both in the prose
+// and as a structured field — the operator sees the exact artifact needed
+// without self-deriving it client-side.
+
+test("W110: the EVIDENCE_REQUIRED rejection names each missing requirement and why", () => {
+  const graph = new TaskGraph([
+    {
+      ...task("A"),
+      requiredEvidence: [
+        { authority: "environment", subject: "typecheck" },
+        { authority: "reviewer", subject: "design-review" },
+      ],
+    },
+  ]);
+  graph.transition(taskId("A"), "IN_PROGRESS");
+  graph.transition(taskId("A"), "VERIFYING");
+
+  const nothing = graph.transition(taskId("A"), "VERIFIED");
+  assert.equal(nothing.kind, "rejected");
+  if (nothing.kind !== "rejected") return;
+  assert.equal(nothing.code, "EVIDENCE_REQUIRED");
+  assert.deepEqual(nothing.missing, [
+    { authority: "environment", subject: "typecheck", why: "no evidence observed" },
+    { authority: "reviewer", subject: "design-review", why: "no evidence observed" },
+  ]);
+  assert.match(nothing.reason, /missing: environment:typecheck — no evidence observed; reviewer:design-review — no evidence observed/);
+});
+
+test("W110: the per-requirement why discriminates stale, not-passing, and authority mismatch", () => {
+  const graph = new TaskGraph([
+    {
+      ...task("A"),
+      requiredEvidence: [
+        { authority: "environment", subject: "stale-check" },
+        { authority: "environment", subject: "failed-check" },
+        { authority: "reviewer", subject: "reviewed-check" },
+      ],
+    },
+  ]);
+  graph.transition(taskId("A"), "IN_PROGRESS");
+  graph.transition(taskId("A"), "VERIFYING");
+  graph.recordEvidence(evidence("stale-check", "passed", graph.mutationEpoch));
+  graph.recordEvidence(evidence("failed-check", "failed", graph.mutationEpoch));
+  graph.recordEvidence({ ...evidence("reviewed-check", "passed", graph.mutationEpoch), authority: "environment" });
+  // A mutation lands, staling everything (the kernel's freshness machinery).
+  graph.recordMutation(["stale-check", "failed-check", "reviewed-check"]);
+
+  const refusal = graph.transition(taskId("A"), "VERIFIED");
+  assert.equal(refusal.kind, "rejected");
+  if (refusal.kind !== "rejected") return;
+  const bySubject = new Map((refusal.missing ?? []).map((entry) => [entry.subject, entry]));
+  assert.equal(bySubject.get("stale-check")?.why, "the passing evidence is stale (a mutation landed after it)");
+  assert.equal(bySubject.get("failed-check")?.why, "the observed evidence is not passing");
+  assert.equal(bySubject.get("reviewed-check")?.why, "no evidence from authority 'reviewer'");
+});
+
 test("a relevant mutation invalidates evidence and verified task state", () => {
   const graph = new TaskGraph([
     {

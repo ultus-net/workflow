@@ -5,7 +5,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, StatusBar, StepLedgerRow, UsageMeter } from "../src/ui/webapp/app.js";
+import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, StatusBar, StepLedgerRow, TaskRefusal, UsageMeter } from "../src/ui/webapp/app.js";
 import { ScheduleForm, SchedulesView, scheduleIdCollisionError, type ScheduleMeta } from "../src/ui/webapp/schedules-view.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { EditDiff, parseEditTool } from "../src/ui/webapp/diff-text.js";
@@ -571,5 +571,26 @@ test("W107 C2: the invariants panel renders the judged population and the could-
   assert.ok(markup.includes("could not discriminate"), "an empty population must say it judged nothing");
   // A failure names the offending subjects.
   assert.ok(markup.includes("e7"), "a failed invariant names the offending subject");
+});
+
+test("W110: the task refusal renders the kernel's reason verbatim with the missing artifacts", () => {
+  const markup = renderToStaticMarkup(createElement(TaskRefusal, {
+    refusal: {
+      code: "EVIDENCE_REQUIRED",
+      reason: "task gated does not have fresh passing evidence for every requirement (missing: environment:typecheck — no evidence observed)",
+      missing: [
+        { authority: "environment", subject: "typecheck", why: "no evidence observed" },
+        { authority: "reviewer", subject: "design-review", why: "the passing evidence is stale (a mutation landed after it)" },
+      ],
+    },
+  }));
+  // The kernel's reason renders verbatim (the step-rejection convention:
+  // role=alert, the refusal color).
+  assert.ok(markup.includes("does not have fresh passing evidence"), "the kernel reason renders verbatim");
+  assert.ok(markup.includes("role=\"alert\""), "the refusal is announced as an alert");
+  // The missing artifacts render per entry with the per-requirement why.
+  assert.ok(markup.includes("missing environment:typecheck — no evidence observed"));
+  assert.ok(markup.includes("missing reviewer:design-review — the passing evidence is stale"));
+  assert.ok(markup.includes("[EVIDENCE_REQUIRED]"), "the machine code rides along for the trail");
 });
 

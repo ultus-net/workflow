@@ -313,6 +313,19 @@ export class TaskGraph {
     this.#evidence.push(evidence);
   }
 
+  /** W110 (refusal legibility): why a requirement is unsatisfied — the
+   * discriminating diagnosis across the kernel's evidence dimensions
+   * (observed at all → authority match → result → freshness). */
+  #requirementWhy(requirement: EvidenceRequirement): string {
+    const records = this.#evidence.filter((record) => record.subject === requirement.subject);
+    if (records.length === 0) return "no evidence observed";
+    const matching = records.filter((record) => record.authority === requirement.authority);
+    if (matching.length === 0) return `no evidence from authority '${requirement.authority}'`;
+    const passing = matching.filter((record) => record.result === "passed");
+    if (passing.length === 0) return "the observed evidence is not passing";
+    return "the passing evidence is stale (a mutation landed after it)";
+  }
+
   recordMutation(subjects: readonly string[]): readonly TransitionRecord[] {
     this.#mutationEpoch += 1;
     const transitions: TransitionRecord[] = [];
@@ -360,10 +373,19 @@ export class TaskGraph {
     }
 
     if (requested === "VERIFIED" && !task.requiredEvidence.every((requirement) => this.#hasEvidence(requirement))) {
+      // W110 (amux C3 — refusal legibility): the rejection names the
+      // UNSATISFIED requirements with a per-requirement why, in the prose
+      // and as a structured field — the operator sees the exact artifact
+      // needed without deriving it client-side.
+      const missing = task.requiredEvidence
+        .filter((requirement) => !this.#hasEvidence(requirement))
+        .map((requirement) => ({ authority: requirement.authority, subject: requirement.subject, why: this.#requirementWhy(requirement) }));
+      const detail = missing.map((entry) => `${entry.authority}:${entry.subject} — ${entry.why}`).join("; ");
       return {
         kind: "rejected",
         code: "EVIDENCE_REQUIRED",
-        reason: `task ${task.id} does not have fresh passing evidence for every requirement`,
+        reason: `task ${task.id} does not have fresh passing evidence for every requirement (missing: ${detail})`,
+        missing,
         taskId: task.id,
         from: task.state,
         requested,

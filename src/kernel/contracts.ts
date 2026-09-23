@@ -84,6 +84,15 @@ export type TransitionResult =
       readonly taskId: TaskId;
       readonly from: TaskState;
       readonly requested: TaskState;
+      /** W110 (refusal legibility): the unsatisfied evidence requirements with
+       * a per-requirement diagnosis. Present on EVIDENCE_REQUIRED rejections;
+       * absent elsewhere (never fabricated for gates that do not produce
+       * it). */
+      readonly missing?: readonly {
+        readonly authority: EvidenceAuthority;
+        readonly subject: string;
+        readonly why: string;
+      }[];
     };
 
 function nonEmptyId<Name extends string>(value: string, name: Name): Brand<string, Name> {
