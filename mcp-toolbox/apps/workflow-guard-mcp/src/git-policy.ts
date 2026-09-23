@@ -59,10 +59,12 @@ export function hasGitMutation(command: string, depth = 0): boolean {
   // one-operand reads (--short/-q) stay non-mutations (review round 1
   // P2 — the first cut flagged them); the first operand position refuses
   // a dash (otherwise the engine's zero-iteration backtrack would still
-  // match flag+operand); --delete is matched explicitly (the flags group
-  // would swallow its single operand). The one-operand read is not a
-  // mutation.
-  const extras = /\bgit\s+branch\s+(?:[^|;&]*\s)?-(?:[dDfMCcm]|--force\b|--move\b|--copy\b|--delete\b)|\bgit\s+fetch\s+[^|;&]*:\S|\bgit\s+pull\b|\bgit\s+symbolic-ref\s+(?:-{1,2}[\w-]+\s+)*(?!-)\S+\s+(?!-)\S+|\bgit\s+symbolic-ref\s+(?:[^|;&]*\s)?--delete\b/;
+  // match flag+operand); review round 2 P2: flags may also interleave
+  // BETWEEN the operands (git permutes options), so both operand
+  // positions carry their own flags group; --delete is matched
+  // explicitly (the flags group would swallow its single operand). The
+  // one-operand read is not a mutation.
+  const extras = /\bgit\s+branch\s+(?:[^|;&]*\s)?-(?:[dDfMCcm]|--force\b|--move\b|--copy\b|--delete\b)|\bgit\s+fetch\s+[^|;&]*:\S|\bgit\s+pull\b|\bgit\s+symbolic-ref\s+(?:-{1,2}[\w-]+\s+)*(?!-)\S+\s+(?:-{1,2}[\w-]+\s+)*(?!-)\S+|\bgit\s+symbolic-ref\s+(?:[^|;&]*\s)?--delete\b/;
   if (gitWriteRe.test(normalized) || extras.test(normalized) || /\bgit\s+(?:switch|checkout)\b/.test(normalized)) return true;
   // W102 review round 1 P3: the wrapper walk is SHARED (one detection
   // implementation, not a verbatim copy) so the mutation matcher and the
@@ -146,14 +148,17 @@ function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>
     // when no refspec-shaping flag precedes it — --delete/-d make it the
     // deletion refspec (its destination is checked by the literal loop
     // above), and --tags/--follow-tags push no branch refs at all (the
-    // W084 release lane). Both were mis-modeled as default pushes in the
-    // first cut (protected-seat flips captured red live).
+    // W084 release lane). Review round 2 P1: the tags-only exclusion
+    // scopes to the DEFAULT-PUSH readings ONLY — an explicit HEAD/@
+    // refspec beside tags flags is still a branch push and must resolve
+    // (the first cut gated the whole disjunction behind !tagsOnly and
+    // re-opened the hole; captured red live).
     const refspecShaped = flags.some((word) => word === "--delete" || word === "-d");
     const tagsOnly = flags.some((word) => word === "--tags" || word === "--follow-tags");
-    const aliasPush = !tagsOnly && ((args.length === 0 || (args.length === 1 && !refspecShaped)) || refspecs.some((refspec) => {
+    const aliasPush = (args.length === 0 && !tagsOnly) || (args.length === 1 && !refspecShaped && !tagsOnly) || refspecs.some((refspec) => {
       const token = refspec.replace(/^\+/, "");
       return token === "HEAD" || token === "@";
-    }));
+    });
     if (aliasPush && currentBranch) {
       const normalizedCurrent = normalizeBranchRef(currentBranch);
       if (protectedBranches.has(normalizedCurrent)) return normalizedCurrent;

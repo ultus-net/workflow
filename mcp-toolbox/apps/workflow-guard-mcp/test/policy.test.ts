@@ -1228,6 +1228,10 @@ test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", 
   // flagged them; captured red live).
   assert.equal(hasGitMutation("git symbolic-ref --short HEAD"), false);
   assert.equal(hasGitMutation("git symbolic-ref -q HEAD"), false);
+  // Review round 2 P2: git permutes options — a flag interleaved between
+  // the two operands is still the write form for the twin (the round-1
+  // pattern required the operands to be adjacent; captured red live).
+  assert.equal(hasGitMutation("git symbolic-ref refs/heads/feat --short sym2"), true);
 });
 
 // ---- W103: the queued W101/W102 residuals #22 and #21 (SECURITY_ASSURANCE) ----
@@ -1286,6 +1290,23 @@ test("W103 residual #22: push aliases (HEAD/@/default) resolve against the curre
   assert.equal(checkPolicy({ action: "shell", command: "git push --follow-tags", currentBranch: "main" }).decision, "allow");
   assert.equal(checkPolicy({ action: "shell", command: "git push --delete feat2", currentBranch: "main" }).decision, "allow");
   assert.equal(checkPolicy({ action: "shell", command: "git push --delete main", currentBranch: "feat/g5" }).decision, "deny");
+  // Review round 2 P1: the tags-only exclusion scopes to the DEFAULT-PUSH
+  // reading only — an explicit HEAD/@ refspec beside tags flags is still
+  // a branch push and must resolve (the first cut gated the whole
+  // disjunction behind !tagsOnly and re-opened the hole; captured red
+  // live).
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --tags HEAD", currentBranch: "main" }).decision, "deny");
+  // The no-remote tags combo is NOT a branch push: git's grammar makes
+  // the single positional the repository slot, and the tags-only flag
+  // pushes no branch refs (a remote named HEAD just errors at runtime).
+  // The round-2 table's deny expectation for this cell was inconsistent
+  // with its own formula — corrected here per the formula.
+  assert.equal(checkPolicy({ action: "shell", command: "git push --tags HEAD", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --follow-tags HEAD", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --tags @", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --tags HEAD", currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --tags HEAD" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push --tags origin HEAD", currentBranch: "main" }).decision, "deny");
   // Review round 1 P3 (recorded as-found, NOT changed here): the
   // empty-source deletion of the remote HEAD alias allows — pre-existing,
   // adjacent to the #22 family; queued for a deliberate pass.
