@@ -423,17 +423,25 @@ export function wrapperCommands(command: string): string[] {
       // bundle containing a `c` option consumes the REST of the word as
       // -c's option-argument (`-ec'cmd'`, `-xc`…), and the spaced `-ec
       // 'cmd'` and `-o <value> -c` forms were the same bypass. The
-      // generalized -Xc matcher is the precedent the boundary and shell
-      // lanes already use. After the c option: a non-empty remainder is
-      // the fused command; an empty remainder means the command is the
-      // next word.
+      // generalized -Xc matcher is the same shape the boundary and shell
+      // lanes' findIndex flag-finders implement for the NEXT-word form
+      // (round 3 note: those precedents are non-capturing next-word
+      // finders — this walker additionally handles the fused form, which
+      // is why the sequential walk exists); after the c option, a
+      // non-empty remainder is the fused command and an empty remainder
+      // means the command is the next word.
       const cMatch = /^-[a-zA-Z]*c(.*)$/s.exec(word);
       if (cMatch) {
         const fused = cMatch[1]!.replace(/^['"]|['"]$/g, "");
         return fused.length > 0 ? [fused] : (words[i + 1] ? [words[i + 1]!] : []);
       }
-      // -o consumes its value (the sh-family value option in common use).
-      if (word === "-o" && words[i + 1]) i += 1;
+      // -o consumes its value — bundle-aware (W102 review round 3 B1): a
+      // bundle ENDING in o consumes the next word (`bash -euo pipefail -c
+      // '...'` — the walk died at the non-dash value word before reaching
+      // -c); a fused `-opipefail` is correctly NOT a value-consumer since o
+      // is not the last option char. For the sh-family, `-o <name>` is the
+      // value option in common use.
+      if (/^-[a-zA-Z]*o$/.test(word) && words[i + 1]) i += 1;
     }
     return [];
   });

@@ -387,7 +387,10 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   wrappers recurse, depth cap fails closed; suites 87/0 (policy 77 +
   redirect 5 + mcp 5); dist rebuilt (LESS-0010 hazard); the W100-era
   46-row inventory re-probe green against the REBUILT dist; repo
-  lint/typecheck exit 0; security-assurance checker 7/0.
+  lint/typecheck exit 0; security-assurance checker 7/0. NOTE: the
+  env-prefixed-wrapper sentence below is STALE — falsified by review
+  round 1 (prefixed wrappers were always detected); see the correction
+  appended to this entry.
 
   Review round 1 on W102 (fresh-eyes) — REVISE: the fused -c-quote
   spelling (`bash -c'git commit -m x'`) bypassed both matchers (captured

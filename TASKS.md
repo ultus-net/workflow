@@ -2658,7 +2658,12 @@ did (the twin matchers' wrapper scopes diverged).
   allow residual pin superseded with a note (residual closure);
   SECURITY_ASSURANCE #20 marks the resolution including the honest edge:
   env-prefixed wrappers (`env sh -c '...'`) remain outside BOTH matchers'
-  scope — recorded, not silently closed.
+  scope — recorded, not silently closed. CORRECTION (review round 1,
+  2026-09-23): that env claim was FALSIFIED — unwrapShellWords consumes
+  env/timeout/assignment prefixes, so prefixed wrappers were always
+  detected (live probe: deny across all three prefix forms); the honest
+  edge that remains is exotic interpreter names (busybox sh, xsh) and the
+  zsh EQUALS caveat, pinned as-found and queued.
 - W100 doc §7 item 12; parity-log W102 entry (after the W101 rounds).
 
 **Evidence:** red-first — the 2 new W102 pin blocks ran 75/2 against the
@@ -2681,8 +2686,28 @@ security-assurance checker 7/0.
       cap fails closed.
 - [x] The as-found residual pin superseded with a note; SECURITY_ASSURANCE
       #20 marks the resolution with the env-prefix limitation stated.
+      CORRECTION (review round 1, 2026-09-23): the env-prefix limitation
+      was FALSIFIED (prefixed wrappers were always detected — live probe:
+      deny across all three prefix forms); #20's corrected text states the
+      real edges (busybox/xsh interpreters, the zsh EQUALS caveat).
 - [x] dist rebuilt + the 46-row re-probe green; suites 87/0.
 - [x] Queued (NOT this iteration): env-prefixed wrapper coverage
       (`env sh -c '...'` — shared with hasGitMutation's scope); the
       symbolic-ref matcher line; the HEAD-alias push resolution; the
       localBranches fact.
+      CORRECTION (review round 1, 2026-09-23): the queued env-prefix
+      item above was FALSIFIED — env/timeout/assignment prefixes are
+      consumed by the unwrapper and prefixed wrappers were always
+      detected; the correction is recorded in SECURITY_ASSURANCE #20,
+      LESS-0019, the W100 doc §7 item 12, and here (this line). The
+      genuinely queued edges are the exotic interpreter names (busybox
+      sh, xsh), the zsh EQUALS caveat, and the fused-bundle shapes the
+      review rounds continue to harden.
+      CORRECTION (review round 1, 2026-09-23): the queued env-prefix
+      item above was FALSIFIED — env/timeout/assignment prefixes are
+      consumed by the unwrapper and prefixed wrappers were always
+      detected; the correction is recorded in SECURITY_ASSURANCE #20,
+      LESS-0019, the W100 doc §7 item 12, and here (this line). The
+      genuinely queued edges are the exotic interpreter names (busybox
+      sh, xsh), the zsh EQUALS caveat, and the fused-bundle shapes the
+      review rounds continue to harden.

@@ -1155,6 +1155,27 @@ test("W102 review round 2: bundled-flag wrappers are detected (the getopt -Xc fa
   assert.equal(checkPolicy({ action: "shell", command: "bash -ex 'echo hi'", currentBranch: "main" }).decision, "allow");
 });
 
+test("W102 review round 3: the -o bundle consumption is getopt-aware (B1 closure)", () => {
+  // getopt value semantics inside a bundle: `-euo pipefail` consumes
+  // pipefail as -o's value, so the walk reaches -c and the wrapped
+  // command classifies (captured red live: allow on main pre-fix, with
+  // facts and factless). The reviewer's trace: the walk died at the
+  // non-dash value word before reaching -c.
+  for (const currentBranch of ["main", undefined]) {
+    const context = currentBranch ? { currentBranch } : {};
+    // TRANSPARENCY per seat: the with-facts protected-seat variants deny
+    // (the inner command denies unwrapped); the factless variants inherit
+    // the inner factless allow (the W090 fail-open class) — except the
+    // target-gated shape, whose base-set deny fires factlessly too.
+    assert.equal(checkPolicy({ action: "shell", command: "bash -euo pipefail -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `euo commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "bash -eo pipefail -c 'git branch -f main abc'", ...(currentBranch ? { currentBranch } : {}) }).decision, "deny", `eo branch -f ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "zsh -euo pipefail -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `zsh euo ${String(currentBranch)}`);
+  }
+  // A fused -opipefail is NOT a value consumer (o is not the last option
+  // char) — the bundle continues to -c normally.
+  assert.equal(checkPolicy({ action: "shell", command: "bash -opipefail -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+});
+
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {
   const { hasGitMutation } = await import("../src/git-policy.js");
   assert.equal(hasGitMutation("git branch -f main abc123def"), true);
