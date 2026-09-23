@@ -1,9 +1,12 @@
 # amux research: the control-plane comparison and the web-UI enhancement
-# candidates for Workflow (W103 research)
+# candidates for Workflow (research; ledger item opens with the first
+# enhancement-candidate iteration)
 
 **Date:** 2026-09-23 · **Status:** research recorded; the enhancement
 candidates are QUEUED as proposal material — none are implemented or
-directed yet · **Subject:** https://github.com/mixpeek/amux (492 stars,
+directed yet · **Ledger timing:** the candidates become a W-numbered
+web-UI item only on the operator's direction (queued behind the open
+W102 wrapper-recursion merge to avoid a same-region ledger collision). · **Subject:** https://github.com/mixpeek/amux (492 stars,
 ~6,069 commits at fetch, MIT + Commons Clause, single Rust binary) ·
 **Author:** RSI base-loop session (ses_f34e91c77ffekcRQkQKPCf5nLZ),
 operator-directed ("a full deep research task… pillage some of their
@@ -26,6 +29,8 @@ migrated to Rust (the boundary matrix reports `proxied: []`, asserted by
 a composition test).
 
 ## 2. The deep comparison — same phrase, different layer
+
+## 3. The convergence signal
 
 Both projects say "control plane for coding agents," but they mean
 different layers:
@@ -127,15 +132,17 @@ operator view over the same server. Grouped:
 
 ## 5. Workflow's web-UI baseline (the honest inventory)
 
-The hub webapp (`src/ui/webapp` + `web-service`/`web-launch`) is a
+The hub webapp (`src/ui/webapp` + `src/cli/web-service`/`src/cli/web-launch`) is a
 server-authoritative projection of the live `WorkflowApplication`: the
 usage/metering pages, the tasks surface (kernel task transitions through
 `/api/tasks`), the settings dialog (model routing with the per-workspace
 overlay and the honest `clearsEverything` disable, MCP servers with
 origin-scoped writes, capabilities), and the approvals surface
 (mode/authority round-trips driven through the same-origin
-trusted-mutation gate — the e2e suite asserts the authority's own state,
-never local optimism). The trust posture is already correct: mutations
+trusted-mutation gate; the state assertions live in the endpoint tests
+(`test/web-settings-endpoints.test.ts` — the browser e2e covers
+composer/stream/usage/palette), with the demo server wrapping the real
+`WorkflowApplication`. The trust posture is already correct: mutations
 are server-side; the UI is a projection. What it does not yet have: a
 fleet-status grid with per-run context, an evidence/invariants legibility
 layer, per-task cost drill-down, a review-requirements approvals flow, a
@@ -270,8 +277,13 @@ test-before-run, or the operator-banner routing of dangerous truths.
    session name (`_bwSession = 'amux'`), so human browser actions are
    recorded as agent-lane actions — an open frustration (AF-183) with a
    live path for an agent to destroy a human's signed-in session.
-   Workflow: operator actions carry human identity; reviewer identity
-   stays server-enforced.
+   Workflow's VERIFIED half: reviewer identity is server-enforced
+   (src/review/provenance.ts — self-ack rejection pinned) and the web
+   mutations route through the same-origin trusted-mutation gate. The
+   UNVERIFIED half, recorded as a queued requirement rather than an
+   invariant: kernel/application have no operator-identity attribution
+   today — D1's "operator actions carry human identity" is a design
+   requirement for the enhancement work, not a standing property.
 2. **Force-bypass as a UI button**: amux's `force-bypass-logged` is
    reachable from tooling; any one-click past a gate conflicts with
    fail-closed authorization. Waivers are hub decisions producing new
