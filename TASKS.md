@@ -2877,7 +2877,11 @@ version-portable extraction (legacy array or npm-12 keyed object) with
 the entry's `name` pinned per app, ending `const filename =
 entry.filename;` so every downstream reference survived unchanged.
 Six INLINE-destructure files additionally received the packOutput
-binding; five SPLIT files changed only the destructure line. The
+binding; five SPLIT files changed only the destructure line. Comment-
+block attribution: the inserted blocks carry the W105 tag (not the two
+landed apps' W104 tag) because the tag names the iteration that
+touched the file — W104 never edited these 11; the review round
+confirmed the tag update is correct per-item attribution. The
 shared-helper question (the W104 review's P3) is decided for now:
 inline per-app, consistent with the two landed W104 apps (per-app test
 locality; the apps are standalone packages) — re-open if a future
