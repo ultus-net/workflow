@@ -967,6 +967,23 @@ test("W101 review round 3: --refmap values are refspecs the fetch lane never ins
   assert.equal(checkPolicy({ action: "shell", command: "git fetch --prune origin", currentBranch: "feat/g5" }).decision, "allow");
 });
 
+test("W101 review round 4: the one-arg rename writes BOTH names", () => {
+  // `git branch (-m|-M) <new>` renames the current branch to <new>: the
+  // destination operand force-overwrites a protected branch when it names
+  // one (from a feature branch, `git branch -M main` destroys
+  // refs/heads/main), and the source (the current branch) is renamed away.
+  // Both names are checked; a factless seat fails closed (row 12).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const rename = checkPolicy({ action: "shell", command: "git branch -M main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(rename.decision, "deny", String(currentBranch));
+    const soft = checkPolicy({ action: "shell", command: "git branch -m main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(soft.decision, "deny", String(currentBranch));
+  }
+  // Renaming a non-protected branch to a non-protected name stays allowed.
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m feat2", currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m renamed", currentBranch: "main" }).decision, "deny");
+});
+
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {
   const { hasGitMutation } = await import("../src/git-policy.js");
   assert.equal(hasGitMutation("git branch -f main abc123def"), true);

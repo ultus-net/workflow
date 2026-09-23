@@ -129,8 +129,10 @@ function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>
 interface PointerInvocation {
   targets: string[];
   uncertain: boolean;
-  // The one-arg rename form's target is the CURRENT branch: the membership
-  // check consumes the currentBranch fact, and a factless seat fails closed.
+  // The one-arg rename form writes BOTH names: its targets carry the
+  // DESTINATION operand and `needsCurrentBranch` marks the SOURCE (the
+  // current branch, renamed away) — the source requires the fact, and a
+  // factless seat fails closed.
   needsCurrentBranch: boolean;
 }
 
@@ -224,7 +226,13 @@ function parseBranch(words: string[]): PointerInvocation | undefined {
   if (walk.uncertain || walk.operands.length === 0) return { targets: [], uncertain: true, needsCurrentBranch: false };
   if (renameish) {
     // Rows 11-13: the protected name may be the SOURCE or the DESTINATION.
-    if (walk.operands.length === 1) return { targets: [], uncertain: false, needsCurrentBranch: true };
+    // The two-arg form checks both operands; the ONE-ARG form renames the
+    // current branch to the operand, so BOTH names are written — the
+    // destination operand force-overwrites a protected branch when it names
+    // one (review round 4: `git branch -M main` from a feature branch
+    // destroys refs/heads/main), and the source needs the currentBranch
+    // fact (factless fails closed, row 12).
+    if (walk.operands.length === 1) return { targets: walk.operands, uncertain: false, needsCurrentBranch: true };
     if (walk.operands.length === 2) return { targets: walk.operands, uncertain: false, needsCurrentBranch: false };
     return { targets: [], uncertain: true, needsCurrentBranch: false };
   }
@@ -339,16 +347,17 @@ function checkPointerTarget(words: string[], protectedBranches: Set<string>, con
     return { decision: "deny", policy: "protected-branch-write", reason: "Git pointer command could not be safely parsed; failing closed." };
   }
   if (invocation.needsCurrentBranch) {
-    // The one-arg rename's target IS the current branch: a factless seat
-    // cannot classify it and fails closed (§4.3 bullet 2, row 12); with the
-    // fact the membership check runs against it.
+    // The one-arg rename writes BOTH names: the current branch (renamed
+    // away — the source needs the fact, row 12) and the destination operand
+    // (force-overwrites a protected branch when it names one — review
+    // round 4). A factless seat cannot classify the source and fails
+    // closed.
     if (!context.currentBranch) {
       return { decision: "deny", policy: "protected-branch-write", reason: "Branch rename targets the current branch, which was not supplied; failing closed." };
     }
     if (protectedBranches.has(normalizeBranchRef(context.currentBranch))) {
       return { decision: "deny", policy: "protected-branch-write", reason: `Branch pointer writes on protected branch '${normalizeBranchRef(context.currentBranch)}' are not allowed.` };
     }
-    return undefined;
   }
   for (const target of invocation.targets) {
     if (protectedBranches.has(normalizeBranchRef(target))) {

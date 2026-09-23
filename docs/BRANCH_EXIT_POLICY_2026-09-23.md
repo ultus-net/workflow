@@ -534,9 +534,9 @@ dist rebuild) with these deltas from §4's letter, recorded honestly:
    `-b`+`-B`); the reviewer's falsified "dead entries removed" claim
    honored by actually removing them. Also fixed en route: `--create`
    sat in the shared flag set, making the createSeen tracking dead code.
-   Post-fix: suites 82/0 (policy 72 + redirect 5 + mcp 5); the 55-row
-   re-probe and all round-2 shapes green against the REBUILT dist; repo
-   lint/typecheck exit 0; security-assurance checker 7/0.
+   Pre-fix shapes captured live (allow x4); suites 82/0 (policy 72 +
+   redirect 5 + mcp 5); 55-row re-probe + round-2 shapes green; repo
+   lint/typecheck exit 0.
 6. **Review round 3 (re-review) — REVISE, one new unrecorded fail-open,
    fixed:** `--refmap` is the one fetch value option whose value is itself
    a refspec (the prune mapping) — `--refmap=refs/heads/gone:refs/heads/
@@ -552,3 +552,14 @@ dist rebuild) with these deltas from §4's letter, recorded honestly:
    allow-biased parses of git-rejected shapes (nested-colon refspecs,
    whitespace-embedded) are harmless (no mutation possible) and recorded
    here rather than pinned uncertain.
+7. **Review round 4 (re-review) — REVISE, one more real gap, fixed:** the
+   one-arg rename writes BOTH names — the position's row-12 framing
+   ("targets the current branch away") covered only the SOURCE half; the
+   destination OPERAND force-overwrites a protected branch when it names
+   one (`git branch -M main` from a feature branch destroys
+   refs/heads/main — valid git, allow in the as-found gate). Fix: the
+   one-arg form now checks BOTH the destination operand (targets) and the
+   current branch (source, fact-gated); factless stays fail-closed.
+   Pre-fix verdicts captured live (allow, allow); suites 84/0 (policy 74
+   + redirect 5 + mcp 5); the 55-row re-probe + round-2/3 shapes green
+   against the REBUILT dist; repo lint/typecheck exit 0.

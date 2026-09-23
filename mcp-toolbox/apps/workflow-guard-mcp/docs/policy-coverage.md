@@ -312,3 +312,13 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   the -c/-C combination watch-item pinned. Pre-fix verdict captured
   live (allow); suites 83/0; 55-row re-probe + round-2 shapes green
   against the REBUILT dist.
+
+  Review round 4 (re-review) — REVISE: the one-arg rename writes BOTH
+  names — the position's row-12 framing covered only the SOURCE half;
+  the destination operand force-overwrites a protected branch when it
+  names one (git branch -M main from a feature branch destroys
+  refs/heads/main — valid git). Fixed: the one-arg form checks BOTH the
+  destination operand and the current branch (fact-gated source);
+  factless stays fail-closed. Pre-fix verdicts captured live
+  (allow, allow); suites 84/0; 55-row re-probe + round-2/3 shapes green
+  against the REBUILT dist.
