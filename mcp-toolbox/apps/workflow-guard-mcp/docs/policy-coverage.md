@@ -278,3 +278,17 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   dist: all 56 probe rows (facts + factless, on-branch + cross-branch,
   fixes + residuals) match the position; suites 79/0 (policy 69 + redirect
   5 + mcp 5); dist rebuilt (LESS-0010 hazard).
+
+  Review round 1 (fresh-eyes) found three real gate defects — a P0
+  value-option phantom bypass (space-form `--points-at`/`--format` values
+  shifted the first-operand target selection, phantom-allowing a protected
+  pointer move factless), a P1 wildcard branch-glob refspec destination gap
+  in BOTH the fetch lane and the pre-existing push lane, and a P2
+  `--force\b` over-match on `--force-create` that re-introduced the exact
+  spelling-vs-intent asymmetry the change removes. All three fixed and
+  pinned (value consumption in the operand walk; wildcard branch-glob
+  destinations fail closed in both lanes with tag-glob exemptions kept;
+  `--force(?!-create)\b` lookahead); pre-fix verdicts captured live against
+  the pre-fix dist (allow/allow/allow/allow/deny) and post-fix green.
+  Suites 81/0; the 55-row re-probe matches the position; see the W100
+  doc's §7 implementation addendum for the record.

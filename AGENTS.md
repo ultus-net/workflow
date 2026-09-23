@@ -101,8 +101,9 @@ from fingerprinted provenance, never from stale approvals
   (`docs/ACP_RESEARCH.md`, `docs/ACP_DECISION.md`,
   `docs/OPENCODE_QUALIFICATION.md`, `docs/GOOSE_RESEARCH.md`) get dated
   supersession notes; history is never silently rewritten.
-- **Residual risks stay stated** — `docs/SECURITY_ASSURANCE.md` keeps nineteen
-  of them on record, and its checker pins the honesty statements.
+- **Residual risks stay stated** — `docs/SECURITY_ASSURANCE.md` keeps its
+  residual risks on record (21 as of the W101 git-pointer work), and its
+  checker pins the honesty statements.
 - Probe-gated, never date-gated: an agent version bump without a re-run of
   its probes caps that surface `advisory`.
 

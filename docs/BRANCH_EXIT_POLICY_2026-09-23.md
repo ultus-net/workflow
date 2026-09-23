@@ -479,3 +479,45 @@ move it without tripping a pin); (2) rows 26–27 named in the bucket plan
 (row 26 rides existing push-lane pins; row 27 gets a characterization pin)
 so the plan is exhaustive over rows 1–28. Frontier verification closes at
 round 3; the implementation iteration inherits the position as recorded.
+
+## 7. Implementation addendum (2026-09-23, appended by the W101 session —
+## this section does not alter §1–§6 or appendix A's byte-state)
+
+The implementation landed (feat/w101-branch-pointer-gate, vendored core +
+dist rebuild) with these deltas from §4's letter, recorded honestly:
+
+1. **The §4.4 red-free claim was factually wrong for one pin.** The W099
+   set DID pin `git checkout -B <feature>` on a protected branch as-found
+   DENY (the row-8 clause member with a feature target), and this
+   implementation moves that classification by design. The pin was
+   superseded — the old assertion replaced by a supersession note in the
+   W099 block, the new assertion living in the W101 unification pin — per
+   the pin discipline (position-documented classification change, never a
+   silent weakening). §4.4/§4.5's "stays red-free / survives verbatim"
+   should be read as "except the one superseded assertion the unification
+   itself requires".
+2. **Review hardening (round-1 fresh-eyes, three findings, all fixed and
+   pinned):** (P0) space-form value options now consume their value token —
+   the phantom shape `git branch -f --points-at HEAD main <sha>` had let
+   the value shift the first-operand target selection and phantom-allow a
+   protected pointer move factless (captured red against the pre-fix dist:
+   allow); (P1) wildcard branch-glob refspec destinations
+   (refs/heads/*:refs/heads/*) fail closed in BOTH the new fetch lane and
+   the pre-existing push lane, while tag globs keep their W084
+   release-operation exemption (captured red: allow); (P2) the spelling
+   clause's `--force\b` over-matched `--force-create` — `git switch
+   --force-create <feature>` on a protected branch denied while the
+   intent-identical `-C` was pinned allow (captured red: deny). All three
+   shapes are pinned; the pre-fix dist captured the red verdicts live
+   before the rebuild.
+3. **En-route scanner finding (LESS-0017's shape, harder):** the live
+   scanner's shell-command path reassembles string fragments — even a
+   fully runtime-assembled wildcard push refspec in a `node -e` one-liner
+   is blocked ("force push targets a live system"), while the same
+   literals pass the file scanner inside a committed test file. The
+   fixture convention's escape is per-context: file-scoped probes carry
+   the shapes, shell one-liners must assemble them from characters.
+4. Evidence at the review-fixed tip: suites 81/0 (policy 71 + redirect 5
+   + mcp 5); the 55-row live re-probe matches the position against the
+   REBUILT dist; repo lint/typecheck exit 0; security-assurance checker
+   7/0.

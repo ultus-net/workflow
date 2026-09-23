@@ -13,7 +13,7 @@ import { splitShellSegments, unwrapShellWords } from "./shell.js";
 // (mirroring rows 5 and 7's checkout treatments): switch -C/-c stay OUT of
 // the spelling lane so the target gate decides and the sanctioned
 // feature-target force-create keeps its W099-pinned allow.
-const gitWriteRe = /\bgit\s+(?:add|rm|mv|commit|merge|rebase|cherry-pick|revert|stash\s+pop|apply|am|restore|reset|update-ref|filter-branch)\b|\bgit\s+tag\s+(?!--?list\b|-l\b)(?:[^|;&]*\s)?(?:-d\b|--delete\b)|\bgit\s+checkout\s+(?!-b\b|-B\b)|\bgit\s+switch\s+(?:-d\b|--detach\b|-f\b|--force\b|--discard-changes\b)|\bgit\s+branch\s+(?:[^|;&]*\s)?-[dDM]\b/;
+const gitWriteRe = /\bgit\s+(?:add|rm|mv|commit|merge|rebase|cherry-pick|revert|stash\s+pop|apply|am|restore|reset|update-ref|filter-branch)\b|\bgit\s+tag\s+(?!--?list\b|-l\b)(?:[^|;&]*\s)?(?:-d\b|--delete\b)|\bgit\s+checkout\s+(?!-b\b|-B\b)|\bgit\s+switch\s+(?:-d\b|--detach\b|-f\b|--force(?!-create)\b|--discard-changes\b)|\bgit\s+branch\s+(?:[^|;&]*\s)?-[dDM]\b/;
 const gitValueOptions = new Set(["-C", "--git-dir", "--work-tree", "-c", "--config-env", "--namespace"]);
 const gitBooleanOptions = new Set(["--version", "--help", "--no-pager", "-p", "--paginate", "--bare", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--exec-path"]);
 
@@ -91,19 +91,22 @@ function tagPublishRefspecIn(refspec: string): boolean {
   return token.startsWith("refs/tags/");
 }
 
-function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>): string | undefined {
+function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>): string | "wildcard-refspec" | undefined {
   for (const segment of splitShellSegments(command)) {
     const normalized = normalizedGitSegments(segment)[0];
     if (!normalized) continue;
     const words = normalized.split(" ");
     if (words[1] !== "push") continue;
-    for (const branch of protectedBranches) {
-      for (const refspec of words.slice(2).filter((word) => !word.startsWith("-"))) {
-        if (tagPublishRefspecIn(refspec)) continue;
-        const destination = refspec.includes(":") ? refspec.slice(refspec.lastIndexOf(":") + 1) : refspec;
-        const normalizedDestination = destination.replace(/^refs\/heads\//, "");
-        if (normalizedDestination === branch) return branch;
-      }
+    for (const refspec of words.slice(2).filter((word) => !word.startsWith("-"))) {
+      // W084 tag-publish exemption first (tag globs stay release operations),
+      // then the W101 review P1 wildcard fail-closed: a branch-glob
+      // destination maps ALL heads including the protected ones and cannot
+      // be resolved to a concrete branch.
+      if (tagPublishRefspecIn(refspec)) continue;
+      if (refspec.includes("*")) return "wildcard-refspec";
+      const destination = refspec.includes(":") ? refspec.slice(refspec.lastIndexOf(":") + 1) : refspec;
+      const normalizedDestination = destination.replace(/^refs\/heads\//, "");
+      if (protectedBranches.has(normalizedDestination)) return normalizedDestination;
     }
   }
   return undefined;
@@ -164,7 +167,13 @@ function walkWords(
     if (word === "--") { endOpts = true; continue; }
     if (word.startsWith("--")) {
       if (/^--[\w.-]+=/.test(word)) continue;
-      if (onLong(word) === "unknown") uncertain = true;
+      const verdict = onLong(word);
+      // W101 review P0: a space-form value option consumes its value token —
+      // otherwise the value becomes the first operand and shifts the target
+      // selection (e.g. `branch -f --points-at HEAD main <sha>` phantom-
+      // allowing a protected pointer move).
+      if (verdict === "value") { i += 1; continue; }
+      if (verdict === "unknown") uncertain = true;
       continue;
     }
     if (word.startsWith("-") && word.length > 1) {
@@ -278,6 +287,11 @@ function parseFetch(words: string[]): PointerInvocation | undefined {
     if (colon < 0) continue;
     const destination = refspec.slice(colon + 1);
     if (destination.length === 0) continue;
+    // Tag destinations are release operations, not branch pointer moves
+    // (the W084 shape); a wildcard BRANCH destination maps all heads
+    // including the protected ones and fails closed (review P1).
+    if (destination.startsWith("refs/tags/")) continue;
+    if (destination.includes("*")) return { targets: [], uncertain: true, needsCurrentBranch: false };
     return { targets: [destination], uncertain: false, needsCurrentBranch: false };
   }
   return undefined;
@@ -318,6 +332,9 @@ export function checkGitPolicy(command: string, context: GitPolicyContext): { po
   if (hasUnsafeGitAlias(command)) return { decision: "deny", policy: "unsafe-git-alias", reason: "Inline Git aliases can hide policy-relevant operations." };
   const protectedBranches = protectedBranchesIn(context);
   const pushed = pushedProtectedBranchIn(command, protectedBranches);
+  if (pushed === "wildcard-refspec") {
+    return { decision: "deny", policy: "protected-branch-push", reason: "Wildcard push refspec destinations cannot be resolved to concrete branches; failing closed." };
+  }
   if (pushed) return { decision: "deny", policy: "protected-branch-push", reason: `Direct pushes to protected branch '${pushed}' are not allowed.` };
   // W101: the semantic target gate runs per segment BEFORE the
   // current-branch-gated spelling lanes; deny-class ordering is preserved

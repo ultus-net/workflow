@@ -897,6 +897,39 @@ test("W101: recorded residuals keep their as-found shape (queued companion fixes
   assert.equal(checkPolicy({ action: "shell", command: "git branch main abc123def", currentBranch: "main" }).decision, "allow");
 });
 
+test("W101 review round: the parser's value-option consumption and wildcard fail-closed (review P0/P1/P2)", () => {
+  // P0: a space-form value option consumes its value — the phantom shape
+  // bound HEAD to --points-at and force-created main at the sha (allow today
+  // before the fix, mis-selecting the first operand as the target).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const phantom = checkPolicy({ action: "shell", command: "git branch -f --points-at HEAD main abc123def", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(phantom.decision, "deny", String(currentBranch));
+  }
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m --format x renamed", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -D --points-at HEAD main", currentBranch: "feat/g5" }).decision, "deny");
+  // P1: wildcard branch destinations map ALL heads including protected ones.
+  const pushGlob = checkPolicy({ action: "shell", command: "git push origin refs/heads/*:refs/heads/*", currentBranch: "feat/g5" });
+  assert.equal(pushGlob.decision, "deny");
+  assert.equal(pushGlob.policy, "protected-branch-push");
+  assert.equal(checkPolicy({ action: "shell", command: "git fetch origin refs/heads/*:refs/heads/*", currentBranch: "feat/g5" }).decision, "deny");
+  // Tag globs keep their W084 release-operation exemption.
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin refs/tags/*:refs/tags/*", currentBranch: "feat/g5" }).decision, "allow");
+  // P2: --force-create must not over-match the discard-class --force.
+  assert.equal(checkPolicy({ action: "shell", command: "git switch --force-create feat/g5", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git switch --force main", currentBranch: "main" }).decision, "deny");
+});
+
+test("W101 review: the spelling lanes stay intact where the gate is silent", () => {
+  // Row 16's target-blind conservative deny is preserved even when the gate
+  // allows the (non-protected) target: branch -M/-d on a protected current
+  // branch deny via the unchanged -[dDM] clause.
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -M feat/g5 x", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -m feat/g5 feat2", currentBranch: "main" }).decision, "allow");
+  // Unknown flags WITHOUT pointer flags keep today's behavior (git errors on
+  // them at runtime anyway).
+  assert.equal(checkPolicy({ action: "shell", command: "git branch --mystery" }).decision, "allow");
+});
+
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {
   const { hasGitMutation } = await import("../src/git-policy.js");
   assert.equal(hasGitMutation("git branch -f main abc123def"), true);

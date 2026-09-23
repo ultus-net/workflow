@@ -2535,8 +2535,30 @@ deny was dropped in the rewrite) — the pins caught both; the W099 pin
 collisions resolved by supersession + probe, never by weakening. Live
 re-probe of the 28-row family inventory against the REBUILT dist: all 56
 probe rows match the position (facts + factless, on-branch +
-cross-branch, fixes + residuals). Repo lint/typecheck in this
-iteration's evidence below.
+cross-branch, fixes + residuals).
+
+**Review round 1 (fresh-eyes) — REJECT, three real gate defects, all
+fixed and pinned:** (P0) space-form value options (`--points-at HEAD`,
+`--format x`) shifted the parser's first-operand target selection —
+`git branch -f --points-at HEAD main <sha>` phantom-allowed a protected
+pointer move factless; (P1) wildcard branch-glob destinations
+(refs/heads/*:refs/heads/*) escaped BOTH the new fetch lane and the
+pre-existing push lane (tag globs keep their W084 exemption); (P2)
+`--force\b` over-matched `--force-create`, re-introducing the exact
+spelling-vs-intent asymmetry for the switch spelling (deny-direction).
+Fixes: value consumption in the operand walk; wildcard branch-glob
+destinations fail closed in both lanes; `--force(?!-create)\b` lookahead.
+Pre-fix verdicts captured LIVE against the pre-fix dist (allow, allow,
+allow, allow, deny — genuine red), post-fix green. The spec's §4.4
+"W099 stays red-free" claim was corrected by a §7 implementation addendum
+on the W100 doc (the -B feature-on-main pin supersession always moved one
+pin; the doc's red-free claim missed it — the supersession is disclosed
+in the pin comment, the parity log, and here).
+
+**Evidence (final, at the review-fixed tip):** suites 81/0 (policy 71 +
+redirect 5 + mcp 5); the 55-row live re-probe matches the position
+against the REBUILT dist; repo lint/typecheck exit 0; security-assurance
+checker 7/0.
 
 **Acceptance criteria:**
 - [x] Both matchers widened in the same change (`gitWriteRe` lanes +
@@ -2547,10 +2569,12 @@ iteration's evidence below.
 - [x] Red-first pins for every changed row; W099 set survives except the
       one position-superseded assertion (supersession note recorded);
       characterization pins added for rows 16–21 + the round-3 watch-items
-      (explicit `checkout <sha>`, row 27).
-- [x] dist rebuilt + live re-probe green (56/56 rows).
-- [x] Parity-log W101 divergence entry; SECURITY_ASSURANCE residuals #20/#21;
-      repo lint/typecheck exit 0 (below).
+      (explicit `checkout <sha>`, row 27) + the review-round shapes
+      (value-option phantom, wildcard globs, `--force-create`).
+- [x] dist rebuilt + live re-probe green (56/56 pre-review, 55/55
+      post-review-fixes).
+- [x] Parity-log W101 divergence entry (incl. the review round);
+      SECURITY_ASSURANCE residuals #20/#21; repo lint/typecheck exit 0.
 - [x] Queued (NOT this iteration): the deny-path `sh -c` recursion
       companion fix; the exotic symbolic-ref matcher line; the
       `localBranches` fact for row 4's disambiguation (separately queued).
