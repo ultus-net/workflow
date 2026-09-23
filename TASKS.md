@@ -3006,6 +3006,17 @@ security-assurance checker (7), plus the held-out task-graph suite
 helper fixes: a test helper's parameter type intersected with a
 branded id cannot accept a plain string — Omit the branded field from
 the Partial instead); lint exit 0.
+   CORRECTION (review round 1, 2026-09-23): this item's earlier draft
+claimed the pre-change handler "dropped" the proxy's
+`metadata.truncated` — FALSIFIED by the reviewer against base source:
+`query()` mapped `metadata.truncated` into `AnalyticsResult.truncated`
+faithfully, the base handler relayed byModel/byDay whole (truncated
+inside them), and the base UI already rendered byModel truncation;
+only byDay truncation went carried-but-never-rendered. The genuine
+pre-change anti-patterns this iteration closed: silent days coercion
+(no disclosure), silent empty series on unavailable granularity,
+undisclosed limits/window, and the byDay truncated tell carried but
+never rendered. Recorded as the correction, not hidden.
 
 **Acceptance criteria:**
 - [x] Every /api/usage response carries server-computed coverage;
