@@ -12,6 +12,52 @@ import { enforceReplayPolicy } from "./model-replay-policy.js";
 
 export { METERED_PLACEHOLDER_KEY };
 
+/**
+ * W109 (W095 c2): a body transform for the metering proxy's policy-routing
+ * seam. Pure: takes the current body, returns the next body (or a non-record
+ * to be skipped). Consumers: the W070a profile shaping, the W098 c2 cache
+ * marker pass, and — queued — the W095 budget-downgrade body rewrite.
+ */
+export type BodyTransform = (body: Record<string, unknown>) => Record<string, unknown>;
+
+/**
+ * W109 (W095 c2): composes body transforms in order into one transform for
+ * the proxy's `transformBody` seam. Per-stage fail-open: a stage whose
+ * return is not a record — or that THROWS — is skipped and the chain
+ * continues with the last good body, so composing consumers cannot change
+ * the pass-through posture. An empty list returns the body untouched.
+ *
+ * Ordering guidance for policy consumers (frontier round 1 P3): a stage
+ * that REWRITES `body.model` (the W095 budget-downgrade rewrite) must
+ * attach BEFORE the profile-shaping stage — both key on `body.model`, and
+ * a model rewrite after shaping leaves the body shaped for the
+ * pre-downgrade model.
+ */
+export function composeBodyTransforms(transforms: readonly BodyTransform[]): BodyTransform {
+  return (body: Record<string, unknown>): Record<string, unknown> => {
+    let current = body;
+    for (const transform of transforms) {
+      let result: Record<string, unknown> | unknown;
+      try {
+        result = transform(current);
+      } catch {
+        // W109 (frontier round 1 P2): the fail-open extends to THROWING
+        // stages — a buggy policy-critical stage is skipped and the chain
+        // continues with the last good body, so composing consumers cannot
+        // change the pass-through posture (a propagating throw would 502 the
+        // whole pool).
+        continue;
+      }
+      if (isRecordTransformResult(result)) current = result;
+    }
+    return current;
+  };
+}
+
+function isRecordTransformResult(value: Record<string, unknown> | unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 export interface ModelUsageMetrics {
   readonly requests: number;
   readonly usageEvents: number;
@@ -102,6 +148,14 @@ export async function createModelUsageProxy(options: {
    * request shaping at the vendor boundary. A non-object return is ignored so
    * a misbehaving transform cannot corrupt the request. Absent leaves the body
    * untouched.
+   *
+   * W109 (W095 c2): this option is the metering proxy's POLICY-ROUTING
+   * transform point — the same seam the W095 design note names for the
+   * budget-downgrade body rewrite (its second consumer, alongside the W070a
+   * profile shaping). Policy consumers compose through
+   * `composeBodyTransforms`; the pass-through posture is unchanged for
+   * unclassified traffic (absent transforms and non-record returns leave the
+   * body untouched).
    */
   readonly transformBody?: ((body: Record<string, unknown>) => Record<string, unknown>) | undefined;
   /**

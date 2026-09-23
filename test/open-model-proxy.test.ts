@@ -123,3 +123,72 @@ test("a family split across endpoints fails closed instead of misrouting", async
     /spans multiple endpoints/,
   );
 });
+
+// ---- W109 (W098 c2): an anthropic-wire pool with the cacheMarkers opt-in
+// marks the stable composition-time prefixes through the governed pipeline;
+// the pool without the opt-in passes through; the definition's wire reaches
+// the profile (the pre-change composer dropped it, so anthropic-wire pools
+// could not exist). DISCOVERED AND QUEUED: the proxy's metering/transform
+// pipeline governs only the /chat/completions path — the anthropic messages
+// path passes through unmetered and untransformed (a pre-existing W070b-era
+// gap the marker injection's real-traffic effectiveness depends on). ----
+
+test("W109: the anthropic-wire pool marks stable prefixes when opted in and passes through without the opt-in", async (context) => {
+  const upstream = await fakeUpstream({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.0001 });
+  context.after(() => upstream.close());
+  const anthropicDef: OpenModelDefinition = {
+    ...DEFAULT_OPEN_SOURCE_POOL[0]!,
+    endpoint: "https://api.deepseek.com/anthropic",
+    wire: "anthropic",
+  };
+  const markedPool = await createOpenModelMeteringPool({
+    pool: [anthropicDef],
+    keys: { deepseek: "DEEPSEEK_KEY" },
+    upstreamOverride: () => upstream.url,
+    cacheMarkers: true,
+  });
+  try {
+    const deepseek = markedPool.byFamily.get("deepseek")!;
+    const response = await fetch(`${deepseek.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "deepseek-flash", system: "You are Workflow.", tools: [{ name: "read_file" }], messages: [{ role: "user", content: "hi" }] }),
+    });
+    assert.equal(response.status, 200);
+    const seenBody = JSON.parse(upstream.seen[0]?.body ?? "{}") as {
+      system: Array<{ text: string; cache_control?: { type: string } }>;
+      tools: Array<{ cache_control?: { type: string } }>;
+      messages: unknown;
+      reasoning?: { effort: string };
+      thinking?: unknown;
+    };
+    assert.equal(seenBody.system[0]?.cache_control?.type, "ephemeral", "the system block carries the marker on the wire");
+    assert.equal(seenBody.tools.at(-1)?.cache_control?.type, "ephemeral", "the last tool carries the breakpoint");
+    assert.equal(seenBody.system[0]?.text, "You are Workflow.");
+    // The definition's wire reached the profile: the deepseek anthropic
+    // shaping branch applies (reasoning object, no thinking field).
+    assert.deepEqual(seenBody.reasoning, { effort: "high" });
+    assert.equal("thinking" in seenBody, false);
+  } finally {
+    await markedPool.close();
+  }
+
+  const plainPool = await createOpenModelMeteringPool({
+    pool: [anthropicDef],
+    keys: { deepseek: "DEEPSEEK_KEY" },
+    upstreamOverride: () => upstream.url,
+  });
+  try {
+    const deepseek = plainPool.byFamily.get("deepseek")!;
+    await fetch(`${deepseek.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "deepseek-flash", system: "You are Workflow.", messages: [{ role: "user", content: "hi" }] }),
+    });
+    const plainBody = JSON.parse(upstream.seen[1]?.body ?? "{}") as { system: unknown; reasoning?: { effort: string } };
+    assert.equal(plainBody.system, "You are Workflow.", "no opt-in: the system string passes through unmarked");
+    assert.deepEqual(plainBody.reasoning, { effort: "high" }, "the wire shaping still applies without the marker opt-in");
+  } finally {
+    await plainPool.close();
+  }
+});
