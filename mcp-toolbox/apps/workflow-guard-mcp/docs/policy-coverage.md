@@ -322,3 +322,14 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   factless stays fail-closed. Pre-fix verdicts captured live
   (allow, allow); suites 84/0; 55-row re-probe + round-2/3 shapes green
   against the REBUILT dist.
+
+  Review round 5 (re-review) — REVISE: the delete grammar is variadic
+  (git-branch(1): (-d|-D) <branchname>...) and the gate's delete arm kept
+  only the first operand — git branch -D feat2 main classified allow
+  while git deletes BOTH. Fixed: delete targets are ALL operands (force-
+  set keeps first-operand-only). Recorded residual #22 (pre-existing
+  push lane): push origin HEAD / @ / bare push from a protected seat
+  update the remote protected branch under allow (colon form pinned
+  deny) — queued resolution via the currentBranch fact. Pre-fix
+  verdicts captured live (allow x3); suites 85/0; 55-row re-probe +
+  round-2 shapes green against the REBUILT dist.

@@ -2571,17 +2571,25 @@ fails closed on ANY `--refmap` spelling before parsing; the `-c`/`-C`
 combination watch-item pinned; benign prune fetches stay allow (pre-fix
 verdict captured live as allow). Suites 83/0 (policy 73 + redirect 5 +
 mcp 5); the 55-row live re-probe + all round-2/3 shield shapes green
-against the REBUILT dist; repo lint/typecheck exit 0;
-security-assurance checker 7/0. Review round 4 (re-review) — REVISE:
-the one-arg rename writes BOTH names (the position's row-12 framing
-covered only the source half; the destination operand force-overwrites
-a protected branch when it names one — `git branch -M main` from a
-feature branch destroys refs/heads/main, valid git); fixed — the one-arg
-form checks BOTH the destination operand and the current branch
-(fact-gated source), factless stays fail-closed; pre-fix verdicts
-captured live (allow, allow); suites 84/0 (policy 74 + redirect 5 + mcp
-5); 55-row re-probe + round-2/3 shapes green against the REBUILT dist;
-repo lint/typecheck exit 0.
+against the REBUILT dist; repo lint/typecheck exit 0. Review round 4
+(re-review) — REVISE: the one-arg rename writes BOTH names (the
+position's row-12 framing covered only the source half; the destination
+operand force-overwrites a protected branch when it names one — git
+branch -M main from a feature branch destroys refs/heads/main, valid
+git); fixed — the one-arg form checks BOTH the destination operand and
+the current branch (fact-gated source), factless stays fail-closed;
+pre-fix verdicts captured live (allow, allow); suites 84/0 (policy 74 +
+redirect 5 + mcp 5). Review round 5 (re-review) — REVISE: the
+delete grammar is variadic (git-branch(1): (-d|-D) <branchname>...) and
+the gate's delete arm kept only the first operand — git branch -D feat2
+main classified allow while git deletes BOTH; fixed — delete targets
+are ALL operands (force-set keeps first-operand-only). Recorded
+residual #22 (pre-existing push lane): push origin HEAD / @ / bare push
+from a protected seat update the remote protected branch under allow
+(colon form pinned deny) — queued resolution via the currentBranch
+fact. Pre-fix verdicts captured live (allow x3); suites 85/0 (policy 75
++ redirect 5 + mcp 5); 55-row re-probe + round-2 shapes green against
+the REBUILT dist; repo lint/typecheck exit 0.
 
 **Acceptance criteria:**
 - [x] Both matchers widened in the same change (`gitWriteRe` lanes +

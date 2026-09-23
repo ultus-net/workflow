@@ -984,6 +984,33 @@ test("W101 review round 4: the one-arg rename writes BOTH names", () => {
   assert.equal(checkPolicy({ action: "shell", command: "git branch -m renamed", currentBranch: "main" }).decision, "deny");
 });
 
+test("W101 review round 5: branch delete is variadic — every operand is a written target", () => {
+  // git-branch(1): `git branch [-r] (-d | -D) <branchname>…` — the delete
+  // grammar is variadic, so `git branch -D feat2 main` deletes BOTH. The
+  // pre-fix gate kept only the first operand and classified allow (captured
+  // red live against the pre-fix dist).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const variadic = checkPolicy({ action: "shell", command: "git branch -D feat2 main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(variadic.decision, "deny", String(currentBranch));
+    const long = checkPolicy({ action: "shell", command: "git branch --delete feat2 main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(long.decision, "deny", String(currentBranch));
+    const separated = checkPolicy({ action: "shell", command: "git branch -D -- feat2 main", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(separated.decision, "deny", String(currentBranch));
+  }
+  // Reordered protected-first still denies; the on-main target-blind
+  // conservative deny is unchanged (row 16 — ANY delete while ON a
+  // protected branch denies); the factless all-feature delete stays allow
+  // (the gate adds denies, never loosens).
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -d main feat2", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -D feat2 feat3", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -D feat2 feat3" }).decision, "allow");
+  // The recorded push HEAD-alias residual (pre-existing push lane, queued
+  // resolution): from a protected seat the bare alias form updates the
+  // remote protected branch under allow — the colon form is pinned deny.
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin HEAD", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin HEAD:main", currentBranch: "feat/g5" }).decision, "deny");
+});
+
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {
   const { hasGitMutation } = await import("../src/git-policy.js");
   assert.equal(hasGitMutation("git branch -f main abc123def"), true);

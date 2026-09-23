@@ -202,11 +202,11 @@ function walkWords(
 }
 
 function parseBranch(words: string[]): PointerInvocation | undefined {
-  let renameish = false, copyish = false, targetish = false, known = false;
+  let renameish = false, copyish = false, targetish = false, deleteish = false, known = false;
   const walk = walkWords(
     words,
     (ch) => {
-      if (ch === "d" || ch === "D" || ch === "f") { targetish = true; known = true; return true; }
+      if (ch === "d" || ch === "D" || ch === "f") { targetish = true; known = true; if (ch !== "f") deleteish = true; return true; }
       if (ch === "m" || ch === "M") { renameish = true; known = true; return true; }
       if (ch === "c" || ch === "C") { copyish = true; known = true; return true; }
       // List/config flags: never pointer forms, always safe to skip.
@@ -215,7 +215,7 @@ function parseBranch(words: string[]): PointerInvocation | undefined {
     },
     (word) => {
       if (branchValueOptions.has(word)) return "value";
-      if (word === "--force" || word === "--delete") { targetish = true; known = true; return "flag"; }
+      if (word === "--force" || word === "--delete") { targetish = true; known = true; if (word === "--delete") deleteish = true; return "flag"; }
       if (word === "--move") { renameish = true; known = true; return "flag"; }
       if (word === "--copy") { copyish = true; known = true; return "flag"; }
       if (word === "--set-upstream-to" || word === "--edit-description" || word === "--show-current" || word === "--list" || word === "--omit-empty" || word === "--ignore-case" || word === "--create-reflog" || word === "--no-abbrev" || word === "--track" || word === "--no-track" || word === "--recurse-submodules" || word === "--color" || word === "--column" || word === "--abbrev" || word === "--quiet" || word === "--verbose" || word === "--all" || word === "--remotes") return "flag";
@@ -240,7 +240,15 @@ function parseBranch(words: string[]): PointerInvocation | undefined {
     // Copy writes the DESTINATION (last operand); the source is read.
     return { targets: [walk.operands[walk.operands.length - 1]!], uncertain: false, needsCurrentBranch: false };
   }
-  // Force-set and delete: the first operand is the target branch.
+  if (deleteish) {
+    // Review round 5: delete is VARIADIC in git (`git branch -D <name>…`
+    // deletes every named branch), so every operand is a written target —
+    // the first-operand-only rule would let `git branch -D feat2 main`
+    // destroy the protected branch that is named second.
+    return { targets: walk.operands, uncertain: false, needsCurrentBranch: false };
+  }
+  // Force-set: the first operand is the target branch; the second, when
+  // present, is a start-point (read-only).
   return { targets: [walk.operands[0]!], uncertain: false, needsCurrentBranch: false };
 }
 

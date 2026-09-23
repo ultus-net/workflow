@@ -563,3 +563,22 @@ dist rebuild) with these deltas from §4's letter, recorded honestly:
    Pre-fix verdicts captured live (allow, allow); suites 84/0 (policy 74
    + redirect 5 + mcp 5); the 55-row re-probe + round-2/3 shapes green
    against the REBUILT dist; repo lint/typecheck exit 0.
+8. **Review round 5 (re-review) — REVISE, the delete grammar is variadic,
+   fixed:** git-branch(1)'s delete grammar is `(-d | -D) <branchname>…` —
+   variadic — but the gate's delete arm kept only the first operand, so
+   `git branch -D feat2 main` (also `--delete`, reordered, and
+   `--`-separated spellings) classified allow while git deletes BOTH.
+   Fix: delete targets are ALL operands (force-set keeps
+   first-operand-only — its second operand is a start-point). Recorded
+   residual (pre-existing push lane, adjacent): `git push origin HEAD` /
+   `@` / bare `git push` from a protected seat update the remote
+   protected branch under allow (the colon form `HEAD:main` is pinned
+   deny) — SECURITY_ASSURANCE #22, as-found pin, queued resolution via
+   the currentBranch fact the seat already supplies. En-route: the
+   round-5 pin draft wrongly expected `branch -D feat2 feat3` on main to
+   be allow — row 16's target-blind conservative deny is unchanged, and
+   the corrected assertion (on-main deny, factless all-feature allow)
+   doubles as the no-loosening pin. Pre-fix verdicts captured live
+   (allow, allow, allow); suites 85/0 (policy 75 + redirect 5 + mcp 5);
+   the 55-row re-probe + round-2 shapes green against the REBUILT dist;
+   repo lint/typecheck exit 0.
