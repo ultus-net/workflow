@@ -637,12 +637,16 @@ test("W112: an oversized payload is NOT-APPROVABLE-WITH-REASON — deny stays av
   const markup = renderToStaticMarkup(createElement(PermissionPrompt, { pending, answer: ANSWER_NOOP, remembered: 0 }));
   assert.ok(markup.includes("NOT-APPROVABLE-WITH-REASON"), "the not-approvable reason renders verbatim");
   assert.ok(markup.includes("inspection cap"), "the reason states the cap");
-  // Never approvable-with-warning: the allow affordances are disabled.
-  const allowButton = markup.slice(markup.indexOf(">Allow<") - 200, markup.indexOf(">Allow<"));
-  assert.match(allowButton, /disabled/, "Allow is disabled on an uninspectable payload");
-  assert.ok(!markup.includes(">Always allow this tool</button>") || (markup.includes("disabled") && true), "the allow-family affordances are gated");
-  // Deny stays available (a refusal is always possible).
-  const denyButton = markup.slice(markup.indexOf(">Deny<") - 200, markup.indexOf(">Deny<"));
-  assert.ok(!denyButton.includes("disabled"), "Deny is never disabled");
+  // Never approvable-with-warning: BOTH allow affordances are disabled (the
+  // allow pair renders before the deny pair; slice between them so the
+  // assertion covers Allow AND Always-allow, not just one).
+  const allowWindow = markup.slice(markup.indexOf(">Allow<") - 300, markup.indexOf(">Deny<"));
+  assert.match(allowWindow, /disabled/, "Allow is disabled on an uninspectable payload");
+  assert.match(allowWindow, /Always allow this tool/, "the Always-allow affordance is inside the gated window");
+  assert.equal((allowWindow.match(/disabled/g) ?? []).length >= 2, true, "both allow affordances are gated");
+  // Deny stays available (a refusal is always possible): the Deny button's
+  // own tag carries no disabled.
+  const denyTag = markup.slice(markup.indexOf(">Deny<") - 120, markup.indexOf(">Deny<"));
+  assert.ok(!denyTag.includes("disabled"), "Deny is never disabled");
 });
 

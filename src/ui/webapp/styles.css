@@ -1334,6 +1334,7 @@ body {
 /* W112 (amux C5): the full-payload inspection and the approval disciplines. */
 .part-permission-input-full { max-height: 16rem; }
 .part-permission-input-overcap { color: var(--fail); }
+.part-permission-meta-row { display: block; color: var(--text-muted); font-size: 0.8rem; }
 .part-permission-meta { color: var(--text-muted); font-size: 0.8rem; }
 .part-permission-meta:not(:last-child)::after { content: " · "; }
 .part-permission-reviewed { display: block; margin: 0.4rem 0; font-size: 0.8rem; }

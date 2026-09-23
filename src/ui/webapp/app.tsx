@@ -846,7 +846,10 @@ export function PermissionPrompt({ pending, answer, remembered }: {
     cardRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
     allowRef.current?.focus();
   }, [pending.id]);
-  const rendered = payloadRenderText(pending.input);
+  // W112 review round 1 P1/P2: the payload text is computed INLINE in the
+  // render branch (guarded by pending.input !== undefined — an ACP rawInput
+  // is optional and may be absent, and payloadRenderText(undefined) would
+  // throw). No unguarded pre-computation.
   const notApprovable = pending.input !== undefined && payloadRenderText(pending.input).overCap;
   const allowDisabled = notApprovable || !reviewed;
   return (
@@ -856,7 +859,7 @@ export function PermissionPrompt({ pending, answer, remembered }: {
         <code className="part-permission-tool">{pending.tool}</code>
         {remembered > 0 && <span className="part-permission-remembered">{remembered} remembered</span>}
       </div>
-      <div className="part-permission-meta">
+      <div className="part-permission-meta-row">
         {pending.mutating !== undefined && <span className="part-permission-meta">{pending.mutating ? "mutating" : "read-only"}</span>}
         {pending.capability !== undefined && <span className="part-permission-meta">capability: {pending.capability}</span>}
         {pending.taskId !== undefined && <span className="part-permission-meta">task: {pending.taskId}</span>}
