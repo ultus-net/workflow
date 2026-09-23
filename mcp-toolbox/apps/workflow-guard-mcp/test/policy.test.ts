@@ -1112,6 +1112,25 @@ test("W102: nested wrappers recurse with the depth cap", () => {
   assert.equal(checkPolicy({ action: "shell", command: "sh script.sh" }).decision, "allow");
 });
 
+test("W102 review round 1: fused -c spellings are detected; the env-prefix note was wrong", () => {
+  // P1: `-c` glued to its quoted command is real shell getopt semantics —
+  // the tokenizer fuses the word, and the detection now reads the fused
+  // option-argument (captured red live: allow pre-fix on main).
+  assert.equal(checkPolicy({ action: "shell", command: "bash -c'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c'git reset --hard abc123def'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c'git branch -f main abc'", currentBranch: "feat/g5" }).decision, "deny");
+  // P2: env/timeout/VAR= prefixes are CONSUMED by the unwrapper — prefixed
+  // wrappers were already detected; the W101-era "env limitation" note was
+  // factually wrong and the records are corrected (deny asserted so the
+  // corrected claim has coverage).
+  assert.equal(checkPolicy({ action: "shell", command: "env sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "VAR=val sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "timeout 30 sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  // The honest residual edge that REMAINS: exotic interpreter names
+  // (busybox sh, xsh) are outside the sh-family detection — queued.
+  assert.equal(checkPolicy({ action: "shell", command: "busybox sh -c 'git commit -m x'", currentBranch: "main" }).decision, "allow");
+});
+
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {
   const { hasGitMutation } = await import("../src/git-policy.js");
   assert.equal(hasGitMutation("git branch -f main abc123def"), true);

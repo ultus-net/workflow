@@ -54,12 +54,10 @@ export function hasGitMutation(command: string, depth = 0): boolean {
   // colon-refspec clause, in the SAME change as the target gate below.
   const extras = /\bgit\s+branch\s+(?:[^|;&]*\s)?-(?:[dDfMCcm]|--force\b|--move\b|--copy\b|--delete\b)|\bgit\s+fetch\s+[^|;&]*:\S|\bgit\s+pull\b/;
   if (gitWriteRe.test(normalized) || extras.test(normalized) || /\bgit\s+(?:switch|checkout)\b/.test(normalized)) return true;
-  return splitShellSegments(command).some((segment) => {
-    const words = unwrapShellWords(segment);
-    if (!/^(?:ba|z|da|k)?sh$/i.test(basename(words[0] ?? ""))) return false;
-    const commandFlag = words.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
-    return commandFlag >= 0 && Boolean(words[commandFlag + 1]) && hasGitMutation(words[commandFlag + 1]!, depth + 1);
-  });
+  // W102 review round 1 P3: the wrapper walk is SHARED (one detection
+  // implementation, not a verbatim copy) so the mutation matcher and the
+  // deny path cannot drift.
+  return wrapperCommands(command).some((inner) => hasGitMutation(inner, depth + 1));
 }
 
 function hasUnsafeGitAlias(command: string): boolean {
@@ -402,17 +400,36 @@ function checkPointerTarget(words: string[], protectedBranches: Set<string>, con
 }
 
 export function wrapperCommands(command: string): string[] {
-  // The hasGitMutation detection discipline, shared verbatim: sh-family
-  // interpreters with a -c command flag expose their command string to the
-  // deny path. `sh script.sh` is NOT a wrapper (script contents are
-  // unknowable — the file-scanner's territory), and env-prefixed wrappers
-  // share the same documented limitation as the mutation matcher.
+  // The wrapper detection shared by BOTH matchers (hasGitMutation and the
+  // deny path — W102 review round 1 P3: one implementation, not a verbatim
+  // copy): sh-family interpreters exposing their command string via -c.
+  // `sh script.sh` is NOT a wrapper (script contents are unknowable — the
+  // file-scanner's territory). The fused -c form (`sh -c'git commit'` — no
+  // space between -c and the quote) is real shell getopt semantics: the
+  // remainder of the word IS the option-argument, and the tokenizer glues
+  // the quoted text into the word — the fused spelling is detected, not a
+  // bypass (W102 review round 1 P1). env/timeout/VAR= prefixes are consumed
+  // by unwrapShellWords, so prefixed wrappers ARE detected (the W101-era
+  // "env limitation" note was factually wrong — corrected by review round 1
+  // P2). busybox sh / exotic interpreter names remain the honest edge.
   return splitShellSegments(command).flatMap((segment) => {
     const words = unwrapShellWords(segment);
     if (!/^(?:ba|z|da|k)?sh$/i.test(basename(words[0] ?? ""))) return [];
-    const commandFlag = words.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
-    if (commandFlag < 0 || !words[commandFlag + 1]) return [];
-    return [words[commandFlag + 1]!];
+    for (let i = 1; i < words.length; i++) {
+      const word = words[i]!;
+      if (word === "--") return [];
+      if (!word.startsWith("-")) return [];
+      if (word === "-c") {
+        return words[i + 1] ? [words[i + 1]!] : [];
+      }
+      // The fused getopt form: `-c` at the word head, the option-argument
+      // glued on (`-c'cmd'` tokenizes as "-c" glued to the command).
+      if (word.startsWith("-c") && word.length > 2) {
+        const fused = word.slice(2).replace(/^['"]|['"]$/g, "");
+        return fused.length > 0 ? [fused] : [];
+      }
+    }
+    return [];
   });
 }
 
