@@ -626,3 +626,33 @@ dist rebuild) with these deltas from §4's letter, recorded honestly:
     (assertions added inside existing blocks); 55-row re-probe +
     round-2 shapes green against the REBUILT dist; repo lint/typecheck
     exit 0; security-assurance checker 7/0.
+12. **The §4.6 companion fix DELIVERED (W102, feat/w102-wrapper-recursion):**
+    the shell-wrapper bypass residual (#20) is closed — `checkGitPolicy`
+    recurses into sh/bash/zsh/dash/ksh `-c` wrappers with the same seat
+    facts and a depth-16 fail-closed cap, and the detection is SHARED with
+    `hasGitMutation` (one implementation — the twin matchers' wrapper
+    scope is identical; the wrapped command classifies through the FULL
+    git pipeline: alias, push, target gate, spelling lanes). The design
+    direction the implementation settled on: wrapper TRANSPARENCY, not a
+    deny-everything blanket — a wrapped benign command (feature-branch
+    reset, `echo`) keeps its inner classification, because the wrapper
+    executes in the same repository with the same facts; the first
+    draft's deny-everything expectation was wrong and the corrected pins
+    assert wrapper ≡ inner. The as-found allow residual pin was
+    superseded with a note (residual closure, documented). Review round 1
+    hardened the closure: the FUSED `-c`-quote spelling
+    (`sh -c'git commit -m x'` — real shell getopt, tokenizer-glued) had
+    bypassed both matchers and now classifies through the wrapper, and
+    the env-prefix "limitation" recorded here earlier was FALSIFIED (the
+    unwrapper consumes env/timeout/assignment prefixes — prefixed
+    wrappers were always detected); the remaining honest edge is exotic
+    interpreter names (busybox sh, xsh), pinned as-found and queued — the
+    remaining edge, not a silently-closed bypass. Review round 2 closed
+    the bundled-flag wrapper family (`-ec`/`-xc`/`-vc` bundles, the
+    `-o <value> -c` detour, and the common spaced `bash -ec '...'` form —
+    getopt consumes the rest of the word as -c's option-argument; the
+    generalized -Xc matcher the boundary and shell lanes already use),
+    with the transparency principle applied per seat (factless variants
+    inherit the inner factless allow; target-gated shapes deny
+    factlessly via the base set) and the zsh EQUALS-expansion caveat
+    queued with the exotic-interpreter edge.

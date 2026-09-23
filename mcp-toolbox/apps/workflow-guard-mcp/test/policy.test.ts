@@ -883,10 +883,12 @@ test("W101: recorded residuals keep their as-found shape (queued companion fixes
   assert.equal(checkPolicy({ action: "shell", command: "git symbolic-ref HEAD refs/heads/main", currentBranch: "feat/g5" }).decision, "allow");
   // Row 27: worktree add checks a branch out into a NEW worktree — no pointer move.
   assert.equal(checkPolicy({ action: "shell", command: "git worktree add ../wt main", currentBranch: "feat/g5" }).decision, "allow");
-  // Row 28 residual: the shell-wrapper lane stays open until the queued
-  // companion fix extends the deny path's recursion (hasGitMutation already
-  // recurses; checkGitPolicy does not).
-  assert.equal(checkPolicy({ action: "shell", command: "sh -c 'git branch -f main abc123def'", currentBranch: "feat/g5" }).decision, "allow");
+  // Row 28 residual: the shell-wrapper bypass was CLOSED by W102's
+  // deny-path recursion (this assertion originally pinned the as-found
+  // allow as a queued-companion-fix residual — superseded; the wrapped
+  // pointer write now classifies through the wrapper, see the W102 block).
+  // The symbolic-ref exotic form and the HEAD-alias push residual remain
+  // as-found (queued separately).
   // Row 5 explicit pins (the round-3 watch-item: a future token-discriminating
   // matcher edit must not move the detach deny silently).
   assert.equal(checkPolicy({ action: "shell", command: "git checkout abc123def", currentBranch: "main" }).decision, "deny");
@@ -1058,6 +1060,147 @@ test("W101 review round 5: branch delete is variadic — every operand is a writ
     assert.equal(forced.policy, "protected-branch-push", String(currentBranch));
     assert.equal(checkPolicy({ action: "shell", command: `git push origin ${plus2}refs/heads/main`, ...(currentBranch ? { currentBranch } : {}) }).policy, "protected-branch-push");
   }
+});
+
+// ---- W102: the deny-path wrapper recursion (residual #20's closure) ----
+// W100 §4.6 recorded the residual: every git deny class was bypassable by
+// wrapping (`sh -c 'git reset --hard <sha>'` classified allow because
+// checkGitPolicy did not recurse; hasGitMutation already did, feeding only
+// the read-only-role gate). The fix extends the SAME recursion discipline to
+// the deny path: sh/bash/zsh/dash/ksh -c wrappers are transparent to the
+// full git classification (alias, push, target gate, spelling lanes), depth-
+// capped like the mutation matcher. RED-FIRST: every pin below asserted the
+// deny direction against the pre-fix tree (allow as-found, captured live in
+// the W101 round-5 residual pins).
+
+test("W102: wrapped git pointer writes are classified through the wrapper (residual #20 closure)", () => {
+  // The wrapper is TRANSPARENT to the inner classification — not
+  // deny-everything: the wrapper inherits exactly the verdict the inner
+  // command would have earned unwrapped, with the same seat facts (the
+  // wrapper executes in the same repository).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const context = currentBranch ? { currentBranch } : {};
+    // Reset from a feature branch is today's allow (the residual's original
+    // example denied only on the protected CURRENT branch, W101 round-5
+    // probe); the wrapper changes nothing.
+    assert.equal(checkPolicy({ action: "shell", command: "sh -c 'git reset --hard abc123def'", ...(currentBranch ? { currentBranch } : {}) }).decision, "allow");
+    // Target-shaped denials fire through the wrapper from any branch and
+    // factless (the gate's base-set coverage).
+    const pointer = checkPolicy({ action: "shell", command: "sh -c 'git branch -f main abc123def'", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(pointer.decision, "deny", String(currentBranch));
+    assert.equal(pointer.policy, "protected-branch-write", String(currentBranch));
+    const bash = checkPolicy({ action: "shell", command: "bash -c 'git update-ref refs/heads/main abc123def'", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(bash.decision, "deny", String(currentBranch));
+    // The push lane's deny recurses too (the wrapper cannot launder a
+    // protected-branch push).
+    const push = checkPolicy({ action: "shell", command: "sh -c 'git push origin main'", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(push.decision, "deny", String(currentBranch));
+    assert.equal(push.policy, "protected-branch-push", String(currentBranch));
+  }
+});
+
+test("W102: nested wrappers recurse with the depth cap", () => {
+  const nested = checkPolicy({ action: "shell", command: "sh -c 'sh -c \"git commit -m x\"'", currentBranch: "main" });
+  assert.equal(nested.decision, "deny");
+  assert.equal(nested.policy, "protected-branch-write");
+  // The inner verdict applies with the same facts: off-protected wrappers
+  // of benign commands stay transparent.
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c 'echo hi'" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c 'git switch feat/g5'", currentBranch: "main" }).decision, "allow");
+  // A wrapper without a -c command string is not recursed (script contents
+  // are unknowable — unchanged behavior, the file-scanner's territory).
+  assert.equal(checkPolicy({ action: "shell", command: "sh script.sh" }).decision, "allow");
+});
+
+test("W102 review round 1: fused -c spellings are detected; the env-prefix note was wrong", () => {
+  // P1: `-c` glued to its quoted command is real shell getopt semantics —
+  // the tokenizer fuses the word, and the detection now reads the fused
+  // option-argument (captured red live: allow pre-fix on main).
+  assert.equal(checkPolicy({ action: "shell", command: "bash -c'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c'git reset --hard abc123def'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c'git branch -f main abc'", currentBranch: "feat/g5" }).decision, "deny");
+  // P2: env/timeout/VAR= prefixes are CONSUMED by the unwrapper — prefixed
+  // wrappers were already detected; the W101-era "env limitation" note was
+  // factually wrong and the records are corrected (deny asserted so the
+  // corrected claim has coverage).
+  assert.equal(checkPolicy({ action: "shell", command: "env sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "VAR=val sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "timeout 30 sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  // The honest residual edge that REMAINS: exotic interpreter names
+  // (busybox sh, xsh) are outside the sh-family detection — queued; and
+  // the zsh-only EQUALS expansion (`zsh -c='git commit -m x'` executes
+  // =git via zsh's default equals expansion) is a parser-consistent allow
+  // queued with it (sh/bash harmlessly reject the command).
+  assert.equal(checkPolicy({ action: "shell", command: "busybox sh -c 'git commit -m x'", currentBranch: "main" }).decision, "allow");
+});
+
+test("W102 review round 2: bundled-flag wrappers are detected (the getopt -Xc family)", () => {
+  // getopt does not stop at the word head: a bundle carrying a c option
+  // consumes the rest of the word as -c's option-argument (captured red
+  // live: allow pre-fix on main). The spaced -ec form and the value-form
+  // -o detour are the same family. TRANSPARENCY applies per seat: the
+  // with-facts protected-seat variants deny (the inner command denies
+  // unwrapped), the factless variants inherit the inner factless allow
+  // (the W090 fail-open class, unchanged) — except the target-gated
+  // shapes, whose base-set deny fires factlessly too.
+  for (const currentBranch of ["main", undefined]) {
+    const context = currentBranch ? { currentBranch } : {};
+    assert.equal(checkPolicy({ action: "shell", command: "sh -ec'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "bash -ec 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `spaced commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "sh -xc'git reset --hard abc123def'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `reset ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "sh -vc'git branch -f main abc'", ...(currentBranch ? { currentBranch } : {}) }).decision, "deny", `branch -f ${String(currentBranch)}`);
+  }
+  assert.equal(checkPolicy({ action: "shell", command: "bash -o vi -c'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  // Benign bundles stay transparent.
+  assert.equal(checkPolicy({ action: "shell", command: "bash -ex 'echo hi'", currentBranch: "main" }).decision, "allow");
+});
+
+test("W102 review round 3: the -o bundle consumption is getopt-aware (B1 closure)", () => {
+  // getopt value semantics inside a bundle: `-euo pipefail` consumes
+  // pipefail as -o's value, so the walk reaches -c and the wrapped
+  // command classifies (captured red live: allow on main pre-fix, with
+  // facts and factless). The reviewer's trace: the walk died at the
+  // non-dash value word before reaching -c.
+  for (const currentBranch of ["main", undefined]) {
+    const context = currentBranch ? { currentBranch } : {};
+    // TRANSPARENCY per seat: the with-facts protected-seat variants deny
+    // (the inner command denies unwrapped); the factless variants inherit
+    // the inner factless allow (the W090 fail-open class) — except the
+    // target-gated shape, whose base-set deny fires factlessly too.
+    assert.equal(checkPolicy({ action: "shell", command: "bash -euo pipefail -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `euo commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "bash -eo pipefail -c 'git branch -f main abc'", ...(currentBranch ? { currentBranch } : {}) }).decision, "deny", `eo branch -f ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "zsh -euo pipefail -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `zsh euo ${String(currentBranch)}`);
+  }
+  // A fused -opipefail is NOT a value consumer (o is not the last option
+  // char) — the bundle continues to -c normally.
+  assert.equal(checkPolicy({ action: "shell", command: "bash -opipefail -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+});
+
+test("W102 review round 4: the -O/+O shopt family and the faithful positional stop", () => {
+  // bash's -O <shopt> (and the plus-sense +O/+o) consume a spaced argument
+  // and option parsing CONTINUES — the walk died at "extglob" and
+  // `git commit -m x` ran on main (captured red live: allow with facts and
+  // factless).
+  for (const currentBranch of ["main", undefined]) {
+    const context = currentBranch ? { currentBranch } : {};
+    assert.equal(checkPolicy({ action: "shell", command: "bash -O extglob -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `O extglob commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "bash -eO extglob -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `eO commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "bash +O extglob -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `plusO commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "bash +o extglob -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `pluso commit ${String(currentBranch)}`);
+  }
+  // Transparency: benign -O usage keeps its inner classification.
+  assert.equal(checkPolicy({ action: "shell", command: "bash -O extglob -c 'echo hi'", currentBranch: "feat/g5" }).decision, "allow");
+  // The reviewer's falsified candidate, pinned as EMPIRICAL documentation:
+  // bash stops startup-option parsing at the first positional — `bash -eu
+  // pipefail -c 'echo hi'` never reaches -c ("pipefail" is the script
+  // name; ENOENT). The walk dying there is semantically faithful, NOT a
+  // bypass — the exact opposite of the -O family, where the non-dash word
+  // is a consumed option-argument and parsing continues.
+  assert.equal(checkPolicy({ action: "shell", command: "bash -eu pipefail -c 'echo hi'", currentBranch: "main" }).decision, "allow");
+  // The -O-swallows--c edge (round 5 note): `-O` consumes "-c" as its shopt
+  // argument — bash rejects the shopt name and executes nothing, so allow
+  // is harmless-in-practice; pinned as-found so the walker edge is visible.
+  assert.equal(checkPolicy({ action: "shell", command: "bash -O -c 'git commit -m x'", currentBranch: "main" }).decision, "allow");
 });
 
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {

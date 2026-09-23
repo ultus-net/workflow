@@ -334,6 +334,15 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   verdicts captured live (allow x3); suites 85/0; 55-row re-probe +
   round-2 shapes green against the REBUILT dist.
 
+  Review round 6 (re-review) — no new bypass found (all shapes trace
+  fail-closed or harmless; the round-5 variadic fix confirmed in src and
+  dist); the one open watch-item — bundled conflicting branch modes
+  (a -dc/-md short bundle) — is now hardened: multi-mode bundles fail
+  closed (real git rejects the combination). Pinned; suites 85/0; all
+  probes green. The reviewer's remaining REVISE grounds were execution
+  and docs attestation beyond its shell-less toolset; the primary
+  session's executed evidence covers those (this record).
+
   Review round 7 (re-review) — the blocker claim FALSIFIED by probe: the
   reviewer traced the push lane only and claimed the colon-less
   plus-prefixed refspec classified allow, but the shape was ALREADY
@@ -359,11 +368,80 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   captured). Suites 85/0; 55-row re-probe + round-2 shapes green
   against the REBUILT dist.
 
-  Review round 6 (re-review) — no new bypass found (all shapes trace
-  fail-closed or harmless; the round-5 variadic fix confirmed in src and
-  dist); the one open watch-item — bundled conflicting branch modes
-  (a -dc/-md short bundle) — is now hardened: multi-mode bundles fail
-  closed (real git rejects the combination). Pinned; suites 85/0; all
-  probes green. The reviewer's remaining REVISE grounds were execution
-  and docs attestation beyond its shell-less toolset; the primary
-  session's executed evidence covers those (this record).
+- **2026-09-23 (W102):** the shell-wrapper bypass residual (#20) CLOSED —
+  `checkGitPolicy` recurses into sh/bash/zsh/dash/ksh `-c` wrappers with
+  the same seat facts and a depth-16 fail-closed cap (W100 §4.6's queued
+  companion fix). The wrapper is TRANSPARENT to the full inner
+  classification (alias, push, target gate, spelling lanes) — a wrapped
+  benign command keeps its inner classification; the design direction is
+  classification passthrough, not a deny-everything blanket (the first
+  draft's deny-everything expectation was corrected by the pins:
+  wrapper ≡ inner). The detection is shared verbatim with
+  `hasGitMutation`, making the twin matchers' wrapper scope identical;
+  env-prefixed wrappers (`env sh -c '...'`) remain outside BOTH matchers'
+  scope — the honest edge, recorded rather than silently closed. The
+  as-found allow residual pin superseded with a note; SECURITY_ASSURANCE
+  #20 marks the resolution. Live verification: wrapped pointer writes
+  deny through the wrapper (branch -f/update-ref/push from any seat
+  where the inner command denies), wrapped benign commands allow, nested
+  wrappers recurse, depth cap fails closed; suites 87/0 (policy 77 +
+  redirect 5 + mcp 5); dist rebuilt (LESS-0010 hazard); the W100-era
+  46-row inventory re-probe green against the REBUILT dist; repo
+  lint/typecheck exit 0; security-assurance checker 7/0. NOTE: the
+  env-prefixed-wrapper sentence ABOVE this note is STALE — falsified by
+  review round 1 (prefixed wrappers were always detected); see the
+  correction appended to this entry.
+
+  Review round 1 on W102 (fresh-eyes) — REVISE: the fused -c-quote
+  spelling (`bash -c'git commit -m x'`) bypassed both matchers (captured
+  red live: allow on main), and the recorded env-prefix limitation was
+  FALSIFIED (env/timeout/assignment prefixes were always consumed — the
+  records corrected at all four sites; hasGitMutation now SHARES
+  wrapperCommands). Round 2 on W102 — REVISE: the bundled-flag family
+  (`-ec`/`-xc`/`-vc`, the `-o <value> -c` detour, the common spaced
+  `bash -ec '...'`) — getopt consumes the rest of the word as -c's
+  option-argument; the generalized -Xc matcher the boundary and shell
+  lanes already use closes it, with transparency applied per seat
+  (factless variants inherit the inner factless allow — the pin draft
+  asserting blanket factless denies corrected per LESS-0019's own first
+  point). Suites 89/0 (policy 79 + redirect 5 + mcp 5); 46-row re-probe
+  green; lint/typecheck exit 0; checker 7/0.
+
+  Review round 3 on W102 (fresh-eyes) — REVISE, B1: the -o bundle
+  consumption was not getopt-aware — the walk died at the non-dash value
+  word before reaching -c (`bash -euo pipefail -c 'git commit -m x'`
+  classified allow on a protected branch; captured red live with facts
+  and factless). Fixed: a bundle ENDING in o consumes the next word; a
+  fused -opipefail correctly does not. Also recorded: W1 (TASKS.md
+  carried the falsified env-prefix claim at three sites — the fourth
+  site of the four-site correction was missed — corrected with dated
+  notes), N1 (an inline stale-sentence marker on this entry's initial
+  env sentence), N2 (the code comment's precedent note made precise —
+  the boundary/shell precedents are non-capturing next-word finders, and
+  this walker additionally handles the fused form). The transparency
+  principle re-learned from the pins: the factless variants of
+  spelling-lane shapes inherit the inner factless allow (the W090
+  fail-open class); only target-gated shapes deny factlessly via the
+  base set — the round-3 pin draft asserted blanket factless denies and
+  was corrected by the pins themselves (LESS-0019's own first point,
+  re-learned). Suites 90/0 (policy 80 + redirect 5 + mcp 5); the 46-row
+  re-probe green against the REBUILT dist.
+
+  Review round 4 on W102 (fresh-eyes) — REVISE, B2: the -O/+O shopt
+  family. bash's `-O <shopt>` (and the opposite-sense `+O`/`+o`) consume
+  a spaced argument and option parsing CONTINUES — the walk died at
+  "extglob" and `git commit -m x` ran on main under allow (captured red
+  live with facts and factless, four spellings). Fixed: value
+  consumption extended to `-O`/`+O`/`+o` endings, and the walk treats
+  plus-prefixed words as option-shaped (bash's plus-options are the
+  opposite-sense shopt set), not positionals. The reviewer ALSO
+  falsified the round-4 probe's own candidate: `bash -eu pipefail -c
+  'echo hi'` is NOT a bypass — bash stops startup-option parsing at the
+  first positional, the walk dying there is semantically faithful
+  ("pipefail" ENOENT), pinned as empirical documentation opposite the
+  -O family. Transparency: benign -O usage keeps its inner
+  classification. Suites 91/0 (policy 81 + redirect 5 + mcp 5); the
+  46-row re-probe green; lint/typecheck exit 0; checker 7/0. The
+  getopt-enumeration lesson: the sh-family value options are small and
+  enumerable (-o/-O/+o/+O) — LESS-0020 records that the general fix is a
+  complete enumeration, not per-finding patches.

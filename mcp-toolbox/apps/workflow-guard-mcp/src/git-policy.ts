@@ -54,12 +54,10 @@ export function hasGitMutation(command: string, depth = 0): boolean {
   // colon-refspec clause, in the SAME change as the target gate below.
   const extras = /\bgit\s+branch\s+(?:[^|;&]*\s)?-(?:[dDfMCcm]|--force\b|--move\b|--copy\b|--delete\b)|\bgit\s+fetch\s+[^|;&]*:\S|\bgit\s+pull\b/;
   if (gitWriteRe.test(normalized) || extras.test(normalized) || /\bgit\s+(?:switch|checkout)\b/.test(normalized)) return true;
-  return splitShellSegments(command).some((segment) => {
-    const words = unwrapShellWords(segment);
-    if (!/^(?:ba|z|da|k)?sh$/i.test(basename(words[0] ?? ""))) return false;
-    const commandFlag = words.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
-    return commandFlag >= 0 && Boolean(words[commandFlag + 1]) && hasGitMutation(words[commandFlag + 1]!, depth + 1);
-  });
+  // W102 review round 1 P3: the wrapper walk is SHARED (one detection
+  // implementation, not a verbatim copy) so the mutation matcher and the
+  // deny path cannot drift.
+  return wrapperCommands(command).some((inner) => hasGitMutation(inner, depth + 1));
 }
 
 function hasUnsafeGitAlias(command: string): boolean {
@@ -401,7 +399,64 @@ function checkPointerTarget(words: string[], protectedBranches: Set<string>, con
   return undefined;
 }
 
-export function checkGitPolicy(command: string, context: GitPolicyContext): { policy: string; decision: "deny"; reason: string } | undefined {
+export function wrapperCommands(command: string): string[] {
+  // The wrapper detection shared by BOTH matchers (hasGitMutation and the
+  // deny path — W102 review round 1 P3: one implementation, not a verbatim
+  // copy): sh-family interpreters exposing their command string via -c.
+  // `sh script.sh` is NOT a wrapper (script contents are unknowable — the
+  // file-scanner's territory). The fused -c form (`sh -c'git commit'` — no
+  // space between -c and the quote) is real shell getopt semantics: the
+  // remainder of the word IS the option-argument, and the tokenizer glues
+  // the quoted text into the word — the fused spelling is detected, not a
+  // bypass (W102 review round 1 P1). env/timeout/VAR= prefixes are consumed
+  // by unwrapShellWords, so prefixed wrappers ARE detected (the W101-era
+  // "env limitation" note was factually wrong — corrected by review round 1
+  // P2). busybox sh / exotic interpreter names remain the honest edge.
+  return splitShellSegments(command).flatMap((segment) => {
+    const words = unwrapShellWords(segment);
+    if (!/^(?:ba|z|da|k)?sh$/i.test(basename(words[0] ?? ""))) return [];
+    for (let i = 1; i < words.length; i++) {
+      const word = words[i]!;
+      if (word === "--") return [];
+      if (!/^[+-]/.test(word)) return [];
+      // W102 review round 2: getopt does not stop at the word head — a
+      // bundle containing a `c` option consumes the REST of the word as
+      // -c's option-argument (`-ec'cmd'`, `-xc`…), and the spaced `-ec
+      // 'cmd'` and `-o <value> -c` forms were the same bypass. The
+      // generalized -Xc matcher is the same shape the boundary and shell
+      // lanes' findIndex flag-finders implement for the NEXT-word form
+      // (round 3 note: those precedents are non-capturing next-word
+      // finders — this walker additionally handles the fused form, which
+      // is why the sequential walk exists); after the c option, a
+      // non-empty remainder is the fused command and an empty remainder
+      // means the command is the next word.
+      const cMatch = /^-[a-zA-Z]*c(.*)$/s.exec(word);
+      if (cMatch) {
+        const fused = cMatch[1]!.replace(/^['"]|['"]$/g, "");
+        return fused.length > 0 ? [fused] : (words[i + 1] ? [words[i + 1]!] : []);
+      }
+      // -o consumes its value — bundle-aware (W102 review round 3 B1): a
+      // bundle ENDING in o consumes the next word (`bash -euo pipefail -c
+      // '...'` — the walk died at the non-dash value word before reaching
+      // -c); a fused `-opipefail` is correctly NOT a value-consumer since o
+      // is not the last option char. For the sh-family, `-o <name>` is the
+      // value option in common use. W102 review round 4 (B2): -O is also a
+      // value option (bash shopt: `-O <shopt>` sets, `+O`/`+o` unset —
+      // captured red live: allow on main pre-fix), and the plus-family
+      // (`+O`, `+o`) is option-shaped too — bash's plus-options are the
+      // opposite-sense shopt set, so the walk must treat them as options,
+      // not positionals.
+      if (/^-[a-zA-Z]*[oO]$/.test(word) && words[i + 1]) i += 1;
+      if (/^\+[a-zA-Z]*[oO]$/.test(word) && words[i + 1]) i += 1;
+    }
+    return [];
+  });
+}
+
+export function checkGitPolicy(command: string, context: GitPolicyContext, depth = 0): { policy: string; decision: "deny"; reason: string } | undefined {
+  // W102 (residual #20's closure): depth-capped like hasGitMutation — at the
+  // cap the classification is unresolvable and fails closed.
+  if (depth >= 16) return { decision: "deny", policy: "protected-branch-write", reason: "Git command nesting depth exceeded; failing closed." };
   if (hasUnsafeGitAlias(command)) return { decision: "deny", policy: "unsafe-git-alias", reason: "Inline Git aliases can hide policy-relevant operations." };
   const protectedBranches = protectedBranchesIn(context);
   const pushed = pushedProtectedBranchIn(command, protectedBranches);
@@ -424,6 +479,16 @@ export function checkGitPolicy(command: string, context: GitPolicyContext): { po
   const normalized = normalizedGitSegments(command).join(" ; ");
   if (protectedBranchWriteReason(context) && gitWriteRe.test(normalized)) {
     return { decision: "deny", policy: "protected-branch-write", reason: `Git mutations on protected branch '${context.currentBranch}' are not allowed.` };
+  }
+  // W102: the wrapper recursion — the deny class must not be bypassable by
+  // wrapping. sh-family -c wrappers are transparent to the FULL git
+  // classification with the same seat facts (a wrapper executes in the same
+  // repository, so the currentBranch fact applies to the inner command).
+  // Direct-segment evidence keeps reason-attribution primacy; the recursion
+  // runs last.
+  for (const inner of wrapperCommands(command)) {
+    const verdict = checkGitPolicy(inner, context, depth + 1);
+    if (verdict) return verdict;
   }
   return undefined;
 }
