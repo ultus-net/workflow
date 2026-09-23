@@ -1197,6 +1197,10 @@ test("W102 review round 4: the -O/+O shopt family and the faithful positional st
   // bypass — the exact opposite of the -O family, where the non-dash word
   // is a consumed option-argument and parsing continues.
   assert.equal(checkPolicy({ action: "shell", command: "bash -eu pipefail -c 'echo hi'", currentBranch: "main" }).decision, "allow");
+  // The -O-swallows--c edge (round 5 note): `-O` consumes "-c" as its shopt
+  // argument — bash rejects the shopt name and executes nothing, so allow
+  // is harmless-in-practice; pinned as-found so the walker edge is visible.
+  assert.equal(checkPolicy({ action: "shell", command: "bash -O -c 'git commit -m x'", currentBranch: "main" }).decision, "allow");
 });
 
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {

@@ -2656,14 +2656,12 @@ did (the twin matchers' wrapper scopes diverged).
   expectation was wrong (a feature-branch reset stays allow through the
   wrapper) and the corrected pins assert wrapper ≡ inner. The as-found
   allow residual pin superseded with a note (residual closure);
-  SECURITY_ASSURANCE #20 marks the resolution including the honest edge:
-  env-prefixed wrappers (`env sh -c '...'`) remain outside BOTH matchers'
-  scope — recorded, not silently closed. CORRECTION (review round 1,
-  2026-09-23): that env claim was FALSIFIED — unwrapShellWords consumes
-  env/timeout/assignment prefixes, so prefixed wrappers were always
-  detected (live probe: deny across all three prefix forms); the honest
-  edge that remains is exotic interpreter names (busybox sh, xsh) and the
-  zsh EQUALS caveat, pinned as-found and queued.
+  SECURITY_ASSURANCE #20 marks the resolution including the honest edge
+  (CORRECTED across rounds 1-2: the env-prefix claim was falsified —
+  prefixed wrappers were always detected; the fused -c-quote and
+  bundled-flag forms were real and are now detected via the SHARED
+  wrapperCommands implementation, not a verbatim copy; the remaining
+  edge is exotic interpreter names and the zsh EQUALS caveat).
 - W100 doc §7 item 12; parity-log W102 entry (after the W101 rounds).
 
 **Evidence:** red-first — the 2 new W102 pin blocks ran 75/2 against the
@@ -2691,6 +2689,8 @@ security-assurance checker 7/0.
       deny across all three prefix forms); #20's corrected text states the
       real edges (busybox/xsh interpreters, the zsh EQUALS caveat).
 - [x] dist rebuilt + the 46-row re-probe green; suites 87/0.
+      (Suite count at this item's write time; superseded across review
+      rounds 1-4 — the final count is 91/0, see the evidence below.)
 - [x] Queued (NOT this iteration): env-prefixed wrapper coverage
       (`env sh -c '...'` — shared with hasGitMutation's scope); the
       symbolic-ref matcher line; the HEAD-alias push resolution; the
@@ -2706,6 +2706,10 @@ security-assurance checker 7/0.
       the -o bundle consumption and the -O/+O shopt family — see the
       parity-log W102 rounds 3-4; the duplicate correction block that
       stood here was a splice artifact, deduped.)
+      (Round-5 hygiene: the correction block appeared TWICE — the second
+      occurrence above is the splice artifact itself, retained and
+      marked here rather than silently deleted; the canonical correction
+      is the first one.)
       CORRECTION (review round 1, 2026-09-23): the queued env-prefix
       item above was FALSIFIED — env/timeout/assignment prefixes are
       consumed by the unwrapper and prefixed wrappers were always
