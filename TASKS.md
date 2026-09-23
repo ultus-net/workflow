@@ -2589,7 +2589,12 @@ from a protected seat update the remote protected branch under allow
 (colon form pinned deny) — queued resolution via the currentBranch
 fact. Pre-fix verdicts captured live (allow x3); suites 85/0 (policy 75
 + redirect 5 + mcp 5); 55-row re-probe + round-2 shapes green against
-the REBUILT dist; repo lint/typecheck exit 0.
+the REBUILT dist; repo lint/typecheck exit 0. Review round 6
+(re-review) — no new bypass found (all shapes trace fail-closed or
+harmless; the variadic fix confirmed in src and dist); the one open
+watch-item — bundled conflicting branch modes (a -dc/-md short bundle)
+— hardened: multi-mode bundles fail closed (real git rejects the
+combination); pinned; suites 85/0; all probes green.
 
 **Acceptance criteria:**
 - [x] Both matchers widened in the same change (`gitWriteRe` lanes +

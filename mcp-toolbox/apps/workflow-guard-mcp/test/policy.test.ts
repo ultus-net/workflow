@@ -997,6 +997,11 @@ test("W101 review round 5: branch delete is variadic — every operand is a writ
     const separated = checkPolicy({ action: "shell", command: "git branch -D -- feat2 main", ...(currentBranch ? { currentBranch } : {}) });
     assert.equal(separated.decision, "deny", String(currentBranch));
   }
+  // Bundled conflicting modes (round-6 watch-item) fail closed — real git
+  // rejects the combination and the conservative direction costs nothing
+  // valid.
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -dc main feat2", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git branch -md x main", currentBranch: "feat/g5" }).decision, "deny");
   // Reordered protected-first still denies; the on-main target-blind
   // conservative deny is unchanged (row 16 — ANY delete while ON a
   // protected branch denies); the factless all-feature delete stays allow

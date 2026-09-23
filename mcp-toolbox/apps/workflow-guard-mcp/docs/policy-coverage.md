@@ -333,3 +333,12 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   deny) — queued resolution via the currentBranch fact. Pre-fix
   verdicts captured live (allow x3); suites 85/0; 55-row re-probe +
   round-2 shapes green against the REBUILT dist.
+
+  Review round 6 (re-review) — no new bypass found (all shapes trace
+  fail-closed or harmless; the round-5 variadic fix confirmed in src and
+  dist); the one open watch-item — bundled conflicting branch modes
+  (a -dc/-md short bundle) — is now hardened: multi-mode bundles fail
+  closed (real git rejects the combination). Pinned; suites 85/0; all
+  probes green. The reviewer's remaining REVISE grounds were execution
+  and docs attestation beyond its shell-less toolset; the primary
+  session's executed evidence covers those (this record).

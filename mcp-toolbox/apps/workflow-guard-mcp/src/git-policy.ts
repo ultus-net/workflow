@@ -223,6 +223,13 @@ function parseBranch(words: string[]): PointerInvocation | undefined {
     },
   );
   if (!known) return undefined;
+  // W101 review round 6 watch-item: conflicting branch modes (a bundled
+  // -dc or -md) cannot be classified — delete is variadic while copy/
+  // rename shape their targets differently — so a bundle carrying modes
+  // from different families fails closed (real git rejects the
+  // combination; the conservative direction costs nothing valid).
+  if (deleteish && (renameish || copyish)) return { targets: [], uncertain: true, needsCurrentBranch: false };
+  if (renameish && copyish) return { targets: [], uncertain: true, needsCurrentBranch: false };
   if (walk.uncertain || walk.operands.length === 0) return { targets: [], uncertain: true, needsCurrentBranch: false };
   if (renameish) {
     // Rows 11-13: the protected name may be the SOURCE or the DESTINATION.
