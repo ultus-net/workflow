@@ -445,3 +445,145 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   getopt-enumeration lesson: the sh-family value options are small and
   enumerable (-o/-O/+o/+O) — LESS-0020 records that the general fix is a
   complete enumeration, not per-finding patches.
+
+  ---- W103 (2026-09-23): the queued W101/W102 residuals #22 and #21 ----
+
+  SECURITY_ASSURANCE #22 (HEAD-alias push resolution) and #21 (the
+  symbolic-ref matcher line) closed in one guard-touch iteration, per the
+  pain-point recommendation (items 2+3: small, same file, same region as
+  W102). Pre-change probe captured the as-found allow for EVERY shape
+  (24-row matrix against src, not inferred): alias/default pushes allow
+  from the protected seat, push with mirror or all flags but NO
+  remote/refspec arguments allow (the round-8 #24 sweep sat INSIDE the
+  refspec loop and a zero-arg push never ran it), symbolic-ref
+  protected-NAME writes allow even factless and even through sh -c
+  wrappers, and symrefs aimed AT a protected branch allow.
+
+  Fixed in src/git-policy.ts: (1) the push lane resolves HEAD/@ refspecs
+  and the default push (no refspec beyond the remote slot — git's grammar
+  makes the first non-option argument the repository) against the
+  currentBranch fact; protected seat → deny/protected-branch-push,
+  feature seat → allow, and a FACTLESS seat keeps the as-found allow —
+  the deliberate divergence from round 4's factless fail-closed, because
+  the alias destination is fact-shaped (only the fact names it), not
+  base-set-shaped: these forms are the documented W090 fail-open class,
+  symmetric with the pinned bare-pull factless allow (round 8) and the
+  W102-era transparency principle. Honest config edge recorded in #22:
+  push.default=upstream aiming a feature branch at a differently-named
+  protected upstream is repo-config-dependent and stays unresolvable.
+  (2) The --mirror/--all sweep hoisted per SEGMENT (the zero-arg edge
+  above closes; the pre-existing with-remote pins stay green).
+  (3) symbolic-ref joins parseUpdateRef in the target gate: the
+  two-operand write form checks BOTH names — the protected NAME (the
+  queued one-liner) AND the referent it is aimed at (a symref
+  feat→main routes later commits through main; the rows-11-13
+  both-operands principle) — while the HEAD-form repoint stays the
+  deliberate row-25 exit-class allow, the one-operand form stays a read,
+  and --short/-q are enumerated so benign reads do not newly fail closed
+  (--delete and -m fail closed on parse uncertainty). (4) The twin
+  matcher widens in the same change (§2.3): hasGitMutation's extras carry
+  symbolic-ref >=2-token forms (write/delete) for the read-only-role
+  lane; the one-operand read is not a mutation.
+
+  Evidence: pins authored red-first (the two new W103 blocks + the
+  flipped as-found pin + the twin additions ran 79/4 against the
+  pre-fix tree — EXACTLY the four expected failures, no collateral;
+  pre-fix classification live-probed via a scratch probe script, plus a
+  pre-probe of the force-alias shape via the shell lane's
+  destructive-operation attribution), then green 93/0 (policy 83 +
+  redirect 5 + mcp 5) after the src edits; dist rebuilt + the dist probe
+  re-run (src≡dist: every predicted flip landed, every preserved
+  classification survived — feature/factless alias allows, HEAD-form,
+  reads, benign writes); vendored typecheck OK; repo lint/typecheck
+  exit 0; security-assurance checker 7/0. The W101-era as-found allow
+  pin flipped in the round-5 test block WITH a resolution note (the
+  residual pre-registered its own successor) — a pin move as the
+  sanctioned closure, not test-weakening. LESS-0021 records the
+  factless-design decision and the fixture-convention note (the
+  scanner blocked a literal force-fragment in the probe script until it
+  was constructed at runtime).
+
+  Review round 1 on W103 (fresh-eyes completion reviewer, executed
+  evidence) — [APPROVE] across all five axes, recorded via record_review
+  against 3c2e46f: the reviewer reproduced red-first (79/4, only the four
+  expected blocks) against a reverted src, executed a 108-cell
+  classification matrix (32 allow→deny flips, ZERO deny→allow — the
+  no-loosening invariant held), reconciled the counts, re-ran every gate
+  (vendored typecheck, repo lint/typecheck, checker 7/0), and verified
+  dist≡src by executing the compiled dist. Three P2s + one P3, all
+  addressed in this iteration's follow-up commit:
+  (P2-a) the entry below referenced LESS-0021 before it existed — the
+  append happened in the REMEMBER step, closing the chain;
+  (P2-b) the first-cut alias condition modeled ANY <=1-non-arg push as
+  the default branch push: --tags/--follow-tags (tags-only release
+  pushes, the W084 lane) and --delete/-d (whose single non-option
+  argument is the deletion REFSPEC, not the remote) mis-flipped to deny
+  from the protected seat — fixed: a refspec-shaping flag (--delete/-d)
+  excludes the single-arg default-push reading (its destination is
+  already checked by the literal loop) and tags-only flags are not
+  default pushes at all; the round-1 pins ran red-first (81/2 — exactly
+  the tags/delete/twin blocks) then green; the orchestrator's first
+  refine also DROPPED the bare-args case (git push itself) — its own red
+  pin caught it before any dist run;
+  (P2-c) the twin's coarse >=2-token pattern flagged one-operand reads
+  (--short/-q HEAD) as mutations, contradicting the comment and #21 —
+  fixed with a flags-skipping two-operand pattern plus an explicit
+  --delete clause (the flags group would swallow its single operand),
+  and the first operand position refuses a dash because the engine's
+  zero-iteration backtrack would otherwise still match flag+operand;
+  (P3-d) `git push origin :HEAD` (empty-source deletion of the remote
+  HEAD alias) classifies allow — pre-existing (executed), adjacent to
+  the closed #22 family, recorded here as a queued deliberate pass, and
+  pinned as-found in the W103 test block. Final suites 93/0 (policy 83
+  + redirect 5 + mcp 5); dist rebuilt AFTER the fixes and re-probed
+  (the intermediate dist-probe run caught a stale-dist divergence — the
+  LESS-0010 hazard discipline applied mid-iteration; the one probe-line
+  discrepancy was a scratch-script fragment bug producing a malformed
+  flag, re-verified allow with the correct shape); repo lint/typecheck
+  exit 0; checker 7/0.
+
+  Review round 2 on W103 (the completing reviewer's continuation) —
+  [REQUEST_CHANGES], P1: the round-1 tags-only fix gated the WHOLE alias
+  disjunction behind !tagsOnly, re-opening the #22 hole for flag-combo
+  pushes (`git push origin --tags HEAD` classified allow from the
+  protected seat — the exact shape the iteration closed). Fixed by the
+  reviewer's scoping: the exclusion applies to the DEFAULT-PUSH readings
+  only (args 0 or 1); explicit HEAD/@ refspecs always resolve. En-route
+  correction inside the round-2 fix: the round-2 table's no-remote cell
+  (`git push --tags HEAD`, expect deny) was inconsistent with the
+  reviewer's own formula — git's grammar makes the single positional the
+  repository slot and tags-only flags push no branch refs, so the cell
+  corrects to allow (pinned with the note). Round-2 P2 fixed: the twin's
+  two-operand pattern now carries a flags group before EACH operand
+  position (git permutes options — the interleaved write form
+  `refs/heads/feat --short sym2` is a mutation again; red live before
+  the fix). Round-2 P2-b: the LESS-0021 append was still pending (the
+  REMEMBER step) — landed in this iteration's final commit; the ledger
+  claims above were written ahead of the append and are only true as of
+  that commit. Pins red-first (81/2 — exactly the round-2 blocks) then
+  green 93/0; dist rebuilt and probed (8 round-2 cells match, including
+  the corrected no-remote cell); repo lint/typecheck exit 0; checker
+  7/0.
+
+  Review round 3 on W103 (the same reviewer's continuation, final
+  confirmation before the bind) — [REQUEST_CHANGES], one P1: the
+  round-1/2 premise "--follow-tags is tags-only" was FALSIFIED by the
+  reviewer's git dry-run (git 2.55.0) — the man page has --follow-tags
+  push "all the refs that would be pushed without this option", so the
+  DEFAULT PUSH fires and `git push --follow-tags` from a protected seat
+  was re-opening the #22 hole under allow (3c2e46f had denied it
+  correctly; the mis-modeling entered in 20361b6; the round-2 record
+  had endorsed the allow pin without a grammar probe — recorded here as
+  the falsification, not hidden). Fixed: the tags-only reading requires
+  `--tags` WITHOUT `--follow-tags` (which also folds the round-3 P3
+  combined-flags shape in); the follow-tags pins flipped with a
+  falsification note; the false premise corrected in the src comment,
+  the test comment, #22's sentence, and this log. All round-3 cells
+  executed end-to-end on src and dist: follow-tags protected-seat forms
+  deny, tags-only forms allow (correct per git), the corrected no-remote
+  cell accepted by the reviewer (their round-2 deny expectation was
+  inconsistent with their own formula — the pin, not the src, was
+  corrected), the twin matrix 8/8, LESS-0021 confirmed appended (the
+  P2-a chain closed). Suites 93/0 (policy 83, redirect 5, mcp 5); dist
+  fresh and probed (11 cells match); repo lint/typecheck exit 0;
+  checker 7/0.

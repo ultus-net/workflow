@@ -52,7 +52,19 @@ export function hasGitMutation(command: string, depth = 0): boolean {
   // W101 (W100 §2.3 twin-matcher discipline): the branch class widens for the
   // pointer family (-f/-m/-M/-C/-c and their long forms) and fetch gains a
   // colon-refspec clause, in the SAME change as the target gate below.
-  const extras = /\bgit\s+branch\s+(?:[^|;&]*\s)?-(?:[dDfMCcm]|--force\b|--move\b|--copy\b|--delete\b)|\bgit\s+fetch\s+[^|;&]*:\S|\bgit\s+pull\b/;
+  // W103: symbolic-ref's write/delete forms are mutations — the gate and
+  // the twin widen together (§2.3); the precise classification is the
+  // target gate's job — the twin only carries the mutation signal for the
+  // read-only-role lane. The two-operand (write) match skips leading flags so the flagged
+  // one-operand reads (--short/-q) stay non-mutations (review round 1
+  // P2 — the first cut flagged them); the first operand position refuses
+  // a dash (otherwise the engine's zero-iteration backtrack would still
+  // match flag+operand); review round 2 P2: flags may also interleave
+  // BETWEEN the operands (git permutes options), so both operand
+  // positions carry their own flags group; --delete is matched
+  // explicitly (the flags group would swallow its single operand). The
+  // one-operand read is not a mutation.
+  const extras = /\bgit\s+branch\s+(?:[^|;&]*\s)?-(?:[dDfMCcm]|--force\b|--move\b|--copy\b|--delete\b)|\bgit\s+fetch\s+[^|;&]*:\S|\bgit\s+pull\b|\bgit\s+symbolic-ref\s+(?:-{1,2}[\w-]+\s+)*(?!-)\S+\s+(?:-{1,2}[\w-]+\s+)*(?!-)\S+|\bgit\s+symbolic-ref\s+(?:[^|;&]*\s)?--delete\b/;
   if (gitWriteRe.test(normalized) || extras.test(normalized) || /\bgit\s+(?:switch|checkout)\b/.test(normalized)) return true;
   // W102 review round 1 P3: the wrapper walk is SHARED (one detection
   // implementation, not a verbatim copy) so the mutation matcher and the
@@ -89,18 +101,22 @@ function tagPublishRefspecIn(refspec: string): boolean {
   return token.startsWith("refs/tags/");
 }
 
-function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>): string | "wildcard-refspec" | undefined {
+function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>, currentBranch?: string): string | "wildcard-refspec" | undefined {
   for (const segment of splitShellSegments(command)) {
     const normalized = normalizedGitSegments(segment)[0];
     if (!normalized) continue;
     const words = normalized.split(" ");
     if (words[1] !== "push") continue;
-    for (const refspec of words.slice(2).filter((word) => !word.startsWith("-"))) {
-      // W101 review round 8: --mirror/--all pushes update and delete ALL
-      // remote refs including the protected ones — no refspec names them,
-      // so the per-refspec destination match cannot see them. Fail closed
-      // (recorded as SECURITY_ASSURANCE #24).
-      if (words.slice(2).some((word) => word === "--mirror" || word === "--all")) return "wildcard-refspec";
+    // W101 review round 8 + W103: --mirror/--all pushes update and delete
+    // ALL remote refs including the protected ones — no refspec names
+    // them, so the per-refspec destination match cannot see them. The
+    // check is per SEGMENT, not per refspec: the pre-W103 placement
+    // inside the refspec loop never ran for a flag-driven push with no
+    // remote/refspec arguments (`git push --mirror`). Fail closed
+    // (recorded as SECURITY_ASSURANCE #24).
+    if (words.slice(2).some((word) => word === "--mirror" || word === "--all")) return "wildcard-refspec";
+    const args = words.slice(2).filter((word) => !word.startsWith("-"));
+    for (const refspec of args) {
       // W084 tag-publish exemption first (tag globs stay release operations),
       // then the W101 review P1 wildcard fail-closed: a branch-glob
       // destination maps ALL heads including the protected ones and cannot
@@ -115,6 +131,44 @@ function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>
       const destination = (refspec.includes(":") ? refspec.slice(refspec.lastIndexOf(":") + 1) : refspec).replace(/^\+/, "");
       const normalizedDestination = destination.replace(/^refs\/heads\//, "");
       if (protectedBranches.has(normalizedDestination)) return normalizedDestination;
+    }
+    // W103 (SECURITY_ASSURANCE #22's queued resolution): HEAD/@ refspecs
+    // and the default push (no refspec beyond the remote slot — git's
+    // grammar makes the first non-option argument the repository) resolve
+    // to the CURRENT branch; from a protected seat that is the protected
+    // remote branch. Resolve against the currentBranch fact (the same
+    // mechanism round 4 built for the one-arg rename source). A FACTLESS
+    // seat keeps the as-found allow: the destination is only knowable from
+    // the fact, so this is the documented W090 fail-open class (the
+    // round-8 bare-pull symmetry), not a fail-closed target — the gate
+    // adds denies, never loosens.
+    const flags = words.slice(2).filter((word) => word.startsWith("-"));
+    const refspecs = args.length >= 2 ? args.slice(1) : [];
+    // Review round 1 P2: a single non-option argument is the REMOTE only
+    // when no refspec-shaping flag precedes it — --delete/-d make it the
+    // deletion refspec (its destination is checked by the literal loop
+    // above), and --tags pushes no branch refs at all (executed dry-run:
+    // only tag refs fire — the W084 release lane). CORRECTED in review
+    // round 3 (P1, falsified by a git dry-run): --follow-tags is NOT
+    // tags-only — the man page has it push "all the refs that would be
+    // pushed without this option", so the DEFAULT PUSH fires and the
+    // default-push reading applies (the round-1/2 allow was a false
+    // premise; endorsed in the round-2 record without a grammar probe).
+    // The tags-only reading therefore requires --tags WITHOUT
+    // --follow-tags, which also models the combined shape. Review round
+    // 2 P1 (kept): the tags-only exclusion scopes to the DEFAULT-PUSH
+    // readings ONLY — an explicit HEAD/@ refspec beside tags flags is
+    // still a branch push and must resolve (the round-1 cut gated the
+    // whole disjunction behind !tagsOnly and re-opened the hole).
+    const refspecShaped = flags.some((word) => word === "--delete" || word === "-d");
+    const tagsOnly = flags.some((word) => word === "--tags") && !flags.some((word) => word === "--follow-tags");
+    const aliasPush = (args.length === 0 && !tagsOnly) || (args.length === 1 && !refspecShaped && !tagsOnly) || refspecs.some((refspec) => {
+      const token = refspec.replace(/^\+/, "");
+      return token === "HEAD" || token === "@";
+    });
+    if (aliasPush && currentBranch) {
+      const normalizedCurrent = normalizeBranchRef(currentBranch);
+      if (protectedBranches.has(normalizedCurrent)) return normalizedCurrent;
     }
   }
   return undefined;
@@ -301,11 +355,11 @@ function parseForceCreate(words: string[], forceShort: string): PointerInvocatio
   return { targets: [walk.operands[0]!], uncertain: false, needsCurrentBranch: false };
 }
 
-function parseUpdateRef(words: string[]): PointerInvocation | undefined {
+function parseUpdateRef(words: string[], symbolicRef = false): PointerInvocation | undefined {
   const walk = walkWords(
     words,
-    (ch) => ch === "d" || ch === "z",
-    (word) => (updateRefFlags.has(word) ? "flag" : "unknown"),
+    (ch) => ch === "d" || ch === "z" || (symbolicRef && ch === "q"),
+    (word) => (updateRefFlags.has(word) || (symbolicRef && (word === "--short" || word === "--quiet")) ? "flag" : "unknown"),
   );
   // --stdin is deliberately NOT a known flag: refspecs read from stdin cannot
   // be classified, so it falls into the uncertain bucket and fails closed.
@@ -314,10 +368,23 @@ function parseUpdateRef(words: string[]): PointerInvocation | undefined {
   const branchRef = /^refs\/heads\/(.+)$/.exec(walk.operands[0]!);
   // HEAD and refs/heads-sibling forms keep their existing-lane semantics:
   // on the protected branch the spelling lane denies every update-ref;
-  // elsewhere HEAD updates the CURRENT branch (own-branch, allow) — the
-  // exotic symbolic-ref forms are the recorded row-25 residual.
+  // elsewhere HEAD updates the CURRENT branch (own-branch, allow). For
+  // symbolic-ref the HEAD-form repoint stays the deliberate row-25
+  // exit-class allow (this first-operand check is what preserves it).
   if (!branchRef) return undefined;
-  return { targets: [branchRef[1]!], uncertain: false, needsCurrentBranch: false };
+  // W103 residual #21: symbolic-ref's ONE-operand form is a READ (it
+  // prints the referent) — only the two-operand form repoints the name.
+  // update-ref keeps its existing shape: a bare refs/heads/ operand there
+  // is always a write target (real git requires -d or a new value).
+  if (symbolicRef && walk.operands.length < 2) return undefined;
+  // W103: the symbolic-ref write form writes BOTH names — the repointed
+  // name (operand 0) and the referent it is aimed at (operand 1): a
+  // symref aimed AT a protected branch routes later commits through the
+  // protected ref (the rename lane's both-operands principle, rows 11-13).
+  // update-ref's second operand is a VALUE (a sha snapshot), not a live
+  // pointer, so it stays unchecked.
+  const targets = symbolicRef ? [branchRef[1]!, walk.operands[1]!] : [branchRef[1]!];
+  return { targets, uncertain: false, needsCurrentBranch: false };
 }
 
 function parseFetch(words: string[]): PointerInvocation | undefined {
@@ -365,7 +432,7 @@ function checkPointerTarget(words: string[], protectedBranches: Set<string>, con
   let invocation: PointerInvocation | undefined;
   if (sub === "branch") invocation = parseBranch(words);
   else if (sub === "checkout" || sub === "switch") invocation = parseForceCreate(words, sub === "checkout" ? "B" : "C");
-  else if (sub === "update-ref") invocation = parseUpdateRef(words);
+  else if (sub === "update-ref" || sub === "symbolic-ref") invocation = parseUpdateRef(words, sub === "symbolic-ref");
   else if (sub === "fetch" || sub === "pull") {
     // W101 review round 8: pull runs git fetch with the same arguments —
     // its colon refspecs are fetch refspecs writing local branches, so the
@@ -459,7 +526,7 @@ export function checkGitPolicy(command: string, context: GitPolicyContext, depth
   if (depth >= 16) return { decision: "deny", policy: "protected-branch-write", reason: "Git command nesting depth exceeded; failing closed." };
   if (hasUnsafeGitAlias(command)) return { decision: "deny", policy: "unsafe-git-alias", reason: "Inline Git aliases can hide policy-relevant operations." };
   const protectedBranches = protectedBranchesIn(context);
-  const pushed = pushedProtectedBranchIn(command, protectedBranches);
+  const pushed = pushedProtectedBranchIn(command, protectedBranches, context.currentBranch);
   if (pushed === "wildcard-refspec") {
     return { decision: "deny", policy: "protected-branch-push", reason: "Push could not be resolved to concrete branch destinations (wildcard refspec, --mirror, or --all); failing closed." };
   }

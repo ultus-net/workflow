@@ -1038,10 +1038,14 @@ test("W101 review round 5: branch delete is variadic — every operand is a writ
   assert.equal(checkPolicy({ action: "shell", command: "git branch -d main feat2", currentBranch: "feat/g5" }).decision, "deny");
   assert.equal(checkPolicy({ action: "shell", command: "git branch -D feat2 feat3", currentBranch: "main" }).decision, "deny");
   assert.equal(checkPolicy({ action: "shell", command: "git branch -D feat2 feat3" }).decision, "allow");
-  // The recorded push HEAD-alias residual (pre-existing push lane, queued
-  // resolution): from a protected seat the bare alias form updates the
-  // remote protected branch under allow — the colon form is pinned deny.
-  assert.equal(checkPolicy({ action: "shell", command: "git push origin HEAD", currentBranch: "main" }).decision, "allow");
+  // The recorded push HEAD-alias residual (SECURITY_ASSURANCE #22): the
+  // as-found allow was captured live pre-fix (and in the round-5 probe).
+  // RESOLVED in W103 — the alias resolves against the currentBranch fact,
+  // so the protected seat's HEAD-form push denies like its colon twin; the
+  // full alias matrix (HEAD/@/default/remote-only, factless fail-open
+  // class) is pinned in the W103 test below.
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin HEAD", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin HEAD", currentBranch: "main" }).policy, "protected-branch-push");
   assert.equal(checkPolicy({ action: "shell", command: "git push origin HEAD:main", currentBranch: "feat/g5" }).decision, "deny");
   // Round 7: the colon-less plus-prefixed refspec force-updates the remote
   // protected branch exactly like its colon twin. The shell lane already
@@ -1211,4 +1215,153 @@ test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", 
   assert.equal(hasGitMutation(`git fetch origin ${String.fromCharCode(43)}main:main`), true);
   // Bare fetch and config-only branch forms stay non-mutations for this gate.
   assert.equal(hasGitMutation("git fetch origin"), false);
+  // W103 residual #21: symbolic-ref's write/delete forms are mutations for
+  // the read-only-role lane (the target gate and the twin widen together,
+  // §2.3); the precise classification stays the gate's job — the twin only
+  // carries the mutation signal. The one-operand read is not a mutation.
+  assert.equal(hasGitMutation("git symbolic-ref refs/heads/main abc123def"), true);
+  assert.equal(hasGitMutation("git symbolic-ref --delete refs/heads/main"), true);
+  assert.equal(hasGitMutation("sh -c 'git symbolic-ref refs/heads/main abc123def'"), true);
+  assert.equal(hasGitMutation("git symbolic-ref HEAD"), false);
+  // Review round 1 P2: flagged one-operand reads (--short/-q) are not
+  // mutations — the twin's pattern skips leading flags (the first cut
+  // flagged them; captured red live).
+  assert.equal(hasGitMutation("git symbolic-ref --short HEAD"), false);
+  assert.equal(hasGitMutation("git symbolic-ref -q HEAD"), false);
+  // Review round 2 P2: git permutes options — a flag interleaved between
+  // the two operands is still the write form for the twin (the round-1
+  // pattern required the operands to be adjacent; captured red live).
+  assert.equal(hasGitMutation("git symbolic-ref refs/heads/feat --short sym2"), true);
+});
+
+// ---- W103: the queued W101/W102 residuals #22 and #21 (SECURITY_ASSURANCE) ----
+
+test("W103 residual #22: push aliases (HEAD/@/default) resolve against the currentBranch fact", () => {
+  // The queued resolution: `git push origin HEAD`, `git push origin @`,
+  // and the default push (no refspec beyond the remote slot — git's
+  // grammar makes the first non-option argument the repository) resolve to
+  // the CURRENT branch; from a protected seat that is the protected
+  // remote branch. The as-found allow was captured live pre-fix (the
+  // round-5 block carries the flipped pin).
+  const plus = String.fromCharCode(43);
+  const force = "-" + "-force";
+  for (const command of ["git push origin HEAD", "git push origin @", "git push", "git push origin", `git push ${force}`]) {
+    const denied = checkPolicy({ action: "shell", command, currentBranch: "main" });
+    assert.equal(denied.decision, "deny", command);
+    assert.equal(denied.policy, "protected-branch-push", command);
+  }
+  // The same aliases from a feature seat are the normal publish flow —
+  // the fact classifies the current branch as its own feature destination.
+  for (const command of ["git push origin HEAD", "git push origin @", "git push", "git push origin"]) {
+    assert.equal(checkPolicy({ action: "shell", command, currentBranch: "feat/g5" }).decision, "allow", command);
+  }
+  // Factless seats keep the as-found allow: the destination is only
+  // knowable from the currentBranch fact, so these are the documented W090
+  // fail-open class (the round-8 bare-pull symmetry), NOT fail-closed
+  // targets — the gate adds denies, never loosens.
+  for (const command of ["git push origin HEAD", "git push origin @", "git push", "git push origin"]) {
+    assert.equal(checkPolicy({ action: "shell", command }).decision, "allow", command);
+  }
+  // Mixed refspecs: an explicit protected destination denies regardless of
+  // the alias tokens around it, and a protected seat's mixed alias push
+  // denies via the alias half.
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin main HEAD", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin HEAD feat2", currentBranch: "main" }).decision, "deny");
+  // The alias resolution is not fooled by a leading + (attribution only —
+  // the shell lane's destination-blind rule denies these regardless).
+  assert.equal(checkPolicy({ action: "shell", command: `git push origin ${plus}HEAD`, currentBranch: "main" }).policy, "protected-branch-push");
+  // Related #24 edge, fixed in the same lane: the --mirror/--all sweep sat
+  // INSIDE the refspec loop, so a flag-driven push with no remote/refspec
+  // arguments never ran it (pre-fix allow captured live). Hoisted per
+  // segment.
+  for (const command of ["git push --mirror", "git push --all"]) {
+    const denied = checkPolicy({ action: "shell", command });
+    assert.equal(denied.decision, "deny", command);
+    assert.equal(denied.policy, "protected-branch-push", command);
+  }
+  // Review round 1 P2: deletion flag pushes are NOT the default branch
+  // push — --delete/-d make the single non-option argument a deletion
+  // refspec (its destination is checked by the literal loop). CORRECTED
+  // in round 3: --tags alone pushes no branch refs (executed dry-run:
+  // only tag refs fire), but --follow-tags pushes the DEFAULT REFS TOO
+  // (the man page: "all the refs that would be pushed without this
+  // option") — the round-1/2 allow for follow-tags was a false premise,
+  // flipped here with the falsification note.
+  assert.equal(checkPolicy({ action: "shell", command: "git push --tags", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --tags", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push --follow-tags", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --follow-tags", currentBranch: "main" }).decision, "deny");
+  // The combined shape: --follow-tags makes the default push fire even
+  // beside --tags (round-3 P3, folded into the same scoping).
+  assert.equal(checkPolicy({ action: "shell", command: "git push --tags --follow-tags", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git push --follow-tags", currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push --follow-tags" }).decision, "allow");
+  // Review round 1 P2: deletion flag pushes are NOT the default branch
+  // push — --delete/-d make the single non-option argument a deletion
+  // refspec (its destination is checked by the literal loop). Captured
+  // red live in round 1.
+  assert.equal(checkPolicy({ action: "shell", command: "git push --delete feat2", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push --delete main", currentBranch: "feat/g5" }).decision, "deny");
+  // Review round 2 P1: the tags-only exclusion scopes to the DEFAULT-PUSH
+  // reading only — an explicit HEAD/@ refspec beside tags flags is still
+  // a branch push and must resolve (the first cut gated the whole
+  // disjunction behind !tagsOnly and re-opened the hole; captured red
+  // live).
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --tags HEAD", currentBranch: "main" }).decision, "deny");
+  // The no-remote tags combo is NOT a branch push: git's grammar makes
+  // the single positional the repository slot, and the tags-only flag
+  // pushes no branch refs (a remote named HEAD just errors at runtime).
+  // The round-2 table's deny expectation for this cell was inconsistent
+  // with its own formula — corrected here per the formula.
+  assert.equal(checkPolicy({ action: "shell", command: "git push --tags HEAD", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --follow-tags HEAD", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --tags @", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --tags HEAD", currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin --tags HEAD" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git push --tags origin HEAD", currentBranch: "main" }).decision, "deny");
+  // Review round 1 P3 (recorded as-found, NOT changed here): the
+  // empty-source deletion of the remote HEAD alias allows — pre-existing,
+  // adjacent to the #22 family; queued for a deliberate pass.
+  assert.equal(checkPolicy({ action: "shell", command: "git push origin :HEAD" }).decision, "allow");
+  // The wrapper recursion inherits the resolved classification (W102
+  // transparency — a wrapper cannot launder the alias).
+  const wrapped = checkPolicy({ action: "shell", command: "sh -c 'git push origin HEAD'", currentBranch: "main" });
+  assert.equal(wrapped.decision, "deny");
+  assert.equal(wrapped.policy, "protected-branch-push");
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c 'git push origin HEAD'", currentBranch: "feat/g5" }).decision, "allow");
+});
+
+test("W103 residual #21: symbolic-ref pointer writes join the target gate", () => {
+  // The queued one-line matcher addition: repointing the protected NAME
+  // itself denies. No fact is needed — the name is in the command
+  // (target-gated via the base set).
+  for (const currentBranch of ["feat/g5", undefined]) {
+    const name = checkPolicy({ action: "shell", command: "git symbolic-ref refs/heads/main abc123def", ...(currentBranch ? { currentBranch } : {}) });
+    assert.equal(name.decision, "deny", String(currentBranch));
+    assert.equal(name.policy, "protected-branch-write", String(currentBranch));
+  }
+  // The write form writes BOTH names (the rename lane's rows-11-13
+  // principle): a symref aimed AT a protected branch routes later commits
+  // through the protected ref (pre-fix allow captured live).
+  const aimed = checkPolicy({ action: "shell", command: "git symbolic-ref refs/heads/feat refs/heads/main", currentBranch: "feat/g5" });
+  assert.equal(aimed.decision, "deny");
+  assert.equal(aimed.policy, "protected-branch-write");
+  // Row 25's deliberate exit-class allow survives: the HEAD-form repoint
+  // is an exit, not a branch write; benign symrefs and the READ forms
+  // keep their classification (--short/-q are enumerated known shapes).
+  assert.equal(checkPolicy({ action: "shell", command: "git symbolic-ref HEAD refs/heads/main", currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git symbolic-ref refs/heads/feat sym2" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git symbolic-ref refs/heads/main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git symbolic-ref --short HEAD" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git symbolic-ref -q HEAD" }).decision, "allow");
+  // Unenumerated shapes fail closed (--delete, the -m reason form): the
+  // write/delete direction is the safe one.
+  assert.equal(checkPolicy({ action: "shell", command: "git symbolic-ref --delete refs/heads/main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "git symbolic-ref -m note refs/heads/main abc123def" }).decision, "deny");
+  // The wrapper recursion inherits (W102): the wrapped write classifies
+  // through the wrapper exactly as unwrapped.
+  const wrapped = checkPolicy({ action: "shell", command: "sh -c 'git symbolic-ref refs/heads/main abc123def'", currentBranch: "feat/g5" });
+  assert.equal(wrapped.decision, "deny");
+  assert.equal(wrapped.policy, "protected-branch-write");
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c 'git symbolic-ref HEAD refs/heads/main'", currentBranch: "feat/g5" }).decision, "allow");
 });
