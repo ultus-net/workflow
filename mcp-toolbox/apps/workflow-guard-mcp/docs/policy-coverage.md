@@ -587,3 +587,62 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   P2-a chain closed). Suites 93/0 (policy 83, redirect 5, mcp 5); dist
   fresh and probed (11 cells match); repo lint/typecheck exit 0;
   checker 7/0.
+
+  ---- W108 (2026-09-23): residual #23 — the shell lane's force-push
+  rules become destination-aware ----
+
+  The W101-era watch-item resolved per the pain-point queue's item 4.
+  The pre-change 14-row probe captured the as-found matrix against the
+  pre-fix dist: EVERY feature-destination force shape classified
+  deny/destructive-operation (plus-refspec feature spellings ×3, the
+  force-flag form to a feature branch — including the aliased forms
+  WITH facts, i.e. the W103-era git-lane alias resolution allowed the
+  shape and the blind shell rule then over-denied it end-to-end), the
+  forced tag publish denied (contradicting the W084 release-operation
+  exemption), and the protected destinations denied via the git lane's
+  protected-branch-push attribution (the shell rule never fired there —
+  the git lane runs first).
+
+  Fixed in shell-policy.ts + git-policy.ts: (1) the shape DETECTION
+  stays regex — the same two shapes the blind rules matched, tested over
+  the same three text variants (command/decoded/normalized); (2) the
+  VERDICT reuses the GIT lane's push-destination resolver —
+  pushedProtectedBranchIn and protectedBranchesIn exported from
+  git-policy and consumed by shell-policy (one grammar implementation,
+  not a copy — the W102 round-1 P3 twin discipline); (3) a new
+  "unresolved-alias" sentinel: a factless alias/default force push (the
+  destination only knowable from the currentBranch fact) — the GIT lane
+  maps it to its documented W090 fail-open allow (the W103 pins keep
+  their as-found classification) while the SHELL lane maps it to deny,
+  so its force-push stance stays conservative where nothing is knowable
+  — the lanes now differ EXPLICITLY by policy over the same grammar
+  (git lane fail-open vs shell lane fail-closed force stance), pinned in
+  both directions; (4) the two blind regex entries removed from
+  destructivePatterns and the destination-aware check placed after the
+  generic destructive loop (a compound's earlier destructive match still
+  attributes first; a compound mixing the post-push rules — kubectl and
+  later — with a force push now attributes the earlier rule first: an
+  attribution-order shift, recorded). Scoping note: residual #23's text
+  had recorded only the plus-refspec instance; the W108 iteration's
+  exploration pass flagged the flag spelling as equally blind and the resolution covers
+  BOTH (the class heading was always "destination-blind").
+
+  Deliberate behavior change, pinned: forced tag publishes classify
+  allow in the shell lane now too (the W084 release-operation exemption
+  holds in both lanes; pre-fix the shell rule denied the forced
+  spelling). Deliberate preserved deny, pinned: a factless bare or
+  remote-only force push denies (destructive-operation) — the shell
+  lane's conservative stance where the destination is unknowable.
+
+  Evidence: the pre-change probe (14 cells, above); pins authored
+  red-first ran 84/1 (EXACTLY the allow-flips test red — the
+  preservation test green as-found) then 95/0 (policy 85 + redirect 5 +
+  mcp 5) after the src edits; dist rebuilt and probed (12 cells match —
+  the first dist-probe run caught a STALE dist classifying the flips as
+  deny: the LESS-0010 hazard discipline applied mid-iteration); vendored
+  typecheck OK; repo lint/typecheck exit 0; checker 7/0. The
+  fixture-writing convention earned its keep again: the scanner's shell
+  normalization re-joins quote fragments, so a concatenation whose
+  quote-stripped form reads as a force-push shape trips the rule even
+  when the raw line looks safe — the pins hoist the push anchor off
+  every concatenation line (LESS-0029 records the mechanism).

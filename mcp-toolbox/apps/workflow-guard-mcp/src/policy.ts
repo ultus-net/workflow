@@ -117,7 +117,7 @@ function evaluatePolicy(input: GuardCheckInput): GuardDecision {
     if (git) return git;
   }
   if ((input.action === "shell" || input.action === "git") && input.command?.trim()) {
-    const shell = checkShellPolicy(input.command);
+    const shell = checkShellPolicy(input.command, { currentBranch: input.currentBranch, protectedBranches: input.protectedBranches });
     if (shell) return shell;
   }
   // W091 ordering: the promotion ask is evaluated AFTER the deny-class

@@ -37,7 +37,7 @@ export interface GitPolicyContext {
   protectedBranches?: string[];
 }
 
-function protectedBranchesIn(context: GitPolicyContext): Set<string> {
+export function protectedBranchesIn(context: GitPolicyContext): Set<string> {
   return new Set(["main", "master", ...(context.protectedBranches ?? [])]);
 }
 
@@ -101,7 +101,7 @@ function tagPublishRefspecIn(refspec: string): boolean {
   return token.startsWith("refs/tags/");
 }
 
-function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>, currentBranch?: string): string | "wildcard-refspec" | undefined {
+export function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>, currentBranch?: string): string | "wildcard-refspec" | "unresolved-alias" | undefined {
   for (const segment of splitShellSegments(command)) {
     const normalized = normalizedGitSegments(segment)[0];
     if (!normalized) continue;
@@ -166,7 +166,16 @@ function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>
       const token = refspec.replace(/^\+/, "");
       return token === "HEAD" || token === "@";
     });
-    if (aliasPush && currentBranch) {
+    // W108: the alias/default destination is only knowable from the
+    // currentBranch fact. With it, the classification is concrete (protected
+    // → deny; resolvable non-protected → keep scanning — a later segment may
+    // still name a protected destination). WITHOUT the fact, the shape is
+    // the W090 fail-open class for the GIT lane (the W103 as-found allow
+    // stays) — but the sentinel lets the SHELL lane apply its own
+    // conservative force-push stance to the same unresolvable shape instead
+    // of silently inheriting the git lane's allowance.
+    if (aliasPush) {
+      if (currentBranch === undefined) return "unresolved-alias";
       const normalizedCurrent = normalizeBranchRef(currentBranch);
       if (protectedBranches.has(normalizedCurrent)) return normalizedCurrent;
     }
@@ -530,7 +539,14 @@ export function checkGitPolicy(command: string, context: GitPolicyContext, depth
   if (pushed === "wildcard-refspec") {
     return { decision: "deny", policy: "protected-branch-push", reason: "Push could not be resolved to concrete branch destinations (wildcard refspec, --mirror, or --all); failing closed." };
   }
-  if (pushed) return { decision: "deny", policy: "protected-branch-push", reason: `Direct pushes to protected branch '${pushed}' are not allowed.` };
+  if (pushed === "unresolved-alias") {
+    // W108: the factless alias/default push is the documented W090 fail-open
+    // class for this lane (the W103 pins keep their as-found allow) — the
+    // sentinel is consumed by the shell lane's destination-aware force-push
+    // rule, which applies its own conservative stance.
+  } else if (pushed) {
+    return { decision: "deny", policy: "protected-branch-push", reason: `Direct pushes to protected branch '${pushed}' are not allowed.` };
+  }
   // W101: the semantic target gate runs per segment BEFORE the
   // current-branch-gated spelling lanes; deny-class ordering is preserved
   // (alias and push keep their primacy), the gate's deny names the protected

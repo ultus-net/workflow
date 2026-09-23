@@ -602,6 +602,14 @@ dist rebuild) with these deltas from §4's letter, recorded honestly:
    out of W101 scope, noted for the shell-policy's own queue. Lesson
    folded into LESS-0018: a reviewer trace of ONE lane is not a verdict —
    probe before implementing.
+   (W108, 2026-09-23: the watch-item is RESOLVED — the shell lane's
+   force-push rules are destination-aware, reusing the git lane's
+   push-destination resolver; see SECURITY_ASSURANCE #23's resolution and
+   the parity-log W108 entry. Cite correction: the rule this entry cites
+   sat at shell-policy.ts:21 in the pre-fix tree, not :20 — the :20 cite
+   above was stale when written. The post-fix shape is a destination-aware
+   check replacing both blind regex entries — plus-refspec AND flag — with
+   the resolved-destination semantics being the resolver's.)
 10. Evidence at the round-7 tip: suites 85/0 (policy 75 + redirect 5 +
     mcp 5 — the round-7 pins assert the policy label, discriminating the
     attribution fix); 55-row re-probe + round-2 shapes green; repo

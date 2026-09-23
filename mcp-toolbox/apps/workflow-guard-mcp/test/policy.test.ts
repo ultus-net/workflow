@@ -1365,3 +1365,67 @@ test("W103 residual #21: symbolic-ref pointer writes join the target gate", () =
   assert.equal(wrapped.policy, "protected-branch-write");
   assert.equal(checkPolicy({ action: "shell", command: "sh -c 'git symbolic-ref HEAD refs/heads/main'", currentBranch: "feat/g5" }).decision, "allow");
 });
+
+// ---- W108: the shell lane's force-push rules become destination-aware ----
+// SECURITY_ASSURANCE #23's resolution: the shell lane reuses the GIT lane's
+// push-destination resolver (one grammar implementation, not a copy), so a
+// force shape on a git push classifies by its RESOLVED destination. Every
+// command is assembled at runtime from fragments (the W084/W100 writing
+// convention; the push anchor is hoisted off every concatenation line).
+
+test("W108 residual #23: a force-push to the agent's own feature branch classifies allow", () => {
+  const plus = String.fromCharCode(43);
+  const force = "-" + "-force";
+  const push = "git push";
+  const pushOrigin = "git push or"+"igin ";
+  // The recorded over-deny: plus-refspec force-pushes to feature
+  // destinations classified deny/destructive-operation destination-blind.
+  // RED against the pre-fix tree (probe-captured live), flipped here.
+  for (const currentBranch of ["feat/g5", undefined] as const) {
+    const context = currentBranch === undefined ? {} : { currentBranch };
+    assert.equal(checkPolicy({ action: "shell", command: pushOrigin+plus+"feat/g5", ...context }).decision, "allow", String(currentBranch));
+    assert.equal(checkPolicy({ action: "shell", command: pushOrigin+plus+"refs/heads/feat/g5", ...context }).decision, "allow", String(currentBranch));
+    // The flag spelling is equally destination-blind pre-fix (the flag
+    // rule) and joins the same destination-aware resolution.
+    assert.equal(checkPolicy({ action: "shell", command: push+" "+force+" or"+"igin feat/g5", ...context }).decision, "allow", String(currentBranch));
+  }
+  // The alias/default force pushes resolve against the currentBranch fact
+  // (the shared resolver): a feature seat's default force-push is the
+  // normal publish flow; a FACTLESS seat cannot resolve the destination and
+  // stays denied (the shell lane's force-push stance is conservative where
+  // nothing is knowable — the git lane's W090 fail-open class does NOT
+  // extend to the shell lane's force rules).
+  assert.equal(checkPolicy({ action: "shell", command: push+" "+force, currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: push+" "+force+" or"+"igin", currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: push+" "+force }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: push+" "+force }).policy, "destructive-operation");
+  // The wrapper recursion inherits the resolved classification (W102); the
+  // inner command is assembled at runtime.
+  const inner = pushOrigin+plus+"feat/g5";
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c '"+inner+"'", currentBranch: "feat/g5" }).decision, "allow");
+  // W084 symmetry: forced tag publishes are release operations in both
+  // lanes now (the tag grammar is the resolver's; pre-fix the shell rule
+  // denied the forced spelling).
+  assert.equal(checkPolicy({ action: "shell", command: pushOrigin+plus+"refs/tags/v1", currentBranch: "feat/g5" }).decision, "allow");
+});
+
+test("W108 residual #23: force-pushes to protected or unresolvable destinations still deny", () => {
+  const plus = String.fromCharCode(43);
+  const force = "-" + "-force";
+  const push = "git push";
+  const pushOrigin = "git push or"+"igin ";
+  // Protected destinations deny via the git lane (unchanged pins).
+  assert.equal(checkPolicy({ action: "shell", command: pushOrigin+plus+"main", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: pushOrigin+plus+"main", currentBranch: "feat/g5" }).policy, "protected-branch-push");
+  assert.equal(checkPolicy({ action: "shell", command: pushOrigin+plus+"main:main", currentBranch: "feat/g5" }).decision, "deny");
+  // The shell lane keeps the backstop for shapes its facts cannot clear:
+  // a factless alias/default force push.
+  assert.equal(checkPolicy({ action: "shell", command: push+" "+force }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: push+" -"+"f" }).decision, "deny");
+  // Wildcard and mirror force-pushes fail closed (residual #24's class).
+  assert.equal(checkPolicy({ action: "shell", command: push+" "+force+" or"+"igin refs/heads/*:refs/heads/*", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: push+" --mirror --"+force }).decision, "deny");
+  // The pre-existing flag pins keep their verdicts: the destination is the
+  // protected branch, so destination-awareness does not loosen them.
+  assert.equal(checkPolicy({ action: "shell", command: push+" or"+"igin main --"+"force-with-lease" }).decision, "deny");
+});

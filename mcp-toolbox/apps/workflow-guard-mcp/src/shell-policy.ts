@@ -1,5 +1,6 @@
 import { basename } from "node:path";
 import { decodeShellEscapes, dynamicShellSyntaxIn, executableIn, shellWords, splitShellSegments, unwrapShellWords } from "./shell.js";
+import { protectedBranchesIn, pushedProtectedBranchIn, type GitPolicyContext } from "./git-policy.js";
 
 const W_DELETE = ["del", "ete"].join("");
 const W_DESTROY = ["des", "troy"].join("");
@@ -14,12 +15,25 @@ const W_RESET = ["res", "et"].join("");
 const W_PRUNE = ["pr", "une"].join("");
 const W_PUBLISH = ["pub", "lish"].join("");
 
+// W108 (SECURITY_ASSURANCE #23): the shell lane's force-push rules are
+// destination-aware — the shape DETECTION stays regex (the same two shapes
+// the blind rules matched), but the VERDICT reuses the GIT lane's
+// push-destination resolver (one grammar implementation, not a copy — the
+// W102 round-1 P3 twin discipline): protected or unresolvable destinations
+// deny; resolvable non-protected destinations (the agent's own feature
+// branch) and W084 tag publishes classify allow, matching the git lane.
+const FORCE_PUSH_PLUS_RE = new RegExp("\\bgit\\s+push\\b[^|;&]*\\s\\+(?:[\\w./-]*:)?");
+const FORCE_PUSH_FLAG_RE = /\bgit\s+push\b[^|;&]*(?:--force\b|--force-with-lease\b|\s-f\b)/;
+function forcePushShapeIn(variant: string): { readonly reason: string } | undefined {
+  if (FORCE_PUSH_PLUS_RE.test(variant)) return { reason: "force push via positive refspec can rewrite remote history" };
+  if (FORCE_PUSH_FLAG_RE.test(variant)) return { reason: "force push can rewrite remote history" };
+  return undefined;
+}
+
 const destructivePatterns: Array<{ re: RegExp; reason: string }> = [
   { re: new RegExp(`\\b${W_REMOVE}\\s+(?:-[a-zA-Z]*[rRfF][a-zA-Z]*\\s+)*-[a-zA-Z]*[rRfF][a-zA-Z]*\\s+(?:\\/|~|\\*)`), reason: "recursive or forced deletion of system/home paths" },
   { re: new RegExp(`\\b(?:sudo\\s+)?${W_REMOVE}\\s+-(?:[a-zA-Z]*[rRfF][a-zA-Z]*\\s+){1,2}(?:\\/|~)`), reason: "forced deletion of system/home paths" },
   { re: new RegExp(`\\bgit\\s+${W_CLEAN}\\s+(?:-[a-zA-Z]*[fdx][a-zA-Z]*)(?:\\s|$)`), reason: "git clean can delete untracked files" },
-  { re: new RegExp("\\bgit\\s+push\\b[^|;&]*\\s\\+(?:[\\w./-]*:)?"), reason: "force push via positive refspec can rewrite remote history" },
-  { re: /\bgit\s+push\b[^|;&]*(?:--force\b|--force-with-lease\b|\s-f\b)/, reason: "force push can rewrite remote history" },
   { re: new RegExp(`\\bkubectl\\s+(?:${W_DELETE}|drain|cordon)\\b`), reason: "destructive Kubernetes operation" },
   { re: /\bkubectl\s+rollout\s+(?:undo|restart)\b/, reason: "destructive Kubernetes rollout" },
   { re: new RegExp(`\\bhelm\\s+(?:uninstall|rollback|${W_DELETE})\\b`), reason: "destructive Helm operation" },
@@ -144,13 +158,32 @@ function interactiveReason(command: string, depth = 0): string | undefined {
   return undefined;
 }
 
-export function checkShellPolicy(command: string): ShellPolicyMatch | undefined {
+export function checkShellPolicy(command: string, context: GitPolicyContext = {}): ShellPolicyMatch | undefined {
   const dynamic = dynamicShellSyntaxIn(command);
   if (dynamic) return { policy: "dynamic-shell-syntax", decision: "deny", reason: `Cannot safely inspect shell command: ${dynamic}.` };
   const decoded = decodeShellEscapes(command);
   const normalized = normalizedCommand(decoded);
   for (const pattern of destructivePatterns) {
     if (pattern.re.test(command) || pattern.re.test(decoded) || pattern.re.test(normalized)) return { policy: "destructive-operation", decision: "deny", reason: pattern.reason };
+  }
+  // W108 (SECURITY_ASSURANCE #23): the destination-aware force-push rules.
+  // Checked over the same three text variants the blind regexes covered;
+  // placed AFTER the generic destructive patterns so a compound's earlier
+  // destructive match still attributes first (the pre-change entries sat
+  // mid-array; a compound mixing the post-push rules — kubectl and later —
+  // with a force push now attributes the earlier rule first: recorded in
+  // the W108 ledger item).
+  for (const variant of [command, decoded, normalized]) {
+    const shape = forcePushShapeIn(variant);
+    if (shape === undefined) continue;
+    const pushed = pushedProtectedBranchIn(variant, protectedBranchesIn(context), context.currentBranch);
+    if (pushed === undefined) continue;
+    // "wildcard-refspec" (fail-closed), "unresolved-alias" (a factless
+    // alias/default push — the shell lane's force-push stance is
+    // conservative where nothing is knowable; the git lane's W090 fail-open
+    // class does NOT extend to the shell lane's force rules), or a
+    // protected destination → deny.
+    return { policy: "destructive-operation", decision: "deny", reason: shape.reason };
   }
   for (const pattern of packagePatterns) {
     if (pattern.re.test(command) || pattern.re.test(normalized)) return { policy: "package-hygiene", decision: "deny", reason: pattern.reason };
