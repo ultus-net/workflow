@@ -149,20 +149,23 @@ export function shapeRequestBody(profile: ModelProfile, body: Record<string, unk
       // `disabled` is a hard error on GLM-5.3: force enabled, never passthrough.
       // W109 (frontier round 1 P1): the GLM anthropic-wire shape is UNPROBED —
       // the openai-wire fields (thinking.enabled, reasoning_effort) are not
-      // valid Messages-schema fields, so on the anthropic wire only the
-      // verified shared fields (sampling) are emitted rather than an invented
-      // shape. Wiring the verified anthropic thinking shape for GLM is queued.
+      // valid Messages-schema fields, so on the anthropic wire they are
+      // SCRUBBED (including caller-supplied ones — the module invariant says
+      // GLM never carries thinking.type:"disabled" on any wire) rather than
+      // an invented shape passed through. Wiring the verified anthropic
+      // thinking shape for GLM is queued.
       return profile.wire === "anthropic"
-        ? { ...shaped }
+        ? omitKey(omitKey(shaped, "thinking"), "reasoning_effort")
         : { ...shaped, thinking: { type: "enabled" }, reasoning_effort: profile.reasoningEffort };
     case "kimi":
       // K3 reasons unconditionally; `thinking` is not a valid K3 field, so a
       // GPT-era `thinking: { type: "disabled" }` must be dropped, not sent.
-      // W109 (frontier round 1 P1): the K3 anthropic-wire shape is unprobed —
-      // reasoning_effort is an openai-wire field, not a Messages field, so it
-      // is emitted only on the verified wire.
+      // W109 (frontier round 1 P1 + review round 1 P2-1): the K3 anthropic-
+      // wire shape is unprobed — both openai-wire fields are scrubbed (the
+      // nested omits: a second flat spread would re-add the caller-supplied
+      // thinking the first omit removed).
       return profile.wire === "anthropic"
-        ? { ...omitKey(shaped, "thinking"), ...omitKey(shaped, "reasoning_effort") }
+        ? omitKey(omitKey(shaped, "thinking"), "reasoning_effort")
         : { ...omitKey(shaped, "thinking"), reasoning_effort: profile.reasoningEffort };
   }
 }

@@ -3165,12 +3165,16 @@ shaped):**
 1. **The messages-lane governance gap (P1, pre-existing W070b-era):**
    the proxy's parse/transform/usage-injection pipeline gates on the
    `/chat/completions` path only — the anthropic messages path passes
-   through UNMETERED and UNTRANSFORMED. The cache-marker pass therefore
-   fires on real anthropic-wire traffic only after that lane is
-   governed; the c2 end-to-end pin exercises the governed lane with an
-   anthropic-wire profile. Queued as its own item (it needs the replay
-   policy's Messages-schema compatibility and the anthropic usage shape
-   recorded before the metering trail is trusted on that lane).
+   through UNTRANSFORMED and effectively UNMETERED (clarifier, review
+   round 1 P3: the lane does reach `recordUsage`, but the OpenAI-shaped
+   extraction keys against the anthropic usage shape, so `usageEvents`
+   can increment with zero tokens — the trail is polluted, not absent).
+   The cache-marker pass therefore fires on real anthropic-wire traffic
+   only after that lane is governed; the c2 end-to-end pin exercises the
+   governed lane with an anthropic-wire profile. Queued as its own item
+   (it needs the replay policy's Messages-schema compatibility and the
+   anthropic usage shape recorded before the metering trail is trusted
+   on that lane).
 2. **The cached-token metering blind spot (P2):** the metrics model
    knows only prompt/completion/total/cost — no cache_read/cache_create
    fields exist, so when markers fire on real traffic the cache-hit

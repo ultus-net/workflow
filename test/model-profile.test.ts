@@ -134,6 +134,22 @@ test("W109: array-form system blocks get the marker on the last block only", () 
   assert.equal(marked.system[1]?.text, "part two");
 });
 
+test("W109: an already-marked prefix block is preserved, never double-marked", () => {
+  const profile = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic", cacheMarkers: true });
+  const body = {
+    system: [
+      { type: "text", text: "part one", cache_control: { type: "ephemeral" } },
+      { type: "text", text: "part two" },
+    ],
+  };
+  const marked = applyCacheMarkers(profile, body) as { system: Array<{ text: string; cache_control?: { type: string } }> };
+  assert.equal(marked.system[0]?.cache_control?.type, "ephemeral", "the pre-existing marker survives untouched");
+  assert.equal(marked.system[1]?.cache_control?.type, "ephemeral", "the marker moves to the last block");
+  // Only the last block changes: the pass never stacks a second marker on
+  // an already-marked block.
+  assert.deepEqual(marked.system[0], body.system[0]);
+});
+
 test("W109: the marker pass is opt-in and wire-gated — everything else passes through untouched", () => {
   const body = { system: "You are Workflow.", tools: [{ name: "read_file" }] };
   const unmarked = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic" });
@@ -171,4 +187,15 @@ test("W109: glm/kimi anthropic-wire shaping emits no openai-wire reasoning field
   // The openai wire keeps its verified shapes.
   assert.deepEqual(shapeRequestBody(modelProfile({ family: "kimi", model: "kimi-k3", taskClass: "coding" }), { messages: [] }).reasoning_effort, "max");
   assert.deepEqual(shapeRequestBody(modelProfile({ family: "glm", model: "glm-5.3", taskClass: "coding" }), { messages: [] }).reasoning_effort, "max");
+  // Review round 1 P2-1: a CALLER-SUPPLIED thinking field is scrubbed on
+  // the anthropic wire too — the module invariant (GLM/K3 never carry
+  // thinking.type:"disabled") holds on every wire, and the nested omits
+  // mean the second spread cannot re-add what the first removed.
+  const hostile = { messages: [], thinking: { type: "disabled" }, reasoning_effort: "ultra" };
+  const glmScrubbed = shapeRequestBody(glm, hostile) as Record<string, unknown>;
+  assert.equal("thinking" in glmScrubbed, false);
+  assert.equal("reasoning_effort" in glmScrubbed, false);
+  const kimiScrubbed = shapeRequestBody(kimi, hostile) as Record<string, unknown>;
+  assert.equal("thinking" in kimiScrubbed, false);
+  assert.equal("reasoning_effort" in kimiScrubbed, false);
 });

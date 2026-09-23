@@ -37,7 +37,7 @@ export function composeBodyTransforms(transforms: readonly BodyTransform[]): Bod
   return (body: Record<string, unknown>): Record<string, unknown> => {
     let current = body;
     for (const transform of transforms) {
-      let result: Record<string, unknown> | unknown;
+      let result: unknown;
       try {
         result = transform(current);
       } catch {
