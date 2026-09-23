@@ -541,3 +541,26 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   discrepancy was a scratch-script fragment bug producing a malformed
   flag, re-verified allow with the correct shape); repo lint/typecheck
   exit 0; checker 7/0.
+
+  Review round 2 on W103 (the completing reviewer's continuation) —
+  [REQUEST_CHANGES], P1: the round-1 tags-only fix gated the WHOLE alias
+  disjunction behind !tagsOnly, re-opening the #22 hole for flag-combo
+  pushes (`git push origin --tags HEAD` classified allow from the
+  protected seat — the exact shape the iteration closed). Fixed by the
+  reviewer's scoping: the exclusion applies to the DEFAULT-PUSH readings
+  only (args 0 or 1); explicit HEAD/@ refspecs always resolve. En-route
+  correction inside the round-2 fix: the round-2 table's no-remote cell
+  (`git push --tags HEAD`, expect deny) was inconsistent with the
+  reviewer's own formula — git's grammar makes the single positional the
+  repository slot and tags-only flags push no branch refs, so the cell
+  corrects to allow (pinned with the note). Round-2 P2 fixed: the twin's
+  two-operand pattern now carries a flags group before EACH operand
+  position (git permutes options — the interleaved write form
+  `refs/heads/feat --short sym2` is a mutation again; red live before
+  the fix). Round-2 P2-b: the LESS-0021 append was still pending (the
+  REMEMBER step) — landed in this iteration's final commit; the ledger
+  claims above were written ahead of the append and are only true as of
+  that commit. Pins red-first (81/2 — exactly the round-2 blocks) then
+  green 93/0; dist rebuilt and probed (8 round-2 cells match, including
+  the corrected no-remote cell); repo lint/typecheck exit 0; checker
+  7/0.

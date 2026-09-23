@@ -2775,6 +2775,20 @@ after the post-fix rebuild (a mid-iteration stale-dist divergence was
 caught by the dist probe itself), repo lint/typecheck exit 0, checker
 7/0.
 
+**Review round 2 (the completing reviewer's continuation):**
+[REQUEST_CHANGES] with one P1 — the round-1 tags-only fix had gated the
+WHOLE alias disjunction, re-opening the #22 hole for tag-flag combos
+with an explicit alias refspec; fixed by scoping the exclusion to the
+default-push readings only (explicit HEAD/@ refspecs always resolve),
+plus the twin's interleaved-flags fix (git permutes options) and the
+LESS-0021 append (the REMEMBER step). The round-2 table's no-remote
+cell was corrected against the reviewer's own formula (git's grammar
+makes the single positional the repository slot; tags-only flags push
+no branch refs). Re-verified: 81/2 red (exactly the round-2 pins) then
+93/0 green, dist rebuilt and probed (8 round-2 cells), repo
+lint/typecheck exit 0, checker 7/0. Round 3 re-binds the verdict to the
+final tip.
+
 **Acceptance criteria:**
 - [x] Alias/default pushes from a protected seat deny; from a feature
       seat and a factless seat they keep their classification; mixed
