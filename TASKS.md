@@ -4157,13 +4157,15 @@ launcher's web surface is the only affected path (source mode
       reviewer's reflog P1 — the fix rode a mislabeled test(webapp)
       commit, split into properly-labeled commits and the
       fixture-mkdir/regex corrections re-applied on top).
-- [x] The both-candidates regex tightened per review (the ordered pair:
-      the dist candidate then the src candidate — a message dropping the
-      sibling fails the pin).
+- [x] The both-candidates regex per review (the pin asserts the ordered
+      pair — the dist candidate, then " and ", then the src candidate; a
+      message dropping either fails the pin).
 - [x] The interim workaround recorded: `npm run web` (tsx mode) was never
       affected; the compiled path is what this closes.
 
 **Residuals (recorded, not fixed):** the "real compiled layout" pin is a
 simulated dist-shaped module URL — the operator's live
-`node dist/cli/workflow.js` repro is the live verification (the fixture
-prefix leftover renamed to w124-* per review).
+`node dist/cli/workflow.js` repro is the live verification; the
+"real compiled layout" wording corrected to "a dist-shaped module URL"
+per review (the pin exercises the fallback logic, not a built
+artifact); the fixture prefixes all renamed to w124-* per review.

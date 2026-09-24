@@ -3,7 +3,6 @@ import { test } from "node:test";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 
 import { resolveWebappEntry } from "../src/ui/webapp/bundle.js";
 
@@ -23,7 +22,7 @@ const distModuleUrl = (root: string): string =>
   `file://${join(root, "dist", "ui", "webapp", "bundle.js").replace(/\\/g, "/")}`;
 
 test("W124: a source-layout module resolves its main.tsx sibling", () => {
-  const root = mkdtempSync(join(tmpdir(), "w123-src-"));
+  const root = mkdtempSync(join(tmpdir(), "w124-src-"));
   mkdirSync(join(root, "src", "ui", "webapp"), { recursive: true });
   writeFileSync(join(root, "src", "ui", "webapp", "main.tsx"), "export {};");
   assert.equal(
@@ -50,8 +49,8 @@ test("W124: neither layout present fails with both candidates named", () => {
   mkdirSync(join(root, "dist", "ui", "webapp"), { recursive: true });
   assert.throws(
     () => resolveWebappEntry(distModuleUrl(root)),
-    /webapp entry main\.tsx not found \(looked in .*src[\\\/]ui[\\\/]webapp[\\\/]main\.tsx\)/s,
-    "the error names the searched candidates so the missing-tree failure is diagnosable",
+    /dist[\\\/]ui[\\\/]webapp[\\\/]main\.tsx.* and .*src[\\\/]ui[\\\/]webapp[\\\/]main\.tsx\)/s,
+    "the error names BOTH candidates in order (a message dropping either fails the pin)",
   );
 });
 
