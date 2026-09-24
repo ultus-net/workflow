@@ -2243,7 +2243,7 @@ workspace and passes it to `createOpencodeServerAuthority`.
       surface, G2 part 2 (`trustedRole`), G5 branch-exit pins, G4
       matched-surface field, ostree `/var`-home fix, dist-freshness pin,
       `npm pack` verifier debt (human-gated).
-### W095 - Local model-routing policy at the metering proxy (Planned - shape + constraints) (2026-09-22)
+### W095 - Local model-routing policy at the metering proxy (Partial - the metering-proxy seam landed via W109's transformBody; the routing design note EXISTS and is frontier-verified through round 2, round 3 + the per-role end-to-end check queued) (2026-09-22)
 
 **Operator question:** "readdress the mixture-of-experts local router idea -
 would it be a good idea to classify things before handing them to
@@ -2319,6 +2319,16 @@ decision), durable state (local JSON stores -> durable remote store per the
 DURABLE_STATE_INVENTORY.md writer authorities), and long-running loops
 (RSI/scheduler -> durable-function or timer-trigger shaping).
 
+**DUPLICATE (found 2026-09-24, contradiction sweep):** this item
+duplicates W093 — same operator intent (2026-09-22), same title, same
+open hosting-assessment criterion — recorded twice during that session.
+W096 carries the fuller constraint enumeration (the plane map's five
+re-opened surfaces); W093 carries the plane-3 loopback facts. The
+canonical resolution (merge into one item or supersede one) is the
+operator's call — both are operator-intent records, not agent-authored
+design. No work is queued twice: the hosting assessment criterion is the
+same single deliverable.
+
 **Acceptance criteria:**
 - [ ] A hosting assessment (AZ Function vs container-app vs stay-local,
       per the plane map) with the THREAT_MODEL re-read - before any
@@ -2339,7 +2349,7 @@ DURABLE_STATE_INVENTORY.md writer authorities), and long-running loops
 - [x] Verifier: W097 pins RED against the unmodified tree (52 pass/1 fail - exactly the user-home test; the genuine-/var and credential tests green pre-change as they assert existing protection), GREEN after the fix (62/0 across policy+mcp+redirect); guard typecheck OK; dist rebuilt and the LIVE probe re-run post-fix (home-abs: undefined; ws-relative: undefined; var-log: protected; ssh: protected); repo lint/typecheck exit 0.
 - [ ] Queued (one change per iteration): the ask channel on the other four seats, the plane-3-prime pending-ask surface, daemon-level end-to-end ask pin, G2 part 2 (trustedRole), G5 branch-exit pins, G4 matched-surface field, dist-freshness pin, npm pack verifier debt (human-gated).
 
-### W098 - Control-plane caching posture: cache-enabling + affinity, never response-caching (Planned - position recorded) (2026-09-23)
+### W098 - Control-plane caching posture: cache-enabling + affinity, never response-caching (Partial - c1 audit/c2 markers/c4 frontier landed; c3 affinity unblocked and queued) (2026-09-23)
 
 **Operator question:** "should we be doing caching on the control
 plane/router as well? This would complement the provider-side caching done
