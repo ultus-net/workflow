@@ -70,7 +70,27 @@ export async function openStockWebTab(options: StockWebTabOptions): Promise<Stoc
   return { url: tabUrl, username: discovery.tuiUsername };
 }
 
+/** W129: the help contract's web usage — exported so the guard can live in
+ * runWebLaunch itself and the direct-script block stays a thin entry. */
+export const WEB_USAGE = [
+  "workflow-web — the browser operator UI (headless-safe)",
+  "  --cwd <dir>    workspace (default: cwd)",
+  "  --port <n>     bind port (default: env PORT or 4173; 0 = ephemeral)",
+  "  --no-browser   never open a browser (env WORKFLOW_NO_BROWSER=1)",
+  "  --help         print this help",
+].join("\n");
+
 export async function runWebLaunch(argv: readonly string[]): Promise<WebLaunchHandle> {
+  // W129: the help contract — BEFORE any workspace/port/service work. The
+  // guard lives HERE, not only in the runnable-script block, because the
+  // dispatcher (src/cli/workflow.ts) calls runWebLaunch IN-PROCESS:
+  // `workflow web --help` must resolve on this path too (the round-1
+  // review's P1 — the original guard was unreachable for the dispatcher's
+  // in-process call, so `workflow web --help` started the service).
+  if (argv.includes("--help") || argv.includes("-h")) {
+    process.stdout.write(`${WEB_USAGE}\n`);
+    process.exit(0);
+  }
   const workspace = resolveTuiWorkspace(argv, process.cwd());
   const port = parsePort(argv);
   const noBrowser = argv.includes("--no-browser") || process.env.WORKFLOW_NO_BROWSER === "1";
@@ -102,16 +122,7 @@ export async function runWebLaunch(argv: readonly string[]): Promise<WebLaunchHa
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  const argv = process.argv.slice(2);
-  // W129: the help contract — print and exit before runWebLaunch starts the
-  // service (or the browser).
-  if (argv.includes("--help") || argv.includes("-h")) {
-    console.log("workflow-web — the browser operator UI (headless-safe)");
-    console.log("  --cwd <dir>    workspace (default: cwd)");
-    console.log("  --port <n>     bind port (default: env PORT or 4173; 0 = ephemeral)");
-    console.log("  --no-browser   never open a browser (env WORKFLOW_NO_BROWSER=1)");
-    console.log("  --help         print this help");
-    process.exit(0);
-  }
-  await runWebLaunch(argv);
+  // The help guard lives inside runWebLaunch (the in-process dispatcher call
+  // shares it); this block is a thin entry.
+  await runWebLaunch(process.argv.slice(2));
 }

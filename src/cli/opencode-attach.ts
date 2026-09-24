@@ -37,7 +37,7 @@ const USAGE = [
   "workflow-opencode — attach the stock OpenCode client to the Workflow OpenCode server",
   "",
   "Options:",
-  "  --workspace <dir>  workspace the client attaches to (default: cwd)",
+  "  --workspace <dir>  workspace the client attaches to (default: cwd; alias: --dir)",
   "  --no-autostart     never start the server daemon; fail when discovery is absent",
   "  --help             print this help",
 ].join("\n");

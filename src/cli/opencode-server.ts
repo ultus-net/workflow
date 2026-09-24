@@ -115,7 +115,7 @@ const USAGE = [
   "workflow-opencode-server — the Workflow-owned OpenCode server daemon (advisory enforcement)",
   "",
   "Options:",
-  "  --workspace <dir>  workspace the daemon serves (default: cwd)",
+  "  --workspace <dir>  workspace the daemon serves (default: cwd; alias: --dir)",
   "  --help             print this help",
 ].join("\n");
 
