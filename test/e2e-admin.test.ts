@@ -62,7 +62,6 @@ const CREDENTIAL_ID = "w130-e2e-credential";
 test("W130: the compiled admin control plane serves the credential contract end to end — the token gate, mutation validation, the audit trail, and the clean teardown", async (context) => {
   ensureFresh(distArtifact("cli", "admin.js"));
   const home = mkdtempSync(join(tmpdir(), "w130-admin-home-"));
-  context.after(() => rmSync(home, { recursive: true, force: true }));
   let output = "";
   let exitInfo: { code: number | null; signal: string | null } | undefined;
   const child = spawn(process.execPath, ["dist/cli/admin.js"], {
@@ -76,13 +75,16 @@ test("W130: the compiled admin control plane serves the credential contract end 
   child.once("exit", (code, signal) => { exitInfo = { code, signal }; });
   let storedCredential = false;
   let adminUrl = "";
-  // The after-hook best-effort cleanup (the round-1 review's P2): node:test
-  // runs after hooks in reverse registration order, so this — registered
-  // after the kill hook — runs BEFORE the kill while the server is still
-  // alive: a test failure between the PUT and the in-test DELETE still
-  // revokes the keyring entry. (node:test hook order confirmed against the
-  // runner's behavior; if the server is already gone, the entry may orphan —
-  // the recorded residual.)
+  // The after-hook best-effort cleanup (the round-1 review's P2). ORDER IS
+  // LOAD-BEARING and the round-2 review verified it against Node's runner
+  // source (lib/internal/test_runner/test.js — after hooks run in
+  // DECLARATION (FIFO) order; nodejs/node#48736 records the docs mismatch):
+  // this revoke is declared BEFORE the kill hook deliberately, so a test
+  // failure between the PUT and the in-test DELETE still revokes the
+  // keyring entry while the server is alive; the home rmSync is declared
+  // LAST so the revoke never races a removed credential-config tree (the
+  // original reverse-order claim was wrong and is corrected here). If the
+  // server is already gone, the entry may orphan — the recorded residual.
   context.after(async () => {
     if (storedCredential && exitInfo === undefined && adminUrl !== "") {
       try {
@@ -97,6 +99,7 @@ test("W130: the compiled admin control plane serves the credential contract end 
       try { if (child.pid !== undefined) process.kill(-child.pid, "SIGTERM"); } catch { /* exited */ }
     }
   });
+  context.after(() => rmSync(home, { recursive: true, force: true }));
   const deadline = Date.now() + 20_000;
   let baseUrl = "";
   while (baseUrl === "" && exitInfo === undefined && Date.now() < deadline) {

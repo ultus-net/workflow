@@ -331,10 +331,13 @@ test("W131: the compiled settings panel serves the settings-document HTTP contra
 
   // The writes. Global scope, with a deliberately malformed sibling server:
   // fail-closed normalization DROPS it (src/integrations/workflow-settings.ts),
-  // never guesses a shape.
+  // never guesses a shape. This write also exercises the NO-ORIGIN trusted
+  // path (node fetch sends no Origin/Sec-Fetch-Site headers —
+  // isTrustedMutation's fallback branch; the round-2 review's note: the
+  // same-origin shape is exercised by the later writes).
   const writeMcpGlobal = await fetch(`${base}/api/settings/mcp`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin: base },
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
       scope: "global",
       servers: [
@@ -480,7 +483,10 @@ test("W131: the compiled settings panel serves the settings-document HTTP contra
     `after SIGTERM the shutdown handler must exit 0 (service.close().then(() => process.exit(0))) — output: ${output.slice(0, 600)}`,
   );
   // The full lifecycle composed exactly two stdout lines: the banner and the
-  // honest no-opener line — no agent spawn, no stray logging.
+  // honest no-opener line — no agent spawn, no stray logging. The equality
+  // is read after the exit promise resolves (node flushes pipe stdout
+  // before exit — the round-2 review's note-level flake caveat; if a flush
+  // race ever appears, await stream close before this assert).
   assert.equal(
     output,
     `Workflow settings panel: ${base}/settings\nNo browser opener available; open the URL above manually.\n`,
