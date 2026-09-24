@@ -1160,7 +1160,7 @@ test("web UI guards session rename, task retry/add, and the removed evidence end
   // no request shape can mint kernel evidence anymore.
   const evidenceAttempt = await fetch(`${base}/api/evidence`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", origin: base },
     body: JSON.stringify({ subject: "test-subject", result: "passed" }),
   });
   assert.equal(evidenceAttempt.status, 404);

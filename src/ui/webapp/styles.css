@@ -2468,18 +2468,15 @@ body {
 
 .sessions-none { margin: 0.3rem 0 0.6rem; }
 
-/* Task/evidence affordances in the panels */
+/* Task affordances in the panels */
 
-.task-add,
-.evidence-add {
+.task-add {
   display: flex;
   gap: 0.35rem;
   margin-top: 0.5rem;
 }
 
-.task-add input,
-.evidence-add input,
-.evidence-add select {
+.task-add input {
   flex: 1;
   min-width: 0;
   background: var(--bg-deep);
@@ -2666,7 +2663,7 @@ body {
   .usage-cost { display: none; }
   .status-bar-keys { display: none; }
   .status-bar-branch { display: none; }
-  .task-add, .evidence-add { display: grid; grid-template-columns: 1fr auto; }
+  .task-add { display: grid; grid-template-columns: 1fr auto; }
   .task-add input:nth-child(2), .task-add button { grid-column: 1 / -1; }
 }
 
