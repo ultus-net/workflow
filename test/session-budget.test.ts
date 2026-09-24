@@ -5,6 +5,8 @@ import type { CodingSessionDriver, CodingSessionEvent } from "../src/application
 import { WorkflowCodingSession } from "../src/application/coding-session.js";
 import type { ModelUsageMetrics, ModelUsageProxy } from "../src/integrations/model-usage-proxy.js";
 import {
+  budgetDowngradeActive,
+  budgetDowngradeFromEnv,
   createSessionBudgetGuard,
   sessionBudgetFromEnv,
   sessionBudgetMechanism,
@@ -184,4 +186,51 @@ test("the usage line renders a crossed budget", () => {
     formatUsageLine({ totalTokens: 1500, costUsd: 0.002, budgetViolation: "budget exceeded: total tokens 1500 > cap 1000" }),
     "1500 tokens · $0.0020 · ! budget exceeded: total tokens 1500 > cap 1000",
   );
+});
+
+// W118 (the W095 budget-downgrade consumer, part 1): the env axes. The
+// downgrade TARGET is required (a fraction without a target downgrades to
+// nothing); the warn FRACTION defaults to 0.8 and must parse to (0,1) —
+// an invalid axis fails CLOSED to no downgrade (the pass-through posture
+// is the default; a downgrade is an opt-in behavior). The threshold
+// source stays design-open (the routing note's key-2: "env axis or cap
+// fraction") — both axes are env for v1, recorded as such.
+test("W118: the budget-downgrade env axes parse fail-closed", () => {
+  const model = { WORKFLOW_BUDGET_DOWNGRADE_MODEL: "glm-5.3-flash" };
+  assert.deepEqual(budgetDowngradeFromEnv(model), { targetModel: "glm-5.3-flash", fraction: 0.8 }, "the fraction defaults to 0.8");
+  assert.deepEqual(
+    budgetDowngradeFromEnv({ ...model, WORKFLOW_BUDGET_DOWNGRADE_FRACTION: "0.5" }),
+    { targetModel: "glm-5.3-flash", fraction: 0.5 },
+  );
+  assert.equal(budgetDowngradeFromEnv({}), undefined, "no target model = no downgrade (silence is honest)");
+  assert.equal(budgetDowngradeFromEnv({ WORKFLOW_BUDGET_DOWNGRADE_MODEL: "   " }), undefined, "a blank target is absent");
+  assert.equal(budgetDowngradeFromEnv({ ...model, WORKFLOW_BUDGET_DOWNGRADE_FRACTION: "1.5" }), undefined, "a fraction ≥ 1 fails closed");
+  assert.equal(budgetDowngradeFromEnv({ ...model, WORKFLOW_BUDGET_DOWNGRADE_FRACTION: "0" }), undefined, "a fraction ≤ 0 fails closed");
+  assert.equal(budgetDowngradeFromEnv({ ...model, WORKFLOW_BUDGET_DOWNGRADE_FRACTION: "abc" }), undefined, "a non-numeric fraction fails closed");
+});
+
+// W118: the warn-tier predicate mirrors the abort-tier comparison
+// (budgetViolation's semantics) at the warn fraction — ANY cap dimension
+// crossed at ≥ fraction × cap activates the downgrade; no cap configured
+// means nothing to warn about. The abort tier itself is untouched: the
+// guard still cancels at the full cap (one implementation, two tiers).
+test("W118: the downgrade activates at the warn fraction of any cap dimension", () => {
+  const budget = { maxTotalTokens: 1000, maxCostUsd: 1 };
+  assert.equal(budgetDowngradeActive({ promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0 }, budget, 0.5), false, "no usage, no downgrade");
+  assert.equal(
+    budgetDowngradeActive({ promptTokens: 0, completionTokens: 0, totalTokens: 600, costUsd: 0.1 }, budget, 0.5),
+    true,
+    "total tokens at ≥ 0.5× the cap activates",
+  );
+  assert.equal(
+    budgetDowngradeActive({ promptTokens: 0, completionTokens: 0, totalTokens: 100, costUsd: 0.9 }, budget, 0.5),
+    true,
+    "cost at ≥ 0.5× its cap activates (any dimension)",
+  );
+  assert.equal(
+    budgetDowngradeActive({ promptTokens: 0, completionTokens: 0, totalTokens: 499, costUsd: 0.4 }, budget, 0.5),
+    false,
+    "below the fraction on every dimension stays inactive",
+  );
+  assert.equal(budgetDowngradeActive({ promptTokens: 0, completionTokens: 0, totalTokens: 600, costUsd: 0 }, {}, 0.5), false, "no caps configured = nothing to warn about");
 });

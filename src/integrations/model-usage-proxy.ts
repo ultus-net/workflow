@@ -9,6 +9,8 @@ import {
 } from "./openrouter-auto-latest.js";
 import { checkEgressCredential, METERED_PLACEHOLDER_KEY } from "./egress-credential.js";
 import { enforceReplayPolicy } from "./model-replay-policy.js";
+import type { RunBudget } from "./hub-scheduler.js";
+import { budgetDowngradeActive } from "./session-budget.js";
 
 export { METERED_PLACEHOLDER_KEY };
 
@@ -16,7 +18,8 @@ export { METERED_PLACEHOLDER_KEY };
  * W109 (W095 c2): a body transform for the metering proxy's policy-routing
  * seam. Pure: takes the current body, returns the next body (or a non-record
  * to be skipped). Consumers: the W070a profile shaping, the W098 c2 cache
- * marker pass, and — queued — the W095 budget-downgrade body rewrite.
+ * marker pass, and the W095 budget-downgrade body rewrite (the third
+ * consumer, landed W118).
  */
 export type BodyTransform = (body: Record<string, unknown>) => Record<string, unknown>;
 
@@ -151,13 +154,31 @@ export async function createModelUsageProxy(options: {
    *
    * W109 (W095 c2): this option is the metering proxy's POLICY-ROUTING
    * transform point — the same seam the W095 design note names for the
-   * budget-downgrade body rewrite (its second consumer, alongside the W070a
-   * profile shaping). Policy consumers compose through
-   * `composeBodyTransforms`; the pass-through posture is unchanged for
-   * unclassified traffic (absent transforms and non-record returns leave the
-   * body untouched).
+   * budget-downgrade body rewrite (its third consumer, alongside the W070a
+   * profile shaping and the W098 c2 cache-marker pass). Policy consumers
+   * compose through `composeBodyTransforms`; the pass-through posture is
+   * unchanged for unclassified traffic (absent transforms and non-record
+   * returns leave the body untouched).
    */
   readonly transformBody?: ((body: Record<string, unknown>) => Record<string, unknown>) | undefined;
+  /**
+   * W118 (the W095 budget-downgrade consumer): when set, requests whose
+   * session usage has crossed the WARN fraction of the budget (any cap
+   * dimension at >= fraction * cap, the same comparison budgetViolation
+   * uses at the abort tier) have their body.model rewritten to the
+   * target — composed AFTER the caller's transformBody (the rewrite
+   * applies to the shaped body). Absent leaves traffic untouched (the
+   * pass-through posture is the default; a downgrade is opt-in). The
+   * activation reads the proxy's OWN recorded usage — per-family on the
+   * open-source lane (the granularity residual: a session spreading
+   * traffic across family proxies sums separately). The abort tier is
+   * untouched: the W045 guard still cancels at the full cap.
+   */
+  readonly budgetDowngrade?: {
+    readonly targetModel: string;
+    readonly budget: RunBudget;
+    readonly fraction: number;
+  } | undefined;
   /**
    * When set, chat completions targeting `openrouter/auto` have the resolved
    * `~...-latest` pool injected as the Auto Router `allowed_models` before
@@ -185,6 +206,26 @@ export async function createModelUsageProxy(options: {
           ...(autoLatest.ttlMs === undefined ? {} : { ttlMs: autoLatest.ttlMs }),
           ...(autoLatest.negativeTtlMs === undefined ? {} : { negativeTtlMs: autoLatest.negativeTtlMs }),
         });
+
+  // W118: the budget-downgrade stage reads the proxy's OWN recorded usage at
+  // REQUEST time (this `metrics` object mutates as usage events land), so a
+  // session crossing the warn fraction downgrades its subsequent requests.
+  const downgrade = options.budgetDowngrade;
+  const downgradeStage = downgrade === undefined
+    ? undefined
+    : (body: Record<string, unknown>): Record<string, unknown> =>
+        budgetDowngradeActive(metrics, downgrade.budget, downgrade.fraction)
+          ? { ...body, model: downgrade.targetModel }
+          : body;
+  // Both consumers set → the downgrade composes AFTER the caller's
+  // transformBody (the rewrite applies to the shaped body); a single consumer
+  // runs alone; neither stays undefined (pass-through).
+  const bodyTransform =
+    options.transformBody === undefined
+      ? downgradeStage
+      : downgradeStage === undefined
+        ? options.transformBody
+        : composeBodyTransforms([options.transformBody, downgradeStage]);
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((error) => {
@@ -258,8 +299,8 @@ export async function createModelUsageProxy(options: {
           routed = applyAutoRouterPlugin(parsed, parsed.model, allowedModels, autoLatest?.costTier);
         }
       }
-      if (options.transformBody !== undefined) {
-        const shaped = options.transformBody(routed);
+      if (bodyTransform !== undefined) {
+        const shaped = bodyTransform(routed);
         if (isRecord(shaped)) routed = shaped;
       }
       const existing = isRecord(routed.usage) ? routed.usage : {};

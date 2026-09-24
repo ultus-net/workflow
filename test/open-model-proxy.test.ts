@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 
 import { createOpenModelMeteringPool, openModelProviderId, proxyBaseUrl } from "../src/integrations/open-model-proxy.js";
+import type { RunBudget } from "../src/integrations/hub-scheduler.js";
 import { METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
 import { DEFAULT_OPEN_SOURCE_POOL, type OpenModelDefinition } from "../src/integrations/open-source-pool.js";
 import type { ModelFamily } from "../src/integrations/model-profile.js";
@@ -190,5 +191,123 @@ test("W109: the anthropic-wire pool marks stable prefixes when opted in and pass
     assert.deepEqual(plainBody.reasoning, { effort: "high" }, "the wire shaping still applies without the marker opt-in");
   } finally {
     await plainPool.close();
+  }
+});
+
+// W118 (the W095 budget-downgrade consumer, part 1): the transform stage
+// composes into the GOVERNED lane — the open-source lane's transformBody
+// is the only production consumer of the policy seam, so the end-to-end
+// pin runs through the REAL pool composition (LESS-0030: no synthetic
+// paths). A session crossing the WARN fraction of its budget has its
+// subsequent requests' body.model rewritten to the downgrade target;
+// pre-crossing requests are untouched; and the metering trail records
+// identically on both sides of the rewrite (the recording mechanics are
+// upstream of the model field — the W115/LESS-0036 discipline applied to
+// the downgrade). The abort tier is untouched: the guard still cancels
+// at the full cap — the downgrade is the softer middle step.
+test("W118: a session crossing the budget warn fraction downgrades its model at the governed lane", async (context) => {
+  const budget: RunBudget = { maxTotalTokens: 1000 };
+  // The usage holder is mutable so the test crosses the warn fraction
+  // between requests — the activation is a function of the proxy's own
+  // recorded usage, exactly as production wires it.
+  const usageHolder = { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20, cost: 0.001 };
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      const body = Buffer.concat(chunks).toString("utf8");
+      seen.push(body);
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ choices: [], usage: { ...usageHolder } }));
+    });
+  });
+  const seen: string[] = [];
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  context.after(() => server.close());
+  const address = server.address() as AddressInfo;
+
+  const pool = await createOpenModelMeteringPool({
+    pool: DEFAULT_OPEN_SOURCE_POOL.filter((def) => def.family === "deepseek"),
+    keys: { deepseek: "DEEPSEEK_KEY" },
+    upstreamOverride: () => `http://127.0.0.1:${address.port}`,
+    budgetDowngrade: { targetModel: "deepseek-flash-cheap", budget, fraction: 0.5 },
+  });
+  try {
+    const deepseek = pool.byFamily.get("deepseek")!;
+    const ask = async (model: string): Promise<void> => {
+      await fetch(`${deepseek.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+        body: JSON.stringify({ model, messages: [] }),
+      });
+    };
+
+    // Pre-crossing: 20/1000 tokens — the forwarded model is the original.
+    await ask("deepseek-flash");
+    assert.equal(JSON.parse(seen[0]!).model, "deepseek-flash", "below the warn fraction the model is untouched");
+
+    // The crossing request: the holder's usage rises to 900, but the
+    // activation reads the proxy's RECORDED usage at REQUEST time — and
+    // only 20 tokens have landed when request 2 is transformed (response
+    // 2's 900 land after it is forwarded). So request 2 still rides the
+    // original model: the recorded usage lags the holder by exactly one
+    // in-flight request (the LESS-0030 discipline: the pin asserts the
+    // REAL timeline, not the test's intent).
+    usageHolder.total_tokens = 900;
+    await ask("deepseek-flash");
+    assert.equal(JSON.parse(seen[1]!).model, "deepseek-flash", "the recorded usage lags the holder: the crossing is not yet observable at request time");
+
+    // The crossing is first observable here: response 2's 900 tokens are
+    // recorded, so request 3 — a REMAINING turn — rides the target.
+    await ask("deepseek-flash");
+    assert.equal(JSON.parse(seen[2]!).model, "deepseek-flash-cheap", "remaining turns downgrade once the crossing lands in the recorded usage");
+
+    // The downgrade persists (sticky at the warn tier).
+    await ask("deepseek-flash");
+    assert.equal(JSON.parse(seen[3]!).model, "deepseek-flash-cheap", "the downgrade holds");
+
+    // The metering trail records ALL sides identically: every request
+    // (rewritten or not) fed the usage event — the rewrite never skips
+    // recording (the recording mechanics are upstream of the model field).
+    assert.equal(pool.byFamily.get("deepseek")!.proxy.metrics().requests, 4, "all four requests metered");
+    assert.equal(pool.byFamily.get("deepseek")!.proxy.metrics().usageEvents, 4, "all four usage events recorded");
+    assert.equal(pool.byFamily.get("deepseek")!.proxy.metrics().totalTokens, 20 + 900 + 900 + 900, "the trail accumulates the real usage, not the rewritten model's");
+  } finally {
+    await pool.close();
+  }
+});
+
+// W118: without the downgrade config the lane is byte-unchanged — the
+// pass-through posture is the default and a downgrade is an opt-in.
+test("W118: absent the downgrade config the model is never rewritten", async (context) => {
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      seen.push(Buffer.concat(chunks).toString("utf8"));
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ choices: [], usage: { prompt_tokens: 5000, completion_tokens: 100, total_tokens: 5100, cost: 0.5 } }));
+    });
+  });
+  const seen: string[] = [];
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  context.after(() => server.close());
+  const address = server.address() as AddressInfo;
+
+  const pool = await createOpenModelMeteringPool({
+    pool: DEFAULT_OPEN_SOURCE_POOL.filter((def) => def.family === "deepseek"),
+    keys: { deepseek: "DEEPSEEK_KEY" },
+    upstreamOverride: () => `http://127.0.0.1:${address.port}`,
+  });
+  try {
+    const deepseek = pool.byFamily.get("deepseek")!;
+    await fetch(`${deepseek.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "deepseek-flash", messages: [] }),
+    });
+    assert.equal(JSON.parse(seen[0]!).model, "deepseek-flash", "no downgrade config = the model rides untouched at any usage level");
+  } finally {
+    await pool.close();
   }
 });

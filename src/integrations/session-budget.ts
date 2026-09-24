@@ -1,4 +1,4 @@
-import { createBudgetGuard, type RunBudget } from "./hub-scheduler.js";
+import { createBudgetGuard, type RunBudget, type UsageSnapshot } from "./hub-scheduler.js";
 
 /**
  * W045 (G1 budget enforcement): spending caps for INTERACTIVE sessions,
@@ -25,6 +25,8 @@ interface BudgetEnv {
   readonly WORKFLOW_SESSION_BUDGET_INPUT_TOKENS?: string;
   readonly WORKFLOW_SESSION_BUDGET_OUTPUT_TOKENS?: string;
   readonly WORKFLOW_SESSION_BUDGET_COST_USD?: string;
+  readonly WORKFLOW_BUDGET_DOWNGRADE_MODEL?: string;
+  readonly WORKFLOW_BUDGET_DOWNGRADE_FRACTION?: string;
 }
 
 function parseCap(env: BudgetEnv, name: keyof BudgetEnv): number | undefined {
@@ -74,6 +76,40 @@ export function sessionBudgetMechanism(env: BudgetEnv = process.env): string {
     budget.maxCostUsd === undefined ? undefined : `cost≤$${budget.maxCostUsd}`,
   ].filter((part): part is string => part !== undefined);
   return `local session-budget guard (${caps.join(", ")})`;
+}
+
+/** W118 (the W095 budget-downgrade consumer): the downgrade axes. The
+ * TARGET model is required — a fraction without a target downgrades to
+ * nothing; the WARN FRACTION defaults to 0.8 and must parse to (0,1).
+ * Unlike parseCap (which throws — a broken cap must never degrade to an
+ * unenforced session), a broken downgrade axis fails CLOSED to undefined:
+ * no downgrade is the status quo ante, the safe direction. The threshold
+ * source stays design-open (the routing note's key-2: "env axis or cap
+ * fraction") — both axes are env for v1. */
+export interface BudgetDowngradeConfig {
+  readonly targetModel: string;
+  readonly fraction: number;
+}
+
+export function budgetDowngradeFromEnv(env: BudgetEnv = process.env): BudgetDowngradeConfig | undefined {
+  const targetModel = env.WORKFLOW_BUDGET_DOWNGRADE_MODEL?.trim();
+  if (targetModel === undefined || targetModel.length === 0) return undefined;
+  const rawFraction = env.WORKFLOW_BUDGET_DOWNGRADE_FRACTION?.trim();
+  const fraction = rawFraction === undefined || rawFraction.length === 0 ? 0.8 : Number(rawFraction);
+  if (!Number.isFinite(fraction) || fraction <= 0 || fraction >= 1) return undefined;
+  return { targetModel, fraction };
+}
+
+/** W118: the WARN-tier predicate — mirrors budgetViolation's per-dimension
+ * comparison at the warn fraction (usage >= fraction x cap on ANY
+ * dimension). No caps configured means nothing to warn about. The abort
+ * tier itself is untouched: the guard still cancels at the full cap. */
+export function budgetDowngradeActive(usage: UsageSnapshot, budget: RunBudget, fraction: number): boolean {
+  if (budget.maxTotalTokens !== undefined && usage.totalTokens >= budget.maxTotalTokens * fraction) return true;
+  if (budget.maxInputTokens !== undefined && usage.promptTokens >= budget.maxInputTokens * fraction) return true;
+  if (budget.maxOutputTokens !== undefined && usage.completionTokens >= budget.maxOutputTokens * fraction) return true;
+  if (budget.maxCostUsd !== undefined && usage.costUsd >= budget.maxCostUsd * fraction) return true;
+  return false;
 }
 
 export type SessionBudgetGuard = ReturnType<typeof createSessionBudgetGuard>;

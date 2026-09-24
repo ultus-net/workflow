@@ -10,7 +10,7 @@ import { WorkflowCodingSession, type CodingSessionDriver } from "../application/
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import type { TaskId } from "../kernel/contracts.js";
 import { AcpSessionDriver } from "./acp-session.js";
-import { createSessionBudgetGuard, sessionBudgetFromEnv, sessionBudgetMechanism } from "./session-budget.js";
+import { budgetDowngradeFromEnv, createSessionBudgetGuard, sessionBudgetFromEnv, sessionBudgetMechanism } from "./session-budget.js";
 import { globalClineEntrypoint, resolveClineLaunch } from "./cline-launch.js";
 import {
   globalGooseBinary,
@@ -151,9 +151,20 @@ async function createOpencodeRuntime(
   // the agent keeps the existing OpenRouter/Auto-Router surface unchanged
   // (the closed-model operator override path is untouched).
   const openKeys = loadOpenModelKeys();
+  // W118: the downgrade axes are parsed once from the env; the downgrade
+  // additionally requires budget caps to exist (no caps = nothing to warn
+  // about). Absent either leaves the pool without a downgrade (the
+  // pass-through default).
+  const budgetDowngradeConfig = budgetDowngradeFromEnv();
+  const sessionBudget = sessionBudgetFromEnv();
+  const budgetDowngrade = budgetDowngradeConfig !== undefined && sessionBudget !== undefined
+    ? { ...budgetDowngradeConfig, budget: sessionBudget }
+    : undefined;
   let openPool: OpenModelMeteringPool | undefined;
   try {
-    openPool = Object.keys(openKeys.keys).length > 0 ? await createOpenModelMeteringPool({ pool: openSourcePoolFromEnv(), keys: openKeys.keys }) : undefined;
+    openPool = Object.keys(openKeys.keys).length > 0
+      ? await createOpenModelMeteringPool({ pool: openSourcePoolFromEnv(), keys: openKeys.keys, ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }) })
+      : undefined;
   } catch (error) {
     // A misconfigured pool (unknown WORKFLOW_OPEN_MODEL_POOL id) must not leak
     // the already-started OpenRouter proxy listener.

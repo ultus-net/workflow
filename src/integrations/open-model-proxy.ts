@@ -13,6 +13,7 @@
 import { composeBodyTransforms, createModelUsageProxy, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
 import { applyCacheMarkers, modelProfile, shapeRequestBody, type ModelFamily, type ModelTaskClass } from "./model-profile.js";
 import { DEFAULT_OPEN_SOURCE_POOL, type OpenModelDefinition } from "./open-source-pool.js";
+import type { RunBudget } from "./hub-scheduler.js";
 
 export interface OpenModelProvider {
   readonly providerId: string;
@@ -40,6 +41,18 @@ export interface CreateOpenModelMeteringPoolOptions {
    * anthropic-wire profiles; absent stays absent.
    */
   readonly cacheMarkers?: boolean;
+  /**
+   * W118 (the W095 budget-downgrade consumer): the downgrade axes passed
+   * through to every family proxy. The activation reads each family
+   * proxy's OWN recorded usage (the granularity residual: a session
+   * spreading traffic across families sums separately). Absent = no
+   * downgrade.
+   */
+  readonly budgetDowngrade?: {
+    readonly targetModel: string;
+    readonly budget: RunBudget;
+    readonly fraction: number;
+  };
   readonly onUsage?: (family: ModelFamily, usage: Record<string, unknown>) => void;
 }
 
@@ -131,6 +144,7 @@ export async function createOpenModelMeteringPool(options: CreateOpenModelMeteri
         ...(options.onUsage === undefined
           ? {}
           : { onUsage: (usage: Record<string, unknown>) => options.onUsage?.(family, usage) }),
+        ...(options.budgetDowngrade === undefined ? {} : { budgetDowngrade: options.budgetDowngrade }),
       });
       started.push(proxy);
       const provider: OpenModelProvider = {
