@@ -12,6 +12,15 @@ import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-g
 import { evidenceId, observationId, taskId } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 
+// W129: the help contract — resolve help and exit before the shell's tmp
+// workspace or guard composition.
+if (process.argv.slice(2).some((argument) => argument === "--help" || argument === "-h")) {
+  console.log("workflow-shell — the interactive contained-shell smoke (one command per prompt)");
+  console.log("  stdin: commands until exit/quit; the workspace/network/credential boundaries are stated at boot");
+  console.log("  --help  print this help");
+  process.exit(0);
+}
+
 const workspace = await mkdtemp(join(tmpdir(), "workflow-interactive-"));
 const guard = await createDefaultToolboxGuardProvider().catch((error) => {
   console.error(`Workflow guard unavailable (advisory): ${error instanceof Error ? error.message : error}`);

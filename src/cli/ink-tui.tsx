@@ -30,6 +30,14 @@ import { createHubSnapshotSource } from "./hub-snapshot.js";
  * back to a standalone local authority with the demo seed, labelled
  * "standalone (no hub)" in the mode bar.
  */
+// W129: the help contract — resolve help and exit before the review-followup
+// client spawn or resolveWorkflowHub (which can AUTO-SPAWN the hub).
+if (process.argv.slice(2).some((argument) => argument === "--help" || argument === "-h")) {
+  console.log("workflow-monitor — the Workflow monitoring TUI (hub-first; standalone fallback)");
+  console.log("  --cwd <dir>  workspace (default: cwd)");
+  console.log("  --help       print this help");
+  process.exit(0);
+}
 const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
 
 // Advisory: open review follow-ups (P2/P3 debt from adversarial reviews),

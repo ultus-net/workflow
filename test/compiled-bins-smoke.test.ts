@@ -35,6 +35,19 @@ import { ensureFresh, repoRoot } from "./fixtures/compiled-dist.js";
 // Every honest outcome is pinned from the source (exit codes and output
 // markers named per bin), not generic "it ran" claims. The `workflow`
 // dispatcher + doctor is W125's smoke and is not re-covered here.
+//
+// W129 adds the help contract (the sweep's own discovered-and-queued
+// defect, closed as a class): every bin resolves --help/-h to usage + exit 0
+// BEFORE any composition. The pre-fix behavior this names: opencode-server
+// started its guard + runtime, opencode-attach's autostart path could start
+// the daemon, universal-tui composed the AGENT driver, the module-level
+// daemons (hub/admin) started on any argv (admin --help even printed a
+// freshly generated token), and the web service started serving. The
+// reference pattern is acp-remote.ts's (parse -> help -> print -> return).
+// The IN-PROCESS dispatcher verbs are the subtle case (the round-1 review's
+// P1): an in-process call BYPASSES a script-entry guard, so web's guard lives
+// inside runWebLaunch (shared by both entries) and settings/doctor/install
+// guard in their dispatch branches.
 
 /** The compiled entry per bin (package.json's bin map). */
 const ENTRIES: Readonly<Record<string, string>> = {
@@ -346,6 +359,64 @@ for (const probe of DAEMON_PROBES) {
       probe.expectedExit,
       `${probe.bin}: after SIGTERM the teardown handler should exit ${probe.expectedExit} — output: ${run.output.slice(0, 600)}`,
     );
+  });
+}
+
+// W129 — the help contract per bin: --help/-h prints usage and exits 0 BEFORE
+// any composition (see the header's W129 note for the pre-fix class). Every
+// row runs BOTH flags; rows also cover the dispatcher's IN-PROCESS verb paths
+// (web/settings/doctor/install — the round-1 review's P1/P2: an in-process
+// call BYPASSES a script-entry guard, so web's guard lives inside
+// runWebLaunch and the other in-process verbs guard in their branches) and
+// rsi's non-leading --help (`status --help` must resolve, not fall through to
+// hub resolution). Help exits by itself and touches neither state nor the
+// network, so spawnSync is safe here without a redirected HOME.
+interface HelpProbe {
+  readonly bin: string;
+  readonly entry: string;
+  /** Defaults to ["--help"]; rows may pin verb-level paths. */
+  readonly argv?: readonly string[];
+  readonly stdoutIncludes: readonly string[];
+}
+
+const HELP_PROBES: readonly HelpProbe[] = [
+  { bin: "workflow (dispatcher, leading)", entry: "dist/cli/workflow.js", stdoutIncludes: ["workflow — one hub"] },
+  { bin: "workflow web (dispatcher verb, in-process)", entry: "dist/cli/workflow.js", argv: ["web", "--help"], stdoutIncludes: ["workflow-web — the browser operator UI"] },
+  { bin: "workflow settings (dispatcher verb, in-process)", entry: "dist/cli/workflow.js", argv: ["settings", "--help"], stdoutIncludes: ["workflow settings — the settings panel only"] },
+  { bin: "workflow doctor (dispatcher verb, in-process)", entry: "dist/cli/workflow.js", argv: ["doctor", "--help"], stdoutIncludes: ["workflow doctor — state the local setup honestly"] },
+  { bin: "workflow install (dispatcher verb, in-process)", entry: "dist/cli/workflow.js", argv: ["install", "--help"], stdoutIncludes: ["workflow install fleet —"] },
+  { bin: "workflow-web", entry: "dist/cli/web-launch.js", stdoutIncludes: ["workflow-web — the browser operator UI"] },
+  { bin: "workflow-tui", entry: "dist/cli/universal-tui.js", stdoutIncludes: ["workflow-tui — the Workflow TUI"] },
+  { bin: "workflow-hub", entry: "dist/cli/hub.js", stdoutIncludes: ["workflow-hub — the Workflow authority daemon"] },
+  { bin: "workflow-admin", entry: "dist/cli/admin.js", stdoutIncludes: ["workflow-admin — the credential custody control plane"] },
+  { bin: "workflow-monitor", entry: "dist/cli/ink-tui.js", stdoutIncludes: ["workflow-monitor — the Workflow monitoring TUI"] },
+  { bin: "workflow-shell", entry: "dist/cli/contained-shell.js", stdoutIncludes: ["workflow-shell — the interactive contained-shell smoke"] },
+  { bin: "workflow-opencode", entry: "dist/cli/opencode-attach.js", stdoutIncludes: ["workflow-opencode — attach the stock OpenCode client"] },
+  { bin: "workflow-opencode-server", entry: "dist/cli/opencode-server.js", stdoutIncludes: ["workflow-opencode-server — the Workflow-owned OpenCode server daemon"] },
+  { bin: "workflow-rsi", entry: "dist/cli/rsi.js", stdoutIncludes: ["usage: workflow-rsi"] },
+  { bin: "workflow-rsi (help anywhere)", entry: "dist/cli/rsi.js", argv: ["status", "--help"], stdoutIncludes: ["usage: workflow-rsi"] },
+];
+
+for (const probe of HELP_PROBES) {
+  test(`W129: the compiled ${probe.bin} resolves --help/-h to usage and exits 0 before any composition`, () => {
+    ensureFresh(resolve(repoRoot, probe.entry));
+    const baseArgv = probe.argv ?? ["--help"];
+    for (const flag of ["--help", "-h"] as const) {
+      const argv = baseArgv.map((argument) => (argument === "--help" ? flag : argument));
+      const result = spawnSync(process.execPath, [probe.entry, ...argv], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        timeout: 15_000,
+      });
+      const label = `${probe.bin} [${argv.join(" ")}]`;
+      assert.equal(result.error, undefined, `${label}: spawned cleanly (${result.error?.message ?? "no spawn error"})`);
+      assert.equal(result.signal, null, `${label}: exits by itself, not killed by ${result.signal}`);
+      assert.equal(result.status, 0, `${label}: exits 0 — stdout: ${result.stdout.slice(0, 300)} stderr: ${result.stderr.slice(0, 300)}`);
+      for (const marker of probe.stdoutIncludes) {
+        assert.ok(result.stdout.includes(marker), `${label}: stdout carries "${marker}" — stdout: ${result.stdout.slice(0, 300)}`);
+      }
+      assert.equal(result.stderr.trim(), "", `${label}: writes no error output — stderr: ${result.stderr.slice(0, 300)}`);
+    }
   });
 }
 

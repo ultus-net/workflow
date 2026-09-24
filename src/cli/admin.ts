@@ -6,6 +6,16 @@ import { defaultCredentialConfigPath, loadCredentialDefinitions, saveCredentialD
 import { createSecretServiceStore } from "../integrations/secret-service.js";
 import { createAdminControlPlaneServer } from "../ui/admin-control-plane.js";
 
+// W129: the help contract — resolve help and exit before the daemon starts
+// (this module otherwise starts on any argv, and used to print a freshly
+// generated admin token for `--help`).
+if (process.argv.slice(2).some((argument) => argument === "--help" || argument === "-h")) {
+  console.log("workflow-admin — the credential custody control plane (loopback only)");
+  console.log("  env: WORKFLOW_ADMIN_PORT (default 4180), WORKFLOW_ADMIN_TOKEN");
+  console.log("  --help  print this help");
+  process.exit(0);
+}
+
 const host = "127.0.0.1";
 const port = Number.parseInt(process.env.WORKFLOW_ADMIN_PORT ?? "4180", 10);
 if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) throw new TypeError("invalid WORKFLOW_ADMIN_PORT");

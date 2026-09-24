@@ -37,6 +37,14 @@ import { TaskGraph } from "../kernel/task-graph.js";
  * through the discovery file written under `<data-dir>/hub/discovery.json`.
  * See `docs/HUB.md`.
  */
+// W129: the help contract — this module is a daemon that otherwise starts on
+// ANY argv; resolve help and exit before the first composition statement.
+if (process.argv.slice(2).some((argument) => argument === "--help" || argument === "-h")) {
+  console.log("workflow-hub — the Workflow authority daemon (one hub, one journal)");
+  console.log("  state: ~/.workflow (env: WORKFLOW_HUB_PROVENANCE, WORKFLOW_HUB_SCHEDULES)");
+  console.log("  --help  print this help");
+  process.exit(0);
+}
 const workspace = process.cwd();
 const graph = new TaskGraph([
   {

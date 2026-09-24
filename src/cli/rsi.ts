@@ -35,10 +35,17 @@ export interface RsiArgs {
 }
 
 export function parseRsiArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): RsiArgs {
-  const [command = "help", ...rest] = argv;
+  const [rawCommand = "help", ...rest] = argv;
+  // W129: the help contract — --help/-h resolve to the help command before
+  // any hub resolution (the same outcome as the explicit "help" verb).
+  const command = rawCommand === "--help" || rawCommand === "-h" ? "help" : rawCommand;
   const flags = new Map<string, string | true>();
   for (let index = 0; index < rest.length; index += 1) {
     const token = rest[index];
+    // W129: --help/-h resolve anywhere in the argv; -h rides this branch
+    // because the flags loop below is --prefixed (so `status -h` resolves
+    // like `status --help` instead of throwing "unexpected argument").
+    if (token === "--help" || token === "-h") { flags.set("help", true); continue; }
     if (token === undefined || !token.startsWith("--")) throw new TypeError(`unexpected argument: ${String(token)}`);
     const key = token.slice(2);
     const next = rest[index + 1];
@@ -52,6 +59,11 @@ export function parseRsiArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
   const discoveryDir = typeof flags.get("discovery-dir") === "string"
     ? (flags.get("discovery-dir") as string)
     : env.WORKFLOW_HUB_DIR ?? resolve(homedir(), ".workflow");
+  // W129: the help contract — --help/-h resolve to help ANYWHERE in the argv
+  // (the round-1 review's P2: `status --help` / `start … --help` otherwise
+  // fell through to hub resolution — and `start` is the most consequential
+  // autonomous action in this surface).
+  if (flags.has("help")) return { command: "help", discoveryDir };
   if (command !== "start" && command !== "status" && command !== "cancel" && command !== "help") {
     throw new TypeError(`unknown command: ${command}`);
   }

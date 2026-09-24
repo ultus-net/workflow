@@ -28,7 +28,19 @@ import {
 export interface OpencodeAttachArgs {
   readonly workspace: string;
   readonly autostart: boolean;
+  /** W129: present only when --help/-h was requested — help resolves BEFORE
+   * any discovery read or client spawn (help must precede every side effect). */
+  readonly help?: true;
 }
+
+const USAGE = [
+  "workflow-opencode — attach the stock OpenCode client to the Workflow OpenCode server",
+  "",
+  "Options:",
+  "  --workspace <dir>  workspace the client attaches to (default: cwd; alias: --dir)",
+  "  --no-autostart     never start the server daemon; fail when discovery is absent",
+  "  --help             print this help",
+].join("\n");
 
 export function parseAttachArgs(argv: readonly string[]): OpencodeAttachArgs {
   let workspace: string | undefined;
@@ -43,7 +55,7 @@ export function parseAttachArgs(argv: readonly string[]): OpencodeAttachArgs {
       continue;
     }
     if (argument === "--no-autostart") { autostart = false; continue; }
-    if (argument === "--help" || argument === "-h") return { workspace: process.cwd(), autostart };
+    if (argument === "--help" || argument === "-h") return { workspace: process.cwd(), autostart, help: true };
     throw new TypeError(`unknown argument: ${argument}`);
   }
   return { workspace: workspace ?? process.cwd(), autostart };
@@ -189,6 +201,12 @@ export async function ensureDiscovery(options: EnsureDiscoveryOptions): Promise<
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   const args = parseAttachArgs(argv);
+  // W129: the help contract — print and exit before ensureDiscovery, whose
+  // autostart path could otherwise START THE SERVER DAEMON for `--help`.
+  if (args.help === true) {
+    process.stdout.write(`${USAGE}\n`);
+    return;
+  }
   const workspace = resolve(args.workspace);
   const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? resolve(homedir(), ".workflow", "opencode-server");
   const discovery = await ensureDiscovery({ workspace, stateHome, autostart: args.autostart });

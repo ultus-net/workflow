@@ -46,6 +46,21 @@ function spawnSurface(name: "opencode-attach" | "hub", args: readonly string[], 
   process.on("SIGHUP", () => child.kill("SIGHUP"));
 }
 
+// W129: the help contract — a leading --help/-h prints the surface list and
+// exits before any surface work; a verb's own --help resolves at that
+// surface's own seam: web inside runWebLaunch (shared by the in-process call
+// and the script entry), settings/doctor/install in their branches below
+// (helpExit), and the spawned verbs (tui, hub) in their bins' guards.
+const leadingArgument = process.argv.slice(2)[0];
+if (leadingArgument === "--help" || leadingArgument === "-h") {
+  console.log("workflow — one hub, one authority, one journal; pick a surface:");
+  for (const option of LAUNCHER_OPTIONS) console.log(`  ${option.label}`);
+  console.log("  doctor             state the local setup honestly");
+  console.log("  install fleet      deploy the vendored fleet payload");
+  console.log("  --agent <kind>     engine axis: opencode | goose | cline");
+  process.exit(0);
+}
+
 const initial = parseLauncherArgs(process.argv.slice(2));
 const agentChoice = parseAgentFlag(initial.rest);
 if (agentChoice.error !== undefined) {
@@ -69,6 +84,15 @@ const { verb, rest } = initial.verb === undefined
   ? parseLauncherArgs(agentChoice.rest)
   : { verb: initial.verb, rest: agentChoice.rest };
 const workspace = resolveTuiWorkspace(rest, process.cwd());
+
+/** W129: the in-process verbs resolve --help/-h before their work (web's
+ * guard lives inside runWebLaunch, which the in-process call shares). */
+function helpExit(argv: readonly string[], usage: string): void {
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log(usage);
+    process.exit(0);
+  }
+}
 
 let selected = verb;
 if (selected === undefined) {
@@ -98,6 +122,7 @@ if (selected === "web") {
   const opencodeWeb = process.env.WORKFLOW_OPENCODE_WEB_URL;
   if (opencodeWeb !== undefined && opencodeWeb !== "") void openBrowser(opencodeWeb);
 } else if (selected === "doctor") {
+  helpExit(rest, "workflow doctor — state the local setup honestly (no options; the probe verdict register lives at docs/PROBE_VERDICTS.json)");
   const { runDoctor, renderDoctorReport } = await import("./doctor.js");
   const checks = await runDoctor({ workspace });
   console.log(renderDoctorReport(checks));
@@ -105,11 +130,13 @@ if (selected === "web") {
   // expected states, not failures.
   process.exitCode = checks.some((check) => check.status === "fail") ? 1 : 0;
 } else if (selected === "install") {
+  helpExit(rest, "workflow install fleet — deploy the vendored fleet payload through the ask-gate (flags: see src/cli/install.ts)");
   // W086: the operator-invoked fleet deployment (the ask-gate). Never runs
   // unattended; never touches the host config document.
   const { runInstall } = await import("./install.js");
   process.exitCode = await runInstall(rest);
 } else if (selected === "settings") {
+  helpExit(rest, "workflow settings — the settings panel only (no flags; the port follows env PORT or 4173)");
   const { startWorkflowWeb } = await import("./web-service.js");
   const service = await startWorkflowWeb({ workspace });
   console.log(`Workflow settings panel: ${service.url}/settings`);
