@@ -104,19 +104,14 @@ function formatBest(best: ProposalContext["best"]): string {
 /**
  * Checkpoint F default proposal prompt. Placeholders: `{{objective}}`,
  * `{{iteration}}`, `{{accepted}}`, `{{rejected}}`, `{{best}}`, `{{history}}`.
+ * W098: the section ORDER is the invariant — stable preamble first, the
+ * append-only history second, the per-iteration counters last — so provider
+ * prefix caches grow with the history. The W098 ordering pin enforces it.
  * The JSON reply contract matches `parseProposalReply`.
  */
 export const DEFAULT_PROPOSAL_PROMPT_TEMPLATE = `You are the proposal source for a bounded self-improvement loop.
 
 Objective (operator-authored, authoritative): {{objective}}
-
-Loop state:
-- iteration: {{iteration}}
-- accepted candidates: {{accepted}}
-- rejected candidates: {{rejected}}
-- incumbent best: {{best}}
-- iteration history:
-{{history}}
 
 Task: propose exactly ONE next improvement candidate for the repository working toward the objective.
 Reply with ONLY a JSON object (optionally in a \`\`\`json fenced block) shaped as:
@@ -126,6 +121,14 @@ Rules:
 - The hypothesis must describe one concrete, small, testable change.
 - Propose the NEXT change; never restate work the history shows as accepted.
 - Rejected candidates were discarded; their reasons are in the history.
+
+Loop state:
+- iteration history:
+{{history}}
+- iteration: {{iteration}}
+- accepted candidates: {{accepted}}
+- rejected candidates: {{rejected}}
+- incumbent best: {{best}}
 `;
 
 /**
