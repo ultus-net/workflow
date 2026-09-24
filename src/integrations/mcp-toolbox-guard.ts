@@ -44,6 +44,11 @@ export interface GuardDecision {
   decision: "allow" | "deny" | "ask";
   policy: string;
   reason: string;
+  /** W121 (G4, the F6 residual): the concrete surface the rule matched —
+   * the offending path/command/toolName, threaded from the vendored
+   * guard's structuredContent. Absent when the rule keyed on no concrete
+   * surface — never fabricated. */
+  matched?: string;
 }
 
 export interface GuardStatus {

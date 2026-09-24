@@ -436,7 +436,8 @@ function parseFetch(words: string[]): PointerInvocation | undefined {
   return { targets: destinations, uncertain: false, needsCurrentBranch: false };
 }
 
-function checkPointerTarget(words: string[], protectedBranches: Set<string>, context: GitPolicyContext): { decision: "deny"; policy: string; reason: string } | undefined {
+function checkPointerTarget(words: string[], protectedBranches: Set<string>, context: GitPolicyContext): { decision: "deny"; policy: string; reason: string; matched?: string } | undefined {
+  const pointerCommand = words.join(" ");
   const sub = words[1];
   let invocation: PointerInvocation | undefined;
   if (sub === "branch") invocation = parseBranch(words);
@@ -452,7 +453,7 @@ function checkPointerTarget(words: string[], protectedBranches: Set<string>, con
   }
   if (!invocation) return undefined;
   if (invocation.uncertain) {
-    return { decision: "deny", policy: "protected-branch-write", reason: "Git pointer command could not be safely parsed; failing closed." };
+    return { decision: "deny", policy: "protected-branch-write", reason: "Git pointer command could not be safely parsed; failing closed.", matched: pointerCommand };
   }
   if (invocation.needsCurrentBranch) {
     // The one-arg rename writes BOTH names: the current branch (renamed
@@ -461,15 +462,15 @@ function checkPointerTarget(words: string[], protectedBranches: Set<string>, con
     // round 4). A factless seat cannot classify the source and fails
     // closed.
     if (!context.currentBranch) {
-      return { decision: "deny", policy: "protected-branch-write", reason: "Branch rename targets the current branch, which was not supplied; failing closed." };
+      return { decision: "deny", policy: "protected-branch-write", reason: "Branch rename targets the current branch, which was not supplied; failing closed.", matched: pointerCommand };
     }
     if (protectedBranches.has(normalizeBranchRef(context.currentBranch))) {
-      return { decision: "deny", policy: "protected-branch-write", reason: `Branch pointer writes on protected branch '${normalizeBranchRef(context.currentBranch)}' are not allowed.` };
+      return { decision: "deny", policy: "protected-branch-write", reason: `Branch pointer writes on protected branch '${normalizeBranchRef(context.currentBranch)}' are not allowed.`, matched: normalizeBranchRef(context.currentBranch) };
     }
   }
   for (const target of invocation.targets) {
     if (protectedBranches.has(normalizeBranchRef(target))) {
-      return { decision: "deny", policy: "protected-branch-write", reason: `Branch pointer writes on protected branch '${normalizeBranchRef(target)}' are not allowed.` };
+      return { decision: "deny", policy: "protected-branch-write", reason: `Branch pointer writes on protected branch '${normalizeBranchRef(target)}' are not allowed.`, matched: target };
     }
   }
   return undefined;
@@ -529,15 +530,15 @@ export function wrapperCommands(command: string): string[] {
   });
 }
 
-export function checkGitPolicy(command: string, context: GitPolicyContext, depth = 0): { policy: string; decision: "deny"; reason: string } | undefined {
+export function checkGitPolicy(command: string, context: GitPolicyContext, depth = 0): { policy: string; decision: "deny"; reason: string; matched?: string } | undefined {
   // W102 (residual #20's closure): depth-capped like hasGitMutation — at the
   // cap the classification is unresolvable and fails closed.
-  if (depth >= 16) return { decision: "deny", policy: "protected-branch-write", reason: "Git command nesting depth exceeded; failing closed." };
-  if (hasUnsafeGitAlias(command)) return { decision: "deny", policy: "unsafe-git-alias", reason: "Inline Git aliases can hide policy-relevant operations." };
+  if (depth >= 16) return { decision: "deny", policy: "protected-branch-write", reason: "Git command nesting depth exceeded; failing closed.", matched: command };
+  if (hasUnsafeGitAlias(command)) return { decision: "deny", policy: "unsafe-git-alias", reason: "Inline Git aliases can hide policy-relevant operations.", matched: command };
   const protectedBranches = protectedBranchesIn(context);
   const pushed = pushedProtectedBranchIn(command, protectedBranches, context.currentBranch);
   if (pushed === "wildcard-refspec") {
-    return { decision: "deny", policy: "protected-branch-push", reason: "Push could not be resolved to concrete branch destinations (wildcard refspec, --mirror, or --all); failing closed." };
+    return { decision: "deny", policy: "protected-branch-push", reason: "Push could not be resolved to concrete branch destinations (wildcard refspec, --mirror, or --all); failing closed.", matched: command };
   }
   if (pushed === "unresolved-alias") {
     // W108: the factless alias/default push is the documented W090 fail-open
@@ -545,7 +546,7 @@ export function checkGitPolicy(command: string, context: GitPolicyContext, depth
     // sentinel is consumed by the shell lane's destination-aware force-push
     // rule, which applies its own conservative stance.
   } else if (pushed) {
-    return { decision: "deny", policy: "protected-branch-push", reason: `Direct pushes to protected branch '${pushed}' are not allowed.` };
+    return { decision: "deny", policy: "protected-branch-push", reason: `Direct pushes to protected branch '${pushed}' are not allowed.`, matched: command };
   }
   // W101: the semantic target gate runs per segment BEFORE the
   // current-branch-gated spelling lanes; deny-class ordering is preserved
@@ -561,7 +562,7 @@ export function checkGitPolicy(command: string, context: GitPolicyContext, depth
   }
   const normalized = normalizedGitSegments(command).join(" ; ");
   if (protectedBranchWriteReason(context) && gitWriteRe.test(normalized)) {
-    return { decision: "deny", policy: "protected-branch-write", reason: `Git mutations on protected branch '${context.currentBranch}' are not allowed.` };
+    return { decision: "deny", policy: "protected-branch-write", reason: `Git mutations on protected branch '${context.currentBranch}' are not allowed.`, matched: command };
   }
   // W102: the wrapper recursion — the deny class must not be bypassable by
   // wrapping. sh-family -c wrappers are transparent to the FULL git

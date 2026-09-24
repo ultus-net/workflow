@@ -32,13 +32,13 @@ const writeTargetPatterns = [
   /[>]{1,2}\s*["']?([^\s;&"'|)]+)/g,
 ];
 
-export function checkInterpreterPolicy(command: string, workspaceRoot?: string, liveConfigPaths?: readonly string[]): { policy: string; decision: "deny"; reason: string } | undefined {
+export function checkInterpreterPolicy(command: string, workspaceRoot?: string, liveConfigPaths?: readonly string[]): { policy: string; decision: "deny"; reason: string; matched?: string } | undefined {
   for (const payload of interpreterPayloads(command)) {
     if (fileVerb.test(payload)) {
       for (const token of payload.match(/["'][^"']*["']|[^\s(){}[\];,|&<>]+/g) ?? []) {
         const path = token.replace(/^["']|["']$/g, "");
         const match = checkProtectedPath(path, workspaceRoot);
-        if (match) return { decision: "deny", policy: "interpreter-secret-path", reason: `Interpreter payload references protected path '${path}'.` };
+        if (match) return { decision: "deny", policy: "interpreter-secret-path", reason: `Interpreter payload references protected path '${path}'.`, matched: path };
       }
     }
     for (const pattern of writeTargetPatterns) {
@@ -47,9 +47,9 @@ export function checkInterpreterPolicy(command: string, workspaceRoot?: string, 
         // Upstream precedence: the tamper classification runs before the
         // system/secret check, so a config-shaped destination keeps its own
         // policy name even where a realpath would also match a system rule.
-        if (isGuardConfigurationPath(match[1], workspaceRoot, liveConfigPaths)) return { decision: "deny", policy: "interpreter-guard-tamper", reason: `Interpreter payload writes guarded control-plane path '${match[1]}'.` };
+        if (isGuardConfigurationPath(match[1], workspaceRoot, liveConfigPaths)) return { decision: "deny", policy: "interpreter-guard-tamper", reason: `Interpreter payload writes guarded control-plane path '${match[1]}'.`, matched: match[1] };
         const protectedPath = checkProtectedPath(match[1], workspaceRoot);
-        if (protectedPath) return { decision: "deny", policy: "interpreter-protected-write", reason: `Interpreter payload writes protected path '${match[1]}'.` };
+        if (protectedPath) return { decision: "deny", policy: "interpreter-protected-write", reason: `Interpreter payload writes protected path '${match[1]}'.`, matched: match[1] };
       }
     }
   }
