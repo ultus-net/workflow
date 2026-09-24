@@ -17,6 +17,20 @@ import { resolveTuiWorkspace } from "./tui-args.js";
 
 const argv = process.argv.slice(2);
 const args = parseUniversalArgs(argv);
+// W129: the help contract — print and exit BEFORE resolveDriverName or
+// composeDriver: an unparsed --help used to fall through and start the agent.
+if (args.help === true) {
+  console.log([
+    "workflow-tui — the Workflow TUI (standalone, local authority)",
+    "",
+    "Options:",
+    "  --driver <name>     cline | opencode | acp (env WORKFLOW_DRIVER)",
+    "  --opencode-url <u>  OpenCode endpoint for the opencode driver",
+    "  --cwd <dir>         workspace (default: cwd)",
+    "  --help              print this help",
+  ].join("\n"));
+  process.exit(0);
+}
 const driverName = resolveDriverName(args.driver);
 const workspace = resolveTuiWorkspace(argv, process.cwd());
 const seed: WorkflowTask[] = [{

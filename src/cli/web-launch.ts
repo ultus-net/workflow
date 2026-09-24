@@ -102,5 +102,16 @@ export async function runWebLaunch(argv: readonly string[]): Promise<WebLaunchHa
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
-  await runWebLaunch(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  // W129: the help contract — print and exit before runWebLaunch starts the
+  // service (or the browser).
+  if (argv.includes("--help") || argv.includes("-h")) {
+    console.log("workflow-web — the browser operator UI (headless-safe)");
+    console.log("  --cwd <dir>    workspace (default: cwd)");
+    console.log("  --port <n>     bind port (default: env PORT or 4173; 0 = ephemeral)");
+    console.log("  --no-browser   never open a browser (env WORKFLOW_NO_BROWSER=1)");
+    console.log("  --help         print this help");
+    process.exit(0);
+  }
+  await runWebLaunch(argv);
 }

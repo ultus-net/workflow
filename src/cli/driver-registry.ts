@@ -32,10 +32,13 @@ export function resolveDriverName(raw: string | undefined): DriverName {
   throw new TypeError(`unknown driver '${name}' (valid: ${DRIVER_NAMES.join(", ")})`);
 }
 
-export function parseUniversalArgs(args: readonly string[]): { driver?: string; opencodeUrl?: string } {
-  const out: { driver?: string; opencodeUrl?: string } = {};
+export function parseUniversalArgs(args: readonly string[]): { driver?: string; opencodeUrl?: string; help?: true } {
+  const out: { driver?: string; opencodeUrl?: string; help?: true } = {};
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
+    // W129: the help contract — resolved before any driver composition (an
+    // unparsed --help would otherwise fall through and START THE AGENT).
+    if (argument === "--help" || argument === "-h") return { ...out, help: true };
     if (argument !== "--driver" && argument !== "--opencode-url") continue;
     const value = args[index + 1];
     if (value === undefined || value.startsWith("-")) throw new TypeError(`${argument} requires a value`);

@@ -35,7 +35,10 @@ export interface RsiArgs {
 }
 
 export function parseRsiArgs(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): RsiArgs {
-  const [command = "help", ...rest] = argv;
+  const [rawCommand = "help", ...rest] = argv;
+  // W129: the help contract — --help/-h resolve to the help command before
+  // any hub resolution (the same outcome as the explicit "help" verb).
+  const command = rawCommand === "--help" || rawCommand === "-h" ? "help" : rawCommand;
   const flags = new Map<string, string | true>();
   for (let index = 0; index < rest.length; index += 1) {
     const token = rest[index];

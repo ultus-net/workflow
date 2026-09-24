@@ -46,6 +46,19 @@ function spawnSurface(name: "opencode-attach" | "hub", args: readonly string[], 
   process.on("SIGHUP", () => child.kill("SIGHUP"));
 }
 
+// W129: the help contract — a leading --help/-h prints the surface list and
+// exits before any surface work; a verb's own --help (e.g. `workflow web
+// --help`) is resolved by that bin's guard.
+const leadingArgument = process.argv.slice(2)[0];
+if (leadingArgument === "--help" || leadingArgument === "-h") {
+  console.log("workflow — one hub, one authority, one journal; pick a surface:");
+  for (const option of LAUNCHER_OPTIONS) console.log(`  ${option.label}`);
+  console.log("  doctor             state the local setup honestly");
+  console.log("  install fleet      deploy the vendored fleet payload");
+  console.log("  --agent <kind>     engine axis: opencode | goose | cline");
+  process.exit(0);
+}
+
 const initial = parseLauncherArgs(process.argv.slice(2));
 const agentChoice = parseAgentFlag(initial.rest);
 if (agentChoice.error !== undefined) {

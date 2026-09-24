@@ -106,7 +106,18 @@ export function enforcementFromEnv(env: NodeJS.ProcessEnv): OpencodeAuthorityEnf
 
 export interface OpencodeServerDaemonArgs {
   readonly workspace: string;
+  /** W129: present only when --help/-h was requested — help resolves BEFORE
+   * the guard composition or any OpenCode runtime spawn. */
+  readonly help?: true;
 }
+
+const USAGE = [
+  "workflow-opencode-server — the Workflow-owned OpenCode server daemon (advisory enforcement)",
+  "",
+  "Options:",
+  "  --workspace <dir>  workspace the daemon serves (default: cwd)",
+  "  --help             print this help",
+].join("\n");
 
 export function parseDaemonArgs(argv: readonly string[]): OpencodeServerDaemonArgs {
   let workspace: string | undefined;
@@ -119,7 +130,7 @@ export function parseDaemonArgs(argv: readonly string[]): OpencodeServerDaemonAr
       index += 1;
       continue;
     }
-    if (argument === "--help" || argument === "-h") return { workspace: process.cwd() };
+    if (argument === "--help" || argument === "-h") return { workspace: process.cwd(), help: true };
     throw new TypeError(`unknown argument: ${argument}`);
   }
   return { workspace: workspace ?? process.cwd() };
@@ -137,6 +148,12 @@ export async function createOpencodeServerGuard(workspace: string) {
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   const args = parseDaemonArgs(argv);
+  // W129: the help contract — print and exit before the guard composition or
+  // the runtime spawn (`--help` must never start the daemon).
+  if (args.help === true) {
+    process.stdout.write(`${USAGE}\n`);
+    return;
+  }
   const workspace = resolve(args.workspace);
   // W094: fail-closed composition — if the vendored guard cannot start, the
   // daemon refuses to run guard-less (the hub's "no hub, no mutations"
