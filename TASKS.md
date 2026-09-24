@@ -4452,3 +4452,58 @@ lifecycle run); the TUI surfaces' real-driver e2e stays out of bounds
 (agent spawns); the fleet-install flow from a packaged tree is now
 partially covered (install + doctor) — its remaining flows queue behind
 the P6 npm-pack verifier debt (human-gated).
+
+### W129 - The help contract: every bin resolves --help before any side effect (Complete - W126's discovered-and-queued defect closed as a class; previously six bins started their surface on --help, one printed a token, one could start the agent) (2026-09-25)
+
+**Source:** W126's discovered-and-queued defect —
+`workflow-opencode-server --help` started the daemon instead of printing
+usage. The survey for this loop showed it was a CLASS: only
+`acp-remote.ts` resolved help correctly (parse → `help: true` → print
+USAGE → return); `opencode-attach --help` proceeded into
+`ensureDiscovery`, whose autostart path could START THE DAEMON;
+`universal-tui --help` fell through to `composeDriver` and could START
+THE AGENT; the module-level daemons (`hub`, `admin`) started on ANY
+argv; `web-launch`, `ink-tui`, and `contained-shell` ignored the flag;
+`rsi --help` was rejected as an unknown command.
+
+**What landed:** the help contract — every bin resolves `--help`/`-h`
+to a usage block and exit 0 BEFORE any composition:
+- parser-level (the acp-remote pattern): `opencode-server`
+  (`parseDaemonArgs`), `opencode-attach` (`parseAttachArgs`),
+  `universal-tui` (`parseUniversalArgs`), `rsi` (`--help`/`-h` map to the
+  help command). The `help?: true` field is ADDITIVE (present only when
+  requested), so the existing parser deep-equal pins stay valid
+  (driver-registry, opencode-server-launcher, pretrust-parsing-audit).
+- pre-composition guards for the module-level daemons and script
+  surfaces: `hub`, `admin`, `ink-tui`, `web-launch` (inside the
+  runnable-script guard), `contained-shell`.
+- the dispatcher: a leading `workflow --help`/`-h` prints the surface
+  list and exits 0 (a verb's own `--help`, e.g. `workflow web --help`,
+  routes to that bin's guard).
+
+**The captured red:** `node dist/cli/admin.js --help` (pre-fix) printed
+"Workflow admin listening at http://127.0.0.1:4180" plus a FRESHLY
+GENERATED admin token and served until a 5s timeout killed it (exit
+124) — the module-level daemon started where usage belonged, and the
+token printed for a command that should touch nothing. The agent-spawn
+reds (universal-tui, opencode-server) were cited from source, never
+executed during development (spawning an agent is outside the suite's
+bounds).
+
+**Acceptance criteria:**
+- [x] Red/green: the live admin red above; post-fix 19/19 in the sweep
+      file (9 W126 probes + 10 W129 help pins — the dispatcher + the nine
+      bins), each pinning exit 0 + the usage marker + EMPTY stderr.
+- [x] Regressions 58/58: the three parser suites whose deep-equals guard
+      the additive help field, the web/W124 hold-outs, the W125/W127
+      pins, and the three W128 e2e files.
+- [x] lint + typecheck exit 0.
+- [x] The dangerous paths named honestly: universal-tui's `--help` no
+      longer composes the agent; opencode-attach's `--help` no longer
+      reaches the autostart discovery path; opencode-server's `--help`
+      no longer composes the guard or runtime.
+
+**Residuals (recorded, not fixed):** the usage text is per-bin minimal
+(the first-line banner + key flags), not exhaustive flag docs; a
+verb-level `--help` for the dispatcher's spawned surfaces is resolved by
+the bin (documented in workflow.ts's guard comment).
