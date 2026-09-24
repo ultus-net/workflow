@@ -78,6 +78,39 @@ test("W112: the parked request carries the full proposal payload", async () => {
   assert.deepEqual(await pending, { kind: "deny", code: "OPERATOR_REJECTED", reason: "rejected by operator" });
 });
 
+// W115: the over-cap determination is made ONCE at parking, with the SAME
+// measure the approval card renders (the payload's rendered length vs the
+// 64 KiB inspection cap) — so transport-strip and NOT-APPROVABLE-WITH-REASON
+// are one classification, never two divergent ones. The full payload still
+// parks in memory for the answer path; only the transport classification is
+// computed here.
+test("W115: the parked request carries the transport over-cap flag", async () => {
+  const broker = new PermissionBroker();
+  broker.setMode("ask");
+  const pending = broker.intercept(
+    action("run_commands", { input: "x".repeat(64 * 1024 + 100) }),
+    allowAll(),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  const request = broker.pendingRequest();
+  assert.ok(request !== undefined, "the request parks for the operator");
+  assert.equal(request.inputOverCap, true, "an over-cap payload is flagged at parking");
+  assert.equal(broker.answer(request.id, "reject_once"), true);
+  assert.deepEqual(await pending, { kind: "deny", code: "OPERATOR_REJECTED", reason: "rejected by operator" });
+});
+
+test("W115: an under-cap payload is not flagged", async () => {
+  const broker = new PermissionBroker();
+  broker.setMode("ask");
+  broker.intercept(action("run_commands", { input: { command: "build", flags: ["--verbose"] } }), allowAll());
+  await new Promise((resolve) => setImmediate(resolve));
+  const request = broker.pendingRequest();
+  assert.ok(request !== undefined, "the request parks for the operator");
+  assert.equal(request.inputOverCap, false, "an under-cap payload stays shippable");
+  assert.deepEqual(request.input, { command: "build", flags: ["--verbose"] }, "the FULL input is retained");
+  assert.equal(broker.answer(request.id, "reject_once"), true);
+});
+
 test("ask mode never prompts for hard policy denials", async () => {
   const broker = new PermissionBroker();
   broker.setMode("ask");

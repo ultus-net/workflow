@@ -378,6 +378,10 @@ interface PendingPermission {
   /** W112 (amux C5): the full untruncated payload + the authorization-
    * relevant metadata the broker now retains. */
   readonly input?: unknown;
+  /** W115: set by the transport when the payload exceeded the inspection cap
+   * and was stripped from the poll response — the card must stay
+   * NOT-APPROVABLE-WITH-REASON without the payload. */
+  readonly inputOverCap?: boolean;
   readonly taskId?: string;
   readonly mutating?: boolean;
   readonly requiredCapabilities?: readonly string[];
@@ -849,8 +853,10 @@ export function PermissionPrompt({ pending, answer, remembered }: {
   // W112 review round 1 P1/P2: the payload text is computed INLINE in the
   // render branch (guarded by pending.input !== undefined — an ACP rawInput
   // is optional and may be absent, and payloadRenderText(undefined) would
-  // throw). No unguarded pre-computation.
-  const notApprovable = pending.input !== undefined && payloadRenderText(pending.input).overCap;
+  // throw). No unguarded pre-computation. W115: when the poll transport
+  // stripped an over-cap payload, the inputOverCap flag alone makes the
+  // request NOT-APPROVABLE-WITH-REASON (no payload arrives to measure).
+  const notApprovable = pending.inputOverCap === true || (pending.input !== undefined && payloadRenderText(pending.input).overCap);
   const allowDisabled = notApprovable || !reviewed;
   return (
     <div className="part part-permission" role="alertdialog" aria-label={`Permission request for ${pending.tool}`} ref={cardRef}>

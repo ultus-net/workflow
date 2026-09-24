@@ -624,6 +624,34 @@ test("W112: the approval card renders the full payload metadata and gates Allow 
   assert.match(allowSlice, /disabled/, "Allow is disabled before the confirmation (static render: the initial unchecked state)");
 });
 
+// W115: the transport flag is load-bearing — when the poll strips an
+// over-cap payload (input absent, inputOverCap true), the card must stay
+// NOT-APPROVABLE-WITH-REASON. Without the flag check, a stripped payload
+// would render approvable (input undefined skips the render-side cap check)
+// — an approval without review, the exact regression the W112 discipline
+// exists to prevent.
+test("W115: a transport-stripped over-cap payload stays NOT-APPROVABLE-WITH-REASON", () => {
+  const stripped = {
+    id: "perm-3",
+    tool: "run_commands",
+    mutating: true,
+    subjects: [],
+    inputPreview: "y".repeat(2048) + "…",
+    inputOverCap: true,
+    // input deliberately ABSENT: the poll stripped it (transport cap).
+  };
+  const markup = renderToStaticMarkup(createElement(PermissionPrompt, { pending: stripped as never, answer: ANSWER_NOOP, remembered: 0 }));
+  assert.ok(markup.includes("NOT-APPROVABLE-WITH-REASON"), "the flagged-stripped payload renders the not-approvable reason");
+  const allowWindow = markup.slice(markup.indexOf(">Allow<") - 300, markup.indexOf(">Deny<"));
+  assert.match(allowWindow, /disabled/, "Allow is disabled when the payload was stripped at transport");
+  assert.equal((allowWindow.match(/disabled/g) ?? []).length >= 2, true, "both allow affordances are gated");
+  const beforeDeny = markup.slice(0, markup.indexOf(">Deny<"));
+  const denyTagStart = beforeDeny.lastIndexOf("<button");
+  assert.ok(denyTagStart !== -1, "the deny button renders");
+  const denyTag = beforeDeny.slice(denyTagStart);
+  assert.match(denyTag, /^<button(?![^>]*\bdisabled\b)/, "Deny stays available");
+});
+
 test("W112: an oversized payload is NOT-APPROVABLE-WITH-REASON — deny stays available, allow does not", () => {
   const oversized = "x".repeat(65 * 1024);
   const pending = {

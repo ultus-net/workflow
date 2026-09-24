@@ -1007,6 +1007,77 @@ test("web UI guards permission answers, ask mode, and capability toggles", async
   assert.equal(unconfinedView.workspaceConfinement, false);
 });
 
+// W115: the 1s permission poll is the transport seam — an oversized parked
+// payload must NOT ride it every poll (the card can never approve over the
+// 64 KiB inspection cap, so shipping it is pure amplification against the
+// operator's browser). The route strips the input and sets the explicit
+// flag; the flag is load-bearing (the card must stay NOT-APPROVABLE without
+// the payload). The broker still parks the full request for the answer path.
+test("W115: the permission poll transports the parked payload under the inspection cap", async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), "web-permission-cap-test-"));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const broker = new PermissionBroker();
+  broker.setMode("ask");
+  const fakeRuntimeFactory = async () => {
+    const driver: CodingSessionDriver = {
+      async start(_prompt, emit) { emit({ type: "completed", result: "done" }); },
+      async cancel() {},
+    };
+    return {
+      driver: {
+        ...driver,
+        agentSessionId: () => "agent-x",
+        connect: async () => {},
+        subscribe: () => () => {},
+      } as never,
+      session: new WorkflowCodingSession(driver),
+      budgetMechanism: "test: no local caps (fake runtime)",
+      async dispose() {},
+    };
+  };
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: fakeRuntimeFactory,
+    permissionBroker: broker,
+  });
+  context.after(() => manager.dispose());
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+    [],
+    new Set(["read", "mutation"]),
+    "/repo",
+  );
+  const server = createWorkflowWebServer(application, manager);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+
+  broker.intercept(
+    {
+      sessionId: "agent-x",
+      taskId: "T1" as never,
+      tool: "run_commands",
+      mutating: true,
+      subjects: [],
+      input: "y".repeat(200 * 1024),
+    },
+    () => ({ kind: "allow" }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const oversized = await fetch(`${base}/api/permission`).then((response) => response.json()) as {
+    pending: { inputOverCap?: boolean; input?: unknown } | null;
+  };
+  assert.ok(oversized.pending !== null, "the parked request serves on the poll");
+  assert.equal(oversized.pending?.inputOverCap, true, "the over-cap flag crosses the transport");
+  assert.equal(oversized.pending?.input, undefined, "the oversized payload does NOT ride the poll");
+  const parked = broker.pendingRequest();
+  assert.ok(parked !== undefined, "the broker still parks the request for the answer path");
+  assert.equal(broker.answer(parked.id, "reject_once"), true, "the answer path still works on the parked request");
+});
+
 test("web UI guards session rename, task retry/add, and the removed evidence endpoint (W114)", async (context) => {
   const dir = mkdtempSync(join(tmpdir(), "web-batch5-test-"));
   context.after(() => rmSync(dir, { recursive: true, force: true }));
