@@ -4657,6 +4657,12 @@ assumed.
 flows are pinned only at the API contract level; the same-origin PUT
 variant is unpinned (node fetch's no-Origin shape is the pinned trusted
 path); the dead deep link is queued (above).
+  - Dated note (2026-09-25, W134): the dead deep link FIXED — the CLI
+    advertises and opens the shell root (the Settings dialog lives there);
+    the /settings route still 404s as the server truth (serving the shell
+    at /settings is deferred because src/ui/web.ts carries the operator's
+    uncommitted W115 work). The banner pin and its parse regex flipped
+    with the fix.
 
 ### W132 - The contained-shell's behavioral lane e2e + the guard-deny session-death repair (Complete - the containment contract driven over stdin pipes: ALLOW→ENFORCED→VERIFIED, the nonzero lane's persistence, and the guard-deny lane repaired to W022's contract) (2026-09-25)
 
@@ -4785,8 +4791,210 @@ a blessing of it; the round-4 review's P3).
       under the redirected HOME (the schedule lifecycle mutates only the
       probe's own WORKFLOW_HUB_SCHEDULES file); port 0; process-group
       SIGTERM with the pinned exit + unlink truth.
+  - Dated note (2026-09-25, W134): the empty-body 500 FIXED — see the note
+    in the W133 residuals below; the pin now characterizes the repaired
+    contract (the W133 entry's "pin flips alongside that polish" note
+    came due).
 
-**Residuals (recorded, not fixed):** the empty-body 500 (queued above);
-one unreproduced one-off 400 "invalid snapshot request" mid-sequence
-(suspected rare keep-alive/unconsumed-body interaction — noted by the
-agent, never reproduced in ~12 runs, deliberately not pinned).
+**Residuals (recorded, not fixed):** the unreproduced one-off 400
+"invalid snapshot request" mid-sequence (suspected rare
+keep-alive/unconsumed-body interaction — noted by the agent, never
+reproduced in ~12 runs, deliberately not pinned).
+
+### W134 - The two queued product fixes: the hub's body-error classification and the settings verb's dead deep link (Complete - the wave's findings closed; the empty-body 500 is now an honest 400 and the settings verb points at the shell, not a 404) (2026-09-25)
+
+**Source:** the e2e wave's two recorded queued findings — W133's
+empty-body 500 (the hub's catch-all classified a client payload error as
+a server fault) and W131's dead /settings deep link (the settings verb
+printed and opened a 404). The operator's "continue tasks + e2e testing
+coverage and fixes" direction.
+
+**What landed:**
+- `hub-http.ts`: a typed `HubRequestError` (the request-BODY fault class)
+  thrown by `readJson` for oversized or unparseable bodies, with a NAMED
+  requirement message ("a JSON request body is required (send {} for read
+  routes)") — the catch-all's 400/500 split answers 400 for the client
+  class and keeps 500 for genuine server faults. The W133 pin flipped
+  (500 → 400 + the message).
+- `workflow.ts` (the settings verb): prints and opens the SHELL ROOT —
+  where the Settings dialog actually lives — instead of the dead
+  `/settings` URL; the parenthetical names the seam ("the Settings
+  dialog lives on the operator shell"). The W131 banner pin and its
+  parse regex flipped. The deeper option (serving the shell AT /settings
+  in src/ui/web.ts) is deferred: that file carries the operator's
+  uncommitted W115 work (a coordination note, recorded).
+
+**Acceptance criteria:**
+- [x] Red/green: the pre-fix observations (the 500 "Unexpected end of
+      JSON input"; the `/settings` 404 the verb advertised) were the
+      wave's recorded findings; post-fix the flipped pins run green
+      (2/2).
+- [x] Regressions 80/80 across the hub unit suites (hub-rsi/hub-review/
+      hub-runs), the compiled-bin sweep, the W128 hub e2e, and the web
+      tests — the body-classification change did not disturb any other
+      hub consumer, and the dispatcher change kept the help pins valid.
+- [x] lint + typecheck + build exit 0.
+
+**Residuals (recorded, not fixed):** the /settings route still 404s as
+the server truth (the CLI no longer advertises it; serving the shell
+there awaits the operator's W115 work clearing src/ui/web.ts); the
+unreproduced one-off 400 remains unpinned (W133's residual); a
+NON-HubRequestError body-read fault — a client aborting mid-body inside
+readJson's for-await — still lands 500 through the catch-all (the
+review's P3): the "body faults are client errors" claim covers oversize
++ parse failure only, exactly as stated, and the mid-abort class is
+recorded here as an adjacent residual.
+  - Dated note (2026-09-25, W134): the empty-body 500 FIXED — hub-http
+    classifies a request-BODY fault as a CLIENT error (a HubRequestError
+    answered 400 with "a JSON request body is required (send {} for read
+    routes)"), and the catch-all's 400/500 split leaves 500 to genuine
+    server faults. The W133 pin flipped (500 → 400 + the named
+    requirement).
+
+### W135 - The web service's static/PWA asset contract e2e (Complete - the shell's CSP verbatim, the service worker's hash-derived cache version computed against the bytes the same service served, the manifest deepEqual, and all six SHELL entries answering 200) (2026-09-25)
+
+**Source:** the third background wave (the webapp-assets agent). The
+PWA/service-worker surface — the shell page's static contract, /sw.js
+(built in-memory by pwa.ts), /manifest.webmanifest, the generated icons —
+had no compiled-seat e2e; the browser the offline shell serves has never
+had its routes proven from outside.
+
+**What landed:** `test/e2e-webapp-assets.test.ts` — the compiled web
+service's static contract: GET / (200, the html()-helper CSP VERBATIM —
+default-src/script-src/style-src/img-src/manifest-src/worker-src — and
+the PAGE markers: doctype, lang, charset, viewport, theme-color,
+`<title>Workflow Control</title>`, the manifest link, #root, the /app.js
+script); a cachebusted GET (/?cachebust=) byte-identical to / (static
+routes match on pathname); /app.js + /app.css no-cache (byte-equality
+stays W128's pin); **/sw.js's cache name `workflow-shell-<12hex>` where
+the version equals sha256(served /app.js ‖ /app.css).slice(0,12)**
+computed against the bytes the SAME service just served — a rebuilt
+bundle provably retires the old cache; the exact SHELL list
+(["/", "/app.js", "/app.css", "/manifest.webmanifest", "/icon-192.png",
+"/icon-512.png"]); the verbatim handler pins (install addAll + skipWaiting,
+activate retirement + clients.claim, the /api/ + cross-origin bypass,
+network-first with the hit ?? Response.error fallback); **all six SHELL
+entries answer 200** (the offline shell is only as real as its routes);
+/manifest.webmanifest deepEqual against PWA_MANIFEST; the icons' PNG
+signature + IHDR (192×192 / 512×512, RGBA — generated in-memory by
+renderIconPng, never served from disk, so there is no icons-absent 404
+scenario); the JSON 404 shape; GET-only static routes.
+
+**Findings recorded (not fixed):** the manifest route carries NO
+cache-control while every sibling static asset is no-cache — a
+heuristic-cached manifest can lag a theme/icon change (a polish
+candidate); the CSP rides only the document route (the assets and the
+JSON 404 carry no nosniff/XFO — same-origin fixed shapes, a residual
+stated rather than assumed).
+
+**Acceptance criteria:**
+- [x] 1/1 green twice (503-524ms); lint + typecheck exit 0.
+- [x] The SW version derivation verified against the observed hash
+      (c303105a02fb = the computed sha256 slice).
+- [x] The LESS-0051 safety contract: no agent/PTY spawns; redirected
+      HOME; ephemeral port; async spawn → banner → SIGTERM → pinned exit.
+
+**Residuals (recorded, not fixed):** the manifest cache-control polish;
+the asset/404 header residuals (above).
+
+### W136 - The `workflow-rsi` CLI's client-side flow against a live hub e2e (Complete - the multi-process CLI contract: the operator-token reads, the verifier gate refusing client-side before any request, and the refusal shapes through the CLI's stdout/exit contract) (2026-09-25)
+
+**Source:** the third background wave (the rsi-CLI agent). W133 pinned
+the hub's route bodies; the CLI's discovery → authentication → request
+flow — and its refusal shapes — against a live compiled hub had never
+been driven.
+
+**What landed:** `test/e2e-rsi-cli.test.ts` — the compiled CLI against a
+spawned compiled hub (the operator token from discovery.json, the
+verifier token from verifier.json, all state under redirected HOMEs):
+`status` (the operator token) answers EXACTLY `{ loops: [] }`
+pretty-printed with an empty stderr and exit 0; `status --id <missing>`
+answers `{ loop: null }`; `cancel --id/--workspace <absent>` answers
+`{ cancelled: false }` — safe refusals leaving the registry untouched;
+`start` with verifier.json ABSENT refuses CLIENT-side before any request
+("no Workflow hub verifier discovery at … (is the hub running?)") with a
+follow-up status proving NOTHING ARMED — /rsi/start is never called;
+`status` against a crafted verifier-token seat answers the 401 through
+the CLI's call-error shape ("hub /rsi/status failed: unauthorized") —
+proving status/cancel authenticate with exactly the discovery token; the
+refusal shapes (missing and MALFORMED discovery are indistinguishable —
+readHubDiscovery returns undefined either way; a dead endpoint surfaces
+as bare "fetch failed"; the parse refusals fire before hub resolution);
+the seam precedence (--discovery-dir > WORKFLOW_HUB_DIR > ~/.workflow,
+each named verbatim in the failure); the teardown re-observes W128's
+unlink contract.
+
+**Findings recorded (not fixed):** malformed discovery is
+INDISTINGUISHABLE from missing (hub-client.ts swallows the parse error —
+an operator with a corrupt seat sees the no-daemon message; fail-closed
+but ambiguous — a polish candidate); the dead endpoint surfaces as bare
+"fetch failed" (the CLI prints only error.message, dropping the
+ECONNREFUSED cause chain — note-level; the preserve-caught-error rule
+would suggest printing the cause).
+
+**Acceptance criteria:**
+- [x] 2/2 green three consecutive runs (1.2-1.3s); lint + typecheck
+      exit 0.
+- [x] The verifier gate pinned CLIENT-side with a follow-up status
+      proving nothing armed; /rsi/start never sent.
+- [x] The LESS-0051 safety contract: no agent/PTY spawns; three
+      ephemeral mkdtemp HOMEs; port 0; the hub never spawnSync-killed
+      (async spawn → banners → CLI spawnSyncs → group SIGTERM → pinned
+      exit 0 + unlink truth).
+
+**Residuals (recorded, not fixed):** the two findings above; W133's
+route-level contract remains the deeper seat (this file re-projects it
+through the CLI's stdout/exit contract rather than re-pinning it).
+
+### W137 - The shipped postinstall target's execution e2e (Complete - scripts/prepare-tool.mjs driven in the packaged seat and through stub lanes; the workspace-upwalk mutation blast radius found) (2026-09-25)
+
+**Source:** the third wave's prepare-tool agent. W128's packaged e2e
+found the postinstall target shipped NOWHERE (fixed) and its shape pin
+enforces presence; the hook's EXECUTION had never been tested.
+
+**What landed:** `test/e2e-prepare-tool.test.ts` (5 tests): the LIVE
+packaged seat (pack → extract → `node <extracted>/package/scripts/
+prepare-tool.mjs`: exit 0 UNCONDITIONALLY; the built lane asserts the
+toolbox install landed inside the installed tree + the vendored guard
+seat's dist/server.js exists; the skipped lane (offline) asserts the
+warn shape — exactly one class per run); the npm-repair rerun in the
+same tree; and three stub-pnpm lanes (success → stdout EXACTLY
+`prepare: toolbox ok\n`, argv EXACTLY ["--dir", <root>/mcp-toolbox,
+"run", "build"], cwd = root, and a byte-identical second invocation;
+exit 1 → exit 0 with the EXACT skipped message; missing pnpm → exit 0
+with the ENOENT message). Finding (c) — the dead `existsSync` import in
+the shipped script — FIXED in this loop.
+
+**Findings recorded (not fixed):**
+- **(a) The postinstall is heavyweight and network-dependent** — a
+  consumer approving install scripts unknowingly installs the 391-entry
+  vendored toolbox tree (~9.5s warm). Polish shape: a gate env (e.g.
+  WORKFLOW_PREPARE_TOOL=1) or honest docs.
+- **(b) THE WORKSPACE UPWALK MUTATION BLAST RADIUS** — the child pnpm
+  resolves workspaces by walking UP from its cwd: when the target is not
+  itself a workspace root, pnpm can mutate an ANCESTOR workspace's
+  node_modules. OBSERVED during this agent's research (2026-09-25): the
+  run pruned 135 stale entries from `/var/home/hunter/node_modules` (the
+  operator's $HOME-level pnpm workspace — reconciled to its own lockfile,
+  the same effect its own `pnpm install` would produce, but unintended).
+  The PACKAGED seat is immune (the extracted toolbox IS a workspace —
+  pinned), but the escape class is real; queued (remedy direction: refuse
+  when the target is not a workspace root, or the (a) gate env).
+
+**Acceptance criteria:**
+- [x] 5/5 green twice (15.8-16.1s — the live lane's ~9.5s toolbox build
+      dominates); lint + typecheck exit 0.
+- [x] The packaged lane's writes confined to the extracted mkdtemp tree +
+      a redirected-HOME store (with the ambient XDG/PNPM_HOME/NPM_CONFIG_*
+      overrides stripped so HOME is authoritative — the round's P3); the
+      repo's mcp-toolbox/scripts trees OBSERVED porcelain-clean around the
+      live runs (the in-test canary is the mcp-toolbox/node_modules mtime).
+- [x] The LESS-0051 safety contract: no agent/PTY spawns; the script's
+      own pnpm child is short-lived (spawnSync-captured); all scratch
+      under mkdtemp.
+
+**Residuals (recorded, not fixed):** the two findings above; a hung
+pnpm child could survive a parent timeout-kill (never observed); npm
+12's install-scripts gate still means the hook does not run during a
+real tarball install (this file drives it directly — W128's residual
+stands).

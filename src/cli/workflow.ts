@@ -13,7 +13,7 @@ import { runWebLaunch } from "./web-launch.js";
  *   workflow                     interactive selector (web / tui / settings / hub)
  *   workflow web [args…]         browser operator UI (+ settings tab)
  *   workflow tui [args]          official opencode TUI attached via the hub gateway
- *   workflow settings [--port n] settings panel only
+ *   workflow settings           settings panel only (the port follows env PORT, default 4173)
  *   workflow hub                 hub daemon in the foreground
  *   workflow doctor              state the local setup honestly (W076)
  *   workflow install fleet       deploy the vendored fleet payload (W086)
@@ -139,8 +139,14 @@ if (selected === "web") {
   helpExit(rest, "workflow settings — the settings panel only (no flags; the port follows env PORT or 4173)");
   const { startWorkflowWeb } = await import("./web-service.js");
   const service = await startWorkflowWeb({ workspace });
-  console.log(`Workflow settings panel: ${service.url}/settings`);
-  if (await openBrowser(`${service.url}/settings`)) {
+  // W134: the verb used to advertise and open `${service.url}/settings` — a
+  // 404 (the server has no /settings route; the settings surface is the
+  // operator shell's dialog behind GET /). The CLI now points at the shell
+  // root; the deeper option (serving the shell at /settings in
+  // src/ui/web.ts) is deferred because that file carries the operator's
+  // uncommitted W115 work (recorded in the ledger).
+  console.log(`Workflow settings panel: ${service.url} (the Settings dialog lives on the operator shell)`);
+  if (await openBrowser(service.url)) {
     console.log("Opening in your default browser…");
   } else {
     console.log("No browser opener available; open the URL above manually.");

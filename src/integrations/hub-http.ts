@@ -267,9 +267,17 @@ async function handleRequest(
     }
     send(response, 404, { error: "not found" });
   } catch (error) {
-    send(response, 500, { error: error instanceof Error ? error.message : String(error) });
+    // W134: a HubRequestError is a CLIENT error (an unreadable/malformed
+    // request body) — the W133 e2e found a zero-byte body earning a 500
+    // "Unexpected end of JSON input" from this catch-all, a client fault
+    // classified as a server fault. 400 with the named requirement.
+    send(response, error instanceof HubRequestError ? 400 : 500, { error: error instanceof Error ? error.message : String(error) });
   }
 }
+
+/** W134: a request-body fault (unreadable, oversized, or not JSON) — the
+ * catch-all classifies it 400, never 500 (the W133 finding). */
+class HubRequestError extends Error {}
 
 function authorized(request: IncomingMessage, token: string): boolean {
   const supplied = request.headers.authorization?.replace(/^Bearer /, "") ?? "";
@@ -284,10 +292,18 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   for await (const chunk of request) {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     length += buffer.length;
-    if (length > 1024 * 1024) throw new Error("Workflow hub request is too large");
+    if (length > 1024 * 1024) throw new HubRequestError("Workflow hub request is too large");
     chunks.push(buffer);
   }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  const text = Buffer.concat(chunks).toString("utf8");
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    // W134: every hub route except /health reads a JSON body — a zero-byte
+    // body ("") or a malformed one is a CLIENT error; name the requirement
+    // instead of surfacing JSON.parse's "Unexpected end of JSON input".
+    throw new HubRequestError("a JSON request body is required (send {} for read routes)");
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
