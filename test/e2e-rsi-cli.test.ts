@@ -96,7 +96,7 @@ test("W136: the compiled workflow-rsi CLI fails closed before any request withou
   // what the CLI does when the discovery seat it resolves is missing,
   // malformed, or pointing at a dead endpoint, and which parse refusals fire
   // before discovery is even consulted.
-  const home = mkdtempSync(join(tmpdir(), "w135-rsi-cli-home-"));
+  const home = mkdtempSync(join(tmpdir(), "w136-rsi-cli-home-"));
   context.after(() => rmSync(home, { recursive: true, force: true }));
 
   // Missing discovery (fresh HOME, no .workflow): the fail-closed message
@@ -186,7 +186,7 @@ test("W136: the compiled workflow-rsi CLI drives the live hub — operator-token
   ensureFresh(distArtifact("cli", "rsi.js"));
   ensureToolboxGuardBuilt();
 
-  const home = mkdtempSync(join(tmpdir(), "w135-rsi-cli-live-home-"));
+  const home = mkdtempSync(join(tmpdir(), "w136-rsi-cli-live-home-"));
   context.after(() => rmSync(home, { recursive: true, force: true }));
   const provenancePath = join(home, "provenance.jsonl");
   const schedulesPath = join(home, "schedules.json");
@@ -304,7 +304,7 @@ test("W136: the compiled workflow-rsi CLI drives the live hub — operator-token
   // closed BEFORE any request — exit 1, the message naming the verifier seat
   // it needed. (W133 pinned the route-level token gate with the WRONG token
   // class; this is the missing-credential side of the same trust model.)
-  const verifierHold = `${verifierPath}.w135-hold`;
+  const verifierHold = `${verifierPath}.w136-hold`;
   renameSync(verifierPath, verifierHold);
   let refusedStart: CliRun;
   try {

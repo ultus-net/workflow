@@ -209,12 +209,14 @@ test("W131: the compiled settings panel serves the settings-document HTTP contra
     `no browser may ever open under this contract — output: ${output.slice(0, 600)}`,
   );
 
-  // THE FINDING PIN: the deep link the launcher just printed and tried to
-  // open answers 404. The server serves the operator shell only at GET /
-  // (src/ui/web.ts has no /settings page route — the settings surface is the
-  // SPA's settings DIALOG reached from the shell). Pinned as observed.
+  // THE ROUTE-TRUTH PIN: the /settings route answers 404 — the server serves
+  // the operator shell only at GET / (src/ui/web.ts has no /settings page
+  // route — the settings surface is the SPA's settings DIALOG reached from
+  // the shell). Pre-W134 the launcher printed and opened this dead link
+  // (the W131 finding); the CLI now advertises the shell root (pinned
+  // above), and the route pin remains the server truth.
   const deepLink = await fetch(`${base}/settings`);
-  assert.equal(deepLink.status, 404, "the launcher's advertised /settings deep link must 404 (the finding, pinned as observed)");
+  assert.equal(deepLink.status, 404, "the /settings route is a 404 (the server truth; the CLI no longer advertises it — W134)");
   assert.deepEqual(await deepLink.json(), { error: "not found" });
 
   // The operator shell the dialog actually lives behind (src/ui/web.ts's PAGE).

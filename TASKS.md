@@ -4838,7 +4838,12 @@ coverage and fixes" direction.
 **Residuals (recorded, not fixed):** the /settings route still 404s as
 the server truth (the CLI no longer advertises it; serving the shell
 there awaits the operator's W115 work clearing src/ui/web.ts); the
-unreproduced one-off 400 remains unpinned (W133's residual).
+unreproduced one-off 400 remains unpinned (W133's residual); a
+NON-HubRequestError body-read fault — a client aborting mid-body inside
+readJson's for-await — still lands 500 through the catch-all (the
+review's P3): the "body faults are client errors" claim covers oversize
++ parse failure only, exactly as stated, and the mid-abort class is
+recorded here as an adjacent residual.
   - Dated note (2026-09-25, W134): the empty-body 500 FIXED — hub-http
     classifies a request-BODY fault as a CLIENT error (a HubRequestError
     answered 400 with "a JSON request body is required (send {} for read

@@ -13,7 +13,7 @@ import { runWebLaunch } from "./web-launch.js";
  *   workflow                     interactive selector (web / tui / settings / hub)
  *   workflow web [args…]         browser operator UI (+ settings tab)
  *   workflow tui [args]          official opencode TUI attached via the hub gateway
- *   workflow settings [--port n] settings panel only
+ *   workflow settings           settings panel only (the port follows env PORT, default 4173)
  *   workflow hub                 hub daemon in the foreground
  *   workflow doctor              state the local setup honestly (W076)
  *   workflow install fleet       deploy the vendored fleet payload (W086)
