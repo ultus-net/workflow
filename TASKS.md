@@ -2351,7 +2351,7 @@ same single deliverable.
 - [x] Verifier: W097 pins RED against the unmodified tree (52 pass/1 fail - exactly the user-home test; the genuine-/var and credential tests green pre-change as they assert existing protection), GREEN after the fix (62/0 across policy+mcp+redirect); guard typecheck OK; dist rebuilt and the LIVE probe re-run post-fix (home-abs: undefined; ws-relative: undefined; var-log: protected; ssh: protected); repo lint/typecheck exit 0.
 - [ ] Queued (one change per iteration): the ask channel on the other four seats, the plane-3-prime pending-ask surface, daemon-level end-to-end ask pin, G2 part 2 (trustedRole), G5 branch-exit pins, G4 matched-surface field, dist-freshness pin, npm pack verifier debt (human-gated).
 
-### W098 - Control-plane caching posture: cache-enabling + affinity, never response-caching (Partial - c1 audit/c2 markers/c4 frontier landed; c3 affinity unblocked and queued) (2026-09-23)
+### W098 - Control-plane caching posture: cache-enabling + affinity, never response-caching (Partial - c1 audit/c2 markers/c3 spec/c4 frontier landed; the affinity implementation parked as P19) (2026-09-23)
 
 **Operator question:** "should we be doing caching on the control
 plane/router as well? This would complement the provider-side caching done
@@ -2445,9 +2445,25 @@ at OpenRouter's end."
       two-sided honest scope: real-traffic effectiveness is queued on the
       messages-lane transform+metering governance gap (pre-existing) and
       the vendor probes; see the W109 item's queued list.
-- [ ] Affinity routing specced as a W095 key-1 modifier (pool narrowing),
+- [x] Affinity routing specced as a W095 key-1 modifier (pool narrowing),
       with the cost tradeoff recorded and the metering trail verified
-      unaffected.
+      unaffected. LANDED (2026-09-24, PR this branch):
+      docs/AFFINITY_ROUTING_SPEC_2026-09-24.md — frontier-verified in
+      three rounds (Kimi K3: round 1 REVISE with 3×P1 — the
+      family-granularity narrowing does NOT stop the bounce (the pin
+      narrows to ONE SLUG); the role→model map the spec first cited does
+      NOT exist (the spec is explicitly CONDITIONAL on W095 key-1's
+      landing); the W109 lane equation corrected — round 2 REVISE at the
+      pointer layer (six stale cross-refs, one wrong work-item cite) —
+      round 3 ACCEPT). The metering trail is verified unaffected scoped
+      to the RECORDING mechanics (affinity composes at the autoLatest
+      allowed_models injection, upstream of the usage event) with the
+      content-variance caveat recorded (the W109 pollution class — the
+      trail's per-vendor content varies; P12's fields land on the
+      governed lane only). The cost tradeoff is recorded two-sided
+      including the outage-persistence cost (key 4 unwired — a pinned
+      vendor's degradation persists session-long). The savings remain
+      unmeasured (park P11) until P12 + P9.
 - [x] Frontier verification of the design (same pattern as #82/#85).
       RAN (W109, 2026-09-23): Kimi K3, fresh context, adversarial — round
       1 REVISE (2×P1: the synthetic-path pin + the unrecorded
