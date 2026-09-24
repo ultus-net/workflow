@@ -3824,9 +3824,19 @@ wiring shape clear.
 - [x] The abort tier untouched: budgetViolation's comparison and the
       W045 cancel-at-cap unchanged (the downgrade is the middle step).
 
-**Residuals (recorded, not fixed):** the per-family usage granularity
-(the signal reads the family proxy's own usage); the OpenRouter-lane
-variant; the warn-threshold source stays design-open (env axes for v1,
-recorded in the stage's doc comment); the fail-open composition
-semantics (a throwing stage silently skipped — the W045 abort tier is
-the real backstop, recorded in the park file's P15).
+**Residuals (recorded, not fixed):** the abort tier is BLIND to the
+open lane (the fresh-eyes round-1 P2, pre-existing W045-era:
+composeSessionWithBudget wires the guard with the OpenRouter proxy's
+metrics only, so the open lane's traffic is invisible to the abort tier
+while the W118 downgrade activates on exactly that traffic — feeding
+the guard the aggregated pool metrics is the queued design change, and
+until then neither tier sees open-lane usage); the per-family usage
+granularity (the signal reads the family proxy's own usage); the
+OpenRouter-lane allowed_models-narrowing variant; the warn-threshold
+source stays design-open (env axes for v1, recorded in the stage's doc
+comment); the fail-open composition semantics (a throwing stage
+silently skipped — with the blindness above, the abort tier is not a
+complete backstop for open-lane traffic); the fail-closed silence (a
+malformed axis silently disables the downgrade — the parse function's
+comment records it; operator-facing logging queued with the
+threshold-source decision).

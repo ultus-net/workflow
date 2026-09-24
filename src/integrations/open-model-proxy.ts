@@ -13,7 +13,7 @@
 import { composeBodyTransforms, createModelUsageProxy, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
 import { applyCacheMarkers, modelProfile, shapeRequestBody, type ModelFamily, type ModelTaskClass } from "./model-profile.js";
 import { DEFAULT_OPEN_SOURCE_POOL, type OpenModelDefinition } from "./open-source-pool.js";
-import type { RunBudget } from "./hub-scheduler.js";
+import type { BudgetDowngradeRuntime } from "./session-budget.js";
 
 export interface OpenModelProvider {
   readonly providerId: string;
@@ -48,11 +48,7 @@ export interface CreateOpenModelMeteringPoolOptions {
    * spreading traffic across families sums separately). Absent = no
    * downgrade.
    */
-  readonly budgetDowngrade?: {
-    readonly targetModel: string;
-    readonly budget: RunBudget;
-    readonly fraction: number;
-  };
+  readonly budgetDowngrade?: BudgetDowngradeRuntime;
   readonly onUsage?: (family: ModelFamily, usage: Record<string, unknown>) => void;
 }
 

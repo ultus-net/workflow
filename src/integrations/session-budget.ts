@@ -91,12 +91,27 @@ export interface BudgetDowngradeConfig {
   readonly fraction: number;
 }
 
+/** W118: the runtime shape — the env config plus the budget the activation
+ * evaluates against. Named once so the proxy and pool option types cannot
+ * drift apart (the fresh-eyes round-1 P3: two inline copies of the same
+ * shape will diverge). */
+export interface BudgetDowngradeRuntime {
+  readonly targetModel: string;
+  readonly budget: RunBudget;
+  readonly fraction: number;
+}
+
 export function budgetDowngradeFromEnv(env: BudgetEnv = process.env): BudgetDowngradeConfig | undefined {
   const targetModel = env.WORKFLOW_BUDGET_DOWNGRADE_MODEL?.trim();
   if (targetModel === undefined || targetModel.length === 0) return undefined;
   const rawFraction = env.WORKFLOW_BUDGET_DOWNGRADE_FRACTION?.trim();
   const fraction = rawFraction === undefined || rawFraction.length === 0 ? 0.8 : Number(rawFraction);
   if (!Number.isFinite(fraction) || fraction <= 0 || fraction >= 1) return undefined;
+  // The fail-closed silence is a RECORDED residual, not an oversight: a
+  // malformed axis silently disables the downgrade (the operator asked for
+  // a behavior that is not configured) — the honest-status entry and the
+  // W118 ledger item carry it; operator-facing logging is queued with the
+  // threshold-source decision.
   return { targetModel, fraction };
 }
 

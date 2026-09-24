@@ -10,7 +10,7 @@ import {
 import { checkEgressCredential, METERED_PLACEHOLDER_KEY } from "./egress-credential.js";
 import { enforceReplayPolicy } from "./model-replay-policy.js";
 import type { RunBudget } from "./hub-scheduler.js";
-import { budgetDowngradeActive } from "./session-budget.js";
+import { budgetDowngradeActive, type BudgetDowngradeRuntime } from "./session-budget.js";
 
 export { METERED_PLACEHOLDER_KEY };
 
@@ -34,7 +34,11 @@ export type BodyTransform = (body: Record<string, unknown>) => Record<string, un
  * that REWRITES `body.model` (the W095 budget-downgrade rewrite) must
  * attach BEFORE the profile-shaping stage — both key on `body.model`, and
  * a model rewrite after shaping leaves the body shaped for the
- * pre-downgrade model.
+ * pre-downgrade model. HONORED by the W118 consumer: the downgrade stage
+ * composes BEFORE the caller's transformBody (the shaping+marker stages)
+ * inside createModelUsageProxy, and the order is discriminated by the
+ * W118 pin (the downgraded body carries no pre-downgrade shaping
+ * artifacts).
  */
 export function composeBodyTransforms(transforms: readonly BodyTransform[]): BodyTransform {
   return (body: Record<string, unknown>): Record<string, unknown> => {
@@ -174,11 +178,7 @@ export async function createModelUsageProxy(options: {
    * traffic across family proxies sums separately). The abort tier is
    * untouched: the W045 guard still cancels at the full cap.
    */
-  readonly budgetDowngrade?: {
-    readonly targetModel: string;
-    readonly budget: RunBudget;
-    readonly fraction: number;
-  } | undefined;
+  readonly budgetDowngrade?: BudgetDowngradeRuntime | undefined;
   /**
    * When set, chat completions targeting `openrouter/auto` have the resolved
    * `~...-latest` pool injected as the Auto Router `allowed_models` before
@@ -210,6 +210,11 @@ export async function createModelUsageProxy(options: {
   // W118: the budget-downgrade stage reads the proxy's OWN recorded usage at
   // REQUEST time (this `metrics` object mutates as usage events land), so a
   // session crossing the warn fraction downgrades its subsequent requests.
+  // ORDER (the W109 guidance honored): the downgrade composes BEFORE the
+  // caller's transformBody — a rewrite precedes shaping so the body shapes
+  // for the downgraded-TO model; a target without a pool profile passes
+  // through unshaped (the order-discriminating pin asserts the original
+  // model's shaping artifacts are absent on downgraded requests).
   const downgrade = options.budgetDowngrade;
   const downgradeStage = downgrade === undefined
     ? undefined
@@ -217,15 +222,16 @@ export async function createModelUsageProxy(options: {
         budgetDowngradeActive(metrics, downgrade.budget, downgrade.fraction)
           ? { ...body, model: downgrade.targetModel }
           : body;
-  // Both consumers set → the downgrade composes AFTER the caller's
-  // transformBody (the rewrite applies to the shaped body); a single consumer
+  // Both consumers set → the downgrade composes BEFORE the caller's
+  // transformBody (the rewrite applies before the profile-keyed shaping, per
+  // the W109 ordering guidance); a single consumer
   // runs alone; neither stays undefined (pass-through).
   const bodyTransform =
     options.transformBody === undefined
       ? downgradeStage
       : downgradeStage === undefined
         ? options.transformBody
-        : composeBodyTransforms([options.transformBody, downgradeStage]);
+        : composeBodyTransforms([downgradeStage, options.transformBody]);
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((error) => {

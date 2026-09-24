@@ -266,6 +266,21 @@ test("W118: a session crossing the budget warn fraction downgrades its model at 
     await ask("deepseek-flash");
     assert.equal(JSON.parse(seen[3]!).model, "deepseek-flash-cheap", "the downgrade holds");
 
+    // ORDER DISCRIMINATION (the fresh-eyes round-1 P1 — the W109 ordering
+    // guidance honored): the deepseek profile's openai-wire shaping adds
+    // `thinking` + `reasoning_effort` keyed on body.model. Pre-crossing,
+    // the original model's profile shapes the body (artifacts present);
+    // after the downgrade, the target has NO pool profile, so with the
+    // downgrade composed BEFORE shaping the body carries NO pre-downgrade
+    // shaping artifacts — the exact wrong-shape bug the W109 guidance
+    // forbids.
+    const preCrossing = JSON.parse(seen[0]!);
+    assert.equal(preCrossing.thinking?.type, "enabled", "the original model's profile shaping applies pre-downgrade");
+    assert.ok(preCrossing.reasoning_effort !== undefined, "the original model's reasoning_effort renders pre-crossing");
+    const downgraded = JSON.parse(seen[2]!);
+    assert.equal(downgraded.thinking, undefined, "the downgraded body carries NO pre-downgrade shaping artifact (the rewrite composes BEFORE shaping)");
+    assert.equal(downgraded.reasoning_effort, undefined, "no reasoning_effort from the pre-downgrade profile either");
+
     // The metering trail records ALL sides identically: every request
     // (rewritten or not) fed the usage event — the rewrite never skips
     // recording (the recording mechanics are upstream of the model field).

@@ -233,4 +233,18 @@ test("W118: the downgrade activates at the warn fraction of any cap dimension", 
     "below the fraction on every dimension stays inactive",
   );
   assert.equal(budgetDowngradeActive({ promptTokens: 0, completionTokens: 0, totalTokens: 600, costUsd: 0 }, {}, 0.5), false, "no caps configured = nothing to warn about");
+  // The FIELD MAPPING matches budgetViolation's exactly (the four
+  // dimensions, mirrored — the fresh-eyes round-1 P3: the mirror claim is
+  // pinned, not asserted): input tokens vs maxInputTokens, output tokens
+  // vs maxOutputTokens.
+  assert.equal(
+    budgetDowngradeActive({ promptTokens: 300, completionTokens: 0, totalTokens: 300, costUsd: 0 }, { maxInputTokens: 500 }, 0.5),
+    true,
+    "input tokens map to maxInputTokens (promptTokens ≥ 0.5× the cap)",
+  );
+  assert.equal(
+    budgetDowngradeActive({ promptTokens: 0, completionTokens: 300, totalTokens: 300, costUsd: 0 }, { maxOutputTokens: 400 }, 0.5),
+    true,
+    "output tokens map to maxOutputTokens (completionTokens ≥ 0.5× the cap)",
+  );
 });
