@@ -17,7 +17,7 @@ import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js
 //     the hub's own banner prints) plus the separate verifier.json credential
 //     beside it (the verification token is a distinct credential — P1-1);
 //   - the HTTP contract of src/integrations/hub-http.ts: the /health probe
-//     (POST + Bearer — probeHub's wire shape, src/cli/hub-client.ts:46-49), the
+//     (POST + Bearer — probeHub's wire shape, src/cli/hub-client.ts:44-55), the
 //     authenticated POST /snapshot canonical projection (the hub's seeded
 //     "interactive" READY task, src/cli/hub.ts:41-49), and the honest refusal
 //     of both an unauthenticated request and a non-POST method (the 401
@@ -29,8 +29,10 @@ import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js
 // Safety contract (LESS-0051): no agent or PTY spawns ever. The guard MCP
 // child the hub composes at startup is the product's own fail-closed
 // composition (src/cli/hub.ts:76-85) — allowed — which is exactly why the
-// kill must reach it: the child leads its own process group (detached spawn)
-// and the SIGTERM lands on the group, reaping the guard grandchild too. All
+// kill must reach it: the hub child is the detached group leader, and the
+// guard grandchild is spawned WITHOUT detached (the MCP SDK's
+// StdioClientTransport), so it shares the hub's group — the group SIGTERM
+// reaps both. All
 // hub state lands under a redirected HOME (discovery/lock/provenance/
 // schedules live under resolve(homedir(), ".workflow") or the WORKFLOW_HUB_*
 // overrides), the bridge binds port 0 (hub-http.ts:61), and the server is

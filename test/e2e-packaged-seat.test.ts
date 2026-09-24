@@ -49,9 +49,12 @@ import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js
 // or written; the doctor exits by itself so spawnSync with a generous
 // timeout is correct here (no long-running process to tear down —
 // spawnSync's timeout-kill is only blind to clean teardown, and there is
-// none to observe). npm's HOME is redirected too; the shared npm cache is
-// passed via --cache so install can stay warm and offline-tolerant while
-// writing nothing into the operator's home dotfiles.
+// none to observe). npm's HOME is deliberately NOT redirected for the pack
+// and install steps — they share the operator's real npm cache on purpose
+// (warm-cache installs, offline-tolerant), so npm writes its usual cache/log
+// entries into ~/.npm; only the doctor's HOME is redirected (its own
+// mkdtemp), so no ~/.workflow state is read or written by the code under
+// test.
 
 interface PackedTarball {
   /** The pack destination (a mkdtemp tree). */
