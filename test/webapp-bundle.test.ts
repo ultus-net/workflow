@@ -49,7 +49,7 @@ test("W124: neither layout present fails with both candidates named", () => {
   mkdirSync(join(root, "dist", "ui", "webapp"), { recursive: true });
   assert.throws(
     () => resolveWebappEntry(distModuleUrl(root)),
-    /dist[\\\/]ui[\\\/]webapp[\\\/]main\.tsx.* and .*src[\\\/]ui[\\\/]webapp[\\\/]main\.tsx\)/s,
+    /dist[\\/]ui[\\/]webapp[\\/]main\.tsx.* and .*src[\\/]ui[\\/]webapp[\\/]main\.tsx\)/s,
     "the error names BOTH candidates in order (a message dropping either fails the pin)",
   );
 });
