@@ -34,11 +34,19 @@
   budget and **off-peak vendor windows** (`off-peak.ts`, W070a) — batch
   work can already be *time*-constrained to discounted windows.
 - **The per-request transform seam exists**: the metering proxy is a
-  loopback pass-through holding the real key, with three bounded deviations from pure pass-through already shipped — the autoLatest plugin injection (`openrouter-auto-latest.ts` resolves `~lab/model-latest`
+  loopback pass-through holding the real key, with bounded deviations
+  from pure pass-through already shipped — the autoLatest plugin injection (`openrouter-auto-latest.ts` resolves `~lab/model-latest`
   aliases against the public catalog and injects the resolved pool as an
   `allowed_models` constraint before forwarding), the W070a `transformBody`
-  model-profile shaping, and the W070b replay policy. It already
-  *constrains* OpenRouter's own router deterministically.
+  model-profile shaping, the W070b replay policy, and — since W109
+  (2026-09-23, after this note's base) — the W098 c2 cache-marker pass
+  (`applyCacheMarkers`, composed through the `transformBody` seam;
+  opt-in per pool, wire-gated). It already
+  *constrains* OpenRouter's own router deterministically. (Enumeration
+  scope: ROUTING/POLICY deviations — the `usage: {include: true}`
+  injection is the proxy's declared metering function itself, not a
+  policy transform, and is not counted. Count current as of the W109
+  merge; supersession recorded in §8.)
 - **The budget machinery exists**: per-session caps (`session-budget.ts`,
   W045) abort turns on violation — today they stop work; they do not
   *downgrade* it.
@@ -91,9 +99,12 @@ OpenRouter's Auto, which the hub constrains but does not duplicate).
   note (round-1 P2): the existing `allowed_models` injection fires only
   for auto-router model sessions; downgrade enforcement for concrete pool
   models is a body-`model` rewrite at the proxy's `transformBody` seam —
-  the FOURTH bounded deviation from pure pass-through (after the autoLatest
-  plugin injection, the W070a `transformBody` profile shaping, and the
-  W070b replay policy) and the second consumer of that seam.
+  the FIFTH bounded deviation from pure pass-through (after the autoLatest
+  plugin injection, the W070a `transformBody` profile shaping, the W070b
+  replay policy, and the W098 c2 cache-marker pass) and the THIRD consumer
+  of that seam (corrected 2026-09-24 in round 3: W109's cache-marker pass
+  became the second consumer after this note's base — the model-usage-
+  proxy's own W109 header comment already enumerates it that way).
 - **Per-request (failover only)**: upstream failure-class responses
   (pre-first-byte) retry the fallback pool once before surfacing the
   error — the same transform point as the alias seam; SSE mid-stream
@@ -170,4 +181,29 @@ All round-1 findings accepted and incorporated (the corrections are
 text-level; the correct modules and precedents existed and are now cited).
 **Round 2 - REVISE** (five round-1 corrections verified landed; the reviewer self-corrected one of its own round-1 claims - the resolveOpenModelRoute failover wiring it asserted does not exist: zero callers, no-key families are skipped not rerouted - and the revision had faithfully incorporated that error): row 4 evidence cell corrected to the honest state (open-source-pool.ts declares pools with verified fallbacks; resolveOpenModelRoute encodes the policy but is NOT wired); the section-1 transform-seed sentence repaired after a partial edit application (the quantifier said one while listing three - the half-applied state the round-2 review caught); row 1 tier-label cite corrected to decompose.md (the output spec); row 2 server-path budget-watcher globality recorded in row 2 itself; the section-4 deviation-count corrected (third -> FOURTH bounded deviation, second transformBody consumer).
 
-**Round 3 - pending** (diff-check confirmation of the repaired sentence and the remaining row-4/row-1 corrections); appended as it occurs, before commit. The durable verdict binding is record_review.
+**Round 3 - REVISE (2026-09-24; the stated scope ran: the diff-check
+confirmation of the round-2 repairs) — all four round-2 repairs
+confirmed against the tree:** (1) the repaired transform-seed sentence
+(§1's quantifier now matches its list); (2) row 4's honest unwired state
+(`resolveOpenModelRoute` still has ZERO production callers — grep
+re-verified; no-key families skipped, never rerouted); (3) row 1's
+tier-label cite lands on `decompose.md:45`'s `tier: cheap | strong-only`
+output spec; (4) row 2's server-path globality note accurate
+(opencode-server-budget.ts aborts every known session + sticky
+broker-wide denial — global; the interactive path composes the
+per-session guard). **Two new findings, accepted and incorporated:**
+(P2) the deviation counts were STALE post-W109 — the W098 c2
+cache-marker pass (`applyCacheMarkers`, composed via `transformBody`)
+is a fourth shipped body-transform deviation and the seam's SECOND
+consumer, so the budget-downgrade rewrite is the FIFTH deviation and
+THIRD consumer (the model-usage-proxy's own W109 header comment
+enumerates it that way — the doc's count predated the W109 merge and
+the base pin 78eb839 makes the staleness attributable); §1 and §4
+corrected with the dated supersession. (P3) the enumeration boundary
+clarified: the `usage: {include: true}` injection is the proxy's
+declared metering function itself, not a policy transform, and is not
+counted (§1's scope half-sentence added). Verdict: the note's
+substance survived; the counts are now current as of the W109 merge.
+
+**Round 3 verdict binding:** the criterion's "frontier-verified" state
+is reached — W095 criterion 1 ticks with this record.

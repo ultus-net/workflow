@@ -2288,12 +2288,17 @@ work):**
   the acceptance-check discipline would have to catch after the fact.
 
 **Acceptance criteria:**
-- [ ] A routing-policy design note (the four metadata keys, the pool
+- [x] A routing-policy design note (the four metadata keys, the pool
       matrix, the precedence: task-class -> budget -> schedule -> failover)
       before any code.
-      (The note exists — docs/MODEL_ROUTING_POLICY_2026-09-23.md,
-      frontier-verified through round 2 with round 3 pending; left unticked
-      until its own round 3 completes — NOT this bundle's scope.)
+      (docs/MODEL_ROUTING_POLICY_2026-09-23.md — frontier-verified
+      through round 3, 2026-09-24: the round-2 repairs confirmed against
+      the tree (the zero-callers state re-grepped, the tier-label cite,
+      the globality note, the repaired quantifier) and two new findings
+      incorporated (the deviation counts stale post-W109 — the
+      cache-marker pass is the seam's second consumer; the
+      enumeration-boundary clarification). The criterion's tick stands
+      on the note's §8 round-3 record.)
 - [x] The metering-proxy seam shaped for policy routing (the
       autoLatest-style transform point) without changing the pass-through
       posture for unclassified traffic. LANDED in W109 (2026-09-23): the
