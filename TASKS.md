@@ -3441,6 +3441,10 @@ be tightened by a guard deny — the M3 posture, fail-closed).
   1 P3): the full input ships over the 1 s permission poll UNCAPPED at
   transport (the 64 KiB cap is render-side only) — a transport cap
   belongs to the evidence-endpoint governance item's scope.
+  SUPERSEDED (W115, 2026-09-24): the poll now transports under the
+  inspection cap — the broker classifies the payload once at parking and
+  the poll route strips flagged payloads (see the W115 item); the
+  answer-route approvability posture is unchanged.
 
 **Evidence:** the broker pin (the parked request carries the full
 payload — taskId/mutating/requiredCapabilities/readFingerprints mapped
@@ -3525,3 +3529,51 @@ as kernel-gate evidence").
 - [x] The honest producers (run-registry verdict flow, test runner)
       unchanged — verified by the untouched src outside the removed
       route/form and the held-out suites.
+
+### W115 - The permission-poll transport cap: an oversized parked payload stops riding the 1 s poll (Complete - the amplify vector dead; the answer-route posture unchanged) (2026-09-24)
+
+**Source:** W112's queued transport note (the poll ships the parked FULL
+input UNCAPPED at transport; the 64 KiB cap was render-side only) — the
+exact gap W112's review round 1 flagged, named as belonging to the
+evidence-endpoint governance scope.
+
+**What landed:**
+- The broker classifies the payload ONCE at parking (`classifyInput` —
+  one pass producing the 2 KiB preview and the over-cap flag with the
+  SAME measure the approval card renders: strings by length, objects by
+  pretty-printed JSON length vs the 64 KiB PAYLOAD_INSPECTION_CAP) — so
+  transport-strip and NOT-APPROVABLE-WITH-REASON are one classification,
+  never two divergent ones. The parked in-memory request is untouched
+  for the answer path.
+- GET /api/permission shapes the pending through `transportPermissionView`:
+  flagged payloads lose `input` and keep the explicit `inputOverCap` flag;
+  unflagged requests pass through untouched (the VIEW is identity; the
+  wire gains the required `inputOverCap: false` field — harmless, the card
+  treats false and undefined identically). POST /api/permission's
+  next-parked field is shaped through the same view (review round 1 P3).
+- The card treats `inputOverCap === true` as NOT-APPROVABLE-WITH-REASON —
+  LOAD-BEARING: without it, a stripped payload (input undefined) would
+  skip the render-side cap check and render approvable — an approval
+  without review, the exact regression the W112 discipline prevents. The
+  flag is fail-restrictive only (a pure OR of disabling terms; it can
+  never enable Allow).
+
+**Acceptance criteria:**
+- [x] The amplify vector is dead: an oversized parked payload (200 KiB in
+      the pin) does NOT ride the poll; the response carries the flag and
+      no input; the parked request still answers.
+- [x] The under-cap path unchanged: the full input still transports (the
+      identity-view pin), the card's approvable path untouched.
+- [x] Red/green: 4 pins red on the pre-change tree (62 pass/4 fail —
+      exactly the W115 pins), green after (67/67 across permission-broker
+      + web + webapp-surface); held-out web suites 72/72; lint + typecheck
+      exit 0.
+- [x] The W112 transport note superseded with a dated note (append-only).
+
+**Residuals (recorded, not fixed):** the answer route performs no
+server-side approvability re-check (a direct POST with a valid id allows
+an over-cap request regardless of the card) — the documented W112 posture
+("a UI affordance gating the existing answer() route only"), unchanged by
+W115; the under-cap wire GAINS `inputOverCap: false` (view-identity, not
+byte-identity); the full input still parks in memory at the broker (the
+agent's own spend — only the per-poll shipping is capped).
