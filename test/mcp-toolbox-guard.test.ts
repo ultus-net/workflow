@@ -1,21 +1,105 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { createCredentialBroker, InMemorySecretStore } from "../src/integrations/credentials.js";
-import { guardInputFromToolCall, guardPolicyEvidence } from "../src/integrations/mcp-toolbox-guard.js";
+import { defaultToolboxGuardServerPath, guardDistIsStale, guardInputFromToolCall, guardPolicyEvidence } from "../src/integrations/mcp-toolbox-guard.js";
 import { createGuardFactsResolver, createWorkflowGuardMcpProvider } from "../src/integrations/mcp-toolbox-guard.js";
 
 const serverPath = resolve(process.cwd(), "mcp-toolbox", "apps", "workflow-guard-mcp", "dist", "server.js");
 
 function ensureBuilt(): void {
-  if (existsSync(serverPath)) return;
+  if (existsSync(serverPath) && !guardDistIsStale(process.cwd())) return;
   execFileSync("pnpm", ["--dir", "mcp-toolbox", "--filter", "workflow-guard-mcp", "run", "build"], { stdio: "inherit" });
 }
+
+// ── W120: the dist-freshness gate (the W097-queued pin; LESS-0010's hazard) ──
+// existsSync alone let hub-side tests run a STALE vendored-guard dist: the
+// build-when-missing semantics rebuild only on absence, so a src change
+// after the last build leaves the enforcement seat executing pre-change
+// policy (LESS-0010's en-route hazard; the live tree proved the mtime
+// staleness class — dist/server.js predated src/policy.ts by a day). The
+// staleness predicate + the runtime throw + the test's self-healing rebuild
+// close it: one predicate, two consumers.
+
+test("W120: guardDistIsStale classifies a fixture dist older than its src", () => {
+  const root = mkdtempSync(join(tmpdir(), "w120-stale-"));
+  const dist = join(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "dist");
+  const src = join(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "src");
+  mkdirSync(dist, { recursive: true });
+  mkdirSync(src, { recursive: true });
+  writeFileSync(join(dist, "server.js"), "old");
+  writeFileSync(join(src, "policy.ts"), "new");
+  // The default mtimes are creation-ordered (dist then src) — make the
+  // staleness explicit so the pin tests the comparison, not the clock.
+  const newer = new Date(Date.now() + 60_000);
+  utimesSync(join(src, "policy.ts"), newer, newer);
+  assert.equal(guardDistIsStale(root), true, "a src file newer than the dist is stale");
+});
+
+test("W120: guardDistIsStale classifies a fresh dist as not stale", () => {
+  const root = mkdtempSync(join(tmpdir(), "w120-fresh-"));
+  const dist = join(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "dist");
+  const src = join(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "src");
+  mkdirSync(dist, { recursive: true });
+  mkdirSync(src, { recursive: true });
+  writeFileSync(join(dist, "server.js"), "built");
+  writeFileSync(join(src, "policy.ts"), "source");
+  const newer = new Date(Date.now() + 120_000);
+  utimesSync(join(dist, "server.js"), newer, newer);
+  assert.equal(guardDistIsStale(root), false, "a dist at least as new as every src file is fresh");
+});
+
+test("W120: the runtime refuses to mount a stale enforcement seat, naming the remedy", () => {
+  const root = mkdtempSync(join(tmpdir(), "w120-runtime-"));
+  const dist = join(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "dist");
+  const src = join(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "src");
+  mkdirSync(dist, { recursive: true });
+  mkdirSync(src, { recursive: true });
+  writeFileSync(join(dist, "server.js"), "old");
+  writeFileSync(join(src, "policy.ts"), "new");
+  const newer = new Date(Date.now() + 60_000);
+  utimesSync(join(src, "policy.ts"), newer, newer);
+  assert.throws(
+    () => defaultToolboxGuardServerPath({ root }),
+    /stale/,
+    "a stale dist must fail closed at the seat (the enforcement composition cannot silently run pre-change policy)",
+  );
+  assert.throws(
+    () => defaultToolboxGuardServerPath({ root }),
+    /toolbox:build/,
+    "the error names the recorded remedy",
+  );
+});
+
+test("W120: the real tree's dist is fresh (the queued repo-level pin; self-heals via ensureBuilt's staleness rebuild)", () => {
+  ensureBuilt();
+  assert.equal(
+    guardDistIsStale(process.cwd()),
+    false,
+    "the checked-out dist must not predate the vendored src (existsSync alone let a stale seat execute pre-change policy)",
+  );
+});
+
+// The fresh-eyes round-1 P3: the missing-dist branch (guardDistIsStale →
+// false) is the not-built error's job — a pin so a regression to `true`
+// cannot conflate the two error classes (the not-built path was unpinned
+// anywhere before this).
+test("W120: a missing dist is not staleness (the not-built error governs)", () => {
+  const root = mkdtempSync(join(tmpdir(), "w120-missing-"));
+  mkdirSync(join(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "src"), { recursive: true });
+  writeFileSync(join(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "src", "policy.ts"), "source");
+  assert.equal(guardDistIsStale(root), false, "a missing dist is the not-built error's job, not staleness");
+  assert.throws(
+    () => defaultToolboxGuardServerPath({ root }),
+    /not built/,
+    "the not-built error is preserved verbatim (the two error classes stay distinct)",
+  );
+});
 
 test("guardPolicyEvidence maps decisions onto normalized MCP evidence", () => {
   const allow = guardPolicyEvidence({ decision: "allow", policy: "shell.safe", reason: "ok" }, 3);
