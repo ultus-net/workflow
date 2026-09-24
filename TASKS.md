@@ -4230,6 +4230,23 @@ compiled-runtime crash).
       recorded, not actionable: its sandbox had no shell, so the gate
       runs are operator-attested (its static inspection confirmed the
       structural claims).
+- [x] The round-2 fresh-eyes review (the committed-state re-review the
+      PR preflight's fingerprint rule demanded) accepted with one P2,
+      fixed pre-recording: the bundle pin's staleness walk covered only
+      src/ui/webapp while the bundle's real input graph could extend
+      cross-tree (all cross-tree imports are type-only today — erased by
+      esbuild — so the walk was correct by unasserted invariant), the
+      walk-narrower-than-input-graph lie again; resolved STRUCTURALLY by
+      widening both walks to all of src — the whole-dist remedy's true
+      input graph (`npm run build` rebuilds everything, so the walk
+      cannot be narrower than what the remedy consumes). The P3s
+      recorded: ensureBuilt copies W120's shape (the W120 predicate is
+      hardwired to the vendored-app layout); the doctor probe is
+      deliberately non-hermetic — stated in the pin's comment with both
+      probe bounds now verified in source (probeHub's and the gateway
+      probe's 2s AbortSignals, hub-client.ts:49 / opencode-health.ts:43,
+      plus the 120s spawn timeout); execFileSync("npm") is POSIX-shaped
+      (the repo is Linux/bubblewrap-targeted).
 
 **Residuals (recorded, not fixed):** the launcher smoke covers the
 `workflow.js` dispatcher and doctor's compiled graph (arg parsing, hub
