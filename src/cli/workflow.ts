@@ -139,8 +139,14 @@ if (selected === "web") {
   helpExit(rest, "workflow settings — the settings panel only (no flags; the port follows env PORT or 4173)");
   const { startWorkflowWeb } = await import("./web-service.js");
   const service = await startWorkflowWeb({ workspace });
-  console.log(`Workflow settings panel: ${service.url}/settings`);
-  if (await openBrowser(`${service.url}/settings`)) {
+  // W134: the verb used to advertise and open `${service.url}/settings` — a
+  // 404 (the server has no /settings route; the settings surface is the
+  // operator shell's dialog behind GET /). The CLI now points at the shell
+  // root; the deeper option (serving the shell at /settings in
+  // src/ui/web.ts) is deferred because that file carries the operator's
+  // uncommitted W115 work (recorded in the ledger).
+  console.log(`Workflow settings panel: ${service.url} (the Settings dialog lives on the operator shell)`);
+  if (await openBrowser(service.url)) {
     console.log("Opening in your default browser…");
   } else {
     console.log("No browser opener available; open the URL above manually.");
