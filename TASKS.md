@@ -5018,3 +5018,117 @@ pnpm child could survive a parent timeout-kill (never observed); npm
 12's install-scripts gate still means the hook does not run during a
 real tarball install (this file drives it directly — W128's residual
 stands).
+
+### W138 - The control-plane hidden-Unicode strip at the prompt seat (Complete - the named-class sanitize covers every prompt crossing WorkflowCodingSession.submit, and the web transcript shows what the agent receives) (2026-09-25)
+
+**Source:** the operator's base-loop direction ("add something to the
+control plane that strips out hidden unicode characters — help prevent
+prompt injection"). THREAT_MODEL item 2 records the injection-pressure
+class as a residual (reviewer/candidate lanes read agent-authored text);
+no strip existed anywhere (greps for unicode/bidi/zero-width/homoglyph
+across docs+src+test: empty before this item).
+
+**What landed:**
+- `src/application/text-hygiene.ts` — `sanitizeControlPlaneText`: a
+  NAMED-CLASS denylist strip (control = C0 minus tab/newline/CR + DEL +
+  C1; bidi = U+061C/200E/200F/202A-202E/2066-2069; zero-width = U+200B/
+  2060/FEFF; tag = U+E0000-E007F; noncharacters = U+FDD0-FDEF + every
+  plane's xxFFFE/xxFFFF) returning EVERY hit (kind + code point) so a
+  surface can show what was removed. Idempotent, allocation-local, zero
+  imports.
+- The seat: `WorkflowCodingSession.submit` sanitizes BEFORE the
+  queue/turn (the queue holds clean text) — every prompt crosses it
+  (web channel, TUI, hub turn lanes hub.ts:143/219/300, the reviewer
+  lane hub-run-gates.ts:58), so the THREAT_MODEL item-2 class is
+  covered once. `SessionChannel.submit` sanitizes BEFORE storing the
+  transcript item — the operator's transcript shows exactly what the
+  agent receives, never a raw projection of stripped text.
+- Pins: `test/text-hygiene.test.ts` (9 — per-class strip, the preserved
+  classes byte-for-byte, the emoji-ZWJ overstrip guard, idempotence, hit
+  shapes) + one web behavioral pin in `test/web.test.ts` (POST
+  /api/prompt with one hit from every named class → the DRIVER receives
+  the sanitized text AND the transcript item matches it).
+
+**Acceptance criteria:**
+- [x] Red-first: with only the two src changes stashed, exactly ONE pin
+      is red (the W138 web pin — the raw payload with bidi/zero-width/
+      tag/control/noncharacter chars reached the driver verbatim);
+      green after: 36/36 (9 + 27).
+- [x] Held-out submit consumers 27/27 (coding-session-queue,
+      session-port, driver-registry, error-surfacing); lint + typecheck
+      exit 0.
+- [x] Fresh-eyes review APPROVE (five axes named; the class table
+      verified complete; seat universality verified across five
+      surfaces; kernel purity clean).
+
+**Residuals (recorded, not fixed):** (i) the empty-prompt
+validation-order gap — `isPromptRequest`'s trim catches U+FEFF but not
+bidi/ZWSP/U+2060, so an all-invisible prompt passes the route, sanitizes
+to "" at the seat, and runs an EMPTY turn (pre-change the same input ran
+a turn carrying hidden text, so the change is fail-restrictive; the
+queued fix is a sanitized-emptiness recheck); (ii) the strip's hits are
+computed but never surfaced (silent mutation from the operator's view —
+a strip notice is a queued UX decision); (iii) the TUI's Ctrl+E markdown
+export writes the raw composer text (tui.tsx:599-607) — export parity
+queued; (iv) the honest boundary of the denylist itself: ZWNJ/ZWJ and
+variation selectors are PRESERVED (load-bearing for scripts/emoji) and
+can still smuggle low-bandwidth data, and unlisted future glyphs pass —
+a strict mode could queue; (v) the TUI composer echo/promptHistory keeps
+the operator's raw text (their own input, not an agent-state projection).
+
+### W139 - The hub schedule WRITE lifecycle e2e (Complete - save echo → list deep-equal → delete, both refusal classes, the W134 body contract, a verifier-gated run-now that refuses before any agent work, and the table's persistence across a hub restart) (2026-09-25)
+
+**Source:** the first wave of the operator's "get sub agents to
+continue e2e coverage" direction (report-only agent, LESS-0051 safety
+contract). W133 pinned the route-LEVEL contract on a fresh hub; this
+wave drove the write lifecycle and its persistence against the live
+multi-process seat.
+
+**What landed:** `test/e2e-hub-schedule.test.ts` (2 tests, 101
+assertions; green 3× consecutive, 1.24-1.26s warm): save echo → list
+deep-equal with the `{version:1, schedules:[…]}` table file asserted
+after every write; the token-class matrix per hub-http.ts:92-97
+(verifier refused 401 on save/list/delete; operator refused 401 on
+run-now BEFORE body parse); eight registry-level 400 refusals (bad cron
+minute/day-of-month, whitespace title, empty id, non-string workspace,
+bad taskClass) leaving the list unchanged; the W134 body contract on a
+WRITE route (empty/malformed → 400 with the named requirement;
+>1 MiB → 400); run-now on an absent id → 200 `{fired:false}`, on a
+present id fired with the verifier token → 200 `{fired:true}` with the
+fire landing on a workspace that cannot canonicalize so `fireOnce`
+refuses at controller.begin (the hub log line observed; /snapshot pins
+ZERO run tasks — no ACP runtime ever composes; cron Feb-31 +
+enabled:false belt-and-braces); the default seat
+`<HOME>/.workflow/scheduler.json` surviving clean teardown AND a hub
+restart with freshly re-issued credentials; delete lands the empty
+table.
+
+**Findings recorded (not fixed):**
+- **(a) Unknown definition fields persist verbatim** — POST /schedule/
+  save with an extra `unknownField` answers 200 and writes it to the
+  table (hub-scheduler.ts:246-286 validates known keys only); a
+  schema-rejection gap.
+- **(b) A begin-failing run-now is indistinguishable from a successful
+  fire at the route** — 200 `{fired:true}` either way; the only signal
+  is the hub's stdout log; an observability gap.
+- **(c) Delete of an unknown id is a silent 200 no-op**
+  (schedule-registry.ts:62-65) — idempotent, but never surfaces an id
+  typo.
+- Asymmetry (pinned, not filed): the save route's shape check admits an
+  empty id (hub-http.ts:202) that sibling delete/run-now refuse (:216,
+  :223); the registry catches it.
+
+**Acceptance criteria:**
+- [x] 2/2 green three consecutive runs; lint + typecheck exit 0 with
+      the file present.
+- [x] The LESS-0051 safety contract: no agent/PTY spawns; the fireable
+      path was made to refuse at controller.begin BEFORE any runtime
+      composition; redirected mkdtemp HOMEs; port 0; clean teardown
+      pinned.
+
+**Residuals (recorded, not fixed):** run-now on a fireable schedule and
+the clock-fired tick path are out of LESS-0051's bounds (either would
+compose a real ACP agent run); the paused-schedule-is-still-fireable
+rule is documented from hub-scheduler.ts:294-297,424, not live-driven;
+off-peak deferral and run budgets are scheduler-internal, unreachable
+through the write-lifecycle routes without a live turn.

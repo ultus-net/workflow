@@ -5,6 +5,7 @@ import {
   type ToolExpectedTurnStats,
 } from "./tool-expected-turn.js";
 import { createReasoningClaimMonitor, type ReasoningClaimFlag } from "./reasoning-claims.js";
+import { sanitizeControlPlaneText } from "./text-hygiene.js";
 
 export type CodingSessionEvent =
   | { readonly type: "user"; readonly text: string }
@@ -168,6 +169,12 @@ export class WorkflowCodingSession {
   }
 
   async submit(prompt: string, images: readonly CodingSessionImage[] = []): Promise<void> {
+    // W138: the prompt seat — every surface's operator/authority prompt
+    // crosses here (web channel, TUI, hub turn lanes, the reviewer lane),
+    // so the hidden-Unicode strip lands once and covers them all. The
+    // sanitized text is what the queue holds and what the driver receives;
+    // the strip's hits are available to callers via sanitizeControlPlaneText.
+    const clean = sanitizeControlPlaneText(prompt).text;
     const refusal = this.#refusalGate?.();
     if (refusal !== undefined) {
       // Refuse fail-closed: the prompt is neither run nor queued, and the
@@ -178,10 +185,10 @@ export class WorkflowCodingSession {
       return;
     }
     if (this.#state.state === "running") {
-      this.#queue = [...this.#queue, { prompt, images }];
+      this.#queue = [...this.#queue, { prompt: clean, images }];
       return;
     }
-    await this.#runTurn(prompt, images);
+    await this.#runTurn(clean, images);
     while (this.#queue.length > 0) {
       // A concurrent submit that arrives between turns may have moved the
       // session back to running; only the owning call drives the queue.

@@ -4,6 +4,7 @@ import type { CodingSessionState } from "../application/coding-session.js";
 import type { AcpConfigOptionValue, AcpSessionConfig } from "../adapters/acp-subprocess.js";
 import type { ModelUsageMetrics } from "../integrations/model-usage-proxy.js";
 import { appendOperatorItem, projectOperatorSessionEvent, type OperatorSessionImage, type OperatorSessionItem } from "./operator-session.js";
+import { sanitizeControlPlaneText } from "../application/text-hygiene.js";
 import type { PermissionBroker, PermissionDecisionChoice, PermissionMode, PendingPermissionRequest } from "./permission-broker.js";
 import { normalizeConfigOptions, type WebConfigOption } from "./web-config-options.js";
 
@@ -334,11 +335,16 @@ export class SessionChannel {
   submit(prompt: string, images: readonly PromptImage[]): "accepted" | "busy" {
     if (this.#turnInFlight) return "busy";
     this.#turnInFlight = true;
+    // W138: sanitize BEFORE the transcript stores and the session receives —
+    // the operator's transcript shows exactly what the agent gets, never a
+    // raw projection of text the strip removed. (The session's own submit
+    // sanitizes again; the function is idempotent.)
+    const { text } = sanitizeControlPlaneText(prompt);
     const stored = images.map((image) => ({ id: this.#images.store(image), mediaType: image.mediaType }));
     const userImages: readonly OperatorSessionImage[] = stored;
-    this.#items = appendOperatorItem(this.#items, { kind: "user", text: prompt, ...(stored.length > 0 ? { images: userImages } : {}) });
+    this.#items = appendOperatorItem(this.#items, { kind: "user", text, ...(stored.length > 0 ? { images: userImages } : {}) });
     const wire: readonly CodingSessionImage[] = images;
-    void this.session.submit(prompt, wire).finally(() => { this.#turnInFlight = false; });
+    void this.session.submit(text, wire).finally(() => { this.#turnInFlight = false; });
     return "accepted";
   }
 

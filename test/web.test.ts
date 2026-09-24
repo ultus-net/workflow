@@ -324,6 +324,55 @@ test("web UI rejects invalid prompt images before touching the session", async (
   assert.equal(submitted, false);
 });
 
+// W138: hidden Unicode strips at the control-plane prompt seat — the DRIVER
+// receives the sanitized text and the operator's transcript shows the SAME
+// sanitized text (never a raw projection of text the strip removed). The
+// preserved classes (ZWNJ/ZWJ/VS/NBSP/tab/newline) survive byte-for-byte:
+// without those assertions the strip could silently widen to everything.
+test("W138: hidden unicode is stripped from prompts at the control-plane seat", async (context) => {
+  let submitted = "";
+  const driver: CodingSessionDriver = {
+    async start(prompt, emit) {
+      submitted = prompt;
+      emit({ type: "completed", result: "done" });
+    },
+    async cancel() {},
+  };
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, new WorkflowCodingSession(driver));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+
+  // One hit from every named class + one of every preserved class:
+  // bidi (U+202E), zero-width (U+200B, U+2060, U+FEFF), tag (U+E0054),
+  // control (U+0001, U+009F), noncharacter (U+FDD0, U+10FFFE);
+  // preserved: tab, newline, NBSP, ZWNJ, ZWJ, VS16.
+  const raw = "run\u202Ediag\u200Bnostic\u2060wj\u{E0054}tag\u0001ctl\u009Fc1\uFEFFbom\uFDD0nc\u{10FFFE}nc2" +
+    "\tTAB\nNL\u00A0NBSP\u200CZWNJ\u200DZWJ\uFE0FVS";
+  const expected = "rundiagnosticwjtagctlc1bomncnc2" +
+    "\tTAB\nNL\u00A0NBSP\u200CZWNJ\u200DZWJ\uFE0FVS";
+
+  const prompt = await fetch(`${base}/api/prompt`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: raw }),
+  });
+  assert.equal(prompt.status, 202);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(submitted, expected, "the DRIVER receives the sanitized text — the strip is the seat's contract");
+
+  const session = await fetch(`${base}/api/session`).then((response) => response.json()) as {
+    items: { kind: string; text?: string }[];
+  };
+  assert.equal(session.items[0]?.kind, "user");
+  assert.equal(session.items[0]?.text, expected, "the transcript shows what the agent received, not the raw paste");
+});
+
 test("web UI denies cross-origin browser mutations", async (context) => {
   const driver: CodingSessionDriver = { async start() {}, async cancel() {} };
   const application = new WorkflowApplication(
