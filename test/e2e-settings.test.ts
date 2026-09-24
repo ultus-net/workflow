@@ -285,7 +285,8 @@ test("W131: the compiled settings panel serves the settings-document HTTP contra
   // (src/ui/web.ts): the cross-origin gate first, then the content-type,
   // then the body shape. The origin gate is the ONLY auth these settings
   // mutations compose — no management key, no session scope — so a plain
-  // loopback client (no Origin header, like every fetch below) is trusted.
+  // loopback client (no Origin header — the shape this next write exercises;
+  // the later writes use the same-origin shape instead) is trusted.
   const crossOrigin = await fetch(`${base}/api/settings/mcp`, {
     method: "POST",
     headers: { "content-type": "application/json", origin: "http://evil.example" },

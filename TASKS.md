@@ -4685,12 +4685,16 @@ ever printed) — violating W022's recorded contract ("a denied command
 does not terminate the persistent session"; the nonzero lane held, the
 guard lane did not). Fail-closed (the denial fires BEFORE any spawn:
 nothing executed, nothing mutated) but honest death instead of
-per-command reporting. Fixed: contained-shell.ts catches the denial
-per-command, reports `Task: FAILED (the guard denied execution: …)`,
-transitions the task FAILED, and keeps the loop alive — the pin now
-asserts the repaired contract (the FAILED report names the denial, no
-containment verdict prints, and the NEXT command still verifies, exit
-0). W022's ledger line carries the dated contradiction note.
+per-command reporting. Fixed: contained-shell.ts catches the failure
+per-command, reports `Task: FAILED (execution refused: …)` — the label
+deliberately SEAT-NEUTRAL per the round-3 review's P2 (execute's throw
+classes are the guard seat, the second authorization seat, and
+containment failures; a bwrap-less operator must not read a false seat
+attribution) — transitions the task FAILED, and keeps the loop alive;
+the pin now asserts the repaired contract (the FAILED report carries the
+denial's message, no containment verdict prints, and the NEXT command
+still verifies, exit 0). W022's ledger line carries the dated
+contradiction note.
 
 **Discoveries recorded (observed, pinned):** the shell's own Policy:
 DENY branch is DEAD CODE from its only input surface — every stdin line
@@ -4724,4 +4728,9 @@ test — recorded for the surface's next design pass); the bwrap-less
 Linux and non-Linux degradations are recorded from source and must be
 pinned by their own environments; the guard-deny probe's fragment
 assembly is environment-coupled to the vendored policy corpus's
-destructive-operation rule.
+destructive-operation rule; a POST-SPAWN containment failure (the
+command possibly executed) would skip recordMutation where the nonzero
+lane records it — the mutation-accounting question for the catch lane
+is queued (the round-3 review's P2 follow-up); the ShellSession exit
+await has no SIGKILL escalation deadline (note-level: a plain node child
+never ignores SIGTERM — the round-3 review's P3).

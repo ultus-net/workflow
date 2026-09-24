@@ -56,12 +56,14 @@ import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js
 // them (never faked): ENFORCED is this environment's truth (bwrap present);
 // on Linux without a working bwrap, selectContainment still selects
 // LinuxBubblewrapContainment and execute() rejects ("containment backend
-// unavailable" / the bwrap: stderr boundary error) — the SAME unhandled-throw
-// session death this file pins on the guard lane, i.e. fail-closed, never a
-// policy-only label; on non-Linux the honest degradation is
-// "Containment: POLICY-ONLY" with a real execution (platform.ts's visible
-// two-place degradation). A bwrap-less environment must pin its own observed
-// truth, not borrow this file's.
+// unavailable" / the bwrap: stderr boundary error) — since the W132 fix that
+// rejection is CAUGHT per-command (the session survives; the FAILED report
+// carries the message; its label is deliberately seat-neutral — the
+// round-3 review's P2 — because execute's throw classes are not
+// distinguishable without parsing message prefixes); on non-Linux the honest
+// degradation is "Containment: POLICY-ONLY" with a real execution
+// (platform.ts's visible two-place degradation). A bwrap-less environment
+// must pin its own observed truth, not borrow this file's.
 //
 // Why there is no "Policy: DENY" pin: the shell's own deny branch
 // (contained-shell.ts's `Policy: DENY (...)` + "Task: FAILED" + continue) is
@@ -219,15 +221,15 @@ const GUARD_DENIED_COMMAND = `${gitWord} ${cleanWord} -fd`;
 
 test("W132: a benign command flows Workflow authorization, enforced bubblewrap containment, and evidence-gated VERIFIED, then a clean exit", async (context) => {
   ensureFresh(distArtifact("cli", "contained-shell.js"));
-  const home = mkdtempSync(join(tmpdir(), "w130-shell-home-"));
+  const home = mkdtempSync(join(tmpdir(), "w132-shell-home-"));
   context.after(() => rmSync(home, { recursive: true, force: true }));
   const shell = new ShellSession(context, home);
 
   // The blank line is part of the prompt contract: it executes nothing and
   // only re-prompts (pinning via the final Policy/Task counts below).
   shell.write("");
-  shell.write("echo w130-contained-marker");
-  await shell.waitFor(["Policy: ALLOW", "Containment: ENFORCED", "w130-contained-marker", "Task: VERIFIED"], 30_000, "the benign command flow");
+  shell.write("echo w132-contained-marker");
+  await shell.waitFor(["Policy: ALLOW", "Containment: ENFORCED", "w132-contained-marker", "Task: VERIFIED"], 30_000, "the benign command flow");
 
   shell.write("exit");
   const exit = await shell.waitForExit();
@@ -243,7 +245,7 @@ test("W132: a benign command flows Workflow authorization, enforced bubblewrap c
   // containment verdict, then the command's own output, then the terminal
   // task state reached through recorded mutation + fresh evidence.
   const indexOf = (marker: string): number => stdout.indexOf(marker);
-  const sequence = ["Policy: ALLOW", "Containment: ENFORCED", "w130-contained-marker", "Task: VERIFIED"].map(indexOf);
+  const sequence = ["Policy: ALLOW", "Containment: ENFORCED", "w132-contained-marker", "Task: VERIFIED"].map(indexOf);
   assert.ok(
     sequence.every((position) => position >= 0) && sequence.every((position, index) => index === 0 || position > sequence[index - 1]!),
     `the ALLOW → ENFORCED → output → VERIFIED sequence must hold in order — stdout:\n${stdout}`,
@@ -264,7 +266,7 @@ test("W132: a benign command flows Workflow authorization, enforced bubblewrap c
 
 test("W132: a failing command stays unverified and the persistent session survives it (W022's persistence contract)", async (context) => {
   ensureFresh(distArtifact("cli", "contained-shell.js"));
-  const home = mkdtempSync(join(tmpdir(), "w130-shell-home-"));
+  const home = mkdtempSync(join(tmpdir(), "w132-shell-home-"));
   context.after(() => rmSync(home, { recursive: true, force: true }));
   const shell = new ShellSession(context, home);
 
@@ -275,8 +277,8 @@ test("W132: a failing command stays unverified and the persistent session surviv
 
   // The next command still crosses the full flow on its own fresh task —
   // per-command independence over the compiled seat.
-  shell.write("echo w130-persisted-marker");
-  await shell.waitFor(["w130-persisted-marker", "Task: VERIFIED"], 30_000, "the post-failure command");
+  shell.write("echo w132-persisted-marker");
+  await shell.waitFor(["w132-persisted-marker", "Task: VERIFIED"], 30_000, "the post-failure command");
 
   shell.write("exit");
   const exit = await shell.waitForExit();
@@ -312,7 +314,7 @@ test("W132: a guard-denied command fails closed at the guard seat, is reported p
   // it is CAUGHT per-command: the FAILED report names the denial, no
   // containment verdict prints (nothing executed), and the session lives.
   await shell.waitFor(["Policy: ALLOW"], 30_000, "Workflow's own allow");
-  await shell.waitFor(["Task: FAILED (the guard denied execution: "], 30_000, "the per-command denial report");
+  await shell.waitFor(["Task: FAILED (execution refused: "], 30_000, "the per-command refusal report");
   assert.match(shell.output(), /guard denied process execution/, `the denial's cause must be visible in the FAILED report — stdout:\n${shell.output()}`);
   assert.ok(!shell.output().includes("Containment:"), `nothing executed — no containment verdict may print — stdout:\n${shell.output()}`);
   // The persistence half of W022's contract on the repaired lane: the next
