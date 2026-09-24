@@ -2377,7 +2377,7 @@ at OpenRouter's end."
   logic as W095.
 
 **Acceptance criteria:**
-- [ ] A cache-bust audit of hub-composed prefixes (orientation/guidance,
+- [x] A cache-bust audit of hub-composed prefixes (orientation/guidance,
       system prompts, tool serialization) - before any affinity work.
       AUDIT SCOPE CORRECTION (W109 frontier round 1, 2026-09-23): the
       audit must extend into HOST-COMPOSED prefixes — on the default
@@ -2397,9 +2397,36 @@ at OpenRouter's end."
       proposal turn); the W098 ordering pin freezes the invariant.
       Honest scope: verified structurally (the ordering pin +
       formatHistory's append-only serialization); the provider cache-hit
-      improvement is NOT yet measured on live traffic. Remaining audit
-      scope: the hub-composed orientation block, per-turn advisory
-      guidance, MCP mounts, and the host-composed prefixes.
+      improvement is NOT yet measured on live traffic.
+      PART 2 LANDED — THE HUB-COMPOSED AUDIT (2026-09-24,
+      test/w098-c1-guidance-audit; pins + ledger only, zero src change).
+      Findings per site: (1) orientation block — static, versioned,
+      zero-interpolation by construction (prompt-guidance.ts:69-86), the
+      content snapshot + no-placeholder + order + opt-out pins already
+      freeze it, and it renders as expected (g5-observability.test.ts:90-133); (2) per-turn advisory
+      guidance — env-derived constants composed ONCE at hub startup
+      (hub.ts:159), constant per process; (3) scheduler composition —
+      guidance prepended, per-turn schedule prompt after
+      (hub-scheduler.ts:358), the verbatim prefix order already pinned
+      (hub-scheduler.test.ts:191) and the composed prompt is the recorded
+      ask (the W041 digest binds it); (4) the reviewer rubric — stable
+      five-axis preamble -> per-run content (task, manifest, diff) ->
+      verdict instructions (rubric.ts:32-93); the section order was
+      UNPINNED — the new decision-freezer pin freezes it (green on first
+      run, the characterization-pin discipline); fresh session per run,
+      so cross-run prefix affinity does not apply; (5) the RSI apply
+      prompt (self-improvement-agent.ts:139-148) — static preamble leads,
+      per-candidate fields follow, no append-only history to invert, fresh
+      session per apply turn — stable, unpin-worthy beyond part 1's
+      proposal-pin pattern; (6) the iteration-21
+      reasoning-claim findings — observability-only, never injected into
+      prompts (hub.ts:276-281). MCP-mount tool serialization and the
+      host-composed prefixes (the OpenCode environment block, compaction
+      rewrites, mid-session tool churn) are OUTSIDE hub control —
+      DISPOSITIONED as host-side, not audited: the hub cannot pin what it
+      does not compose, and that segment's cache behavior remains
+      unmeasured. Criterion complete for the hub-composed surface: stable
+      by construction; the affinity work (c3) is unblocked.
 - [x] Cache-control marker injection at transformBody for anthropic-wire
       pools (opt-in per pool via model-profile.ts). LANDED in W109
       (machinery + pins, wire-gated, absent-never-fabricated) — with the
