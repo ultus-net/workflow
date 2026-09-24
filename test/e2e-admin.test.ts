@@ -42,6 +42,18 @@ import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js
 // process-group SIGTERM with a SIGKILL backstop; spawnSync is not used for
 // the daemon (its timeout-kill cannot see a clean teardown). The admin token
 // is a W130 test constant (its only power is over this ephemeral process).
+//
+// KEYRING HONESTY (the round-1 review's P2 — recorded, not hidden): the
+// redirected HOME confines only the credential CONFIG file — the secret
+// MATERIAL is stored by createSecretServiceStore through `secret-tool` into
+// the operator's LIVE system keyring (D-Bus, service "workflow"). This e2e
+// stores ONE test credential (the w130- prefixed id; clobbering a real
+// credential is implausible by the prefix) whose cleanup is the in-test
+// DELETE plus an after-hook best-effort revoke; a failure between the PUT
+// and the cleanup can orphan that keyring entry (the recorded residual).
+// The surface is also MACHINE-GATED on secret-tool + an unlocked keyring:
+// without them the store throws, the control plane answers 400, and this
+// test fails closed — visible, never skipped.
 
 const ADMIN_TOKEN = "w130-e2e-admin-capability-token-0123456789abcdef";
 const SECRET_VALUE = "w130-e2e-secret-value-DO-NOT-ECHO";
@@ -62,6 +74,24 @@ test("W130: the compiled admin control plane serves the credential contract end 
   child.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
   child.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
   child.once("exit", (code, signal) => { exitInfo = { code, signal }; });
+  let storedCredential = false;
+  let adminUrl = "";
+  // The after-hook best-effort cleanup (the round-1 review's P2): node:test
+  // runs after hooks in reverse registration order, so this — registered
+  // after the kill hook — runs BEFORE the kill while the server is still
+  // alive: a test failure between the PUT and the in-test DELETE still
+  // revokes the keyring entry. (node:test hook order confirmed against the
+  // runner's behavior; if the server is already gone, the entry may orphan —
+  // the recorded residual.)
+  context.after(async () => {
+    if (storedCredential && exitInfo === undefined && adminUrl !== "") {
+      try {
+        await fetch(`${adminUrl}/api/admin/credentials/${CREDENTIAL_ID}`, {
+          method: "DELETE", headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+        });
+      } catch { /* best-effort: the recorded residual covers the orphan case */ }
+    }
+  });
   context.after(() => {
     if (exitInfo === undefined) {
       try { if (child.pid !== undefined) process.kill(-child.pid, "SIGTERM"); } catch { /* exited */ }
@@ -75,6 +105,7 @@ test("W130: the compiled admin control plane serves the credential contract end 
     else await new Promise<void>((resolveWait) => setTimeout(resolveWait, 100));
   }
   assert.ok(baseUrl !== "", `the admin banner never appeared within 20s — output: ${output.slice(0, 500)}`);
+  adminUrl = baseUrl;
   const auth = { authorization: `Bearer ${ADMIN_TOKEN}` };
   const jsonHeaders = { ...auth, "content-type": "application/json" };
 
@@ -130,9 +161,15 @@ test("W130: the compiled admin control plane serves the credential contract end 
     }),
   });
   assert.equal(put.status, 204, `the store must succeed — body: ${await put.text()}`);
+  storedCredential = true;
   const listed = await fetch(`${baseUrl}/api/admin/credentials`, { headers: auth });
   assert.equal(listed.status, 200);
-  const listedBody = (await listed.json()) as Array<Record<string, unknown>>;
+  // Channel completeness (the round-1 review's note): read the RAW listing
+  // body once and check the WHOLE body for the secret — not just the entry's
+  // known fields — before parsing it for the field pins.
+  const listedText = await listed.text();
+  assert.ok(!listedText.includes(SECRET_VALUE), "the raw listing body never contains the secret value");
+  const listedBody = JSON.parse(listedText) as Array<Record<string, unknown>>;
   const entry = listedBody.find((credential) => credential.id === CREDENTIAL_ID);
   assert.ok(entry !== undefined, "the stored credential's metadata is listed");
   assert.equal(entry.configured, true, "the stored credential reports configured");
@@ -155,9 +192,10 @@ test("W130: the compiled admin control plane serves the credential contract end 
   assert.equal(deleteUnknown.status, 404, "revoking an unknown id is a 404");
 
   // The audit trail records set + revoke — and the secret value never
-  // appears anywhere in the process output.
+  // appears anywhere in the process output. The revoke line is bound to the
+  // credential id the same way the set line is (the round-1 review's P3).
   assert.ok(output.includes('"action":"set"') && output.includes(`"credentialId":"${CREDENTIAL_ID}"`), `the audit trail records the set — output: ${output.slice(0, 600)}`);
-  assert.ok(output.includes('"action":"revoke"'), `the audit trail records the revoke — output: ${output.slice(0, 600)}`);
+  assert.ok(output.includes(`"action":"revoke","credentialId":"${CREDENTIAL_ID}"`), `the audit trail records the revoke for this credential — output: ${output.slice(0, 600)}`);
   assert.ok(!output.includes(SECRET_VALUE), "the secret value never appears in the process output");
 
   // Teardown: the admin's own SIGTERM shutdown → exit 0.
