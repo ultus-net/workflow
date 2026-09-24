@@ -53,10 +53,15 @@ function newestSrcMtime(srcRoot: string): number | undefined {
 /** W120's staleness semantics, scoped to the artifact under test: a missing
  * artifact is the rebuild's job; any input newer than the artifact is
  * stale (the fail-closed direction — the remedy is an idempotent rebuild).
- * The inputs are the src walk PLUS the build's config inputs (the tsconfigs
- * and the package manifest — a config-only change with no src mtime bump
- * must still rebuild; the W125 round-1 review P2, LESS-0049(4) applied to
- * this pin's own walk). */
+ * The walk covers ALL of src — deliberately wider than any one artifact's
+ * esbuild/tsc input graph, because the REMEDY (`npm run build`) rebuilds
+ * the whole dist: a walk narrower than the remedy's true input graph is
+ * the lie LESS-0049(4) declares (the round-2 review's bundle-walk P2 — a
+ * future cross-tree value-import from the webapp graph would have been
+ * invisible to a src/ui/webapp-only walk). The build's config inputs ride
+ * the same comparison. The mtime false-positive class (a checkout touching
+ * mtimes without a content change) is W120's recorded, deliberate trade —
+ * the remedy is deterministic and idempotent. */
 const BUILD_CONFIG_INPUTS = ["tsconfig.json", "tsconfig.build.json", "package.json", "package-lock.json"] as const;
 
 function artifactIsStale(artifact: string, srcRoot: string): boolean {
@@ -76,7 +81,7 @@ function ensureBuilt(artifact: string, srcRoot: string): void {
 }
 
 test("W125: the real compiled webapp bundle produces js and css in the dist seat", async () => {
-  ensureBuilt(bundleArtifact, join(repoRoot, "src", "ui", "webapp"));
+  ensureBuilt(bundleArtifact, join(repoRoot, "src"));
   // The source-seat tests import ../src/ui/webapp/bundle.js; THIS import is
   // the compiled module the operator's launcher actually serves. A resolution
   // regression here fails exactly as the operator's live run did
@@ -102,9 +107,14 @@ test("W125: the compiled launcher runs end-to-end non-interactively (node dist/c
   // The first compiled execution the suite has ever performed of a bin
   // (the operator's manual UAT was the only prior runner). doctor is the
   // safe probe: read-only checks, no daemon spawn, non-interactive by
-  // contract. Exit 0/1 are BOTH honest outcomes (warns and fail rows are
-  // environment truth); a signal, a timeout, or any other status is a
-  // crash of the compiled tree, which is what this pin exists to catch.
+  // contract — and deliberately NOT hermetic: it reads the operator's
+  // real home (~/.workflow, settings) and probes live local endpoints
+  // (bounded: probeHub's 2s AbortSignal, the gateway probe's 2s
+  // AbortSignal, and the 120s spawn timeout below) — an honest
+  // environment-truth probe, not a sandboxed fixture. Exit 0/1 are BOTH
+  // honest outcomes (warns and fail rows are environment truth); a
+  // signal, a timeout, or any other status is a crash of the compiled
+  // tree, which is what this pin exists to catch.
   const result = spawnSync(process.execPath, ["dist/cli/workflow.js", "doctor"], {
     cwd: repoRoot,
     encoding: "utf8",
