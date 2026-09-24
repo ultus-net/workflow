@@ -8,8 +8,6 @@ Build Workflow as the durable, SDK-agnostic safety and execution layer around fa
 
 The invariant is:
 
-The invariant is:
-
 ```text
 model proposes -> Workflow authorizes -> tool acts -> environment supplies evidence -> Workflow validates -> state may advance
 ```
@@ -3642,13 +3640,31 @@ work-picking surface.
   chain: earlier entries rode inside merged PRs (#101-#107) implicitly;
   this file's creation is the explicit approval act.
 - TASKS.md's header carries the pointer so every loop entry point
-  (and `guard_next_tasks`) finds it.
+  finds it (the loop reads TASKS.md's header; the `guard_next_tasks`
+  tool surfaces TASKS.md content).
 
 **Acceptance criteria:**
-- [x] Every entry's facts match its source ledger item (verified by the
-      fresh-eyes reviewer's source cross-check — the honest verifier for
-      a prose file; no automated test covers prose).
+- [x] Every entry's facts match its source ledger item (the fresh-eyes
+      review round 1 — REQUEST_CHANGES — caught a duplicate invariant
+      line, three entry drifts (P1/P4/P9), and FIVE missing queued items;
+      all fixed in this iteration's follow-up commit and re-verified by
+      the round-2 cross-check, recorded below).
 - [x] The file is append-only by stated rule; the operator's approval
       date recorded per entry.
 - [x] The discoverability pointer exists in TASKS.md.
 - [x] Docs-only: lint/typecheck exit 0.
+
+**Review record (round 1, 2026-09-24, REQUEST_CHANGES — all findings
+applied):** the reviewer's source cross-check found: the W116 criterion
+was ticked before its named verifier ran (this very round); an unintended
+duplicate "The invariant is:" line my header edit introduced; P1's
+"metering trail verified unaffected" read as completed (it is future
+work); P4's cross-reference pointed at the wrong W109 gap; P9 dropped
+the corrected pollution nuance (the trail is polluted via zero-token
+events, not absent); FIVE queued items were missing from a file claiming
+canonicity (W109 gaps 2/4/6, the budget-downgrade consumer, the
+W099/W100 unification implementation). All fixed: the criterion unticked
+then re-ticked against the round-2 cross-check; the duplicate removed;
+the entries corrected/appended as P12-P16; the guard-discoverability
+claim in TASKS.md softened to what is true (the pointer exists in
+TASKS.md, the header every loop reads).
