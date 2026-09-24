@@ -5,7 +5,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, StatusBar, StepLedgerRow, TaskRefusal, UsageMeter } from "../src/ui/webapp/app.js";
+import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, PermissionPrompt, StatusBar, StepLedgerRow, TaskRefusal, UsageMeter } from "../src/ui/webapp/app.js";
 import { ScheduleForm, SchedulesView, scheduleIdCollisionError, type ScheduleMeta } from "../src/ui/webapp/schedules-view.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { EditDiff, parseEditTool } from "../src/ui/webapp/diff-text.js";
@@ -592,5 +592,61 @@ test("W110: the task refusal renders the kernel's reason verbatim with the missi
   assert.ok(markup.includes("missing environment:typecheck — no evidence observed"));
   assert.ok(markup.includes("missing reviewer:design-review — the passing evidence is stale"));
   assert.ok(markup.includes("[EVIDENCE_REQUIRED]"), "the machine code rides along for the trail");
+});
+
+// ---- W112 (amux C5): the approval card renders the COMPLETE proposal
+// payload, requires the reviewed confirmation before Allow, and is
+// NOT-APPROVABLE-WITH-REASON when the payload exceeds the inspection cap. ----
+
+const ANSWER_NOOP = async (): Promise<void> => {};
+
+test("W112: the approval card renders the full payload metadata and gates Allow on the reviewed confirmation", () => {
+  const pending = {
+    id: "perm-1",
+    tool: "write_file",
+    capability: "mutation",
+    subjects: ["src/a.ts"],
+    inputPreview: "{ \"path\": \"src/a.ts\" }",
+    input: { path: "src/a.ts", content: "the full content is inspectable" },
+    taskId: "T1",
+    mutating: true,
+    requiredCapabilities: ["mutation"],
+    readFingerprints: ["src/a.ts"],
+  };
+  const gated = renderToStaticMarkup(createElement(PermissionPrompt, { pending, answer: ANSWER_NOOP, remembered: 0 }));
+  // The complete payload's metadata renders (previously dropped at parking).
+  assert.ok(gated.includes("mutating"), "the mutating flag renders");
+  assert.ok(gated.includes("T1"), "the task id renders");
+  assert.ok(gated.includes("the full content is inspectable"), "the FULL input renders, not just the preview");
+  // The confirmation gate: Allow starts DISABLED until the operator checks it.
+  assert.ok(gated.includes("I have reviewed the full payload"), "the confirmation renders");
+  const allowSlice = gated.slice(gated.indexOf("I have reviewed"), gated.indexOf(">Allow<"));
+  assert.match(allowSlice, /disabled/, "Allow is disabled before the confirmation (static render: the initial unchecked state)");
+});
+
+test("W112: an oversized payload is NOT-APPROVABLE-WITH-REASON — deny stays available, allow does not", () => {
+  const oversized = "x".repeat(65 * 1024);
+  const pending = {
+    id: "perm-2",
+    tool: "run_commands",
+    mutating: true,
+    subjects: [],
+    inputPreview: oversized.slice(0, 2048) + "…",
+    input: oversized,
+  };
+  const markup = renderToStaticMarkup(createElement(PermissionPrompt, { pending, answer: ANSWER_NOOP, remembered: 0 }));
+  assert.ok(markup.includes("NOT-APPROVABLE-WITH-REASON"), "the not-approvable reason renders verbatim");
+  assert.ok(markup.includes("inspection cap"), "the reason states the cap");
+  // Never approvable-with-warning: BOTH allow affordances are disabled (the
+  // allow pair renders before the deny pair; slice between them so the
+  // assertion covers Allow AND Always-allow, not just one).
+  const allowWindow = markup.slice(markup.indexOf(">Allow<") - 300, markup.indexOf(">Deny<"));
+  assert.match(allowWindow, /disabled/, "Allow is disabled on an uninspectable payload");
+  assert.match(allowWindow, /Always allow this tool/, "the Always-allow affordance is inside the gated window");
+  assert.equal((allowWindow.match(/disabled/g) ?? []).length >= 2, true, "both allow affordances are gated");
+  // Deny stays available (a refusal is always possible): the Deny button's
+  // own tag carries no disabled.
+  const denyTag = markup.slice(markup.indexOf(">Deny<") - 120, markup.indexOf(">Deny<"));
+  assert.ok(!denyTag.includes("disabled"), "Deny is never disabled");
 });
 

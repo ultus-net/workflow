@@ -51,6 +51,33 @@ test("ask mode parks allowed requests and resolves them by answer", async () => 
   assert.equal(broker.pendingRequest(), undefined, "answering clears the parked slot");
 });
 
+// W112 (amux C5): the parked request carries the COMPLETE proposal payload —
+// the broker retains it at parking (the pre-change surface dropped taskId,
+// mutating, the capabilities, the fingerprints, and the full input).
+test("W112: the parked request carries the full proposal payload", async () => {
+  const broker = new PermissionBroker();
+  broker.setMode("ask");
+  const pending = broker.intercept(
+    action("run_commands", {
+      requiredCapabilities: ["process"],
+      readFingerprints: [{ path: "src/a.ts", digest: "d1", size: 10, modifiedNs: "0" }],
+      input: { command: "build", flags: ["--verbose"] },
+    }),
+    allowAll(),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  const request = broker.pendingRequest();
+  assert.ok(request !== undefined, "the request parks for the operator");
+  assert.equal(request.taskId, "T1");
+  assert.equal(request.mutating, true);
+  assert.deepEqual(request.requiredCapabilities, ["process"]);
+  assert.deepEqual(request.readFingerprints, ["src/a.ts"], "the fingerprints render as the inspected paths");
+  assert.deepEqual(request.input, { command: "build", flags: ["--verbose"] }, "the FULL input is retained, not the preview");
+  assert.ok(request.inputPreview !== undefined && request.inputPreview.includes("build"), "the compact preview still rides along");
+  assert.equal(broker.answer(request.id, "reject_once"), true);
+  assert.deepEqual(await pending, { kind: "deny", code: "OPERATOR_REJECTED", reason: "rejected by operator" });
+});
+
 test("ask mode never prompts for hard policy denials", async () => {
   const broker = new PermissionBroker();
   broker.setMode("ask");
