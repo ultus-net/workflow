@@ -5089,18 +5089,18 @@ assertions; green 3× consecutive, 1.24-1.26s warm): save echo → list
 deep-equal with the `{version:1, schedules:[…]}` table file asserted
 after every write; the token-class matrix per hub-http.ts:92-97
 (verifier refused 401 on save/list/delete; operator refused 401 on
-run-now BEFORE body parse); eight registry-level 400 refusals (bad cron
-minute/day-of-month, whitespace title, empty id, non-string workspace,
-bad taskClass) leaving the list unchanged; the W134 body contract on a
-WRITE route (empty/malformed → 400 with the named requirement;
->1 MiB → 400); run-now on an absent id → 200 `{fired:false}`, on a
-present id fired with the verifier token → 200 `{fired:true}` with the
-fire landing on a workspace that cannot canonicalize so `fireOnce`
-refuses at controller.begin (the hub log line observed; /snapshot pins
-ZERO run tasks — no ACP runtime ever composes; cron Feb-31 +
-enabled:false belt-and-braces); the default seat
-`<HOME>/.workflow/scheduler.json` surviving clean teardown AND a hub
-restart with freshly re-issued credentials; delete lands the empty
+run-now BEFORE body parse); six registry-level plus two route-level 400
+refusals (bad cron minute/day-of-month, whitespace title, empty id,
+non-string workspace, bad taskClass) leaving the list unchanged; the
+W134 body contract on a WRITE route (empty/malformed → 400 with the
+named requirement; >1 MiB → 400); run-now on an absent id → 200
+`{fired:false}`, on a present id fired with the verifier token → 200
+`{fired:true}` with the fire landing on a workspace that cannot
+canonicalize so `fireOnce` refuses at controller.begin (the hub log
+line observed; /snapshot pins ZERO run tasks — no ACP runtime ever
+composes; cron Feb-31 + enabled:false belt-and-braces); the default
+seat `<HOME>/.workflow/scheduler.json` surviving clean teardown AND a
+hub restart with freshly re-issued credentials; delete lands the empty
 table.
 
 **Findings recorded (not fixed):**
@@ -5132,3 +5132,52 @@ compose a real ACP agent run); the paused-schedule-is-still-fireable
 rule is documented from hub-scheduler.ts:294-297,424, not live-driven;
 off-peak deferral and run budgets are scheduler-internal, unreachable
 through the write-lifecycle routes without a live turn.
+
+### W140 - The web multi-session isolation e2e (Complete - two parallel fake-runtime sessions behind one server: transcript/config/prompt isolation per session, the guard set per session, and the cross-session answer-consumption FINDING pinned as-found) (2026-09-25)
+
+**Source:** the second wave of the operator's "get sub agents to
+continue e2e coverage" direction (report-only agent, LESS-0051 safety
+contract, in-process tsx seat — no dist build, no agent/PTY spawns).
+The ?session= routing contract was unit-pinned against ONE session
+(W114-era); this wave drives the isolation contract with TWO real
+parallel sessions.
+
+**What landed:** `test/web-scoping.test.ts` (11 tests, green twice
+consecutively at 571-731ms; the mirrored suites still green — web 27/27,
+web-sessions 20/20): transcript isolation both directions with the
+unscoped route answering the focused session; config options isolated
+per driver; the unknown-id 404 shape against TWO real sessions across
+six routes (upgrading test/web.test.ts:688's single-session pin);
+permission scoping (B's poll null while A parks); cancel scoping (only
+A's park resolves PROMPT_CANCELLED, B's park survives and stays
+answerable); PROMPT_BUSY per session (A's second park denies while B's
+first park is accepted); rename/retry/add guards per session; focus
+switch (activating B spawns nothing, disposes nothing in A, denies no
+parks); the per-session busy contract (A 409 + B 202 in the same
+window; B's completion never unbusy A).
+
+**FINDING (recorded, not fixed):** the permission poll is
+session-scoped (`pendingRequest(sessionKey)`, permission-broker.ts:77-80)
+but the ANSWER path is not — `PermissionBroker.answer` matches the
+parked id alone (:83-106) and the route never checks ownership, so
+answering through B's route with A's parked id returns 200, resolves
+A's park (OPERATOR_REJECTED), and A's poll afterwards shows null. Pinned
+as-found (the FINDING test); the fix shape is a session-scoped refusal
+on the answer route, which flips that pin deliberately. Mitigating
+posture: the same-origin trusted-mutation guard still applies and the UI
+never surfaces another session's id.
+
+**Acceptance criteria:**
+- [x] 11/11 green twice consecutively; lint + typecheck exit 0; the
+      mirrored suites (web, web-sessions) still green.
+- [x] The LESS-0051 safety contract: in-process only (tsx), fake drivers,
+      mkdtemp registry paths, port 0, no agent/PTY spawns, no dist build.
+
+**Residuals (recorded, not covered):** full /api/image cross-session
+store isolation (only the lookalike 404 is pinned — a cheap follow-up);
+the live-cap eviction path and dismiss-with-parked-prompts (need seven
+parallel runtimes / dismiss flows; the keyed-cancel wiring is already
+manager-pinned at test/web-sessions.test.ts:531); /api/sessions/compact
+per-session agent-id mapping (rides the v2 data-lane gateway, outside
+the in-process contract); registry-restart isolation over HTTP (covered
+at manager level in web-sessions.test.ts, not duplicated).
