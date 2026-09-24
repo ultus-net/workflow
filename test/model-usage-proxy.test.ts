@@ -493,3 +493,166 @@ test("W109: composeBodyTransforms chains transforms in order with per-stage fail
   // No transforms: the body passes through untouched.
   assert.deepEqual(composeBodyTransforms([])({ original: true }), { original: true });
 });
+
+// ── W123: the anthropic Messages lane meters honestly (park P9 part 1) ──────
+
+// The recorded gap (park P9): the metering pipeline gates on /chat/completions
+// — the anthropic messages path passed through UNTRANSFORMED and effectively
+// UNMETERED, and the W109 review round-1 nuance sharpened the fix: the lane
+// DOES reach recordUsage, but the OpenAI-shaped extraction keys against the
+// anthropic usage shape (input_tokens/output_tokens/cache_*_input_tokens — no
+// prompt_tokens/completion_tokens/total_tokens/cost keys), so every anthropic
+// event landed as usageEvents += 1 with ZERO tokens: the trail was polluted,
+// not absent. The fix keys the extraction on the anthropic wire type and
+// normalizes the cache components into the prompt side (anthropic reports them
+// OUTSIDE input_tokens; OpenAI's prompt_tokens INCLUDES cached reads — the
+// budget caps must mean the same thing on both lanes).
+test("W123: the anthropic message JSON lane meters real tokens (the P9 pollution closed)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({
+      id: "msg_01",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "text", text: "hello" }],
+      model: "glm-5.3",
+      stop_reason: "end_turn",
+      usage: { input_tokens: 120, output_tokens: 30, cache_creation_input_tokens: 40, cache_read_input_tokens: 60 },
+    }));
+  });
+  const seen: Record<string, unknown>[] = [];
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY", onUsage: (usage) => seen.push(usage) });
+  try {
+    const response = await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "glm-5.3", max_tokens: 64, messages: [{ role: "user", content: "hi" }], stream: false }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(proxy.metrics(), {
+      requests: 1,
+      usageEvents: 1,
+      promptTokens: 220, // 120 input + 40 cache_creation + 60 cache_read (the cross-lane normalization)
+      completionTokens: 30,
+      totalTokens: 250,
+      costUsd: 0, // the anthropic usage carries no cost field — the OpenRouter lane's usage.cost stays the only local cost source
+      latestPromptTokens: 220,
+    }, "the anthropic usage shape must record real tokens, not zeros");
+    // The raw anthropic fields ride onUsage untouched — P12's seam: first-class
+    // cache fields later never need re-deriving from the wire.
+    assert.deepEqual(seen, [{ input_tokens: 120, output_tokens: 30, cache_creation_input_tokens: 40, cache_read_input_tokens: 60 }]);
+    // The anthropic lane stays untransformed: no usage.include injection (the
+    // messages wire always reports usage), the body forwards untouched.
+    assert.deepEqual(JSON.parse(upstream.seen[0]?.body ?? "{}"), {
+      model: "glm-5.3",
+      max_tokens: 64,
+      messages: [{ role: "user", content: "hi" }],
+      stream: false,
+    }, "the messages lane forwards without the chat-completions body seam");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+// The anthropic SSE stream's usage events are CUMULATIVE, not deltas: both
+// message_start (message.usage) and message_delta (usage) carry the cache
+// fields, and message_delta re-carries the totals (the SDK types mark them
+// "cumulative — not a delta!"; summing across events double-counts — the
+// recorded cautionary instance is langchainjs #10249). The metering proxy
+// takes the LAST-OBSERVED value per field within one stream and emits ONE
+// usage event per message at stream end — matching the JSON lane's event
+// count and never double-counting.
+test("W123: the anthropic SSE lane accumulates the cumulative stream into ONE usage event", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write('event: message_start\ndata: {"type":"message_start","message":{"id":"msg_02","type":"message","role":"assistant","content":[],"model":"glm-5.3","usage":{"input_tokens":9,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n\n');
+    res.write('data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}\n\n');
+    res.write('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":9,"output_tokens":23,"cache_creation_input_tokens":20,"cache_read_input_tokens":50}}\n\n');
+    res.write('data: {"type":"message_stop"}\n\n');
+    res.end();
+  });
+  const seen: Record<string, unknown>[] = [];
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY", onUsage: (usage) => seen.push(usage) });
+  try {
+    const response = await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "glm-5.3", max_tokens: 64, messages: [{ role: "user", content: "hi" }], stream: true }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.text(), 'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_02","type":"message","role":"assistant","content":[],"model":"glm-5.3","usage":{"input_tokens":9,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}\n\nevent: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":9,"output_tokens":23,"cache_creation_input_tokens":20,"cache_read_input_tokens":50}}\n\ndata: {"type":"message_stop"}\n\n', "the stream bytes forward through unchanged");
+    assert.deepEqual(proxy.metrics(), {
+      requests: 1,
+      usageEvents: 1, // ONE event per message — the two usage-bearing events are cumulative, not deltas
+      promptTokens: 79, // 9 input + 20 cache_creation + 50 cache_read (the last-observed values, NOT 9+9=18)
+      completionTokens: 23, // the cumulative output, NOT 1+23=24
+      totalTokens: 102,
+      costUsd: 0,
+      latestPromptTokens: 79,
+    }, "the cumulative stream must not double-count and must emit one event");
+    assert.deepEqual(seen, [{ input_tokens: 9, output_tokens: 23, cache_creation_input_tokens: 20, cache_read_input_tokens: 50 }], "onUsage receives the merged per-message record exactly once");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+// Regression hold-outs (green before AND after by design): the detection is
+// TYPE-keyed (the wire type the chat-completions lane never carries), so the
+// OpenAI lanes and the unrecognized-shape behavior are frozen as-found.
+test("W123: an anthropic error payload carries no usage and meters nothing (hold-out)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(400, { "content-type": "application/json" });
+    res.end(JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "max_tokens is required" } }));
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    const response = await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "glm-5.3", messages: [] }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(proxy.metrics(), {
+      requests: 1,
+      usageEvents: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      costUsd: 0,
+      latestPromptTokens: undefined,
+    }, "no usage record: nothing to meter");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W123: a chat-completions usage with anthropic-style keys still records zeros (type-keyed, as-found hold-out)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [], usage: { input_tokens: 500, output_tokens: 50 } }));
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(proxy.metrics(), {
+      requests: 1,
+      usageEvents: 1,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      costUsd: 0,
+      latestPromptTokens: undefined,
+    }, "the detection keys on the wire type, not the usage shape — the chat-completions lane behaves exactly as before");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
