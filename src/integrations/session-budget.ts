@@ -83,9 +83,13 @@ export function sessionBudgetMechanism(env: BudgetEnv = process.env): string {
  * nothing; the WARN FRACTION defaults to 0.8 and must parse to (0,1).
  * Unlike parseCap (which throws — a broken cap must never degrade to an
  * unenforced session), a broken downgrade axis fails CLOSED to undefined:
- * no downgrade is the status quo ante, the safe direction. The threshold
- * source stays design-open (the routing note's key-2: "env axis or cap
- * fraction") — both axes are env for v1. */
+ * no downgrade is the status quo ante, the safe direction. The fail-closed
+ * path is NOT silent: when the operator set an axis, the parse warns
+ * `[budget] …` naming the axis and the value (the W118-era silence residual
+ * — park P15 (d), the W118 item's residual (f) — resolved 2026-09-24 in
+ * W122). Honest absence (nothing set) stays silent. The threshold source
+ * stays design-open (the routing note's key-2: "env axis or cap fraction")
+ * — both axes are env for v1. */
 export interface BudgetDowngradeConfig {
   readonly targetModel: string;
   readonly fraction: number;
@@ -101,17 +105,37 @@ export interface BudgetDowngradeRuntime {
   readonly fraction: number;
 }
 
-export function budgetDowngradeFromEnv(env: BudgetEnv = process.env): BudgetDowngradeConfig | undefined {
+export function budgetDowngradeFromEnv(
+  env: BudgetEnv = process.env,
+  warn: (message: string) => void = (message) => console.warn(`[budget] ${message}`),
+): BudgetDowngradeConfig | undefined {
   const targetModel = env.WORKFLOW_BUDGET_DOWNGRADE_MODEL?.trim();
-  if (targetModel === undefined || targetModel.length === 0) return undefined;
   const rawFraction = env.WORKFLOW_BUDGET_DOWNGRADE_FRACTION?.trim();
-  const fraction = rawFraction === undefined || rawFraction.length === 0 ? 0.8 : Number(rawFraction);
-  if (!Number.isFinite(fraction) || fraction <= 0 || fraction >= 1) return undefined;
-  // The fail-closed silence is a RECORDED residual, not an oversight: a
-  // malformed axis silently disables the downgrade (the operator asked for
-  // a behavior that is not configured) — the honest-status entry and the
-  // W118 ledger item carry it; operator-facing logging is queued with the
-  // threshold-source decision.
+  const fractionSet = rawFraction !== undefined && rawFraction.length > 0;
+  if ((targetModel === undefined || targetModel.length === 0) && !fractionSet) return undefined;
+  if (targetModel === undefined || targetModel.length === 0) {
+    // The operator set the fraction axis but there is no target: a fraction
+    // without a target downgrades to nothing. The warn keeps the operator
+    // facing the disabled behavior (once per runtime composition — the
+    // createOpencodeRuntime call site).
+    warn(
+      `WORKFLOW_BUDGET_DOWNGRADE_FRACTION is set (${JSON.stringify(rawFraction)}) but WORKFLOW_BUDGET_DOWNGRADE_MODEL is missing — a fraction without a target downgrades to nothing; the downgrade stays OFF`,
+    );
+    return undefined;
+  }
+  const fraction = fractionSet ? Number(rawFraction) : 0.8;
+  if (!Number.isFinite(fraction) || fraction <= 0 || fraction >= 1) {
+    warn(
+      `WORKFLOW_BUDGET_DOWNGRADE_FRACTION is malformed: ${JSON.stringify(rawFraction)} does not parse to (0,1) — the downgrade to ${JSON.stringify(targetModel)} stays off (fail-closed; the status quo ante)`,
+    );
+    return undefined;
+  }
+  // The fail-closed-to-undefined posture itself is unchanged (a broken
+  // downgrade degrades to no-downgrade, the safe direction). What the
+  // W118-era record carried as a residual was the SILENCE around it —
+  // "operator-facing logging is queued" (park P15 (d); the W118 item's
+  // residual (f)) — now landed as the warns above; honest absence stays
+  // silent.
   return { targetModel, fraction };
 }
 

@@ -310,3 +310,89 @@ test("W118: the downgrade activates at the warn fraction of any cap dimension", 
     "output tokens map to maxOutputTokens (completionTokens ≥ 0.5× the cap)",
   );
 });
+
+// ── W122: the fail-closed silence gets operator-facing logging ──────────────
+
+// Injectable-warn collector (the containment platform.ts pattern): the parse
+// warns through the injected sink so the pins assert on CONTENT, not on
+// intercepted globals; the default-warn pin below exercises the real
+// console.warn path separately.
+function recordingWarn(): { readonly messages: string[]; readonly warn: (message: string) => void } {
+  const messages: string[] = [];
+  return { messages, warn: (message) => { messages.push(message); } };
+}
+
+// The W118-era recorded residual (park P15 (d); the W118 item's residual
+// (f)): a malformed downgrade axis fails CLOSED to undefined — the safe
+// direction — but SILENTLY: the operator set an axis and never learns the
+// downgrade is disabled. The fix: budgetDowngradeFromEnv takes an injectable
+// warn (the containment platform.ts pattern) defaulting to a `[budget]`
+// console.warn, fired ONLY when the operator ASKED (an axis is set) but the
+// config fails closed. Honest absence stays silent (nothing set = nothing to
+// say; a blank target with no fraction is absence).
+test("W122: a malformed fraction warns once and still fails closed", () => {
+  const { messages, warn } = recordingWarn();
+  const model = { WORKFLOW_BUDGET_DOWNGRADE_MODEL: "glm-5.3-flash" };
+  for (const raw of ["1.5", "0", "abc"]) {
+    messages.length = 0;
+    assert.equal(
+      budgetDowngradeFromEnv({ ...model, WORKFLOW_BUDGET_DOWNGRADE_FRACTION: raw }, warn),
+      undefined,
+      `the fail-closed return is unchanged for ${JSON.stringify(raw)} (logging must not soften it)`,
+    );
+    assert.equal(messages.length, 1, "exactly one warning per parse");
+    assert.ok(messages[0]!.includes("WORKFLOW_BUDGET_DOWNGRADE_FRACTION"), "the warning names the offending axis");
+    assert.ok(messages[0]!.includes(raw), "the warning echoes the raw value");
+    assert.ok(messages[0]!.includes("glm-5.3-flash"), "the warning names the configured target");
+  }
+});
+
+test("W122: a fraction without a target model warns (the operator asked for a downgrade)", () => {
+  const { messages, warn } = recordingWarn();
+  assert.equal(budgetDowngradeFromEnv({ WORKFLOW_BUDGET_DOWNGRADE_FRACTION: "0.5" }, warn), undefined);
+  assert.equal(messages.length, 1, "exactly one warning");
+  assert.ok(messages[0]!.includes("WORKFLOW_BUDGET_DOWNGRADE_MODEL"), "the warning names the missing axis");
+  assert.ok(messages[0]!.includes("0.5"), "the warning echoes the set fraction");
+});
+
+// Regression hold-outs (green before AND after by design): the paths where
+// the operator asked for NOTHING must not start warning — the fix closes the
+// operator-asked silence, it does not add noise to honest absence.
+test("W122: valid configs and honest absence stay silent (hold-out)", () => {
+  const { messages, warn } = recordingWarn();
+  assert.deepEqual(
+    budgetDowngradeFromEnv({ WORKFLOW_BUDGET_DOWNGRADE_MODEL: "glm-5.3-flash" }, warn),
+    { targetModel: "glm-5.3-flash", fraction: 0.8 },
+    "a target with the default fraction parses unchanged",
+  );
+  assert.deepEqual(
+    budgetDowngradeFromEnv({ WORKFLOW_BUDGET_DOWNGRADE_MODEL: "glm-5.3-flash", WORKFLOW_BUDGET_DOWNGRADE_FRACTION: "   " }, warn),
+    { targetModel: "glm-5.3-flash", fraction: 0.8 },
+    "a whitespace-only fraction is unset (parseCap's convention), not malformed",
+  );
+  assert.equal(budgetDowngradeFromEnv({}, warn), undefined, "nothing set = nothing to say");
+  assert.equal(budgetDowngradeFromEnv({ WORKFLOW_BUDGET_DOWNGRADE_MODEL: "   " }, warn), undefined, "a blank target with no fraction is honest absence");
+  assert.equal(
+    budgetDowngradeFromEnv({ WORKFLOW_BUDGET_DOWNGRADE_MODEL: "   ", WORKFLOW_BUDGET_DOWNGRADE_FRACTION: "   " }, warn),
+    undefined,
+    "both axes blank is honest absence (the both-absent branch), not a warning case",
+  );
+  assert.deepEqual(messages, [], "no warnings on any non-operator-asked path");
+});
+
+test("W122: the default warn reaches the operator console with the [budget] prefix", () => {
+  const seen: string[] = [];
+  const original = console.warn;
+  console.warn = (message?: unknown, ...rest: unknown[]) => { seen.push([String(message), ...rest.map(String)].join(" ")); };
+  try {
+    assert.equal(
+      budgetDowngradeFromEnv({ WORKFLOW_BUDGET_DOWNGRADE_MODEL: "glm-5.3-flash", WORKFLOW_BUDGET_DOWNGRADE_FRACTION: "1.5" }),
+      undefined,
+      "no injection: the production default path",
+    );
+  } finally {
+    console.warn = original;
+  }
+  assert.equal(seen.length, 1, "the default warn fired through the real console");
+  assert.ok(seen[0]!.startsWith("[budget]"), "the prefix matches the hub's budget-log convention");
+});
