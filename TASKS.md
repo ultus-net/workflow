@@ -3628,7 +3628,9 @@ work-picking surface.
 
 **What landed:**
 - `docs/PARKED_AND_LIMITATIONS.md` — one canonical file, two sections
-  (11 parked items P1-P11, 8 recorded limitations L1-L8), every entry
+  (**P1-P11 at creation; P12-P16 appended by the round-1 review fixes;
+  P17-P18 appended by the round-2 completion pass** — 18 parked items,
+  8 recorded limitations), every entry
   carrying its source ledger item, dependencies/conditions, TRUTHFUL
   verification status (landed+verified / structural-only / unmeasured /
   dispositioned-not-audited), and its approval record. File rules:
@@ -3668,3 +3670,20 @@ then re-ticked against the round-2 cross-check; the duplicate removed;
 the entries corrected/appended as P12-P16; the guard-discoverability
 claim in TASKS.md softened to what is true (the pointer exists in
 TASKS.md, the header every loop reads).
+
+**Review record (round 2, 2026-09-24 — TWO passes, honestly incomplete
+then completed):** the round-2 reviewer hit its step limit mid-sweep and
+honestly reported the cross-check INCOMPLETE (the tick cited a verifier
+that had not demonstrably run — the same defect round 1 flagged, in a
+new form; its interim verdict: REQUEST_CHANGES). The completion pass
+(a fresh reviewer, scope-tightened to the remaining pairs) verified
+15/16 pairs + all four limitations faithful (P2/P3/P4/P5/P15/P6/P7/
+P9/P12/P13/P14/P10/L3/L4/L5/L6 ✓) and found TWO further omissions from
+the file claiming canonical completeness: the ci-intelligence-mcp
+pre-existing build/typecheck break (W105's queued item) and the open
+W102/W103 wrapper/push residual edges (residual #20's queued edges +
+#21's still-open part). Both appended as P17/P18; the W113 numbering
+skip noted (no ledger item exists — another session's branch never
+landed its item; nothing dangles). Interim verdict: REVISE → the
+fixes applied in this commit; the criterion's tick stands on BOTH
+passes recorded here.
