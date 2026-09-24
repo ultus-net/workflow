@@ -9,7 +9,6 @@ import {
 } from "./openrouter-auto-latest.js";
 import { checkEgressCredential, METERED_PLACEHOLDER_KEY } from "./egress-credential.js";
 import { enforceReplayPolicy } from "./model-replay-policy.js";
-import type { RunBudget } from "./hub-scheduler.js";
 import { budgetDowngradeActive, type BudgetDowngradeRuntime } from "./session-budget.js";
 
 export { METERED_PLACEHOLDER_KEY };

@@ -3830,13 +3830,43 @@ composeSessionWithBudget wires the guard with the OpenRouter proxy's
 metrics only, so the open lane's traffic is invisible to the abort tier
 while the W118 downgrade activates on exactly that traffic — feeding
 the guard the aggregated pool metrics is the queued design change, and
-until then neither tier sees open-lane usage); the per-family usage
-granularity (the signal reads the family proxy's own usage); the
-OpenRouter-lane allowed_models-narrowing variant; the warn-threshold
-source stays design-open (env axes for v1, recorded in the stage's doc
-comment); the fail-open composition semantics (a throwing stage
-silently skipped — with the blindness above, the abort tier is not a
-complete backstop for open-lane traffic); the fail-closed silence (a
-malformed axis silently disables the downgrade — the parse function's
-comment records it; operator-facing logging queued with the
-threshold-source decision).
+until then neither tier sees open-lane usage). RESOLVED (W119,
+2026-09-24, the next iteration): the guard's usage snapshot AGGREGATES
+the pool's metrics with the OpenRouter proxy's
+(`composeSessionWithBudget`'s optional `additionalUsage`; the open
+lane's runtime wired; the violation reason echoes the aggregated total,
+pinned) — the abort tier now sees the open lane and the downgrade warn
+tier covers the same usage; the OTHER residuals ((a) the OpenRouter-
+lane variant, (b) the per-family granularity, (d) the fail-open
+composition semantics, (e) the warn-threshold source, (f) the
+fail-closed silence) stand.
+
+### W119 - The abort tier sees every lane: the guard's usage snapshot aggregates the open-source pool (Complete - the W118-era blindness residual closed) (2026-09-24)
+
+**Source:** the W118-era recorded residual (park P15 (c); the W118
+item's residuals; PR #112's fresh-eyes round-1 P2):
+composeSessionWithBudget wired the W045 budget guard with the OpenRouter
+proxy's metrics only — the open lane's traffic was invisible to the
+abort tier while the W118 downgrade activates on exactly that traffic.
+
+**What landed:** `composeSessionWithBudget` gains an optional
+`additionalUsage` snapshot; the field-wise `aggregateUsage` helper
+(latestPromptTokens stays the primary lane's — display-only, no cap
+reads it); the open-model-pool runtime site wired
+(`openPool.metrics()`, the pool's cross-family aggregate); the
+cline/goose sites unchanged and recorded (their only lane IS the
+OpenRouter proxy — complete by construction); the azure direct path
+unchanged (no local metering — the pre-existing honest statement).
+
+**Acceptance criteria:**
+- [x] The governed-lane pin: the violation reason echoes the AGGREGATED
+      total ("total tokens 2100 > cap 1000" — primary 100 + pool 2000)
+      through the real session semantics (submit -> event -> cancel ->
+      sticky refusal).
+- [x] Absent additional usage the snapshot is exactly as before (the
+      helper returns `a` when `b` is undefined; the pre-W119 callers
+      unchanged — pin (b) is the regression hold-out, green before AND
+      after, NOT a red: the honest prediction correction).
+- [x] 31/31 across session-budget (13) + open-model-proxy (6) +
+      mutation-budget + opencode-server-budget + hub-rsi; lint +
+      typecheck exit 0.

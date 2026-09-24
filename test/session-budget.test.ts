@@ -179,6 +179,68 @@ test("an in-flight turn is cancelled the moment a session event crosses the cap"
   }
 });
 
+// ── W119: the abort tier sees every lane (the W118-era blindness closed) ───
+
+// The W118-era recorded residual (park P15 (c), the fresh-eyes round-1 P2):
+// composeSessionWithBudget wired the guard with the OpenRouter proxy's
+// metrics only — the open-source lane's traffic was INVISIBLE to the abort
+// tier while the W118 downgrade activates on exactly that traffic. The fix:
+// the guard's usage snapshot AGGREGATES the pool's metrics with the
+// OpenRouter proxy's, so one budget sees all lanes (the abort tier and the
+// W118 warn tier now cover the same usage). The violation reason echoes the
+// AGGREGATED number — the discriminating observable.
+test("W119: the guard's usage aggregates the open-source lane's pool metrics", async () => {
+  const { driver, started, events } = fakeDriver();
+  // The primary (OpenRouter) proxy stays under the cap; the open lane's
+  // usage crosses it — without the aggregation the abort tier never fires.
+  const proxy: ModelUsageProxy = {
+    url: "http://127.0.0.1:0",
+    metrics: () => metrics(100, 0.001),
+    close: async () => undefined,
+  };
+  const openPoolUsage = metrics(2000, 0.01);
+  process.env.WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS = "1000";
+  try {
+    const composed = composeSessionWithBudget(driver, proxy, () => openPoolUsage);
+    assert.equal(composed.budgetViolation?.(), undefined, "nothing recorded yet: no violation");
+    const submit = composed.session.submit("long turn");
+    // A session event triggers the check over the AGGREGATED usage
+    // (100 + 2000 = 2100 tokens ≥ the 1000 cap) — the open lane counts, and
+    // the in-flight turn is cancelled through session/cancel semantics.
+    events[0]!({ type: "status", status: "working" });
+    await submit;
+    assert.match(
+      composed.budgetViolation?.() ?? "",
+      /total tokens 2100 > cap 1000/,
+      "the violation reason echoes the AGGREGATED total (the open lane is visible to the abort tier)",
+    );
+    // And the next prompt is refused (the sticky violation).
+    await composed.session.submit("one more");
+    assert.deepEqual(started, ["long turn"], "the post-violation prompt is refused");
+  } finally {
+    delete process.env.WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS;
+  }
+});
+
+test("W119: absent additional usage the guard's snapshot is the OpenRouter proxy alone", async () => {
+  const { driver, events } = fakeDriver();
+  const proxy: ModelUsageProxy = {
+    url: "http://127.0.0.1:0",
+    metrics: () => metrics(900, 0.001),
+    close: async () => undefined,
+  };
+  process.env.WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS = "1000";
+  try {
+    const composed = composeSessionWithBudget(driver, proxy);
+    const submit = composed.session.submit("turn one");
+    events[0]!({ type: "status", status: "working" });
+    await submit;
+    assert.equal(composed.budgetViolation?.(), undefined, "no additional usage wired: the snapshot is the OpenRouter proxy's alone (under the cap)");
+  } finally {
+    delete process.env.WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS;
+  }
+});
+
 // ── Operator-visible formatting ────────────────────────────────────────────
 
 test("the usage line renders a crossed budget", () => {
