@@ -1811,7 +1811,7 @@ function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent,
               {entry.subject}: {entry.result} / {entry.freshness}
             </p>
           ))}
-        <RecordEvidenceForm refresh={refresh} />
+        <p className="muted">evidence records are produced by the hub's own flows (test runner, review verdicts); operator claims are not recorded (W114).</p>
         </section>
       </details>
       <details className="panel-disclosure">
@@ -2069,38 +2069,6 @@ function AddTaskForm({ refresh }: { readonly refresh: () => Promise<void> }) {
       <input aria-label="New task id" placeholder="id" value={taskId} onChange={(event) => setTaskId(event.target.value)} />
       <input aria-label="New task title" placeholder="title" value={title} onChange={(event) => setTitle(event.target.value)} />
       <button className="btn btn-ghost" type="submit">Add task</button>
-    </form>
-  );
-}
-
-/** Compact form for the hub's recordEvidence (reviewer authority, fresh). */
-function RecordEvidenceForm({ refresh }: { readonly refresh: () => Promise<void> }) {
-  const [subject, setSubject] = useState("");
-  const [result, setResult] = useState<"passed" | "failed">("passed");
-  const submit = (): void => {
-    void fetch("/api/evidence", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ subject, result }),
-    }).then((response) => {
-      if (response.ok) setSubject("");
-      void refresh();
-    });
-  };
-  return (
-    <form
-      className="evidence-add"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (subject.trim().length > 0) submit();
-      }}
-    >
-      <input aria-label="Evidence subject" placeholder="subject" value={subject} onChange={(event) => setSubject(event.target.value)} />
-      <select aria-label="Evidence result" value={result} onChange={(event) => setResult(event.target.value === "failed" ? "failed" : "passed")}>
-        <option value="passed">passed</option>
-        <option value="failed">failed</option>
-      </select>
-      <button className="btn btn-ghost" type="submit">Record</button>
     </form>
   );
 }
