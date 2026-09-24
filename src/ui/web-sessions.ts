@@ -123,6 +123,24 @@ export class WebSessionManager {
       .map(([, record]) => this.#meta(record));
   }
 
+  /** W111 (amux C4): the per-session metering rollup — the persisted readouts
+   * only, backend-measured. Sessions without a usage readout are excluded
+   * (never fabricated); the lanes these readouts do NOT cover (the hub
+   * reviewer/RSI lanes, the anthropic messages lane) are disclosed by the
+   * usage route's attribution note, not summed here as if they were free. */
+  usageRollup(): { id: string; title: string; updatedAt: string; source?: "metered" | "agent"; totalTokens?: number; costUsd?: number }[] {
+    return this.#sessions
+      .filter((record) => record.usage !== undefined)
+      .map((record) => ({
+        id: record.id,
+        title: record.title,
+        updatedAt: record.updatedAt,
+        ...(record.usage?.source !== undefined ? { source: record.usage.source } : {}),
+        ...(record.usage?.totalTokens !== undefined ? { totalTokens: record.usage.totalTokens } : {}),
+        ...(record.usage?.costUsd !== undefined ? { costUsd: record.usage.costUsd } : {}),
+      }));
+  }
+
   /** Focused channel, lazily creating the first session on demand. With an id,
    * that session's live channel (spawned on demand — parallel sessions). */
   async channel(id?: string): Promise<SessionChannel> {
