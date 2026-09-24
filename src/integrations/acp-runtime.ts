@@ -123,7 +123,12 @@ function aggregateUsage(a: ModelUsageMetrics, b: ModelUsageMetrics | undefined):
  * W119: the usage snapshot aggregates the open-source pool's metrics with the
  * OpenRouter proxy's when wired (one budget sees all lanes — the abort tier
  * and the W118 warn tier cover the same usage; the per-family granularity
- * residual is the pool's own metrics() aggregate).
+ * residual is the pool's own metrics() aggregate). The cline/goose runtime
+ * flavors have no open lane (the OpenRouter proxy is their only lane, so
+ * their snapshot is complete by construction); the azure direct path
+ * records no local usage at all (the provider's own spend management — the
+ * pre-existing honest statement). Latest prompt tokens stay the primary
+ * lane's (display-only: no cap reads them).
  */
 export function composeSessionWithBudget(driver: CodingSessionDriver, proxy: ModelUsageProxy, additionalUsage?: () => ModelUsageMetrics | undefined): {
   readonly session: WorkflowCodingSession;
