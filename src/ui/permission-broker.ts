@@ -1,18 +1,33 @@
 import { randomBytes } from "node:crypto";
 
 import type { PolicyDecision } from "../kernel/contracts.js";
-import type { ProposedToolAction, ToolCapability } from "../application/host.js";
+import type { ProposedToolAction, ReadFingerprint, ToolCapability } from "../application/host.js";
 
 export type PermissionMode = "auto" | "ask";
 export type PermissionDecisionChoice = "allow_once" | "allow_always" | "reject_once" | "reject_always";
 
-/** One parked permission request as shown on the prompt card. */
+/** One parked permission request as shown on the prompt card.
+ * W112 (amux C5): the card renders the COMPLETE proposal payload — the
+ * broker retains the full action at parking time (it is in scope there), so
+ * the surface no longer truncates it to a 2 KiB preview. The preview stays
+ * as the compact form; the inspection cap and the not-approvable-with-
+ * reason discipline live in the card. */
 export interface PendingPermissionRequest {
   readonly id: string;
   readonly tool: string;
   readonly capability: ToolCapability | undefined;
   readonly subjects: readonly string[];
   readonly inputPreview: string | undefined;
+  /** W112: the full untruncated request input (the amux "complete payload").
+   * Present whenever the action carried one; the card renders it up to the
+   * inspection cap and refuses approval beyond it. */
+  readonly input: unknown;
+  /** W112: the proposal's authorization-relevant metadata, previously
+   * dropped at parking. */
+  readonly taskId: string | undefined;
+  readonly mutating: boolean | undefined;
+  readonly requiredCapabilities: readonly string[];
+  readonly readFingerprints: readonly string[];
 }
 
 interface ParkedRequest {
@@ -148,6 +163,14 @@ export class PermissionBroker {
           capability: action.capability,
           subjects: [...action.subjects],
           inputPreview: inputPreview(action.input),
+          // W112 (amux C5): the FULL payload is retained at parking (it is in
+          // scope here) — the card renders the complete proposal instead of
+          // the 2 KiB preview alone.
+          input: action.input,
+          taskId: action.taskId,
+          mutating: action.mutating,
+          requiredCapabilities: [...(action.requiredCapabilities ?? [])],
+          readFingerprints: [...(action.readFingerprints ?? []).map((fingerprint: ReadFingerprint) => fingerprint.path)],
         };
         this.#parked.set(request.id, { request, sessionKey: action.sessionId, resolve });
       });
