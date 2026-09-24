@@ -193,14 +193,24 @@ const DAEMON_PROBES: readonly DaemonProbe[] = [
 ];
 
 /** The vendored guard seat: the hub composes it fail-closed at startup, so
- * the hub probe needs it built and fresh (the W120 gate's own remedy). */
+ * the hub probe needs it built and fresh (the W120 gate's own remedy — which
+ * requires `pnpm` on PATH and the toolbox's node_modules installed, the same
+ * precondition the W120 guard test carries; documented here so a bare
+ * checkout's failure names the remedy instead of a raw ENOENT). */
 function ensureToolboxGuardBuilt(): void {
   const serverPath = resolve(repoRoot, "mcp-toolbox", "apps", "workflow-guard-mcp", "dist", "server.js");
   if (existsSync(serverPath) && !guardDistIsStale(repoRoot)) return;
-  execFileSync("pnpm", ["--dir", "mcp-toolbox", "--filter", "workflow-guard-mcp", "run", "build"], {
-    cwd: repoRoot,
-    stdio: "inherit",
-  });
+  try {
+    execFileSync("pnpm", ["--dir", "mcp-toolbox", "--filter", "workflow-guard-mcp", "run", "build"], {
+      cwd: repoRoot,
+      stdio: "inherit",
+    });
+  } catch (error) {
+    throw new Error(
+      `the hub probe composes the vendored workflow-guard-mcp seat fail-closed, and its self-healing build failed — run "npm run toolbox:install && npm run toolbox:build" once (pnpm required): ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
 }
 
 interface DaemonRun {
@@ -225,7 +235,21 @@ async function probeDaemon(
     cwd: repoRoot,
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
   });
+  // The child leads its own process group (detached), so the kill reaches
+  // every grandchild it spawned — the hub composes a guard MCP child, and a
+  // broken-teardown scenario (the exact failure this probe exists to catch)
+  // must not orphan it (the round-3 review's P3; the kill-group pattern is
+  // src/cli/opencode-attach.ts's terminateProcessGroup).
+  const killTree = (signal: NodeJS.Signals): void => {
+    try {
+      if (child.pid !== undefined && process.platform !== "win32") process.kill(-child.pid, signal);
+      else child.kill(signal);
+    } catch {
+      /* already exited */
+    }
+  };
   child.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
   child.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
   child.once("exit", (code, signal) => { exitInfo = { code, signal }; });
@@ -239,10 +263,10 @@ async function probeDaemon(
   }
   const bannerSeen = banner === undefined || output.includes(banner);
   if (exitInfo === undefined) {
-    try { child.kill("SIGTERM"); } catch { /* already exited */ }
+    killTree("SIGTERM");
     exitInfo = await new Promise((resolveExit) => {
       const hardKill = setTimeout(() => {
-        try { child.kill("SIGKILL"); } catch { /* already exited */ }
+        killTree("SIGKILL");
       }, 15_000);
       child.once("exit", (code, signal) => {
         clearTimeout(hardKill);

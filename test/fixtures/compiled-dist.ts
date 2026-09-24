@@ -35,7 +35,17 @@ function newestSrcMtime(srcRoot: string): number | undefined {
   return newest;
 }
 
-const BUILD_CONFIG_INPUTS = ["tsconfig.json", "tsconfig.build.json", "package.json", "package-lock.json"] as const;
+const BUILD_CONFIG_INPUTS = [
+  "tsconfig.json",
+  "tsconfig.build.json",
+  "package.json",
+  "package-lock.json",
+  // The prebuilt webapp bundle's emitter (W127): a script-only edit must
+  // rebuild too, or the packaged seat serves stale prebuilt content (the
+  // round-3 review's P3 — the gate walked only src + the tsconfig/manifest
+  // inputs, and the prebuilt emit lives in scripts/).
+  join("scripts", "build-webapp-bundle.mjs"),
+] as const;
 
 /** A missing artifact is NOT staleness; any src file or build-config input
  * newer than the artifact is stale (fail-closed: the remedy is a rebuild). */

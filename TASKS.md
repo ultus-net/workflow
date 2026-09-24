@@ -4311,6 +4311,20 @@ print and exit before composition).
       fixing the strict-mode exitInfo finding typecheck itself caught).
 - [x] The hub probe self-heals the vendored guard seat (the W120 gate's
       own remedy) before composing.
+- [x] The round-3 fresh-eyes review (committed-state) accepted with three
+      P3s, all fixed pre-recording: the freshness gate now covers the
+      prebuilt emitter script (a script-only edit rebuilds — the gate's
+      walk previously missed scripts/build-webapp-bundle.mjs); probeDaemon
+      spawns detached and kills the child's PROCESS GROUP (the
+      broken-teardown scenario the hub probe exists to catch cannot orphan
+      the hub's guard child — the kill-group pattern of
+      opencode-attach's terminateProcessGroup); the hub probe's pnpm
+      remedy failure now names the actionable fix (and the repo's own
+      preserve-caught-error lint rule caught the missing cause
+      attachment). The reviewer's honest residue is recorded: its sandbox
+      could not read the ledger/lessons tails or four CLI sources, so
+      those claims are operator-attested (its verified set — the six
+      safety seams it traced — held fully).
 
 **Residuals (recorded, not fixed):** universal-tui's real-driver path
 remains unexercised (it spawns an agent — out of the default suite's
