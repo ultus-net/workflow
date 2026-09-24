@@ -12,7 +12,9 @@ import {
   WorkflowApplication,
   WorkflowCodingSession,
   createWorkflowWebServer,
+  evidenceId,
   hostCapabilities,
+  observationId,
   taskId,
   type WorkflowTask,
 } from "../src/index.js";
@@ -1294,4 +1296,97 @@ test("W110: the transition route surfaces the kernel's refusal with the missing 
     { authority: "reviewer", subject: "design-review", why: "no evidence observed" },
   ]);
   assert.match(body.reason, /missing: environment:typecheck — no evidence observed; reviewer:design-review — no evidence observed/);
+});
+
+test("W111: the usage route carries the backend-measured headline, the session rollup, and the attribution disclosure", async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), "w111-usage-rollup-"));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  // A seeded registry: one session with a metered readout, one without
+  // (the rollup excludes it — never fabricated).
+  const registry = join(dir, "registry.json");
+  writeFileSync(registry, JSON.stringify({
+    sessions: [
+      { id: "ses-metered", title: "Metered session", createdAt: "2026-09-23T10:00:00.000Z", updatedAt: "2026-09-23T11:00:00.000Z", usage: { source: "metered", totalTokens: 500, costUsd: 0.01 } },
+      { id: "ses-bare", title: "Bare session", createdAt: "2026-09-23T12:00:00.000Z", updatedAt: "2026-09-23T12:30:00.000Z" },
+    ],
+  }));
+  const manager = new WebSessionManager({
+    registryPath: registry,
+    factory: async () => {
+      throw new Error("never spawned in this test");
+    },
+  });
+
+  // A task in VERIFYING with fresh evidence so the headline's verified count
+  // is a measured 1, not a default.
+  const tasks: WorkflowTask[] = [{
+    id: taskId("headline"),
+    title: "Headline task",
+    state: "VERIFYING",
+    dependencies: [],
+    requiredEvidence: [{ authority: "environment", subject: "typecheck" }],
+  }];
+  const application = new WorkflowApplication(
+    new TaskGraph(tasks),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  application.recordEvidence({
+    id: evidenceId("e1"),
+    observationId: observationId("o1"),
+    authority: "environment",
+    subject: "typecheck",
+    result: "passed",
+    freshness: "fresh",
+    mutationEpoch: application.snapshot().mutationEpoch,
+    observedAt: new Date().toISOString(),
+  });
+  application.transition(taskId("headline"), "VERIFIED");
+
+  // WITHOUT a key: the Workflow-side facts are served regardless — the
+  // analytics stay honestly unavailable while the headline and rollup show.
+  const bare = createWorkflowWebServer(application, manager, undefined, { analytics: () => undefined });
+  await new Promise<void>((resolve) => bare.listen(0, "127.0.0.1", resolve));
+  context.after(() => bare.close());
+  const barePort = (bare.address() as AddressInfo).port;
+  const bareBody = await fetch(`http://127.0.0.1:${barePort}/api/usage`).then((response) => response.json()) as {
+    available: boolean;
+    coverage?: unknown;
+    headline?: { verifiedTasks: number; totalTasks: number; sessionCostUsd?: number; verifiedTasksPerCostUsd?: number; attention: string };
+    sessionRollup?: { id: string; title: string; totalTokens?: number; costUsd?: number; source?: string }[];
+    attribution?: { perTask: string; unrecordedLanes: string[]; attention: string };
+  };
+  assert.equal(bareBody.available, false);
+  assert.equal("coverage" in bareBody, false, "no analytics: no coverage (W107 pin)");
+  assert.deepEqual(bareBody.headline?.verifiedTasks, 1);
+  assert.deepEqual(bareBody.headline?.totalTasks, 1);
+  assert.deepEqual(bareBody.headline?.sessionCostUsd, 0.01);
+  assert.ok((bareBody.headline?.verifiedTasksPerCostUsd ?? 0) > 0, "the per-cost ratio is computable");
+  assert.equal(bareBody.headline?.attention, "unmeasured");
+  assert.deepEqual(bareBody.sessionRollup?.length, 1, "sessions without usage are excluded, never fabricated");
+  assert.equal(bareBody.sessionRollup?.[0]?.totalTokens, 500);
+  assert.equal(bareBody.sessionRollup?.[0]?.source, "metered");
+  assert.ok(bareBody.attribution?.perTask.includes("not yet built"));
+  assert.ok(bareBody.attribution?.unrecordedLanes.some((lane) => lane.includes("reviewer")), "the unrecorded lanes are named, not silently omitted");
+
+  // WITH a key: the analytics parts and the Workflow-side facts compose.
+  const fakeAnalytics = {
+    async meta() { return { metrics: [], dimensions: [], granularities: [] }; },
+    async queryByModel() { return { rows: [], truncated: false }; },
+    async queryDaily() { return { rows: [], truncated: false }; },
+    async credits() { return undefined; },
+  };
+  const keyed = createWorkflowWebServer(application, manager, undefined, { analytics: () => fakeAnalytics });
+  await new Promise<void>((resolve) => keyed.listen(0, "127.0.0.1", resolve));
+  context.after(() => keyed.close());
+  const keyedPort = (keyed.address() as AddressInfo).port;
+  const keyedBody = await fetch(`http://127.0.0.1:${keyedPort}/api/usage`).then((response) => response.json()) as {
+    available: boolean;
+    coverage?: unknown;
+    headline?: { verifiedTasks: number };
+    attribution?: { unrecordedLanes: string[] };
+  };
+  assert.equal(keyedBody.available, true);
+  assert.equal("coverage" in keyedBody, true, "the analytics compose alongside");
+  assert.deepEqual(keyedBody.headline?.verifiedTasks, 1);
+  assert.ok((keyedBody.attribution?.unrecordedLanes.length ?? 0) > 0);
 });

@@ -210,11 +210,46 @@ export function createWorkflowWebServer(
       }
     }
     if (request.method === "GET" && pathname === "/api/usage") {
+      // W111 (amux C4): the Workflow-side facts — the backend-measured
+      // headline, the per-session rollup, and the attribution disclosure —
+      // are served regardless of the analytics key: they are this server's
+      // own measurements, never client-derived. The headline states the
+      // unmeasured axes explicitly (the run-registry precedent: recall and
+      // time-to-response are "unmeasured" there for the same reason), and
+      // the attribution note names the lanes the metering trail does NOT
+      // cover (the amux attribution lesson: a rollup that counts only
+      // recorded lanes accuses the unrecorded ones of working off-ledger).
+      const snapshotTasks = application.snapshot().tasks;
+      const rollup = manager?.usageRollup();
+      const knownCosts = (rollup ?? []).map((entry) => entry.costUsd).filter((cost) => cost !== undefined);
+      const sessionCostUsd = knownCosts.length > 0 ? knownCosts.reduce((sum, cost) => sum + cost, 0) : undefined;
+      const verifiedTasks = snapshotTasks.filter((task) => task.state === "VERIFIED").length;
+      const totalTasks = snapshotTasks.length;
+      const headline = {
+        verifiedTasks,
+        totalTasks,
+        ...(sessionCostUsd !== undefined ? { sessionCostUsd } : {}),
+        ...(sessionCostUsd !== undefined && sessionCostUsd > 0 ? { verifiedTasksPerCostUsd: verifiedTasks / sessionCostUsd } : {}),
+        attention: "unmeasured",
+      };
+      const attribution = {
+        perTask: "not yet built — turn-boundary attribution (the active-task pointer at turn boundaries, paired with per-turn deltas) is queued",
+        unrecordedLanes: [
+          "hub reviewer-lane spend is recorded nowhere",
+          "RSI proposal turns are recorded nowhere",
+          "multi-turn runs record only their last turn",
+          "the anthropic messages lane's usage extraction is shape-mismatched (zero-token events)",
+        ],
+        attention: "unmeasured",
+      };
       const analytics = analyticsFactory();
       if (analytics === undefined) {
         return json(response, 200, {
           available: false,
           reason: "OpenRouter analytics need a Management key — set WORKFLOW_OPENROUTER_MANAGEMENT_KEY (server-side only; it never reaches the browser)",
+          headline,
+          ...(rollup !== undefined ? { sessionRollup: rollup } : {}),
+          attribution,
         });
       }
       const requestedDays = new URL(request.url ?? "/", "http://workflow.local").searchParams.get("days");
@@ -253,6 +288,9 @@ export function createWorkflowWebServer(
             },
             creditsAvailable: credits !== undefined,
           },
+          headline,
+          ...(rollup !== undefined ? { sessionRollup: rollup } : {}),
+          attribution,
         });
       } catch (error) {
         return json(response, 503, { error: error instanceof Error ? error.message : "OpenRouter analytics unavailable" });
