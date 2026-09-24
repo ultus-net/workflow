@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { guardDistIsStale } from "../src/integrations/mcp-toolbox-guard.js";
-import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js";
+import { distArtifact, ensureFresh, ensureToolboxGuardBuilt, repoRoot } from "./fixtures/compiled-dist.js";
 
 // W133 — the compiled hub's ROUTE-level contract: the two-credential class
 // matrix, the composed schedule/self-improvement routes' shapes on a fresh
@@ -59,28 +58,6 @@ import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js
 // hub.close() deliberately does NOT unlink — workflow-hub.ts:175-181 removes
 // only discovery.json, verifier.json, and the instance lock).
 
-/** The vendored guard seat: the hub composes it fail-closed at startup, so
- * this probe needs it built and fresh (the W120 gate's remedy — which
- * requires `pnpm` on PATH and the toolbox's node_modules installed; the error
- * names the remedy instead of surfacing a raw ENOENT, with the cause
- * attached per the preserve-caught-error rule). Same precondition as W128's
- * ensureToolboxGuardBuilt. */
-function ensureToolboxGuardBuilt(): void {
-  const serverPath = resolve(repoRoot, "mcp-toolbox", "apps", "workflow-guard-mcp", "dist", "server.js");
-  if (existsSync(serverPath) && !guardDistIsStale(repoRoot)) return;
-  try {
-    execFileSync("pnpm", ["--dir", "mcp-toolbox", "--filter", "workflow-guard-mcp", "run", "build"], {
-      cwd: repoRoot,
-      stdio: "inherit",
-    });
-  } catch (error) {
-    throw new Error(
-      `the compiled hub composes the vendored workflow-guard-mcp seat fail-closed, and its self-healing build failed — run "npm run toolbox:install && npm run toolbox:build" once (pnpm required): ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
-}
-
 const sleep = (ms: number): Promise<void> => new Promise((resolveWait) => setTimeout(resolveWait, ms));
 
 /** The route pins' wire shape: POST + Bearer (hub-http serves POST-only
@@ -110,7 +87,7 @@ test("W133: the compiled hub's routes enforce the operator/verifier token-class 
   ensureFresh(distArtifact("cli", "hub.js"));
   ensureToolboxGuardBuilt();
 
-  const home = mkdtempSync(join(tmpdir(), "w131-hub-routes-home-"));
+  const home = mkdtempSync(join(tmpdir(), "w133-hub-routes-home-"));
   context.after(() => rmSync(home, { recursive: true, force: true }));
   const provenancePath = join(home, "provenance.jsonl");
   const schedulesPath = join(home, "schedules.json");
@@ -296,7 +273,7 @@ test("W133: the compiled hub's routes enforce the operator/verifier token-class 
   );
 
   const definition = {
-    id: "w131-probe-schedule",
+    id: "w133-probe-schedule",
     title: "W133 probe schedule",
     cron: "5 5 * * *",
     prompt: "never fired by this probe",
@@ -317,14 +294,14 @@ test("W133: the compiled hub's routes enforce the operator/verifier token-class 
 
   // Route-level refusal: a missing required field is the route's 400
   // (hub-http.ts:202-204), not the registry's.
-  const missingCron = await postRoute(endpoint, "/schedule/save", token, { id: "w131-no-cron", title: "no cron", prompt: "x" });
+  const missingCron = await postRoute(endpoint, "/schedule/save", token, { id: "w133-no-cron", title: "no cron", prompt: "x" });
   assert.equal(missingCron.status, 400);
   assert.deepEqual(missingCron.body, { error: "invalid schedule save request" });
 
   // Registry-level refusal: a well-shaped body with an invalid cron reaches
   // the registry and comes back through the route's client-error catch
   // (hub-http.ts:205-212) — a 400, never a partially-admitted schedule.
-  const badCron = await postRoute(endpoint, "/schedule/save", token, { id: "w131-bad-cron", title: "bad cron", cron: "not-a-cron", prompt: "x" });
+  const badCron = await postRoute(endpoint, "/schedule/save", token, { id: "w133-bad-cron", title: "bad cron", cron: "not-a-cron", prompt: "x" });
   assert.equal(badCron.status, 400, "an invalid cron is a CLIENT error (hub-http.ts:208-211), never a server fault");
   assert.equal(
     badCron.body.error,
@@ -338,7 +315,7 @@ test("W133: the compiled hub's routes enforce the operator/verifier token-class 
     "a rejected save leaves the table untouched (schedule-registry.ts:40-45 — persist before admit)",
   );
 
-  const removed = await postRoute(endpoint, "/schedule/delete", token, { id: "w131-probe-schedule" });
+  const removed = await postRoute(endpoint, "/schedule/delete", token, { id: "w133-probe-schedule" });
   assert.equal(removed.status, 200);
   assert.deepEqual(removed.body, { schedules: [] }, "the delete removes exactly the named schedule");
   const listedAfterDelete = await postRoute(endpoint, "/schedule/list", token);

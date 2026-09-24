@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { guardDistIsStale } from "../src/integrations/mcp-toolbox-guard.js";
-import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js";
+import { distArtifact, ensureFresh, ensureToolboxGuardBuilt, repoRoot } from "./fixtures/compiled-dist.js";
 
 // W128 — the compiled hub's HTTP contract + discovery lifecycle (multi-process
 // e2e). The compiled `workflow-hub` bin only ever proved START + teardown
@@ -37,30 +36,9 @@ import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js
 // schedules live under resolve(homedir(), ".workflow") or the WORKFLOW_HUB_*
 // overrides), the bridge binds port 0 (hub-http.ts:61), and the server is
 // never spawnSync-timeout-killed: async spawn → banner → SIGTERM → pinned
-// exit. The W120 vendored-gate remedy is replicated honestly in
-// ensureToolboxGuardBuilt — the hub refuses to run without its guard, so a
+// exit. The W120 vendored-gate remedy lives in the shared fixture
+// (ensureToolboxGuardBuilt) — the hub refuses to run without its guard, so a
 // missing/stale guard dist is a precondition failure that names its remedy.
-
-/** The vendored guard seat: the hub composes it fail-closed at startup, so
- * this probe needs it built and fresh (the W120 gate's remedy — which
- * requires `pnpm` on PATH and the toolbox's node_modules installed; the error
- * names the remedy instead of surfacing a raw ENOENT, with the cause
- * attached per the preserve-caught-error lint rule). */
-function ensureToolboxGuardBuilt(): void {
-  const serverPath = resolve(repoRoot, "mcp-toolbox", "apps", "workflow-guard-mcp", "dist", "server.js");
-  if (existsSync(serverPath) && !guardDistIsStale(repoRoot)) return;
-  try {
-    execFileSync("pnpm", ["--dir", "mcp-toolbox", "--filter", "workflow-guard-mcp", "run", "build"], {
-      cwd: repoRoot,
-      stdio: "inherit",
-    });
-  } catch (error) {
-    throw new Error(
-      `the compiled hub composes the vendored workflow-guard-mcp seat fail-closed, and its self-healing build failed — run "npm run toolbox:install && npm run toolbox:build" once (pnpm required): ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
-}
 
 const sleep = (ms: number): Promise<void> => new Promise((resolveWait) => setTimeout(resolveWait, ms));
 

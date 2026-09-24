@@ -4765,7 +4765,9 @@ JSON.parses a zero-byte body, so every route except /health requires a
 JSON body ("{}" suffices) even for reads, and the client payload error is
 classified as a server fault. Product polish queued: a 400 naming the
 body requirement instead of a 500 "Unexpected end of JSON input".
-Recorded honestly in the file's header, not fixed here.
+Recorded honestly in the file's header, not fixed here — and the 500 pin
+flips alongside that polish (it characterizes the current contract, not
+a blessing of it; the round-4 review's P3).
 
 **Acceptance criteria:**
 - [x] Red/green: the agent's debugging found the 500 was ITS helper's

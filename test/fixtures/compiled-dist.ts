@@ -11,7 +11,9 @@
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+
+import { guardDistIsStale } from "../../src/integrations/mcp-toolbox-guard.js";
 
 export const repoRoot = process.cwd();
 
@@ -69,4 +71,27 @@ export function ensureFresh(artifact: string): void {
 /** A compiled bin's artifact path (dist/cli/<name>). */
 export function distArtifact(...parts: readonly string[]): string {
   return join(repoRoot, "dist", ...parts);
+}
+
+/** The vendored guard seat's self-healing build (the W120 remedy): the hub
+ * probes compose the guard fail-closed at startup, so they need it built and
+ * fresh. Requires `pnpm` on PATH and the toolbox's node_modules installed; a
+ * failure throws an error NAMING the remedy, with the cause attached per the
+ * repo's preserve-caught-error rule. Extracted here from the per-file copies
+ * (the W133 round-4 review's cleanliness P3 — the W120 remedy had four
+ * literal copies). */
+export function ensureToolboxGuardBuilt(): void {
+  const serverPath = resolve(repoRoot, "mcp-toolbox", "apps", "workflow-guard-mcp", "dist", "server.js");
+  if (existsSync(serverPath) && !guardDistIsStale(repoRoot)) return;
+  try {
+    execFileSync("pnpm", ["--dir", "mcp-toolbox", "--filter", "workflow-guard-mcp", "run", "build"], {
+      cwd: repoRoot,
+      stdio: "inherit",
+    });
+  } catch (error) {
+    throw new Error(
+      `the hub probes compose the vendored workflow-guard-mcp seat fail-closed, and its self-healing build failed — run "npm run toolbox:install && npm run toolbox:build" once (pnpm required): ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
 }
