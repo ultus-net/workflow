@@ -95,6 +95,24 @@ export async function createConfiguredAcpRuntime(
       : createGooseRuntime(application, workspace, taskId, resumeFrom, guard, options);
 }
 
+/** W119: the abort tier must see every lane — the guard's usage snapshot
+ * aggregates the OpenRouter proxy's metrics with the open-source pool's
+ * (field-wise; latestPromptTokens stays the primary lane's). Absent
+ * additional usage leaves the snapshot exactly as before (the pre-W119
+ * callers are unchanged). */
+function aggregateUsage(a: ModelUsageMetrics, b: ModelUsageMetrics | undefined): ModelUsageMetrics {
+  if (b === undefined) return a;
+  return {
+    requests: a.requests + b.requests,
+    usageEvents: a.usageEvents + b.usageEvents,
+    promptTokens: a.promptTokens + b.promptTokens,
+    completionTokens: a.completionTokens + b.completionTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+    costUsd: a.costUsd + b.costUsd,
+    latestPromptTokens: a.latestPromptTokens,
+  };
+}
+
 /**
  * W045 (G1 budget enforcement): the session plus its interactive budget
  * guard. The guard watches the metering proxy's recorded usage on every
@@ -102,8 +120,12 @@ export async function createConfiguredAcpRuntime(
  * the sticky violation refuses every later prompt through the session's
  * refusal gate. No caps configured → no guard; the OpenRouter per-key credit
  * limit on the proxy's upstream key is the recorded backstop mechanism.
+ * W119: the usage snapshot aggregates the open-source pool's metrics with the
+ * OpenRouter proxy's when wired (one budget sees all lanes — the abort tier
+ * and the W118 warn tier cover the same usage; the per-family granularity
+ * residual is the pool's own metrics() aggregate).
  */
-export function composeSessionWithBudget(driver: CodingSessionDriver, proxy: ModelUsageProxy): {
+export function composeSessionWithBudget(driver: CodingSessionDriver, proxy: ModelUsageProxy, additionalUsage?: () => ModelUsageMetrics | undefined): {
   readonly session: WorkflowCodingSession;
   readonly budgetViolation?: () => string | undefined;
   readonly budgetMechanism: string;
@@ -115,7 +137,7 @@ export function composeSessionWithBudget(driver: CodingSessionDriver, proxy: Mod
   }
   const guard = createSessionBudgetGuard({
     budget,
-    usageSnapshot: () => proxy.metrics(),
+    usageSnapshot: () => aggregateUsage(proxy.metrics(), additionalUsage?.()),
     // Closures evaluated at guard-check time, after the session exists.
     cancel: () => session.cancel(),
     subscribe: (listener) => session.subscribe(listener),
@@ -314,7 +336,7 @@ async function createOpencodeRuntime(
     });
     return {
       driver,
-      ...composeSessionWithBudget(driver, proxy),
+      ...composeSessionWithBudget(driver, proxy, openPool === undefined ? undefined : () => openPool.metrics()),
       usage: (): ModelUsageMetrics => proxy.metrics(),
       metrics: (): ModelUsageMetrics => proxy.metrics(),
       async dispose() {
