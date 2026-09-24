@@ -3697,15 +3697,23 @@ park file's own rule picked it as a high-value candidate (self-contained,
 a live build failure). Per LESS-0015/0018 (probe before implementing),
 the END-TO-END state was probed first.
 
-**The probe result: the premise is falsified.**
-- `tsc --noEmit -p tsconfig.json` exits 0 in the committed tree; the
-  app's suite is 28/28 green (npm test: build + test both pass).
-- The adapter source is byte-identical to the vendoring commit
-  (8053588) — no code drift.
-- The toolchain facts: tsc 5.9.3; zod@3.25.76 lockfile-pinned, and the
-  lockfile pins the SAME zod before AND after W105's merge (diff empty)
-  — no lockfile drift; a single zod@3.25.76 in the pnpm store and NO
-  zod ^4 anywhere in the workspace — no hoist/cross-contamination.
+**The probe result: the premise is falsified.** (Facts marked
+"executed" below were run by this iteration's session; the fresh-eyes
+reviewer — no shell — statically corroborated the core claim and
+disclosed the rest as execution-only facts.)
+- EXECUTED: `tsc --noEmit -p tsconfig.json` exits 0 in the committed
+  tree; the app's suite is 28/28 green (npm test: build + test both
+  pass). Statically corroborated by the reviewer: `request` is generic
+  (`Promise<z.infer<T>>`), so `payload` is typed, not `unknown` —
+  TS18046 at 171/178 is implausible on this source.
+- EXECUTED: the adapter source is byte-identical to the vendoring
+  commit (8053588) — no code drift.
+- The toolchain facts: tsc 5.9.3 (EXECUTED via `tsc --version`);
+  zod@3.25.76 lockfile-pinned, and the lockfile pins the SAME zod
+  before AND after W105's merge (diff empty) — no lockfile drift; a
+  single zod@3.25.76 in the pnpm store and NO zod ^4 anywhere in the
+  workspace — no hoist/cross-contamination (read-verified by the
+  reviewer from the store listing + the package.json manifests).
 - Ruled out: code drift, lockfile drift, sibling zod-4 hoisting. The
   W105-era environment's exact zod/tsc resolution could NOT be
   reconstructed — the failure was environment-dependent and honestly
