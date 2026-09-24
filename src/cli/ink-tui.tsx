@@ -131,6 +131,15 @@ if (hub !== undefined) {
     new Set(["read", "mutation", "process"]),
     workspace,
   );
+  // W126: the mode bar installs the initial mode's gate on mount (tui.tsx's
+  // mount effect calls onModeChange unconditionally), and applySkillGating
+  // reads the active task — but the standalone fallback never starts a
+  // session, so nothing ever activated one: the fallback died on first
+  // render with "no active workflow task selected" (the crash the W126
+  // compiled-bin sweep caught — the operator's hub is always running, so
+  // this path was never exercised live). Start the demo seed's interactive
+  // task before rendering, the same activation a session start would do.
+  application.startInteractiveTask();
 
   // Standalone (no hub): compose the host-neutral ACP runtime, the same
   // authority path the hub-hosted surfaces use.

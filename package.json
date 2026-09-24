@@ -37,7 +37,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/build-webapp-bundle.mjs",
     "lint": "eslint src test",
     "hub": "tsx src/cli/hub.ts",
     "admin": "tsx src/cli/admin.ts",

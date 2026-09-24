@@ -1,8 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-
-import { build } from "esbuild";
 
 export interface WebappBundle {
   readonly js: string;
@@ -27,11 +25,34 @@ export function resolveWebappEntry(moduleUrl: string): string {
   );
 }
 
+/** W127: the PREBUILT seat — scripts/build-webapp-bundle.mjs emits
+ * prebuilt.js/prebuilt.css beside the compiled module at BUILD time, so the
+ * packaged install (dist only: no src, no devDependencies) serves the
+ * operator UI without esbuild and without the source entry. Reading is per
+ * call so a rebuild during a long-lived process picks up the fresh
+ * artifact; absence falls through to the runtime build (the source seat
+ * keeps that path — src/ui/webapp/ never contains a prebuilt copy). */
+function readPrebuiltBundle(moduleUrl: string): WebappBundle | undefined {
+  const moduleDir = dirname(fileURLToPath(moduleUrl));
+  const jsPath = resolve(moduleDir, "prebuilt.js");
+  const cssPath = resolve(moduleDir, "prebuilt.css");
+  if (!existsSync(jsPath) || !existsSync(cssPath)) return undefined;
+  return { js: readFileSync(jsPath, "utf8"), css: readFileSync(cssPath, "utf8") };
+}
+
 /**
  * Bundles the React operator surface (React + assistant-ui + styles) into a
  * single IIFE script and stylesheet, held in memory and served by web.ts.
  */
 export async function buildWebappBundle(): Promise<WebappBundle> {
+  const prebuilt = readPrebuiltBundle(import.meta.url);
+  if (prebuilt !== undefined) return prebuilt;
+  // LAZY import (W127): the packaged seat has no esbuild (a devDependency) —
+  // a STATIC import here failed the MODULE LOAD itself in a packaged tree
+  // (the red the W127 pin first ran as: "Cannot find package 'esbuild'").
+  // Only the runtime-build path (source seat, or the compiled fallback with
+  // no prebuilt beside it) ever touches this import.
+  const { build } = await import("esbuild");
   const entry = resolveWebappEntry(import.meta.url);
   const result = await build({
     entryPoints: [entry],

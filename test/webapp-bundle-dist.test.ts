@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import test from "node:test";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { tmpdir } from "node:os";
+
+import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js";
 
 // W125 — the compiled-artifact smoke: the suite's seats were all SOURCE seats.
 // test/web.test.ts and test/fixtures/webui-demo-server.ts load
@@ -15,77 +18,30 @@ import { pathToFileURL } from "node:url";
 // and not by the suite. The W124 pins exercise resolveWebappEntry with
 // simulated dist-shaped module URLs (its own recorded residual: "the pin
 // exercises the fallback logic, not a built artifact") — they never import
-// the real compiled module. This file closes that class (LESS-0048's
+// the real compiled module. The W125 file closed that class (LESS-0048's
 // two-seats rule made executable): the REAL dist bundle is imported and
-// executed, and the compiled launcher bin is spawned end-to-end.
+// executed, and the compiled launcher bin is spawned end-to-end. W127
+// extends it with the two dist-seat paths that exist since the prebuilt
+// bundle: the packaged seat (no src, no node_modules) and the runtime
+// fallback (the W124 resolution executed for real).
 //
 // Conditional on the artifact existing, self-healing like the W120
-// freshness gate: a missing or stale dist triggers `npm run build` (the
-// rebuild is deterministic and idempotent; the mtime false-positive class —
-// a checkout touching mtimes without a content change — is W120's recorded,
-// deliberate trade). A missing artifact is NOT staleness: it is the
-// rebuild's job (the same two-error-class split as the W120 gate).
+// freshness gate — the shared gate lives in test/fixtures/compiled-dist.ts
+// (the whole-src walk + config inputs; the mtime false-positive class is
+// W120's recorded, deliberate trade). A missing artifact is NOT staleness:
+// it is the rebuild's job (the same two-error-class split as the W120 gate).
 
-const repoRoot = process.cwd();
-const bundleArtifact = join(repoRoot, "dist", "ui", "webapp", "bundle.js");
-const launcherArtifact = join(repoRoot, "dist", "cli", "workflow.js");
-
-/** Newest mtime under a src tree, or undefined when the tree is absent. */
-function newestSrcMtime(srcRoot: string): number | undefined {
-  if (!existsSync(srcRoot)) return undefined;
-  let newest: number | undefined;
-  const stack = [srcRoot];
-  while (stack.length > 0) {
-    const dir = stack.pop()!;
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(path);
-        continue;
-      }
-      const mtimeMs = statSync(path).mtimeMs;
-      if (newest === undefined || mtimeMs > newest) newest = mtimeMs;
-    }
-  }
-  return newest;
-}
-
-/** W120's staleness semantics, scoped to the artifact under test: a missing
- * artifact is the rebuild's job; any input newer than the artifact is
- * stale (the fail-closed direction — the remedy is an idempotent rebuild).
- * The walk covers ALL of src — deliberately wider than any one artifact's
- * esbuild/tsc input graph, because the REMEDY (`npm run build`) rebuilds
- * the whole dist: a walk narrower than the remedy's true input graph is
- * the lie LESS-0049(4) declares (the round-2 review's bundle-walk P2 — a
- * future cross-tree value-import from the webapp graph would have been
- * invisible to a src/ui/webapp-only walk). The build's config inputs ride
- * the same comparison. The mtime false-positive class (a checkout touching
- * mtimes without a content change) is W120's recorded, deliberate trade —
- * the remedy is deterministic and idempotent. */
-const BUILD_CONFIG_INPUTS = ["tsconfig.json", "tsconfig.build.json", "package.json", "package-lock.json"] as const;
-
-function artifactIsStale(artifact: string, srcRoot: string): boolean {
-  if (!existsSync(artifact)) return false;
-  const artifactMtime = statSync(artifact).mtimeMs;
-  const newest = newestSrcMtime(srcRoot);
-  if (newest !== undefined && newest > artifactMtime) return true;
-  return BUILD_CONFIG_INPUTS.some((name) => {
-    const path = join(repoRoot, name);
-    return existsSync(path) && statSync(path).mtimeMs > artifactMtime;
-  });
-}
-
-function ensureBuilt(artifact: string, srcRoot: string): void {
-  if (existsSync(artifact) && !artifactIsStale(artifact, srcRoot)) return;
-  execFileSync("npm", ["run", "build"], { cwd: repoRoot, stdio: "inherit" });
-}
+const bundleArtifact = distArtifact("ui", "webapp", "bundle.js");
+const launcherArtifact = distArtifact("cli", "workflow.js");
 
 test("W125: the real compiled webapp bundle produces js and css in the dist seat", async () => {
-  ensureBuilt(bundleArtifact, join(repoRoot, "src"));
+  ensureFresh(bundleArtifact);
   // The source-seat tests import ../src/ui/webapp/bundle.js; THIS import is
-  // the compiled module the operator's launcher actually serves. A resolution
-  // regression here fails exactly as the operator's live run did
-  // ("Could not resolve .../dist/ui/webapp/main.tsx" — the W124 repro).
+  // the compiled module the operator's launcher actually serves. Since W127
+  // the dist seat serves the PREBUILT artifact — this pin proves the
+  // compiled module serves correct js and css; the runtime fallback path
+  // (entry resolution + esbuild) keeps its own pin below, and the W124
+  // synthetic-URL pins keep covering the resolution logic itself.
   const compiled = (await import(pathToFileURL(bundleArtifact).href)) as {
     buildWebappBundle(): Promise<{ js: string; css: string }>;
   };
@@ -103,7 +59,7 @@ test("W125: the real compiled webapp bundle produces js and css in the dist seat
 });
 
 test("W125: the compiled launcher runs end-to-end non-interactively (node dist/cli/workflow.js doctor)", () => {
-  ensureBuilt(launcherArtifact, join(repoRoot, "src"));
+  ensureFresh(launcherArtifact);
   // The first compiled execution the suite has ever performed of a bin
   // (the operator's manual UAT was the only prior runner). doctor is the
   // safe probe: read-only checks, no daemon spawn, non-interactive by
@@ -136,5 +92,71 @@ test("W125: the compiled launcher runs end-to-end non-interactively (node dist/c
   assert.ok(
     result.status === 0 || result.status === 1,
     `exit ${result.status} (signal ${result.signal}) — the doctor's honest exits are 0 (pass/warn) and 1 (fail rows); anything else is a compiled-runtime crash`,
+  );
+});
+
+test("W127: the compiled webapp module's runtime fallback resolves and bundles from the src entry (no prebuilt beside it)", async (context) => {
+  ensureFresh(bundleArtifact);
+  // W127 kept the W124 class alive: with the prebuilt artifact absent, the
+  // compiled module must fall back to the runtime build — resolveWebappEntry
+  // executed by the REAL compiled module (the W124-class regression the
+  // synthetic-URL pins can only model, and the path the W125 dist-seat pin
+  // stopped exercising once the prebuilt artifact took over the dist seat).
+  // The copy lives under the repo root (not os.tmpdir) so the module's lazy
+  // esbuild import resolves this checkout's node_modules — the fallback is
+  // only reachable where esbuild is installed, which is what this seat is.
+  const fallbackTree = mkdtempSync(join(repoRoot, ".tmp-w127-fallback-"));
+  context.after(() => rmSync(fallbackTree, { recursive: true, force: true }));
+  mkdirSync(join(fallbackTree, "ui", "webapp"), { recursive: true });
+  copyFileSync(bundleArtifact, join(fallbackTree, "ui", "webapp", "bundle.js"));
+  const compiled = (await import(pathToFileURL(join(fallbackTree, "ui", "webapp", "bundle.js")).href)) as {
+    buildWebappBundle(): Promise<{ js: string; css: string }>;
+  };
+  const built = await compiled.buildWebappBundle();
+  assert.ok(built.js.length > 0, "the fallback runtime build produced js");
+  assert.ok(
+    built.js.includes("composer-chips"),
+    "the fallback bundles the src entry's markup hooks",
+  );
+  assert.ok(
+    built.css.includes("--accent"),
+    "the fallback's css side-effect import resolved through the src graph",
+  );
+});
+
+test("W127: the packaged seat (no src, no node_modules) serves the prebuilt bundle verbatim", async (context) => {
+  ensureFresh(bundleArtifact);
+  // The packaged install ships dist/ only: no src (the W124 fallback's
+  // three-up source entry is absent) and no devDependencies (esbuild
+  // absent — the pre-W127 compiled module imported esbuild STATICALLY, so
+  // a packaged tree could not even LOAD it: "Cannot find package
+  // 'esbuild'" is the module-load mechanism this seat's lazy import
+  // removes). The pin's own first red (pre-W127) was the missing prebuilt
+  // artifacts themselves (copyFileSync ENOENT — the build emitted none).
+  // Post-W127 the seat assembles, and the compiled bundle must (a) import
+  // esbuild lazily and (b) serve the prebuilt artifacts beside it — this
+  // pin executes exactly that tree: dist/ui/webapp copied WITHOUT src and
+  // WITHOUT node_modules. The verbatim equality also proves the served
+  // content IS the prebuilt artifact (a runtime build is impossible in
+  // this tree).
+  const packaged = mkdtempSync(join(tmpdir(), "w127-packaged-"));
+  context.after(() => rmSync(packaged, { recursive: true, force: true }));
+  mkdirSync(join(packaged, "ui", "webapp"), { recursive: true });
+  for (const name of ["bundle.js", "prebuilt.js", "prebuilt.css"]) {
+    copyFileSync(distArtifact("ui", "webapp", name), join(packaged, "ui", "webapp", name));
+  }
+  const compiled = (await import(pathToFileURL(join(packaged, "ui", "webapp", "bundle.js")).href)) as {
+    buildWebappBundle(): Promise<{ js: string; css: string }>;
+  };
+  const built = await compiled.buildWebappBundle();
+  assert.equal(
+    built.js,
+    readFileSync(distArtifact("ui", "webapp", "prebuilt.js"), "utf8"),
+    "the packaged seat serves the prebuilt js verbatim",
+  );
+  assert.equal(
+    built.css,
+    readFileSync(distArtifact("ui", "webapp", "prebuilt.css"), "utf8"),
+    "the packaged seat serves the prebuilt css verbatim",
   );
 });
