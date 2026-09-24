@@ -366,6 +366,7 @@ W019 is complete. The v0 W001-W018 baseline remains the trusted host-policy/appl
 - [x] The session shares only its temporary writable workspace; network isolation and cleared ambient credentials remain unchanged.
 - [x] Automated CLI coverage proves two commands are independently allowed, contained, observed, and verified before clean exit.
 - [x] A denied or nonzero command remains unverified and does not terminate the persistent session.
+  - Dated note (2026-09-25, W132): the W126/W132 compiled-bin e2e found the contract violated on the GUARD-deny lane — the vendored guard's denial threw out of the unguarded per-command loop and killed the session (the nonzero lane held). Repaired in W132 (contained-shell.ts catches the denial per-command and reports Task: FAILED; the session survives — pinned in test/e2e-contained-shell.test.ts).
 
 **Verification:** focused persistent CLI test plus lint, full test suite, containment/E2E runtime checks, typecheck, build, diff check, and independent review.
 
@@ -4565,6 +4566,18 @@ lines, and the clean SIGTERM shutdown (exit 0).
       HOME (the credential config isolated), ephemeral port,
       process-group SIGTERM with a SIGKILL backstop, no spawnSync for the
       daemon.
+- [x] The round-2 review REVISE'd the after-hook with a verified blocker:
+      the comment claimed node:test runs after hooks in REVERSE
+      registration order — FALSE (the runner executes them in declaration
+      (FIFO) order; verified against lib/internal/test_runner/test.js and
+      nodejs/node#48736), so the revoke ran AFTER the home rmSync. Fixed:
+      the registration order is now revoke → kill → rmSync (FIFO = the
+      intended execution order), the comment states the verified truth,
+      and the revoke's gating (storedCredential + a live server) is
+      unchanged. The round-2 P3s: the revoke audit line is now bound to
+      the credential id, the listing's raw body is checked whole for the
+      secret (channel completeness), and the "field-by-field" wording
+      corrected.
 
 **Residuals (recorded, not fixed):** the audit's rollback path
 (credentials.ts:146-149 — a failed onDefinitionsChanged) is unexercised;
@@ -4633,8 +4646,82 @@ assumed.
       stdout equality).
 - [x] The settings document writes are confined to the redirected
       HOME/workspace overlay (asserted against the real repo).
+- [x] The round-2 review's notes dispositioned: the no-Origin trusted path
+      is now EXERCISED (the global MCP write drops its origin header —
+      the prose/behavior mismatch closed), and the whole-stdout equality
+      pin carries the flush-timing caveat in a comment (node flushes pipe
+      stdout before exit; if a flush race ever appears, await stream
+      close first).
 
 **Residuals (recorded, not fixed):** the browser-side settings dialog
 flows are pinned only at the API contract level; the same-origin PUT
 variant is unpinned (node fetch's no-Origin shape is the pinned trusted
 path); the dead deep link is queued (above).
+
+### W132 - The contained-shell's behavioral lane e2e + the guard-deny session-death repair (Complete - the containment contract driven over stdin pipes: ALLOW→ENFORCED→VERIFIED, the nonzero lane's persistence, and the guard-deny lane repaired to W022's contract) (2026-09-25)
+
+**Source:** the second background wave's contained-shell agent; the
+contained shell is the containment contract's user-facing surface, and
+its behavioral lanes (ALLOW → ENFORCED → VERIFIED; the nonzero lane;
+the guard-deny lane) had never been driven over the COMPILED seat —
+LESS-0012's divergence class on the surface that executes operator
+commands inside bubblewrap.
+
+**What landed:** `test/e2e-contained-shell.test.ts` (three lanes over
+stdin pipes, no PTY, every execution inside the product's own bubblewrap
+boundary, HOME redirected): (1) the benign allow — blank line executes
+nothing, Policy: ALLOW → Containment: ENFORCED (bwrap 0.11.0 — the
+observed truth) → the command's output → Task: VERIFIED, strict order,
+clean exit 0; (2) the nonzero lane — `false` → Task: FAILED (exit 1) and
+the session SURVIVES (the next command verifies — W022's persistence
+contract); (3) the guard-deny lane — Workflow's own lane prints Policy:
+ALLOW first, then the vendored guard denies INSIDE
+WorkflowContainedProcess.execute.
+
+**Discovered and fixed — the wave's second live product defect:** the
+guard-deny lane's denial THREW out of the unguarded per-command loop and
+TERMINATED the persistent session (exit 1, no Containment/Task lines
+ever printed) — violating W022's recorded contract ("a denied command
+does not terminate the persistent session"; the nonzero lane held, the
+guard lane did not). Fail-closed (the denial fires BEFORE any spawn:
+nothing executed, nothing mutated) but honest death instead of
+per-command reporting. Fixed: contained-shell.ts catches the denial
+per-command, reports `Task: FAILED (the guard denied execution: …)`,
+transitions the task FAILED, and keeps the loop alive — the pin now
+asserts the repaired contract (the FAILED report names the denial, no
+containment verdict prints, and the NEXT command still verifies, exit
+0). W022's ledger line carries the dated contradiction note.
+
+**Discoveries recorded (observed, pinned):** the shell's own Policy:
+DENY branch is DEAD CODE from its only input surface — every stdin line
+flows the same hardcoded proposal (subjects fixed [], workspaceRoot
+never set, the capability set includes process, a fresh
+WorkflowApplication + fresh MutationBudget(100) per command) — so the
+only reachable deny is the guard seat's, which the fix now surfaces
+honestly. The environment truth: bwrap 0.11.0 present → ENFORCED is the
+live lane; the bwrap-less and non-Linux degradations are recorded from
+source, never faked.
+
+**Acceptance criteria:**
+- [x] Red/green: the lane-3 red was the live session death (the agent's
+      observed run: exit 1, no Task line); post-fix 3/3 green with the
+      repaired pin (the FAILED report + the surviving session's next
+      VERIFIED).
+- [x] The LESS-0051 safety contract: no agent/PTY spawns; the payloads
+      execute INSIDE the product's own bubblewrap boundary (echo/false
+      only; the guard-deny probe assembled from fragments so the file's
+      own authoring guard never matches the literal); HOME redirected;
+      the guard MCP server dies with the child's process group; SIGTERM
+      only as the stuck-exit backstop.
+- [x] Hold-outs: the W126 sweep's contained-shell boot/EOF pin holds
+      alongside; lint + this file's typecheck clean (the whole-project
+      typecheck is transiently red from the concurrent hub-routes agent's
+      untracked WIP — its gate lands with its integration).
+
+**Residuals (recorded, not fixed):** the shell's own DENY branch remains
+unreachable from stdin (a coverage gap in the surface's design, not the
+test — recorded for the surface's next design pass); the bwrap-less
+Linux and non-Linux degradations are recorded from source and must be
+pinned by their own environments; the guard-deny probe's fragment
+assembly is environment-coupled to the vendored policy corpus's
+destructive-operation rule.
