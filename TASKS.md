@@ -3772,3 +3772,71 @@ toolchain/zod drift), the exact error cites in W105's record are the
 reproduction recipe; a toolchain pin (a committed typescript/zod
 resolution the toolbox already has) is what makes this deterministic
 going forward.
+
+### W118 - The budget-downgrade consumer, part 1: the warn-tier stage composes at the governed transformBody lane (Partial - the transform + env axes + the no-key-lane composition landed; the OpenRouter-lane variant and the wiring breadth queued) (2026-09-24)
+
+**Source:** the park file's P15 (the W095 budget-downgrade consumer,
+queued since the routing design note) — the top self-contained candidate
+after P17's retirement: the seam landed (W109's transformBody), the
+design recorded (the note's key-2 + the round-3 fail-open posture), the
+wiring shape clear.
+
+**What landed (part 1):**
+- The warn-tier axes (session-budget.ts): `WORKFLOW_BUDGET_DOWNGRADE_MODEL`
+  (required) + `WORKFLOW_BUDGET_DOWNGRADE_FRACTION` (default 0.8, must
+  parse to (0,1)) — `budgetDowngradeFromEnv` fails CLOSED to undefined
+  (a broken downgrade axis degrades to no-downgrade, the status quo
+  ante; unlike parseCap's throw, because a broken CAP must never degrade
+  to unenforced while a broken DOWNGRADE degrades to the safe default);
+  `budgetDowngradeActive(usage, budget, fraction)` mirrors
+  budgetViolation's per-dimension comparison at the warn fraction.
+- The transform stage (model-usage-proxy.ts): the `budgetDowngrade`
+  option composes a rewrite stage AFTER the caller's transformBody (the
+  shaped body's model rewritten to the target when the proxy's OWN
+  recorded usage has crossed the warn fraction — a per-request read of
+  the mutating metrics object). The FIFTH bounded deviation from pure
+  pass-through and the THIRD transformBody consumer (the header
+  enumeration synced — it already anticipated this consumer).
+- The governed-lane composition (open-model-proxy.ts + acp-runtime.ts):
+  the open-source lane's transformBody (the only production
+  transformBody consumer per the round-3 review) composes the stage;
+  the runtime passes the env-parsed axes and additionally requires
+  budget caps to exist (no caps = nothing to warn about).
+- The OpenRouter-lane allowed_models-narrowing variant (the auto-router
+  downgrade per the design note) and the per-family usage-granularity
+  residual (a session spreading traffic across family proxies sums
+  separately) are QUEUED.
+
+**Acceptance criteria:**
+- [x] Red/green: 4 pins red at compile level (the exports/option did not
+      exist), 17/17 after the stage (the executor hit its step limit on a
+      pin contradiction — the orchestrator resolved it: the pin's
+      timeline model had an off-by-one, the crossing is observable one
+      request AFTER the crossing usage records, exactly the W095 note's
+      "routes remaining turns" semantics), 29/29 with the budget
+      held-outs; lint + typecheck exit 0.
+- [x] The governed-lane end-to-end pin (LESS-0030: through the REAL pool
+      composition, not a synthetic path): pre-crossing untouched,
+      remaining turns rewritten, sticky, and the metering trail records
+      identically on both sides of the rewrite.
+- [x] The pass-through posture pinned: absent the downgrade config the
+      model rides untouched at any usage level.
+- [x] The abort tier untouched: budgetViolation's comparison and the
+      W045 cancel-at-cap unchanged (the downgrade is the middle step).
+
+**Residuals (recorded, not fixed):** the abort tier is BLIND to the
+open lane (the fresh-eyes round-1 P2, pre-existing W045-era:
+composeSessionWithBudget wires the guard with the OpenRouter proxy's
+metrics only, so the open lane's traffic is invisible to the abort tier
+while the W118 downgrade activates on exactly that traffic — feeding
+the guard the aggregated pool metrics is the queued design change, and
+until then neither tier sees open-lane usage); the per-family usage
+granularity (the signal reads the family proxy's own usage); the
+OpenRouter-lane allowed_models-narrowing variant; the warn-threshold
+source stays design-open (env axes for v1, recorded in the stage's doc
+comment); the fail-open composition semantics (a throwing stage
+silently skipped — with the blindness above, the abort tier is not a
+complete backstop for open-lane traffic); the fail-closed silence (a
+malformed axis silently disables the downgrade — the parse function's
+comment records it; operator-facing logging queued with the
+threshold-source decision).
