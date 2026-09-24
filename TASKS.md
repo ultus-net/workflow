@@ -2351,7 +2351,7 @@ same single deliverable.
 - [x] Verifier: W097 pins RED against the unmodified tree (52 pass/1 fail - exactly the user-home test; the genuine-/var and credential tests green pre-change as they assert existing protection), GREEN after the fix (62/0 across policy+mcp+redirect); guard typecheck OK; dist rebuilt and the LIVE probe re-run post-fix (home-abs: undefined; ws-relative: undefined; var-log: protected; ssh: protected); repo lint/typecheck exit 0.
 - [ ] Queued (one change per iteration): the ask channel on the other four seats, the plane-3-prime pending-ask surface, daemon-level end-to-end ask pin, G2 part 2 (trustedRole), G5 branch-exit pins, G4 matched-surface field, dist-freshness pin, npm pack verifier debt (human-gated).
 
-### W098 - Control-plane caching posture: cache-enabling + affinity, never response-caching (Partial - c1 audit/c2 markers/c4 frontier landed; c3 affinity unblocked and queued) (2026-09-23)
+### W098 - Control-plane caching posture: cache-enabling + affinity, never response-caching (Partial - c1 audit/c2 markers/c3 spec/c4 frontier landed; the affinity implementation parked as P19) (2026-09-23)
 
 **Operator question:** "should we be doing caching on the control
 plane/router as well? This would complement the provider-side caching done

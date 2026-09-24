@@ -139,7 +139,9 @@ even though recording is not. The anthropic messages lane reaches
 with zero-token events (the W109 gap-1 lesson: the trail is polluted,
 not absent); direct vendor lanes carry no `cost` field. Narrowing the
 pool to one slug changes WHICH lane/vendor shapes the trail carries for
-the session. "Verified unaffected" therefore scopes to the RECORDING
+the session. On the OpenRouter lane the FIELD shape stays OpenRouter's
+regardless of which underlying vendor serves — what varies is the
+serving vendor and the trail's numbers/cost. "Verified unaffected" therefore scopes to the RECORDING
 mechanics; the trail's per-vendor content variance is the W109 pollution
 class, and P12's cached-token fields land on the governed lane only.
 The savings remain `unmeasured` (park file L1/P11) until P12 + P9.
@@ -242,16 +244,6 @@ The savings remain `unmeasured` (park file L1/P11) until P12 + P9.
   the open-source-pool lane already maximally pinned (no work needed
   there), the topology-daemon surface wires no autoLatest option, and
   "pool" is defined on first use.
-- **Round 3 (2026-09-24) — the same session, continuation (confirm):
-  ACCEPT.** All eight round-1 fixes verified landed; all ten §-references
-  checked and every one resolves to the right section; the slug rule
-  agrees exactly across §2/§3/§8.1; the family counts match the alias
-  array (x-ai/moonshotai ×1 correctly omitted from the multi-alias
-  enumeration); the round records judged faithful (the round-2 record
-  matches the round-2 verifier's own session); no new errors in the
-  fixed lines. One cosmetic P3 (a two-space continuation-line indent at
-  the trail cite) fixed with this record's edit.
-- **Fresh-eyes round:** [recorded below.]
 - **Round 2 (2026-09-24) — the same Kimi K3 session, continuation
   (confirm + tree-verify): REVISE at the pointer layer** — all eight
   round-1 fixes verified landed and tree-accurate (the one-slug counts
@@ -266,8 +258,28 @@ The savings remain `unmeasured` (park file L1/P11) until P12 + P9.
   error surfacing — instead of the W044-surfaced G1 metrics), and a
   §2/§3 wording wobble on the slug-selection rule. All fixed in this
   round's edits; round 3 confirms.
-- **Round 3 (2026-09-24):** [recorded below.]
-- **Fresh-eyes round:** [recorded below.]
+- **Round 3 (2026-09-24) — the same session, continuation (confirm):
+  ACCEPT.** All eight round-1 fixes verified landed; all ten §-references
+  checked and every one resolves to the right section; the slug rule
+  agrees exactly across §2/§3/§8 item 4; the family counts match the
+  alias array (x-ai/moonshotai ×1 correctly omitted from the multi-alias
+  enumeration); the round records judged faithful (the round-2 record
+  matches the round-2 verifier's own session); no new errors in the
+  fixed lines. One cosmetic P3 (a two-space continuation-line indent at
+  the trail cite) fixed with this record's edit.
+- **Fresh-eyes round (2026-09-24): REQUEST_CHANGES → all findings
+  applied** — the §10 layout this record sat in was scrambled (a
+  duplicate Round-3 bullet, dangling "[recorded below.]" placeholders,
+  the round-3 content before the round-2 record it references);
+  W098's header clause still said "c3 affinity unblocked and queued"
+  against the ticked criterion; the park file's P11/P12 dependency
+  pointers still targeted the just-superseded P1; §6's lane-shape
+  wording overreached (on the OpenRouter lane the FIELD shape stays
+  OpenRouter's — what varies is the serving vendor and the numbers/cost);
+  and a round-3 cite said "§8.1" where §8 has no subsections (the
+  configured-order rule is §8 item 4). All fixed; the re-verification is
+  the fresh-eyes round's own follow-up record below.
+- **Fresh-eyes follow-up:** [recorded below.]
 
 ## 11. The writing-convention note
 
