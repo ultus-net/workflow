@@ -3651,6 +3651,26 @@ an over-cap request regardless of the card) — the documented W112 posture
 W115; the under-cap wire GAINS `inputOverCap: false` (view-identity, not
 byte-identity); the full input still parks in memory at the broker (the
 agent's own spend — only the per-poll shipping is capped).
+  - Dated note (2026-09-25, the base-loop continuation, iteration 49):
+    the round-1 P3 above LANDED ONLY TODAY — the "What landed" list
+    claimed it on 2026-09-24, but the merged commit (1e62f97) carried
+    only the poll shaping; the answer-route line sat UNCOMMITTED in
+    src/ui/web.ts until this session (the W134 deferral note "carries
+    the operator's uncommitted W115 work" was the honest record). This
+    iteration completed it: the answer route's `pending` rides
+    `transportPermissionView` (src/ui/web.ts), the in-flight comment's
+    race premise CORRECTED to the reachable truth (a concurrent
+    same-session park is PROMPT_BUSY-denied and the field is read
+    synchronously with the answer — the reachable non-null path is the
+    legacy undefined-key shape, oldest parked overall), and the seam's
+    own pin added: RED on the pre-change tree (25 pass/1 fail, the raw
+    200 KiB payload in the answer response's `pending`), GREEN after
+    (web 26/26; held-out permission-broker + webapp-surface +
+    web-sessions 62/62; lint + typecheck exit 0). The under-cap identity
+    pin rode along (a guard pin, green on both trees — its comment says
+    exactly that). Fresh-eyes review: round 1 REJECT (the reviewer
+    sandbox had no shell; four items unverified), the four closures
+    cited file:line, round 2 APPROVE. LESS-0055 records the lesson.
 
 ### W116 - The parked-items and limitations registry file (Complete - the operator-directed re-address queue; the loop's work-picking source) (2026-09-24)
 
@@ -4998,3 +5018,328 @@ pnpm child could survive a parent timeout-kill (never observed); npm
 12's install-scripts gate still means the hook does not run during a
 real tarball install (this file drives it directly — W128's residual
 stands).
+
+### W138 - The control-plane hidden-Unicode strip at the prompt seat (Complete - the named-class sanitize covers every prompt crossing WorkflowCodingSession.submit, and the web transcript shows what the agent receives) (2026-09-25)
+
+**Source:** the operator's base-loop direction ("add something to the
+control plane that strips out hidden unicode characters — help prevent
+prompt injection"). THREAT_MODEL item 2 records the injection-pressure
+class as a residual (reviewer/candidate lanes read agent-authored text);
+no strip existed anywhere (greps for unicode/bidi/zero-width/homoglyph
+across docs+src+test: empty before this item).
+
+**What landed:**
+- `src/application/text-hygiene.ts` — `sanitizeControlPlaneText`: a
+  NAMED-CLASS denylist strip (control = C0 minus tab/newline/CR + DEL +
+  C1; bidi = U+061C/200E/200F/202A-202E/2066-2069; zero-width = U+200B/
+  2060/FEFF; tag = U+E0000-E007F; noncharacters = U+FDD0-FDEF + every
+  plane's xxFFFE/xxFFFF) returning EVERY hit (kind + code point) so a
+  surface can show what was removed. Idempotent, allocation-local, zero
+  imports.
+- The seat: `WorkflowCodingSession.submit` sanitizes BEFORE the
+  queue/turn (the queue holds clean text) — every prompt crosses it
+  (web channel, TUI, hub turn lanes hub.ts:143/219/300, the reviewer
+  lane hub-run-gates.ts:58), so the THREAT_MODEL item-2 class is
+  covered once. `SessionChannel.submit` sanitizes BEFORE storing the
+  transcript item — the operator's transcript shows exactly what the
+  agent receives, never a raw projection of stripped text.
+- Pins: `test/text-hygiene.test.ts` (9 — per-class strip, the preserved
+  classes byte-for-byte, the emoji-ZWJ overstrip guard, idempotence, hit
+  shapes) + one web behavioral pin in `test/web.test.ts` (POST
+  /api/prompt with one hit from every named class → the DRIVER receives
+  the sanitized text AND the transcript item matches it).
+
+**Acceptance criteria:**
+- [x] Red-first: with only the two src changes stashed, exactly ONE pin
+      is red (the W138 web pin — the raw payload with bidi/zero-width/
+      tag/control/noncharacter chars reached the driver verbatim);
+      green after: 36/36 (9 + 27).
+- [x] Held-out submit consumers 27/27 (coding-session-queue,
+      session-port, driver-registry, error-surfacing); lint + typecheck
+      exit 0.
+- [x] Fresh-eyes review APPROVE (five axes named; the class table
+      verified complete; seat universality verified across five
+      surfaces; kernel purity clean).
+
+**Residuals (recorded, not fixed):** (i) the empty-prompt
+validation-order gap — `isPromptRequest`'s trim catches U+FEFF but not
+bidi/ZWSP/U+2060, so an all-invisible prompt passes the route, sanitizes
+to "" at the seat, and runs an EMPTY turn (pre-change the same input ran
+a turn carrying hidden text, so the change is fail-restrictive; the
+queued fix is a sanitized-emptiness recheck); (ii) the strip's hits are
+computed but never surfaced (silent mutation from the operator's view —
+a strip notice is a queued UX decision); (iii) the TUI's Ctrl+E markdown
+export writes the raw composer text (tui.tsx:599-607) — export parity
+queued; (iv) the honest boundary of the denylist itself: ZWNJ/ZWJ and
+variation selectors are PRESERVED (load-bearing for scripts/emoji) and
+can still smuggle low-bandwidth data, and unlisted future glyphs pass —
+a strict mode could queue; (v) the TUI composer echo/promptHistory keeps
+the operator's raw text (their own input, not an agent-state projection).
+
+### W139 - The hub schedule WRITE lifecycle e2e (Complete - save echo → list deep-equal → delete, both refusal classes, the W134 body contract, a verifier-gated run-now that refuses before any agent work, and the table's persistence across a hub restart) (2026-09-25)
+
+**Source:** the first wave of the operator's "get sub agents to
+continue e2e coverage" direction (report-only agent, LESS-0051 safety
+contract). W133 pinned the route-LEVEL contract on a fresh hub; this
+wave drove the write lifecycle and its persistence against the live
+multi-process seat.
+
+**What landed:** `test/e2e-hub-schedule.test.ts` (2 tests, 101
+assertions; green 3× consecutive, 1.24-1.26s warm): save echo → list
+deep-equal with the `{version:1, schedules:[…]}` table file asserted
+after every write; the token-class matrix per hub-http.ts:92-97
+(verifier refused 401 on save/list/delete; operator refused 401 on
+run-now BEFORE body parse); six registry-level plus two route-level 400
+refusals (bad cron minute/day-of-month, whitespace title, empty id,
+non-string workspace, bad taskClass) leaving the list unchanged; the
+W134 body contract on a WRITE route (empty/malformed → 400 with the
+named requirement; >1 MiB → 400); run-now on an absent id → 200
+`{fired:false}`, on a present id fired with the verifier token → 200
+`{fired:true}` with the fire landing on a workspace that cannot
+canonicalize so `fireOnce` refuses at controller.begin (the hub log
+line observed; /snapshot pins ZERO run tasks — no ACP runtime ever
+composes; cron Feb-31 + enabled:false belt-and-braces); the default
+seat `<HOME>/.workflow/scheduler.json` surviving clean teardown AND a
+hub restart with freshly re-issued credentials; delete lands the empty
+table.
+
+**Findings recorded (not fixed):**
+- **(a) Unknown definition fields persist verbatim** — POST /schedule/
+  save with an extra `unknownField` answers 200 and writes it to the
+  table (hub-scheduler.ts:246-286 validates known keys only); a
+  schema-rejection gap.
+- **(b) A begin-failing run-now is indistinguishable from a successful
+  fire at the route** — 200 `{fired:true}` either way; the only signal
+  is the hub's stdout log; an observability gap.
+- **(c) Delete of an unknown id is a silent 200 no-op**
+  (schedule-registry.ts:62-65) — idempotent, but never surfaces an id
+  typo.
+- Asymmetry (pinned, not filed): the save route's shape check admits an
+  empty id (hub-http.ts:202) that sibling delete/run-now refuse (:216,
+  :223); the registry catches it.
+
+**Acceptance criteria:**
+- [x] 2/2 green three consecutive runs; lint + typecheck exit 0 with
+      the file present.
+- [x] The LESS-0051 safety contract: no agent/PTY spawns; the fireable
+      path was made to refuse at controller.begin BEFORE any runtime
+      composition; redirected mkdtemp HOMEs; port 0; clean teardown
+      pinned.
+
+**Residuals (recorded, not fixed):** run-now on a fireable schedule and
+the clock-fired tick path are out of LESS-0051's bounds (either would
+compose a real ACP agent run); the paused-schedule-is-still-fireable
+rule is documented from hub-scheduler.ts:294-297,424, not live-driven;
+off-peak deferral and run budgets are scheduler-internal, unreachable
+through the write-lifecycle routes without a live turn.
+
+### W140 - The web multi-session isolation e2e (Complete - two parallel fake-runtime sessions behind one server: transcript/config/prompt isolation per session, the guard set per session, and the cross-session answer-consumption FINDING pinned as-found) (2026-09-25)
+
+**Source:** the second wave of the operator's "get sub agents to
+continue e2e coverage" direction (report-only agent, LESS-0051 safety
+contract, in-process tsx seat — no dist build, no agent/PTY spawns).
+The ?session= routing contract was unit-pinned against ONE session
+(W114-era); this wave drives the isolation contract with TWO real
+parallel sessions.
+
+**What landed:** `test/web-scoping.test.ts` (11 tests, green twice
+consecutively at 571-731ms; the mirrored suites still green — web 27/27,
+web-sessions 20/20): transcript isolation both directions with the
+unscoped route answering the focused session; config options isolated
+per driver; the unknown-id 404 shape against TWO real sessions across
+six routes (upgrading test/web.test.ts:688's single-session pin);
+permission scoping (B's poll null while A parks); cancel scoping (only
+A's park resolves PROMPT_CANCELLED, B's park survives and stays
+answerable); PROMPT_BUSY per session (A's second park denies while B's
+first park is accepted); rename/retry/add guards per session; focus
+switch (activating B spawns nothing, disposes nothing in A, denies no
+parks); the per-session busy contract (A 409 + B 202 in the same
+window; B's completion never unbusy A).
+
+**FINDING (recorded, not fixed):** the permission poll is
+session-scoped (`pendingRequest(sessionKey)`, permission-broker.ts:77-80)
+but the ANSWER path is not — `PermissionBroker.answer` matches the
+parked id alone (:83-106) and the route never checks ownership, so
+answering through B's route with A's parked id returns 200, resolves
+A's park (OPERATOR_REJECTED), and A's poll afterwards shows null. Pinned
+as-found (the FINDING test); the fix shape is a session-scoped refusal
+on the answer route, which flips that pin deliberately. Mitigating
+posture: the same-origin trusted-mutation guard still applies and the UI
+never surfaces another session's id.
+  - Dated note (2026-09-25, W141): the finding FIXED — the pin flipped
+    deliberately (the test now pins the repaired contract: cross-session
+    404, the park survives B's attempt, the owning session still
+    answers). See the W141 entry.
+
+**Acceptance criteria:**
+- [x] 11/11 green twice consecutively; lint + typecheck exit 0; the
+      mirrored suites (web, web-sessions) still green.
+- [x] The LESS-0051 safety contract: in-process only (tsx), fake drivers,
+      mkdtemp registry paths, port 0, no agent/PTY spawns, no dist build.
+
+**Residuals (recorded, not covered):** full /api/image cross-session
+store isolation (only the lookalike 404 is pinned — a cheap follow-up);
+the live-cap eviction path and dismiss-with-parked-prompts (need seven
+parallel runtimes / dismiss flows; the keyed-cancel wiring is already
+manager-pinned at test/web-sessions.test.ts:531); /api/sessions/compact
+per-session agent-id mapping (rides the v2 data-lane gateway, outside
+the in-process contract); registry-restart isolation over HTTP (covered
+at manager level in web-sessions.test.ts, not duplicated).
+
+### W141 - The permission answer path is as session-scoped as the poll (Complete - broker.answer's ownership check ends the cross-session answer consumption the W140 wave observed; the FINDING pin flipped deliberately) (2026-09-25)
+
+**Source:** the W140 wave's finding (recorded 2026-09-25, this branch's
+wave round): GET /api/permission filters the parked set by the session's
+permission key, but POST /api/permission resolved by parked id ALONE —
+answering through session B's route with session A's parked id returned
+200, resolved A's park (OPERATOR_REJECTED), and A's poll afterwards
+showed null. The operator's "fix the next item" direction.
+
+**What landed:**
+- `PermissionBroker.answer` gains an optional `sessionKey` ownership
+  check: a caller-scoped key must OWN the parked request (the parked
+  entry's sessionKey is fixed at parking from the action's correlation
+  id); a mismatched key answers nothing. `undefined` keeps the legacy
+  unscoped shape — consistent by construction: the keyless channel's
+  poll surfaces the OLDEST parked request overall, so what it shows is
+  what it may answer.
+- `SessionChannel.answerPermission` passes its own key — the channel is
+  the only src caller (web.ts:709), so the refusal rides the route's
+  EXISTING 404 branch ("unknown or stale permission request"); no route
+  logic changed. `cancelPending` was already keyed; the answer now
+  mirrors it.
+- Pins: a broker-level ownership pin (mismatched key refuses; the park
+  survives; the owning key resolves; B's park answers independently) +
+  the W140 FINDING test FLIPPED DELIBERATELY (cross-session 404 + the
+  park survives + the positive control through A's own route; the file
+  header and the in-test comment record the flip with the pre-fix truth
+  pointer).
+
+**Acceptance criteria:**
+- [x] Red-first: with only the two src changes stashed, exactly the two
+      W141 pins are red (the broker pin: answer ignored the key → true ≠
+      false; the web pin: cross-session 200 ≠ 404); green after:
+      101/101 across permission-broker + web-scoping + web +
+      web-sessions + webapp-surface; lint + typecheck exit 0.
+- [x] Fresh-eyes review: [APPROVE] on the code (the ownership check
+      verified airtight — the only src caller is the channel; the
+      web-sessions pin stays green by construction; the residual-shape
+      audit found no second unscoped consumption seam; the ACP answer
+      path never touches broker.answer), with two P2 record defects
+      (the stale in-file FINDING block; the missing ledger rows) repaired
+      before this entry.
+
+**Residuals (recorded, not fixed):** the keyless window (a channel whose
+driver reports neither permissionSessionKey nor agentSessionId) still
+polls and answers the oldest parked request OVERALL — poll and answer
+AGREE in that window, so the "as scoped as the poll" contract holds, but
+cross-session consumption remains reachable there by design (the legacy
+single-session posture); the window only opens for degenerate drivers
+(the manager always wires a key function, web-sessions.ts:460). A parked
+entry with sessionKey === undefined can never be answered by a keyed
+caller (fail-closed on degenerate data).
+
+### W142 - The hub /bash + /run/begin lanes e2e (Complete - the contained-shell contract on the live compiled seat, every refusal class, and the run-record lifecycle with exactly one task that never composes) (2026-09-25)
+
+**Source:** the third wave of the operator's e2e-coverage direction
+(report-only agent, LESS-0051 safety contract; this wave owned the dist
+build). Greps found no /bash coverage anywhere in test/ before it.
+
+**What landed:** `test/e2e-hub-bash.test.ts` (1 test, green 3×
+consecutively, subtest 0.6-1.5s): the token-class matrix against
+hub-http.ts:92-97 — /bash and /run/begin are OPERATOR routes (verifier
+refused 401, both directions pinned) while the run lifecycle's
+verifier-gated lane is /run/finish (pinned both directions); the happy
+contract EXACTLY `{output: string}` (stdout+stderr concatenated with no
+separator and no exit-code field, contained-shell-executor.ts:62) with
+echo/pwd/printf pins, pwd === the requested cwd, the structured
+{command,args} direct-exec form, and a 200,000-char output returned
+verbatim; every refusal class (empty body → 400 with the W134 named
+requirement; `{}` → 400; empty command → 500; relative/empty cwd →
+canonicalization refusal; cross-workspace cwd → WORKSPACE_PATH_DENIED;
+guard non-allow → promotion-gate 500); the /run/begin record lifecycle —
+exactly ONE run task created (run:w141-e2e-run-record), the
+cannot-canonicalize attempt refused BEFORE composition (the snapshot
+stays empty), and the observed removal path `/run/finish
+{outcome:"failed"}` hides the task (never deletes; one failed
+environment evidence remains); the bwrap confinement signature pinned
+(cleared environment, synthesized PATH, no HOME, the runtime probe
+before every execute).
+
+**Findings recorded (not fixed, each with its reproducing request):**
+(a) a nonzero exit is represented only as a 500 with no exit-code field
+on the wire; (b) an empty command string passes the route check and 500s
+in the executor; (c) NO timeout anywhere in the /bash chain
+(grep-verified across hub-http.ts, contained-shell-executor.ts,
+linux-bwrap.ts — the hung-command lane was deliberately NEVER sent, the
+finding is the record); (d) no response-side output cap (asymmetric with
+the 1 MiB request cap); (e) /run/begin client-shaped faults classify
+500; (f) no true deletion path for a run record (finish-failed hides;
+evidence remains).
+
+**Acceptance criteria:**
+- [x] 1/1 green three consecutive runs; lint + typecheck exit 0 with
+      the file present.
+- [x] The LESS-0051 safety contract: the only spawned processes are the
+      compiled hub and innocuous one-liners (echo/pwd/printf) with
+      captured output; no agents/PTYs/network; redirected mkdtemp HOMEs;
+      port 0; clean teardown re-observed.
+
+**Residuals (recorded, not covered):** the hung-command boundary (no
+timeout exists to bound it — finding (c)); /rsi/start, /schedule/run-now,
+requiresReview begins, and any ACP/agent composition were never
+exercised; the seat's enforcement marker is not surfaced over HTTP
+(recorded as a limitation in the header).
+
+### W143 - The `workflow doctor` e2e (Complete - the verb's honest-output contract on the TSX lane: the uninstalled 8-check shape, the probe-verdict register tally byte-for-byte, and the exit-code matrix) (2026-09-25)
+
+**Source:** the fourth wave of the operator's e2e-coverage direction
+(report-only agent, LESS-0051 safety contract; TSX lane only — never
+dist, no builds, no network). doctor had smoke-level coverage only
+(compiled-bins-smoke); its rendering contract had no e2e.
+
+**What landed:** `test/e2e-doctor.test.ts` (10 tests, green twice
+consecutively, ~3.4-3.7s): the honest UNINSTALLED shape — all 8 checks
+rendering 10 report rows (credentials expands to three), exit 1, fleet
+the fail row on a fresh home (`0/15 entries current`, manifest-derived);
+the register tally derived from the repo's real docs/PROBE_VERDICTS.json
+(42 verdicts: 27 green / 1 red / 1 negative / 2 pending / 11 blocked)
+matched byte for byte against the CLI output; the exit-code matrix —
+provisioned (byte-identical fleet copy, fake agent binaries, canonical
+upstream key env, fake cline on the child PATH) = 0; corrupt settings /
+stale hub discovery / stale topology discovery each singly flip 0 → 1;
+doc-drift and the guard-plugin posture stay warns at 0; crafted-state
+overlays (global+workspace settings parse detail via --cwd, stale
+discovery against a dead loopback port refusing instantly, guard-plugin
+host config).
+
+**Findings recorded (not fixed):**
+- **F-1: the register seat is not CLI-reachable** — checkProbeVerdicts()
+  is called with no options (src/cli/doctor.ts:344) and resolves its root
+  from the module's own location (probe-verdicts.ts:76-83);
+  runDoctor never forwards DoctorOptions.root; the fail-closed shapes
+  (corrupt/missing register) are pinned at the programmatic seat via a
+  tsx child, and the CLI-side proof the seat is the repo file is the
+  tally match.
+- **F-2: the armed count counts register ROWS, not distinct gates** —
+  arming WORKFLOW_ACP_GOOSE_METERED (named by two rows, one green one
+  blocked) renders "2 gate(s) armed now" naming one gate (doctor.ts:225,
+  233); the test faithfully reproduces the quirk it records.
+- **F-3 (cosmetic):** "1 agent prefs" / "1 servers" pluralization.
+- **F-4: cline availability has no `*_BIN` seam** in listWebAgents
+  (resolves ambient `which cline`, cline-launch.ts:62-74), unlike
+  opencode/goose; a cline-free seat can only be crafted on PATH.
+
+**Acceptance criteria:**
+- [x] 10/10 green twice consecutively; lint + typecheck exit 0 with the
+      file present.
+- [x] The LESS-0051 safety contract: TSX lane only (never dist, no
+      builds); no network (the only traffic is a dead loopback
+      127.0.0.1:1 refusing instantly); every write confined to mkdtemp
+      trees; no agent/PTY spawns; focused runs only.
+
+**Residuals (recorded, not covered):** corrupt-register rendering
+through the CLI verb (F-1's seat resolution — no env/cwd override; the
+programmatic seat carries the fail-closed pins); the non-Linux
+containment row (the machine is Linux with /usr/bin/bwrap present —
+pinned to all three honest shapes instead).

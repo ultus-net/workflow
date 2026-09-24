@@ -78,6 +78,27 @@ test("W112: the parked request carries the full proposal payload", async () => {
   assert.deepEqual(await pending, { kind: "deny", code: "OPERATOR_REJECTED", reason: "rejected by operator" });
 });
 
+// W141: the answer is as session-scoped as the poll — a caller-scoped
+// sessionKey must OWN the parked request (the channel passes its own key;
+// undefined keeps the legacy unscoped shape). The W140 wave observed a
+// cross-session answer consuming another session's park through the route.
+test("W141: answer refuses a parked request owned by another session's key", async () => {
+  const broker = new PermissionBroker();
+  broker.setMode("ask");
+  const pending = broker.intercept(action("run_commands", { sessionId: "agent-a" }), allowAll());
+  const second = broker.intercept(action("run_commands", { sessionId: "agent-b" }), allowAll());
+  await new Promise((resolve) => setImmediate(resolve));
+  const request = broker.pendingRequest("agent-a");
+  assert.ok(request !== undefined, "A's request parks under its correlation id");
+  assert.equal(broker.answer(request.id, "reject_once", "agent-b"), false, "a mismatched sessionKey does NOT consume the park");
+  assert.equal(broker.pendingRequest("agent-a")?.id, request.id, "A's park survives the cross-key attempt");
+  assert.ok(broker.pendingRequest("agent-b") !== undefined, "B's park is untouched");
+  assert.equal(broker.answer(request.id, "reject_once", "agent-a"), true, "the owning key still resolves the park");
+  assert.deepEqual(await pending, { kind: "deny", code: "OPERATOR_REJECTED", reason: "rejected by operator" });
+  assert.equal(broker.answer(broker.pendingRequest("agent-b")!.id, "reject_once", "agent-b"), true);
+  assert.deepEqual(await second, { kind: "deny", code: "OPERATOR_REJECTED", reason: "rejected by operator" });
+});
+
 // W115: the over-cap determination is made ONCE at parking, with the SAME
 // measure the approval card renders (the payload's rendered length vs the
 // 64 KiB inspection cap) — so transport-strip and NOT-APPROVABLE-WITH-REASON

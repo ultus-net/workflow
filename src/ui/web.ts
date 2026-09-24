@@ -711,7 +711,13 @@ export function createWorkflowWebServer(
         }
         return json(response, 200, {
           mode: active.permissionMode(),
-          pending: active.pendingPermission() ?? null,
+          // W115 review round 1 P3: the answer response also carries
+          // `pending` — null on every same-session path today (a concurrent
+          // same-session park is PROMPT_BUSY-denied and the field is read
+          // synchronously with the answer), but the legacy undefined-key
+          // shape surfaces the oldest parked request overall. Whatever this
+          // field carries rides the SAME transport view as the poll.
+          pending: transportPermissionView(active.pendingPermission() ?? null),
           patterns: active.permissionPatterns(),
         });
       } catch {

@@ -324,6 +324,55 @@ test("web UI rejects invalid prompt images before touching the session", async (
   assert.equal(submitted, false);
 });
 
+// W138: hidden Unicode strips at the control-plane prompt seat — the DRIVER
+// receives the sanitized text and the operator's transcript shows the SAME
+// sanitized text (never a raw projection of text the strip removed). The
+// preserved classes (ZWNJ/ZWJ/VS/NBSP/tab/newline) survive byte-for-byte:
+// without those assertions the strip could silently widen to everything.
+test("W138: hidden unicode is stripped from prompts at the control-plane seat", async (context) => {
+  let submitted = "";
+  const driver: CodingSessionDriver = {
+    async start(prompt, emit) {
+      submitted = prompt;
+      emit({ type: "completed", result: "done" });
+    },
+    async cancel() {},
+  };
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(application, new WorkflowCodingSession(driver));
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+
+  // One hit from every named class + one of every preserved class:
+  // bidi (U+202E), zero-width (U+200B, U+2060, U+FEFF), tag (U+E0054),
+  // control (U+0001, U+009F), noncharacter (U+FDD0, U+10FFFE);
+  // preserved: tab, newline, NBSP, ZWNJ, ZWJ, VS16.
+  const raw = "run\u202Ediag\u200Bnostic\u2060wj\u{E0054}tag\u0001ctl\u009Fc1\uFEFFbom\uFDD0nc\u{10FFFE}nc2" +
+    "\tTAB\nNL\u00A0NBSP\u200CZWNJ\u200DZWJ\uFE0FVS";
+  const expected = "rundiagnosticwjtagctlc1bomncnc2" +
+    "\tTAB\nNL\u00A0NBSP\u200CZWNJ\u200DZWJ\uFE0FVS";
+
+  const prompt = await fetch(`${base}/api/prompt`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ prompt: raw }),
+  });
+  assert.equal(prompt.status, 202);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(submitted, expected, "the DRIVER receives the sanitized text — the strip is the seat's contract");
+
+  const session = await fetch(`${base}/api/session`).then((response) => response.json()) as {
+    items: { kind: string; text?: string }[];
+  };
+  assert.equal(session.items[0]?.kind, "user");
+  assert.equal(session.items[0]?.text, expected, "the transcript shows what the agent received, not the raw paste");
+});
+
 test("web UI denies cross-origin browser mutations", async (context) => {
   const driver: CodingSessionDriver = { async start() {}, async cancel() {} };
   const application = new WorkflowApplication(
@@ -1076,6 +1125,182 @@ test("W115: the permission poll transports the parked payload under the inspecti
   const parked = broker.pendingRequest();
   assert.ok(parked !== undefined, "the broker still parks the request for the answer path");
   assert.equal(broker.answer(parked.id, "reject_once"), true, "the answer path still works on the parked request");
+});
+
+// W115 review round 1 P3: the under-cap approvable path is unchanged — a
+// payload under the cap still rides the poll WITH its full input (the flag
+// gains a false on the wire; the view itself is identity for unflagged
+// requests). Without this pin the strip could silently widen to everything.
+test("W115: an under-cap parked payload still transports with its full input", async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), "web-permission-under-cap-test-"));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const broker = new PermissionBroker();
+  broker.setMode("ask");
+  const fakeRuntimeFactory = async () => {
+    const driver: CodingSessionDriver = {
+      async start(_prompt, emit) { emit({ type: "completed", result: "done" }); },
+      async cancel() {},
+    };
+    return {
+      driver: {
+        ...driver,
+        agentSessionId: () => "agent-x",
+        connect: async () => {},
+        subscribe: () => () => {},
+      } as never,
+      session: new WorkflowCodingSession(driver),
+      budgetMechanism: "test: no local caps (fake runtime)",
+      async dispose() {},
+    };
+  };
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: fakeRuntimeFactory,
+    permissionBroker: broker,
+  });
+  context.after(() => manager.dispose());
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+    [],
+    new Set(["read", "mutation"]),
+    "/repo",
+  );
+  const server = createWorkflowWebServer(application, manager);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+
+  broker.intercept(
+    {
+      sessionId: "agent-x",
+      taskId: "T1" as never,
+      tool: "run_commands",
+      mutating: true,
+      subjects: [],
+      input: { command: "build", flags: ["--verbose"] },
+    },
+    () => ({ kind: "allow" }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const underCap = await fetch(`${base}/api/permission`).then((response) => response.json()) as {
+    pending: { inputOverCap?: boolean; input?: unknown; tool?: string } | null;
+  };
+  assert.ok(underCap.pending !== null, "the parked request serves on the poll");
+  assert.equal(underCap.pending?.tool, "run_commands");
+  assert.equal(underCap.pending?.inputOverCap, false, "an under-cap payload is not flagged");
+  assert.deepEqual(underCap.pending?.input, { command: "build", flags: ["--verbose"] }, "the FULL input still rides the poll under the cap");
+  const parked = broker.pendingRequest();
+  assert.ok(parked !== undefined);
+  assert.equal(broker.answer(parked.id, "reject_once"), true);
+});
+
+// W115 review round 1 P3: the ANSWER response also carries `pending` — null
+// on every same-session path today (a concurrent same-session park is
+// PROMPT_BUSY-denied and the field is read synchronously with the answer),
+// but the legacy undefined-key shape surfaces the OLDEST parked request
+// across sessions (driverPermissionKey falls back through absent keys).
+// Whatever this field carries must ride the same transport view as the
+// poll: an over-cap next-parked request arrives stripped WITH the flag,
+// never as the raw payload.
+test("W115: the answer response's next-parked field rides the transport view", async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), "web-permission-answer-next-test-"));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const broker = new PermissionBroker();
+  broker.setMode("ask");
+  // A driver exposing NO permission key: agentSessionId returns undefined so
+  // the channel's permission key is undefined and pendingPermission() falls
+  // back to the broker's oldest-parked-overall shape (the legacy posture) —
+  // the only reachable path where the answer response carries a next-parked
+  // request.
+  const fakeRuntimeFactory = async () => {
+    const driver: CodingSessionDriver = {
+      async start(_prompt, emit) { emit({ type: "completed", result: "done" }); },
+      async cancel() {},
+    };
+    return {
+      driver: {
+        ...driver,
+        agentSessionId: () => undefined,
+        connect: async () => {},
+        subscribe: () => () => {},
+      } as never,
+      session: new WorkflowCodingSession(driver),
+      budgetMechanism: "test: no local caps (fake runtime)",
+      async dispose() {},
+    };
+  };
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: fakeRuntimeFactory,
+    permissionBroker: broker,
+  });
+  context.after(() => manager.dispose());
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+    [],
+    new Set(["read", "mutation"]),
+    "/repo",
+  );
+  const server = createWorkflowWebServer(application, manager);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+
+  // Two parked requests from DIFFERENT action sessions: the busy rule caps
+  // one parked prompt per action sessionId, so distinct ids both park. The
+  // oldest-overall view serves the first; answering it leaves the over-cap
+  // second parked — the shape the answer response then carries.
+  broker.intercept(
+    {
+      sessionId: "agent-a",
+      taskId: "T1" as never,
+      tool: "run_commands",
+      mutating: true,
+      subjects: [],
+      input: { command: "build" },
+    },
+    () => ({ kind: "allow" }),
+  );
+  broker.intercept(
+    {
+      sessionId: "agent-b",
+      taskId: "T2" as never,
+      tool: "run_commands",
+      mutating: true,
+      subjects: [],
+      input: "y".repeat(200 * 1024),
+    },
+    () => ({ kind: "allow" }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const poll = await fetch(`${base}/api/permission`).then((response) => response.json()) as {
+    pending: { id?: string; inputOverCap?: boolean } | null;
+  };
+  assert.ok(poll.pending !== null, "the oldest parked request serves on the poll");
+  assert.equal(poll.pending?.inputOverCap, false, "the under-cap first request is not flagged");
+
+  const answer = await fetch(`${base}/api/permission`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: poll.pending?.id, decision: "reject_once" }),
+  });
+  assert.equal(answer.status, 200);
+  const body = await answer.json() as { pending: { inputOverCap?: boolean; input?: unknown; tool?: string } | null };
+  assert.ok(body.pending !== null, "the next parked request rides the answer response");
+  assert.equal(body.pending?.tool, "run_commands");
+  assert.equal(body.pending?.inputOverCap, true, "the over-cap flag crosses the answer transport");
+  assert.equal(body.pending?.input, undefined, "the oversized payload does NOT ride the answer response");
+  // The broker's parked in-memory request is untouched for its own answer.
+  const stillParked = broker.pendingRequest("agent-b");
+  assert.ok(stillParked !== undefined, "the second request stays parked for the answer path");
+  assert.equal(stillParked.inputOverCap, true);
+  assert.equal(broker.answer(stillParked.id, "reject_once"), true);
 });
 
 test("web UI guards session rename, task retry/add, and the removed evidence endpoint (W114)", async (context) => {
