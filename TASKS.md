@@ -4311,6 +4311,13 @@ print and exit before composition).
       fixing the strict-mode exitInfo finding typecheck itself caught).
 - [x] The hub probe self-heals the vendored guard seat (the W120 gate's
       own remedy) before composing.
+- [x] The PR preflight's manifest/lockfile check caught a PRE-EXISTING
+      drift the W127 build-script edit surfaced: the lockfile's root bin
+      map still recorded `workflow → dist/cli/web-launch.js` (a stale
+      pre-restructure entry) while the manifest carries the real ten-bin
+      map; the lock-only install synced it and dropped a drifted optional
+      peer row — recorded as the preflight's own finding (no dependency
+      changes: the audit stays 426 packages, 0 vulnerabilities).
 - [x] The round-3 fresh-eyes review (committed-state) accepted with three
       P3s, all fixed pre-recording: the freshness gate now covers the
       prebuilt emitter script (a script-only edit rebuilds — the gate's
