@@ -29,10 +29,10 @@ test("W098: the review rubric keeps the stable preamble ahead of the per-run con
     diffText: "+ the change under review",
   });
   const gate = rubric.indexOf("# Secondary Review Agent Quality Gate");
-  const task = rubric.indexOf("### User Request / Context:");
-  const manifest = rubric.indexOf("### Review Coverage Manifest");
-  const diff = rubric.indexOf("### Code Diff Under Review:");
-  const verdict = rubric.indexOf("Provide your verdict:");
+  const task = rubric.indexOf("### User Request / Context:", gate);
+  const manifest = rubric.indexOf("### Review Coverage Manifest", gate);
+  const diff = rubric.indexOf("### Code Diff Under Review:", gate);
+  const verdict = rubric.indexOf("Provide your verdict:", diff);
   assert.ok(gate !== -1 && task !== -1 && manifest !== -1 && diff !== -1 && verdict !== -1, "every section renders");
   assert.ok(gate < task && gate < manifest && gate < diff, "the stable gate preamble precedes every per-run section");
   assert.ok(task < manifest && manifest < diff, "the per-run sections hold their own order (task, manifest, diff)");
