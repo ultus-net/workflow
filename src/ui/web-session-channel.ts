@@ -301,9 +301,11 @@ export class SessionChannel {
     this.#broker?.resetPatterns();
   }
 
-  /** Answers the parked permission request; false when unknown/stale. */
+  /** Answers the parked permission request; false when unknown/stale or
+   * (W141) owned by another session's park. The channel's own permission key
+   * scopes the answer — the poll is session-scoped, so the answer is too. */
   answerPermission(id: string, choice: PermissionDecisionChoice): boolean {
-    return this.#broker?.answer(id, choice) ?? false;
+    return this.#broker?.answer(id, choice, this.#permissionKey?.()) ?? false;
   }
 
   /** Projects one raw session event into the transcript (used for session/load replays). */

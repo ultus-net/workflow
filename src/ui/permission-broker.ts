@@ -79,10 +79,16 @@ export class PermissionBroker {
     return this.#parkedFor(sessionKey);
   }
 
-  /** Resolves the parked request; false when the id is unknown or stale. */
-  answer(id: string, choice: PermissionDecisionChoice): boolean {
+  /** Resolves the parked request; false when the id is unknown or stale, or
+   * (W141) when a caller-scoped sessionKey does not OWN the parked request —
+   * a session-scoped poll must not let another session's route consume its
+   * park. `sessionKey === undefined` keeps the legacy unscoped shape (the
+   * keyless channel's poll surfaces the oldest parked request OVERALL, so
+   * what it shows is what it may answer). */
+  answer(id: string, choice: PermissionDecisionChoice, sessionKey?: string): boolean {
     const parked = this.#parked.get(id);
     if (parked === undefined) return false;
+    if (sessionKey !== undefined && parked.sessionKey !== sessionKey) return false;
     this.#parked.delete(id);
     const tool = parked.request.tool;
     switch (choice) {

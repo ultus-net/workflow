@@ -26,16 +26,20 @@ import { WebSessionManager } from "../src/ui/web-sessions.js";
 // every pin below observes a request scoped with ?session= against the
 // OTHER session.
 //
-// FINDING (recorded 2026-09-25, not fixed — the wave's report-only mandate):
-// the permission poll is session-scoped but the ANSWER path is not —
-// PermissionBroker.answer matches the parked id alone (permission-broker.ts:
-// 83-106) and the answer route never checks ownership, so POST
-// /api/permission?session=<B> with A's parked id returns 200, resolves A's
-// park (OPERATOR_REJECTED), and A's poll afterwards shows pending: null.
-// Pinned as-found in the FINDING test below; the fix shape is a
-// session-scoped refusal in the answer route (which would flip that pin
-// deliberately). Mitigating posture: the same-origin trusted-mutation guard
-// still applies and the UI never surfaces another session's id.
+// FINDING (recorded 2026-09-25, FIXED 2026-09-25 by W141 — the pin flipped
+// deliberately): the permission poll was session-scoped but the ANSWER path
+// was not — PermissionBroker.answer matched the parked id alone (permission-
+// broker.ts:83-106) and the answer route never checked ownership, so POST
+// /api/permission?session=<B> with A's parked id returned 200, resolved A's
+// park (OPERATOR_REJECTED), and A's poll afterwards showed pending: null.
+// W141 scopes the answer with the answering channel's own permission key
+// (broker.answer's optional sessionKey; a keyless channel keeps the legacy
+// oldest-overall shape — what its poll shows is what it may answer). The
+// FINDING test below now pins the REPAIRED contract (404 cross-session; the
+// park survives B's attempt); the pre-fix truth is recorded in the W140/W141
+// ledger entries. Mitigating posture that applied pre-fix: the same-origin
+// trusted-mutation guard still applied and the UI never surfaced another
+// session's id.
 //
 // Manager under test: src/ui/web-sessions.ts — per-session live runtimes
 // (#live map, web-sessions.ts:88), cancel scoping at the three dispose sites
@@ -380,16 +384,19 @@ test("a park in A shows only on A's poll; B's poll is null while B is idle", asy
   assert.deepEqual(await parkedA, { kind: "allow" });
 });
 
-// FINDING (recorded, not fixed): the permission ANSWER route is not
-// session-scoped. GET /api/permission filters the parked set by the session's
-// permission key (web-session-channel.ts:285-287 -> permission-broker.ts:77-80),
-// but POST /api/permission resolves by parked id alone (active.answerPermission
-// -> permission-broker.ts:83-106 — no sessionKey filter), so a request scoped
-// to B with A's parked id consumes A's prompt. The observed shape below is
-// pinned as-found; a session-scoped refusal is the fix shape and would flip
-// this pin deliberately.
+// FINDING — FIXED by W141 (2026-09-25, the pin below flipped deliberately):
+// the permission ANSWER route was not session-scoped. GET /api/permission
+// filters the parked set by the session's permission key (web-session-channel.ts:285-287
+// -> permission-broker.ts:77-80), but POST /api/permission resolved by parked
+// id alone (active.answerPermission -> broker.answer had no sessionKey
+// filter), so a request scoped to B with A's parked id consumed A's prompt
+// (200, OPERATOR_REJECTED). W141 scopes broker.answer with the answering
+// channel's own key — the refusal rides the route's 404 branch — and the
+// test below pins the REPAIRED contract (cross-session 404; A's park
+// survives B's attempt; the owning session still answers). The pre-fix
+// truth (200 + consumption) lives in the W140/W141 ledger entries.
 
-test("FINDING: answering through B's route consumes A's parked prompt (answer path is not session-scoped)", async (t) => {
+test("W141: answering through B's route REFUSES A's parked prompt (the answer is as session-scoped as the poll)", async (t) => {
   const h = await harness(t, { askMode: true });
   const a = await createSession(h.base);
   const b = await createSession(h.base);
@@ -400,22 +407,23 @@ test("FINDING: answering through B's route consumes A's parked prompt (answer pa
   const pendingA = (await permissionView(h.base, a)).pending;
   assert.ok(pendingA !== null);
 
-  // The exact reproducing request: B's route, A's parked id.
+  // W141 flipped this pin deliberately (2026-09-25): the W140 wave observed
+  // the answer route consuming another session's park (200, OPERATOR_REJECTED)
+  // and the fix makes the answer as session-scoped as the poll — a cross-
+  // session answer is unknown-or-stale (404) and A's park SURVIVES B's
+  // attempt. The OBSERVED marker now documents the repaired contract; the
+  // pre-fix truth (200 + consumption) is recorded in the W140/W141 ledger
+  // entries.
   const cross = await postJson(h.base, "/api/permission", { id: pendingA.id, decision: "reject_once" }, `?session=${encodeURIComponent(b)}`);
-  assert.equal(cross.status, 200, "OBSERVED: the answer route resolves another session's parked prompt");
-  assert.deepEqual(await parkedA, { kind: "deny", code: "OPERATOR_REJECTED", reason: "rejected by operator" },
-    "A's parked promise was resolved by the request scoped to B");
+  assert.equal(cross.status, 404, "OBSERVED: a cross-session answer is unknown-or-stale to the answering route");
+  assert.deepEqual(await cross.json(), { error: "unknown or stale permission request" });
+  assert.equal((await permissionView(h.base, a)).pending?.id, pendingA.id, "A's park SURVIVES B's cross-session attempt");
   assert.equal((await permissionView(h.base, b)).pending, null);
-  assert.equal((await permissionView(h.base, a)).pending, null, "A's park is gone — consumed cross-session");
 
   // Positive control: the same answer through A's OWN route resolves normally.
-  const parkedA2 = park(h.broker, keyA);
-  await tick();
-  const pendingA2 = (await permissionView(h.base, a)).pending;
-  assert.ok(pendingA2 !== null);
-  const own = await postJson(h.base, "/api/permission", { id: pendingA2.id, decision: "allow_once" }, `?session=${encodeURIComponent(a)}`);
+  const own = await postJson(h.base, "/api/permission", { id: pendingA.id, decision: "reject_once" }, `?session=${encodeURIComponent(a)}`);
   assert.equal(own.status, 200);
-  assert.deepEqual(await parkedA2, { kind: "allow" });
+  assert.deepEqual(await parkedA, { kind: "deny", code: "OPERATOR_REJECTED", reason: "rejected by operator" });
   assert.equal((await permissionView(h.base, a)).pending, null);
 });
 
