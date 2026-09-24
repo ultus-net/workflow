@@ -4475,11 +4475,15 @@ to a usage block and exit 0 BEFORE any composition:
   requested), so the existing parser deep-equal pins stay valid
   (driver-registry, opencode-server-launcher, pretrust-parsing-audit).
 - pre-composition guards for the module-level daemons and script
-  surfaces: `hub`, `admin`, `ink-tui`, `web-launch` (inside the
-  runnable-script guard), `contained-shell`.
+  surfaces: `hub`, `admin`, `ink-tui`, `contained-shell`, and `web-launch`
+  (the guard lives INSIDE `runWebLaunch` — see the round-1 review note
+  below).
 - the dispatcher: a leading `workflow --help`/`-h` prints the surface
-  list and exits 0 (a verb's own `--help`, e.g. `workflow web --help`,
-  routes to that bin's guard).
+  list and exits 0; a verb's own `--help` resolves at that surface's own
+  seam — `web` inside `runWebLaunch` (shared by the in-process call and
+  the script entry), `settings`/`doctor`/`install` in their dispatch
+  branches (`helpExit`), and the spawned verbs (`tui`, `hub`) in their
+  bins' guards.
 
 **The captured red:** `node dist/cli/admin.js --help` (pre-fix) printed
 "Workflow admin listening at http://127.0.0.1:4180" plus a FRESHLY
@@ -4502,8 +4506,19 @@ bounds).
       longer composes the agent; opencode-attach's `--help` no longer
       reaches the autostart discovery path; opencode-server's `--help`
       no longer composes the guard or runtime.
+- [x] The round-1 fresh-eyes review REVISE'd the first cut with a real
+      P1: the claim `workflow web --help` routes to the bin's guard was
+      FALSE — the dispatcher calls `runWebLaunch` IN-PROCESS, bypassing
+      the runnable-script guard, so it started the service (same class:
+      `settings`; P2: rsi's `--help` only resolved in argv[0], so
+      `start … --help` could reach the verifier POST). Fixed
+      pre-recording: web's guard moved INSIDE `runWebLaunch`; the
+      in-process verbs (settings/doctor/install) guard in their dispatch
+      branches; rsi resolves `--help`/`-h` anywhere (including the
+      single-dash token the flags loop previously rejected). The pins
+      now run BOTH flags per row and cover the in-process verb paths and
+      rsi's non-leading help (24/24). LESS-0053's lesson gained the
+      in-process-bypass clause.
 
 **Residuals (recorded, not fixed):** the usage text is per-bin minimal
-(the first-line banner + key flags), not exhaustive flag docs; a
-verb-level `--help` for the dispatcher's spawned surfaces is resolved by
-the bin (documented in workflow.ts's guard comment).
+(the first-line banner + key flags), not exhaustive flag docs.
