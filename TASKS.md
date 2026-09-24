@@ -5238,3 +5238,108 @@ single-session posture); the window only opens for degenerate drivers
 (the manager always wires a key function, web-sessions.ts:460). A parked
 entry with sessionKey === undefined can never be answered by a keyed
 caller (fail-closed on degenerate data).
+
+### W142 - The hub /bash + /run/begin lanes e2e (Complete - the contained-shell contract on the live compiled seat, every refusal class, and the run-record lifecycle with exactly one task that never composes) (2026-09-25)
+
+**Source:** the third wave of the operator's e2e-coverage direction
+(report-only agent, LESS-0051 safety contract; this wave owned the dist
+build). Greps found no /bash coverage anywhere in test/ before it.
+
+**What landed:** `test/e2e-hub-bash.test.ts` (1 test, green 3×
+consecutively, subtest 0.6-1.5s): the token-class matrix against
+hub-http.ts:92-97 — /bash and /run/begin are OPERATOR routes (verifier
+refused 401, both directions pinned) while the run lifecycle's
+verifier-gated lane is /run/finish (pinned both directions); the happy
+contract EXACTLY `{output: string}` (stdout+stderr concatenated with no
+separator and no exit-code field, contained-shell-executor.ts:62) with
+echo/pwd/printf pins, pwd === the requested cwd, the structured
+{command,args} direct-exec form, and a 200,000-char output returned
+verbatim; every refusal class (empty body → 400 with the W134 named
+requirement; `{}` → 400; empty command → 500; relative/empty cwd →
+canonicalization refusal; cross-workspace cwd → WORKSPACE_PATH_DENIED;
+guard non-allow → promotion-gate 500); the /run/begin record lifecycle —
+exactly ONE run task created (run:w141-e2e-run-record), the
+cannot-canonicalize attempt refused BEFORE composition (the snapshot
+stays empty), and the observed removal path `/run/finish
+{outcome:"failed"}` hides the task (never deletes; one failed
+environment evidence remains); the bwrap confinement signature pinned
+(cleared environment, synthesized PATH, no HOME, the runtime probe
+before every execute).
+
+**Findings recorded (not fixed, each with its reproducing request):**
+(a) a nonzero exit is represented only as a 500 with no exit-code field
+on the wire; (b) an empty command string passes the route check and 500s
+in the executor; (c) NO timeout anywhere in the /bash chain
+(grep-verified across hub-http.ts, contained-shell-executor.ts,
+linux-bwrap.ts — the hung-command lane was deliberately NEVER sent, the
+finding is the record); (d) no response-side output cap (asymmetric with
+the 1 MiB request cap); (e) /run/begin client-shaped faults classify
+500; (f) no true deletion path for a run record (finish-failed hides;
+evidence remains).
+
+**Acceptance criteria:**
+- [x] 1/1 green three consecutive runs; lint + typecheck exit 0 with
+      the file present.
+- [x] The LESS-0051 safety contract: the only spawned processes are the
+      compiled hub and innocuous one-liners (echo/pwd/printf) with
+      captured output; no agents/PTYs/network; redirected mkdtemp HOMEs;
+      port 0; clean teardown re-observed.
+
+**Residuals (recorded, not covered):** the hung-command boundary (no
+timeout exists to bound it — finding (c)); /rsi/start, /schedule/run-now,
+requiresReview begins, and any ACP/agent composition were never
+exercised; the seat's enforcement marker is not surfaced over HTTP
+(recorded as a limitation in the header).
+
+### W143 - The `workflow doctor` e2e (Complete - the verb's honest-output contract on the TSX lane: the uninstalled 8-check shape, the probe-verdict register tally byte-for-byte, and the exit-code matrix) (2026-09-25)
+
+**Source:** the fourth wave of the operator's e2e-coverage direction
+(report-only agent, LESS-0051 safety contract; TSX lane only — never
+dist, no builds, no network). doctor had smoke-level coverage only
+(compiled-bins-smoke); its rendering contract had no e2e.
+
+**What landed:** `test/e2e-doctor.test.ts` (10 tests, green twice
+consecutively, ~3.4-3.7s): the honest UNINSTALLED shape — all 8 checks
+rendering 10 report rows (credentials expands to three), exit 1, fleet
+the fail row on a fresh home (`0/15 entries current`, manifest-derived);
+the register tally derived from the repo's real docs/PROBE_VERDICTS.json
+(42 verdicts: 27 green / 1 red / 1 negative / 2 pending / 11 blocked)
+matched byte for byte against the CLI output; the exit-code matrix —
+provisioned (byte-identical fleet copy, fake agent binaries, canonical
+upstream key env, fake cline on the child PATH) = 0; corrupt settings /
+stale hub discovery / stale topology discovery each singly flip 0 → 1;
+doc-drift and the guard-plugin posture stay warns at 0; crafted-state
+overlays (global+workspace settings parse detail via --cwd, stale
+discovery against a dead loopback port refusing instantly, guard-plugin
+host config).
+
+**Findings recorded (not fixed):**
+- **F-1: the register seat is not CLI-reachable** — checkProbeVerdicts()
+  is called with no options (src/cli/doctor.ts:344) and resolves its root
+  from the module's own location (probe-verdicts.ts:76-83);
+  runDoctor never forwards DoctorOptions.root; the fail-closed shapes
+  (corrupt/missing register) are pinned at the programmatic seat via a
+  tsx child, and the CLI-side proof the seat is the repo file is the
+  tally match.
+- **F-2: the armed count counts register ROWS, not distinct gates** —
+  arming WORKFLOW_ACP_GOOSE_METERED (named by two rows, one green one
+  blocked) renders "2 gate(s) armed now" naming one gate (doctor.ts:225,
+  233); the test faithfully reproduces the quirk it records.
+- **F-3 (cosmetic):** "1 agent prefs" / "1 servers" pluralization.
+- **F-4: cline availability has no `*_BIN` seam** in listWebAgents
+  (resolves ambient `which cline`, cline-launch.ts:62-74), unlike
+  opencode/goose; a cline-free seat can only be crafted on PATH.
+
+**Acceptance criteria:**
+- [x] 10/10 green twice consecutively; lint + typecheck exit 0 with the
+      file present.
+- [x] The LESS-0051 safety contract: TSX lane only (never dist, no
+      builds); no network (the only traffic is a dead loopback
+      127.0.0.1:1 refusing instantly); every write confined to mkdtemp
+      trees; no agent/PTY spawns; focused runs only.
+
+**Residuals (recorded, not covered):** corrupt-register rendering
+through the CLI verb (F-1's seat resolution — no env/cwd override; the
+programmatic seat carries the fail-closed pins); the non-Linux
+containment row (the machine is Linux with /usr/bin/bwrap present —
+pinned to all three honest shapes instead).
