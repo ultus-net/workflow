@@ -2245,7 +2245,7 @@ workspace and passes it to `createOpencodeServerAuthority`.
       surface, G2 part 2 (`trustedRole`), G5 branch-exit pins, G4
       matched-surface field, ostree `/var`-home fix, dist-freshness pin,
       `npm pack` verifier debt (human-gated).
-### W095 - Local model-routing policy at the metering proxy (Partial - the metering-proxy seam landed via W109's transformBody; the routing design note EXISTS and is frontier-verified through round 2, round 3 + the per-role end-to-end check queued) (2026-09-22)
+### W095 - Local model-routing policy at the metering proxy (Partial - the metering-proxy seam landed via W109's transformBody; the routing design note EXISTS and is frontier-verified through round 3 (2026-09-24); the per-role end-to-end check queued) (2026-09-22)
 
 **Operator question:** "readdress the mixture-of-experts local router idea -
 would it be a good idea to classify things before handing them to
@@ -2288,12 +2288,17 @@ work):**
   the acceptance-check discipline would have to catch after the fact.
 
 **Acceptance criteria:**
-- [ ] A routing-policy design note (the four metadata keys, the pool
+- [x] A routing-policy design note (the four metadata keys, the pool
       matrix, the precedence: task-class -> budget -> schedule -> failover)
       before any code.
-      (The note exists — docs/MODEL_ROUTING_POLICY_2026-09-23.md,
-      frontier-verified through round 2 with round 3 pending; left unticked
-      until its own round 3 completes — NOT this bundle's scope.)
+      (docs/MODEL_ROUTING_POLICY_2026-09-23.md — frontier-verified
+      through round 3, 2026-09-24: the round-2 repairs confirmed against
+      the tree (the zero-callers state re-grepped, the tier-label cite,
+      the globality note, the repaired quantifier) and two new findings
+      incorporated (the deviation counts stale post-W109 — the
+      cache-marker pass is the seam's second consumer; the
+      enumeration-boundary clarification). The criterion's tick stands
+      on the note's §8 round-3 record.)
 - [x] The metering-proxy seam shaped for policy routing (the
       autoLatest-style transform point) without changing the pass-through
       posture for unclassified traffic. LANDED in W109 (2026-09-23): the
@@ -2304,7 +2309,16 @@ work):**
       still queued (it attaches through this seam).
 - [ ] The fleet's per-role models verified end-to-end (the de-facto MoE)
       before building anything new.
-- [ ] Frontier verification of the design note (same pattern as #78/#82).
+- [x] Frontier verification of the design note (same pattern as #78/#82).
+      DONE (2026-09-24): the three-round Kimi K3 chain recorded in the
+      note's §7-§8 (round 1 REVISE with the fleet-architecture + pool-
+      substrate + downgrade-seam corrections; round 2 REVISE with the
+      self-corrected failover-wiring claim + the partially-applied
+      sentence caught; round 3 REVISE with the stale W109-era deviation
+      counts corrected + the enumeration boundary stated — all
+      tree-verified by the verifiers themselves). This criterion and
+      criterion 1's "frontier-verified" are the same verification; the
+      tick stands on the note's §8 record.
 
 ### W096 - Serverless hosting option for the control plane (AZ Function) (Planned - intent + constraints only)
 
