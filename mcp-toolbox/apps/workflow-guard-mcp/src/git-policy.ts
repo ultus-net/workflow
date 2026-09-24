@@ -436,7 +436,8 @@ function parseFetch(words: string[]): PointerInvocation | undefined {
   return { targets: destinations, uncertain: false, needsCurrentBranch: false };
 }
 
-function checkPointerTarget(words: string[], protectedBranches: Set<string>, context: GitPolicyContext): { decision: "deny"; policy: string; reason: string } | undefined {
+function checkPointerTarget(words: string[], protectedBranches: Set<string>, context: GitPolicyContext): { decision: "deny"; policy: string; reason: string; matched?: string } | undefined {
+  const pointerCommand = words.join(" ");
   const sub = words[1];
   let invocation: PointerInvocation | undefined;
   if (sub === "branch") invocation = parseBranch(words);
@@ -452,7 +453,7 @@ function checkPointerTarget(words: string[], protectedBranches: Set<string>, con
   }
   if (!invocation) return undefined;
   if (invocation.uncertain) {
-    return { decision: "deny", policy: "protected-branch-write", reason: "Git pointer command could not be safely parsed; failing closed." };
+    return { decision: "deny", policy: "protected-branch-write", reason: "Git pointer command could not be safely parsed; failing closed.", matched: pointerCommand };
   }
   if (invocation.needsCurrentBranch) {
     // The one-arg rename writes BOTH names: the current branch (renamed
@@ -461,15 +462,15 @@ function checkPointerTarget(words: string[], protectedBranches: Set<string>, con
     // round 4). A factless seat cannot classify the source and fails
     // closed.
     if (!context.currentBranch) {
-      return { decision: "deny", policy: "protected-branch-write", reason: "Branch rename targets the current branch, which was not supplied; failing closed." };
+      return { decision: "deny", policy: "protected-branch-write", reason: "Branch rename targets the current branch, which was not supplied; failing closed.", matched: pointerCommand };
     }
     if (protectedBranches.has(normalizeBranchRef(context.currentBranch))) {
-      return { decision: "deny", policy: "protected-branch-write", reason: `Branch pointer writes on protected branch '${normalizeBranchRef(context.currentBranch)}' are not allowed.` };
+      return { decision: "deny", policy: "protected-branch-write", reason: `Branch pointer writes on protected branch '${normalizeBranchRef(context.currentBranch)}' are not allowed.`, matched: normalizeBranchRef(context.currentBranch) };
     }
   }
   for (const target of invocation.targets) {
     if (protectedBranches.has(normalizeBranchRef(target))) {
-      return { decision: "deny", policy: "protected-branch-write", reason: `Branch pointer writes on protected branch '${normalizeBranchRef(target)}' are not allowed.` };
+      return { decision: "deny", policy: "protected-branch-write", reason: `Branch pointer writes on protected branch '${normalizeBranchRef(target)}' are not allowed.`, matched: target };
     }
   }
   return undefined;

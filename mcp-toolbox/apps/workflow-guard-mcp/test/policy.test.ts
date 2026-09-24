@@ -1451,6 +1451,7 @@ test("W121: a protected-path deny carries the matched path", () => {
 test("W121: a shell deny carries the matched command", () => {
   const decision = checkPolicy({ action: "shell", command: destructiveExemplar });
   assert.equal(decision.decision, "deny");
+  assert.equal(decision.policy, "destructive-operation", "the shell lane's attribution pinned (the matched field cannot drift lanes silently)");
   assert.equal(decision.matched, destructiveExemplar, "the shell lane's matched surface is the command");
 });
 
