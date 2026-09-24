@@ -14,6 +14,31 @@ test("rubric covers all five axes with severity tiers and verdict format", () =>
   assert.match(rubric, /```diff\n/);
 });
 
+// W098 c1 part 2 (the reviewer-rubric slice of the cache-bust audit): the
+// rubric's STABLE preamble (the five-axis quality gate) must precede the
+// per-run content (task context, manifest, diff) — provider prompt caches
+// reward the longest shared token prefix, so the static gate text is the
+// cacheable prefix and per-run material must never ride ahead of it. The
+// verdict instructions trail after the per-run content (a stable tail).
+// A characterization pin: green on first run is the EXPECTED outcome; a red
+// means the rubric's section order moved and the cache discipline with it.
+test("W098: the review rubric keeps the stable preamble ahead of the per-run content", () => {
+  const rubric = buildReviewRubric({
+    taskPrompt: "implement hub feature",
+    manifestText: "src/a.ts",
+    diffText: "+ the change under review",
+  });
+  const gate = rubric.indexOf("# Secondary Review Agent Quality Gate");
+  const task = rubric.indexOf("### User Request / Context:");
+  const manifest = rubric.indexOf("### Review Coverage Manifest");
+  const diff = rubric.indexOf("### Code Diff Under Review:");
+  const verdict = rubric.indexOf("Provide your verdict:");
+  assert.ok(gate !== -1 && task !== -1 && manifest !== -1 && diff !== -1 && verdict !== -1, "every section renders");
+  assert.ok(gate < task && gate < manifest && gate < diff, "the stable gate preamble precedes every per-run section");
+  assert.ok(task < manifest && manifest < diff, "the per-run sections hold their own order (task, manifest, diff)");
+  assert.ok(diff < verdict, "the verdict instructions trail the per-run content");
+});
+
 test("rubric caps the embedded diff and includes task context when given", () => {
   const big = "y".repeat(100_000);
   const rubric = buildReviewRubric({ diffText: big, taskPrompt: "implement hub" });
