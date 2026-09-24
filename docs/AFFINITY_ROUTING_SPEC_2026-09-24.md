@@ -279,7 +279,13 @@ The savings remain `unmeasured` (park file L1/P11) until P12 + P9.
   and a round-3 cite said "§8.1" where §8 has no subsections (the
   configured-order rule is §8 item 4). All fixed; the re-verification is
   the fresh-eyes round's own follow-up record below.
-- **Fresh-eyes follow-up:** [recorded below.]
+- **Fresh-eyes follow-up:** the fresh-eyes reviewer's post-fix verdict
+  is recorded in the ledger item via record_review (bound to the final
+  tip); its spot-checks confirmed every load-bearing code claim
+  tree-accurate (the multi-alias counts, the resolver's drop/fail-open,
+  the one-model-per-launch composition, the seam split, key 4's zero
+  callers, the four-field projection, the future-tense role→model map,
+  the park P1/P19 rows and LESS-0040).
 
 ## 11. The writing-convention note
 
