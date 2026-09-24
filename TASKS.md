@@ -4,6 +4,10 @@
 
 Build Workflow as the durable, SDK-agnostic safety and execution layer around fast-changing agent hosts, MCP capabilities, and user interfaces.
 
+**Parked items and recorded limitations live in `docs/PARKED_AND_LIMITATIONS.md`** — the operator-directed re-address queue; consult it before picking loop work (an entry whose dependencies have landed is the highest-value candidate).
+
+The invariant is:
+
 The invariant is:
 
 ```text
@@ -3614,3 +3618,37 @@ an over-cap request regardless of the card) — the documented W112 posture
 W115; the under-cap wire GAINS `inputOverCap: false` (view-identity, not
 byte-identity); the full input still parks in memory at the broker (the
 agent's own spend — only the per-poll shipping is capped).
+
+### W116 - The parked-items and limitations registry file (Complete - the operator-directed re-address queue; the loop's work-picking source) (2026-09-24)
+
+**Source:** the operator's direction closing the contradiction sweep
+("parked items and limitations need to be in their own file so we can
+readdress with loops in the future") after PR #107's merge. The
+inventory existed only scattered across ledger items and lessons — the
+operator had approved it (2026-09-24) but nothing made it the loop's
+work-picking surface.
+
+**What landed:**
+- `docs/PARKED_AND_LIMITATIONS.md` — one canonical file, two sections
+  (11 parked items P1-P11, 8 recorded limitations L1-L8), every entry
+  carrying its source ledger item, dependencies/conditions, TRUTHFUL
+  verification status (landed+verified / structural-only / unmeasured /
+  dispositioned-not-audited), and its approval record. File rules:
+  append-only, dated supersession notes, entries leave only when the
+  work lands (PR linked) or the operator retires them, and future loops
+  consult it BEFORE picking work.
+- The operator's explicit approval of the limitations and parked items
+  (2026-09-24) is recorded in the file's approval record — the honest
+  chain: earlier entries rode inside merged PRs (#101-#107) implicitly;
+  this file's creation is the explicit approval act.
+- TASKS.md's header carries the pointer so every loop entry point
+  (and `guard_next_tasks`) finds it.
+
+**Acceptance criteria:**
+- [x] Every entry's facts match its source ledger item (verified by the
+      fresh-eyes reviewer's source cross-check — the honest verifier for
+      a prose file; no automated test covers prose).
+- [x] The file is append-only by stated rule; the operator's approval
+      date recorded per entry.
+- [x] The discoverability pointer exists in TASKS.md.
+- [x] Docs-only: lint/typecheck exit 0.
