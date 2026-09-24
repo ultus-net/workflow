@@ -4528,3 +4528,46 @@ resolves anywhere in WELL-FORMED argv — a malformed value pairing
 (`workflow web --cwd --help`, `workflow-rsi --help start`) fails closed
 with the value error before any side effect (the seam's hard line holds;
 the anywhere-nicety leaks, recorded by the round-2 review as note-level).
+
+### W130 - The admin control plane's HTTP contract e2e (Complete - the credential-custody surface's token gate, mutation validation, audit trail, and value-never-echoed rule are executable for the first time) (2026-09-25)
+
+**Source:** the operator's standing e2e direction ("continue with e2e
+testing setup"), landing on the stream's security surface: the admin
+control plane holds the operator's secrets (credential custody), and
+W126's sweep had only proved boot + teardown — the token gate, the
+trusted-mutation refusal, the body validation, and the audit trail were
+never exercised over the compiled seat.
+
+**What landed:** `test/e2e-admin.test.ts` — the compiled
+`dist/cli/admin.js` driven end to end (WORKFLOW_ADMIN_PORT=0 +
+WORKFLOW_ADMIN_TOKEN as the env seam, redirected HOME so the credential
+config lands in a tmp tree): the public page (200, CSP with
+frame-ancestors 'none'), the token gate (anonymous → 401 "admin
+capability required"; a WRONG token of the right length → 401 — the
+timing-safe comparison path; unknown route → 404), the trusted-mutation
+gate (an authed cross-origin PUT → 403 BEFORE the body is read), the
+content-type (415) and body (400) validation, the happy path (store →
+list METADATA ONLY — the secret value never echoed, asserted
+field-by-field and against the whole process output — → revoke → the
+definition deleted per credentials.ts:145), the audit trail's set/revoke
+lines, and the clean SIGTERM shutdown (exit 0).
+
+**Acceptance criteria:**
+- [x] Green on the first run against the observed contract; the
+      post-revoke pin tightened from a compound OR to the real semantic
+      (revoke DELETES the definition — credentials.ts:145) after reading
+      the source.
+- [x] The value-never-echoed rule is a first-class pin: the listing
+      carries metadata only (no `value` field) and the process output
+      never contains the secret.
+- [x] 1/1 e2e green; lint + typecheck exit 0.
+- [x] The LESS-0051 safety contract: no agent/PTY spawns, redirected
+      HOME (the credential config isolated), ephemeral port,
+      process-group SIGTERM with a SIGKILL backstop, no spawnSync for the
+      daemon.
+
+**Residuals (recorded, not fixed):** the audit's rollback path
+(credentials.ts:146-149 — a failed onDefinitionsChanged) is unexercised;
+the admin page's browser-side flows (the editor dialog) are pinned only
+at the API contract level; the browser-style same-origin PUT variant is
+unpinned (node fetch's no-Origin shape is the pinned trusted path).
