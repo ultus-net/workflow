@@ -68,7 +68,7 @@ const packagePatterns: Array<{ re: RegExp; reason: string }> = [
   { re: new RegExp(`\\b(?:npm|yarn|pnpm|bun)\\s+${W_PUBLISH}\\b`, "i"), reason: "package publishing is an external release side effect" },
 ];
 
-export interface ShellPolicyMatch { policy: string; decision: "deny" | "ask"; reason: string }
+export interface ShellPolicyMatch { policy: string; decision: "deny" | "ask"; reason: string; matched?: string }
 
 function normalizedCommand(command: string): string {
   const shellNormalized = splitShellSegments(decodeShellEscapes(command)).map((segment) => shellWords(segment).join(" ")).join(" ; ");
@@ -160,11 +160,11 @@ function interactiveReason(command: string, depth = 0): string | undefined {
 
 export function checkShellPolicy(command: string, context: GitPolicyContext = {}): ShellPolicyMatch | undefined {
   const dynamic = dynamicShellSyntaxIn(command);
-  if (dynamic) return { policy: "dynamic-shell-syntax", decision: "deny", reason: `Cannot safely inspect shell command: ${dynamic}.` };
+  if (dynamic) return { policy: "dynamic-shell-syntax", decision: "deny", reason: `Cannot safely inspect shell command: ${dynamic}.`, matched: command };
   const decoded = decodeShellEscapes(command);
   const normalized = normalizedCommand(decoded);
   for (const pattern of destructivePatterns) {
-    if (pattern.re.test(command) || pattern.re.test(decoded) || pattern.re.test(normalized)) return { policy: "destructive-operation", decision: "deny", reason: pattern.reason };
+    if (pattern.re.test(command) || pattern.re.test(decoded) || pattern.re.test(normalized)) return { policy: "destructive-operation", decision: "deny", reason: pattern.reason, matched: command };
   }
   // W108 (SECURITY_ASSURANCE #23): the destination-aware force-push rules.
   // Checked over the same three text variants the blind regexes covered;
@@ -183,10 +183,10 @@ export function checkShellPolicy(command: string, context: GitPolicyContext = {}
     // conservative where nothing is knowable; the git lane's W090 fail-open
     // class does NOT extend to the shell lane's force rules), or a
     // protected destination → deny.
-    return { policy: "destructive-operation", decision: "deny", reason: shape.reason };
+    return { policy: "destructive-operation", decision: "deny", reason: shape.reason, matched: command };
   }
   for (const pattern of packagePatterns) {
-    if (pattern.re.test(command) || pattern.re.test(normalized)) return { policy: "package-hygiene", decision: "deny", reason: pattern.reason };
+    if (pattern.re.test(command) || pattern.re.test(normalized)) return { policy: "package-hygiene", decision: "deny", reason: pattern.reason, matched: command };
   }
   const interactive = interactiveReason(command);
   if (interactive) return { policy: "interactive-command", decision: "ask", reason: interactive };

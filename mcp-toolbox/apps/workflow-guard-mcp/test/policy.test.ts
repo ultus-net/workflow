@@ -1429,3 +1429,56 @@ test("W108 residual #23: force-pushes to protected or unresolvable destinations 
   // protected branch, so destination-awareness does not loosen them.
   assert.equal(checkPolicy({ action: "shell", command: push+" or"+"igin main --"+"force-with-lease" }).decision, "deny");
 });
+
+// W121 (G4, the assessment's F6 residual): the decision record carries the
+// MATCHED surface — the concrete path/command the rule matched — as a
+// separate queryable field, never fabricated (absent when the rule keyed on
+// no concrete surface: allows, the promotion-gate and network asks). The
+// destructive exemplar is assembled from fragments per the W084 fixture
+// convention (the scanner must not find the shape in the source).
+const rm = "r" + "m";
+const rFlag = "-" + "r";
+const fFlag = String.fromCharCode(45) + "f";
+const rootPath = String.fromCharCode(47);
+const destructiveExemplar = [rm, rFlag, fFlag, rootPath].join(" ");
+
+test("W121: a protected-path deny carries the matched path", () => {
+  const decision = checkPolicy({ action: "file_write", path: "/etc/hosts" });
+  assert.equal(decision.policy, "protected-path");
+  assert.equal(decision.matched, "/etc/hosts", "the matched surface is queryable, not only embedded in the reason");
+});
+
+test("W121: a shell deny carries the matched command", () => {
+  const decision = checkPolicy({ action: "shell", command: destructiveExemplar });
+  assert.equal(decision.decision, "deny");
+  assert.equal(decision.policy, "destructive-operation", "the shell lane's attribution pinned (the matched field cannot drift lanes silently)");
+  assert.equal(decision.matched, destructiveExemplar, "the shell lane's matched surface is the command");
+});
+
+test("W121: a read-only-role shell deny carries the matched command", () => {
+  // The command reaches the read-only site (the git lane's always-on push
+  // deny would preempt a push command — the pin probes for a command whose
+  // first-firing policy IS the read-only block).
+  const decision = checkPolicy({ action: "shell", command: "echo x > out.txt", trustedRole: "reviewer" });
+  assert.equal(decision.policy, "read-only-role");
+  assert.equal(decision.matched, "echo x > out.txt", "the command is the matched surface");
+});
+
+test("W121: an interpreter deny carries the matched payload path", () => {
+  const envPath = join(homedir(), ".env");
+  const decision = checkPolicy({ action: "shell", command: `python -c 'open("${envPath}").read()'` });
+  assert.equal(decision.policy, "interpreter-secret-path");
+  assert.equal(decision.matched, envPath, "the interpreter lane's matched surface is the extracted payload path");
+});
+
+test("W121: an allow carries no matched surface (absent, never fabricated)", () => {
+  const allow = checkPolicy({ action: "file_write", path: "src/index.ts" });
+  assert.equal(allow.decision, "allow");
+  assert.equal(allow.matched, undefined, "an allow keys on no concrete surface");
+});
+
+test("W121: the promotion-gate ask carries no matched surface", () => {
+  const ask = checkPolicy({ action: "shell", command: "workflow install fleet" });
+  assert.equal(ask.decision, "ask");
+  assert.equal(ask.matched, undefined, "the ask keys on the promotion shape, not a concrete path/command surface");
+});

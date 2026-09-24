@@ -105,13 +105,14 @@ function bodyHasLiteralLineBreakEscapes(segment: string): boolean {
   return false;
 }
 
-export function checkPrCreatePreflight(command: string): { policy: string; decision: "deny"; reason: string } | undefined {
+export function checkPrCreatePreflight(command: string): { policy: string; decision: "deny"; reason: string; matched: string } | undefined {
   if (!hasPrCreateInvocation(command)) return undefined;
   if (splitShellSegments(command).some(bodyHasLiteralLineBreakEscapes)) {
     return {
       decision: "deny",
       policy: "pr-preflight",
       reason: "PR description contains literal \\n/\\r escapes that will render as text; use real newlines or a body/description file instead.",
+      matched: command,
     };
   }
   return undefined;
