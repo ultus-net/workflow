@@ -4495,9 +4495,11 @@ executed during development (spawning an agent is outside the suite's
 bounds).
 
 **Acceptance criteria:**
-- [x] Red/green: the live admin red above; post-fix 19/19 in the sweep
-      file (9 W126 probes + 10 W129 help pins — the dispatcher + the nine
-      bins), each pinning exit 0 + the usage marker + EMPTY stderr.
+- [x] Red/green: the live admin red above; post-fix 24/24 in the sweep
+      file (expanded by the round-1 review: 9 W126 probes + 15 W129 rows
+      × BOTH flags — the original 10-pin cut and its 19/19 count stand
+      recorded in the round-1 bullet below), each pinning exit 0 + the
+      usage marker + EMPTY stderr.
 - [x] Regressions 58/58: the three parser suites whose deep-equals guard
       the additive help field, the web/W124 hold-outs, the W125/W127
       pins, and the three W128 e2e files.
@@ -4521,4 +4523,8 @@ bounds).
       in-process-bypass clause.
 
 **Residuals (recorded, not fixed):** the usage text is per-bin minimal
-(the first-line banner + key flags), not exhaustive flag docs.
+(the first-line banner + key flags), not exhaustive flag docs; help
+resolves anywhere in WELL-FORMED argv — a malformed value pairing
+(`workflow web --cwd --help`, `workflow-rsi --help start`) fails closed
+with the value error before any side effect (the seam's hard line holds;
+the anywhere-nicety leaks, recorded by the round-2 review as note-level).
