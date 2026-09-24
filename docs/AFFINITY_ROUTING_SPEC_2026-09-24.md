@@ -129,7 +129,7 @@ requested; it composes at the autoLatest `allowed_models` injection
 `transformBody` seam, which landed on the vendor-proxy lane and is a
 different stage), adds no second metering path, and every request still
 records usage through the fixed four-field projection (the
-  model-usage-proxy metering trail — the W044-surfaced G1 metrics).
+model-usage-proxy metering trail — the W044-surfaced G1 metrics).
 Transforms run pre-forward; SSE passes through untouched; no mid-stream
 switch exists — the recording mechanics are unaffected by construction.
 
@@ -242,6 +242,16 @@ The savings remain `unmeasured` (park file L1/P11) until P12 + P9.
   the open-source-pool lane already maximally pinned (no work needed
   there), the topology-daemon surface wires no autoLatest option, and
   "pool" is defined on first use.
+- **Round 3 (2026-09-24) — the same session, continuation (confirm):
+  ACCEPT.** All eight round-1 fixes verified landed; all ten §-references
+  checked and every one resolves to the right section; the slug rule
+  agrees exactly across §2/§3/§8.1; the family counts match the alias
+  array (x-ai/moonshotai ×1 correctly omitted from the multi-alias
+  enumeration); the round records judged faithful (the round-2 record
+  matches the round-2 verifier's own session); no new errors in the
+  fixed lines. One cosmetic P3 (a two-space continuation-line indent at
+  the trail cite) fixed with this record's edit.
+- **Fresh-eyes round:** [recorded below.]
 - **Round 2 (2026-09-24) — the same Kimi K3 session, continuation
   (confirm + tree-verify): REVISE at the pointer layer** — all eight
   round-1 fixes verified landed and tree-accurate (the one-slug counts
