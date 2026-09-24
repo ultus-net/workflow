@@ -3651,6 +3651,26 @@ an over-cap request regardless of the card) — the documented W112 posture
 W115; the under-cap wire GAINS `inputOverCap: false` (view-identity, not
 byte-identity); the full input still parks in memory at the broker (the
 agent's own spend — only the per-poll shipping is capped).
+  - Dated note (2026-09-25, the base-loop continuation, iteration 49):
+    the round-1 P3 above LANDED ONLY TODAY — the "What landed" list
+    claimed it on 2026-09-24, but the merged commit (1e62f97) carried
+    only the poll shaping; the answer-route line sat UNCOMMITTED in
+    src/ui/web.ts until this session (the W134 deferral note "carries
+    the operator's uncommitted W115 work" was the honest record). This
+    iteration completed it: the answer route's `pending` rides
+    `transportPermissionView` (src/ui/web.ts), the in-flight comment's
+    race premise CORRECTED to the reachable truth (a concurrent
+    same-session park is PROMPT_BUSY-denied and the field is read
+    synchronously with the answer — the reachable non-null path is the
+    legacy undefined-key shape, oldest parked overall), and the seam's
+    own pin added: RED on the pre-change tree (25 pass/1 fail, the raw
+    200 KiB payload in the answer response's `pending`), GREEN after
+    (web 26/26; held-out permission-broker + webapp-surface +
+    web-sessions 62/62; lint + typecheck exit 0). The under-cap identity
+    pin rode along (a guard pin, green on both trees — its comment says
+    exactly that). Fresh-eyes review: round 1 REJECT (the reviewer
+    sandbox had no shell; four items unverified), the four closures
+    cited file:line, round 2 APPROVE. LESS-0055 records the lesson.
 
 ### W116 - The parked-items and limitations registry file (Complete - the operator-directed re-address queue; the loop's work-picking source) (2026-09-24)
 
