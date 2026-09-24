@@ -4657,6 +4657,12 @@ assumed.
 flows are pinned only at the API contract level; the same-origin PUT
 variant is unpinned (node fetch's no-Origin shape is the pinned trusted
 path); the dead deep link is queued (above).
+  - Dated note (2026-09-25, W134): the dead deep link FIXED — the CLI
+    advertises and opens the shell root (the Settings dialog lives there);
+    the /settings route still 404s as the server truth (serving the shell
+    at /settings is deferred because src/ui/web.ts carries the operator's
+    uncommitted W115 work). The banner pin and its parse regex flipped
+    with the fix.
 
 ### W132 - The contained-shell's behavioral lane e2e + the guard-deny session-death repair (Complete - the containment contract driven over stdin pipes: ALLOW→ENFORCED→VERIFIED, the nonzero lane's persistence, and the guard-deny lane repaired to W022's contract) (2026-09-25)
 
@@ -4785,8 +4791,57 @@ a blessing of it; the round-4 review's P3).
       under the redirected HOME (the schedule lifecycle mutates only the
       probe's own WORKFLOW_HUB_SCHEDULES file); port 0; process-group
       SIGTERM with the pinned exit + unlink truth.
+  - Dated note (2026-09-25, W134): the empty-body 500 FIXED — see the note
+    in the W133 residuals below; the pin now characterizes the repaired
+    contract (the W133 entry's "pin flips alongside that polish" note
+    came due).
 
-**Residuals (recorded, not fixed):** the empty-body 500 (queued above);
-one unreproduced one-off 400 "invalid snapshot request" mid-sequence
-(suspected rare keep-alive/unconsumed-body interaction — noted by the
-agent, never reproduced in ~12 runs, deliberately not pinned).
+**Residuals (recorded, not fixed):** the unreproduced one-off 400
+"invalid snapshot request" mid-sequence (suspected rare
+keep-alive/unconsumed-body interaction — noted by the agent, never
+reproduced in ~12 runs, deliberately not pinned).
+
+### W134 - The two queued product fixes: the hub's body-error classification and the settings verb's dead deep link (Complete - the wave's findings closed; the empty-body 500 is now an honest 400 and the settings verb points at the shell, not a 404) (2026-09-25)
+
+**Source:** the e2e wave's two recorded queued findings — W133's
+empty-body 500 (the hub's catch-all classified a client payload error as
+a server fault) and W131's dead /settings deep link (the settings verb
+printed and opened a 404). The operator's "continue tasks + e2e testing
+coverage and fixes" direction.
+
+**What landed:**
+- `hub-http.ts`: a typed `HubRequestError` (the request-BODY fault class)
+  thrown by `readJson` for oversized or unparseable bodies, with a NAMED
+  requirement message ("a JSON request body is required (send {} for read
+  routes)") — the catch-all's 400/500 split answers 400 for the client
+  class and keeps 500 for genuine server faults. The W133 pin flipped
+  (500 → 400 + the message).
+- `workflow.ts` (the settings verb): prints and opens the SHELL ROOT —
+  where the Settings dialog actually lives — instead of the dead
+  `/settings` URL; the parenthetical names the seam ("the Settings
+  dialog lives on the operator shell"). The W131 banner pin and its
+  parse regex flipped. The deeper option (serving the shell AT /settings
+  in src/ui/web.ts) is deferred: that file carries the operator's
+  uncommitted W115 work (a coordination note, recorded).
+
+**Acceptance criteria:**
+- [x] Red/green: the pre-fix observations (the 500 "Unexpected end of
+      JSON input"; the `/settings` 404 the verb advertised) were the
+      wave's recorded findings; post-fix the flipped pins run green
+      (2/2).
+- [x] Regressions 80/80 across the hub unit suites (hub-rsi/hub-review/
+      hub-runs), the compiled-bin sweep, the W128 hub e2e, and the web
+      tests — the body-classification change did not disturb any other
+      hub consumer, and the dispatcher change kept the help pins valid.
+- [x] lint + typecheck + build exit 0.
+
+**Residuals (recorded, not fixed):** the /settings route still 404s as
+the server truth (the CLI no longer advertises it; serving the shell
+there awaits the operator's W115 work clearing src/ui/web.ts); the
+unreproduced one-off 400 remains unpinned (W133's residual).
+  - Dated note (2026-09-25, W134): the empty-body 500 FIXED — hub-http
+    classifies a request-BODY fault as a CLIENT error (a HubRequestError
+    answered 400 with "a JSON request body is required (send {} for read
+    routes)"), and the catch-all's 400/500 split leaves 500 to genuine
+    server faults. The W133 pin flipped (500 → 400 + the named
+    requirement).

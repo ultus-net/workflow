@@ -349,18 +349,20 @@ test("W133: the compiled hub's routes enforce the operator/verifier token-class 
   assert.deepEqual(unknownRoute.body, { error: "not found" }, "an unknown route falls through to the honest 404 (hub-http.ts:268)");
 
   // An EMPTY-body request (no bytes at all): readJson's for-await sees zero
-  // chunks and JSON.parse("") throws into the catch-all — OBSERVED 500, the
-  // server-fault shape for what is arguably a client payload error
-  // (hub-http.ts:269-271). Recorded as a finding, not fixed.
+  // chunks and JSON.parse("") throws — W134 repairs the classification: the
+  // body fault is a CLIENT error, answered 400 with the named requirement
+  // (hub-http.ts's HubRequestError + the catch-all's 400/500 split). The
+  // pre-fix observation (a 500 "Unexpected end of JSON input" through the
+  // server-fault shape) is recorded in the ledger's W133/W134 entries.
   const emptyBody = await fetch(`${endpoint}/snapshot`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
   });
-  assert.equal(emptyBody.status, 500, "OBSERVED: an empty-body request earns the 500 catch-all (hub-http.ts:269-271) — recorded as a finding, not fixed");
+  assert.equal(emptyBody.status, 400, "an empty-body request answers 400 (the client-error classification, W134)");
   assert.deepEqual(
     await emptyBody.json(),
-    { error: "Unexpected end of JSON input" },
-    "the client payload error surfaces verbatim through the server-fault shape",
+    { error: "a JSON request body is required (send {} for read routes)" },
+    "the body requirement is named, not surfaced as a parse error",
   );
 
   // ── Teardown (the skeleton is W128's; the deep guarded-shutdown contract is

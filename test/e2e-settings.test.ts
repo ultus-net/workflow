@@ -10,20 +10,21 @@ import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js
 
 // W131 — the COMPILED settings panel's HTTP contract, end to end (behavioral
 // e2e, the e2e stream's third seat). The settings verb is the dispatcher's
-// in-process branch (src/cli/workflow.ts: startWorkflowWeb + the
-// `Workflow settings panel: <url>/settings` banner + openBrowser), so this
+// in-process branch (src/cli/workflow.ts: startWorkflowWeb + the settings
+// banner + openBrowser), so this
 // file drives the REAL compiled binary (dist/cli/workflow.js `settings`) and
 // pins the settings-document HTTP contract src/ui/web.ts serves:
-//   - the banner: `Workflow settings panel: http://127.0.0.1:<port>/settings`
-//     parsed for the base URL; PORT=0 is the ephemeral-port seam (the settings
-//     branch passes no --port; src/cli/web-service.ts reads env PORT, 4173
-//     unset) — the banner must carry the REAL port, never the 0 placeholder;
-//   - GET /settings → 404 {"error":"not found"}: the deep link the launcher
-//     prints AND tries to open is DEAD — the server serves the app shell only
-//     at GET / (src/ui/web.ts has no /settings page route; the settings
-//     surface is the SPA's settings DIALOG, src/ui/webapp/settings-dialog.tsx).
-//     Pinned as observed truth and reported as a product finding; not fixed
-//     from the test seat;
+//   - the banner: `Workflow settings panel: http://127.0.0.1:<port> (the
+//     Settings dialog lives on the operator shell)` — W134's CLI fix stopped
+//     advertising `/settings` (a 404); the banner carries the REAL port,
+//     never the 0 placeholder (PORT=0 is the ephemeral seam — the branch
+//     passes no --port; src/cli/web-service.ts reads env PORT, 4173 unset);
+//   - GET /settings → 404 {"error":"not found"}: the server has no /settings
+//     page route — the settings surface is the SPA's settings DIALOG behind
+//     GET / (src/ui/web.ts; src/ui/webapp/settings-dialog.tsx). The pre-W134
+//     launcher printed AND opened this dead link (recorded as the W131
+//     finding); the route still 404s as the server truth, and the CLI no
+//     longer advertises it;
 //   - GET /api/settings/mcp + /api/settings/agents: the merged read shapes
 //     (global base + per-workspace overlay, overlay wins per server name and
 //     per agent key — src/integrations/workflow-settings.ts), the vendored
@@ -184,7 +185,7 @@ test("W131: the compiled settings panel serves the settings-document HTTP contra
   while (exit === undefined && !output.includes("Workflow settings panel:") && Date.now() < deadline) {
     await new Promise<void>((resolveWait) => setTimeout(resolveWait, 100));
   }
-  const banner = output.match(/Workflow settings panel: (http:\/\/127\.0\.0\.1:(\d+))\/settings/);
+  const banner = output.match(/Workflow settings panel: (http:\/\/127\.0\.0\.1:(\d+)) \(/);
   assert.ok(
     banner !== null,
     `the compiled settings panel never printed its startup banner within 20s — output: ${output.slice(0, 600)}`,
@@ -488,9 +489,13 @@ test("W131: the compiled settings panel serves the settings-document HTTP contra
   // is read after the exit promise resolves (node flushes pipe stdout
   // before exit — the round-2 review's note-level flake caveat; if a flush
   // race ever appears, await stream close before this assert).
+  // The W134 CLI fix: the verb no longer advertises ${base}/settings (a 404)
+  // — it points at the shell root where the Settings dialog lives; the
+  // /settings route itself still 404s (the server unchanged; pinned below as
+  // the server truth).
   assert.equal(
     output,
-    `Workflow settings panel: ${base}/settings\nNo browser opener available; open the URL above manually.\n`,
+    `Workflow settings panel: ${base} (the Settings dialog lives on the operator shell)\nNo browser opener available; open the URL above manually.\n`,
     `the settings verb's whole output must be exactly the banner + the no-opener line — output: ${JSON.stringify(output)}`,
   );
 });
