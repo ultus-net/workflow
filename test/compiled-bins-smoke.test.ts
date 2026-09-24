@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
-import { execFileSync, spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
 import test from "node:test";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
-import { guardDistIsStale } from "../src/integrations/mcp-toolbox-guard.js";
-import { ensureFresh, repoRoot } from "./fixtures/compiled-dist.js";
+import { ensureFresh, ensureToolboxGuardBuilt, repoRoot } from "./fixtures/compiled-dist.js";
 
 // W126 — the per-bin compiled smoke: W125 gave the suite its first compiled
 // executions (the `workflow` dispatcher + doctor, and the real dist webapp
@@ -204,27 +203,6 @@ const DAEMON_PROBES: readonly DaemonProbe[] = [
     expectedExit: 0,
   },
 ];
-
-/** The vendored guard seat: the hub composes it fail-closed at startup, so
- * the hub probe needs it built and fresh (the W120 gate's own remedy — which
- * requires `pnpm` on PATH and the toolbox's node_modules installed, the same
- * precondition the W120 guard test carries; documented here so a bare
- * checkout's failure names the remedy instead of a raw ENOENT). */
-function ensureToolboxGuardBuilt(): void {
-  const serverPath = resolve(repoRoot, "mcp-toolbox", "apps", "workflow-guard-mcp", "dist", "server.js");
-  if (existsSync(serverPath) && !guardDistIsStale(repoRoot)) return;
-  try {
-    execFileSync("pnpm", ["--dir", "mcp-toolbox", "--filter", "workflow-guard-mcp", "run", "build"], {
-      cwd: repoRoot,
-      stdio: "inherit",
-    });
-  } catch (error) {
-    throw new Error(
-      `the hub probe composes the vendored workflow-guard-mcp seat fail-closed, and its self-healing build failed — run "npm run toolbox:install && npm run toolbox:build" once (pnpm required): ${error instanceof Error ? error.message : String(error)}`,
-      { cause: error },
-    );
-  }
-}
 
 interface DaemonRun {
   readonly output: string;

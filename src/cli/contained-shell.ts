@@ -82,8 +82,28 @@ try {
       throw new TypeError("invalid process proposal command");
     }
 
-    const execution = await new WorkflowContainedProcess(application, containment, guard)
-      .execute(proposal, { executable, args, writablePaths: [workspace] });
+    let execution: Awaited<ReturnType<WorkflowContainedProcess["execute"]>>;
+    try {
+      execution = await new WorkflowContainedProcess(application, containment, guard)
+        .execute(proposal, { executable, args, writablePaths: [workspace] });
+    } catch (error) {
+      // W132 (the compiled-bin sweep's finding): a failure INSIDE execute —
+      // the guard seat's denial, the second authorization seat's denial, or
+      // a containment failure — used to escape the unguarded per-command
+      // loop and terminate the persistent session, violating W022's
+      // recorded contract ("a denied command does not terminate the
+      // persistent session"). The label is deliberately NEUTRAL
+      // ("execution refused"): the round-3 review's P2 — the throw classes
+      // are distinguishable by their message prefixes, and a bwrap-less
+      // operator must not read a false seat attribution. The denial is
+      // fail-closed (it fires BEFORE any spawn: nothing executed, nothing
+      // mutated), so the honest report is the per-command FAILED the
+      // nonzero lane already prints, and the session survives.
+      console.log(`Task: FAILED (execution refused: ${error instanceof Error ? error.message : String(error)})`);
+      application.transition(id, "FAILED");
+      input.prompt();
+      continue;
+    }
     console.log(`Containment: ${execution.enforcement.toUpperCase()}`);
     if (execution.stdout.length > 0) process.stdout.write(execution.stdout);
     if (execution.stderr.length > 0) process.stderr.write(execution.stderr);

@@ -366,6 +366,7 @@ W019 is complete. The v0 W001-W018 baseline remains the trusted host-policy/appl
 - [x] The session shares only its temporary writable workspace; network isolation and cleared ambient credentials remain unchanged.
 - [x] Automated CLI coverage proves two commands are independently allowed, contained, observed, and verified before clean exit.
 - [x] A denied or nonzero command remains unverified and does not terminate the persistent session.
+  - Dated note (2026-09-25, W132): the W126/W132 compiled-bin e2e found the contract violated on the GUARD-deny lane — the vendored guard's denial threw out of the unguarded per-command loop and killed the session (the nonzero lane held). Repaired in W132 (contained-shell.ts catches the denial per-command and reports Task: FAILED; the session survives — pinned in test/e2e-contained-shell.test.ts).
 
 **Verification:** focused persistent CLI test plus lint, full test suite, containment/E2E runtime checks, typecheck, build, diff check, and independent review.
 
@@ -4528,3 +4529,264 @@ resolves anywhere in WELL-FORMED argv — a malformed value pairing
 (`workflow web --cwd --help`, `workflow-rsi --help start`) fails closed
 with the value error before any side effect (the seam's hard line holds;
 the anywhere-nicety leaks, recorded by the round-2 review as note-level).
+
+### W130 - The admin control plane's HTTP contract e2e (Complete - the credential-custody surface's token gate, mutation validation, audit trail, and value-never-echoed rule are executable for the first time) (2026-09-25)
+
+**Source:** the operator's standing e2e direction ("continue with e2e
+testing setup"), landing on the stream's security surface: the admin
+control plane holds the operator's secrets (credential custody), and
+W126's sweep had only proved boot + teardown — the token gate, the
+trusted-mutation refusal, the body validation, and the audit trail were
+never exercised over the compiled seat.
+
+**What landed:** `test/e2e-admin.test.ts` — the compiled
+`dist/cli/admin.js` driven end to end (WORKFLOW_ADMIN_PORT=0 +
+WORKFLOW_ADMIN_TOKEN as the env seam, redirected HOME so the credential
+config lands in a tmp tree): the public page (200, CSP with
+frame-ancestors 'none'), the token gate (anonymous → 401 "admin
+capability required"; a WRONG token of the right length → 401 — the
+timing-safe comparison path; unknown route → 404), the trusted-mutation
+gate (an authed cross-origin PUT → 403 BEFORE the body is read), the
+content-type (415) and body (400) validation, the happy path (store →
+list METADATA ONLY — the secret value never echoed, asserted
+field-by-field and against the whole process output — → revoke → the
+definition deleted per credentials.ts:145), the audit trail's set/revoke
+lines, and the clean SIGTERM shutdown (exit 0).
+
+**Acceptance criteria:**
+- [x] Green on the first run against the observed contract; the
+      post-revoke pin tightened from a compound OR to the real semantic
+      (revoke DELETES the definition — credentials.ts:145) after reading
+      the source.
+- [x] The value-never-echoed rule is a first-class pin: the listing's raw
+      body never contains the secret (the channel-completeness check) and
+      the parsed entry carries metadata only — plus the process-output pin.
+- [x] 1/1 e2e green; lint + typecheck exit 0.
+- [x] The LESS-0051 safety contract: no agent/PTY spawns, redirected
+      HOME (the credential config isolated), ephemeral port,
+      process-group SIGTERM with a SIGKILL backstop, no spawnSync for the
+      daemon.
+- [x] The round-2 review REVISE'd the after-hook with a verified blocker:
+      the comment claimed node:test runs after hooks in REVERSE
+      registration order — FALSE (the runner executes them in declaration
+      (FIFO) order; verified against lib/internal/test_runner/test.js and
+      nodejs/node#48736), so the revoke ran AFTER the home rmSync. Fixed:
+      the registration order is now revoke → kill → rmSync (FIFO = the
+      intended execution order), the comment states the verified truth,
+      and the revoke's gating (storedCredential + a live server) is
+      unchanged. The round-2 P3s: the revoke audit line is now bound to
+      the credential id, the listing's raw body is checked whole for the
+      secret (channel completeness), and the "field-by-field" wording
+      corrected.
+
+**Residuals (recorded, not fixed):** the audit's rollback path
+(credentials.ts:146-149 — a failed onDefinitionsChanged) is unexercised;
+the admin page's browser-side flows (the editor dialog) are pinned only
+at the API contract level; the browser-style same-origin PUT variant is
+unpinned (node fetch's no-Origin shape is the pinned trusted path).
+**The keyring honesty (the round-1 review's P2):** the redirected HOME
+confines only the credential CONFIG file — the secret MATERIAL is stored
+by createSecretServiceStore through `secret-tool` into the operator's
+LIVE system keyring; the e2e stores one w130-prefixed test credential
+whose cleanup is the in-test DELETE plus an after-hook best-effort
+revoke, and a failure between the PUT and the cleanup can orphan that
+keyring entry. The surface is also MACHINE-GATED on secret-tool + an
+unlocked keyring (without them the PUT 400s and the test fails closed —
+visible, never skipped).
+
+### W131 - The settings panel's settings-document HTTP contract e2e (Complete - the second background wave's first file: the merged-document shape, the fail-closed write refusals, the value-never-echoed rule for the management key, and the advertised deep link's honest 404) (2026-09-25)
+
+**Source:** the operator's standing e2e direction (the second background
+wave: three parallel agents; this file from the settings agent). The
+settings document (MCP servers + agent preferences, merged
+global/workspace) had no behavioral coverage over the compiled seat, and
+the settings verb's browser-open behavior had never been e2e-driven
+headlessly.
+
+**What landed:** `test/e2e-settings.test.ts` — the compiled
+`workflow settings` driven end to end (PORT=0; the browser suppressed
+through the discovered seam — the verb has NO --no-browser flag, so the
+e2e uses WORKFLOW_NO_BROWSER=1 (open-browser's pre-lookup env gate) and
+strips DISPLAY/WAYLAND_DISPLAY/DBUS_SESSION_BUS_ADDRESS as
+defense-in-depth; the honest "No browser opener available" line is
+pinned): the settings-document API's read shapes (/api/settings/mcp —
+the merged servers where the workspace overlay wins per server name —
+plus the vendored catalog; /api/settings/agents — the merged preferences
+with presence-booleans only; /api/settings/mcp/live — the honest
+unavailable state), the write refusals (a cross-site origin → 403
+cross-origin mutation denied; text/plain → 415; a non-array servers body
+→ 400), the valid writes (a malformed server is dropped fail-closed; the
+on-disk documents land 0600-in-0700 under the redirected HOME and the
+redirected workspace overlay — the real repo untouched), the
+management-key value-never-echoed pin (a fake key set in the child env;
+the response body greps clean), and the whole-stdout equality pin at
+teardown (banner + no-opener line, exit 0).
+
+**Discovered and queued (product finding):** `workflow settings` prints
+AND opens `${service.url}/settings`, but the server has NO /settings
+page route — it answers 404 JSON; the settings surface is the SPA's
+settings dialog behind GET /. A real browser opening the advertised URL
+lands on an error. The fix belongs in product (serve the shell at
+/settings, or print the bare URL); the test pins the observed 404 until
+then.
+
+**Observation (recorded for the threat model):** the settings mutations
+authenticate only via the trusted-mutation gate (origin /
+Sec-Fetch-Site) — no management key, no session scope; any local
+process can read/write the operator's settings document. Consistent
+with the loopback-only bind (arguably by-design), stated rather than
+assumed.
+
+**Acceptance criteria:**
+- [x] 2/2 green (the W130 admin e2e + this file; ~250ms each), plus the
+      agent's four stability runs; lint + typecheck exit 0 for this file
+      (the whole-project typecheck is transiently red from a concurrent
+      agent's untracked WIP file — its gate lands with its integration).
+- [x] The browser never opens (the suppression seam proven by the pinned
+      stdout equality).
+- [x] The settings document writes are confined to the redirected
+      HOME/workspace overlay (asserted against the real repo).
+- [x] The round-2 review's notes dispositioned: the no-Origin trusted path
+      is now EXERCISED (the global MCP write drops its origin header —
+      the prose/behavior mismatch closed), and the whole-stdout equality
+      pin carries the flush-timing caveat in a comment (node flushes pipe
+      stdout before exit; if a flush race ever appears, await stream
+      close first).
+
+**Residuals (recorded, not fixed):** the browser-side settings dialog
+flows are pinned only at the API contract level; the same-origin PUT
+variant is unpinned (node fetch's no-Origin shape is the pinned trusted
+path); the dead deep link is queued (above).
+
+### W132 - The contained-shell's behavioral lane e2e + the guard-deny session-death repair (Complete - the containment contract driven over stdin pipes: ALLOW→ENFORCED→VERIFIED, the nonzero lane's persistence, and the guard-deny lane repaired to W022's contract) (2026-09-25)
+
+**Source:** the second background wave's contained-shell agent; the
+contained shell is the containment contract's user-facing surface, and
+its behavioral lanes (ALLOW → ENFORCED → VERIFIED; the nonzero lane;
+the guard-deny lane) had never been driven over the COMPILED seat —
+LESS-0012's divergence class on the surface that executes operator
+commands inside bubblewrap.
+
+**What landed:** `test/e2e-contained-shell.test.ts` (three lanes over
+stdin pipes, no PTY, every execution inside the product's own bubblewrap
+boundary, HOME redirected): (1) the benign allow — blank line executes
+nothing, Policy: ALLOW → Containment: ENFORCED (bwrap 0.11.0 — the
+observed truth) → the command's output → Task: VERIFIED, strict order,
+clean exit 0; (2) the nonzero lane — `false` → Task: FAILED (exit 1) and
+the session SURVIVES (the next command verifies — W022's persistence
+contract); (3) the guard-deny lane — Workflow's own lane prints Policy:
+ALLOW first, then the vendored guard denies INSIDE
+WorkflowContainedProcess.execute.
+
+**Discovered and fixed — the wave's second live product defect:** the
+guard-deny lane's denial THREW out of the unguarded per-command loop and
+TERMINATED the persistent session (exit 1, no Containment/Task lines
+ever printed) — violating W022's recorded contract ("a denied command
+does not terminate the persistent session"; the nonzero lane held, the
+guard lane did not). Fail-closed (the denial fires BEFORE any spawn:
+nothing executed, nothing mutated) but honest death instead of
+per-command reporting. Fixed: contained-shell.ts catches the failure
+per-command, reports `Task: FAILED (execution refused: …)` — the label
+deliberately SEAT-NEUTRAL per the round-3 review's P2 (execute's throw
+classes are the guard seat, the second authorization seat, and
+containment failures; a bwrap-less operator must not read a false seat
+attribution) — transitions the task FAILED, and keeps the loop alive;
+the pin now asserts the repaired contract (the FAILED report carries the
+denial's message, no containment verdict prints, and the NEXT command
+still verifies, exit 0). W022's ledger line carries the dated
+contradiction note.
+
+**Discoveries recorded (observed, pinned):** the shell's own Policy:
+DENY branch is DEAD CODE from its only input surface — every stdin line
+flows the same hardcoded proposal (subjects fixed [], workspaceRoot
+never set, the capability set includes process, a fresh
+WorkflowApplication + fresh MutationBudget(100) per command) — so the
+only reachable deny is the guard seat's, which the fix now surfaces
+honestly. The environment truth: bwrap 0.11.0 present → ENFORCED is the
+live lane; the bwrap-less and non-Linux degradations are recorded from
+source, never faked.
+
+**Acceptance criteria:**
+- [x] Red/green: the lane-3 red was the live session death (the agent's
+      observed run: exit 1, no Task line); post-fix 3/3 green with the
+      repaired pin (the FAILED report + the surviving session's next
+      VERIFIED).
+- [x] The LESS-0051 safety contract: no agent/PTY spawns; the payloads
+      execute INSIDE the product's own bubblewrap boundary (echo/false
+      only; the guard-deny probe assembled from fragments so the file's
+      own authoring guard never matches the literal); HOME redirected;
+      the guard MCP server dies with the child's process group; SIGTERM
+      only as the stuck-exit backstop.
+- [x] Hold-outs: the W126 sweep's contained-shell boot/EOF pin holds
+      alongside; lint + this file's typecheck clean (the whole-project
+      typecheck is transiently red from the concurrent hub-routes agent's
+      untracked WIP — its gate lands with its integration).
+
+**Residuals (recorded, not fixed):** the shell's own DENY branch remains
+unreachable from stdin (a coverage gap in the surface's design, not the
+test — recorded for the surface's next design pass); the bwrap-less
+Linux and non-Linux degradations are recorded from source and must be
+pinned by their own environments; the guard-deny probe's fragment
+assembly is environment-coupled to the vendored policy corpus's
+destructive-operation rule; a POST-SPAWN containment failure (the
+command possibly executed) would skip recordMutation where the nonzero
+lane records it — the mutation-accounting question for the catch lane
+is queued (the round-3 review's P2 follow-up); the ShellSession exit
+await has no SIGKILL escalation deadline (note-level: a plain node child
+never ignores SIGTERM — the round-3 review's P3).
+
+### W133 - The hub's route-level contract e2e (Complete - the third background wave file: the operator/verifier token-class matrix, the schedule lifecycle, the self-improvement route shapes, and the empty-body 500 recorded) (2026-09-25)
+
+**Source:** the second background wave's third agent (the hub-routes
+deep-dive). W128 pinned discovery + snapshot + teardown; the ROUTE-level
+contract — the two-credential class split, the composed schedule and
+self-improvement route shapes, the refusal classes — had never been
+exercised over the compiled multi-process seat.
+
+**What landed:** `test/e2e-hub-routes.test.ts` — the compiled hub's
+route contract (W128's spawn/discovery/teardown skeleton reused, not
+reinvented): the token-class split BOTH directions (a verifier credential
+on an operator route → 401; the operator credential on a verifier-only
+route → 401 — authorization precedes body parsing AND dispatch, so those
+pins move no hub state), the schedule routes' live lifecycle
+(list→save→delete through the W074 registry; both refusal classes — the
+route-level 400 and the registry-level 400 surfaced through the route's
+client-error catch; a rejected save never partially admits), the
+self-improvement routes (composed even with WORKFLOW_RSI_AGENT=0 — the
+fail-closed stub arms only the loop RUNNER: zero records, an explicit
+null for an unknown id, a false cancel — never a 404), the trailing 404,
+and the teardown truth: the persisted schedule table is operator state
+that hub.close() deliberately does NOT unlink (only discovery.json,
+verifier.json, and the instance lock go).
+
+**Discovered and queued (product finding):** an EMPTY-body request earns
+a 500 from the route dispatch's catch-all — hub-http's readJson
+JSON.parses a zero-byte body, so every route except /health requires a
+JSON body ("{}" suffices) even for reads, and the client payload error is
+classified as a server fault. Product polish queued: a 400 naming the
+body requirement instead of a 500 "Unexpected end of JSON input".
+Recorded honestly in the file's header, not fixed here — and the 500 pin
+flips alongside that polish (it characterizes the current contract, not
+a blessing of it; the round-4 review's P3).
+
+**Acceptance criteria:**
+- [x] Red/green: the agent's debugging found the 500 was ITS helper's
+      omitted-body default, not a hub defect (the minimal in-process
+      replica ran green; the fix was supplying the JSON body) — LESS-0054
+      formalizes the protocol.
+- [x] The dangerous verifier routes (/rsi/start, /schedule/run-now) are
+      NEVER called with the verifier credential — pinned with the wrong
+      token class only, which authorizes nothing; /rsi/start is never
+      called at all.
+- [x] 1/1 green (356ms first run, ~600ms after the retitle); lint +
+      typecheck exit 0 (the whole-project typecheck now green — the WIP
+      resolved).
+- [x] The LESS-0051 safety contract: no agent/PTY spawns; all hub state
+      under the redirected HOME (the schedule lifecycle mutates only the
+      probe's own WORKFLOW_HUB_SCHEDULES file); port 0; process-group
+      SIGTERM with the pinned exit + unlink truth.
+
+**Residuals (recorded, not fixed):** the empty-body 500 (queued above);
+one unreproduced one-off 400 "invalid snapshot request" mid-sequence
+(suspected rare keep-alive/unconsumed-body interaction — noted by the
+agent, never reproduced in ~12 runs, deliberately not pinned).
