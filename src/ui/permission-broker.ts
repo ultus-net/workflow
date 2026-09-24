@@ -22,6 +22,11 @@ export interface PendingPermissionRequest {
    * Present whenever the action carried one; the card renders it up to the
    * inspection cap and refuses approval beyond it. */
   readonly input: unknown;
+  /** W115: set once at parking when the payload exceeds the approval card's
+   * 64 KiB inspection cap (the same measure the card renders). The poll
+   * transport strips `input` for flagged requests — the flag keeps the card
+   * NOT-APPROVABLE-WITH-REASON without the payload. */
+  readonly inputOverCap: boolean;
   /** W112: the proposal's authorization-relevant metadata, previously
    * dropped at parking. */
   readonly taskId: string | undefined;
@@ -156,17 +161,19 @@ export class PermissionBroker {
           reason: "a permission prompt from this session is already waiting for the operator",
         };
       }
+      const classified = classifyInput(action.input);
       return new Promise<PolicyDecision>((resolve) => {
         const request: PendingPermissionRequest = {
           id: `perm-${randomBytes(6).toString("hex")}`,
           tool: action.tool,
           capability: action.capability,
           subjects: [...action.subjects],
-          inputPreview: inputPreview(action.input),
+          inputPreview: classified.preview,
           // W112 (amux C5): the FULL payload is retained at parking (it is in
           // scope here) — the card renders the complete proposal instead of
           // the 2 KiB preview alone.
           input: action.input,
+          inputOverCap: classified.overCap,
           taskId: action.taskId,
           mutating: action.mutating,
           requiredCapabilities: [...(action.requiredCapabilities ?? [])],
@@ -192,8 +199,12 @@ export class PermissionBroker {
   }
 }
 
-/** Compact display text for the prompt card; capped like tool-card I/O. */
-function inputPreview(input: unknown): string | undefined {
+/** W115: one parking-time pass over the payload — the compact preview text
+ * (capped like tool-card I/O) and the over-cap classification against the
+ * approval card's 64 KiB inspection cap (the SAME measure the card renders:
+ * strings by length, objects by the pretty-printed JSON length), so the
+ * transport strip and NOT-APPROVABLE-WITH-REASON are one classification. */
+function classifyInput(input: unknown): { readonly preview: string | undefined; readonly overCap: boolean } {
   let text: string | undefined;
   if (typeof input === "string") {
     text = input.length > 0 ? input : undefined;
@@ -201,7 +212,8 @@ function inputPreview(input: unknown): string | undefined {
     const encoded = JSON.stringify(input, null, 2);
     text = encoded.length === 0 || encoded === "{}" || encoded === "[]" ? undefined : encoded;
   }
-  if (text === undefined) return undefined;
+  if (text === undefined) return { preview: undefined, overCap: false };
+  const overCap = text.length > 64 * 1024;
   const limit = 2 * 1024;
-  return text.length > limit ? `${text.slice(0, limit)}…` : text;
+  return { preview: text.length > limit ? `${text.slice(0, limit)}…` : text, overCap };
 }
