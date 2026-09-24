@@ -31,14 +31,15 @@ import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js
 // does, observed first (2026-09-25, node v22.22.3, pnpm 11.5.2 =
 // mcp-toolbox/package.json's packageManager pin).
 //
-// Observed truth (the script is 17 lines): it resolves `root` from its own
-// location, spawns exactly one child — `pnpm --dir <root>/mcp-toolbox run build`,
-// cwd = root, stdio inherit (mcp-toolbox/package.json's build is
-// `pnpm -r --if-present run build`, recursive over the vendored workspace) — and
-// swallows EVERY outcome: success logs `prepare: toolbox ok` to stdout; ANY failure
-// (nonzero child exit, missing pnpm) logs `prepare: toolbox skipped (<message>)` to
-// stderr and the process STILL exits 0. The script itself writes nothing (its
-// `existsSync` import is dead). In the packaged seat the extracted mcp-toolbox
+// Observed truth (the script is 16 lines post-W137 — the dead `existsSync`
+// import was removed by this loop's fix, finding (c)): it resolves `root`
+// from its own location, spawns exactly one child — `pnpm --dir
+// <root>/mcp-toolbox run build`, cwd = root, stdio inherit
+// (mcp-toolbox/package.json's build is `pnpm -r --if-present run build`,
+// recursive over the vendored workspace) — and swallows EVERY outcome:
+// success logs `prepare: toolbox ok` to stdout; ANY failure (nonzero child
+// exit, missing pnpm) logs `prepare: toolbox skipped (<message>)` to
+// stderr and the process STILL exits 0. The script itself writes nothing. In the packaged seat the extracted mcp-toolbox
 // ships pnpm-workspace.yaml + pnpm-lock.yaml + every app manifest but NO
 // node_modules (npm pack excludes it), so the step performs a FULL pnpm install +
 // build of the vendored toolbox INSIDE the installed tree (observed: ~11 s against
@@ -72,8 +73,8 @@ import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js
 // packaged seat is immune in practice — the extracted mcp-toolbox IS a
 // workspace, so pnpm confines itself there (pinned by the built-artifacts land
 // inside the extracted tree) — but the escape class is real and recorded.
-// (c) scripts/prepare-tool.mjs imports existsSync and never uses it (a dead
-// import in a shipped file).
+// (c) scripts/prepare-tool.mjs imported existsSync without using it (a dead
+// import in a shipped file) — FIXED by this loop (the import removed).
 //
 // SAFETY CONTRACT (LESS-0051): no agent or PTY spawns; every spawned process is
 // a short-lived node/tar/npm/pnpm invocation (or the one-shot stub pnpm below)
@@ -111,7 +112,7 @@ function packOnce(): string {
   // Nothing ships before the compiled tree is fresh — the shared W125 gate
   // runs `npm run build` when dist is missing or older than its input graph.
   ensureFresh(distArtifact("cli", "workflow.js"));
-  const dir = mkdtempSync(join(tmpdir(), "w135-pack-"));
+  const dir = mkdtempSync(join(tmpdir(), "w137-pack-"));
   tempRoots.push(dir);
   const packed = spawnSync("npm", ["pack", "--pack-destination", dir], {
     cwd: repoRoot,
@@ -131,7 +132,7 @@ function packOnce(): string {
 
 /** Extract the packed tarball into a fresh mkdtemp tree (the installed shape). */
 function extractOnce(label: string, tarball: string): string {
-  const dir = mkdtempSync(join(tmpdir(), `w135-${label}-`));
+  const dir = mkdtempSync(join(tmpdir(), `w137-${label}-`));
   tempRoots.push(dir);
   const unpacked = spawnSync("tar", ["-xzf", tarball, "-C", dir], {
     encoding: "utf8",
@@ -163,9 +164,19 @@ function repoMarkers(): number | null {
   return existsSync(path) ? statSync(path).mtimeMs : null;
 }
 
-/** The script's run env: operator env otherwise, HOME redirected, PATH as given. */
+/** The script's run env: operator env otherwise, HOME redirected, PATH as
+ * given — with the ambient pnpm/npm/XDG path overrides STRIPPED so the
+ * redirected HOME is authoritative (the round's P3: XDG_CACHE_HOME /
+ * XDG_DATA_HOME / PNPM_HOME / NPM_CONFIG_* would otherwise override
+ * HOME-derived store/cache paths and break the confined-writes claim). */
 function preparedEnv(home: string, path?: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, HOME: home };
+  delete env.XDG_CACHE_HOME;
+  delete env.XDG_DATA_HOME;
+  delete env.PNPM_HOME;
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("NPM_CONFIG_") || key.startsWith("npm_config_")) delete env[key];
+  }
   if (path !== undefined) env.PATH = path;
   return env;
 }
@@ -221,7 +232,7 @@ let firstLiveRunCache: LiveRun | undefined;
 function firstLiveRun(): LiveRun {
   if (firstLiveRunCache !== undefined) return firstLiveRunCache;
   const root = extractOnce("live", packOnce());
-  const home = mkdtempSync(join(tmpdir(), "w135-home-"));
+  const home = mkdtempSync(join(tmpdir(), "w137-home-"));
   tempRoots.push(home);
   const markers = repoMarkers();
   const classified = classifyPrepared(runPrepared(root, preparedEnv(home)));
@@ -250,9 +261,10 @@ function firstLiveRun(): LiveRun {
   return firstLiveRunCache;
 }
 
-/** A stub pnpm that records the exact argv + cwd it was handed, then exits per env. */
+/** A stub pnpm that records the exact argv + cwd it was handed, then exits with
+ * the code BAKED into its generated script (deterministic; no env knob). */
 function stubPnpmBin(label: string, exitCode: number): { bin: string; log: string } {
-  const dir = mkdtempSync(join(tmpdir(), `w135-stub-${label}-`));
+  const dir = mkdtempSync(join(tmpdir(), `w137-stub-${label}-`));
   tempRoots.push(dir);
   const bin = join(dir, "bin");
   mkdirSync(bin, { recursive: true });
@@ -315,7 +327,7 @@ test("W137: the shipped postinstall target, run in the extracted tarball's shape
 
 test("W137: rerunning the shipped postinstall target repeats its outcome class and still exits 0 (the stateless hook is rerun-safe in the SAME installed tree — the npm-repair scenario)", () => {
   const first = firstLiveRun();
-  const home = mkdtempSync(join(tmpdir(), "w135-home2-"));
+  const home = mkdtempSync(join(tmpdir(), "w137-home2-"));
   tempRoots.push(home);
   const markers = repoMarkers();
   const second = classifyPrepared(runPrepared(first.root, preparedEnv(home)));
@@ -330,11 +342,10 @@ test("W137: rerunning the shipped postinstall target repeats its outcome class a
 test("W137: the stub seat pins the exact child contract — one pnpm invocation, `--dir <root>/mcp-toolbox run build`, cwd = the package root, and the ok marker — twice, statelessly", () => {
   const root = extractOnce("stub-ok", packOnce());
   const { bin, log } = stubPnpmBin("ok", 0);
-  const home = mkdtempSync(join(tmpdir(), "w135-stubhome-"));
+  const home = mkdtempSync(join(tmpdir(), "w137-stubhome-"));
   tempRoots.push(home);
   const env = preparedEnv(home, bin);
   env.STUB_LOG = log;
-  env.STUB_EXIT = "0";
   const first = runPrepared(root, env);
   assert.equal(first.error, undefined, "the stub seat spawns cleanly");
   assert.equal(first.signal, null, "the stub success lane exits by itself");
@@ -370,11 +381,10 @@ test("W137: the stub seat pins the exact child contract — one pnpm invocation,
 test("W137: a failing toolbox build can never fail the install — exit 0 with the honest skipped warn carrying the failing command", () => {
   const root = extractOnce("stub-fail", packOnce());
   const { bin, log } = stubPnpmBin("fail", 1);
-  const home = mkdtempSync(join(tmpdir(), "w135-failhome-"));
+  const home = mkdtempSync(join(tmpdir(), "w137-failhome-"));
   tempRoots.push(home);
   const env = preparedEnv(home, bin);
   env.STUB_LOG = log;
-  env.STUB_EXIT = "1";
   const run = runPrepared(root, env);
   assert.equal(run.error, undefined, "the stub seat spawns cleanly");
   assert.equal(run.signal, null, "the failing-child lane exits by itself");
@@ -399,9 +409,9 @@ test("W137: a failing toolbox build can never fail the install — exit 0 with t
 
 test("W137: a missing pnpm degrades to the same honest skip — exit 0, empty stdout, the spawnSync ENOENT warn (node 22's phrasing)", () => {
   const root = extractOnce("stub-absent", packOnce());
-  const emptyBin = mkdtempSync(join(tmpdir(), "w135-nopnpm-"));
+  const emptyBin = mkdtempSync(join(tmpdir(), "w137-nopnpm-"));
   tempRoots.push(emptyBin);
-  const home = mkdtempSync(join(tmpdir(), "w135-absenthome-"));
+  const home = mkdtempSync(join(tmpdir(), "w137-absenthome-"));
   tempRoots.push(home);
   const run = runPrepared(root, preparedEnv(home, emptyBin));
   assert.equal(run.error, undefined, "the script itself spawns cleanly");

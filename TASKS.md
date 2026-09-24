@@ -4985,8 +4985,10 @@ the shipped script — FIXED in this loop.
 - [x] 5/5 green twice (15.8-16.1s — the live lane's ~9.5s toolbox build
       dominates); lint + typecheck exit 0.
 - [x] The packaged lane's writes confined to the extracted mkdtemp tree +
-      a redirected-HOME store; the repo's mcp-toolbox/scripts trees
-      pinned porcelain-clean.
+      a redirected-HOME store (with the ambient XDG/PNPM_HOME/NPM_CONFIG_*
+      overrides stripped so HOME is authoritative — the round's P3); the
+      repo's mcp-toolbox/scripts trees OBSERVED porcelain-clean around the
+      live runs (the in-test canary is the mcp-toolbox/node_modules mtime).
 - [x] The LESS-0051 safety contract: no agent/PTY spawns; the script's
       own pnpm child is short-lived (spawnSync-captured); all scratch
       under mkdtemp.
