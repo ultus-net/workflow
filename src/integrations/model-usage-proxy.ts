@@ -142,7 +142,9 @@ export interface AutoLatestProxyOptions {
  * proxy, which strips inbound credentials, injects the real key, and records
  * token/cost usage from responses. Chat-completion requests are rewritten to
  * ask the provider for usage accounting so usage is present even in SSE
- * streams. The proxy binds loopback only.
+ * streams; the anthropic Messages lane (POST /v1/messages) forwards without
+ * that body seam and its usage is extracted from the anthropic shape (W123:
+ * park P9 part 1). The proxy binds loopback only.
  */
 export async function createModelUsageProxy(options: {
   readonly upstream: string;
@@ -281,7 +283,11 @@ export async function createModelUsageProxy(options: {
       // the wire boundary. K3 is rejected on a stripped replay; DeepSeek
       // synthesized tool-call turns are diverted to the Anthropic path. This
       // is harness correctness — it rejects malformed replays, it does not
-      // guarantee model behavior.
+      // guarantee model behavior. W123 compatibility record: the anthropic-
+      // messages transport this policy sanctions (route-anthropic) is NOT
+      // gated here — its Messages-schema integrity check (tool_use /
+      // thinking-signature replay) is the queued successor decision; the
+      // W123 metering slice is type-keyed and replay-agnostic.
       const replay = enforceReplayPolicy(parsed);
       if (replay.action === "reject") {
         res.writeHead(400, { "content-type": "application/json" });
@@ -333,6 +339,35 @@ export async function createModelUsageProxy(options: {
     const contentType = response.headers.get("content-type") ?? "";
     res.writeHead(response.status, forwardedResponseHeaders(response, contentType));
     if (contentType.includes("text/event-stream") && response.body !== null) {
+      // W123: the anthropic Messages stream's usage events are CUMULATIVE,
+      // never deltas — message_start carries the prompt side (message.usage)
+      // and message_delta re-carries the totals (usage; the SDK types mark
+      // them "cumulative — not a delta!", and summing across events
+      // double-counts — the recorded cautionary instance is langchainjs
+      // #10249). The per-request pending record takes the LAST-OBSERVED value
+      // per field and emits ONE usage event per message at stream end, so the
+      // lane's event count matches the JSON lane's.
+      let anthropicPending: Record<string, number> | undefined;
+      const recordSseLine = (line: string): void => {
+        if (!line.startsWith("data:")) return;
+        const data = line.slice(5).trim();
+        if (data.length === 0 || data === "[DONE]") return;
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(data);
+        } catch {
+          return; // Non-JSON SSE chunk; ignore for metering.
+        }
+        if (!isRecord(parsed)) return;
+        if (parsed.type === "message_start" || parsed.type === "message_delta") {
+          const usage = parsed.type === "message_start"
+            ? (isRecord(parsed.message) && isRecord(parsed.message.usage) ? parsed.message.usage : undefined)
+            : (isRecord(parsed.usage) ? parsed.usage : undefined);
+          if (usage !== undefined) anthropicPending = { ...anthropicPending, ...anthropicUsageNumbers(usage) };
+          return;
+        }
+        recordUsage(parsed);
+      };
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffered = "";
@@ -351,23 +386,13 @@ export async function createModelUsageProxy(options: {
         }
       }
       recordSseLine(buffered.trim());
+      if (anthropicPending !== undefined) recordAnthropicUsage(anthropicPending);
       res.end();
       return;
     }
     const text = await response.text();
     recordJsonUsage(text);
     res.end(text);
-  }
-
-  function recordSseLine(line: string): void {
-    if (!line.startsWith("data:")) return;
-    const data = line.slice(5).trim();
-    if (data.length === 0 || data === "[DONE]") return;
-    try {
-      recordUsage(JSON.parse(data));
-    } catch {
-      // Non-JSON SSE chunk; ignore for metering.
-    }
   }
 
   function recordJsonUsage(text: string): void {
@@ -380,6 +405,19 @@ export async function createModelUsageProxy(options: {
 
   function recordUsage(payload: unknown): void {
     if (!isRecord(payload)) return;
+    // W123: the anthropic Messages JSON lane — a message response carries
+    // `type: "message"` and the anthropic usage shape (input_tokens /
+    // output_tokens / cache_*_input_tokens — no OpenAI prompt_tokens /
+    // completion_tokens / total_tokens / cost keys), so the pre-W123 OpenAI
+    // extraction recorded every anthropic event as usageEvents += 1 with ZERO
+    // tokens (park P9: the trail was polluted, not absent). The detection keys
+    // on the wire type the chat-completions lane never carries, so it cannot
+    // misclassify; an unrecognized usage shape keeps the as-found behavior
+    // (usageEvents += 1 with zeros — frozen by the W123 hold-out).
+    if (payload.type === "message" && isRecord(payload.usage)) {
+      recordAnthropicUsage(payload.usage);
+      return;
+    }
     const usage = payload.usage;
     if (!isRecord(usage)) return;
     metrics.usageEvents += 1;
@@ -391,6 +429,45 @@ export async function createModelUsageProxy(options: {
       metrics.latestPromptTokens = usage.prompt_tokens;
     }
     options.onUsage?.(usage);
+  }
+
+  // W123: the anthropic usage normalizer — the P9 extraction correction.
+  // Shape (recorded): the non-stream message response carries
+  // usage { input_tokens, output_tokens, cache_creation_input_tokens,
+  // cache_read_input_tokens }; the stream splits it across message_start
+  // (message.usage) and message_delta (usage), CUMULATIVE — see the SSE
+  // branch's per-request accumulator. NORMALIZATION (the judgment on the
+  // page): anthropic reports the cache components OUTSIDE input_tokens while
+  // OpenAI's prompt_tokens INCLUDES cached reads, so the prompt side sums all
+  // three — the W045/W118 budget caps and the metering trail mean the same
+  // thing on both lanes (and the abort tier, aggregated across lanes since
+  // W119, now sees the anthropic lane's real token mass). COST boundary: the
+  // anthropic usage carries no cost field — costUsd stays the OpenRouter
+  // lane's usage.cost; the anthropic lane's local cost is unmeasured (bounded
+  // server-side by the OpenRouter per-key credit limit, the session-budget
+  // backstop). TRANSFORM boundary: the messages lane forwards untouched (no
+  // body seam, no shaping/markers/downgrade) — the governance half of park P9
+  // stands, decision-first. REPLAY compatibility record: enforceReplayPolicy
+  // stays chat-completions-scoped (the isCompletions branch below); the
+  // anthropic-messages transport is W070b's sanctioned synthetic-tool-call
+  // path and remains replay-ungated — the Messages-schema integrity check
+  // (tool_use / thinking-signature replay) is the queued successor decision.
+  function recordAnthropicUsage(usage: Record<string, unknown>): void {
+    const inputTokens = numberOrZero(usage.input_tokens);
+    const cacheCreation = numberOrZero(usage.cache_creation_input_tokens);
+    const cacheRead = numberOrZero(usage.cache_read_input_tokens);
+    const outputTokens = numberOrZero(usage.output_tokens);
+    const promptSide = inputTokens + cacheCreation + cacheRead;
+    metrics.usageEvents += 1;
+    metrics.promptTokens += promptSide;
+    metrics.completionTokens += outputTokens;
+    metrics.totalTokens += promptSide + outputTokens;
+    if (typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens)) {
+      metrics.latestPromptTokens = promptSide;
+    }
+    // The raw fields ride onUsage untouched — P12's seam: first-class cache
+    // fields in the metrics model later never re-derive from the wire.
+    options.onUsage?.({ ...usage });
   }
 
   // Warm the alias cache so the first Auto Router request does not wait on the
@@ -483,6 +560,20 @@ function forwardedResponseHeaders(response: Response, contentType: string): Reco
 
 function numberOrZero(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/** W123: the recognized numeric fields of the anthropic Messages usage shape
+ * (the wire contract: input_tokens, output_tokens, and the cache components
+ * cache_creation_input_tokens / cache_read_input_tokens — confirmed
+ * cumulative across message_start/message_delta on the stream). Vendor
+ * extras ride onUsage raw but never enter the metrics sums. */
+function anthropicUsageNumbers(usage: Record<string, unknown>): Record<string, number> {
+  const result: Record<string, number> = {};
+  for (const field of ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"] as const) {
+    const value = usage[field];
+    if (typeof value === "number" && Number.isFinite(value)) result[field] = value;
+  }
+  return result;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
