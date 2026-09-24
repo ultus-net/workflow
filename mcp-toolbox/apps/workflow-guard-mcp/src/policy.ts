@@ -39,6 +39,11 @@ export interface GuardDecision {
   decision: "allow" | "deny" | "ask";
   policy: string;
   reason: string;
+  /** W121 (G4, the F6 residual): the concrete surface the rule matched —
+   * the offending path/command/toolName. Absent when the rule keyed on no
+   * concrete surface (allows, the promotion-gate/network asks) — never
+   * fabricated. */
+  matched?: string;
 }
 
 export const CIRCUIT_BREAKER_GUIDANCE =
@@ -134,11 +139,11 @@ function evaluatePolicy(input: GuardCheckInput): GuardDecision {
 
   if (isReadOnlyRole(input.trustedRole)) {
     if (input.action === "git" && input.command?.trim() && hasGitMutation(input.command)) {
-      return { decision: "deny", policy: "read-only-role", reason: `Read-only role '${input.trustedRole}' cannot mutate Git state.` };
+      return { decision: "deny", policy: "read-only-role", reason: `Read-only role '${input.trustedRole}' cannot mutate Git state.`, matched: input.command };
     }
     if (input.action === "shell" && input.command?.trim()) {
-      if (shellHasFileMutation(input.command)) return { decision: "deny", policy: "read-only-role", reason: `Read-only role '${input.trustedRole}' cannot perform shell file mutations.` };
-      if (hasGitMutation(input.command)) return { decision: "deny", policy: "read-only-role", reason: `Read-only role '${input.trustedRole}' cannot mutate Git state.` };
+      if (shellHasFileMutation(input.command)) return { decision: "deny", policy: "read-only-role", reason: `Read-only role '${input.trustedRole}' cannot perform shell file mutations.`, matched: input.command };
+      if (hasGitMutation(input.command)) return { decision: "deny", policy: "read-only-role", reason: `Read-only role '${input.trustedRole}' cannot mutate Git state.`, matched: input.command };
     }
   }
 
@@ -151,7 +156,7 @@ function evaluatePolicy(input: GuardCheckInput): GuardDecision {
     // would also match a system rule (e.g. ostree hosts where /home
     // resolves under /var).
     if (input.action === "file_write" && isGuardConfigurationPath(path, input.workspaceRoot, input.liveConfigPaths)) {
-      return { decision: "deny", policy: "guard-tamper", reason: "Writing host or workflow-guard configuration from the agent is not allowed." };
+      return { decision: "deny", policy: "guard-tamper", reason: "Writing host or workflow-guard configuration from the agent is not allowed.", matched: path };
     }
     const protectedReason = checkProtectedPath(path, input.workspaceRoot);
     if (protectedReason) {
@@ -159,10 +164,11 @@ function evaluatePolicy(input: GuardCheckInput): GuardDecision {
         decision: "deny",
         policy: "protected-path",
         reason: protectedReason,
+        matched: path,
       };
     }
     if (input.action === "file_write" && input.patchText && input.workspaceRoot && isPathOutsideWorkspace(path, input.workspaceRoot)) {
-      return { decision: "deny", policy: "workspace-boundary", reason: `Patch target '${path}' is outside workspace '${input.workspaceRoot}'.` };
+      return { decision: "deny", policy: "workspace-boundary", reason: `Patch target '${path}' is outside workspace '${input.workspaceRoot}'.`, matched: path };
     }
   }
 
@@ -173,8 +179,8 @@ function evaluatePolicy(input: GuardCheckInput): GuardDecision {
 
   if (input.action === "file_write") {
     const branchReason = protectedBranchWriteReason({ currentBranch: input.currentBranch, protectedBranches: input.protectedBranches });
-    if (branchReason) return { decision: "deny", policy: "protected-branch-write", reason: branchReason };
-    if (isReadOnlyRole(input.trustedRole)) return { decision: "deny", policy: "read-only-role", reason: `Read-only role '${input.trustedRole}' cannot perform file mutations.` };
+    if (branchReason) return { decision: "deny", policy: "protected-branch-write", reason: branchReason, ...(input.path === undefined ? {} : { matched: input.path }) };
+    if (isReadOnlyRole(input.trustedRole)) return { decision: "deny", policy: "read-only-role", reason: `Read-only role '${input.trustedRole}' cannot perform file mutations.`, ...(input.path === undefined ? {} : { matched: input.path }) };
   }
 
   if (input.action === "network") {
@@ -187,7 +193,7 @@ function evaluatePolicy(input: GuardCheckInput): GuardDecision {
 
   if (input.action === "mcp" && input.toolName) {
     const target = mcpMutationTarget(input.toolName);
-    if (target) return { decision: "deny", policy: "live-mcp-mutation", reason: `${input.toolName} mutates ${target}, a live system.` };
+    if (target) return { decision: "deny", policy: "live-mcp-mutation", reason: `${input.toolName} mutates ${target}, a live system.`, matched: input.toolName };
   }
 
   return {

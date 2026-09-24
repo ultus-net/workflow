@@ -253,12 +253,12 @@ export function isGuardConfigurationPath(path: string, workspaceRoot?: string, l
   return real !== undefined && real !== lexical && guarded(real.replaceAll("\\", "/"));
 }
 
-export function checkBoundaryPolicy(command: string, workspaceRoot?: string, depth = 0, liveConfigPaths?: readonly string[]): { policy: string; decision: "deny"; reason: string } | undefined {
-  if (depth >= 16) return { decision: "deny", policy: "workspace-boundary", reason: "Nested shell depth exceeds deterministic inspection limit." };
+export function checkBoundaryPolicy(command: string, workspaceRoot?: string, depth = 0, liveConfigPaths?: readonly string[]): { policy: string; decision: "deny"; reason: string; matched?: string } | undefined {
+  if (depth >= 16) return { decision: "deny", policy: "workspace-boundary", reason: "Nested shell depth exceeds deterministic inspection limit.", matched: command };
   const normalized = decodeShellEscapes(command).replace(/'([^']*)'/g, "$1").replace(/"([^"]*)"/g, "$1").replace(new RegExp(`${TOOL}\\.jso[?]|${TOOL}\\.[?*]`, "gi"), `${TOOL}.json`);
   const toolCommand = new RegExp(`(?:^|\\s)${TOOL}\\s+(?:-[^|;&]*\\s+)*(?:auth|config|permission)\\b`, "i");
   const autoCommand = new RegExp(`(?:^|\\s)${TOOL}\\s+(?:run\\s+)?--auto\\b`, "i");
-  if (toolCommand.test(normalized) || autoCommand.test(normalized)) return { decision: "deny", policy: "guard-tamper", reason: "Changing host auth, permissions, or guard configuration from the agent is not allowed." };
+  if (toolCommand.test(normalized) || autoCommand.test(normalized)) return { decision: "deny", policy: "guard-tamper", reason: "Changing host auth, permissions, or guard configuration from the agent is not allowed.", matched: command };
   for (const rawSegment of splitShellSegments(command)) {
     // Ported from upstream opencode-workflow-guard (#144, W084): quoted
     // arguments of gh/glab/az PR/issue commands are command data, not shell
@@ -275,12 +275,12 @@ export function checkBoundaryPolicy(command: string, workspaceRoot?: string, dep
     }
     const { targets, moveSources, secretSources } = mutationPaths(segment);
     for (const source of secretSources) {
-      if (checkSecretPath(source, workspaceRoot)) return { decision: "deny", policy: "secret-source-transfer", reason: `Shell command would copy, move, or link sensitive file '${source}' under a non-secret name.` };
+      if (checkSecretPath(source, workspaceRoot)) return { decision: "deny", policy: "secret-source-transfer", reason: `Shell command would copy, move, or link sensitive file '${source}' under a non-secret name.`, matched: command };
     }
     for (const path of [...targets, ...moveSources]) {
-      if (isGuardConfigurationPath(path, workspaceRoot, liveConfigPaths)) return { decision: "deny", policy: "guard-tamper", reason: "Modifying host or workflow-guard configuration from the agent is not allowed." };
-      if (checkProtectedPath(path, workspaceRoot)) return { decision: "deny", policy: "protected-shell-path", reason: `Shell mutation targets protected path '${path}'.` };
-      if (workspaceRoot && isPathOutsideWorkspace(path, workspaceRoot)) return { decision: "deny", policy: "workspace-boundary", reason: `Shell mutation targets '${path}' outside workspace '${workspaceRoot}'.` };
+      if (isGuardConfigurationPath(path, workspaceRoot, liveConfigPaths)) return { decision: "deny", policy: "guard-tamper", reason: "Modifying host or workflow-guard configuration from the agent is not allowed.", matched: command };
+      if (checkProtectedPath(path, workspaceRoot)) return { decision: "deny", policy: "protected-shell-path", reason: `Shell mutation targets protected path '${path}'.`, matched: command };
+      if (workspaceRoot && isPathOutsideWorkspace(path, workspaceRoot)) return { decision: "deny", policy: "workspace-boundary", reason: `Shell mutation targets '${path}' outside workspace '${workspaceRoot}'.`, matched: command };
     }
   }
   return undefined;

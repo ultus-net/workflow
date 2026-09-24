@@ -53,6 +53,7 @@ server.registerTool(
       decision: z.enum(["allow", "deny", "ask"]),
       policy: z.string(),
       reason: z.string(),
+      matched: z.string().optional(),
     },
   },
   async (input) => {
@@ -77,6 +78,7 @@ server.registerTool(
         decision: decision.decision,
         policy: decision.policy,
         reason: decision.reason,
+        ...(decision.matched === undefined ? {} : { matched: decision.matched }),
       },
     };
   },
