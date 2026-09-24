@@ -33,7 +33,42 @@ export interface UsagePayload {
   /** W107 (amux C1): server-computed coverage metadata — rendered inline so
    * every number states what population and window it actually judged. */
   readonly coverage?: UsageCoverage;
+  /** W111 (amux C4): the backend-measured headline, the per-session rollup,
+   * and the attribution disclosure — Workflow-side facts served regardless
+   * of the analytics key. */
+  readonly headline?: UsageHeadline;
+  readonly sessionRollup?: readonly UsageSessionRow[];
+  readonly attribution?: UsageAttribution;
   readonly error?: string;
+}
+
+export interface UsageHeadline {
+  readonly verifiedTasks: number;
+  readonly totalTasks: number;
+  readonly sessionCostUsd?: number;
+  readonly verifiedTasksPerCostUsd?: number;
+  /** The amux metric is "verified tasks per unit of attention, time, and
+   * cost" — the attention axis is unmeasured and stated as such (the
+   * run-registry precedent) rather than fabricated. */
+  readonly attention: "unmeasured";
+}
+
+export interface UsageSessionRow {
+  readonly id: string;
+  readonly title: string;
+  readonly updatedAt: string;
+  readonly source?: "metered" | "agent";
+  readonly totalTokens?: number;
+  readonly costUsd?: number;
+}
+
+export interface UsageAttribution {
+  /** The amux attribution lesson: mutating METHOD ≠ WORK — the per-task
+   * rollup counts only recorded lanes; the unrecorded ones are named, not
+   * silently omitted. */
+  readonly perTask: string;
+  readonly unrecordedLanes: readonly string[];
+  readonly attention: "unmeasured";
 }
 
 const RANGES = [
@@ -41,6 +76,64 @@ const RANGES = [
   [7, "7d"],
   [30, "30d"],
 ] as const;
+
+// ---- W111 (amux C4): the backend-measured headline, the per-session
+// rollup table, and the attribution disclosure. The headline states the
+// unmeasured axes explicitly; the attribution note names the lanes the
+// metering trail does NOT cover (the amux attribution lesson). ----
+
+function UsageHeadlineBlock(props: { readonly headline: UsageHeadline }) {
+  const { headline } = props;
+  const perCost = headline.verifiedTasksPerCostUsd !== undefined
+    ? ` · ${headline.verifiedTasksPerCostUsd.toPrecision(3)} verified tasks per $`
+    : "";
+  return (
+    <p className="muted usage-note usage-headline" aria-label="Verified tasks headline">
+      {headline.verifiedTasks} verified task{headline.verifiedTasks === 1 ? "" : "s"} of {headline.totalTasks}
+      {headline.sessionCostUsd !== undefined && <> · ${headline.sessionCostUsd.toFixed(4)} metered session cost{perCost}</>}
+      {" "}· attention: {headline.attention}
+    </p>
+  );
+}
+
+function SessionRollupTable(props: { readonly rows: readonly UsageSessionRow[] }) {
+  if (props.rows.length === 0) return null;
+  return (
+    <table className="usage-table" aria-label="Per-session metered spend">
+      <thead>
+        <tr>
+          <th scope="col">Session</th>
+          <th scope="col">Source</th>
+          <th scope="col" className="usage-num">Tokens</th>
+          <th scope="col" className="usage-num">Cost</th>
+          <th scope="col">Updated</th>
+        </tr>
+      </thead>
+      <tbody>
+        {props.rows.map((row) => (
+          <tr key={row.id}>
+            <td title={row.title}>{row.title}</td>
+            <td>{row.source ?? "—"}</td>
+            <td className="usage-num">{row.totalTokens ?? "—"}</td>
+            <td className="usage-num">{row.costUsd !== undefined ? `$${row.costUsd.toFixed(4)}` : "—"}</td>
+            <td>{row.updatedAt}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function UsageAttributionNote(props: { readonly attribution: UsageAttribution }) {
+  return (
+    <p className="muted usage-note usage-attribution" aria-label="Metering attribution">
+      per-task attribution: {props.attribution.perTask}.
+      {props.attribution.unrecordedLanes.length > 0 && (
+        <> the metering trail does NOT cover: {props.attribution.unrecordedLanes.join("; ")} — they are not free, they are off-ledger.</>
+      )}
+    </p>
+  );
+}
 
 /** W107 (amux C1): the response-honesty line — what population and window
  * each rendered number actually judged, all facts server-supplied. Rendered
@@ -198,12 +291,20 @@ export function UsageView() {
       {payload === undefined && <p className="muted usage-empty-note">{loading ? "loading usage…" : ""}</p>}
 
       {payload !== undefined && payload.available === false && (
-        <p className="muted usage-setup">{payload.reason ?? payload.error ?? "usage unavailable"}</p>
+        <>
+          <p className="muted usage-setup">{payload.reason ?? payload.error ?? "usage unavailable"}</p>
+          {payload.headline !== undefined && <UsageHeadlineBlock headline={payload.headline} />}
+          {payload.sessionRollup !== undefined && payload.sessionRollup.length > 0 && <SessionRollupTable rows={payload.sessionRollup} />}
+          {payload.attribution !== undefined && <UsageAttributionNote attribution={payload.attribution} />}
+        </>
       )}
 
       {payload !== undefined && payload.available === true && (
         <div className="usage-body">
+          {payload.headline !== undefined && <UsageHeadlineBlock headline={payload.headline} />}
           {payload.coverage !== undefined && <UsageCoverageLine coverage={payload.coverage} />}
+          {payload.sessionRollup !== undefined && payload.sessionRollup.length > 0 && <SessionRollupTable rows={payload.sessionRollup} />}
+          {payload.attribution !== undefined && <UsageAttributionNote attribution={payload.attribution} />}
           {payload.credits !== undefined && (
             <div className="usage-credits">
               <span className="usage-credit-item">
