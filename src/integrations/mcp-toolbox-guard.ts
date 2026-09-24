@@ -154,12 +154,36 @@ export function defaultToolboxGuardServerPath(options: { root?: string } = {}): 
     throw new Error(`workflow-guard-mcp is not built; run: npm run toolbox:build (expected ${serverPath})`);
   }
   if (guardDistIsStale(root)) {
+    const newest = guardDistNewestSrc(root);
     throw new Error(
-      `workflow-guard-mcp dist is stale relative to its src (dist server.js mtime ${statSync(serverPath).mtimeMs} < newest src mtime); ` +
+      `workflow-guard-mcp dist is stale relative to its src (dist server.js mtime ${statSync(serverPath).mtimeMs} < newest src ${newest?.path} mtime ${newest?.mtimeMs}); ` +
       "run: npm run toolbox:build — the enforcement seat must not execute pre-change policy",
     );
   }
   return serverPath;
+}
+
+/** W120: the newest src file under the vendored app (for the staleness
+ * message's actionable detail). Undefined when the src dir is absent. */
+export function guardDistNewestSrc(root: string): { readonly path: string; readonly mtimeMs: number } | undefined {
+  const appDir = join(root, "mcp-toolbox", "apps", "workflow-guard-mcp");
+  const srcDir = join(appDir, "src");
+  if (!existsSync(srcDir)) return undefined;
+  let newest: { readonly path: string; readonly mtimeMs: number } | undefined;
+  const stack = [srcDir];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(path);
+        continue;
+      }
+      const mtimeMs = statSync(path).mtimeMs;
+      if (newest === undefined || mtimeMs > newest.mtimeMs) newest = { path, mtimeMs };
+    }
+  }
+  return newest;
 }
 
 /** W120 (the W097-queued dist-freshness gate; LESS-0010's hazard): the
@@ -169,7 +193,10 @@ export function defaultToolboxGuardServerPath(options: { root?: string } = {}): 
  * — that is the separate not-built error's job. The mtime comparison has a
  * known false-positive class (git checkout touches mtimes without content
  * change) — the fail-closed direction is deliberate: the remedy (rebuild)
- * is deterministic and idempotent. */
+ * is deterministic and idempotent. A missing SRC dir also returns false
+ * (degenerate layout; the not-built error governs the missing-dist case,
+ * and `guardDistNewestSrc` exposes the newest-src detail for the staleness
+ * message). */
 export function guardDistIsStale(root: string): boolean {
   const appDir = join(root, "mcp-toolbox", "apps", "workflow-guard-mcp");
   const serverPath = join(appDir, "dist", "server.js");

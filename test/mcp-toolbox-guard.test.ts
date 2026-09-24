@@ -85,6 +85,22 @@ test("W120: the real tree's dist is fresh (the queued repo-level pin; self-heals
   );
 });
 
+// The fresh-eyes round-1 P3: the missing-dist branch (guardDistIsStale →
+// false) is the not-built error's job — a pin so a regression to `true`
+// cannot conflate the two error classes (the not-built path was unpinned
+// anywhere before this).
+test("W120: a missing dist is not staleness (the not-built error governs)", () => {
+  const root = mkdtempSync(join(tmpdir(), "w120-missing-"));
+  mkdirSync(join(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "src"), { recursive: true });
+  writeFileSync(join(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "src", "policy.ts"), "source");
+  assert.equal(guardDistIsStale(root), false, "a missing dist is the not-built error's job, not staleness");
+  assert.throws(
+    () => defaultToolboxGuardServerPath({ root }),
+    /not built/,
+    "the not-built error is preserved verbatim (the two error classes stay distinct)",
+  );
+});
+
 test("guardPolicyEvidence maps decisions onto normalized MCP evidence", () => {
   const allow = guardPolicyEvidence({ decision: "allow", policy: "shell.safe", reason: "ok" }, 3);
   assert.equal(allow.result, "passed");
