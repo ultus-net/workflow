@@ -31,7 +31,8 @@
     "THREAT_MODEL.md",
     "docs",
     "mcp-toolbox",
-    "packaging"
+    "packaging",
+    "scripts/prepare-tool.mjs"
   ],
   "engines": {
     "node": ">=22"
