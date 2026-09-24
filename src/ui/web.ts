@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { existsSync, readFileSync } from "node:fs";
@@ -13,7 +13,7 @@ import { compactSession, fetchLiveMcp, fetchSessionStats } from "../integrations
 import { nextCronMatch, type ScheduleDefinition } from "../integrations/hub-scheduler.js";
 import { defaultSettings, mergeSettings, normalizeSettings, readSettingsFile, settingsPaths, writeSettingsFile } from "../integrations/workflow-settings.js";
 import { resolveToolboxCatalog } from "../integrations/toolbox-catalog.js";
-import { evidenceId, observationId, stepId, taskId, type TaskState } from "../kernel/contracts.js";
+import { stepId, taskId, type TaskState } from "../kernel/contracts.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
 import { WebSessionManager, type SessionSwitchResult } from "./web-sessions.js";
 import { isWebAgentId, listWebAgents } from "./web-agents.js";
@@ -602,35 +602,6 @@ export function createWorkflowWebServer(
         } catch (error) {
           return json(response, 409, { error: error instanceof Error ? error.message : String(error) });
         }
-      } catch {
-        return json(response, 400, { error: "invalid request body" });
-      }
-    }
-    if (request.method === "POST" && pathname === "/api/evidence") {
-      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
-      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
-        return json(response, 415, { error: "content-type must be application/json" });
-      }
-      try {
-        const body = await readJson(request);
-        const input = body as { subject?: unknown; result?: unknown } | null;
-        const subject = typeof input?.subject === "string" ? input.subject.trim() : "";
-        const result = input?.result;
-        if (subject.length === 0 || (result !== "passed" && result !== "failed")) {
-          return json(response, 400, { error: "subject and result (passed|failed) are required" });
-        }
-        const stamp = new Date().toISOString();
-        application.recordEvidence({
-          id: evidenceId(`evidence-${randomUUID()}`),
-          observationId: observationId(`observation-${randomUUID()}`),
-          authority: "reviewer",
-          subject,
-          result,
-          freshness: "fresh",
-          mutationEpoch: application.snapshot().mutationEpoch,
-          observedAt: stamp,
-        });
-        return json(response, 201, { recorded: true, subject, result });
       } catch {
         return json(response, 400, { error: "invalid request body" });
       }

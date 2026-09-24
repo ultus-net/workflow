@@ -1005,7 +1005,7 @@ test("web UI guards permission answers, ask mode, and capability toggles", async
   assert.equal(unconfinedView.workspaceConfinement, false);
 });
 
-test("web UI guards session rename, task retry/add, and evidence recording", async (context) => {
+test("web UI guards session rename, task retry/add, and the removed evidence endpoint (W114)", async (context) => {
   const dir = mkdtempSync(join(tmpdir(), "web-batch5-test-"));
   context.after(() => rmSync(dir, { recursive: true, force: true }));
   const manager = new WebSessionManager({
@@ -1148,33 +1148,33 @@ test("web UI guards session rename, task retry/add, and evidence recording", asy
   assert.equal(addedBody.state, "BLOCKED");
   assert.equal(newTask?.title, "Added from test");
 
-  // Evidence: guards, validation, and recording visibility.
-  const evidenceHostile = await fetch(`${base}/api/evidence`, {
-    method: "POST",
-    headers: { "content-type": "application/json", origin: "https://attacker.example" },
-    body: JSON.stringify({ subject: "s", result: "passed" }),
-  });
-  assert.equal(evidenceHostile.status, 403);
-  const evidenceInvalid = await fetch(`${base}/api/evidence`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ subject: "s", result: "maybe" }),
-  });
-  assert.equal(evidenceInvalid.status, 400);
-  const recorded = await fetch(`${base}/api/evidence`, {
+  // W114 (evidence-endpoint governance closure): the claim-shaped evidence
+  // endpoint is REMOVED, not gated — the W110-discovered trap let any
+  // same-origin tab mint kernel evidence (hardcoded authority "reviewer",
+  // freshness "fresh") from client-chosen subject+result, and the kernel's
+  // authority vocabulary has no honest class for an operator-typed claim
+  // (the honest reviewer producer is the run registry's run:<id> verdict
+  // flow). The route's absence (the catch-all 404, for every origin — the
+  // removed route's own cross-origin 403 check went with it) and an
+  // unchanged evidence snapshot are the discriminating closure observables:
+  // no request shape can mint kernel evidence anymore.
+  const evidenceAttempt = await fetch(`${base}/api/evidence`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ subject: "test-subject", result: "passed" }),
   });
-  assert.equal(recorded.status, 201);
+  assert.equal(evidenceAttempt.status, 404);
+  const evidenceAttemptHostile = await fetch(`${base}/api/evidence`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://attacker.example" },
+    body: JSON.stringify({ subject: "s", result: "passed" }),
+  });
+  assert.equal(evidenceAttemptHostile.status, 404);
   const evidence = await fetch(`${base}/api/snapshot`).then((response) => response.json()) as {
-    evidence: { subject: string; result: string; freshness: string }[];
+    evidence: { subject: string }[];
   };
-  const entry = evidence.evidence.find((item) => item.subject === "test-subject");
-  assert.deepEqual(
-    entry !== undefined && { result: entry.result, freshness: entry.freshness },
-    { result: "passed", freshness: "fresh" },
-  );
+  assert.equal(evidence.evidence.find((item) => item.subject === "test-subject"), undefined);
+  assert.equal(evidence.evidence.find((item) => item.subject === "s"), undefined);
 });
 
 test("W107 C1: the usage route carries server-computed coverage metadata, including ignored params", async (context) => {
