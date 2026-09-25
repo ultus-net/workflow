@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname, resolve } from "node:path";
@@ -70,6 +71,44 @@ export function acpAgentKind(): AcpAgentKind {
   if (raw === "cline") return "cline";
   if (raw === "goose") return "goose";
   throw new Error(`WORKFLOW_ACP_AGENT must be "opencode", "cline", or "goose" (got ${JSON.stringify(raw)})`);
+}
+
+/** Parse "opencode v2.0.10" / "1.18.31" style `--version` output into a major. */
+export function parseOpencodeMajorVersion(versionOutput: string): number | undefined {
+  const match = /v?(\d+)\.\d+\.\d+/.exec(versionOutput);
+  if (match === null || match[1] === undefined) return undefined;
+  const major = Number.parseInt(match[1], 10);
+  return Number.isSafeInteger(major) ? major : undefined;
+}
+
+/**
+ * The 1.x `acp --pure` flag kept the operator's global plugins out of the
+ * contained agent. opencode v2 removed the flag and instead prints its CLI
+ * help page to stdout when given an unknown flag — the first line is a bare
+ * `DESCRIPTION`, which the ACP NDJSON decoder correctly rejects, so every
+ * hub-composed turn died at spawn before any model call (verified live,
+ * 2026-09-26: standalone `acp` framing is clean on v2.0.10; only `--pure`
+ * dumps help). v2+ and unknown versions (assumed modern) drop the flag:
+ * per-runtime config isolation is carried by `HOME`/`XDG_CONFIG_HOME`
+ * regardless, so the hub-owned config remains the agent's whole surface.
+ */
+export function opencodeAcpArgs(majorVersion: number | undefined): readonly string[] {
+  return majorVersion !== undefined && majorVersion < 2 ? ["acp", "--pure"] : ["acp"];
+}
+
+const opencodeMajorCache = new Map<string, Promise<number | undefined>>();
+
+/** Probe the opencode binary's major version once per executable path. */
+function opencodeMajorVersion(executable: string): Promise<number | undefined> {
+  const cached = opencodeMajorCache.get(executable);
+  if (cached !== undefined) return cached;
+  const probe = new Promise<number | undefined>((resolveProbe) => {
+    execFile(executable, ["--version"], { timeout: 10_000, encoding: "utf8" }, (error, stdout) => {
+      resolveProbe(parseOpencodeMajorVersion(error === undefined ? String(stdout) : ""));
+    });
+  });
+  opencodeMajorCache.set(executable, probe);
+  return probe;
 }
 
 export interface AcpRuntimeOptions {
@@ -270,12 +309,15 @@ async function createOpencodeRuntime(
       envBinOverride: process.env.WORKFLOW_OPENCODE_BIN,
       opencodeOnPath: globalOpencodeBinary(),
     });
+    // Version-aware spawn args: v1 keeps `--pure`; v2 dropped the flag and
+    // prints its help page to stdout for unknown flags (NDJSON pollution).
+    const acpMajor = await opencodeMajorVersion(opencode.executable);
     const resume = resumeFrom ?? process.env.WORKFLOW_ACP_RESUME;
     const driver = AcpSessionDriver.contained({
       containment: new LinuxBubblewrapContainment(),
       launch: {
         executable: opencode.executable,
-        args: ["acp", "--pure"],
+        args: [...opencodeAcpArgs(acpMajor)],
         workspace,
         home: scratchHome,
         // The delivery mount's runtime dependencies must stay readable inside
@@ -310,9 +352,10 @@ async function createOpencodeRuntime(
         environment: {
           // The placeholder credential rides the 0600 per-runtime config file
           // (same posture as the Cline providers.json); the real upstream key
-          // stays exclusively in the hub-side proxy. `--pure` keeps the
-          // operator's global plugins out of the contained agent so the
-          // hub-owned config is the whole surface.
+          // stays exclusively in the hub-side proxy. On v1 `--pure` also kept
+          // the operator's global plugins out of the contained agent; on v2
+          // the flag is gone (help page on stdout) and the isolation rides on
+          // HOME/XDG_CONFIG_HOME alone — the hub-owned config is the surface.
           XDG_CONFIG_HOME: configDir,
         },
       },
