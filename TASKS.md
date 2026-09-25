@@ -5598,17 +5598,17 @@ which owns the plane design, not repo placement).
       (stays open-side as the qualified reference probe with its append-only
       verdicts), and the local-first guarantee (local surfaces never depend
       on the instance).
+  - Dated note (2026-09-26, operator direction): the `infra/c0/` disposition
+      recorded in this criterion is superseded same-day — the test-deploy
+      folder EXTRACTS to the work instance repo once that repo exists (spec
+      §7 dated note and the §11 gated sequence); W148 carries the extraction.
+      The verdict-preservation duty (append-only records; git history as the
+      archive) is unchanged.
 - [ ] `instances/azure/` seed exists: README contract + checklist, draft
       two-checkout pipeline skeleton, draft `.bicepparam` skeleton — every
       instance-specific value is a TODO marker, and the seed contains no real
       org, subscription, digest, or secret values (greppable).
 - [ ] Independent five-axis review of the branch.
-  - Dated note (2026-09-26, operator direction): the `infra/c0/` disposition
-      recorded above is superseded same-day — the test-deploy folder EXTRACTS
-      to the work instance repo once that repo exists (spec §7 dated note and
-      the §11 gated sequence); W148 carries the extraction. The
-      verdict-preservation duty (append-only records; git history as the
-      archive) is unchanged.
 
 ### W148 - Extract `infra/c0/` into the work instance repo (strip)
 

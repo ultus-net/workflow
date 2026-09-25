@@ -15,7 +15,6 @@ resources:
 variables:
   # image is pinned by digest; never by a moving tag
   imageDigest: TODO_IMAGE_DIGEST # e.g. ghcr.io/ultus-net/workflow@sha256:...
-  moduleRef: openCore # bicep modules come from the pinned open-core checkout
 
 stages:
   - stage: deploy

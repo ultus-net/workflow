@@ -135,9 +135,15 @@ operator-specific material here.
    sha named by the strip commit. History is the archive; nothing is silently
    rewritten.
 3. The reference sweep is clean at execution time. Known today (2026-09-26
-   sweep): this spec (§7), `instances/azure/README.md` (the `c0.env`
-   discipline pointer, reworded to the instance repo's path), and the W147
-   dated note. `src/` and `test/` carry no references (verified).
+   sweep, complete as of this writing): this spec — the §2 seam-table cell
+   naming `infra/c0/` (stale post-strip; `infra/` empties), the §7 dated
+   note, the Evidence-base line citing `infra/c0/README.md`; `.gitignore`'s
+   three `infra/c0/` rules (removed by the strip commit);
+   `instances/azure/README.md` (the `c0.env` discipline pointer, already
+   reworded to drop the path dependency); and the W147 dated note. `src/` and
+   `test/` carry no references (verified). The strip commit updates every one
+   of these — `.gitignore` rules removed, the §2 cell and Evidence-base line
+   re-pointed at the instance repo and git history.
 4. The W148 ledger entry closes with the pre-strip sha in the strip commit
    message.
 
