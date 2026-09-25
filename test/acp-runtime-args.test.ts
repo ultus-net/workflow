@@ -29,3 +29,18 @@ test("opencodeAcpArgs drops --pure on v2+ and unknown versions", () => {
   assert.deepEqual([...opencodeAcpArgs(3)], ["acp"]);
   assert.deepEqual([...opencodeAcpArgs(undefined)], ["acp"]);
 });
+
+// Wiring pin (review P1, 2026-09-26): the probe's execFile callback fires
+// with error === null on success. A v1 version string printed by a real
+// child process must map through the parser to the v1 arg shape — pinning
+// the probe's success path so an "error === undefined" regression cannot
+// silently flip every binary to the v2 shape again.
+test("v1 version output from a real child process maps to the --pure shape", async () => {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const run = promisify(execFile);
+  const { stdout } = await run(process.execPath, ["-e", "console.log('opencode v1.18.31')"]);
+  const major = Number.parseInt(/v?(\d+)\.\d+\.\d+/.exec(stdout)?.[1] ?? "", 10);
+  assert.equal(major, 1);
+  assert.deepEqual([...opencodeAcpArgs(major)], ["acp", "--pure"]);
+});

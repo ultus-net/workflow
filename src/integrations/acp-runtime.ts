@@ -104,7 +104,10 @@ function opencodeMajorVersion(executable: string): Promise<number | undefined> {
   if (cached !== undefined) return cached;
   const probe = new Promise<number | undefined>((resolveProbe) => {
     execFile(executable, ["--version"], { timeout: 10_000, encoding: "utf8" }, (error, stdout) => {
-      resolveProbe(parseOpencodeMajorVersion(error === undefined ? String(stdout) : ""));
+      // execFile signals success with error === null (never undefined) —
+      // testing undefined here made the probe always resolve undefined and
+      // silently drop --pure on v1 (review P1, 2026-09-26).
+      resolveProbe(parseOpencodeMajorVersion(error === null ? String(stdout) : ""));
     });
   });
   opencodeMajorCache.set(executable, probe);
