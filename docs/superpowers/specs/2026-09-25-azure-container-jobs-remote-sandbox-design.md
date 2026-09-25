@@ -282,7 +282,29 @@ and keeps updating itself.
   config, one exclusion list, one route-class matrix to probe. workflow-web is
   served behind the gateway as an additional route class, not a second app.
 
-## 11. Open questions (requirements, not resolutions)
+## 11. Vendored MCP toolbox placement (added 2026-09-25)
+
+- **Plane container (C1):** the full `mcp-toolbox/` ships inside the plane image
+  (it is part of the repo build). Hub-written metered config wires the servers
+  over loopback inside the container — the container is the trust boundary, so
+  the existing security model carries over unchanged. `npm run toolbox:verify`
+  runs at image build, evidencing that the deployed artifact's guard corpus is
+  the executable, intact one.
+- **Worker pods (Shape A, P-track):** the queue message's task spec carries an
+  **MCP manifest** (which servers that run class needs) plus a **guard corpus
+  fingerprint**. Pod startup verifies its local corpus against the fingerprint
+  before any work; mismatch refuses the run, fail-closed. Evidence produced in a
+  pod cites the corpus it ran under — extending the repo's corpus discipline to
+  remote runs.
+- **Not every server rides every context:** browser-verification-mcp needs a
+  browser runtime in the pod image (chromium or the server is dropped from the
+  worker manifest); learning/pedagogy and review-accountability servers stay
+  plane-side (operator-facing). The per-context manifest extends the existing
+  settings-page MCP catalog.
+- **Remote-facing MCP stays out of scope:** servers remain loopback-internal
+  (see §10 Easy Auth PRM gap, microsoft/azure-container-apps #1736).
+
+## 12. Open questions (requirements, not resolutions)
 
 1. Which trigger/queue (Storage Queue vs Service Bus) and what cost ceiling per
    run?
