@@ -4,7 +4,7 @@
 param location string = 'australiaeast'
 param acrName string = 'wfdevplane${uniqueString(resourceGroup().id)}'
 
-var acrPullRoleDefinitionId = '7f951dda-4ed3-4680-a7bb-5efe0d0e0fe9' // AcrPull
+var acrPullRoleDefinitionId = '7f951dda-4ed3-4680-a7ca-43fe172d538d' // AcrPull (verified via az role definition list)
 
 resource vnet 'Microsoft.Network/virtualNetworks@2024-01-01' = {
   name: 'workflow-dev-vnet'
@@ -84,9 +84,6 @@ resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
     ]
     zoneRedundant: false
   }
-  dependsOn: [
-    vnet
-  ]
 }
 
 output acrName string = acr.name

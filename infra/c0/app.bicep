@@ -11,10 +11,6 @@ param imageTag string = 'c0'
 
 var appName = 'workflow-dev-cplane'
 
-resource planeIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
-  name: 'workflow-dev-plane-identity'
-}
-
 resource app 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
