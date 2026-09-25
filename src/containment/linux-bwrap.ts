@@ -83,7 +83,7 @@ export class LinuxBubblewrapContainment implements ProcessContainment {
   async execute(request: ContainedProcessRequest): Promise<ContainedProcessResult> {
     const { args, network, environment } = this.#buildArgs(request);
     await this.#probe(network);
-    return await this.#spawn(args, network, Object.keys(environment).length === 0 ? "cleared" : "explicit");
+    return await this.#spawn(args, network, Object.keys(environment).length === 0 ? "cleared" : "explicit", request.timeoutMs);
   }
 
   /**
@@ -210,18 +210,42 @@ export class LinuxBubblewrapContainment implements ProcessContainment {
     args: readonly string[],
     network: "isolated" | "host",
     credentials: "cleared" | "explicit",
+    timeoutMs?: number,
   ): Promise<ContainedProcessResult> {
     return await new Promise((resolve, reject) => {
-      const child = spawn(this.bwrapPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+      // W144: detached so the child leads a process group — the timeout kill
+      // takes the whole group (bwrap and the contained command together);
+      // --die-with-parent still applies to the normal parent-exit path.
+      const child = spawn(this.bwrapPath, args, { stdio: ["ignore", "pipe", "pipe"], detached: true });
       let stdout = "";
       let stderr = "";
+      let timedOut = false;
+      const timer = timeoutMs === undefined ? undefined : setTimeout(() => {
+        timedOut = true;
+        try {
+          if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+        } catch {
+          child.kill("SIGKILL");
+        }
+        // W144 review P3: grandchildren can hold the stdio pipes past the
+        // kill — destroying them lets `close` fire instead of waiting on the
+        // dead group's descriptors.
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }, timeoutMs);
       child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
       child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
       child.on("error", (error: NodeJS.ErrnoException) => {
+        clearTimeout(timer);
         if (error.code === "ENOENT") reject(new Error("containment backend unavailable", { cause: error }));
         else reject(error);
       });
       child.on("close", (exitCode) => {
+        clearTimeout(timer);
+        if (timedOut) {
+          reject(new Error(`contained command timed out after ${timeoutMs}ms (process group SIGKILL): ${stdout}${stderr}`));
+          return;
+        }
         if (stderr.startsWith("bwrap:")) {
           reject(new Error(`containment boundary could not be established: ${stderr.trim()}`));
           return;

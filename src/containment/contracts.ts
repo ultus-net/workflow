@@ -20,6 +20,12 @@ export interface ContainedProcessRequest {
   readonly writableMountMode?: WritableMountMode;
   readonly network?: "isolated" | "host";
   readonly environment?: Readonly<Record<string, string>>;
+  /** W144: a bounded wall-clock execute — the caller sets it ONLY where a
+   * bounded lane is wanted (the hub's /bash route). On expiry the backend
+   * kills the child's process group (SIGKILL) and rejects with a timeout
+   * error carrying the partial output; absent, execute stays unbounded
+   * (the agent tool lane keeps its current posture). */
+  readonly timeoutMs?: number;
 }
 
 export interface ContainedProcessResult {

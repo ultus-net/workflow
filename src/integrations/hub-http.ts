@@ -253,7 +253,20 @@ async function handleRequest(
       });
     }
     if (request.url === "/bash") {
-      if (!isRecord(body) || typeof body.cwd !== "string" || !(typeof body.command === "string" || isRecord(body.command))) {
+      if (!isRecord(body)) return send(response, 400, { error: "invalid bash request" });
+      const command = body.command;
+      // W145: the client-shaped command faults classify 400 at the route —
+      // an empty string command or an empty/invalid structured command used
+      // to pass this check and die in the executor as a 500 (the W142 wave's
+      // finding (b)).
+      const commandValid =
+        (typeof command === "string" && command.length > 0) ||
+        (isRecord(command) &&
+          typeof command.command === "string" &&
+          command.command.length > 0 &&
+          (command.args === undefined ||
+            (Array.isArray(command.args) && command.args.every((argument) => typeof argument === "string"))));
+      if (typeof body.cwd !== "string" || !commandValid) {
         return send(response, 400, { error: "invalid bash request" });
       }
       const hasSurfaceTask = typeof body.teamTaskId === "string" && body.teamTaskId.length > 0;
@@ -262,8 +275,24 @@ async function handleRequest(
         undefined,
         { activateInteractiveTask: !hasSurfaceTask },
       );
-      const shellExecutor = shellExecutorFor(application, undefined, true, context.guard);
-      return send(response, 200, { output: await shellExecutor(body.command as never, body.cwd, undefined) });
+      // W144: the hub's ad-hoc shell lane is bounded (the W142 wave's finding
+      // (c): no timeout anywhere in the chain). The agent tool lane keeps its
+      // current unbounded posture — a separate queued decision.
+      const shellExecutor = shellExecutorFor(application, undefined, true, context.guard, bashTimeoutMs(process.env));
+      // W145: a nonzero command exit is the COMMAND's result, not a server
+      // fault — the executor's exit error carries the code, so the wire does
+      // too: 422 {error, exitCode} (the W142 wave's finding (a)). Server
+      // faults and guard/authorization denials keep the catch-all's 500.
+      try {
+        const output = await shellExecutor(command as never, body.cwd, undefined);
+        return send(response, 200, { output });
+      } catch (error) {
+        const exitCode = (error as { exitCode?: unknown }).exitCode;
+        if (typeof exitCode === "number") {
+          return send(response, 422, { error: error instanceof Error ? error.message : String(error), exitCode });
+        }
+        throw error;
+      }
     }
     send(response, 404, { error: "not found" });
   } catch (error) {
@@ -314,4 +343,20 @@ function send(response: ServerResponse, status: number, body: unknown): void {
   if (response.headersSent) return;
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
+}
+
+/** W144: the /bash lane's bounded-execute cap. Default 120s; the
+ * WORKFLOW_HUB_BASH_TIMEOUT_MS override must be a positive integer
+ * (milliseconds), CLAMPED to MAX_BASH_TIMEOUT_MS (an operator-explicit env
+ * must never smuggle the unbounded lane back in) — anything unparsable falls
+ * back to the default. */
+export const DEFAULT_BASH_TIMEOUT_MS = 120_000;
+export const MAX_BASH_TIMEOUT_MS = 3_600_000;
+
+export function bashTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const raw = env.WORKFLOW_HUB_BASH_TIMEOUT_MS;
+  if (raw === undefined) return DEFAULT_BASH_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) return DEFAULT_BASH_TIMEOUT_MS;
+  return Math.min(parsed, MAX_BASH_TIMEOUT_MS);
 }

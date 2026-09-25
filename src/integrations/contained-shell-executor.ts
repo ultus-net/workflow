@@ -31,6 +31,12 @@ export interface ContainedShellExecutorOptions {
   readonly commandExitError?: ContainedShellExitErrorFactory;
   readonly observe?: ContainedShellObserver;
   readonly writableWorkspace?: boolean;
+  /** W144: the bounded-execute cap for lanes that want one (the hub's /bash
+   * route). Forwarded into the contained request — the backend kills the
+   * child's process group and rejects with the named timeout error. ABSENT
+   * for the agent tool lane: that lane's current unbounded posture is
+   * unchanged (a separate queued decision). */
+  readonly timeoutMs?: number;
 }
 
 export function createContainedShellExecutor(
@@ -45,7 +51,7 @@ export function createContainedShellExecutor(
     new Error(`contained command exited with code ${exitCode}: ${output}`));
 
   return async (command, cwd) => {
-    const request = containedRequest(command, cwd, writableWorkspace);
+    const request = containedRequest(command, cwd, writableWorkspace, options.timeoutMs);
     const proposal: ProposedToolAction = {
       sessionId: options.sessionId,
       taskId: typeof options.taskId === "function" ? options.taskId() : options.taskId,
@@ -69,7 +75,13 @@ export function createContainedShellExecutor(
   };
 }
 
-function containedRequest(command: string | ContainedShellCommandInput, cwd: string, writableWorkspace: boolean) {
+function containedRequest(
+  command: string | ContainedShellCommandInput,
+  cwd: string,
+  writableWorkspace: boolean,
+  timeoutMs: number | undefined,
+) {
+  const timeout = timeoutMs === undefined ? {} : { timeoutMs };
   if (typeof cwd !== "string" || cwd.length === 0) throw new TypeError("invalid contained shell cwd");
   if (typeof command === "string") {
     if (command.length === 0) throw new TypeError("invalid contained shell command");
@@ -78,6 +90,7 @@ function containedRequest(command: string | ContainedShellCommandInput, cwd: str
       args: ["-c", command],
       cwd,
       writablePaths: writableWorkspace ? [cwd] : [],
+      ...timeout,
     };
     return writableWorkspace ? request : { ...request, readablePaths: [cwd] };
   }
@@ -92,6 +105,7 @@ function containedRequest(command: string | ContainedShellCommandInput, cwd: str
     args: command.args ?? [],
     cwd,
     writablePaths: writableWorkspace ? [cwd] : [],
+    ...timeout,
   };
   return writableWorkspace ? request : { ...request, readablePaths: [cwd] };
 }

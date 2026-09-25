@@ -65,8 +65,9 @@ import { distArtifact, ensureFresh, ensureToolboxGuardBuilt, repoRoot } from "./
 // hub is never spawnSync-timeout-killed: async spawn → both banners → pins →
 // process-group SIGTERM → pinned exit 0 + the discovery/verifier unlink truth.
 //
-// Product findings recorded here, NOT fixed (report-only mandate; each with
-// its exact reproducing request):
+// Product findings recorded here (each with its exact reproducing request);
+// (a) and (b) were FIXED by W145 on 2026-09-25 (the pins flipped
+// deliberately — the dated notes at each), the rest stand as recorded:
 //   (a) a command's NONZERO EXIT is represented only as HTTP 500 with the
 //       combined stdout+stderr as {error}; the numeric exit code never rides
 //       the wire (the in-process Error carries it — run-controller.ts:71 —
@@ -75,11 +76,17 @@ import { distArtifact, ensureFresh, ensureToolboxGuardBuilt, repoRoot } from "./
 //       (the same 400/500 class as W133's empty-body finding). Repro:
 //       {cwd, command: "echo boom >&2; exit 3"} → 500 {"error":"boom\n"};
 //       {cwd, command: "exit 7"} → 500 {"error":""}.
+//       FIXED by W145 (2026-09-25): a nonzero exit answers 422
+//       {error, exitCode} — the command's result is data, never a server
+//       fault; the pins below were flipped deliberately.
 //   (b) an EMPTY command string passes the route's shape check
 //       (hub-http.ts:256 accepts any string) and dies inside the executor
 //       (containedRequest's TypeError, contained-shell-executor.ts:75) as a
 //       500 — another client fault as a server fault. Repro:
 //       {cwd, command: ""} → 500 {"error":"invalid contained shell command"}.
+//       FIXED by W145 (2026-09-25): the route's command validation rejects
+//       empty string commands (and empty/invalid structured commands) with
+//       400; the pin below was flipped deliberately.
 //   (c) THE /bash LANE HAS NO TIMEOUT: no timer exists in hub-http.ts,
 //       contained-shell-executor.ts, or linux-bwrap.ts (grep-verified), so a
 //       hung command (e.g. {cwd, command: "sleep 100000"}) would hold the
@@ -277,28 +284,32 @@ test("the compiled hub's /bash and /run/begin lanes: auth directions, the contai
   assert.match(String(large.body.output), /^x+$/, "the output is exactly the printf's, byte for byte");
 
   // ── refusals ─────────────────────────────────────────────────────────────
-  // (a) nonzero exit: HTTP 500 with stdout+stderr as {error}; the exit code is
-  // not represented on the wire (recorded, not fixed).
+  // (a) nonzero exit: W145 flipped this deliberately (2026-09-25) — the
+  // command's result is data, not a server fault: 422 {error, exitCode}. The
+  // pre-fix truth (500 with no exit-code field) is recorded in the W142/W145
+  // ledger entries.
   const failing = await postRoute(endpoint, "/bash", token, { cwd: workspace, command: "echo boom >&2; exit 3" });
-  assert.equal(failing.status, 500, "a nonzero exit is (currently) classified as a server fault — observed, not blessed");
-  assert.deepEqual(failing.body, { error: "boom\n" }, `observed: ${JSON.stringify(failing.body)}`);
+  assert.equal(failing.status, 422, "a nonzero exit is the command's result — the exit code rides the wire");
+  assert.deepEqual(failing.body, { error: "boom\n", exitCode: 3 }, `observed: ${JSON.stringify(failing.body)}`);
   const failingSilent = await postRoute(endpoint, "/bash", token, { cwd: workspace, command: "exit 7" });
-  assert.equal(failingSilent.status, 500);
-  assert.deepEqual(failingSilent.body, { error: "" }, "an output-less failure is an EMPTY error string — the exit code is unrepresented");
+  assert.equal(failingSilent.status, 422);
+  assert.deepEqual(failingSilent.body, { error: "", exitCode: 7 }, "an output-less failure still carries its exit code");
 
-  // A nonexistent binary: bash's own failure text becomes the {error} value.
+  // A nonexistent binary: bash's own failure text (exit 127) — the same 422
+  // contract, the code named.
   const missingBinary = await postRoute(endpoint, "/bash", token, { cwd: workspace, command: "/usr/bin/definitely-missing-abc123" });
-  assert.equal(missingBinary.status, 500);
+  assert.equal(missingBinary.status, 422);
   assert.deepEqual(
     missingBinary.body,
-    { error: "/bin/bash: line 1: /usr/bin/definitely-missing-abc123: No such file or directory\n" },
+    { error: "/bin/bash: line 1: /usr/bin/definitely-missing-abc123: No such file or directory\n", exitCode: 127 },
     `observed: ${JSON.stringify(missingBinary.body)}`,
   );
 
-  // (b) empty command: past the route's shape check, dead in the executor, 500.
+  // (b) empty command: W145 flipped this deliberately (2026-09-25) — a
+  // client-shaped fault is a 400 at the route, never a 500 from the executor.
   const emptyCommand = await postRoute(endpoint, "/bash", token, { cwd: workspace, command: "" });
-  assert.equal(emptyCommand.status, 500, "a client-shaped fault (currently) classified as a server fault — observed, not blessed");
-  assert.deepEqual(emptyCommand.body, { error: "invalid contained shell command" });
+  assert.equal(emptyCommand.status, 400, "an empty command is a client fault");
+  assert.deepEqual(emptyCommand.body, { error: "invalid bash request" });
 
   // Non-canonical cwd declarations refuse at the registry's canonicalization
   // (run-registry.ts:88-94) BEFORE the executor is even built.
@@ -465,4 +476,94 @@ test("the compiled hub's /bash and /run/begin lanes: auth directions, the contai
   );
   assert.ok(!existsSync(discoveryPath), "the shutdown unlinked discovery.json (workflow-hub.ts:175-181)");
   assert.ok(!existsSync(join(dirname(discoveryPath), "verifier.json")), "the shutdown unlinked verifier.json");
+});
+
+// W144: the /bash lane is BOUNDED — the hub passes the env-derived cap into
+// the executor, the backend kills the process group at the cap, and the
+// response carries the named timeout error WITH the partial output. The hub
+// must stay alive and serving after the kill (the executor never wedges).
+// The test's own 15s timeout keeps the pre-change red bounded (pre-fix the
+// request rode the sleep's full 30s and answered 200).
+test("W144: the /bash lane is bounded by WORKFLOW_HUB_BASH_TIMEOUT_MS and the hub survives the kill", { timeout: 15_000 }, async (context) => {
+  ensureFresh(distArtifact("cli", "hub.js"));
+  ensureToolboxGuardBuilt();
+
+  const home = mkdtempSync(join(tmpdir(), "w144-timeout-home-"));
+  context.after(() => rmSync(home, { recursive: true, force: true }));
+  const workspace = mkdtempSync(join(tmpdir(), "w144-timeout-ws-"));
+  context.after(() => rmSync(workspace, { recursive: true, force: true }));
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: home,
+    WORKFLOW_HUB_PROVENANCE: join(home, "provenance.jsonl"),
+    WORKFLOW_HUB_SCHEDULES: join(home, "schedules.json"),
+    WORKFLOW_HUB_BASH_TIMEOUT_MS: "750",
+    WORKFLOW_RSI_AGENT: "0",
+  };
+  delete env.WORKFLOW_HUB_REQUEST_LOG;
+  delete env.WORKFLOW_TEAM_TASK_VERIFY_COMMAND;
+
+  let output = "";
+  let exitInfo: { code: number | null; signal: string | null } | undefined;
+  const child = spawn(process.execPath, [distArtifact("cli", "hub.js")], {
+    cwd: repoRoot,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+  });
+  const killGroup = (signal: NodeJS.Signals): void => {
+    try {
+      if (child.pid !== undefined && process.platform !== "win32") process.kill(-child.pid, signal);
+      else child.kill(signal);
+    } catch {
+      /* already exited */
+    }
+  };
+  const exitPromise = new Promise<{ code: number | null; signal: string | null }>((resolveExit) => {
+    child.once("exit", (code, signal) => {
+      exitInfo = { code, signal };
+      resolveExit({ code, signal });
+    });
+  });
+  context.after(() => {
+    if (exitInfo === undefined) killGroup("SIGKILL");
+  });
+  child.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+  child.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+
+  const deadline = Date.now() + 30_000;
+  while (
+    exitInfo === undefined &&
+    (!output.includes("Workflow hub listening at") || !output.includes("Discovery file: ")) &&
+    Date.now() < deadline
+  ) {
+    await sleep(100);
+  }
+  const listeningMatch = output.match(/Workflow hub listening at (\S+)/);
+  const discoveryMatch = output.match(/Discovery file: (.+)/);
+  assert.ok(exitInfo === undefined, `the hub exited before serving — output: ${output.slice(0, 600)}`);
+  assert.ok(listeningMatch !== null && discoveryMatch !== null);
+  const endpoint = listeningMatch![1]!;
+  const token = (JSON.parse(readFileSync(discoveryMatch![1]!.trim(), "utf8")) as { token: string }).token;
+
+  // The bounded lane: a command that prints then hangs answers 500 with the
+  // named timeout error carrying the PARTIAL output — the kill landed at the
+  // 750ms cap, not the sleep's full duration.
+  const bounded = await postRoute(endpoint, "/bash", token, { cwd: workspace, command: "echo partial; sleep 30" });
+  assert.equal(bounded.status, 500, `observed: ${JSON.stringify(bounded.body)}`);
+  assert.match(String(bounded.body.error), /timed out after 750ms/);
+  assert.match(String(bounded.body.error), /process group SIGKILL/);
+  assert.match(String(bounded.body.error), /partial/, "the partial output rides the timeout error");
+  assert.ok(exitInfo === undefined, "the hub survived the kill");
+
+  // The executor never wedges: the next command answers normally.
+  const after = await postRoute(endpoint, "/bash", token, { cwd: workspace, command: "echo unwedged" });
+  assert.equal(after.status, 200);
+  assert.deepEqual(after.body, { output: "unwedged\n" });
+
+  await killGroup("SIGTERM");
+  const exit = await Promise.race([exitPromise, sleep(10_000).then(() => undefined)]);
+  assert.ok(exit !== undefined, "the hub exited after the group SIGTERM");
+  assert.deepEqual(exit, { code: 0, signal: null }, "the shutdown is clean");
 });

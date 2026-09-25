@@ -38,3 +38,21 @@ test("passthrough containment refuses read-write-no-delete it cannot enforce", a
     /cannot enforce read-write-no-delete/,
   );
 });
+
+// W144: the passthrough (policy-only) backend honors the same bounded
+// execute — detached + process-group kill, the named timeout error. The
+// policy-only marker never becomes an unbounded-lane excuse.
+test("W144: a bounded execute kills the child at the cap (passthrough)", { timeout: 15_000 }, async () => {
+  const containment = new PassthroughContainment();
+  const started = Date.now();
+  await assert.rejects(
+    () => containment.execute({ executable: "/bin/sleep", args: ["30"], timeoutMs: 500 }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /timed out after 500ms/);
+      assert.match(error.message, /process group SIGKILL/);
+      return true;
+    },
+  );
+  assert.ok(Date.now() - started < 10_000, `the kill lands at the cap — took ${Date.now() - started}ms`);
+});
