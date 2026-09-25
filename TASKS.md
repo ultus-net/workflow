@@ -5568,3 +5568,38 @@ nit).
 **Residuals (cut):** agent-initiated uploads (different trust model — Workflow evidence is environment-captured), anchored document comments, workspace file browser, cross-task stacks.
 
 **Design conventions for W150-W154 (from Paperclip DESIGN.md, projection-compatible):** one semantic status token set (running/paused/blocked/awaiting-review/over-budget) shared across badge/row/chart/log (styles.css/theme.ts before W150 lands); machine values monospace with shared formatters (presenters.ts); no redundant toasts; late terminal outcomes refresh silently. No Paperclip vocabulary (hire/CEO/board/company/heartbeat) enters Workflow copy — runs, schedules, reviews, evidence, objectives stay canonical.
+
+### W147 - Open core / deployment-instance repo split (seed)
+
+**Source:** the operator's 2026-09-26 placement decision — the control plane
+stays an open GitHub project; the Azure deployment material (bicep params,
+pipelines, service connections, secrets) becomes a separate project on the
+work Azure DevOps account, with work paying hosting and inference
+(`azure_foundry` provider) while the tools stay the operator's.
+
+**Objective:** Resolve repo placement before deployment work rides the
+C-track: record the open-core / instance seam and seed the instance template,
+so the work repo starts thin instead of accumulating operator-specific
+material in the open repo.
+
+**Depends on:** none directly; complements the 2026-09-25 remote-sandbox
+design spec (`docs/superpowers/specs/2026-09-25-azure-container-jobs-remote-sandbox-design.md`,
+which owns the plane design, not repo placement).
+
+**Acceptance criteria:**
+- [ ] Root `LICENSE` (MIT, copyright ultus-net) and `package.json`
+      `"license": "MIT"` present — the work tenant has a grant to run the
+      code (the root was previously all-rights-reserved).
+- [ ] Spec `docs/superpowers/specs/2026-09-26-deployment-instance-split.md`
+      records: the seam table (open core vs instance), the one-way dependency
+      rule (instance consumes pinned open artifacts; nothing work-specific
+      flows open-side), the pinning scheme (image by digest, modules at a
+      pinned tag, no work-side image rebuilds), the `infra/c0/` disposition
+      (stays open-side as the qualified reference probe with its append-only
+      verdicts), and the local-first guarantee (local surfaces never depend
+      on the instance).
+- [ ] `instances/azure/` seed exists: README contract + checklist, draft
+      two-checkout pipeline skeleton, draft `.bicepparam` skeleton — every
+      instance-specific value is a TODO marker, and the seed contains no real
+      org, subscription, digest, or secret values (greppable).
+- [ ] Independent five-axis review of the branch.

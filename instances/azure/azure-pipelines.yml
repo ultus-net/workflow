@@ -1,0 +1,45 @@
+# DRAFT (W147, 2026-09-26): instance pipeline skeleton.
+# Every TODO below must be filled in the work instance repo. This pipeline
+# deploys nothing as committed here.
+
+trigger: none # manual until the instance repo exists
+
+resources:
+  repositories:
+    - repository: openCore
+      type: github
+      name: ultus-net/workflow
+      ref: refs/tags/TODO_OPEN_RELEASE_TAG # pinned tag; never a moving ref
+      endpoint: TODO_github_service_connection
+
+variables:
+  # image is pinned by digest; never by a moving tag
+  imageDigest: TODO_IMAGE_DIGEST # e.g. ghcr.io/ultus-net/workflow@sha256:...
+  moduleRef: openCore # bicep modules come from the pinned open-core checkout
+
+stages:
+  - stage: deploy
+    jobs:
+      - deployment: controlPlane
+        environment: TODO_work_environment # approvals/checks configured work-side
+        pool:
+          vmImage: ubuntu-latest
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - checkout: openCore
+
+                # 1. Verify the pin (fail closed) before anything deploys.
+                # TODO: assert imageDigest matches the expectation recorded for
+                # the pinned open-core tag; refuse to deploy on mismatch.
+
+                # 2. Deploy the plane from pinned modules + instance params.
+                # TODO: az deployment --template-file $(Pipeline.Workspace)/s/openCore/infra/...
+                #       --parameters params.bicepparam
+                #       --service-connection TODO_service_connection
+
+                # 3. Wire secrets.
+                # TODO: Key Vault references for OPENCODE_SERVER_PASSWORD and
+                #       provider keys; no plaintext anywhere in this repo.
