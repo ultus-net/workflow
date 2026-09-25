@@ -59,7 +59,7 @@ resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(acr.id, planeIdentity.id, 'acrpull')
   scope: acr
   properties: {
-    roleDefinitionId: acrPullRoleDefinitionId
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', acrPullRoleDefinitionId)
     principalId: planeIdentity.properties.principalId
     principalType: 'ServicePrincipal'
   }
@@ -69,9 +69,6 @@ resource env 'Microsoft.App/managedEnvironments@2024-03-01' = {
   name: 'workflow-dev-env'
   location: location
   properties: {
-    appLogsConfiguration: {
-      destination: 'none'
-    }
     vnetConfiguration: {
       internal: false
       infrastructureSubnetId: vnet.properties.subnets[0].id

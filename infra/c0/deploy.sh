@@ -42,7 +42,11 @@ IFS= read -r ENV_ID < .deploy-tmp/env_id
 IFS= read -r IDENTITY_ID < .deploy-tmp/identity_id
 echo "   acr=$ACR env=workflow-dev-env"
 
-echo "== [3/4] image build + push (opencode v2.0.10 pinned) =="
+echo "== [3/4] stage vendored binary + image build + push (opencode v2.0.10) =="
+cp "$HOME/.local/bin/opencode" image/opencode
+sha256sum image/opencode | cut -d ' ' -f1 > .deploy-tmp/ocsha
+IFS= read -r OC_SHA < .deploy-tmp/ocsha
+echo "   vendored opencode sha256=$OC_SHA"
 az acr build \
   --registry "$ACR" \
   --image "opencode-plane:c0" \
@@ -80,5 +84,6 @@ printf 'C0_SERVER_PASSWORD=%s\n' "$PASSWORD" >> c0.env
 printf 'C0_RESOURCE_GROUP=%s\n' "$RG" >> c0.env
 printf 'C0_APP_NAME=workflow-dev-cplane\n' >> c0.env
 printf 'C0_ACR=%s\n' "$ACR" >> c0.env
+printf 'C0_OPENCODE_SHA=%s\n' "$OC_SHA" >> c0.env
 echo "== deployed: https://$FQDN (credentials in ./c0.env) =="
 echo "== next: node probe.mjs (see README.md) =="
