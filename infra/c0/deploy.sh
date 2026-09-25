@@ -8,7 +8,10 @@
 # Style note: this script deliberately contains no command substitution — the
 # workflow guard cannot statically classify $() inside shell text, so outputs
 # are read through temp files (IFS= read -r VAR < file) instead.
+# Umask first (review P2, 2026-09-26): every temp file this script writes,
+# including the generated password, is created 0600 from the start.
 set -euo pipefail
+umask 077
 
 LOCATION="${LOCATION:-australiaeast}"
 RG="${RG:-workflow-dev-rg}"
