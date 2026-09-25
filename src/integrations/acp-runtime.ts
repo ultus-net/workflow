@@ -99,7 +99,7 @@ export function opencodeAcpArgs(majorVersion: number | undefined): readonly stri
 const opencodeMajorCache = new Map<string, Promise<number | undefined>>();
 
 /** Probe the opencode binary's major version once per executable path. */
-function opencodeMajorVersion(executable: string): Promise<number | undefined> {
+export function opencodeMajorVersion(executable: string): Promise<number | undefined> {
   const cached = opencodeMajorCache.get(executable);
   if (cached !== undefined) return cached;
   const probe = new Promise<number | undefined>((resolveProbe) => {
