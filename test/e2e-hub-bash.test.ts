@@ -466,3 +466,93 @@ test("the compiled hub's /bash and /run/begin lanes: auth directions, the contai
   assert.ok(!existsSync(discoveryPath), "the shutdown unlinked discovery.json (workflow-hub.ts:175-181)");
   assert.ok(!existsSync(join(dirname(discoveryPath), "verifier.json")), "the shutdown unlinked verifier.json");
 });
+
+// W144: the /bash lane is BOUNDED — the hub passes the env-derived cap into
+// the executor, the backend kills the process group at the cap, and the
+// response carries the named timeout error WITH the partial output. The hub
+// must stay alive and serving after the kill (the executor never wedges).
+// The test's own 15s timeout keeps the pre-change red bounded (pre-fix the
+// request rode the sleep's full 30s and answered 200).
+test("W144: the /bash lane is bounded by WORKFLOW_HUB_BASH_TIMEOUT_MS and the hub survives the kill", { timeout: 15_000 }, async (context) => {
+  ensureFresh(distArtifact("cli", "hub.js"));
+  ensureToolboxGuardBuilt();
+
+  const home = mkdtempSync(join(tmpdir(), "w144-timeout-home-"));
+  context.after(() => rmSync(home, { recursive: true, force: true }));
+  const workspace = mkdtempSync(join(tmpdir(), "w144-timeout-ws-"));
+  context.after(() => rmSync(workspace, { recursive: true, force: true }));
+
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: home,
+    WORKFLOW_HUB_PROVENANCE: join(home, "provenance.jsonl"),
+    WORKFLOW_HUB_SCHEDULES: join(home, "schedules.json"),
+    WORKFLOW_HUB_BASH_TIMEOUT_MS: "750",
+    WORKFLOW_RSI_AGENT: "0",
+  };
+  delete env.WORKFLOW_HUB_REQUEST_LOG;
+  delete env.WORKFLOW_TEAM_TASK_VERIFY_COMMAND;
+
+  let output = "";
+  let exitInfo: { code: number | null; signal: string | null } | undefined;
+  const child = spawn(process.execPath, [distArtifact("cli", "hub.js")], {
+    cwd: repoRoot,
+    env,
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+  });
+  const killGroup = (signal: NodeJS.Signals): void => {
+    try {
+      if (child.pid !== undefined && process.platform !== "win32") process.kill(-child.pid, signal);
+      else child.kill(signal);
+    } catch {
+      /* already exited */
+    }
+  };
+  const exitPromise = new Promise<{ code: number | null; signal: string | null }>((resolveExit) => {
+    child.once("exit", (code, signal) => {
+      exitInfo = { code, signal };
+      resolveExit({ code, signal });
+    });
+  });
+  context.after(() => {
+    if (exitInfo === undefined) killGroup("SIGKILL");
+  });
+  child.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+  child.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+
+  const deadline = Date.now() + 30_000;
+  while (
+    exitInfo === undefined &&
+    (!output.includes("Workflow hub listening at") || !output.includes("Discovery file: ")) &&
+    Date.now() < deadline
+  ) {
+    await sleep(100);
+  }
+  const listeningMatch = output.match(/Workflow hub listening at (\S+)/);
+  const discoveryMatch = output.match(/Discovery file: (.+)/);
+  assert.ok(exitInfo === undefined, `the hub exited before serving — output: ${output.slice(0, 600)}`);
+  assert.ok(listeningMatch !== null && discoveryMatch !== null);
+  const endpoint = listeningMatch![1]!;
+  const token = (JSON.parse(readFileSync(discoveryMatch![1]!.trim(), "utf8")) as { token: string }).token;
+
+  // The bounded lane: a command that prints then hangs answers 500 with the
+  // named timeout error carrying the PARTIAL output — the kill landed at the
+  // 750ms cap, not the sleep's full duration.
+  const bounded = await postRoute(endpoint, "/bash", token, { cwd: workspace, command: "echo partial; sleep 30" });
+  assert.equal(bounded.status, 500, `observed: ${JSON.stringify(bounded.body)}`);
+  assert.match(String(bounded.body.error), /timed out after 750ms/);
+  assert.match(String(bounded.body.error), /process group SIGKILL/);
+  assert.match(String(bounded.body.error), /partial/, "the partial output rides the timeout error");
+  assert.ok(exitInfo === undefined, "the hub survived the kill");
+
+  // The executor never wedges: the next command answers normally.
+  const after = await postRoute(endpoint, "/bash", token, { cwd: workspace, command: "echo unwedged" });
+  assert.equal(after.status, 200);
+  assert.deepEqual(after.body, { output: "unwedged\n" });
+
+  await killGroup("SIGTERM");
+  const exit = await Promise.race([exitPromise, sleep(10_000).then(() => undefined)]);
+  assert.ok(exit !== undefined, "the hub exited after the group SIGTERM");
+  assert.deepEqual(exit, { code: 0, signal: null }, "the shutdown is clean");
+});

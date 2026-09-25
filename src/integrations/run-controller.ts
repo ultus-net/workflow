@@ -61,6 +61,7 @@ export function shellExecutorFor(
   fixedTaskId?: TaskId,
   writableWorkspace = true,
   guard?: WorkflowGuardProvider,
+  timeoutMs?: number,
 ): WorkflowContainedShellExecutor {
   return createContainedShellExecutor(
     new WorkflowContainedProcess(application, selectContainment(), guard),
@@ -70,6 +71,7 @@ export function shellExecutorFor(
       taskId: fixedTaskId ?? (() => application.activeTaskId()),
       commandExitError: (exitCode, output) => Object.assign(new Error(output), { exitCode }),
       writableWorkspace,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
     },
   );
 }

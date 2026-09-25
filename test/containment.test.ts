@@ -463,3 +463,31 @@ test("Linux containment never reports enforcement when a requested boundary cann
     /containment boundary could not be established/,
   );
 });
+
+// W144: a bounded execute kills the child's process group at the cap and
+// rejects with the named timeout error — the W142 wave's finding (c), the
+// no-timeout lane, now bounded where the caller asks for it. The kill must
+// land at the CAP, never at the sleep's full duration.
+test("W144: a bounded execute kills the contained command at the cap (bwrap)", { timeout: 15_000 }, async () => {
+  const runtime = new LinuxBubblewrapContainment();
+  const started = Date.now();
+  await assert.rejects(
+    () => runtime.execute({ executable: "/bin/sleep", args: ["30"], timeoutMs: 500 }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /timed out after 500ms/);
+      assert.match(error.message, /process group SIGKILL/);
+      return true;
+    },
+  );
+  assert.ok(Date.now() - started < 10_000, `the kill lands at the cap — took ${Date.now() - started}ms`);
+});
+
+// W144's symmetry guard: a bounded execute that finishes WELL inside the cap
+// resolves normally (the timer must not fire after completion).
+test("W144: a bounded execute inside the cap resolves normally (bwrap)", async () => {
+  const runtime = new LinuxBubblewrapContainment();
+  const result = await runtime.execute({ executable: "/bin/echo", args: ["bounded-ok"], timeoutMs: 10_000 });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "bounded-ok\n");
+});

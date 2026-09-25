@@ -45,17 +45,41 @@ export class PassthroughContainment implements ProcessContainment {
 
     const environment = request.environment ?? {};
     return await new Promise<ContainedProcessResult>((resolveResult, rejectResult) => {
+      // W144: detached + group kill — the timeout takes grandchildren too
+      // (e.g. a shell-spawned npm), mirroring the bwrap backend.
       const child = spawn(request.executable, [...request.args], {
         cwd: request.cwd,
         env: Object.keys(environment).length === 0 ? process.env : environment,
         stdio: ["ignore", "pipe", "pipe"],
+        detached: true,
       });
       let stdout = "";
       let stderr = "";
+      let timedOut = false;
+      const timer = request.timeoutMs === undefined ? undefined : setTimeout(() => {
+        timedOut = true;
+        try {
+          if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+        } catch {
+          child.kill("SIGKILL");
+        }
+        // W144 review P3: destroy the held stdio pipes so `close` fires
+        // instead of waiting on the dead group's descriptors.
+        child.stdout.destroy();
+        child.stderr.destroy();
+      }, request.timeoutMs);
       child.stdout.on("data", (chunk) => { stdout += String(chunk); });
       child.stderr.on("data", (chunk) => { stderr += String(chunk); });
-      child.once("error", rejectResult);
+      child.once("error", (error) => {
+        clearTimeout(timer);
+        rejectResult(error);
+      });
       child.once("close", (exitCode) => {
+        clearTimeout(timer);
+        if (timedOut) {
+          rejectResult(new Error(`contained command timed out after ${request.timeoutMs}ms (process group SIGKILL): ${stdout}${stderr}`));
+          return;
+        }
         resolveResult({
           exitCode,
           stdout,
