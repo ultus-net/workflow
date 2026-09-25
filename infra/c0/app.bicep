@@ -39,9 +39,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         external: true
         targetPort: 4096
         transport: 'http'
-        stickySessions: {
-          affinity: 'sticky'
-        }
         allowInsecure: false
       }
     }
