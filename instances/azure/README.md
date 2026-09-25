@@ -30,7 +30,8 @@ pinned open-core artifacts and supplies everything environment-specific.
 ## Rules (non-negotiable)
 
 - No secrets in any committed file. Local-only connection material goes in a
-  gitignored `instance.env` (same discipline as `infra/c0/c0.env`).
+  gitignored `instance.env` (the same discipline the C0 probe used for its
+  `c0.env`).
 - Nothing work-specific flows back into the open repo (the one-way rule).
 - Image and module refs are pinned (digest/tag); moving refs are forbidden.
 

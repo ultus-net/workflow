@@ -5603,3 +5603,29 @@ which owns the plane design, not repo placement).
       instance-specific value is a TODO marker, and the seed contains no real
       org, subscription, digest, or secret values (greppable).
 - [ ] Independent five-axis review of the branch.
+  - Dated note (2026-09-26, operator direction): the `infra/c0/` disposition
+      recorded above is superseded same-day — the test-deploy folder EXTRACTS
+      to the work instance repo once that repo exists (spec §7 dated note and
+      the §11 gated sequence); W148 carries the extraction. The
+      verdict-preservation duty (append-only records; git history as the
+      archive) is unchanged.
+
+### W148 - Extract `infra/c0/` into the work instance repo (strip)
+
+**Source:** the operator's 2026-09-26 direction — the C0 test deploy leaves
+the open repo once the work Azure DevOps instance repo is ready to receive it.
+
+**Depends on:** W147 (the recorded seam + seed) and the existence of the work
+instance repo consuming the material.
+
+**Acceptance criteria:**
+- [ ] The work instance repo holds the extracted material: the bicep modules,
+      deploy script, probe, and the C0 pinned-recipe + verdict tables as
+      living instance docs.
+- [ ] The 2026-09-25 remote-sandbox spec's C-track gains the dated C0
+      verdict-preservation note naming the pre-strip sha; the 2026-09-26
+      split spec §7/§11 match what actually executed.
+- [ ] The strip commit deletes `infra/c0/`, fixes every reference (grep sweep
+      re-run at execution time), and closes this entry with the pre-strip sha
+      in the message.
+- [ ] Independent five-axis review of the strip.

@@ -35,10 +35,13 @@ stages:
                 # TODO: assert imageDigest matches the expectation recorded for
                 # the pinned open-core tag; refuse to deploy on mismatch.
 
-                # 2. Deploy the plane from pinned modules + instance params.
-                # TODO: az deployment --template-file $(Pipeline.Workspace)/s/openCore/infra/...
+                # 2. Deploy the plane from instance-owned modules + params.
+                # TODO: az deployment --template-file <self-checkout>/infra/...bicep
                 #       --parameters params.bicepparam
                 #       --service-connection TODO_service_connection
+                # The openCore checkout above exists for pin VERIFICATION (step 1)
+                # and, later, for generic modules contributed back open-side
+                # (spec §5); the C0-lineage modules live instance-side.
 
                 # 3. Wire secrets.
                 # TODO: Key Vault references for OPENCODE_SERVER_PASSWORD and

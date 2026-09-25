@@ -83,6 +83,15 @@ the deploying machine (already gitignored). Future instance work seeds from
 `instances/azure/` into the work repo rather than accumulating new
 operator-specific material here.
 
+  - Dated note (2026-09-26, operator direction, same day): `infra/c0/`
+    EXTRACTS to the work instance repo once that repo exists and consumes the
+    material — the open repo does not keep the test-deploy instance. The
+    paragraph above is superseded in that respect. What survives unchanged is
+    the verdict-preservation duty: the pinned recipe and the append-only
+    verdict table move with the instance, the open side records the extraction
+    with dated pointers, and git history remains the archive (§11 is the
+    gated sequence).
+
 ## 8. The work-instance repo shape (seeded by `instances/azure/`)
 
 - Two-checkout pipeline: self (instance values) + open repo at a pinned tag.
@@ -111,3 +120,33 @@ operator-specific material here.
    posture; the mechanism is undecided.
 3. Secret custody work-side: Key Vault refs end-state, ACA secrets as the C0
    probe shortcut only.
+
+## 11. Extraction sequence — strip `infra/c0/` into the work instance repo (recorded 2026-09-26, gated; not executed)
+
+**Readiness gates (all must hold before the strip commit):**
+
+1. The work AzDO instance repo exists, seeded from `instances/azure/`, and
+   carries the extracted material: the bicep modules, the deploy script, the
+   probe, and the C0 pinned-recipe + verdict tables (from
+   `infra/c0/README.md`) as living instance docs.
+2. The verdicts are preserved on the open side too: the 2026-09-25
+   remote-sandbox spec's C-track gains a dated note — C0 executed and PASSED
+   2026-09-25 (australiaeast), record retained in git history at the pre-strip
+   sha named by the strip commit. History is the archive; nothing is silently
+   rewritten.
+3. The reference sweep is clean at execution time. Known today (2026-09-26
+   sweep): this spec (§7), `instances/azure/README.md` (the `c0.env`
+   discipline pointer, reworded to the instance repo's path), and the W147
+   dated note. `src/` and `test/` carry no references (verified).
+4. The W148 ledger entry closes with the pre-strip sha in the strip commit
+   message.
+
+**The strip commit:** deletes `infra/c0/` (README, `infra.bicep`,
+`app.bicep`, `deploy.sh`, `probe.mjs`, `image/`), updates the pointers above,
+and carries the pre-strip sha in its message.
+
+**Honest consequence, stated:** after the strip the open repo no longer ships
+a runnable reference deployment — adopters start from `instances/azure/` and
+their own modules, or check out the pre-strip tag for the C0 reference. If
+reusable generic modules emerge from instance work, they may be contributed
+back open-side under §5 (generic values only).
