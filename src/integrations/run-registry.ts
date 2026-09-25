@@ -78,6 +78,17 @@ export interface ReasoningClaimMetrics {
 }
 
 /**
+ * W146: the typed classification for a client-shaped fault in a
+ * surface-declared workspace — the declaration violates the
+ * canonicalization contract (`docs/HUB_PROTOCOL.md` §3) before any
+ * application state is touched. Subclasses TypeError so every existing
+ * `instanceof TypeError` posture (there are none in-repo, grep-verified)
+ * and any external catch site keeps working; wire surfaces classify it
+ * as 400 because the caller's declaration is the fault, not the server.
+ */
+export class WorkspaceDeclarationError extends TypeError {}
+
+/**
  * The single canonicalization discipline for surface-declared workspaces
  * (`docs/HUB_PROTOCOL.md` §3): declarations must be absolute existing
  * directories, and one canonical (realpath) path means one application —
@@ -86,9 +97,9 @@ export interface ReasoningClaimMetrics {
  * authority error so clients fail closed.
  */
 export function canonicalWorkspace(target: string): string {
-  if (!isAbsolute(target)) throw new TypeError(`declared workspace must be absolute: ${target}`);
+  if (!isAbsolute(target)) throw new WorkspaceDeclarationError(`declared workspace must be absolute: ${target}`);
   if (!statSync(target, { throwIfNoEntry: false })?.isDirectory()) {
-    throw new TypeError(`declared workspace is not an existing directory: ${target}`);
+    throw new WorkspaceDeclarationError(`declared workspace is not an existing directory: ${target}`);
   }
   return realpathSync(target);
 }

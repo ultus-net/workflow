@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import { buildReviewRubric } from "../review/rubric.js";
+import { WorkspaceDeclarationError } from "./run-registry.js";
 import { shellExecutorFor, type WorkflowApplicationResolver, type WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import type { SelfImprovementRegistry, SelfImprovementSpec } from "./self-improvement-registry.js";
@@ -114,13 +115,26 @@ async function handleRequest(
       if (!isRecord(body) || typeof body.runId !== "string" || typeof body.title !== "string") {
         return send(response, 400, { error: "invalid run begin request" });
       }
-      await context.runController.begin({
-        runId: body.runId,
-        title: body.title,
-        ...(typeof body.workspace === "string" ? { workspace: body.workspace } : {}),
-        ...(body.requiresReview === true ? { requiresReview: true } : {}),
-        ...(typeof body.taskPrompt === "string" ? { taskPrompt: body.taskPrompt } : {}),
-      });
+      // W146: the registry's workspace-declaration refusal is a CLIENT
+      // fault — WorkspaceDeclarationError from canonicalWorkspace (reached
+      // through resolveApplication) answers 400 with its message. The
+      // refusal still precedes any composition: nothing composes, no run
+      // task is created. Empty runId and duplicate runId keep the
+      // catch-all's 500 (still queued under the W142 wave's finding (e)).
+      try {
+        await context.runController.begin({
+          runId: body.runId,
+          title: body.title,
+          ...(typeof body.workspace === "string" ? { workspace: body.workspace } : {}),
+          ...(body.requiresReview === true ? { requiresReview: true } : {}),
+          ...(typeof body.taskPrompt === "string" ? { taskPrompt: body.taskPrompt } : {}),
+        });
+      } catch (error) {
+        if (error instanceof WorkspaceDeclarationError) {
+          return send(response, 400, { error: error.message });
+        }
+        throw error;
+      }
       return send(response, 200, {});
     }
     if (request.url === "/run/review") {
@@ -270,11 +284,24 @@ async function handleRequest(
         return send(response, 400, { error: "invalid bash request" });
       }
       const hasSurfaceTask = typeof body.teamTaskId === "string" && body.teamTaskId.length > 0;
-      const application = context.resolveApplication(
-        typeof body.workspace === "string" ? body.workspace : body.cwd,
-        undefined,
-        { activateInteractiveTask: !hasSurfaceTask },
-      );
+      // W146: a non-canonical workspace DECLARATION is a client fault —
+      // canonicalWorkspace throws the typed WorkspaceDeclarationError
+      // (run-registry.ts) and the route answers 400 with its message (the
+      // W142 wave's empty/relative-cwd observations). Every other resolver
+      // fault keeps the catch-all's 500.
+      let application: WorkflowApplication;
+      try {
+        application = context.resolveApplication(
+          typeof body.workspace === "string" ? body.workspace : body.cwd,
+          undefined,
+          { activateInteractiveTask: !hasSurfaceTask },
+        );
+      } catch (error) {
+        if (error instanceof WorkspaceDeclarationError) {
+          return send(response, 400, { error: error.message });
+        }
+        throw error;
+      }
       // W144: the hub's ad-hoc shell lane is bounded (the W142 wave's finding
       // (c): no timeout anywhere in the chain). The agent tool lane keeps its
       // current unbounded posture — a separate queued decision.

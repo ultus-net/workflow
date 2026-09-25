@@ -98,10 +98,12 @@ import { distArtifact, ensureFresh, ensureToolboxGuardBuilt, repoRoot } from "./
 //       printf came back verbatim, untruncated (pinned below as observed).
 //   (e) /run/begin's client-shaped faults are 500s: the route validates only
 //       field TYPES (hub-http.ts:114), so empty runId/title (registry
-//       TypeError, run-registry.ts:281-283), a duplicate runId
-//       (run-registry.ts:284), and a non-canonical workspace
-//       (canonicalWorkspace's TypeError, run-registry.ts:88-94) all land in
-//       the 500 catch-all. Repros below, each observed exactly.
+//       TypeError, run-registry.ts:281-283) and a duplicate runId
+//       (run-registry.ts:284) land in the 500 catch-all. Repros below, each
+//       observed exactly. W146 (2026-09-25) deliberately flipped the family's
+//       third member — the non-canonical workspace (canonicalWorkspace) — to
+//       a 400 via the typed WorkspaceDeclarationError; the empty-runId and
+//       duplicate-runId 500s remain recorded, not fixed.
 //   (f) the cleanup/removal path for a begun run is /run/finish with outcome
 //       "failed": it does NOT delete the task — the record transitions to
 //       FAILED with one failed environment evidence left on the graph
@@ -312,12 +314,15 @@ test("the compiled hub's /bash and /run/begin lanes: auth directions, the contai
   assert.deepEqual(emptyCommand.body, { error: "invalid bash request" });
 
   // Non-canonical cwd declarations refuse at the registry's canonicalization
-  // (run-registry.ts:88-94) BEFORE the executor is even built.
+  // (run-registry.ts) BEFORE the executor is even built. W146 flipped these
+  // deliberately (2026-09-25): the declaration is a CLIENT fault, so the
+  // typed WorkspaceDeclarationError answers 400 with its message — these two
+  // pins were 500s under the old TypeError classification.
   const emptyCwd = await postRoute(endpoint, "/bash", token, { cwd: "", command: "echo refused" });
-  assert.equal(emptyCwd.status, 500);
+  assert.equal(emptyCwd.status, 400, "an empty cwd declaration is a client fault (W146)");
   assert.deepEqual(emptyCwd.body, { error: "declared workspace must be absolute: " });
   const relativeCwd = await postRoute(endpoint, "/bash", token, { cwd: "relative/nope", command: "echo refused" });
-  assert.equal(relativeCwd.status, 500);
+  assert.equal(relativeCwd.status, 400, "a relative cwd declaration is a client fault (W146)");
   assert.deepEqual(relativeCwd.body, { error: "declared workspace must be absolute: relative/nope" });
 
   // The W134 body contract on this lane: malformed and zero-byte bodies are
@@ -379,9 +384,11 @@ test("the compiled hub's /bash and /run/begin lanes: auth directions, the contai
   assert.equal(beginShapeless.status, 400);
   assert.deepEqual(beginShapeless.body, { error: "invalid run begin request" });
 
-  // (e) the registry's client-shaped refusals land in the 500 catch-all
-  // (recorded, not fixed): empty runId, and the CANNOT-CANONICALIZE workspace
-  // (run-registry.ts:88-94) — nothing composes, no run task is created.
+  // (e) the registry's REMAINING client-shaped refusals land in the 500
+  // catch-all (recorded, not fixed): empty runId and a duplicate runId.
+  // W146 (2026-09-25) flipped the third member of this family — the
+  // CANNOT-CANONICALIZE workspace (run-registry.ts) — to a 400: it is now
+  // the typed WorkspaceDeclarationError, a client fault, pinned below.
   const beginEmptyRunId = await postRoute(endpoint, "/run/begin", token, { runId: "  ", title: "t", workspace });
   assert.equal(beginEmptyRunId.status, 500);
   assert.deepEqual(beginEmptyRunId.body, { error: "run begin requires a non-empty runId and title" });
@@ -391,7 +398,7 @@ test("the compiled hub's /bash and /run/begin lanes: auth directions, the contai
     token,
     { runId: "w141-e2e-noncanon", title: "t", workspace: join(workspace, "does-not-exist") },
   );
-  assert.equal(beginNonCanonical.status, 500, "a non-canonicalizable workspace is (currently) a server-fault classification — observed");
+  assert.equal(beginNonCanonical.status, 400, "a non-canonicalizable workspace is a client fault (W146)");
   assert.deepEqual(
     beginNonCanonical.body,
     { error: `declared workspace is not an existing directory: ${join(workspace, "does-not-exist")}` },
