@@ -50,101 +50,51 @@ jobs:
       # Linux Bubblewrap backend and correctly fail closed without it
       # ("containment backend unavailable" — the 2026-09-26 live CI finding).
       # ubuntu-latest ships no bwrap; Ubuntu 24.04 also restricts unprivileged
-      # user namespaces by default, which bwrap needs. W130's credential
-      # custody test additionally drives the real secret-service store
-      # (secret-tool over D-Bus), so the job provisions a headless keyring.
+      # user namespaces by default, which bwrap needs.
       - name: Install system prerequisites (bubblewrap, D-Bus secret service)
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap gnome-keyring dbus-x11 libsecret-1-0 libsecret-tools python3-secretstorage
-          command -v secret-tool # fail the step here if the CLI is missing (the eighth run's ENOENT)
+          sudo apt-get install -y bubblewrap gnome-keyring dbus-x11 libsecret-1-0 libsecret-tools dbus
+          command -v secret-tool dbus-run-session gnome-keyring-daemon # fail the step here if a CLI is missing (the eighth run's ENOENT)
           if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
-      # Unlock a headless keyring for the W130 credential-custody e2e: the
-      # control plane stores material through secret-tool (D-Bus Secret
-      # Service), which needs a session bus, a running keyring daemon WITH
-      # the secrets component, and an existing, unlocked default collection.
-      # Live-run findings baked into this step: the control socket needs its
-      # parent dir (run 7); --daemonize detaches stdout so the control var
-      # must be captured from a foreground --start (run 5); and a fresh
-      # daemon creates NO default collection — secret-tool answers "Object
-      # does not exist at path /org/freedesktop/secrets/collection/login"
-      # (run 9) — so the collection is created by seeding the keyring file
-      # directory first and letting the daemon's first-store path materialize
-      # the rest, verified by a probe round trip before W130 runs.
-      - name: Unlock the headless secret-service keyring
-        run: |
-          set +e
-          eval "$(dbus-launch --sh-syntax)"
-          mkdir -p /run/user/$(id -u)/keyring
-          mkdir -p "$HOME/.local/share/keyrings"
-          daemon_env="$(gnome-keyring-daemon --start --components=secrets,pkcs11 2>&1)"
-          echo "keyring daemon env: $daemon_env"
-          echo "$daemon_env" | tr ';' '\n' | grep 'GNOME_KEYRING_CONTROL=' | sed 's/^  //' >> "$GITHUB_ENV" || true
-          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
-          printf '%s\n' \
-            'import os, subprocess, sys, time' \
-            'import secretstorage' \
-            'from jeepney.wrappers import DBusObject, new_method_call, Message, MessageType, HeaderFields' \
-            'from secretstorage.collection import Collection' \
-            'bus = subprocess.check_output(["bash", "-c", "echo $DBUS_SESSION_BUS_ADDRESS"]).decode().strip()' \
-            'os.environ["DBUS_SESSION_BUS_ADDRESS"] = bus' \
-            'import secrets as _secrets' \
-            'conn = secretstorage.dbus_init()' \
-            'service_addr = DBusObject("org.freedesktop.secrets", "/org/freedesktop/secrets")' \
-            'collection = None' \
-            'try:' \
-            '    collection = secretstorage.get_default_collection(conn)' \
-            'except Exception:' \
-            '    collection = None' \
-            'if collection is None:' \
-            '    # No default collection on a fresh daemon. The prompt-based' \
-            '    # path (secretstorage.create_collection) DISMISSES headless' \
-            '    # (run 12 PromptDismissedException), and raw jeepney connections' \
-            '    # get ECONNRESET (runs 19/22/25/27 — the secretstorage conn' \
-            '    # owns the session auth dialect), so the creation goes through' \
-            '    # the SECRETSTORAGE conn using its util.send_message helper:' \
-            '    # OpenSession(plain) -> CreateCollection with the (oayts)' \
-            '    # secret struct, replied via the same message-serial machinery' \
-            '    # secretstorage itself uses.' \
-            '    from secretstorage.util import send_and_get_reply as ss_send, open_session, format_secret' \
-            '    session = open_session(conn)' \
-            '    secret = format_secret(conn, session, b"ci-probe")' \
-            '    collection_path = "/org/freedesktop/secrets/collection/login"' \
-            '    props = {"org.freedesktop.Secret.Collection.Label": ("s", "login")}' \
-            '    open_msg = prepare_message(conn, new_method_call(service_addr, "CreateCollection", "a{sv}(oayts)", (props, secret)))' \
-            '    create_reply = ss_send(conn, open_msg)' \
-            '    collection = Collection(conn, create_reply[0][1][1])' \
-            '    if collection.is_locked():' \
-            '        collection.unlock()' \
-            '    collection.create_item("ci-unlock-probe", {"service": "workflow", "credential": "ci-unlock-probe"}, b"ci-probe")' \
-            '    print("probe item created")' > /tmp/keyring-create.py
-          printf '%s\n' \
-            'import os, subprocess, secretstorage, time' \
-            'from secretstorage.collection import Collection' \
-            'bus = subprocess.check_output(["bash", "-c", "echo $DBUS_SESSION_BUS_ADDRESS"]).decode().strip()' \
-            'os.environ["DBUS_SESSION_BUS_ADDRESS"] = bus' \
-            'conn = secretstorage.dbus_init()' \
-            'time.sleep(0.3)' \
-            'collection = Collection(conn, "/org/freedesktop/secrets/collection/login")' \
-            'if collection.is_locked():' \
-            '    collection.unlock()' \
-            'item = None' \
-            'for attempt in range(5):' \
-            '    try:' \
-            '        item = next((i for i in collection.get_all_items() if i.get_label() == "ci-unlock-probe"), None)' \
-            '        if item is not None:' \
-            '            break' \
-            '    except Exception:' \
-            '        time.sleep(0.3)' \
-            'assert item is not None, "the probe item vanished"' \
-            'assert item.get_secret().decode() == "ci-probe", "the probe secret round-trip mismatched"' \
-            'print("keyring probe: created + read back ok")' > /tmp/keyring-verify.py
-          python3 /tmp/keyring-create.py
-          python3 /tmp/keyring-verify.py
-          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
-          echo "GNOME_KEYRING_CONTROL=/run/user/$(id -u)/keyring" >> "$GITHUB_ENV" || true
       - run: npm ci
       - run: npm run build
-      - run: npm run test:ci
+      # W130 stores credential MATERIAL through secret-tool (D-Bus Secret
+      # Service), so the suite runs INSIDE one dbus-run-session that owns the
+      # daemon's whole lifecycle: gnome-keyring-daemon(1) --unlock "read[s] a
+      # password from stdin, and use[s] it to unlock the login keyring or
+      # create it if the login keyring does not exist" — verified locally in
+      # the exact runner scenario (fresh HOME, headless, isolated bus): canary
+      # store/lookup/clear round trip green, login.keyring persisted. One
+      # session removes the cross-step env handoff and daemon lifetime
+      # entirely (the unlock-state-loss class apache/iggy#2868 fixed the same
+      # way); the canary fails the step loudly instead of leaving W130 to
+      # answer an opaque 400 (runs 6-34's scripted collection creation never
+      # succeeded and `set +e` masked every failure — W155 dated notes). No
+      # control-dir mkdir: the daemon creates it 0700 itself (a pre-made 0755
+      # dir made it fall back to a suffixed socket — run 34's warning).
+      - name: Evidence suite inside one D-Bus session with an unlocked keyring
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s\n" ci-unlock-pass | gnome-keyring-daemon --unlock --components=secrets &
+            sleep 2
+            store_ok=""
+            for i in $(seq 1 40); do
+              if printf "%s" ci-probe | secret-tool store --label=ci-probe service workflow credential ci-unlock-probe 2>/dev/null; then
+                store_ok="yes"
+                break
+              fi
+              sleep 0.5
+            done
+            if [ "$store_ok" != "yes" ]; then
+              echo "the keyring daemon never became servable on the session bus; last attempt:" >&2
+              printf "%s" ci-probe | secret-tool store --label=ci-probe service workflow credential ci-unlock-probe || true
+              exit 1
+            fi
+            test "$(secret-tool lookup service workflow credential ci-unlock-probe)" = "ci-probe"
+            secret-tool clear service workflow credential ci-unlock-probe
+            echo "keyring canary round trip ok"
+            npm run test:ci
+          '

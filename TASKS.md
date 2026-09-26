@@ -5815,6 +5815,35 @@ choice decides the push target).
       dbus-launch + `gnome-keyring-daemon --unlock --daemonize`, exported
       through $GITHUB_ENV). No test was weakened: W130 still fails closed
       wherever the keyring prerequisite is absent.
+  - Dated note (2026-09-26, runs six through thirty-four, same PR): the
+      fifth note's keyring fix never worked, and the provisioning step's
+      `set +e` masked every failure — each broken unlock/creation attempt
+      exited 0, so W130's fail-closed pre-flight (or the control plane's
+      catch-all 400) carried the signal alone. Run 34's log made it
+      unambiguous: the python collection-creation script crashed on import
+      (`send_and_get_reply` does not exist in Ubuntu 24.04's secretstorage),
+      the verify script then found no collection, and the step still
+      "succeeded". The honest arc: the dbus-launch + $GITHUB_ENV handoff
+      worked mechanically (daemon env and bus address reached later steps),
+      but the collection was NEVER created in any run — run 12's
+      PromptDismissedException, runs 19-27's ECONNRESET, and run 34's
+      ImportError are one fight: hand-rolled D-Bus creation against the
+      headless prompter. Replacement, grounded in documentation before
+      shipping: gnome-keyring-daemon(1) says --unlock "read[s] a password
+      from stdin, and use[s] it to unlock the login keyring or create it if
+      the login keyring does not exist" — verified locally against
+      gnome-keyring 50 in the exact runner scenario (fresh HOME, headless,
+      dbus-run-session): canary store/lookup/clear round trip green and
+      login.keyring persisted; a no-daemon negative control proved the
+      harness detects absence; `--start --unlock` is rejected by the daemon
+      itself ("incompatible") and the PAM --login/--start two-step hangs.
+      Landed shape (apache/iggy#2868 hit the same unlock-state-loss class):
+      daemon, canary, and `npm run test:ci` share ONE dbus-run-session — no
+      cross-step env handoff, no daemon-lifetime races, no `set +e`, and a
+      canary that fails the step loudly. No control-dir mkdir: the daemon
+      creates it 0700 itself (a pre-made 0755 dir made it fall back to a
+      suffixed socket — run 34's warning, and the hardcoded $GITHUB_ENV
+      control path never matched the real one).
 
 **Source:** docs/CI.md (2026-09-26 design) — the operator's "start with CI
 design" direction. The repo has no CI at all today; this wires the existing

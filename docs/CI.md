@@ -122,9 +122,17 @@ working as designed); Ubuntu 24.04's AppArmor unprivileged-userns
 restriction is relaxed in the same setup step; (3) the evidence job must
 also provision a headless secret-service keyring — W130's credential
 custody test drives the real `secret-tool` D-Bus store, and without a
-session bus + unlocked collection the control plane correctly answers 400
-(gnome-keyring + dbus-x11 installed, dbus-launch +
-`gnome-keyring-daemon --unlock --daemonize`, exported through $GITHUB_ENV).
+session bus + unlocked collection the control plane correctly answers 400.
+The landed recipe (gnome-keyring + dbus-x11 installed) wraps the daemon AND
+the suite in ONE `dbus-run-session`: `gnome-keyring-daemon --unlock
+--components=secrets` reads the keyring password from stdin and "unlocks
+the login keyring or creates it if it does not exist"
+(gnome-keyring-daemon(1)); verified locally on a fresh HOME before landing
+(canary store/lookup/clear round trip + persisted `login.keyring`), and a
+canary inside the session fails the step loudly before W130 can answer an
+opaque 400. The earlier dbus-launch + `$GITHUB_ENV` + scripted collection
+creation never worked — every failure was masked by `set +e` (W155 dated
+notes, runs six through thirty-four).
 The guard build precondition
 turned out to be a REAL product defect: the root `postinstall` key sat at
 package.json top level (outside `scripts`), so npm never ran the hook
