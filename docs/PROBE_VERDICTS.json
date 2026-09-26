@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-09-21",
+  "updated": "2026-09-26",
   "verdicts": [
     {
       "id": "acp-cline-probe",
@@ -340,6 +340,19 @@
       "posture": "unqualified",
       "evidence": "docs/HOST_ADAPTERS.md remote ACP bridge entry (2026-09-18, advisory M1)",
       "blocker": "needs a remote/attached opencode server endpoint plus operator credentials; the bridge stays advisory until the family runs"
+    },
+    {
+      "id": "acp-remote-sse-idle",
+      "host": "opencode (remote/attached server)",
+      "hostVersion": "unqualified",
+      "probe": "test/acp-remote-sse-probe.test.ts",
+      "gate": "WORKFLOW_ACP_REMOTE_SSE_IDLE",
+      "date": "2026-09-26",
+      "result": "pending",
+      "posture": "unqualified",
+      "evidence": "docs/HOST_ADAPTERS.md remote ACP bridge entry (2026-09-26 idle-window note); test/acp-remote-sse-probe.test.ts header",
+      "blocker": "needs the same remote/attached opencode server endpoint plus operator credentials as acp-remote-sse; the 4-minute no-event window has never been measured live",
+      "note": "Idle arm of the same probe file: it holds ONE /api/event subscription through a 240s window with no events and fails only on a drop (iterator ended or errored mid-window) or a silent resume (a second text/event-stream subscription). Even a green run caps the bridge at advisory — transport liveness, never enforcement."
     },
     {
       "id": "acp-remote-auth",
