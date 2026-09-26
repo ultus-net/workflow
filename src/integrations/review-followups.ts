@@ -44,6 +44,33 @@ export interface ReviewFollowUps {
   close(): Promise<void>;
 }
 
+/**
+ * A polling ledger read, mirroring the hub snapshot source: the launcher owns
+ * the cadence, the surface reads the latest observation. A boot-time value is
+ * not live debt — a follow-up recorded after launch would never appear, and
+ * resolved debt would stay on screen until restart.
+ */
+export interface ReviewFollowUpsSource {
+  /** The most recent observation. Never a synthesized empty ledger. */
+  current(): OpenReviewFollowUps;
+  refresh(): Promise<void>;
+}
+
+export function createReviewFollowUpsSource(client: ReviewFollowUps, limit: number): ReviewFollowUpsSource {
+  // Before the first read there is no observation at all, and no observation
+  // is not zero debt: the honest pre-refresh state is the unavailable marker,
+  // the same one a refused read produces.
+  let latest = UNAVAILABLE_REVIEW_FOLLOW_UPS;
+  return {
+    current: () => latest,
+    async refresh() {
+      // The poller never rejects: a poll that fails is a read this surface
+      // cannot make, which is debt it cannot see — not a reason to stop polling.
+      latest = await client.openFollowUps(limit).catch(() => UNAVAILABLE_REVIEW_FOLLOW_UPS);
+    },
+  };
+}
+
 export function createReviewFollowUpsClient(options: {
   readonly serverScript: string;
   readonly workspaceRoot: string;

@@ -6,7 +6,12 @@ import { tmpdir } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-import { createReviewFollowUpsClient } from "../src/integrations/review-followups.js";
+import {
+  UNAVAILABLE_REVIEW_FOLLOW_UPS,
+  createReviewFollowUpsClient,
+  createReviewFollowUpsSource,
+  type OpenReviewFollowUps,
+} from "../src/integrations/review-followups.js";
 
 const serverScript = resolve("mcp-toolbox/apps/review-accountability-mcp/dist/server.js");
 
@@ -80,4 +85,48 @@ test("a ledger the server refuses to list reads as unavailable, not as zero debt
 
   assert.equal(refused.available, false, "an unread ledger must be marked unavailable");
   assert.equal(refused.followUps.length, 0, "no follow-up was actually observed");
+});
+
+test("the poller source re-reads the ledger instead of freezing a boot-time value", async () => {
+  // The launcher's cadence lives here; the surface only reads `current()`. A
+  // captured value would make "N open" a claim about launch time — a P2
+  // recorded after launch would never appear, resolved debt would never leave.
+  let read: OpenReviewFollowUps = { followUps: [], truncated: false, available: true };
+  const limits: number[] = [];
+  const source = createReviewFollowUpsSource({
+    async openFollowUps(limit: number) {
+      limits.push(limit);
+      return read;
+    },
+    async close() {},
+  }, 8);
+
+  assert.equal(source.current().available, false, "before the first read there is no observation, and none is not zero");
+  await source.refresh();
+  assert.equal(source.current().available, true);
+  assert.equal(source.current().followUps.length, 0, "a consulted empty ledger really is empty");
+
+  read = {
+    followUps: [
+      { severity: "P2", summary: "recorded after launch", paths: ["src/x.ts"], id: "1", reviewId: "r1", status: "open", createdAt: 1 },
+    ],
+    truncated: false,
+    available: true,
+  };
+  await source.refresh();
+  assert.equal(source.current().followUps.length, 1, "debt recorded after the first read must be observable");
+  assert.deepEqual(limits, [8, 8], "the poller owns the cadence and the window");
+
+  // A failing read is debt this surface cannot see, not a reason to stop
+  // polling: the poller degrades to the unavailable marker and keeps running.
+  const failing = createReviewFollowUpsSource({
+    async openFollowUps() {
+      throw new Error("ledger gone");
+    },
+    async close() {},
+  }, 8);
+  await failing.refresh();
+  assert.equal(failing.current().available, false, "a rejected read must read as unavailable");
+  assert.equal(failing.current().followUps.length, 0);
+  assert.deepEqual(failing.current(), UNAVAILABLE_REVIEW_FOLLOW_UPS);
 });

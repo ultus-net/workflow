@@ -16,6 +16,7 @@ import {
   type CodingSessionDriver,
   type WorkflowTask,
 } from "../src/index.js";
+import type { OpenReviewFollowUps } from "../src/integrations/review-followups.js";
 
 // The monitor-mode TUI polls every second while mounted, so a view leaked by
 // a failing assertion would keep the test process alive past its results.
@@ -49,14 +50,14 @@ async function waitForFrame(view: { lastFrame(): string | undefined }, expected:
 test("TUI activity panel lists open review follow-ups", () => {
   const view = render(React.createElement(WorkflowTui, {
     application: createApplication(),
-    reviewFollowUps: {
+    reviewFollowUps: () => ({
       followUps: [
-        { severity: "P2", summary: "missing edge coverage", paths: ["src/x.ts"], id: "1", reviewId: "r1", status: "open", createdAt: 1 },
-        { severity: "P3", summary: "nit: naming", paths: [], id: "2", reviewId: "r1", status: "open", createdAt: 2 },
+        { severity: "P2" as const, summary: "missing edge coverage", paths: ["src/x.ts"], id: "1", reviewId: "r1", status: "open" as const, createdAt: 1 },
+        { severity: "P3" as const, summary: "nit: naming", paths: [], id: "2", reviewId: "r1", status: "open" as const, createdAt: 2 },
       ],
       truncated: false,
       available: true,
-    },
+    }),
   }));
 
   const frame = view.lastFrame() ?? "";
@@ -72,13 +73,13 @@ test("TUI activity panel marks a truncated follow-up window as capped debt", () 
   // renders as "8+ open".
   const view = render(React.createElement(WorkflowTui, {
     application: createApplication(),
-    reviewFollowUps: {
+    reviewFollowUps: () => ({
       followUps: Array.from({ length: 8 }, (_unused, index) => ({
         severity: "P2" as const, summary: `finding ${index}`, paths: ["src/x.ts"], id: String(index), reviewId: "r1", status: "open" as const, createdAt: index,
       })),
       truncated: true,
       available: true,
-    },
+    }),
   }));
 
   const frame = view.lastFrame() ?? "";
@@ -93,7 +94,7 @@ test("TUI activity panel says the follow-up ledger is unavailable instead of sho
   // brings the Activity panel up for it.
   const unavailable = render(React.createElement(WorkflowTui, {
     application: createApplication(),
-    reviewFollowUps: { followUps: [], truncated: false, available: false },
+    reviewFollowUps: () => ({ followUps: [], truncated: false, available: false }),
   }));
 
   const frame = unavailable.lastFrame() ?? "";
@@ -106,7 +107,7 @@ test("TUI activity panel says the follow-up ledger is unavailable instead of sho
   // emptiness is a real zero, and the panel must not inflate it.
   const consulted = render(React.createElement(WorkflowTui, {
     application: createApplication(),
-    reviewFollowUps: { followUps: [], truncated: false, available: true },
+    reviewFollowUps: () => ({ followUps: [], truncated: false, available: true }),
   }));
 
   assert.equal(/review follow-ups/.test(consulted.lastFrame() ?? ""), false, "a consulted empty ledger renders no section");
@@ -119,13 +120,13 @@ test("TUI activity panel marks a capped follow-up list as a window, not the whol
   // debt, so the cap states how many findings the frame withheld.
   const capped = render(React.createElement(WorkflowTui, {
     application: createApplication(),
-    reviewFollowUps: {
+    reviewFollowUps: () => ({
       followUps: Array.from({ length: 5 }, (_unused, index) => ({
         severity: "P2" as const, summary: `finding ${index}`, paths: ["src/x.ts"], id: String(index), reviewId: "r1", status: "open" as const, createdAt: index,
       })),
       truncated: false,
       available: true,
-    },
+    }),
   }));
 
   const frame = capped.lastFrame() ?? "";
@@ -140,19 +141,54 @@ test("TUI activity panel marks a capped follow-up list as a window, not the whol
   // would overstate the debt.
   const exact = render(React.createElement(WorkflowTui, {
     application: createApplication(),
-    reviewFollowUps: {
+    reviewFollowUps: () => ({
       followUps: Array.from({ length: 3 }, (_unused, index) => ({
         severity: "P3" as const, summary: `finding ${index}`, paths: [], id: String(index), reviewId: "r1", status: "open" as const, createdAt: index,
       })),
       truncated: false,
       available: true,
-    },
+    }),
   }));
 
   const exactFrame = exact.lastFrame() ?? "";
   assert.match(exactFrame, /review follow-ups \(3 open\)/);
   assert.equal(/… \d+ more/.test(exactFrame), false, "a full window needs no cap marker");
   exact.unmount();
+});
+
+test("TUI activity panel reads the follow-up ledger live, not as a boot-time snapshot", async () => {
+  // The ledger moves after launch. A surface that captured the value at boot
+  // would never show a P2 recorded during the session and would leave resolved
+  // debt on screen forever — the panel's "N open" is a claim about the present.
+  let read: OpenReviewFollowUps = { followUps: [], truncated: false, available: true };
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    reviewFollowUps: () => read,
+  }));
+
+  await waitForFrame(view, /No live activity\./);
+  assert.equal(/review follow-ups/.test(view.lastFrame() ?? ""), false, "a consulted empty ledger renders no section");
+
+  // A P2 recorded after launch appears on the next poll, with no restart.
+  read = {
+    followUps: [
+      { severity: "P2", summary: "recorded after launch", paths: ["src/x.ts"], id: "1", reviewId: "r1", status: "open", createdAt: 1 },
+    ],
+    truncated: false,
+    available: true,
+  };
+  await waitForFrame(view, /review follow-ups \(1 open\)/);
+  const live = view.lastFrame() ?? "";
+  assert.match(live, /recorded after launch/, "a follow-up recorded after launch must reach the panel");
+
+  // A ledger that stops answering replaces the item list with the unavailable
+  // marker: the panel must say it cannot see the debt rather than keep
+  // rendering debt it can no longer confirm.
+  read = { followUps: [], truncated: false, available: false };
+  await waitForFrame(view, /review follow-ups \(ledger unavailable\)/);
+  const unavailable = view.lastFrame() ?? "";
+  assert.equal(/recorded after launch/.test(unavailable), false, "the unavailable marker replaces the item list");
+  view.unmount();
 });
 
 test("TUI renders an always-visible task list with states and progress", () => {

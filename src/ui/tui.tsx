@@ -132,7 +132,14 @@ export function WorkflowTui({
   readonly profilePath?: string;
   readonly onInspectSymbol?: (symbol: string) => void;
   readonly onModeChange?: (mode: PedagogicalMode) => void;
-  readonly reviewFollowUps?: OpenReviewFollowUps;
+  /**
+   * The open-follow-up ledger, read live (not frozen at boot): a P2 recorded
+   * during the session must reach the Activity panel without a restart, and
+   * resolved debt must leave it. Same idiom as `gateObservability` below —
+   * the source owns the cadence, this is a fresh read of the current value.
+   * Undefined → this surface composes no ledger.
+   */
+  readonly reviewFollowUps?: () => OpenReviewFollowUps | undefined;
   readonly gateObservability?: () => HubGateObservability | undefined;
   /**
    * W044 (G1 metric surfacing): live cumulative + per-turn usage from the
@@ -163,6 +170,12 @@ export function WorkflowTui({
   const { stdout } = useStdout();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot>(() => application.snapshot());
   const [gates, setGates] = useState<HubGateObservability | undefined>(() => gateObservability?.());
+  // Live ledger read. A boot-time snapshot presented as live state is the
+  // defect this fixes: debt recorded after launch would never appear and
+  // resolved debt would never leave. The source polls; this re-reads it on
+  // the same 1s cadence as the usage line, independently of session
+  // presence — a session must not freeze the ledger.
+  const [followUps, setFollowUps] = useState<OpenReviewFollowUps | undefined>(() => reviewFollowUps?.());
   const usageTracker = useRef(new UsageTurnTracker());
   const [usageLine, setUsageLine] = useState<string | undefined>(() => {
     const view = usage?.();
@@ -238,6 +251,13 @@ export function WorkflowTui({
     const timer = setInterval(refresh, 1_000);
     return () => clearInterval(timer);
   }, [usage, sessionState?.state]);
+  useEffect(() => {
+    if (reviewFollowUps === undefined) return;
+    const refresh = (): void => setFollowUps(reviewFollowUps());
+    refresh();
+    const timer = setInterval(refresh, 1_000);
+    return () => clearInterval(timer);
+  }, [reviewFollowUps]);
   const [scrollOffset, setScrollOffset] = useState(0);
   const [showWorkflow, setShowWorkflow] = useState(false);
   const [mode, setMode] = useState<PedagogicalMode>("autonomous");
@@ -666,10 +686,10 @@ export function WorkflowTui({
     if (input.length > 0 && !key.ctrl && !key.meta) updatePrompt((value) => value + input);
   });
 
-  const openReviewFollowUps = (reviewFollowUps?.followUps ?? []).some((item) => item.status === "open");
+  const openReviewFollowUps = (followUps?.followUps ?? []).some((item) => item.status === "open");
   // An unconsultable ledger is a state worth showing: the panel exists for the
   // review debt it cannot read, not only for the debt it can.
-  const followUpsUnavailable = reviewFollowUps?.available === false;
+  const followUpsUnavailable = followUps?.available === false;
   const showActivityPanel = activeSession !== undefined || openReviewFollowUps || followUpsUnavailable || gates !== undefined;
   const composerRows = activeSession === undefined ? 0 : composerBackground === undefined ? 5 : 3;
   const transcriptRows = Math.max(4, (stdout.rows ?? 24) - chromeRows(showWorkflow, composerRows) - panelRows(snapshot, showActivityPanel));
@@ -735,7 +755,7 @@ export function WorkflowTui({
           />
         ) : null}
         {showActivityPanel ? (
-          <SessionActivityPanel state={sessionState} pendingTools={pendingTools} recentLogs={recentLogs} spinner={spinner} {...(reviewFollowUps === undefined ? {} : { reviewFollowUps })} {...(gates === undefined ? {} : { gateObservability: gates })} />
+          <SessionActivityPanel state={sessionState} pendingTools={pendingTools} recentLogs={recentLogs} spinner={spinner} {...(followUps === undefined ? {} : { reviewFollowUps: followUps })} {...(gates === undefined ? {} : { gateObservability: gates })} />
         ) : null}
         <Box flexDirection="column" minHeight={4}>
         {transcript.length === 0 ? (
