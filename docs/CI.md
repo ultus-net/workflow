@@ -72,25 +72,38 @@ passed, not that "the tests passed".
   D only pushes artifacts; deploys belong to the instance repos, per the
   2026-09-26 split spec).
 
-## 6. Operator decisions pending (W150 scope hangs on these)
+## 6. Operator decisions (recorded 2026-09-26)
 
-1. **Merge-gate scope:** Tier A only, or A+B as required checks?
-   Recommendation: **A+B** — Tier A alone proves formatting and compilation,
-   not behavior; Tier B is bounded by the LESS-0051 design, and GitHub-hosted
-   runners are free for public repos.
-2. **Tier C now or deferred?** Recommendation: **defer the full-suite arm**
-   until the first real release; the probe arms stay manual regardless (spend
-   + per-version verdict discipline).
+1. **DECIDED — merge gate = Tier A + B.** Both `gate` and `evidence` jobs are
+   required checks on PRs; `evidence` runs `npm run test:ci`.
+2. **DECIDED — Tier C deferred.** `release-gate.yml` lands when the first
+   real release happens; the live-probe arms stay manual regardless (spend +
+   per-version verdict discipline).
 
-## 7. Implementation sketch (W150)
+## 7. Implementation (landed 2026-09-26, W150)
 
 - `.github/workflows/ci.yml`: job `gate` (Tier A) + job `evidence` (Tier B,
-  pending decision 1), Node 22 + corepack for `toolbox:verify`.
-- `package.json`: `test:ci` script enumerating the curated suites.
+  `needs: gate`), Node 22 + corepack; both on PRs and pushes to main.
+- `package.json`: `test:ci` enumerating 21 suites by name — the 14
+  LESS-0051-contract e2e suites (`e2e-admin`, `e2e-contained-shell`,
+  `e2e-doctor`, `e2e-hub-bash`, `e2e-hub-routes`, `e2e-hub-schedule`,
+  `e2e-hub`, `e2e-packaged-seat`, `e2e-prepare-tool`, `e2e-rsi-cli`,
+  `e2e-settings`, `e2e-webapp-assets`, `e2e-web-service`, `web-scoping`) plus
+  7 unit suites (`hub-rsi`, `hub-review`, `hub-runs`, `security-assurance`,
+  `text-hygiene`, `contracts`, `acp-runtime-args`).
 - `release-gate.yml`: deferred per decision 2.
-- Branch protection: required checks = the chosen tiers (operator configures
-  in GitHub settings; CI defines the check names).
+- Branch protection: the operator flips the required-checks toggle in GitHub
+  settings to name `gate` and `evidence` (CI defines the check names; the
+  toggle is the operator's remaining click).
 - `publish-image.yml`: drafted (W149); the publish arm of this design.
+
+Precondition discovered during local verification: the curated set needs the
+vendored toolbox BUILT — with install scripts skipped, `e2e-contained-shell`'s
+guard seat fails closed (`workflow-guard-mcp is not built`). The evidence
+job's `npm ci` (scripts ON) provides the build; the Dockerfile's
+`--ignore-scripts` choice is deliberately different and justified in place.
+Local verification of the full enumerated set: 97/97 pass (~33s) after
+`node scripts/prepare-tool.mjs`.
 
 ## 8. Honest residuals
 

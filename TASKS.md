@@ -5710,14 +5710,18 @@ directive.
 for the evidence job; operator decision 2 (tier C deferral).
 
 **Acceptance criteria:**
-- [ ] `.github/workflows/ci.yml` runs Tier A (lint, typecheck, build,
+- [x] `.github/workflows/ci.yml` runs Tier A (lint, typecheck, build,
       `toolbox:verify`) on every PR and push to main; fail-closed required
-      checks.
-- [ ] `npm run test:ci` enumerates the curated suites BY NAME (no globs) per
-      the curation rule (docs/CI.md §4); the enumerated set is exactly the
-      LESS-0051-contract suites plus unit suites.
-- [ ] If decision 1 = A+B: the evidence job runs `test:ci` on PRs, and the
-      GitHub settings' required checks name both jobs.
-- [ ] Tier C recorded as deferred (or implemented) per decision 2, dated in
-      docs/CI.md §6.
+      checks. Landed with the `evidence` job alongside (decision 1 = A+B);
+      YAML-parse valid; the curated set ran locally against the same steps
+      (build → test:ci, 97/97).
+- [x] `npm run test:ci` enumerates the curated suites BY NAME (no globs) per
+      the curation rule (docs/CI.md §4); 21 suites — the 14
+      LESS-0051-contract e2e suites plus 7 unit suites hand-verified this
+      loop (no PTY/agent-spawn/env-gate markers); the enumerated set ran
+      green locally (97/97).
+- [x] Decision 1 = A+B (recorded docs/CI.md §6): both jobs exist and are
+      named for required checks; the settings toggle itself is the
+      operator's remaining click (residual, recorded in §7).
+- [x] Tier C recorded as deferred per decision 2, dated in docs/CI.md §6.
 - [ ] Independent five-axis review.

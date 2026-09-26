@@ -1,0 +1,47 @@
+# CI (W150, docs/CI.md tier model): Tier A gate + Tier B evidence.
+# Full suite and live probes are NOT here — they are tier C (release gate,
+# deferred per operator decision 2026-09-26) and stay out of PR CI by the
+# resource directive (AGENTS.md). Linux-only: the repo's containment is
+# Bubblewrap; no cross-OS jobs are promised.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate (lint, typecheck, build, toolbox)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: corepack enable
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run toolbox:verify
+
+  evidence:
+    name: evidence (curated test set)
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: corepack enable
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:ci
