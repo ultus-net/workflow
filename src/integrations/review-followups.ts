@@ -66,12 +66,20 @@ function validReviewFollowUp(value: unknown): value is ReviewFollowUp {
  * `[P0]` line the ledger never minted, an entry the panel cannot even key,
  * counted as open. A payload that does not match the contract the store
  * itself validates is a ledger that could not be read, which is unknown debt
- * and never zero.
+ * and never zero. The requested window is part of that contract: the server
+ * caps `openFollowUps` at the limit it was handed, so a longer payload is not
+ * a bigger ledger, it is a read this surface cannot bound.
  */
 export function readOpenReviewFollowUps(content: unknown, limit: number): OpenReviewFollowUps {
   if (!content || typeof content !== "object") return UNAVAILABLE_REVIEW_FOLLOW_UPS;
   const payload = content as { openFollowUps?: unknown; followUpsTruncated?: unknown };
   if (!Array.isArray(payload.openFollowUps)) return UNAVAILABLE_REVIEW_FOLLOW_UPS;
+  // Checked before the walk, not after: an over-window payload is already a
+  // broken read, so validating it entry by entry would spend unbounded work on
+  // a foreign array. The panel counts this list as the total debt and prints
+  // "N open" with no "+", so an over-window count states a completeness claim
+  // no bounded read ever made.
+  if (payload.openFollowUps.length > limit) return UNAVAILABLE_REVIEW_FOLLOW_UPS;
   const followUps: ReviewFollowUp[] = [];
   // The panel keys and counts by id, so an absent or repeated one is not a
   // follow-up this surface can speak about.

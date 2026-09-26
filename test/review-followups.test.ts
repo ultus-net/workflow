@@ -138,6 +138,28 @@ test("a garbage truncation flag reads as unavailable, while an absent one still 
   assert.equal(absent.truncated, true, "a full window without the ledger's flag stays 'capped', never 'all'");
 });
 
+test("an over-window payload is not the bounded read it claims to be, so it reads as unavailable", () => {
+  // The server caps `openFollowUps` at the limit it was handed, so nine
+  // entries against an 8-item window cannot be a ledger this surface read.
+  // Passing them through would let the Activity panel print "9 open" with no
+  // "+" as the total debt — a completeness claim no bounded read made.
+  const nine = Array.from({ length: 9 }, (_unused, index) => ({ ...storedFollowUp, id: `fu-${index}` }));
+  const read = readOpenReviewFollowUps({ openFollowUps: nine, followUpsTruncated: false }, 8);
+
+  assert.equal(read.available, false, "a payload wider than the requested window is a broken read, not a bigger ledger");
+  assert.equal(read.followUps.length, 0, "no follow-up in an unbounded payload was actually observed");
+  assert.deepEqual(read, UNAVAILABLE_REVIEW_FOLLOW_UPS);
+
+  // A window filled exactly is still inside the contract: the ledger says it
+  // is not truncated, so the panel may state that count as the whole debt.
+  const eight = Array.from({ length: 8 }, (_unused, index) => ({ ...storedFollowUp, id: `fu-${index}` }));
+  const exact = readOpenReviewFollowUps({ openFollowUps: eight, followUpsTruncated: false }, 8);
+
+  assert.equal(exact.available, true, "a payload exactly at the window is a bounded read");
+  assert.equal(exact.followUps.length, 8);
+  assert.equal(exact.truncated, false, "the ledger's own flag still outranks the window's length");
+});
+
 test("a valid payload passes through with the ledger's own truncation flag intact", () => {
   const read = readOpenReviewFollowUps({ openFollowUps: [storedFollowUp, { ...storedFollowUp, id: "fu-2", severity: "P3", status: "resolved" }], followUpsTruncated: true }, 8);
 
