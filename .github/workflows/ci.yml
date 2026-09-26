@@ -121,7 +121,7 @@ jobs:
             '    # the DAEMON object first (the Secret Service object may not be' \
             '    # servable if the secrets component is not running).' \
             '    import jeepney' \
-            '    daemon_obj = jeepney.DBusAddress("org.freedesktop.DBus", object_path="/org/freedesktop/DBus", interface="org.freedesktop.DBus.Peer")' \
+            '    daemon_obj = jeepney.DBusAddress("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus.Peer")' \
             '    ping_reply = raw.send_and_get_reply(jeepney.new_method_call(daemon_obj, "Ping"))' \
             '    print("bus ping ok")' \
             '    secrets_addr = jeepney.DBusAddress("org.freedesktop.secrets", object_path="/org/freedesktop/secrets")' \
