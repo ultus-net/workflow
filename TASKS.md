@@ -5668,6 +5668,53 @@ instance repo consuming the material.
       in the message.
 - [ ] Independent five-axis review of the strip.
 
+### W156 - The pluggable secret-store seam: Key Vault as the Azure end-state (keyring stays local-first) (2026-09-26)
+
+**Source:** the operator's 2026-09-26 direction — "if deployed in Azure we
+could configure it to connect to a Key Vault in the same resource group";
+rides the deployment-instance split (spec §10 Q3: Key Vault refs are the
+end-state; ACA secrets were the C0 probe shortcut only). The canonical
+record is `docs/ledger/W156-the-pluggable-secret-store-seam-key-vault-as-the-azure-end-state.md`
+(opened directly as a fragment per the post-migration rule).
+
+**What landed (this PR, with #132's CI work):**
+- `src/integrations/key-vault.ts`: `KeyVaultSecretStore` implementing the
+  existing `SecretStore` port (`has/get/put/delete`) against the vault REST
+  API (api-version 7.4). Auth is managed identity on Azure (IMDS) with the
+  azure-cli chain as the local developer fallback — no new SDK dependency;
+  the vault name/URI come from `WORKFLOW_KEYVAULT_NAME`/`WORKFLOW_KEYVAULT_URI`
+  and a non-canonical URI shape fails closed at construction.
+- `src/integrations/secret-store.ts`: the selection seam —
+  `WORKFLOW_SECRET_STORE=keyring` (default, current behavior unchanged) |
+  `azure-kv`; unknown backend names throw; azure-kv with a missing vault
+  name fails closed at startup (never a silent keyring fallback).
+- `src/cli/admin.ts` + `src/cli/hub.ts` switched from hardcoding
+  `createSecretServiceStore()` to the seam; the admin `--help` contract
+  names the new env vars.
+- `test/key-vault-store.test.ts`: 4 behavioral pins — default/validation,
+  fail-closed startup, the REST request shape + Bearer auth against a
+  stubbed fetcher, and API errors surfacing as credential-service-
+  unavailable (never partial state).
+
+**Acceptance criteria:**
+- [x] The selection seam resolves keyring (default) and azure-kv; admin and
+      hub consume it.
+- [x] `KeyVaultSecretStore` implements `SecretStore` via
+      DefaultAzureCredential-equivalent (IMDS + az cli chain); env-sourced
+      vault name; no new dependency.
+- [x] azure-kv with a missing vault name fails closed at startup.
+- [ ] W130's azure-kv lane gated on env (`WORKFLOW_TEST_KEYVAULT_*`) —
+      deferred to the residual decision (fake store vs gated live probe).
+- [x] The instance seed carries the Key Vault + managed-identity RBAC line
+      (instance-side config per the split spec's dependency rule).
+- [ ] Instance-side bicep (vault + identity RBAC + env) — work repo.
+- [ ] Independent five-axis review.
+
+**Residuals (recorded, not built):** the CI-side fake (an in-memory
+SecretStore for W130's azure-kv lane on unauthenticated runners) versus a
+gated live-vault probe — decided at implementation; the azure-kv posture
+stays Partial until a live vault exercises it.
+
 ### W149 - The open-side publish workflow (tag → image push + recorded digest expectation)
 
 **Source:** the 2026-09-26 split spec §10 Q2 resolution — the fail-closed pin

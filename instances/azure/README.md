@@ -23,7 +23,10 @@ pinned open-core artifacts and supplies everything environment-specific.
 - [ ] Registry for the pinned image (`TODO_registry`) and pull authorization
 - [ ] Region, resource group, app name values in the params file
 - [ ] Key Vault references for `OPENCODE_SERVER_PASSWORD` and provider keys
-      (ACA-managed secrets are the C0 probe shortcut, not the end-state)
+      (ACA-managed secrets are the C0 probe shortcut, not the end-state);
+      the open core selects the store with `WORKFLOW_SECRET_STORE=azure-kv`
+      + `WORKFLOW_KEYVAULT_NAME` (W156), so the vault + managed-identity
+      RBAC (get/list on secrets for the app identity) is instance-side config
 - [ ] Environment with approvals/checks matching the C-track posture
 - [ ] Pin-verification wiring: the digest expectation is DOWNLOADED from the
       pinned tag's release (a git checkout does not carry release objects)

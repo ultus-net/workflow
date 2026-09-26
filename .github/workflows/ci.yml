@@ -62,15 +62,23 @@ jobs:
           fi
       # Unlock a headless keyring for the W130 credential-custody e2e: the
       # control plane stores material through secret-tool (D-Bus Secret
-      # Service), which needs a session bus + an unlocked default collection.
+      # Service), which needs a session bus, a running keyring daemon WITH
+      # the secrets component, and an unlocked default collection. The
+      # daemon's env output is captured synchronously — --daemonize detaches
+      # stdout, so the fifth live run exported an EMPTY GNOME_KEYRING_CONTROL
+      # and secret-tool found no service.
       - name: Unlock the headless secret-service keyring
         run: |
           eval "$(dbus-launch --sh-syntax)"
-          echo "" | gnome-keyring-daemon --unlock --daemonize
-          {
-            echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
-            echo "GNOME_KEYRING_CONTROL=$GNOME_KEYRING_CONTROL"
-          } >> "$GITHUB_ENV"
+          # Foreground --start: prints the daemon env (incl. the control
+          # socket) and keeps the daemon alive under the session bus.
+          daemon_env="$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)"
+          echo "$daemon_env" | tr ';' '\n' | grep 'GNOME_KEYRING_CONTROL=' >> "$GITHUB_ENV"
+          echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          # Unlock the default collection (empty password for a fresh
+          # login.keyring created by --start above).
+          echo "" | gnome-keyring-daemon --unlock 2>/dev/null | grep -o 'GNOME_KEYRING_CONTROL=[^;]*' | head -1 >> "$GITHUB_ENV" || true
+          grep -E "KEYRING|DBUS" "$GITHUB_ENV" || true
       - run: npm ci
       - run: npm run build
       - run: npm run test:ci

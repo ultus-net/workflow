@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 
 import { createCredentialControlPlane } from "../integrations/credentials.js";
 import { defaultCredentialConfigPath, loadCredentialDefinitions, saveCredentialDefinitions } from "../integrations/credential-config.js";
-import { createSecretServiceStore } from "../integrations/secret-service.js";
+import { resolveSecretStore } from "../integrations/secret-store.js";
 import { createAdminControlPlaneServer } from "../ui/admin-control-plane.js";
 
 // W129: the help contract — resolve help and exit before the daemon starts
@@ -11,7 +11,7 @@ import { createAdminControlPlaneServer } from "../ui/admin-control-plane.js";
 // generated admin token for `--help`).
 if (process.argv.slice(2).some((argument) => argument === "--help" || argument === "-h")) {
   console.log("workflow-admin — the credential custody control plane (loopback only)");
-  console.log("  env: WORKFLOW_ADMIN_PORT (default 4180), WORKFLOW_ADMIN_TOKEN");
+  console.log("  env: WORKFLOW_ADMIN_PORT (default 4180), WORKFLOW_ADMIN_TOKEN, WORKFLOW_SECRET_STORE (keyring|azure-kv), WORKFLOW_KEYVAULT_NAME (azure-kv)");
   console.log("  --help  print this help");
   process.exit(0);
 }
@@ -23,7 +23,7 @@ if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) throw new TypeErro
 const adminToken = process.env.WORKFLOW_ADMIN_TOKEN ?? randomBytes(32).toString("base64url");
 const credentialConfigPath = defaultCredentialConfigPath();
 const credentials = createCredentialControlPlane(
-  createSecretServiceStore(),
+  resolveSecretStore(),
   loadCredentialDefinitions(credentialConfigPath),
   (definitions) => saveCredentialDefinitions(definitions, credentialConfigPath),
 );
