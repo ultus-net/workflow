@@ -2963,7 +2963,7 @@ body {
 .posture-row { display: flex; align-items: center; gap: 0.6rem; font-size: 0.78rem; }
 .posture-kind { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.1rem 0.4rem; border-radius: 3px; border: 1px solid var(--border); color: var(--text-muted); }
 .posture-kind-review { color: var(--accent, #60a5fa); }
-.posture-kind-budget, .posture-kind-orphan, .posture-kind-schedule { color: var(--warn, #d97706); }
+.posture-kind-gate, .posture-kind-budget, .posture-kind-orphan, .posture-kind-schedule { color: var(--warn, #d97706); }
 .posture-row-body { display: flex; flex-direction: column; gap: 0.05rem; min-width: 0; flex: 1; }
 .posture-row-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .posture-row-attribution { color: var(--text-muted); font-size: 0.68rem; }

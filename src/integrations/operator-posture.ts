@@ -6,11 +6,21 @@
  *
  * ID CONTRACT (the round-1 review's P1 — kernel ids never reach this
  * function): the caller (the hub's /snapshot handler) filters the kernel
- * snapshot to run tasks (`run:<rawRunId>` / `run:schedule:<scheduleId>:<uuid>`)
- * and strips the `run:` prefix, so this function sees RAW run ids — the same
- * id space the run registry's gate-observability maps are keyed by
- * (reviewOutcomes, blockingReasons at run-registry.ts). Everything joins on
- * raw run ids; nothing else.
+ * snapshot to run tasks (`run:<rawRunId>`) and strips the `run:` prefix, so
+ * this function sees RAW run ids — the same id space the run registry's
+ * gate-observability maps are keyed by (reviewOutcomes, blockingReasons at
+ * run-registry.ts). Everything joins on raw run ids; nothing else.
+ *
+ * The RAW id families on the wire: scheduler-origin `schedule:<id>:<uuid>`
+ * (hub-scheduler.ts:352), reviewer runs `schedule:hub-reviewer-<uuid>`
+ * (hub-reviewer.ts — two segments, NOT a schedule origin), RSI loop runs
+ * `rsi:<iteration>:<uuid>` (self-improvement-loop.ts), and
+ * client-supplied ids at /run/begin (arbitrary strings — a client FORGING a
+ * `schedule:x:y` id would be treated as a schedule origin: observability
+ * only, it can mutate nothing). A schedule id CONTAINING a colon would also
+ * produce a four-segment runId the origin regex silently excludes (its
+ * failed runs never count); schedule ids are validated as non-empty strings
+ * only (hub-scheduler requireSchedule) — recorded, not fixed here.
  *
  * Data sources (the spec's "data projected" list):
  * - run-gate state: raw-id run tasks plus the registry's recorded review
@@ -36,7 +46,7 @@
  * not schedule origins and are excluded by the three-segment shape.
  */
 
-export type OperatorDecisionKind = "review" | "budget" | "orphan" | "schedule";
+export type OperatorDecisionKind = "review" | "gate" | "budget" | "orphan" | "schedule";
 
 export interface PostureRunTask {
   /** The RAW run id (no `run:` kernel prefix): `author-1`, a uuid, or the schedule-origin `schedule:<id>:<uuid>`. */
@@ -141,10 +151,10 @@ export function operatorPosture(input: OperatorPostureInput): OperatorPosture {
   for (const [runId, reason] of input.blockingReasons ?? []) {
     const task = input.runTasks.find((candidate) => candidate.runId === runId);
     decisions.push({
-      kind: "review",
       // The blocking-reason map carries EVERY gate family's failures
       // (reviewer verdicts, scheduler failures, test-runner rejections) — the
-      // row says so instead of claiming a reviewer said it.
+      // kind is the GATE's, not the reviewer's, and the row says so.
+      kind: "gate",
       actor: "system",
       authority: "recorded blocking reason (run registry)",
       summary: `${task?.title ?? runId} blocked: ${reason}`,
@@ -174,7 +184,9 @@ export function operatorPosture(input: OperatorPostureInput): OperatorPosture {
     decisions.push({
       kind: "schedule",
       actor: "scheduler",
-      authority: "schedule registry last outcome",
+      // The outcome comes from the KERNEL's run states (the schedule registry
+      // carries definitions only) — the row claims exactly that authority.
+      authority: "kernel run state (schedule-origin run FAILED)",
       summary: `schedule ${scheduleTitle}'s latest fired run failed`,
       action: { label: "Open schedules", target: "#schedules" },
     });

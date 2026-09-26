@@ -37,6 +37,7 @@ const COUNT_LABELS: ReadonlyArray<{ readonly key: keyof OperatorPosture["counts"
 
 const KIND_LABELS: Record<OperatorDecisionKind, string> = {
   review: "review",
+  gate: "gate",
   budget: "budget",
   orphan: "orphan",
   schedule: "schedule",

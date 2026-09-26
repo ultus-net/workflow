@@ -98,17 +98,21 @@ test("W150: the decision list carries actor + authority attribution from the rec
   });
   const byKind = (kind: string) => posture.decisions.filter((row) => row.kind === kind);
   const review = byKind("review");
-  // FOUR review rows, and that is the honest wire shape: author-1 awaits a
-  // verdict; author-0 carries BOTH the awaiting row (it is parked VERIFYING)
-  // and the blocked row — the test-runner rejection lane records the gate's
-  // output as a blocking reason while the run stays VERIFYING awaiting its
-  // retry (run-registry.ts:424); author-5's blocking reason is keyed to an
-  // unknown run and still renders by raw id.
-  assert.equal(review.length, 4);
-  const awaiting = review.find((row) => row.actor === "agent" && row.summary.includes("the nightly candidate"))!;
+  const gate = byKind("gate");
+  // TWO awaiting rows (author-1 and author-0 are both parked VERIFYING with
+  // an empty outcomes map) + TWO gate rows: author-0 carries BOTH the
+  // awaiting row (it is parked VERIFYING) and the gate row — the test-runner
+  // rejection lane records the gate's output as a blocking reason while the
+  // run stays VERIFYING awaiting its retry (run-registry.ts:424);
+  // author-5's blocking reason is keyed to an unknown run and still renders
+  // by raw id.
+  assert.equal(review.length, 2);
+  assert.equal(gate.length, 2);
+  const awaiting = review.find((row) => row.summary.includes("the nightly candidate"))!;
+  assert.equal(awaiting.actor, "agent");
   assert.equal(awaiting.authority, "run review gate (requiresReview)");
   assert.deepEqual(awaiting.action, { label: "Open run", target: "#run:author-1" });
-  const blockedRows = review.filter((row) => row.actor === "system");
+  const blockedRows = gate.filter((row) => row.actor === "system");
   assert.equal(blockedRows.length, 2);
   for (const row of blockedRows) {
     assert.equal(row.authority, "recorded blocking reason (run registry)");
