@@ -69,16 +69,21 @@ jobs:
       # and secret-tool found no service.
       - name: Unlock the headless secret-service keyring
         run: |
+          set +e
           eval "$(dbus-launch --sh-syntax)"
           # Foreground --start: prints the daemon env (incl. the control
-          # socket) and keeps the daemon alive under the session bus.
-          daemon_env="$(gnome-keyring-daemon --start --components=secrets 2>/dev/null)"
-          echo "$daemon_env" | tr ';' '\n' | grep 'GNOME_KEYRING_CONTROL=' >> "$GITHUB_ENV"
+          # socket) and keeps the daemon alive under the session bus. Every
+          # probe below is failure-tolerant: a missing piece is diagnosed by
+          # the W130 machine-gate (fail closed), not by a broken setup step.
+          daemon_env="$(gnome-keyring-daemon --start --components=secrets 2>&1)"
+          echo "keyring daemon env: $daemon_env"
+          echo "$daemon_env" | tr ';' '\n' | grep 'GNOME_KEYRING_CONTROL=' >> "$GITHUB_ENV" || true
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
           # Unlock the default collection (empty password for a fresh
           # login.keyring created by --start above).
-          echo "" | gnome-keyring-daemon --unlock 2>/dev/null | grep -o 'GNOME_KEYRING_CONTROL=[^;]*' | head -1 >> "$GITHUB_ENV" || true
-          grep -E "KEYRING|DBUS" "$GITHUB_ENV" || true
+          echo "" | gnome-keyring-daemon --unlock 2>&1 | tee /tmp/kr-unlock.log | grep -o 'GNOME_KEYRING_CONTROL=[^;]*' | head -1 >> "$GITHUB_ENV" || true
+          cat /tmp/kr-unlock.log || true
+          grep -E "KEYRING|DBUS" "$GITHUB_ENV" || echo "warning: no keyring env captured; W130 will fail closed on its machine-gate"
       - run: npm ci
       - run: npm run build
       - run: npm run test:ci
