@@ -5704,6 +5704,18 @@ choice decides the push target).
 
 ### W155 - CI implementation (tiers per docs/CI.md; C deferred; renumbered from W150 — the Paperclip borrow wave landed W150-W154 first)
 
+  - Dated note (2026-09-26, first live CI run on PR #132): the gate job
+      caught the pnpm pin mismatch — the toolbox declares
+      `packageManager: pnpm@11.5.2` (mcp-toolbox/package.json:4) while
+      corepack's default shim resolved pnpm 12.6.0, which pnpm itself
+      refuses (ERR_PNPM_BAD_PM_VERSION); and `npm ci`'s postinstall
+      prepare-tool skipped the toolbox build honestly (W137's always-exit-0
+      contract), leaving toolbox:verify to fail hard — the fail-closed
+      layering worked. Fix: `pnpm/action-setup@v4` reading the nested
+      declaration (no duplicated version literal), same discipline in the
+      image Dockerfile. The evidence job had not yet run at the time of the
+      failure (needs: gate).
+
 **Source:** docs/CI.md (2026-09-26 design) — the operator's "start with CI
 design" direction. The repo has no CI at all today; this wires the existing
 local discipline into GitHub without violating the full-suite resource

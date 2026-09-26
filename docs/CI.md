@@ -84,7 +84,11 @@ passed, not that "the tests passed".
 ## 7. Implementation (landed 2026-09-26, W155)
 
 - `.github/workflows/ci.yml`: job `gate` (Tier A) + job `evidence` (Tier B,
-  `needs: gate`), Node 22 + corepack; both on PRs and pushes to main.
+  `needs: gate`), Node 22; pnpm pinned via `pnpm/action-setup@v4` reading
+  `mcp-toolbox/package.json` (the toolbox declares
+  `packageManager: pnpm@11.5.2` — corepack's default shim resolves a newer
+  pnpm and pnpm refuses the mismatch, caught live in the first CI run
+  2026-09-26); both on PRs and pushes to main.
 - `package.json`: `test:ci` enumerating 21 suites by name — the 14
   LESS-0051-contract e2e suites (`e2e-admin`, `e2e-contained-shell`,
   `e2e-doctor`, `e2e-hub-bash`, `e2e-hub-routes`, `e2e-hub-schedule`,

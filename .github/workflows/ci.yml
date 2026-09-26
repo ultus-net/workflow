@@ -24,7 +24,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: corepack enable
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: mcp-toolbox/package.json # the toolbox pins pnpm@11.5.2; corepack's default shim (12.x) is refused by pnpm itself
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
@@ -41,7 +43,9 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: corepack enable
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: mcp-toolbox/package.json
       - run: npm ci
       - run: npm run build
       - run: npm run test:ci

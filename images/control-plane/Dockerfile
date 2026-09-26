@@ -29,14 +29,19 @@ WORKDIR /app
 # default; the postinstall prepare-tool hook is heavyweight + network-bound —
 # W137 finding (a) — and runs explicitly below, after the tree is complete).
 COPY package.json package-lock.json ./
-RUN corepack enable && npm ci --ignore-scripts
+RUN npm ci --ignore-scripts
 
 # Build the product, build the vendored toolbox, then shed devDependencies.
 COPY src tsconfig.json tsconfig.build.json ./
 COPY scripts ./scripts
 COPY mcp-toolbox ./mcp-toolbox
 COPY assets ./assets
-RUN npm run build \
+# pnpm version must track mcp-toolbox/package.json's packageManager field:
+# corepack's default shim resolves a newer pnpm and pnpm refuses the
+# mismatch (ERR_PNPM_BAD_PM_VERSION — hit live in the first CI run,
+# 2026-09-26). Update together with the toolbox pin.
+RUN npm install -g pnpm@11.5.2 \
+ && npm run build \
  && node scripts/prepare-tool.mjs \
  && npm prune --omit=dev
 
