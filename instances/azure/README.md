@@ -25,6 +25,9 @@ pinned open-core artifacts and supplies everything environment-specific.
 - [ ] Key Vault references for `OPENCODE_SERVER_PASSWORD` and provider keys
       (ACA-managed secrets are the C0 probe shortcut, not the end-state)
 - [ ] Environment with approvals/checks matching the C-track posture
+- [ ] Pin-verification wiring: the digest expectation is DOWNLOADED from the
+      pinned tag's release (a git checkout does not carry release objects)
+      and verify-pin.sh is invoked via bash with absolute paths
 - [ ] Boards work item per instance PR, linked `AB#`, citing the open release tag consumed
 
 ## Rules (non-negotiable)

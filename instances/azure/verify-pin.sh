@@ -7,12 +7,20 @@
 # absent check never degrades to deploy-anyway.
 #
 # Contract:
-#   argv[1] = path to the digest-expectation record shipped with the pinned
-#             open release (release asset or note materialized at checkout)
+#   argv[1] = path to a LOCAL copy of the digest-expectation record shipped
+#             with the pinned open release. The record is a release asset or
+#             release note — the pipeline must materialize it (download from
+#             the release); a git checkout of the tag does NOT carry it.
 #   argv[2] = the full image reference the pipeline intends to deploy
 #             (registry/repo@sha256:<64 hex>)
-#   exit 0  = the digest portion matches byte-for-byte
-#   exit 1  = missing expectation, missing actual, malformed either, mismatch
+#   exit 0  = the reference's digest SUFFIX matches the expectation exactly
+#             (the digest portion is compared as a suffix after @; full
+#             registry/repo validation is a work-side TODO)
+#   exit 1  = missing expectation, missing actual, no sha256 line in the
+#             record, or a non-matching suffix
+#
+# Format note: the expectation record must carry exactly ONE sha256 line
+# (the W149 release-asset format); this check binds to the first.
 
 set -euo pipefail
 

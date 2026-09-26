@@ -121,12 +121,12 @@ operator-specific material here.
 2. RECORDED (2026-09-26 refinement loop) — the pin check is fail-closed by
    construction: the open release carries the expected image digest as a
    RELEASE ASSET or release note at the pinned tag (not a mutating file in
-   the tagged tree — the digest cannot exist before the image is pushed), and
-   the instance pipeline checks out the open repo at that same pinned ref and
-   asserts the to-be-deployed digest equals the recorded expectation BEFORE
-   any deploy step, refusing on mismatch or absence. The seed's
-   `verify-pin.sh` is the skeleton; the open-side half (tag → GHCR push →
-   digest record) is W149.
+   the tagged tree — the digest cannot exist before the image is pushed), the
+   instance MATERIALIZES that record (downloads the release asset — a tag
+   checkout does not carry release objects) and asserts the to-be-deployed
+   digest equals the recorded expectation BEFORE any deploy step, refusing on
+   mismatch or absence. The seed's `verify-pin.sh` is the skeleton; the
+   open-side half (tag → GHCR push → digest record) is W149.
 3. RECORDED — Key Vault references are the end-state and ACA-managed secrets
    were the C0 probe shortcut only; that is the 2026-09-25 spec's C1 posture
    verbatim, so this is a pointer, not an open question.
