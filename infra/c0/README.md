@@ -28,12 +28,10 @@ re-hashed each run. Connection material lands in `infra/c0/c0.env` (chmod 600).
 ## Probe
 
     node infra/c0/probe.mjs
-    node infra/c0/probe.mjs --idle
 
 Gates: `/api/info` health (version-tolerant fallback to v1 `/global/health`),
 unauthenticated 401, SSE `text/event-stream` open, session create, stream bytes
-after create, session cleanup. Exit 0 only when all pass. `--idle` adds a fourth
-gate: hold the SSE stream open through the full 240s ingress idle window.
+after create, session cleanup. Exit 0 only when all pass.
 
 ## Operator attach (the point of all this)
 
@@ -68,7 +66,6 @@ browser). Easy Auth (Entra ID) is deliberately NOT here yet — that is C1.5.
 | 2026-09-25 | session create | PASS | `ses_f2822b94fffeEVeikiGTJYFocy` |
 | 2026-09-25 | SSE activity round-trip | PASS | 528 stream bytes received after create over the same ingress |
 | 2026-09-25 | session cleanup | PASS | 204 |
-| 2026-09-27 | idle stream survival (240s) | PENDING | `--idle` gate added; live run required |
 
 Image build: ACR run `cr3` (vendored binary verified in-container).
 Probe session created + deleted over the live plane.
@@ -78,8 +75,9 @@ Probe session created + deleted over the live plane.
 - **Quiet-stream idle survival unproven**: the 4-minute default ingress idle
   timeout reaps silent streams; opencode's own keepalive behavior under a real
   attached session is the next observation (operator attach session). The probe
-  proves activity-flow, not silence-survival. The `--idle` gate now tests
-  silence-survival; live verdict pending.
+  proves activity-flow, not silence-survival. The event-stream keepalive recipe
+  at the bottom of this file is the Workflow-side mitigation — transport
+  liveness only, still not a deployed-ingress qualification.
 - **State is ephemeral**: no Azure Files volume yet (C2 durability drill).
 - **Secret is an ACA-managed secret**, not Key Vault (C1 upgrade).
 - **No Easy Auth** (C1.5), **no gateway/broker** (C1) — stock serve only, by design.
@@ -88,3 +86,94 @@ Probe session created + deleted over the live plane.
 
     az acr build --registry $(jq -r .C0_ACR /dev/null 2>/dev/null || cat infra/c0/c0.env | grep C0_ACR | cut -d= -f2) ...
     # or simply: bash infra/c0/deploy.sh
+
+# c0 — event-stream keepalive recipe
+
+The pinned recipe for keeping the `/api/event` SSE stream alive behind ingress
+proxies that destroy an idle response after roughly 4 minutes, so an attached
+session survives a quiet period instead of dying with the proxy's idle timer.
+
+This file records the recipe only. The behavior lives in
+`src/integrations/opencode-server-gateway.ts`; the numbers and strings below are
+pinned to that source by `test/infra-c0-recipe.test.ts`, so the recipe cannot
+drift from the code it describes.
+
+## The interval
+
+The keepalive interval defaults to **15s** and must sit well inside the
+~4-minute ingress idle window — 15s leaves ~16 consecutive intervals of margin
+before the proxy's idle timer fires, which is what makes a single missed frame
+harmless.
+
+- `DEFAULT_SSE_KEEPALIVE_MS = 15000` (15s) — the default, exported from the
+  gateway module.
+- Frame written on each idle interval: `SSE_KEEPALIVE_FRAME`, the SSE comment
+  frame `": workflow-keepalive\n\n"`.
+
+The timer is re-armed on every upstream chunk, so a busy stream is never
+interleaved with a keepalive frame, and it is cleared on upstream
+end/error/close and on response finish/close, so no timer outlives a
+disconnect. It is `unref()`ed.
+
+A comment frame carries no `event:` and no `data:` field, so a conforming
+parser ignores it: the client sees byte activity, never a phantom event.
+
+## The override
+
+`WORKFLOW_SSE_KEEPALIVE_MS` overrides the interval. It must parse as a
+**positive integer**; **any** non-positive-integer value falls back to the
+15s default rather than arming a broken timer:
+
+| `WORKFLOW_SSE_KEEPALIVE_MS` | Effective interval |
+| --- | --- |
+| unset | 15000 (the default) |
+| `40000` | 40000 |
+| `""`, `0`, `-1`, `1.5`, `abc` | 15000 (the default) |
+
+Failing closed here is deliberate: a malformed override degrades to the known-good
+default, and a zero or negative interval would otherwise be a busy loop that
+writes frames as fast as the socket allows.
+
+## Coverage: identity encoding only
+
+The keepalive is applied to `text/event-stream` responses whose
+`content-encoding` is empty or `identity`. **gzip streams are deliberately
+excluded**: a plaintext comment frame spliced into a compressed byte stream
+would break the client's decoder, and a broken stream is strictly worse than a
+drop-prone one. A `content-encoding: gzip` event stream is therefore proxied
+byte-identical and gets no keepalive timer at all — it stays drop-prone at the
+ingress. That residual is stated, not hidden.
+
+## Re-verify
+
+Both commands are hermetic (loopback only, stub upstream, no live host, no
+credentials) and run in the ordinary suite. Per `AGENTS.md`, run these focused
+rather than the full `npm test`.
+
+```
+node --import tsx --test test/opencode-server-gateway-ingress-probe.test.ts
+node --import tsx --test test/opencode-server-gateway.test.ts
+```
+
+- The **ingress probe** stands a real idle-timeout ingress in front of the
+  production gateway and proves the frame buys survival: keepalive inside the
+  proxy idle window survives; the control arm (keepalive past the window) is
+  destroyed by the proxy, so the first arm is not vacuous; and the gzip
+  residual arm keeps the exclusion above honest.
+- The **gateway unit test** proves the frame reaches the wire: repeated frames
+  during quiet, none on a busy stream, none past a self-ending stream, none in
+  a gzip stream, and the interval/override table above.
+
+## Honest residual (advisory)
+
+**This is transport liveness only, and it is not a deployed-ingress
+qualification.** The keepalive holds a connection open and nothing more: it is
+never evidence that upstream is alive and never evidence that the hub is the
+authority. The probe is hermetic on loopback — a real proxy hop, a stub
+upstream, no live host, no credentials — so it is ungated and claims no dated
+gate verdict and no `docs/PROBE_VERDICTS.json` row.
+
+What remains unproven: a real nginx/ALB/Cloudflare read-timeout configuration in
+front of a live `opencode serve`. Until that is probed, any surface may claim
+this recipe as **advisory** and no more. See `docs/HOST_ADAPTERS.md`
+(2026-09-26 entries) for the dated record.

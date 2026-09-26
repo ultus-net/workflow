@@ -90,7 +90,8 @@ const HOP_BY_HOP = new Set([
  * open, and nothing more.
  */
 export const DEFAULT_SSE_KEEPALIVE_MS = 15_000;
-const SSE_KEEPALIVE_FRAME = ": workflow-keepalive\n\n";
+/** Exported so the infra/c0 recipe doc can be pinned to the real frame. */
+export const SSE_KEEPALIVE_FRAME = ": workflow-keepalive\n\n";
 
 /** WORKFLOW_SSE_KEEPALIVE_MS must be a positive integer; anything else keeps the default. */
 export function sseKeepaliveMs(env: NodeJS.ProcessEnv): number {
