@@ -39,6 +39,58 @@ export interface OpenReviewFollowUps {
 /** The honest shape of a ledger nobody could read: no debt observed, not none. */
 export const UNAVAILABLE_REVIEW_FOLLOW_UPS: OpenReviewFollowUps = { followUps: [], truncated: false, available: false };
 
+/**
+ * The ledger's own entry contract, mirrored from the server's `followUp`
+ * schema and the store's `validStoredFollowUp`: the ledger mints P2/P3
+ * follow-ups only, each one identified and rendered by the panel.
+ */
+function validReviewFollowUp(value: unknown): value is ReviewFollowUp {
+  if (!value || typeof value !== "object") return false;
+  const item = value as Partial<ReviewFollowUp>;
+  return (item.severity === "P2" || item.severity === "P3")
+    && typeof item.id === "string" && item.id.length > 0
+    && typeof item.reviewId === "string"
+    && typeof item.summary === "string"
+    && Array.isArray(item.paths) && item.paths.every((path) => typeof path === "string")
+    && (item.status === "open" || item.status === "resolved")
+    && typeof item.createdAt === "number" && Number.isFinite(item.createdAt);
+}
+
+/**
+ * Validate one `list_reviews` payload into a bounded read, or into the
+ * unavailable marker.
+ *
+ * Structured content crosses a trust boundary: nothing about the payload's
+ * shape is guaranteed by the transport, so a malformed or foreign ledger
+ * would otherwise be rendered as debt this surface actually observed — a
+ * `[P0]` line the ledger never minted, an entry the panel cannot even key,
+ * counted as open. A payload that does not match the contract the store
+ * itself validates is a ledger that could not be read, which is unknown debt
+ * and never zero.
+ */
+export function readOpenReviewFollowUps(content: unknown, limit: number): OpenReviewFollowUps {
+  if (!content || typeof content !== "object") return UNAVAILABLE_REVIEW_FOLLOW_UPS;
+  const payload = content as { openFollowUps?: unknown; followUpsTruncated?: unknown };
+  if (!Array.isArray(payload.openFollowUps)) return UNAVAILABLE_REVIEW_FOLLOW_UPS;
+  const followUps: ReviewFollowUp[] = [];
+  // The panel keys and counts by id, so an absent or repeated one is not a
+  // follow-up this surface can speak about.
+  const seen = new Set<string>();
+  for (const entry of payload.openFollowUps) {
+    if (!validReviewFollowUp(entry) || seen.has(entry.id)) return UNAVAILABLE_REVIEW_FOLLOW_UPS;
+    seen.add(entry.id);
+    followUps.push(entry);
+  }
+  // The ledger states its own cap. Without that flag a full window is not
+  // proof of completeness, so it degrades to "capped", never to "all". A flag
+  // of the wrong type is not an absent flag, though: that is a broken read.
+  let truncated: boolean;
+  if (typeof payload.followUpsTruncated === "boolean") truncated = payload.followUpsTruncated;
+  else if (payload.followUpsTruncated === undefined) truncated = followUps.length >= limit;
+  else return UNAVAILABLE_REVIEW_FOLLOW_UPS;
+  return { followUps, truncated, available: true };
+}
+
 export interface ReviewFollowUps {
   openFollowUps(limit: number): Promise<OpenReviewFollowUps>;
   close(): Promise<void>;
@@ -94,11 +146,7 @@ export function createReviewFollowUpsClient(options: {
           arguments: { workspaceRoot: options.workspaceRoot, followUpLimit: limit, limit: 1 },
         }).catch(() => undefined);
         if (result === undefined || result.isError === true) return UNAVAILABLE_REVIEW_FOLLOW_UPS;
-        const content = result.structuredContent as { openFollowUps?: ReviewFollowUp[]; followUpsTruncated?: boolean } | undefined;
-        const followUps = content?.openFollowUps ?? [];
-        // The ledger states its own cap. Without that flag a full window is not
-        // proof of completeness, so it degrades to "capped", never to "all".
-        return { followUps, truncated: content?.followUpsTruncated ?? followUps.length >= limit, available: true };
+        return readOpenReviewFollowUps(result.structuredContent, limit);
       },
       async close(): Promise<void> {
         await client.close();
