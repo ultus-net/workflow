@@ -34,9 +34,30 @@ export interface ProposalTurnTask {
   fail(): void;
 }
 
-export function beginProposalTurnTask(application: WorkflowApplication): ProposalTurnTask {
-  const id = taskId(`rsi-proposal:${randomUUID()}`);
-  application.addTask({ id, title: "RSI proposal session", dependencies: [], requiredEvidence: [] });
+/**
+ * The kernel-graph session task lifecycle (2026-09-26): several hub-side
+ * agent sessions (the RSI proposal turn, the hub reviewer session) run on
+ * applications whose tasks share the hub's single kernel graph. A task left
+ * IN_PROGRESS after its session ends collides with the run begin's own
+ * IN_PROGRESS task — the next activation fails closed with "multiple
+ * IN_PROGRESS tasks require an explicit active task selection" and the loop
+ * dies at iters=0 (observed live; lesson 98dd6a33). So a session's task must
+ * be opened at session start and completed (VERIFIED) or failed (FAILED)
+ * when the session ends. #134 extends the same lifecycle to the
+ * hub-reviewer session (hub.ts left it IN_PROGRESS forever).
+ */
+export interface KernelSessionTask {
+  readonly taskId: TaskId;
+  complete(): void;
+  fail(): void;
+}
+
+export function beginKernelSessionTask(
+  application: WorkflowApplication,
+  options: { readonly idPrefix: string; readonly title: string },
+): KernelSessionTask {
+  const id = taskId(`${options.idPrefix}:${randomUUID()}`);
+  application.addTask({ id, title: options.title, dependencies: [], requiredEvidence: [] });
   application.transition(id, "IN_PROGRESS");
   application.selectActiveTask(id);
   return {
@@ -49,6 +70,10 @@ export function beginProposalTurnTask(application: WorkflowApplication): Proposa
     },
     fail: () => application.transition(id, "FAILED"),
   };
+}
+
+export function beginProposalTurnTask(application: WorkflowApplication): ProposalTurnTask {
+  return beginKernelSessionTask(application, { idPrefix: "rsi-proposal", title: "RSI proposal session" });
 }
 
 /**
