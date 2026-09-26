@@ -108,9 +108,16 @@ jobs:
             '    # so a fresh blocking connection is opened for the raw messages.' \
             '    from jeepney.io.blocking import open_dbus_connection' \
             '    raw = open_dbus_connection(bus=bus)' \
+            '    # The daemon only serves the Secret Service API over the bus it' \
+            '    # authenticated on. The raw conn must be the same session bus' \
+            '    # (it is: bus comes from DBUS_SESSION_BUS_ADDRESS).' \
             '    raw_addr = DBusObject("org.freedesktop.secrets", "/org/freedesktop/secrets")' \
             '    def call_method(method, signature, body):' \
             '        return raw.send_and_get_reply(new_method_call(raw_addr, method, signature=signature, body=body))' \
+            '    # First check the service is actually reachable — a clean error' \
+            '    # here beats a mid-call connection reset.' \
+            '    introspect = call_method("Introspect", "", ())' \
+            '    print("Introspect ok:", b"Secret" in (introspect[0][1][1] if isinstance(introspect[0][1][1], bytes) else introspect[0][1][1].encode()))' \
             '    open_reply = call_method("OpenSession", "sv", ("plain", ("s", "")))' \
             '    session_path = open_reply[0][1][1]' \
             '    session_addr = DBusObject("org.freedesktop.secrets", session_path)' \
