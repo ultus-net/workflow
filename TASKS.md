@@ -5697,7 +5697,11 @@ choice decides the push target).
       fails closed at the download step. YAML-parse and the sha256sum -c
       fail-closed mechanics verified locally; the digest-record format
       matches verify-pin.sh's contract (sha256:<64-hex>, single line). CI
-      placement: tier D of docs/CI.md.
+      placement: tier D of docs/CI.md. Refinement-loop P2 (the review's
+      static catch): the Dockerfile's opencode COPY paths were
+      Dockerfile-dir-relative while the build context is the repo root —
+      fixed in the same commit as this note; exactly the class of defect the
+      unverified-until-first-build status exists to surface before a run.
 
 ### W150 - CI implementation (tiers per docs/CI.md; C deferred pending operator)
 

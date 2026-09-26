@@ -1,7 +1,8 @@
 # CI design — the open repo's verification tiers
 
-**Date:** 2026-09-26 · **Status:** design recorded; implementation is W150
-(pending the operator's two decisions below). · **Evidence base:** `AGENTS.md`
+**Date:** 2026-09-26 · **Status:** decisions recorded + tiers A/B implemented
+(W150); tier C deferred per decision; publish machinery drafted (W149,
+unverified until its first tagged run). · **Evidence base:** `AGENTS.md`
 (verification commands, the full-suite resource directive, probe discipline),
 `docs/HOST_ADAPTERS.md` (per-version probe verdicts),
 `docs/superpowers/specs/2026-09-26-deployment-instance-split.md` (publish

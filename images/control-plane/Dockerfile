@@ -41,8 +41,11 @@ RUN npm run build \
  && npm prune --omit=dev
 
 # Vendored, sha-verified opencode (the pin lives in opencode.sha256, in-tree).
-COPY opencode.sha256 /tmp/opencode.sha256
-COPY opencode /tmp/opencode
+# Paths are repo-root-relative: the publish workflow builds with context: .
+# (the review's P2 — bare filenames would only resolve with a Dockerfile-dir
+# context, which this build does not use).
+COPY images/control-plane/opencode.sha256 /tmp/opencode.sha256
+COPY images/control-plane/opencode /tmp/opencode
 RUN cd /tmp \
  && sha256sum -c opencode.sha256 \
  && install -m 0755 opencode /usr/local/bin/opencode \
