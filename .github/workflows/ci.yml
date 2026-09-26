@@ -108,12 +108,14 @@ jobs:
             '    # OpenSession(plain) -> CreateCollection with the (oayts)' \
             '    # secret struct, replied via the same message-serial machinery' \
             '    # secretstorage itself uses.' \
-            '    from secretstorage.util import send_and_get_reply as ss_send' \
-            '    from secretstorage.util import prepare_message' \
-            '    open_msg = prepare_message(conn, new_method_call(service_addr, "OpenSession", "sv", ("plain", ("s", ""))))' \
-            '    open_reply = ss_send(conn, open_msg)' \
-            '    session_path = open_reply[0][1][1]' \
-            '    collection = Collection(conn, "/org/freedesktop/secrets/collection/login")' \
+            '    from secretstorage.util import send_and_get_reply as ss_send, open_session, format_secret' \
+            '    session = open_session(conn)' \
+            '    secret = format_secret(conn, session, b"ci-probe")' \
+            '    collection_path = "/org/freedesktop/secrets/collection/login"' \
+            '    props = {"org.freedesktop.Secret.Collection.Label": ("s", "login")}' \
+            '    open_msg = prepare_message(conn, new_method_call(service_addr, "CreateCollection", "a{sv}(oayts)", (props, secret)))' \
+            '    create_reply = ss_send(conn, open_msg)' \
+            '    collection = Collection(conn, create_reply[0][1][1])' \
             '    if collection.is_locked():' \
             '        collection.unlock()' \
             '    collection.create_item("ci-unlock-probe", {"service": "workflow", "credential": "ci-unlock-probe"}, b"ci-probe")' \
