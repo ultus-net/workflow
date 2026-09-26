@@ -24,7 +24,6 @@
     "workflow-opencode": "dist/cli/opencode-attach.js",
     "workflow-rsi": "dist/cli/rsi.js"
   },
-  "postinstall": "node scripts/prepare-tool.mjs",
   "files": [
     "dist",
     "assets",
@@ -39,6 +38,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "postinstall": "node scripts/prepare-tool.mjs",
     "build": "tsc -p tsconfig.build.json && node scripts/build-webapp-bundle.mjs",
     "lint": "eslint src test",
     "hub": "tsx src/cli/hub.ts",

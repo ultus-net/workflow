@@ -4990,6 +4990,14 @@ the shipped script — FIXED in this loop.
   consumer approving install scripts unknowingly installs the 391-entry
   vendored toolbox tree (~9.5s warm). Polish shape: a gate env (e.g.
   WORKFLOW_PREPARE_TOOL=1) or honest docs.
+  - Dated correction (2026-09-26, first CI run): the hook was NOT running
+    under npm at all — `postinstall` sat at package.json's TOP LEVEL
+    (outside `scripts`), which npm ignores; the W137 e2e drove the script
+    directly, so the gap was invisible. A fresh CI checkout therefore had no
+    guard dist, and the containment suites failed closed on it. Fixed by
+    moving the key into `scripts` (package-lock `hasInstallScript` synced).
+    The heavyweight-hook finding above becomes real from that fix onward —
+    which is exactly the consumer-facing cost this entry recorded.
 - **(b) THE WORKSPACE UPWALK MUTATION BLAST RADIUS** — the child pnpm
   resolves workspaces by walking UP from its cwd: when the target is not
   itself a workspace root, pnpm can mutate an ANCESTOR workspace's
@@ -5715,6 +5723,29 @@ choice decides the push target).
       declaration (no duplicated version literal), same discipline in the
       image Dockerfile. The evidence job had not yet run at the time of the
       failure (needs: gate).
+  - Dated note (2026-09-26, second live run, same PR): gate failed in the
+      guard corpus — W097's foreign-home denial only fired on ostree hosts
+      (/home -> /var/home made the realpath candidate match the /var
+      prefix); on the runner's conventional layout `/home/otheruser/x`
+      matched no rule and returned MISSING. A REAL policy gap, not just a
+      test fragility: fixed in path-policy.ts by adding /home and /root to
+      the system-space prefixes with canonical-form home membership (a
+      home-symlink escape into system space still fails; the legitimate
+      /home/<self> spelling stays user space), pinned by the new W097b test
+      (HOME swap). Gate went green on the next run.
+  - Dated note (2026-09-26, third live run, same PR): gate GREEN (pnpm pin +
+      the W097 fix verified live). The evidence job then failed 6/97 — all
+      the guard-seat containment suites (W130 admin, W132 x3, hub /bash,
+      W144). Root cause, traced through the missing guard dist: the root
+      `postinstall` key sat at package.json TOP LEVEL (outside `scripts`) —
+      npm never ran it, on any host or in CI (W137 dated correction records
+      this). The evidence job's `npm ci` built no toolbox, and the early
+      containment suites failed closed; a later test's live lane built the
+      toolbox mid-run, which is why only the early suites failed. Fix: move
+      the key into `scripts` (package-lock `hasInstallScript` synced) — the
+      hook now genuinely runs on install, fresh checkouts include the guard
+      dist, and W137's heavyweight-hook finding becomes real. Local:
+      toolbox:verify + test:ci green after the fix.
 
 **Source:** docs/CI.md (2026-09-26 design) — the operator's "start with CI
 design" direction. The repo has no CI at all today; this wires the existing
