@@ -2,33 +2,45 @@
  * W150 (the Paperclip borrow wave 1): the operator posture strip and unified
  * decision inbox's PROJECTION function. Pure: it reads hub/registry-owned
  * state and produces counts plus the merged decision list; it mutates
- * nothing, owns no canonical state, and synthesizes no attribution — every
- * row's actor and authority come from the record kind it was built from.
+ * nothing, owns no canonical state, and synthesizes no attribution.
+ *
+ * ID CONTRACT (the round-1 review's P1 — kernel ids never reach this
+ * function): the caller (the hub's /snapshot handler) filters the kernel
+ * snapshot to run tasks (`run:<rawRunId>` / `run:schedule:<scheduleId>:<uuid>`)
+ * and strips the `run:` prefix, so this function sees RAW run ids — the same
+ * id space the run registry's gate-observability maps are keyed by
+ * (reviewOutcomes, blockingReasons at run-registry.ts). Everything joins on
+ * raw run ids; nothing else.
  *
  * Data sources (the spec's "data projected" list):
- * - run-gate state: the kernel snapshot's run tasks (ids `run:<id>` and
- *   `schedule:<scheduleId>:<uuid>`) plus the run registry's gate
- *   observability (recorded review outcomes, blocking reasons).
+ * - run-gate state: raw-id run tasks plus the registry's recorded review
+ *   outcomes and blocking reasons.
  * - budget incidents: per-session W045 budget-guard state (mechanism, tier).
  * - orphaned runs: recover-or-discard candidates (durable-state attestation).
- * - schedules: the schedule registry's definitions.
+ * - schedules: the schedule registry's definitions (titles only — counts do
+ *   not depend on it).
  *
- * Fail-closed degraded state: when a registry's input is ABSENT the
- * projection does NOT fabricate a zero — it names the absent registry in
- * `degraded` so the strip can render an honest "state unavailable" mark, and
- * emits no decision rows for data it was never given.
+ * Fail-closed degraded state: when a registry's input is ABSENT the count it
+ * feeds is `null` — the strip renders an honest "—" (state unavailable), NOT
+ * a fabricated zero — and the projection emits no decision rows for data it
+ * was never given. `failedSchedules` is the exception: it needs only the
+ * run tasks (the kernel graph), so it is always a number; a missing schedule
+ * registry degrades decision-row TITLES (the registry id is shown instead),
+ * never the count.
  *
  * The scheduled-run origin is registry-structural: the scheduler fires runs
  * with ids `schedule:<scheduleId>:<uuid>` (hub-scheduler.ts), so lineage and
- * failed-schedule grouping are computed from the registry ids alone — never
- * from timestamps or UI-side heuristics.
+ * failed-schedule grouping are computed from the raw run ids alone — never
+ * from timestamps or UI-side heuristics. The REVIEWER's runs
+ * (`schedule:hub-reviewer-<uuid>`, two segments) share the prefix but are
+ * not schedule origins and are excluded by the three-segment shape.
  */
 
 export type OperatorDecisionKind = "review" | "budget" | "orphan" | "schedule";
 
 export interface PostureRunTask {
-  /** The kernel task id — `run:<id>` or the schedule-origin `schedule:<scheduleId>:<uuid>`. */
-  readonly id: string;
+  /** The RAW run id (no `run:` kernel prefix): `author-1`, a uuid, or the schedule-origin `schedule:<id>:<uuid>`. */
+  readonly runId: string;
   readonly title: string;
   /** The kernel state (IN_PROGRESS / VERIFYING / VERIFIED / FAILED / BLOCKED). */
   readonly state: string;
@@ -49,7 +61,7 @@ export interface PostureOrphan {
 }
 
 export interface OperatorPostureInput {
-  /** Kernel snapshot run tasks (run:* and schedule:* ids). Required — no graph, no posture. */
+  /** Raw-id run tasks. Required — no graph, no posture. */
   readonly runTasks: readonly PostureRunTask[];
   readonly reviewOutcomes?: ReadonlyMap<string, { readonly verdict: string; readonly summary: string }>;
   readonly blockingReasons?: ReadonlyMap<string, string>;
@@ -60,8 +72,8 @@ export interface OperatorPostureInput {
 
 export interface OperatorDecisionRow {
   readonly kind: OperatorDecisionKind;
-  /** Attribution from the record: which surface produced this row. */
-  readonly actor: "agent" | "reviewer" | "budget guard" | "system" | "scheduler";
+  /** Attribution from the record kind — the gate maps carry multiple record families, so each row says where it came from. */
+  readonly actor: "agent" | "system" | "budget guard" | "scheduler";
   /** The authority basis the row stands on — never invented. */
   readonly authority: string;
   readonly summary: string;
@@ -71,17 +83,20 @@ export interface OperatorDecisionRow {
 
 export interface OperatorPosture {
   readonly counts: {
-    readonly awaitingReview: number;
-    readonly budgetIncidents: number;
-    readonly orphanedRuns: number;
+    /** Null means the feeding registry was ABSENT — render "state unavailable", never a fabricated zero. */
+    readonly awaitingReview: number | null;
+    readonly budgetIncidents: number | null;
+    readonly orphanedRuns: number | null;
+    /** Always a number: derivable from the kernel graph's run tasks alone. */
     readonly failedSchedules: number;
   };
-  /** Absent registries named so the strip can render "state unavailable" instead of a fabricated zero. */
+  /** Absent registries named so the strip can explain the "—" marks and the degraded rows. */
   readonly degraded: readonly string[];
   readonly decisions: readonly OperatorDecisionRow[];
 }
 
-const isGateRunId = (id: string): boolean => id.startsWith("run:") || id.startsWith("schedule:");
+/** The scheduler-origin run id shape: three segments, `schedule:<id>:<uuid>`. */
+const SCHEDULE_ORIGIN = /^schedule:[^:]+:[^:]+$/;
 
 export function operatorPosture(input: OperatorPostureInput): OperatorPosture {
   const degraded: string[] = [];
@@ -90,46 +105,49 @@ export function operatorPosture(input: OperatorPostureInput): OperatorPosture {
   if (input.orphans === undefined) degraded.push("orphaned-run detection");
   if (input.schedules === undefined) degraded.push("schedule registry");
 
-  const gateRunTasks = input.runTasks.filter((task) => isGateRunId(task.id));
-
   // Awaiting review: a run parked in VERIFYING (its work finished into the
-  // gate) with no recorded review verdict. A run that already carries an
-  // outcome, or that never reached the gate, is not awaiting anything.
-  const awaitingReview = gateRunTasks.filter(
-    (task) => task.state === "VERIFYING" && !(input.reviewOutcomes?.has(task.id) ?? false),
-  );
+  // gate) with no recorded review verdict — joined on RAW run ids. Runs that
+  // already carry an outcome, or that never reached the gate, are not
+  // awaiting anything.
+  const awaitingReview = input.reviewOutcomes === undefined || input.blockingReasons === undefined
+    ? null
+    : input.runTasks.filter(
+        (task) => task.state === "VERIFYING" && !input.reviewOutcomes!.has(task.runId),
+      ).length;
 
   // Failed schedules: FAILED runs fired BY a schedule, grouped by the
-  // originating schedule id parsed from the registry id — one count per
-  // schedule, however many of its runs failed. The SCHEDULE-origin id shape
-  // is three segments (`schedule:<id>:<uuid>`, hub-scheduler.ts); reviewer
-  // runs (`schedule:hub-reviewer-<uuid>`, one colon) are NOT schedule origins
-  // and must never group into this count.
+  // originating schedule id parsed from the RAW run id — one count per
+  // schedule, however many of its runs failed.
   const failedScheduleIds = new Set<string>();
-  for (const task of gateRunTasks) {
-    if (task.state !== "FAILED" || !/^schedule:[^:]+:[^:]+$/.test(task.id)) continue;
-    const scheduleId = task.id.split(":")[1] ?? "";
+  for (const task of input.runTasks) {
+    if (task.state !== "FAILED" || !SCHEDULE_ORIGIN.test(task.runId)) continue;
+    const scheduleId = task.runId.split(":")[1] ?? "";
     if (scheduleId !== "") failedScheduleIds.add(scheduleId);
   }
 
   const decisions: OperatorDecisionRow[] = [];
-  for (const task of awaitingReview) {
-    decisions.push({
-      kind: "review",
-      actor: "agent",
-      authority: "run review gate (requiresReview)",
-      summary: `${task.title} finished into the review gate — awaiting a verdict`,
-      action: { label: "Open run", target: `#run:${task.id}` },
-    });
+  if (awaitingReview !== null) {
+    for (const task of input.runTasks) {
+      if (task.state !== "VERIFYING" || input.reviewOutcomes!.has(task.runId)) continue;
+      decisions.push({
+        kind: "review",
+        actor: "agent",
+        authority: "run review gate (requiresReview)",
+        summary: `${task.title} finished into the review gate — awaiting a verdict`,
+        action: { label: "Open run", target: `#run:${task.runId}` },
+      });
+    }
   }
   for (const [runId, reason] of input.blockingReasons ?? []) {
-    if (!isGateRunId(runId)) continue;
-    const task = gateRunTasks.find((candidate) => candidate.id === runId);
+    const task = input.runTasks.find((candidate) => candidate.runId === runId);
     decisions.push({
       kind: "review",
-      actor: "reviewer",
-      authority: "recorded review decision",
-      summary: `${task?.title ?? runId} blocked by the review gate: ${reason}`,
+      // The blocking-reason map carries EVERY gate family's failures
+      // (reviewer verdicts, scheduler failures, test-runner rejections) — the
+      // row says so instead of claiming a reviewer said it.
+      actor: "system",
+      authority: "recorded blocking reason (run registry)",
+      summary: `${task?.title ?? runId} blocked: ${reason}`,
       action: { label: "Inspect", target: `#run:${runId}` },
     });
   }
@@ -164,9 +182,9 @@ export function operatorPosture(input: OperatorPostureInput): OperatorPosture {
 
   return {
     counts: {
-      awaitingReview: awaitingReview.length,
-      budgetIncidents: (input.budgetIncidents ?? []).length,
-      orphanedRuns: (input.orphans ?? []).length,
+      awaitingReview,
+      budgetIncidents: input.budgetIncidents === undefined ? null : input.budgetIncidents.length,
+      orphanedRuns: input.orphans === undefined ? null : input.orphans.length,
       failedSchedules: failedScheduleIds.size,
     },
     degraded,
@@ -176,11 +194,11 @@ export function operatorPosture(input: OperatorPostureInput): OperatorPosture {
 
 /**
  * W153 (borrow wave 4's registry slice): per-schedule lineage computed from
- * the registries alone. Caused runs join on the registry id prefix (never on
- * timestamps); the last outcome is the LAST matching run task in the
- * snapshot's insertion order (the graph's own append order); a deleted
- * schedule's runs stay attributed to a tombstoned origin rather than
- * dangling.
+ * the registries alone. Caused runs join on the RAW run id's schedule-origin
+ * prefix (never on timestamps); the last outcome is the LAST matching run
+ * task in the snapshot's insertion order (the graph's own append order); a
+ * deleted schedule's runs stay attributed to a tombstoned origin rather than
+ * dangling. Reviewer runs are excluded by the three-segment shape.
  */
 export interface ScheduleLineage {
   readonly scheduleId: string;
@@ -197,10 +215,8 @@ export function scheduleLineage(input: {
 }): ScheduleLineage[] {
   const runsByOrigin = new Map<string, PostureRunTask[]>();
   for (const task of input.runTasks) {
-    // Three-segment schedule-origin ids only (schedule:<id>:<uuid>);
-    // reviewer runs (schedule:hub-reviewer-<uuid>) are not schedule origins.
-    if (!/^schedule:[^:]+:[^:]+$/.test(task.id)) continue;
-    const scheduleId = task.id.split(":")[1] ?? "";
+    if (!SCHEDULE_ORIGIN.test(task.runId)) continue;
+    const scheduleId = task.runId.split(":")[1] ?? "";
     if (scheduleId === "") continue;
     const runs = runsByOrigin.get(scheduleId) ?? [];
     runs.push(task);

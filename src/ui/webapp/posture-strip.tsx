@@ -90,10 +90,10 @@ export function PostureStrip({ state, onAction }: {
     <div className="posture-strip" role="status">
       <div className="posture-counts" aria-label="Operator posture">
         {COUNT_LABELS.map(({ key, label }) => {
-          const unavailable = degraded.has("run-gate observability") && key === "awaitingReview";
+          const count = posture.counts[key];
           return (
-            <span key={key} className={`posture-count${posture.counts[key] > 0 ? " posture-count-active" : ""}`}>
-              <span className="posture-count-value">{unavailable ? "—" : String(posture.counts[key])}</span>
+            <span key={key} className={`posture-count${typeof count === "number" && count > 0 ? " posture-count-active" : ""}`}>
+              <span className="posture-count-value">{count === null ? "—" : String(count)}</span>
               <span className="posture-count-label">{label}</span>
             </span>
           );

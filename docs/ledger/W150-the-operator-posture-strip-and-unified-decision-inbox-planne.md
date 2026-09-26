@@ -43,3 +43,24 @@ guard PR-preflight's lockfile heuristic (a manifest edit without a lockfile
 diff — a scripts-only false positive, the same one that blocked the W156
 lane's PR); its inclusion rides the next manifest-touching PR once that
 heuristic is fixed.
+
+**Dated note (2026-09-27, round-1 review correction):** the first review
+round caught a wire-shape bug the synthetic fixtures had hidden: kernel task
+ids are `run:<rawRunId>` (taskId wraps; a scheduled run's snapshot id is
+`run:schedule:<id>:<uuid>` — four segments), and the registry's
+gate-observability maps are keyed by RAW run ids — so the projection's
+`schedule:`-prefixed id shapes never matched the live wire: failedSchedules
+was always 0, schedule decision rows never fired, scheduleLineage was dead
+code, and the awaiting-review count miskeyed against the outcome map.
+Corrected by giving the projection a RAW-id contract (the hub's /snapshot
+handler strips the `run:` prefix; the projection joins on the same id space
+the registry maps use) — the docstring now states the contract. The review
+also forced: null-for-unavailable counts (an absent registry's count is
+`null` and the strip renders "—" — the fabricated-zero class closed at the
+TYPE level), record-kind attribution on the blocking-reason rows (the map
+carries scheduler/test-runner failures too — the rows say "recorded blocking
+reason (run registry)", not "the reviewer said"), the unfiltered-tasks use
+documented (failed schedule runs are hidden finished tasks — the filtered
+list would hide exactly the FAILED states the count needs), the strip's CSS,
+and wire-shaped test fixtures (8 tests now, including the reviewer-run
+exclusion against the raw-id shape).

@@ -264,12 +264,19 @@ async function handleRequest(
       // canonical projection as in-process surfaces.
       // W150: the operator posture strip + decision inbox ride the same
       // snapshot response — computed ONLY from registry/kernel state by the
-      // shared projection function. Absent registries (per-session budget
-      // state, orphan detection) degrade with NAMED absences, never zeros.
+      // shared projection function. The projection sees RAW run ids (the
+      // kernel snapshot's `run:` prefix is stripped here — the projection's
+      // id contract matches the registry's raw-keyed observability maps).
+      // NOTE: the posture intentionally reads the UNFILTERED task list —
+      // finished schedule runs are hidden from the payload (the reviewer-run
+      // hiding) but their FAILED states are exactly what the failed-schedule
+      // count needs. Absent registries (per-session budget state, orphan
+      // detection) degrade with NAMED absences and null counts — never
+      // fabricated zeros.
       const posture = operatorPosture({
         runTasks: snapshot.tasks
-          .filter((task) => task.id.startsWith("run:") || task.id.startsWith("schedule:"))
-          .map((task) => ({ id: task.id, title: task.title, state: task.state })),
+          .filter((task) => task.id.startsWith("run:"))
+          .map((task) => ({ runId: task.id.slice("run:".length), title: task.title, state: task.state })),
         ...(gates === undefined ? {} : {
           reviewOutcomes: gates.reviewOutcomes,
           blockingReasons: gates.blockingReasons,
