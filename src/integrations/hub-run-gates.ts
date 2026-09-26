@@ -21,6 +21,14 @@ export interface ReviewerRuntimeSession {
   submit(prompt: string): Promise<void>;
   snapshot(): { readonly state: string; readonly result?: string; readonly reason?: string };
   dispose(): Promise<void>;
+  /**
+   * #134: the kernel-graph bookkeeping task the runtime opened (the
+   * `hub-reviewer:<id>` task). The adapter forwards it onto the spawned
+   * reviewer session so the runner can close it — completed when review()
+   * returns, failed when it throws. Optional: runtimes that open no kernel
+   * task omit it. Implementations must be terminal-safe.
+   */
+  endTask?(outcome: "completed" | "failed"): void;
 }
 
 export function createRunTestRunner(options: {
@@ -66,6 +74,10 @@ export function createReviewerFactory(options: {
             return snapshot.result;
           },
           dispose: () => runtime.dispose(),
+          // #134: forward the runtime's kernel-task closer — dropping it here
+          // (the round-1 review's P0) left the hub-reviewer task IN_PROGRESS
+          // forever in production while every stub-composed test stayed green.
+          ...(runtime.endTask === undefined ? {} : { endTask: (outcome: "completed" | "failed") => runtime.endTask?.(outcome) }),
         };
       },
     };

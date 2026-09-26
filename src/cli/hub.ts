@@ -145,25 +145,36 @@ const reviewerFactory = createReviewerFactory({
       throw error;
     });
     // W045: record the reviewer runtime's budget mechanism like every other
-    // hub-composed runtime.
-    console.log(`hub reviewer session budget mechanism: ${runtime.budgetMechanism}`);
-    return {
-      submit: (prompt: string) => runtime.session.submit(prompt),
-      snapshot: () => runtime.session.snapshot(),
-      dispose: () => runtime.dispose(),
-      // #134: the reviewer session's kernel task mirrors the session —
-      // completed when review() returns, failed when it throws or the
-      // runtime never came up. Terminal-safe: a repeated endTask (e.g. a
-      // completed task whose run later failed) is a no-op, never a throw.
-      endTask: (outcome: "completed" | "failed") => {
-        try {
-          if (outcome === "completed") reviewerTask.complete();
-          else reviewerTask.fail();
-        } catch {
-          // already terminal — the session lifecycle must not throw here
-        }
-      },
-    };
+    // hub-composed runtime. The tail of the factory is guarded: anything
+    // throwing here (the budget-mechanism read, a future line) would leak the
+    // opened kernel task IN_PROGRESS with no closer (the round-1 review's P3).
+    try {
+      console.log(`hub reviewer session budget mechanism: ${runtime.budgetMechanism}`);
+      return {
+        submit: (prompt: string) => runtime.session.submit(prompt),
+        snapshot: () => runtime.session.snapshot(),
+        dispose: () => runtime.dispose(),
+        // #134: the reviewer session's kernel task mirrors the session —
+        // completed when review() returns, failed when it throws or the
+        // runtime never came up. Terminal-safe: a repeated endTask (e.g. a
+        // completed task whose run later failed) is a no-op, never a throw.
+        endTask: (outcome: "completed" | "failed") => {
+          try {
+            if (outcome === "completed") reviewerTask.complete();
+            else reviewerTask.fail();
+          } catch {
+            // already terminal — the session lifecycle must not throw here
+          }
+        },
+      };
+    } catch (error) {
+      try {
+        reviewerTask.fail();
+      } catch {
+        // already terminal
+      }
+      throw error;
+    }
   },
 });
 

@@ -307,9 +307,13 @@ export class HubReviewerRunner {
     } catch (error) {
       // #134: a session whose review() threw (or that never came up) fails
       // its kernel task — the shared graph never carries an IN_PROGRESS
-      // hub-reviewer task. Terminal-safe by contract, so a session that
-      // already completed is untouched.
-      session?.endTask?.("failed");
+      // hub-reviewer task. Guarded: a contract-violating endTask must not
+      // mask the original error.
+      try {
+        session?.endTask?.("failed");
+      } catch {
+        // the closer threw — the original error still propagates
+      }
       // W041: journal the interruption best-effort — it must never mask the
       // original failure. An interrupted record is history, never approval.
       await this.#appendProvenance(input, reviewerRunId, fingerprint, {
@@ -474,8 +478,13 @@ export class HubReviewerRunner {
       finalMessage = await session.review(prompt);
     } catch (error) {
       // #134: the unit session's review() threw — its kernel task fails here
-      // (the outer catch cannot see this session).
-      session.endTask?.("failed");
+      // (the outer catch cannot see this session). Guarded: a throwing
+      // endTask must not mask the original error.
+      try {
+        session.endTask?.("failed");
+      } catch {
+        // the closer threw — the original error still propagates
+      }
       throw error;
     } finally {
       try {

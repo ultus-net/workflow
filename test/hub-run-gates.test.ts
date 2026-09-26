@@ -132,3 +132,51 @@ test("createReviewerFactory surfaces reviewer runtime failures fail-closed", asy
   const runTask = base.application.snapshot().tasks.find((task) => task.title === "Author run");
   assert.equal(runTask?.state, "VERIFYING");
 });
+
+// #134 round-2: the adapter must FORWARD the runtime's endTask — the
+// round-1 review's P0 was exactly this layer dropping it, leaving the
+// hub-reviewer task IN_PROGRESS in production while every stub-composed
+// runner test stayed green. These pins compose the FULL production path
+// (createReviewerFactory's spawn literal → HubReviewerRunner) with a
+// recording runtime.
+test("#134: the adapter forwards endTask — a completed review closes the session's kernel task through the PRODUCTION composition", async (t) => {
+  const base = setup();
+  t.after(() => rmSync(base.workspace, { recursive: true, force: true }));
+  const outcomes: Array<"completed" | "failed"> = [];
+  const factory = createReviewerFactory({
+    shell: async (command) => (command.startsWith("git status") ? "M  src/thing.ts\0" : "diff --git a/x b/x"),
+    createRuntime: async () => ({
+      async submit() {},
+      snapshot: () => ({ state: "completed", result: `[APPROVE]\n${AXES_SUMMARY}\n[COVERAGE] src/thing.ts` }),
+      async dispose() {},
+      endTask(outcome: "completed" | "failed") {
+        outcomes.push(outcome);
+      },
+    }),
+  });
+  const registry = createRunRegistry(base.application, base.graph, { reviewer: factory });
+  await registry.controller.begin({ runId: "author-6", title: "Author run", workspace: base.workspace, requiresReview: true });
+  await registry.controller.finish({ runId: "author-6", outcome: "verified" });
+  assert.deepEqual(outcomes, ["completed"], "the adapter forwarded endTask — the kernel task closed on review completion");
+});
+
+test("#134: the adapter forwards endTask on the failure path too (a throwing review fails the session's kernel task)", async (t) => {
+  const base = setup();
+  t.after(() => rmSync(base.workspace, { recursive: true, force: true }));
+  const outcomes: Array<"completed" | "failed"> = [];
+  const factory = createReviewerFactory({
+    shell: async (command) => (command.startsWith("git status") ? "" : "diff --git a/x b/x"),
+    createRuntime: async () => ({
+      async submit() {},
+      snapshot: () => ({ state: "failed", reason: "agent crashed" }),
+      async dispose() {},
+      endTask(outcome: "completed" | "failed") {
+        outcomes.push(outcome);
+      },
+    }),
+  });
+  const registry = createRunRegistry(base.application, base.graph, { reviewer: factory });
+  await registry.controller.begin({ runId: "author-7", title: "Author run", workspace: base.workspace, requiresReview: true });
+  await assert.rejects(registry.controller.finish({ runId: "author-7", outcome: "verified" }), /did not complete/);
+  assert.deepEqual(outcomes, ["failed"], "the adapter forwarded endTask — the kernel task failed on the review's error path");
+});

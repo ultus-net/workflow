@@ -797,7 +797,7 @@ test("#134: an unparseable verdict completes the session's kernel task (the fail
   const { controller, workspace, runner } = await runnerWith(t, reviewer);
   await controller.begin({ runId: "author-134c", title: "Author run", workspace, requiresReview: true });
   const result = await runner.reviewRun({ runId: "author-134c", workspace });
-  assert.equal(result.parseFailure !== undefined || result.verdict === "changes_requested", true);
+  assert.ok(result.parseFailure !== undefined, "the unparseable verdict is fail-closed");
   assert.deepEqual(reviewer.outcomes, ["completed"]);
 });
 
