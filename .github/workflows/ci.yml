@@ -118,10 +118,6 @@ jobs:
             '        collection.unlock()' \
             '    collection.create_item("ci-unlock-probe", {"service": "workflow", "credential": "ci-unlock-probe"}, b"ci-probe")' \
             '    print("probe item created")' > /tmp/keyring-create.py
-            'if collection.is_locked():' \
-            '    collection.unlock()' \
-            'collection.create_item("ci-unlock-probe", {"service": "workflow", "credential": "ci-unlock-probe"}, b"ci-probe")' \
-            'print("probe item created")' > /tmp/keyring-create.py
           printf '%s\n' \
             'import os, subprocess, secretstorage, time' \
             'from secretstorage.collection import Collection' \
@@ -129,14 +125,7 @@ jobs:
             'os.environ["DBUS_SESSION_BUS_ADDRESS"] = bus' \
             'conn = secretstorage.dbus_init()' \
             'time.sleep(0.3)' \
-            'collection = None' \
-            'for attempt in range(5):' \
-            '    try:' \
-            '        collection = secretstorage.get_default_collection(conn)' \
-            '        break' \
-            '    except Exception:' \
-            '        collection = Collection(conn, "/org/freedesktop/secrets/collection/login")' \
-            '        break' \
+            'collection = Collection(conn, "/org/freedesktop/secrets/collection/login")' \
             'if collection.is_locked():' \
             '    collection.unlock()' \
             'item = None' \
