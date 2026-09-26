@@ -83,12 +83,18 @@ jobs:
           echo "keyring daemon env: $daemon_env"
           echo "$daemon_env" | tr ';' '\n' | grep 'GNOME_KEYRING_CONTROL=' | sed 's/^  //' >> "$GITHUB_ENV" || true
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
-          # Create + unlock the default collection by writing one probe
-          # secret through secret-tool itself (a real store+clear round trip
-          # creates the collection if missing and proves the whole path).
+          # Create + unlock the default collection: a fresh daemon serves NO
+          # collection at all, and secret-tool refuses to auto-create
+          # ("Object does not exist at path .../collection/login" — run 9).
+          # The supported headless creation is gnome-keyring-daemon
+          # --unlock with a non-empty password piped in: that materializes
+          # login.keyring. THEN verify with a real store+clear round trip.
+          printf 'ci-unlock-password' | gnome-keyring-daemon --unlock 2>&1 | grep -o 'GNOME_KEYRING_CONTROL=[^;]*' | head -1 >> "$GITHUB_ENV" || true
           printf 'ci-probe' | secret-tool store --label='ci keyring unlock probe' service workflow credential ci-unlock-probe
+          probe_lookup="$(secret-tool lookup service workflow credential ci-unlock-probe || true)"
+          [ "$probe_lookup" = "ci-probe" ] || { echo "keyring probe FAILED: lookup returned '$probe_lookup'"; exit 1; }
           secret-tool clear service workflow credential ci-unlock-probe
-          echo "keyring unlock probe: stored + cleared ok"
+          echo "keyring unlock probe: stored + looked up + cleared ok"
       - run: npm ci
       - run: npm run build
       - run: npm run test:ci
