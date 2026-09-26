@@ -1,5 +1,38 @@
 # Workflow v0 Task Roadmap
 
+**FROZEN 2026-09-26 (operator direction): live task tracking moved to the
+GitHub Project (issues + kanban). This file is the historical roadmap and
+landed-record index — new work items are NOT appended here anymore.**
+
+- **Live status / open work:** the GitHub Project board (`ultus-net/workflow`
+  projects); issues carry the W-number in their title ("W156 - ...") so every
+  existing citation stays resolvable.
+- **Landed records:** one write-once file per item under `docs/ledger/`
+  (extracted 2026-09-26 by `scripts/ledger-extract.mjs --check`; byte-parity
+  with this file as of 52aa74d, 137 fragments). Append dated supersession
+  notes to a fragment; never rewrite it.
+- **Citations:** `TASKS.md:NNN` line references in docs (e.g.
+  `docs/COMPLIANCE_REGISTER.md`, the paperclip spec) remain valid — this file
+  is frozen, so line numbers are stable. Fragment provenance lines refer to
+  the PRE-freeze file (as of 52aa74d). New citations point at
+  `docs/ledger/W###-*.md` or the issue.
+- `guard_next_tasks` still reads this file's header (the loop entry point);
+  the ACTIVE block below is its only maintained section. Note:
+  `scripts/ledger-extract.mjs --check` is an EXTRACTION-TIME parity tool
+  (valid against the extraction commit); it is not a maintained invariant —
+  appending dated notes to a fragment legitimately diverges from TASKS.md.
+- The full-suite resource directive, kernel-purity rule, and honest-claims
+  culture are unaffected; AGENTS.md remains the process authority.
+
+## ACTIVE (the loop's entry block — the only maintained section here)
+
+| Item | Status | Where |
+| --- | --- | --- |
+| PR #132: split + CI + publish machinery (W147-W149, W155) | PR open; CI fixes landing | PR #132 (its branch carries `docs/CI.md` and the W147-W149/W155 records until merge) |
+| W148 infra/c0 strip | gated on the work AzDO repo existing | PR #132, spec §11 (record lands in `docs/ledger/` at merge) |
+| W149 publish workflow | drafted, unverified until first tagged run | PR #132 |
+| W150-W154 Paperclip borrow waves | Planned (not picked up) | issues + `docs/ledger/W150-*.md` … `W154-*.md` |
+
 ## Goal
 
 Build Workflow as the durable, SDK-agnostic safety and execution layer around fast-changing agent hosts, MCP capabilities, and user interfaces.
