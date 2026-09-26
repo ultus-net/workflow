@@ -88,10 +88,9 @@ jobs:
             'bus = subprocess.check_output(["bash", "-c", "echo $DBUS_SESSION_BUS_ADDRESS"]).decode().strip()' \
             'os.environ["DBUS_SESSION_BUS_ADDRESS"] = bus' \
             'import secretstorage' \
-            'from jeepney.wrappers import DBusObject' \
+            'from jeepney.wrappers import DBusObject, new_method_call' \
             'from secretstorage.collection import Collection' \
             'conn = secretstorage.dbus_init()' \
-            'service_obj = DBusObject("org.freedesktop.secrets", "/org/freedesktop/secrets")' \
             'collection = None' \
             'try:' \
             '    collection = secretstorage.get_default_collection(conn)' \
@@ -99,15 +98,28 @@ jobs:
             '    collection = None' \
             'if collection is None:' \
             '    # No default collection on a fresh daemon — create it via the' \
-            '    # Service.CreateCollection D-Bus call (run 11: get_default_collection' \
-            '    # itself raises UnknownMethod when the collection object is absent).' \
-            '    session = secretstorage.dbus_init()' \
-            '    collection = secretstorage.create_collection(conn, "login")' \
-            'if collection.is_locked():' \
-            '    collection.unlock()' \
-            'time.sleep(0.5)' \
-            'collection.create_item("ci-unlock-probe", {"service": "workflow", "credential": "ci-unlock-probe"}, b"ci-probe")' \
-            'print("probe item created")' > /tmp/keyring-create.py
+            '    # Service.CreateCollection D-Bus call. The prompt-based path' \
+            '    # (secretstorage.create_collection) DISMISSES headless (run 12' \
+            '    # PromptDismissedException), so this drives the D-Bus call' \
+            '    # directly: OpenSession(negotiate), then CreateCollection with' \
+            '    # an empty-password secret.' \
+            '    import secrets as _secrets' \
+            '    service_addr = DBusObject("org.freedesktop.secrets", "/org/freedesktop/secrets")' \
+            '    # OpenSession with the plain algorithm; the reply body carries the session path.' \
+            '    open_reply = conn.send_message(new_method_call(service_addr, "OpenSession", "sv", ("plain", ("s", ""))))' \
+            '    session_path = open_reply.body[1][1]' \
+            '    session_addr = DBusObject("org.freedesktop.secrets", session_path)' \
+            '    # CreateCollection: label property + alias, and the secret as the' \
+            '    # (oayts) struct the spec defines (session path, empty params,' \
+            '    # bytes, session object, index).' \
+            '    collection_secret = (session_addr, "", _secrets.token_bytes(32), session_addr, 0)' \
+            '    create_reply = conn.send_message(new_method_call(' \
+            '        service_addr, "CreateCollection", "a{sv}s(oayts)",' \
+            '        ({"org.freedesktop.Secret.Collection.Label": ("s", "login")}, "login", collection_secret)))' \
+            '    create_body = create_reply.body[0]' \
+            '    print("CreateCollection result:", create_body[0], create_body[1])' \
+            '    if create_body[0] == "prompt":' \
+            '        sys.exit("CreateCollection returned a prompt — the headless daemon refused to auto-create; W130 must fail closed")''
           printf '%s\n' \
             'import os, subprocess, secretstorage, time' \
             'from secretstorage.collection import Collection' \
