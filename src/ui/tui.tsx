@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput, useStdout } from "ink";
 
 import type { CodingSessionEvent, CodingSessionState } from "../application/coding-session.js";
-import type { ReviewFollowUp } from "../integrations/review-followups.js";
+import type { OpenReviewFollowUps } from "../integrations/review-followups.js";
 import type { HubGateObservability } from "../cli/hub-snapshot.js";
 import { WorkflowCodingSession } from "../application/coding-session.js";
 import type { TaskCommandPort } from "../application/task-commands.js";
@@ -132,7 +132,7 @@ export function WorkflowTui({
   readonly profilePath?: string;
   readonly onInspectSymbol?: (symbol: string) => void;
   readonly onModeChange?: (mode: PedagogicalMode) => void;
-  readonly reviewFollowUps?: readonly ReviewFollowUp[];
+  readonly reviewFollowUps?: OpenReviewFollowUps;
   readonly gateObservability?: () => HubGateObservability | undefined;
   /**
    * W044 (G1 metric surfacing): live cumulative + per-turn usage from the
@@ -666,8 +666,11 @@ export function WorkflowTui({
     if (input.length > 0 && !key.ctrl && !key.meta) updatePrompt((value) => value + input);
   });
 
-  const openReviewFollowUps = (reviewFollowUps ?? []).some((item) => item.status === "open");
-  const showActivityPanel = activeSession !== undefined || openReviewFollowUps || gates !== undefined;
+  const openReviewFollowUps = (reviewFollowUps?.followUps ?? []).some((item) => item.status === "open");
+  // An unconsultable ledger is a state worth showing: the panel exists for the
+  // review debt it cannot read, not only for the debt it can.
+  const followUpsUnavailable = reviewFollowUps?.available === false;
+  const showActivityPanel = activeSession !== undefined || openReviewFollowUps || followUpsUnavailable || gates !== undefined;
   const composerRows = activeSession === undefined ? 0 : composerBackground === undefined ? 5 : 3;
   const transcriptRows = Math.max(4, (stdout.rows ?? 24) - chromeRows(showWorkflow, composerRows) - panelRows(snapshot, showActivityPanel));
   const end = Math.max(0, transcript.length - scrollOffset);
@@ -952,10 +955,18 @@ function SessionActivityPanel({
   readonly pendingTools: readonly string[];
   readonly recentLogs: readonly SessionLog[];
   readonly spinner: string;
-  readonly reviewFollowUps?: readonly ReviewFollowUp[];
+  readonly reviewFollowUps?: OpenReviewFollowUps;
   readonly gateObservability?: HubGateObservability;
 }) {
-  const openFollowUps = (reviewFollowUps ?? []).filter((item) => item.status === "open");
+  const openFollowUps = (reviewFollowUps?.followUps ?? []).filter((item) => item.status === "open");
+  // A capped ledger read renders as "N+ open": the window's length is not the
+  // total debt, and the panel must not state it as one. An unconsultable
+  // ledger renders as unavailable — silence there would read as "0 open".
+  const followUpsUnavailable = reviewFollowUps?.available === false;
+  const openCount = followUpsUnavailable
+    ? "ledger unavailable"
+    : `${openFollowUps.length}${reviewFollowUps?.truncated === true ? "+" : ""} open`;
+  const showFollowUps = openFollowUps.length > 0 || followUpsUnavailable;
   // Plan Task A3: run-gate observability — latest verdicts, blocking reasons,
   // and claims the kernel had not verified (Policy-24 mismatch port).
   const blockedRuns = Object.entries(gateObservability?.blockingReasons ?? {});
@@ -982,9 +993,9 @@ function SessionActivityPanel({
           </Text>
         );
       })}
-      {openFollowUps.length > 0 ? (
+      {showFollowUps ? (
         <Box flexDirection="column">
-          <Text dimColor>  review follow-ups ({openFollowUps.length} open)</Text>
+          <Text dimColor>  review follow-ups ({openCount})</Text>
           {openFollowUps.slice(0, 3).map((item) => (
             <Text key={item.id} dimColor>    [<Text color={ACCENT_WARNING}>{item.severity}</Text>] {item.summary}</Text>
           ))}
@@ -1030,7 +1041,7 @@ function SessionActivityPanel({
           ))}
         </Box>
       ) : null}
-      {pendingTools.length === 0 && recentLogs.length === 0 && openFollowUps.length === 0 && blockedRuns.length === 0 && verdicts.length === 0 && unverifiedClaims.length === 0 && runUsage.length === 0 && reasoningClaims.length === 0 ? <Text dimColor>No live activity.</Text> : null}
+      {pendingTools.length === 0 && recentLogs.length === 0 && !showFollowUps && blockedRuns.length === 0 && verdicts.length === 0 && unverifiedClaims.length === 0 && runUsage.length === 0 && reasoningClaims.length === 0 ? <Text dimColor>No live activity.</Text> : null}
     </Box>
   );
 }

@@ -6,7 +6,7 @@ import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { activeTaskCorrelation } from "../application/task-commands.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
-import { createReviewFollowUpsClient, type ReviewFollowUp } from "../integrations/review-followups.js";
+import { createReviewFollowUpsClient, UNAVAILABLE_REVIEW_FOLLOW_UPS, type OpenReviewFollowUps } from "../integrations/review-followups.js";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -41,12 +41,17 @@ if (process.argv.slice(2).some((argument) => argument === "--help" || argument =
 const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
 
 // Advisory: open review follow-ups (P2/P3 debt from adversarial reviews),
-// shown in the Activity panel. Missing server → empty list.
+// shown in the Activity panel. A missing server is an unconsultable ledger, so
+// the panel says so instead of rendering silence as "0 open".
 const reviewServer = resolve(fileURLToPath(import.meta.url), "../../../mcp-toolbox/apps/review-accountability-mcp/dist/server.js");
 const followUpsClient = existsSync(reviewServer)
   ? await createReviewFollowUpsClient({ serverScript: reviewServer, workspaceRoot: workspace }).catch(() => undefined)
   : undefined;
-const reviewFollowUps: readonly ReviewFollowUp[] = followUpsClient === undefined ? [] : await followUpsClient.openFollowUps(8).catch(() => []);
+// The 8-item window is a cap, not the debt total: the ledger's own truncation
+// flag rides along so the panel can render "8+ open" instead of "8 open".
+const reviewFollowUps: OpenReviewFollowUps = followUpsClient === undefined
+  ? UNAVAILABLE_REVIEW_FOLLOW_UPS
+  : await followUpsClient.openFollowUps(8).catch(() => UNAVAILABLE_REVIEW_FOLLOW_UPS);
 
 // W044 resource hygiene: a monitor launch that auto-spawns the hub owns that
 // hub and must terminate it on exit; a probed-and-reused hub stays running.

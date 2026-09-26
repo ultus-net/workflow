@@ -49,10 +49,14 @@ async function waitForFrame(view: { lastFrame(): string | undefined }, expected:
 test("TUI activity panel lists open review follow-ups", () => {
   const view = render(React.createElement(WorkflowTui, {
     application: createApplication(),
-    reviewFollowUps: [
-      { severity: "P2", summary: "missing edge coverage", paths: ["src/x.ts"], id: "1", reviewId: "r1", status: "open", createdAt: 1 },
-      { severity: "P3", summary: "nit: naming", paths: [], id: "2", reviewId: "r1", status: "open", createdAt: 2 },
-    ],
+    reviewFollowUps: {
+      followUps: [
+        { severity: "P2", summary: "missing edge coverage", paths: ["src/x.ts"], id: "1", reviewId: "r1", status: "open", createdAt: 1 },
+        { severity: "P3", summary: "nit: naming", paths: [], id: "2", reviewId: "r1", status: "open", createdAt: 2 },
+      ],
+      truncated: false,
+      available: true,
+    },
   }));
 
   const frame = view.lastFrame() ?? "";
@@ -62,6 +66,52 @@ test("TUI activity panel lists open review follow-ups", () => {
   view.unmount();
 });
 
+test("TUI activity panel marks a truncated follow-up window as capped debt", () => {
+  // The monitor reads a bounded window (followUpLimit: 8). Printing "8 open"
+  // would state a capped window as the total debt, so a truncated ledger read
+  // renders as "8+ open".
+  const view = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    reviewFollowUps: {
+      followUps: Array.from({ length: 8 }, (_unused, index) => ({
+        severity: "P2" as const, summary: `finding ${index}`, paths: ["src/x.ts"], id: String(index), reviewId: "r1", status: "open" as const, createdAt: index,
+      })),
+      truncated: true,
+      available: true,
+    },
+  }));
+
+  const frame = view.lastFrame() ?? "";
+  assert.match(frame, /review follow-ups \(8\+ open\)/);
+  assert.equal(/\(8 open\)/.test(frame), false, "a capped window must never be stated as the total");
+  view.unmount();
+});
+
+test("TUI activity panel says the follow-up ledger is unavailable instead of showing no debt", () => {
+  // Silence about an unconsultable ledger reads as "0 open" — the one claim the
+  // surface cannot support. An unavailable ledger renders its own marker, and
+  // brings the Activity panel up for it.
+  const unavailable = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    reviewFollowUps: { followUps: [], truncated: false, available: false },
+  }));
+
+  const frame = unavailable.lastFrame() ?? "";
+  assert.match(frame, /review follow-ups \(ledger unavailable\)/);
+  assert.equal(/review follow-ups \(0 open\)/.test(frame), false, "an unread ledger must never render as zero debt");
+  assert.equal(/No live activity\./.test(frame), false, "the unavailable marker is the activity, not its absence");
+  unavailable.unmount();
+
+  // A ledger that answered and holds nothing open stays silent: consulted
+  // emptiness is a real zero, and the panel must not inflate it.
+  const consulted = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    reviewFollowUps: { followUps: [], truncated: false, available: true },
+  }));
+
+  assert.equal(/review follow-ups/.test(consulted.lastFrame() ?? ""), false, "a consulted empty ledger renders no section");
+  consulted.unmount();
+});
 
 test("TUI renders an always-visible task list with states and progress", () => {
   const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
