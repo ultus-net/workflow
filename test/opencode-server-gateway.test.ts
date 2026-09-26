@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
+import type { ClientRequest, IncomingMessage, ServerResponse } from "node:http";
 import { gzipSync } from "node:zlib";
 import { test } from "node:test";
 
 import {
   createOpencodeServerGateway,
   newTuiPassword,
+  DEFAULT_SSE_KEEPALIVE_MS,
+  sseKeepaliveMs,
   type OpencodePermissionReply,
+  type OpencodeSseKeepaliveEvent,
 } from "../src/integrations/opencode-server-gateway.js";
 
 /**
@@ -32,6 +35,9 @@ const UPSTREAM_CREDENTIAL = "up:secret";
 
 async function stubUpstream(): Promise<StubServer> {
   const requests: { method: string; path: string }[] = [];
+  /** Event streams held open by a client, destroyed on close (see below). */
+  const held: ServerResponse[] = [];
+  let busyTick = 0;
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     requests.push({ method: request.method ?? "", path: request.url ?? "" });
     const auth = (request.headers.authorization ?? "").match(/^Basic\s+(.+)$/);
@@ -68,6 +74,39 @@ async function stubUpstream(): Promise<StubServer> {
       response.end(gzipSync(Buffer.from(JSON.stringify({ compressed: true }))));
       return;
     }
+    if (pathname === "/api/event" || pathname === "/api/busy-event" || pathname === "/api/gzip-event") {
+      // The v2 qualification route is an event stream (`/api/event`).
+      // `/api/event` is SILENT after the head — the quiet case an ingress
+      // proxy's idle timeout would drop. `/api/busy-event` emits steadily —
+      // the busy case, which must never be interleaved with a keepalive.
+      // `/api/gzip-event` is a compressed stream: a plaintext frame injected
+      // into it would corrupt the client's decoder.
+      const compressed = pathname === "/api/gzip-event";
+      response.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        ...(compressed ? { "content-encoding": "gzip" } : {}),
+      });
+      response.flushHeaders();
+      held.push(response);
+      if (pathname === "/api/busy-event") {
+        const ticker = setInterval(() => {
+          busyTick += 1;
+          response.write(`data: ${JSON.stringify({ tick: busyTick })}\n\n`);
+        }, 10);
+        response.once("close", () => clearInterval(ticker));
+      }
+      if (compressed) response.write(gzipSync(Buffer.from('data: {"compressed":true}\n\n')));
+      return;
+    }
+    if (pathname === "/api/finite-event") {
+      // A stream that ends on its own: a keepalive appended after the last
+      // event would be bytes the client never expects.
+      response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+      response.write('data: {"done":true}\n\n');
+      response.end();
+      return;
+    }
     if (/^\/api\/session\/[^/]+\/permission\/[^/]+\/reply$/.test(pathname) && request.method === "POST") {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({ forwarded: true }));
@@ -84,12 +123,68 @@ async function stubUpstream(): Promise<StubServer> {
   return {
     url: `http://127.0.0.1:${port}`,
     requests,
-    close: () => new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))),
+    close: () => new Promise<void>((resolve, reject) => {
+      // A held event stream would keep the server open past `close()`.
+      for (const stream of held) stream.destroy();
+      held.length = 0;
+      server.close((error) => (error ? reject(error) : resolve()));
+    }),
   };
 }
 
 function basic(user: string, password: string): string {
   return `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}`;
+}
+
+/**
+ * A raw byte-level view of a long-lived response. `fetch` would buffer and the
+ * stream would have to be reimplemented, so the test speaks HTTP directly.
+ * A stream that never delivers its head resolves as status 0 rather than
+ * hanging the run — the gateway must open a quiet stream immediately.
+ */
+function openRawStream(target: string, headers: Record<string, string>): {
+  readonly started: Promise<{
+    readonly status: number;
+    readonly contentType: string | undefined;
+    readonly contentEncoding: string | undefined;
+  }>;
+  received(): string;
+  close(): void;
+} {
+  const chunks: Buffer[] = [];
+  let request: ClientRequest | undefined;
+  const started = new Promise<{ status: number; contentType: string | undefined; contentEncoding: string | undefined }>((resolve) => {
+    const head = setTimeout(() => resolve({ status: 0, contentType: undefined, contentEncoding: undefined }), 2_000);
+    head.unref();
+    request = httpRequest(target, { headers }, (response) => {
+      clearTimeout(head);
+      response.on("data", (chunk: Buffer) => { chunks.push(chunk); });
+      resolve({
+        status: response.statusCode ?? 0,
+        contentType: response.headers["content-type"],
+        contentEncoding: response.headers["content-encoding"],
+      });
+    });
+    request.on("error", () => resolve({ status: 0, contentType: undefined, contentEncoding: undefined }));
+    request.end();
+  });
+  return {
+    started,
+    received: () => Buffer.concat(chunks).toString("utf8"),
+    close: () => { request?.destroy(); },
+  };
+}
+
+function sseFrames(received: string): string[] {
+  return received.split("\n\n").filter((frame) => frame !== "");
+}
+
+async function until(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 test("W071 gateway: unauthenticated and wrong-password clients are rejected", async (t) => {
@@ -447,4 +542,175 @@ test("W071 gateway (advisory): unqualified mutations still pass through, no enfo
   });
   assert.equal(response.status, 404);
   assert.equal(upstream.requests.some((entry) => entry.path === "/api/experimental/unknown"), true);
+});
+
+/**
+ * Event-stream keepalive: an ingress proxy with a ~4-minute idle timeout
+ * closes a quiet `text/event-stream`, and the attached session dies with it.
+ * The gateway therefore emits an SSE comment frame on an idle timer. This is
+ * transport liveness only — it is not evidence of upstream health or of hub
+ * authority, so it is ADVISORY until a live ingress probe records a verdict.
+ */
+
+test("gateway SSE keepalive: a silent event stream receives repeated comment frames and none are fabricated as data", async (t) => {
+  const upstream = await stubUpstream();
+  const previous = process.env.WORKFLOW_SSE_KEEPALIVE_MS;
+  process.env.WORKFLOW_SSE_KEEPALIVE_MS = "100";
+  const keepalive: OpencodeSseKeepaliveEvent[] = [];
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    observedKeepalive: (event) => { keepalive.push(event); },
+  });
+  const stream = openRawStream(`${gateway.url}/api/event`, { authorization: basic("opencode", "tuipw") });
+  // One hook, in dependency order: the client socket must be released before
+  // the gateway can finish closing, or a failing assertion deadlocks cleanup.
+  t.after(async () => {
+    if (previous === undefined) delete process.env.WORKFLOW_SSE_KEEPALIVE_MS;
+    else process.env.WORKFLOW_SSE_KEEPALIVE_MS = previous;
+    stream.close();
+    await gateway.close();
+    await upstream.close();
+  });
+
+  const started = await stream.started;
+  assert.equal(started.status, 200, "a quiet event stream must deliver its head immediately");
+  assert.match(started.contentType ?? "", /text\/event-stream/);
+  // The head opens the stream; it must not wait on the first body byte, which
+  // for a quiet stream is a whole keepalive interval away.
+  assert.deepEqual(sseFrames(stream.received()), [], "the head must arrive before any frame");
+  // The upstream says nothing, so every frame the client sees is the keepalive —
+  // and it must repeat, not fire once: the proxy idle timeout recurs.
+  await until(() => sseFrames(stream.received()).length >= 3);
+  const frames = sseFrames(stream.received());
+  assert.ok(frames.length >= 3, "a silent stream must keep receiving keepalive frames");
+  for (const frame of frames) {
+    assert.equal(frame, ": workflow-keepalive", "a comment frame carries no event or data field");
+  }
+
+  // Disconnect: the timer must not outlive the response it writes into. The
+  // snapshot is synchronous, so any later fire is provably post-disconnect;
+  // the close itself is delivered asynchronously, hence the settle window.
+  const count = (event: OpencodeSseKeepaliveEvent): number => keepalive.filter((entry) => entry === event).length;
+  stream.close();
+  const firedAtDisconnect = count("fired");
+  await new Promise((resolve) => setTimeout(resolve, 300)); // three intervals
+  assert.equal(
+    count("fired"),
+    firedAtDisconnect,
+    "the disconnect must clear the pending timer, not let it fire into a dead response",
+  );
+  assert.ok(firedAtDisconnect > 0, "the quiet stream must have been kept alive before the disconnect");
+  assert.equal(count("armed"), count("fired") + count("cleared"), "every armed timer is fired or cleared, never left pending");
+  const settled = keepalive.length;
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(keepalive.length, settled, "no keepalive timer may outlive the disconnect");
+});
+
+test("gateway SSE keepalive: a busy event stream is never interleaved with a comment frame", async (t) => {
+  const upstream = await stubUpstream();
+  const previous = process.env.WORKFLOW_SSE_KEEPALIVE_MS;
+  // Slower than the upstream's 10ms cadence: every chunk resets the idle timer,
+  // so no frame may be injected into a stream that is not quiet.
+  process.env.WORKFLOW_SSE_KEEPALIVE_MS = "120";
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+  });
+  const stream = openRawStream(`${gateway.url}/api/busy-event`, { authorization: basic("opencode", "tuipw") });
+  t.after(async () => {
+    if (previous === undefined) delete process.env.WORKFLOW_SSE_KEEPALIVE_MS;
+    else process.env.WORKFLOW_SSE_KEEPALIVE_MS = previous;
+    stream.close();
+    await gateway.close();
+    await upstream.close();
+  });
+
+  assert.equal((await stream.started).status, 200);
+  // The upstream emits every 10ms against a 120ms keepalive: watch for longer
+  // than several intervals, or a timer that never resets would never be caught.
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  const frames = sseFrames(stream.received());
+  assert.ok(frames.filter((frame) => frame.startsWith("data:")).length >= 3, "upstream data must pass through");
+  assert.deepEqual(
+    frames.filter((frame) => !frame.startsWith("data: ")),
+    [],
+    "a busy stream must not be interleaved with a keepalive comment",
+  );
+});
+
+test("gateway SSE keepalive: a stream that ends on its own gets no appended frame", async (t) => {
+  const upstream = await stubUpstream();
+  const previous = process.env.WORKFLOW_SSE_KEEPALIVE_MS;
+  process.env.WORKFLOW_SSE_KEEPALIVE_MS = "50";
+  const keepalive: OpencodeSseKeepaliveEvent[] = [];
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    observedKeepalive: (event) => { keepalive.push(event); },
+  });
+  const stream = openRawStream(`${gateway.url}/api/finite-event`, { authorization: basic("opencode", "tuipw") });
+  t.after(async () => {
+    if (previous === undefined) delete process.env.WORKFLOW_SSE_KEEPALIVE_MS;
+    else process.env.WORKFLOW_SSE_KEEPALIVE_MS = previous;
+    stream.close();
+    await gateway.close();
+    await upstream.close();
+  });
+
+  assert.equal((await stream.started).status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 250)); // five intervals
+  assert.equal(stream.received(), 'data: {"done":true}\n\n', "a keepalive must not be appended past the end of a stream");
+  assert.deepEqual(keepalive.filter((event) => event === "fired"), [], "an ended stream has nothing left to keep alive");
+});
+
+test("gateway SSE keepalive: a compressed event stream is left byte-identical (no frame injection)", async (t) => {
+  const upstream = await stubUpstream();
+  const previous = process.env.WORKFLOW_SSE_KEEPALIVE_MS;
+  process.env.WORKFLOW_SSE_KEEPALIVE_MS = "50";
+  const keepalive: OpencodeSseKeepaliveEvent[] = [];
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    observedKeepalive: (event) => { keepalive.push(event); },
+  });
+  const stream = openRawStream(`${gateway.url}/api/gzip-event`, { authorization: basic("opencode", "tuipw") });
+  t.after(async () => {
+    if (previous === undefined) delete process.env.WORKFLOW_SSE_KEEPALIVE_MS;
+    else process.env.WORKFLOW_SSE_KEEPALIVE_MS = previous;
+    stream.close();
+    await gateway.close();
+    await upstream.close();
+  });
+
+  const started = await stream.started;
+  assert.equal(started.status, 200);
+  assert.equal(started.contentEncoding, "gzip", "the compressed head must be forwarded unchanged");
+  await new Promise((resolve) => setTimeout(resolve, 250)); // five intervals
+  // A plaintext frame spliced into a gzip member would break the client's
+  // decoder, so a compressed stream is proxied untouched — the residual risk
+  // is a proxy idle timeout, which is strictly better than a corrupt stream.
+  assert.equal(stream.received().includes("workflow-keepalive"), false, "no plaintext frame may enter a compressed stream");
+  assert.deepEqual(keepalive, [], "a compressed stream must not be given a keepalive timer at all");
+});
+
+test("gateway SSE keepalive: the interval defaults to 15s and only a positive integer overrides it", () => {
+  assert.equal(DEFAULT_SSE_KEEPALIVE_MS, 15_000);
+  assert.equal(sseKeepaliveMs({}), DEFAULT_SSE_KEEPALIVE_MS);
+  assert.equal(sseKeepaliveMs({ WORKFLOW_SSE_KEEPALIVE_MS: "40" }), 40);
+  for (const raw of ["", "0", "-1", "1.5", "abc"]) {
+    assert.equal(
+      sseKeepaliveMs({ WORKFLOW_SSE_KEEPALIVE_MS: raw }),
+      DEFAULT_SSE_KEEPALIVE_MS,
+      `${JSON.stringify(raw)} must fall back to the default, never a broken timer`,
+    );
+  }
 });
