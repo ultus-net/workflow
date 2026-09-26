@@ -14,7 +14,7 @@ import { TaskGraph } from "../src/kernel/task-graph.js";
 import { taskId } from "../src/kernel/contracts.js";
 import { WorkflowApplication } from "../src/application/workflow.js";
 import { hostCapabilities } from "../src/adapters/host.js";
-import { beginProposalTurnTask, beginKernelSessionTask } from "../src/integrations/self-improvement-agent.js";
+import { beginProposalTurnTask, beginKernelSessionTask, RSI_PROPOSAL_CAPABILITIES } from "../src/integrations/self-improvement-agent.js";
 
 const WS = "/tmp/rsi-proposal-turn-task-test";
 
@@ -98,4 +98,13 @@ test("#134: beginKernelSessionTask's fail path marks FAILED and unblocks activat
   assert.equal(graph.get(session.taskId).state, "FAILED");
   const app2 = new WorkflowApplication(graph, host, [], new Set(["read"]), WS);
   assert.doesNotThrow(() => app2.startInteractiveTask());
+});
+
+test("#deny-fix-review P2: the proposal application's capability set is exactly read/process/spawn — never mutation", () => {
+  // The deny-fix review's P2: no unit test pinned rsiProposalApplicationFor's
+  // capability grant. The set is now an exported constant the hub composes
+  // with, and this pin holds it: bounded exploration (read/process) plus
+  // subagent delegation (spawn), and NEVER mutation.
+  assert.deepEqual([...RSI_PROPOSAL_CAPABILITIES].sort(), ["process", "read", "spawn"]);
+  assert.equal(RSI_PROPOSAL_CAPABILITIES.has("mutation"), false);
 });

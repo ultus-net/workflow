@@ -17,6 +17,7 @@ import {
 import type { SelfImprovementSpec } from "./self-improvement-registry.js";
 import { taskId, type TaskId } from "../kernel/contracts.js";
 import type { WorkflowApplication } from "../application/workflow.js";
+import type { ToolCapability } from "../application/host.js";
 
 /**
  * The proposal turn's bookkeeping task lifecycle (2026-09-26): the proposal
@@ -51,6 +52,16 @@ export interface KernelSessionTask {
   complete(): void;
   fail(): void;
 }
+
+/**
+ * The RSI proposal turn's capability set (the deny-fix review's P2, now
+ * pinned): the bounded proposal turn explores the repo (read/process) and may
+ * delegate exploration to a subagent (spawn) — and must NEVER carry
+ * mutation. Every call still crosses kernel authorization and the guard
+ * dispatcher; the grant only removes the fail-closed capability-withheld
+ * denial that opencode v2 escalates into a whole-step abort.
+ */
+export const RSI_PROPOSAL_CAPABILITIES: ReadonlySet<ToolCapability> = new Set(["read", "process", "spawn"]);
 
 export function beginKernelSessionTask(
   application: WorkflowApplication,

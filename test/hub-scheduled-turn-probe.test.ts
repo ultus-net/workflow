@@ -134,6 +134,21 @@ test(
             },
             snapshot: () => runtime.session.snapshot(),
             dispose: () => runtime.dispose(),
+            // #134 round-2 follow-up: the probe's mirrored factory must carry
+            // the same kernel-task lifecycle as production — completed when
+            // review() returns, failed when it throws; terminal-safe.
+            endTask: (outcome: "completed" | "failed") => {
+              try {
+                if (outcome === "completed") {
+                  reviewerApplication.transition(reviewerTaskId, "VERIFYING");
+                  reviewerApplication.transition(reviewerTaskId, "VERIFIED");
+                } else {
+                  reviewerApplication.transition(reviewerTaskId, "FAILED");
+                }
+              } catch {
+                // already terminal
+              }
+            },
           };
         },
       }),
