@@ -26,6 +26,7 @@ import {
   beginProposalTurnTask,
   beginKernelSessionTask,
   createContainedGitRunner,
+  RSI_PROPOSAL_CAPABILITIES,
   type AgentTurnRunner,
 } from "../integrations/self-improvement-agent.js";
 import { createAuthorityGate } from "../integrations/self-improvement-loop.js";
@@ -234,7 +235,7 @@ const rsiProposalApplicationFor = (target: string): WorkflowApplication => {
     // fail-closed capability-withheld denial that opencode v2 escalates into
     // a whole-step abort ("The user declined this tool call" -> "Step
     // interrupted" — proven live via opencode.db, 2026-09-26).
-    bound = new WorkflowApplication(graph, application.host, [], new Set(["read", "process", "spawn"]), canonical);
+    bound = new WorkflowApplication(graph, application.host, [], RSI_PROPOSAL_CAPABILITIES, canonical);
     // The proposal turn's task is opened per turn (beginProposalTurnTask in
     // rsiAgentTurn) and closed when the turn ends — never parked IN_PROGRESS
     // on the shared kernel graph across turns.

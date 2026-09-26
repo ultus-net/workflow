@@ -10,3 +10,4 @@ infra/c0/image/opencode
 *.pem
 *.key
 .DS_Store
+.tmp-*
