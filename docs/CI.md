@@ -1,7 +1,7 @@
 # CI design — the open repo's verification tiers
 
 **Date:** 2026-09-26 · **Status:** decisions recorded + tiers A/B implemented
-(W150); tier C deferred per decision; publish machinery drafted (W149,
+(W155); tier C deferred per decision; publish machinery drafted (W149,
 unverified until its first tagged run). · **Evidence base:** `AGENTS.md`
 (verification commands, the full-suite resource directive, probe discipline),
 `docs/HOST_ADAPTERS.md` (per-version probe verdicts),
@@ -81,7 +81,7 @@ passed, not that "the tests passed".
    real release happens; the live-probe arms stay manual regardless (spend +
    per-version verdict discipline).
 
-## 7. Implementation (landed 2026-09-26, W150)
+## 7. Implementation (landed 2026-09-26, W155)
 
 - `.github/workflows/ci.yml`: job `gate` (Tier A) + job `evidence` (Tier B,
   `needs: gate`), Node 22 + corepack; both on PRs and pushes to main.

@@ -1,4 +1,4 @@
-# CI (W150, docs/CI.md tier model): Tier A gate + Tier B evidence.
+# CI (W155, docs/CI.md tier model): Tier A gate + Tier B evidence.
 # Full suite and live probes are NOT here — they are tier C (release gate,
 # deferred per operator decision 2026-09-26) and stay out of PR CI by the
 # resource directive (AGENTS.md). Linux-only: the repo's containment is

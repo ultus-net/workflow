@@ -5702,7 +5702,7 @@ choice decides the push target).
       fixed in the same commit as this note; exactly the class of defect the
       unverified-until-first-build status exists to surface before a run.
 
-### W150 - CI implementation (tiers per docs/CI.md; C deferred pending operator)
+### W155 - CI implementation (tiers per docs/CI.md; C deferred; renumbered from W150 — the Paperclip borrow wave landed W150-W154 first)
 
 **Source:** docs/CI.md (2026-09-26 design) — the operator's "start with CI
 design" direction. The repo has no CI at all today; this wires the existing
