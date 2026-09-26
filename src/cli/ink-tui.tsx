@@ -6,7 +6,7 @@ import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { activeTaskCorrelation } from "../application/task-commands.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
-import { createReviewFollowUpsClient, type ReviewFollowUp } from "../integrations/review-followups.js";
+import { createReviewFollowUpsClient, createReviewFollowUpsSource, UNAVAILABLE_REVIEW_FOLLOW_UPS, type OpenReviewFollowUps } from "../integrations/review-followups.js";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -41,12 +41,22 @@ if (process.argv.slice(2).some((argument) => argument === "--help" || argument =
 const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
 
 // Advisory: open review follow-ups (P2/P3 debt from adversarial reviews),
-// shown in the Activity panel. Missing server → empty list.
+// shown in the Activity panel. A missing server is an unconsultable ledger, so
+// the panel says so instead of rendering silence as "0 open".
 const reviewServer = resolve(fileURLToPath(import.meta.url), "../../../mcp-toolbox/apps/review-accountability-mcp/dist/server.js");
 const followUpsClient = existsSync(reviewServer)
   ? await createReviewFollowUpsClient({ serverScript: reviewServer, workspaceRoot: workspace }).catch(() => undefined)
   : undefined;
-const reviewFollowUps: readonly ReviewFollowUp[] = followUpsClient === undefined ? [] : await followUpsClient.openFollowUps(8).catch(() => []);
+// The 8-item window is a cap, not the debt total: the ledger's own truncation
+// flag rides along so the panel can render "8+ open" instead of "8 open".
+const followUpsSource = followUpsClient === undefined
+  ? undefined
+  : createReviewFollowUpsSource(followUpsClient, 8);
+// One read before the first frame so the panel never opens on a flash of
+// "unavailable"; after that the launcher polls and the TUI re-reads, so debt
+// recorded (or resolved) mid-session reaches the panel live.
+await followUpsSource?.refresh();
+const readFollowUps = (): OpenReviewFollowUps => followUpsSource?.current() ?? UNAVAILABLE_REVIEW_FOLLOW_UPS;
 
 // W044 resource hygiene: a monitor launch that auto-spawns the hub owns that
 // hub and must terminate it on exit; a probed-and-reused hub stays running.
@@ -67,12 +77,17 @@ const hub = await resolveWorkflowHub({ onSpawned: (child) => { ownedHub = child;
 if (hub !== undefined) {
   const source = createHubSnapshotSource(hub, workspace);
   await source.refresh().catch(() => undefined);
-  const refreshTimer = setInterval(() => void source.refresh().catch(() => undefined), 1_000);
+  // One cadence for both polled reads: the hub snapshot (canonical state + gate
+  // observability) and the review-follow-up ledger.
+  const refreshTimer = setInterval(() => {
+    void source.refresh().catch(() => undefined);
+    void followUpsSource?.refresh();
+  }, 1_000);
   refreshTimer.unref();
   const { waitUntilExit } = render(
     React.createElement(WorkflowTui, {
       application: source,
-      reviewFollowUps,
+      reviewFollowUps: readFollowUps,
       // Plan Task A3: run-gate observability from the hub's /snapshot —
       // verdicts, blocking reasons, and unverified claims in the Activity
       // panel; refreshed on the same poll.
@@ -160,11 +175,16 @@ if (hub !== undefined) {
   // Terminal-derived composer tint (OSC 11): must run before Ink owns stdin.
   const composerBackground = await detectTerminalBackground();
 
+  // Standalone (no hub): the ledger still polls, so a follow-up recorded while
+  // the monitor runs reaches the Activity panel here too.
+  const followUpsTimer = setInterval(() => void followUpsSource?.refresh(), 1_000);
+  followUpsTimer.unref();
+
   const { waitUntilExit } = render(
     React.createElement(WorkflowTui, {
       application,
       session: runtime.session,
-      reviewFollowUps,
+      reviewFollowUps: readFollowUps,
       connectionLabel: "standalone (no hub)",
       // The mode bar installs the pedagogy gate on the application; changing mode
       // re-creates the checkpoint ledger for the new mode AND re-binds the mode's
@@ -178,6 +198,7 @@ if (hub !== undefined) {
     }),
   );
   await waitUntilExit();
+  clearInterval(followUpsTimer);
   await runtime.dispose();
   await followUpsClient?.close();
 }
