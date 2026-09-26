@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { HttpRemoteEngine, type RemoteEngineEvent } from "../src/integrations/remote-acp/engine.js";
+import { classifySseIdleHold } from "../src/integrations/probe-verdicts.js";
 
 /**
  * LIVE probe (M1): a remote/attached OpenCode server streams a turn over SSE.
@@ -16,6 +17,14 @@ import { HttpRemoteEngine, type RemoteEngineEvent } from "../src/integrations/re
  * through a 4-minute window with no events and fails only if the ingress drops
  * the stream or silently resumes it. Verdict of record for the arm:
  * docs/PROBE_VERDICTS.json row `acp-remote-sse-idle` (pending).
+ *
+ * The arm's survival decision is NOT inline here: it is
+ * `classifySseIdleHold` (src/integrations/probe-verdicts.ts), shared with
+ * test/probe-verdict-sse-idle.test.ts. This test is the only place the
+ * *evidence* is gathered (a real 240s hold against a real ingress, which no
+ * normal run pays for); the conditions that turn those facts into a verdict
+ * are pinned by the fast suite, so a weakened check cannot hide behind the
+ * gate until the next four-minute live run.
  *
  * Advisory only: this probe proves the transport, not enforcement. Enforcement
  * requires the PERMISSION and RULE-CONFIG probes (spec section 10).
@@ -115,7 +124,10 @@ test("remote ACP SSE idle probe: one event stream survives a 240s no-event windo
 
   // Establish liveness before the window: survival is only meaningful for a
   // subscription that actually opened, so a stream that never arrived is a
-  // setup failure, never a quiet pass.
+  // setup failure, never a quiet pass. This pre-check exists to fail fast
+  // instead of holding a four-minute window against a stream that never
+  // opened; the same fact is also classified (`never-opened`) below, so the
+  // verdict can never be a survival without a subscription.
   const setupDeadline = Date.now() + SETUP_MS;
   while (subscriptions === 0 && Date.now() < setupDeadline) await sleep(100);
   assert.ok(subscriptions > 0, "the engine never received an SSE subscription (no text/event-stream response)");
@@ -126,17 +138,20 @@ test("remote ACP SSE idle probe: one event stream survives a 240s no-event windo
   const heldMs = Date.now() - windowStart;
 
   t.diagnostic(`idle window: ${Math.round(heldMs / 1000)}s held, ${delivered.length} event(s) delivered, ${subscriptions} subscription(s)`);
-  if (delivered.length > 0) {
-    t.diagnostic(`the window was NOT event-free (${delivered.map((event) => event.type).join(", ")}) — the idle premise is only partially exercised`);
-  }
 
-  // Probe integrity first: a hold that closed early would be a false pass, so
-  // it is reported as a probe failure rather than a survival verdict.
-  assert.ok(heldMs >= IDLE_WINDOW_MS - 1_000, `the window closed after ${heldMs}ms — a short hold proves nothing`);
-  assert.equal(drop, undefined, `the ingress dropped the idle stream: ${drop ?? ""}`);
-  assert.equal(
+  // One decision, shared with the fast suite: probe integrity (the hold was
+  // real), then a mid-window drop, then a silent resume. Events delivered
+  // during the window are reported honestly, never banked as a clean hold.
+  const verdict = classifySseIdleHold({
+    heldMs,
+    idleWindowMs: IDLE_WINDOW_MS,
+    delivered: delivered.length,
     subscriptions,
     openedBefore,
-    `the stream silently resumed: ${subscriptions} SSE subscriptions during one idle window (${openedBefore} at the start)`,
-  );
+    drop,
+  });
+  if (!verdict.eventFree) {
+    t.diagnostic(`the window was NOT event-free (${delivered.map((event) => event.type).join(", ")}) — the idle premise is only partially exercised`);
+  }
+  assert.ok(verdict.survived, verdict.reason);
 });

@@ -230,3 +230,148 @@ export function loadProbeVerdicts(options: { root?: string } = {}): ProbeVerdict
   }
   return validateProbeVerdictRegister(parsed, { root });
 }
+
+/* ---------------------------------------------------------------------------
+ * SSE idle-hold classification — the `acp-remote-sse-idle` arm's verdict.
+ *
+ * The idle arm of `test/acp-remote-sse-probe.test.ts` holds ONE `/api/event`
+ * subscription open through a 4-minute window in which no events arrive, and
+ * fails only if the ingress dropped the stream or silently resumed it. That
+ * decision used to be inline asserts inside the arm, which means the arm's
+ * *honest reporting* was pinned by nothing a reviewer or CI can see: the arm
+ * runs only under its live gate, for 240 seconds, against a live server. A
+ * weakened condition (a dropped-stream check removed, the hold tolerance
+ * widened) would have stayed green in every normal run and surfaced only when
+ * someone spent four minutes of wall clock to find out.
+ *
+ * Extracted here, the conditions are a pure function the arm calls and the fast
+ * suite decides in milliseconds: a mid-window drop, a second
+ * `text/event-stream` subscription (the silent-resume signal), a short hold and
+ * a clean 240s hold are all pinned by `test/probe-verdict-sse-idle.test.ts`.
+ * One implementation, so the live arm and its unit tests cannot drift.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Wall-clock slack before a hold counts as short. The arm sleeps for the whole
+ * window, so a timer can land a millisecond or two early; a real truncation
+ * (a suspended host, a throttled timer) is orders of magnitude larger. Without
+ * this the arm would report probe jitter as a transport finding.
+ */
+const SSE_IDLE_HOLD_SLACK_MS = 1_000;
+
+/**
+ * What an idle hold proves:
+ * - `survived` — one subscription was open for the whole window, no drop.
+ * - `short-hold` — **probe integrity**, not a transport finding: the window
+ *   closed early, so it measured nothing either way. Checked first, because a
+ *   cut-short window can manufacture a drop and reporting that as an ingress
+ *   failure would be a false finding.
+ * - `never-opened` — no `text/event-stream` subscription ever arrived, so there
+ *   was no stream to survive. Fail-closed: without this, zero subscriptions
+ *   opened and zero seen compare equal and the arm would report a quiet
+ *   survival of a stream that never existed.
+ * - `dropped` — the ingress ended or errored the stream mid-window.
+ * - `resumed` — the subscription count moved during a window the probe never
+ *   re-opens, i.e. the engine silently resumed the stream and swallowed the
+ *   gap. Also fails on a count that moved the other way: a decreasing counter
+ *   is a broken measurement, and a broken measurement is never a pass.
+ */
+export type SseIdleHoldOutcome = "survived" | "short-hold" | "never-opened" | "dropped" | "resumed";
+
+/** The facts one idle hold is judged on, as the live arm recorded them. */
+export interface SseIdleHoldFacts {
+  /** Milliseconds the stream was actually held open after the window started. */
+  readonly heldMs: number;
+  /** The window the arm set out to hold (240_000 for the live arm). */
+  readonly idleWindowMs: number;
+  /** Events delivered during the window. */
+  readonly delivered: number;
+  /** `text/event-stream` subscriptions seen in total, at the end of the window. */
+  readonly subscriptions: number;
+  /** That same count when the window started. */
+  readonly openedBefore: number;
+  /** Why the event iterator ended or errored, when it did. */
+  readonly drop?: string | undefined;
+}
+
+export interface SseIdleHoldVerdict {
+  readonly outcome: SseIdleHoldOutcome;
+  /** True only for `survived`; the live arm asserts on this and `reason`. */
+  readonly survived: boolean;
+  /** The finding, worded for the probe's failure message. */
+  readonly reason: string;
+  /** Events delivered during the window. */
+  readonly delivered: number;
+  /**
+   * True when the window was event-free. False is NOT a failure — the stream
+   * still survived — but it does mean the idle premise was only partially
+   * exercised, so the arm reports it rather than banking it as a clean hold.
+   */
+  readonly eventFree: boolean;
+}
+
+/** Counts are instrumented integers; anything else is a broken measurement. */
+function idleHoldCount(name: string, value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new TypeError(`invalid SSE idle hold: ${name} must be a non-negative integer (got ${value})`);
+  }
+  return value;
+}
+
+/**
+ * Decides one SSE idle hold — the survival decision the `acp-remote-sse-idle`
+ * arm makes after its live window. Pure and total: it reads the recorded facts
+ * and nothing else, so the conditions that earn (or refuse) a survival verdict
+ * are testable without a server, a network, or four minutes of wall clock.
+ *
+ * Fail-closed on bad facts: a non-finite/negative hold, a non-positive window,
+ * or a non-integer counter throws rather than classifying, because a garbled
+ * measurement must never be reported as a survival.
+ */
+export function classifySseIdleHold(facts: SseIdleHoldFacts): SseIdleHoldVerdict {
+  if (!Number.isFinite(facts.heldMs) || facts.heldMs < 0) {
+    throw new TypeError(`invalid SSE idle hold: heldMs must be a non-negative number of milliseconds (got ${facts.heldMs})`);
+  }
+  if (!Number.isFinite(facts.idleWindowMs) || facts.idleWindowMs <= 0) {
+    throw new TypeError(`invalid SSE idle hold: idleWindowMs must be a positive number of milliseconds (got ${facts.idleWindowMs})`);
+  }
+  const delivered = idleHoldCount("delivered", facts.delivered);
+  const subscriptions = idleHoldCount("subscriptions", facts.subscriptions);
+  const openedBefore = idleHoldCount("openedBefore", facts.openedBefore);
+  const verdict = (outcome: SseIdleHoldOutcome, reason: string): SseIdleHoldVerdict => ({
+    outcome,
+    survived: outcome === "survived",
+    reason,
+    delivered,
+    eventFree: delivered === 0,
+  });
+
+  // Probe integrity first: a short hold proves nothing, and reporting it
+  // before a transport finding keeps a cut-short window from being reported as
+  // an ingress drop it may have manufactured.
+  if (facts.heldMs < facts.idleWindowMs - SSE_IDLE_HOLD_SLACK_MS) {
+    return verdict(
+      "short-hold",
+      `the window closed after ${facts.heldMs}ms of ${facts.idleWindowMs}ms — a short hold proves nothing`,
+    );
+  }
+  if (openedBefore === 0) {
+    return verdict(
+      "never-opened",
+      `no text/event-stream subscription ever opened, so no stream was measured (${delivered} event(s) delivered over ${facts.heldMs}ms)`,
+    );
+  }
+  if (facts.drop !== undefined) {
+    return verdict("dropped", `the ingress dropped the idle stream: ${facts.drop}`);
+  }
+  if (subscriptions !== openedBefore) {
+    return verdict(
+      "resumed",
+      `the stream silently resumed: ${subscriptions} SSE subscriptions during one idle window (${openedBefore} at the start)`,
+    );
+  }
+  return verdict(
+    "survived",
+    `one SSE subscription held ${facts.heldMs}ms through the ${facts.idleWindowMs}ms window, ${delivered === 0 ? "no events" : `${delivered} event(s)`} delivered`,
+  );
+}

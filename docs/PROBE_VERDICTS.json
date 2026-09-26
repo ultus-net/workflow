@@ -350,9 +350,9 @@
       "date": "2026-09-26",
       "result": "pending",
       "posture": "unqualified",
-      "evidence": "docs/HOST_ADAPTERS.md remote ACP bridge entry (2026-09-26 idle-window note); test/acp-remote-sse-probe.test.ts header",
+      "evidence": "docs/HOST_ADAPTERS.md remote ACP bridge entry (2026-09-26 idle-window note); test/acp-remote-sse-probe.test.ts header; test/probe-verdict-sse-idle.test.ts",
       "blocker": "needs the same remote/attached opencode server endpoint plus operator credentials as acp-remote-sse; the 4-minute no-event window has never been measured live",
-      "note": "Idle arm of the same probe file: it holds ONE /api/event subscription through a 240s window with no events and fails only on a drop (iterator ended or errored mid-window) or a silent resume (a second text/event-stream subscription). Even a green run caps the bridge at advisory — transport liveness, never enforcement."
+      "note": "Idle arm of the same probe file: it holds ONE /api/event subscription through a 240s window with no events and fails only on a drop (iterator ended or errored mid-window) or a silent resume (a second text/event-stream subscription). Even a green run caps the bridge at advisory — transport liveness, never enforcement. The arm's decision is the pure classifier classifySseIdleHold in src/integrations/probe-verdicts.ts, not inline asserts: the live run gathers the evidence, and test/probe-verdict-sse-idle.test.ts pins the pass/fail conditions (drop, silent resume, short hold, never-opened, clean 240s hold) in the normal suite, so a weakened check cannot hide behind the gate."
     },
     {
       "id": "acp-remote-auth",
