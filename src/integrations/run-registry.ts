@@ -78,6 +78,20 @@ export interface ReasoningClaimMetrics {
 }
 
 /**
+ * W153: explicit origin attribution on a run record. The scheduler has always
+ * made attribution STRUCTURAL (run ids `schedule:<id>:<uuid>`); this field is
+ * the recorded form — the scheduler states the origin at begin time, so run
+ * rows can name "fired by schedule S" from the registry rather than from id
+ * parsing at the view. Only the scheduler records it: /run/begin and the RSI
+ * and reviewer lanes pass no origin, and a client-supplied one would be
+ * forgeable attribution, so the HTTP route deliberately does not accept it.
+ */
+export interface RunOrigin {
+  readonly kind: "schedule";
+  readonly scheduleId: string;
+}
+
+/**
  * W146: the typed classification for a client-shaped fault in a
  * surface-declared workspace — the declaration violates the
  * canonicalization contract (`docs/HUB_PROTOCOL.md` §3) before any
@@ -149,6 +163,9 @@ export function createRunRegistry(
   reasoningClaims(): ReadonlyMap<string, ReasoningClaimFinding>;
   /** Iteration 21: honest cross-run monitor metrics (recall/TTR explicitly unmeasured). */
   reasoningClaimMetrics(): ReasoningClaimMetrics;
+  /** W153: the recorded run origins (schedule-fired attribution), bounded like the other gate maps. */
+  recordRunOrigin(input: { readonly runId: string; readonly origin: RunOrigin }): void;
+  runOrigins(): ReadonlyMap<string, RunOrigin>;
 } {
   const workspaceApplications = new Map<string, WorkflowApplication>();
   const runs = new Map<string, WorkflowApplication>();
@@ -212,6 +229,16 @@ export function createRunRegistry(
   // verification with no observed action; it never blocks, never mutates state,
   // and never becomes evidence. Metrics are honest about what cannot be measured.
   const reasoningClaims = new Map<string, ReasoningClaimFinding>();
+  // W153: recorded run origins, bounded like the other gate maps.
+  const runOrigins = new Map<string, RunOrigin>();
+  const rememberRunOrigin = (runId: string, origin: RunOrigin): void => {
+    runOrigins.set(runId, origin);
+    while (runOrigins.size > 64) {
+      const oldest = runOrigins.keys().next().value;
+      if (oldest === undefined) break;
+      runOrigins.delete(oldest);
+    }
+  };
   let reasoningClaimFindings = 0;
   let reasoningClaimFlaggedRuns = 0;
   let monitoredRuns = 0;
@@ -279,6 +306,7 @@ export function createRunRegistry(
         completionClaims,
         runUsage,
         reasoningClaims,
+        runOrigins,
         reasoningClaimMetrics: {
           monitoredRuns,
           flaggedRuns: reasoningClaimFlaggedRuns,
@@ -288,11 +316,13 @@ export function createRunRegistry(
         },
       };
     },
-    async begin({ runId, title, workspace, requiresReview, taskPrompt }) {
+    async begin({ runId, title, workspace, requiresReview, taskPrompt, origin }) {
       if (runId.trim().length === 0 || title.trim().length === 0) {
         throw new TypeError("run begin requires a non-empty runId and title");
       }
       if (runs.has(runId)) throw new TypeError(`duplicate run: ${runId}`);
+      // W153: the scheduler's recorded origin attribution (if it declared one).
+      if (origin !== undefined) rememberRunOrigin(runId, origin);
       const parent = workspaceApplication(workspace);
       const application = new WorkflowApplication(
         graph,
@@ -542,6 +572,12 @@ export function createRunRegistry(
     },
     reasoningClaims(): ReadonlyMap<string, ReasoningClaimFinding> {
       return reasoningClaims;
+    },
+    recordRunOrigin(input: { readonly runId: string; readonly origin: RunOrigin }): void {
+      rememberRunOrigin(input.runId, input.origin);
+    },
+    runOrigins(): ReadonlyMap<string, RunOrigin> {
+      return runOrigins;
     },
     reasoningClaimMetrics(): ReasoningClaimMetrics {
       return {

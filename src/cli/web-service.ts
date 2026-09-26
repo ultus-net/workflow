@@ -66,11 +66,13 @@ export async function startWorkflowWeb(options: StartWorkflowWebOptions = {}): P
   const permissionBroker = new PermissionBroker();
   const manager = new WebSessionManager({
     // Load settings per session so an edit made on the settings page is
-    // pushed into the next session's agent launch config.
-    factory: (agent, resumeFrom) =>
+    // pushed into the next session's agent launch config. W151: a session's
+    // persisted raised budget rides the same options into the runtime.
+    factory: (agent, resumeFrom, budgetOverride) =>
       createAgentRuntime(agent, application, workspace, taskId("W001"), resumeFrom, {
         permissionBroker,
         settings: loadSettings({ workspace }),
+        ...(budgetOverride === undefined ? {} : { budgetOverride }),
       }),
     permissionBroker,
   });

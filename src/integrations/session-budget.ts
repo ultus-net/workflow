@@ -1,4 +1,4 @@
-import { createBudgetGuard, type RunBudget, type UsageSnapshot } from "./hub-scheduler.js";
+import { budgetViolation, createBudgetGuard, type RunBudget, type UsageSnapshot } from "./hub-scheduler.js";
 
 /**
  * W045 (G1 budget enforcement): spending caps for INTERACTIVE sessions,
@@ -65,7 +65,16 @@ export function sessionBudgetFromEnv(env: BudgetEnv = process.env): SessionBudge
 
 /** Which enforcement mechanism is active, recorded per runtime. */
 export function sessionBudgetMechanism(env: BudgetEnv = process.env): string {
-  const budget = sessionBudgetFromEnv(env);
+  return describeBudgetMechanism(sessionBudgetFromEnv(env));
+}
+
+/**
+ * The mechanism description for an already-resolved budget. Extracted from
+ * `sessionBudgetMechanism` (W151) so a session with an operator-raised cap
+ * override describes the EFFECTIVE caps, not the env's — the mechanism string
+ * must never name caps the guard is not actually enforcing.
+ */
+export function describeBudgetMechanism(budget: SessionBudget | undefined): string {
   if (budget === undefined) {
     return "server-side: OpenRouter per-key credit limit on the metering proxy's upstream key (operator-set at openrouter.ai/keys); no local interactive caps";
   }
@@ -76,6 +85,49 @@ export function sessionBudgetMechanism(env: BudgetEnv = process.env): string {
     budget.maxCostUsd === undefined ? undefined : `cost≤$${budget.maxCostUsd}`,
   ].filter((part): part is string => part !== undefined);
   return `local session-budget guard (${caps.join(", ")})`;
+}
+
+/**
+ * W151 (Paperclip borrow wave 2): the effective budget for a session — the
+ * env caps with the session's operator-raised override applied per axis
+ * (an override axis replaces the env cap on that axis; unmentioned axes stay
+ * env-derived). Returns undefined only when neither source defines a cap.
+ */
+export function mergeSessionBudget(
+  env: SessionBudget | undefined,
+  override:
+    | {
+      readonly maxInputTokens?: number;
+      readonly maxOutputTokens?: number;
+      readonly maxTotalTokens?: number;
+      readonly maxCostUsd?: number;
+    }
+    | undefined,
+): SessionBudget | undefined {
+  if (override === undefined) return env;
+  const merged: { maxInputTokens?: number; maxOutputTokens?: number; maxTotalTokens?: number; maxCostUsd?: number } = { ...env };
+  for (const key of ["maxInputTokens", "maxOutputTokens", "maxTotalTokens", "maxCostUsd"] as const) {
+    const value = override[key];
+    if (value !== undefined) merged[key] = value;
+  }
+  return merged;
+}
+
+/**
+ * W151: the budget tier from the guard's OWN predicates — the abort tier is
+ * exactly `budgetViolation` (the sticky refusal gate's trigger), the warn
+ * tier is exactly `budgetDowngradeActive` at the guard's warn fraction
+ * (W118's downgrade fraction; undefined when the downgrade is off, in which
+ * case there is no warn threshold the guard enforces and the tier can only
+ * be under or abort). This is the single threshold source for the posture
+ * badge and bar: the UI derives nothing itself (W151 criterion 3).
+ */
+export type SessionBudgetTier = "under" | "warn" | "abort";
+
+export function sessionBudgetTier(usage: UsageSnapshot, budget: SessionBudget, warnFraction: number | undefined): SessionBudgetTier {
+  if (budgetViolation(usage, budget) !== undefined) return "abort";
+  if (warnFraction !== undefined && budgetDowngradeActive(usage, budget, warnFraction)) return "warn";
+  return "under";
 }
 
 /** W118 (the W095 budget-downgrade consumer): the downgrade axes. The

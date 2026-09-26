@@ -1,5 +1,8 @@
 import { useState } from "react";
 
+import { formatScheduleFire } from "./presenters.js";
+import type { ScheduleLineage, ScheduleRecentRun } from "../../integrations/operator-posture.js";
+
 /** The schedule record as the hub's /schedule/list returns it. */
 export interface ScheduleMeta {
   readonly id: string;
@@ -15,6 +18,16 @@ export interface ScheduleMeta {
   readonly taskClass?: string;
   readonly offPeak?: string;
   readonly offPeakRequired?: boolean;
+  /**
+   * W153: the hub-computed per-schedule lineage (caused-run count, last
+   * outcome, tombstone) — computed by the shared projection over the kernel's
+   * run states, never by this view. Null from a hub that computes no row;
+   * ABSENT from a hub predating the view slice (render nothing rather than a
+   * fabricated zero).
+   */
+  readonly lineage?: ScheduleLineage | null;
+  /** W074/W085: the next cron match, hub-proxy-computed; null when none. */
+  readonly nextRunAt?: string | null;
 }
 
 /** The common schedule fields the create/edit form collects. */
@@ -38,6 +51,15 @@ export interface LoopMeta {
   readonly outcome?: { readonly reason: string; readonly accepted: number; readonly rejected: number };
 }
 
+/** The last-outcome label and class the lineage line renders — the recorded
+ * outcome states only, never a computed guess. */
+const OUTCOME_LABELS: Record<ScheduleLineage["lastOutcome"], { readonly label: string; readonly className: string }> = {
+  verified: { label: "last run verified", className: "schedule-lineage-outcome-verified" },
+  failed: { label: "last run failed", className: "schedule-lineage-outcome-failed" },
+  "in-progress": { label: "last run in progress", className: "schedule-lineage-outcome-running" },
+  unrun: { label: "never fired", className: "schedule-lineage-outcome-unrun" },
+};
+
 /**
  * The Schedules page (W074 + W085): the hub cron table projected live —
  * create/edit/pause/resume and delete are operator actions through the web
@@ -45,10 +67,20 @@ export interface LoopMeta {
  * next tick, no restart); run-now is deliberately NOT a browser affordance
  * (it is a verifier-credential action, like starting a self-improvement
  * loop) and the page says so instead of hiding it.
+ *
+ * W153 (the view slice): each card renders the schedule's recorded lineage —
+ * caused-run count, last outcome, next fire — and a recent-runs list answers
+ * "did my schedules fire while I was away?" from hub-served rows. Run rows
+ * render attribution ("fired by …") from the record; a tombstoned schedule's
+ * runs say the schedule was deleted. Run inspection panels do not exist yet,
+ * so rows render the target in the title exactly like the posture inbox
+ * (the recorded wave-1 pattern), never dead buttons.
  */
-export function SchedulesView({ schedules, loops, onCancelLoop, onPauseToggle, onDelete, onSaveSchedule }: {
+export function SchedulesView({ schedules, loops, recentRuns, onCancelLoop, onPauseToggle, onDelete, onSaveSchedule }: {
   readonly schedules: readonly ScheduleMeta[] | undefined;
   readonly loops: readonly LoopMeta[] | undefined;
+  /** W153: the hub's recent schedule-origin runs; undefined from a hub predating the slice. */
+  readonly recentRuns: readonly ScheduleRecentRun[] | undefined;
   readonly onCancelLoop: (id: string) => void;
   readonly onPauseToggle: (schedule: ScheduleMeta) => void;
   readonly onDelete: (id: string) => void;
@@ -96,7 +128,15 @@ export function SchedulesView({ schedules, loops, onCancelLoop, onPauseToggle, o
             <footer className="session-card-meta">
               <span className="session-agent-badge">{entry.cron}</span>
               {entry.workspace !== undefined && <span className="session-time" title={entry.workspace}>{entry.workspace.split("/").pop()}</span>}
+              {entry.nextRunAt != null && <span className="session-time schedule-next-fire" title={`next fire ${entry.nextRunAt}`}>next {formatScheduleFire(entry.nextRunAt)}</span>}
             </footer>
+            {entry.lineage !== undefined && entry.lineage !== null && (
+              <footer className="session-card-meta schedule-lineage" title="run lineage, computed from the run registry">
+                <span className="schedule-lineage-count">{entry.lineage.causedRuns} run{entry.lineage.causedRuns === 1 ? "" : "s"}</span>
+                <span className={OUTCOME_LABELS[entry.lineage.lastOutcome].className}>{OUTCOME_LABELS[entry.lineage.lastOutcome].label}</span>
+                {entry.lineage.tombstoned && <span className="schedule-lineage-tombstone">schedule deleted — runs stay attributed</span>}
+              </footer>
+            )}
             <div className="session-card-actions">
               {editing === undefined && (
                 <button type="button" className="btn btn-ghost" onClick={() => setEditing(entry)}>Edit</button>
@@ -111,6 +151,31 @@ export function SchedulesView({ schedules, loops, onCancelLoop, onPauseToggle, o
         {schedules !== undefined && schedules.length === 0 && editing === undefined && (
           <p className="muted sessions-empty-note">no schedules — create one above to see it here</p>
         )}
+      </div>
+
+      <header className="sessions-view-head">
+        <h2>Recent schedule runs</h2>
+        <p className="muted sessions-empty-note">
+          {recentRuns === undefined
+            ? "hub does not report schedule-run history"
+            : recentRuns.length === 0
+              ? "no schedule-fired runs recorded yet"
+              : "the last schedule-fired runs, newest first (registry order)"}
+        </p>
+      </header>
+      <div className="sessions-grid schedule-recent-runs">
+        {(recentRuns ?? []).map((run) => (
+          <article key={run.runId} className="session-card schedule-recent-run">
+            <header className="session-card-head">
+              <span className={`session-run-dot ${run.state === "IN_PROGRESS" || run.state === "VERIFYING" ? "session-run-dot-on" : ""}`} title={run.state} aria-hidden="true" />
+              <span className="session-card-title schedule-recent-run-id" title={run.runId}>{run.runId}</span>
+              <span className="session-focus-tag">{run.state}</span>
+            </header>
+            <footer className="session-card-meta">
+              <span className="session-agent-badge schedule-run-origin">fired by {run.scheduleTitle}{run.tombstoned ? " (schedule deleted)" : ""}</span>
+            </footer>
+          </article>
+        ))}
       </div>
 
       <header className="sessions-view-head">

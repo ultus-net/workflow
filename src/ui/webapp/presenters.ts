@@ -35,6 +35,22 @@ export function formatRelativeTime(iso: string, now: number = Date.now()): strin
 }
 
 /**
+ * W153: a schedule's next fire, as a short absolute local time ("in 25m" /
+ * "tomorrow 09:00" style is deliberately avoided — the countdown phrasing
+ * would imply precision the cron match does not have). Machine-readable first:
+ * the shared formatter keeps the schedules card and any other next-fire
+ * surface consistent.
+ */
+export function formatScheduleFire(iso: string, now: number = Date.now()): string {
+  const target = new Date(iso).getTime();
+  if (Number.isNaN(target)) return iso;
+  const minutes = Math.round((target - now) / 60_000);
+  if (minutes >= 0 && minutes < 60) return `in ${minutes}m`;
+  if (minutes >= 0 && minutes < 60 * 24) return `in ${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+/**
  * Live activity while a turn runs: the last unfinished tool, or the latest
  * streaming phase. Completed tools are skipped; a poll-tick of staleness at
  * turn start self-corrects on the next projection update.

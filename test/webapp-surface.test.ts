@@ -5,8 +5,11 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, PermissionPrompt, StatusBar, StepLedgerRow, TaskRefusal, UsageMeter } from "../src/ui/webapp/app.js";
+import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, PermissionPrompt, StatusBar, StepLedgerRow, TaskRefusal, UsageMeter, type SessionMeta } from "../src/ui/webapp/app.js";
 import { ScheduleForm, SchedulesView, scheduleIdCollisionError, type ScheduleMeta } from "../src/ui/webapp/schedules-view.js";
+import { AgentsView, budgetRaiseOutcome } from "../src/ui/webapp/agents-view.js";
+import type { SessionBudgetPosture } from "../src/ui/web-sessions.js";
+import type { ScheduleRecentRun } from "../src/integrations/operator-posture.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
 import { EditDiff, parseEditTool } from "../src/ui/webapp/diff-text.js";
 import { AgentOptionsSection, AgentSection, AppearanceSection, McpSection, RoutingSection, SettingsDialog } from "../src/ui/webapp/settings-dialog.js";
@@ -494,6 +497,7 @@ test("W085: the Schedules page offers create and per-schedule edit", () => {
   const markup = renderToStaticMarkup(createElement(SchedulesView, {
     schedules: [{ id: "nightly", title: "Nightly audit", cron: "0 9 * * *", prompt: "audit the repo" }],
     loops: [],
+    recentRuns: undefined,
     onCancelLoop: noop,
     onPauseToggle: noop,
     onDelete: noop,
@@ -507,6 +511,7 @@ test("W085: the Schedules page offers create and per-schedule edit", () => {
   const empty = renderToStaticMarkup(createElement(SchedulesView, {
     schedules: [],
     loops: [],
+    recentRuns: undefined,
     onCancelLoop: noop,
     onPauseToggle: noop,
     onDelete: noop,
@@ -676,5 +681,119 @@ test("W112: an oversized payload is NOT-APPROVABLE-WITH-REASON — deny stays av
   // own tag carries no disabled.
   const denyTag = markup.slice(markup.indexOf(">Deny<") - 120, markup.indexOf(">Deny<"));
   assert.ok(!denyTag.includes("disabled"), "Deny is never disabled");
+});
+
+// ── W151: budget state as agent posture (the Paperclip borrow wave 2) ──────
+// The badge and bar render ONLY from recorded tier state: the tier comes from
+// the guard's own predicates (computed server-side by the manager's posture),
+// the paused badge appears exactly when the sticky violation is recorded, and
+// no configured caps renders the honest "no local cap" state — never a
+// fabricated 0%. The raise dispatch's denial renders verbatim (criterion 2).
+
+const budgetPosture = (budget: SessionBudgetPosture | undefined): SessionMeta => ({
+  id: "s1",
+  title: "capped session",
+  createdAt: "2026-09-27T00:00:00.000Z",
+  updatedAt: "2026-09-27T00:00:00.000Z",
+  active: false,
+  agent: "opencode",
+  ...(budget === undefined ? {} : { budget }),
+});
+
+test("W151: the budget bar renders from recorded tier state; no caps renders the honest no-local-cap state", () => {
+  const view = (session: SessionMeta): string =>
+    renderToStaticMarkup(createElement(AgentsView, {
+      sessions: [session],
+      agents: [],
+      onActivate: noop,
+      onCreate: noop,
+      onSwitchAgent: noop,
+      onRename: noop,
+      onDismiss: noop,
+      onClearUnused: noop,
+      onOpenChat: noop,
+      onBudgetRaise: noop as () => Promise<string | undefined>,
+    }));
+
+  const warn = view(budgetPosture({
+    tier: "warn",
+    caps: { maxTotalTokens: 100 },
+    usage: { promptTokens: 40, completionTokens: 50, totalTokens: 90, costUsd: 0.5 },
+    mechanism: "local session-budget guard (total≤100)",
+  }));
+  assert.match(warn, /session-budget-tier-warn/, "the bar carries the recorded tier's class");
+  assert.match(warn, /session-budget-bar-fill/, "the bar itself renders");
+  assert.ok(!warn.includes("paused: budget"), "no sticky violation, no paused badge");
+  assert.ok(!warn.includes("no local cap"), "configured caps never render the no-cap state");
+
+  const aborted = view(budgetPosture({
+    tier: "abort",
+    caps: { maxTotalTokens: 100 },
+    usage: { promptTokens: 40, completionTokens: 60, totalTokens: 101, costUsd: 0.5 },
+    violation: "budget exceeded: total tokens 101 > cap 100",
+    mechanism: "local session-budget guard (total≤100)",
+  }));
+  assert.match(aborted, /session-budget-tier-abort/, "the recorded abort tier colors the bar");
+  assert.ok(aborted.includes("paused: budget"), "the sticky violation renders the paused badge");
+  assert.ok(aborted.includes("budget incident"), "the incident card renders for a recorded violation");
+  assert.ok(aborted.includes("budget exceeded: total tokens 101 &gt; cap 100"), "the violation's reason renders verbatim, never paraphrased");
+  assert.ok(aborted.includes("Raise cap and resume"), "the raise-and-resume action is offered");
+
+  const uncapped = view(budgetPosture({
+    mechanism: "server-side: OpenRouter per-key credit limit on the metering proxy's upstream key (operator-set at openrouter.ai/keys); no local interactive caps",
+  }));
+  assert.ok(uncapped.includes("no local cap"), "no configured caps renders the honest no-cap state");
+  assert.ok(!uncapped.includes("session-budget-bar"), "no caps, no bar — never a fabricated 0%");
+  assert.ok(!uncapped.includes("session-budget-incident"), "no violation, no incident card");
+});
+
+test("W151: the raise denial renders verbatim; a success resolves to no error", () => {
+  assert.equal(budgetRaiseOutcome(true, 200, undefined), undefined, "success renders no denial");
+  assert.equal(budgetRaiseOutcome(false, 409, "no local session-budget guard is configured — the active mechanism is the provider-side credit limit, which cannot be raised from here"),
+    "no local session-budget guard is configured — the active mechanism is the provider-side credit limit, which cannot be raised from here",
+    "the authority's reason renders verbatim (criterion 2)");
+  assert.equal(budgetRaiseOutcome(false, 503, undefined), "budget raise failed (503)", "a reason-less failure still renders honestly");
+});
+
+// ── W153: the schedules view renders the registry-sourced lineage ──────────
+
+test("W153: the schedules cards render the recorded lineage and the recent-runs section answers honestly", () => {
+  const render = (schedules: ScheduleMeta[], recentRuns: readonly ScheduleRecentRun[] | undefined): string =>
+    renderToStaticMarkup(createElement(SchedulesView, {
+      schedules,
+      loops: [],
+      recentRuns,
+      onCancelLoop: noop,
+      onPauseToggle: noop,
+      onDelete: noop,
+      onSaveSchedule: noop as () => Promise<string | undefined>,
+    }));
+
+  const withLineage = render([{
+    id: "nightly",
+    title: "Nightly audit",
+    cron: "0 9 * * *",
+    prompt: "audit",
+    lineage: { scheduleId: "nightly", title: "Nightly audit", causedRuns: 3, lastOutcome: "failed", tombstoned: false },
+    nextRunAt: "2026-09-27T09:00:00.000Z",
+  }], [
+    { runId: "schedule:nightly:abc", scheduleId: "nightly", scheduleTitle: "Nightly audit", tombstoned: false, title: "Nightly audit", state: "FAILED" },
+    { runId: "schedule:old:def", scheduleId: "old", scheduleTitle: "old", tombstoned: true, title: "Old job", state: "VERIFIED" },
+  ]);
+  assert.match(withLineage, /3 runs/, "the caused-run count renders from the served lineage");
+  assert.match(withLineage, /last run failed/, "the last outcome renders");
+  assert.match(withLineage, /schedule-lineage-outcome-failed/, "the outcome carries its state class");
+  assert.match(withLineage, /next in \d+h/, "the next fire renders");
+  assert.match(withLineage, /fired by Nightly audit/, "run rows carry the schedule attribution");
+  assert.match(withLineage, /schedule deleted/, "a tombstoned schedule's runs say so rather than dangling");
+  assert.ok(withLineage.includes("schedule:nightly:abc"), "the run's raw id renders (registry-sourced, not invented)");
+
+  const hubWithoutLineage = render([{ id: "n", title: "N", cron: "0 9 * * *", prompt: "p" }], undefined);
+  assert.match(hubWithoutLineage, /hub does not report schedule-run history/, "a hub predating the slice renders the honest absence");
+  assert.ok(!hubWithoutLineage.includes("0 runs"), "no lineage served, no fabricated count");
+
+  const noRuns = render([{ id: "n", title: "N", cron: "0 9 * * *", prompt: "p", lineage: { scheduleId: "n", title: "N", causedRuns: 0, lastOutcome: "unrun", tombstoned: false } }], []);
+  assert.match(noRuns, /no schedule-fired runs recorded yet/, "the empty recent-runs state is honest");
+  assert.match(noRuns, /never fired/, "an unrun schedule says so");
 });
 

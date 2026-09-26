@@ -4,6 +4,7 @@ import { WorkflowContainedProcess } from "../containment/workflow-process.js";
 import { selectContainment } from "../containment/platform.js";
 import type { TaskId } from "../kernel/contracts.js";
 import { createContainedShellExecutor, type WorkflowContainedShellExecutor } from "./contained-shell-executor.js";
+import type { RunOrigin } from "./run-registry.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 
 /**
@@ -22,7 +23,15 @@ export type WorkflowApplicationResolver = (
 ) => WorkflowApplication;
 
 export interface WorkflowRunController {
-  begin(input: { runId: string; title: string; workspace?: string; requiresReview?: boolean; taskPrompt?: string }): Promise<void>;
+  begin(input: {
+    runId: string;
+    title: string;
+    workspace?: string;
+    requiresReview?: boolean;
+    taskPrompt?: string;
+    /** W153: the scheduler's recorded origin attribution; only the scheduler supplies it. */
+    origin?: RunOrigin;
+  }): Promise<void>;
   finish(input: { runId: string; outcome: "verified" | "failed" }): Promise<void>;
   review(input: { runId: string; reviewerRunId: string; verdict: "approved" | "changes_requested" | "rejected"; summary: string }): Promise<{ recorded: boolean }>;
   hiddenSnapshotTaskIds(): readonly string[];
@@ -47,6 +56,8 @@ export interface WorkflowRunController {
     };
     /** W044 (open clause): per-run usage from the metering proxy (hub-side aggregation). */
     runUsage?: ReadonlyMap<string, import("./run-registry.js").RunUsageSummary>;
+    /** W153: recorded schedule-origin attribution per run (observability-only). */
+    runOrigins?: ReadonlyMap<string, import("./run-registry.js").RunOrigin>;
   };
 }
 

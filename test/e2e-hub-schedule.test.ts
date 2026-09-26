@@ -266,7 +266,7 @@ test("W139: the schedule write lifecycle — save echo, list deep-equal, both re
   // ── Fresh table ──────────────────────────────────────────────────────────
   const freshList = await postRoute(seat.endpoint, "/schedule/list", seat.token);
   assert.equal(freshList.status, 200);
-  assert.deepEqual(freshList.body, { schedules: [] }, "an absent schedule table means no schedules (hub-scheduler.ts:215-223)");
+  assert.deepEqual(freshList.body, { schedules: [], recentRuns: [] }, "an absent schedule table means no schedules (hub-scheduler.ts:215-223); W153's recent-runs block rides the same response");
 
   // ── The schedule family's token-class matrix, both directions ────────────
   // hub-http.ts:92-97: /schedule/run-now is verifier-only (P1-1 — the
@@ -300,7 +300,7 @@ test("W139: the schedule write lifecycle — save echo, list deep-equal, both re
   assert.deepEqual(await operatorOnRunNow.json(), { error: "unauthorized" });
 
   const untouchedAfterMatrix = await postRoute(seat.endpoint, "/schedule/list", seat.token);
-  assert.deepEqual(untouchedAfterMatrix.body, { schedules: [] }, "the 401 matrix moved no state");
+  assert.deepEqual(untouchedAfterMatrix.body, { schedules: [], recentRuns: [] }, "the 401 matrix moved no state");
 
   // ── Save → list → persisted file ─────────────────────────────────────────
   const definition = {
@@ -313,7 +313,10 @@ test("W139: the schedule write lifecycle — save echo, list deep-equal, both re
   assert.equal(saved.status, 200);
   assert.deepEqual(saved.body, { schedules: [definition] }, "the saved definition is echoed back through the registry");
   const listedAfterSave = await postRoute(seat.endpoint, "/schedule/list", seat.token);
-  assert.deepEqual(listedAfterSave.body, { schedules: [definition] }, "the save is visible to the very next list");
+  assert.deepEqual(listedAfterSave.body, {
+    schedules: [{ ...definition, lineage: { scheduleId: definition.id, title: definition.title, causedRuns: 0, lastOutcome: "unrun", tombstoned: false } }],
+    recentRuns: [],
+  }, "the save is visible to the very next list; W153's lineage rides per entry (registry-sourced: never fired, never a fabricated outcome)");
   assert.deepEqual(
     JSON.parse(readFileSync(schedulesPath, "utf8")),
     { version: 1, schedules: [definition] },
@@ -390,7 +393,13 @@ test("W139: the schedule write lifecycle — save echo, list deep-equal, both re
   const afterRefusals = await postRoute(seat.endpoint, "/schedule/list", seat.token);
   assert.deepEqual(
     afterRefusals.body,
-    { schedules: [definition, extraDefinition] },
+    {
+      schedules: [definition, extraDefinition].map((entry) => ({
+        ...entry,
+        lineage: { scheduleId: entry.id, title: entry.title, causedRuns: 0, lastOutcome: "unrun", tombstoned: false },
+      })),
+      recentRuns: [],
+    },
     "every rejected save left the table untouched (persist before admit, schedule-registry.ts:40-45)",
   );
 
@@ -511,7 +520,7 @@ test("W139: the schedule write lifecycle — save echo, list deep-equal, both re
   assert.deepEqual(removedDefinition.body, { schedules: [] });
 
   const listedAfterDelete = await postRoute(seat.endpoint, "/schedule/list", seat.token);
-  assert.deepEqual(listedAfterDelete.body, { schedules: [] }, "the lifecycle ends with a clean list");
+  assert.deepEqual(listedAfterDelete.body, { schedules: [], recentRuns: [] }, "the lifecycle ends with a clean list");
   assert.deepEqual(
     JSON.parse(readFileSync(schedulesPath, "utf8")),
     { version: 1, schedules: [] },
@@ -550,7 +559,7 @@ test("W139: the schedule table's default seat and its persistence across a hub s
 
   const freshList = await postRoute(first.endpoint, "/schedule/list", first.token);
   assert.equal(freshList.status, 200);
-  assert.deepEqual(freshList.body, { schedules: [] }, "the default seat is empty at composition (an absent table means no schedules)");
+  assert.deepEqual(freshList.body, { schedules: [], recentRuns: [] }, "the default seat is empty at composition (an absent table means no schedules)");
 
   const saved = await postRoute(first.endpoint, "/schedule/save", first.token, definition);
   assert.equal(saved.status, 200);
@@ -584,7 +593,10 @@ test("W139: the schedule table's default seat and its persistence across a hub s
   assert.equal(restartedList.status, 200);
   assert.deepEqual(
     restartedList.body,
-    { schedules: [definition] },
+    {
+      schedules: [{ ...definition, lineage: { scheduleId: definition.id, title: definition.title, causedRuns: 0, lastOutcome: "unrun", tombstoned: false } }],
+      recentRuns: [],
+    },
     "OBSERVED: the saved schedule survives the hub stop + restart — the restarted registry reloads the same table",
   );
 

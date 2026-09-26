@@ -367,6 +367,11 @@ export function createHubScheduler(options: {
         // different guidance preamble, orientation version included) never
         // replays this run's approval.
         taskPrompt: prompt,
+        // W153: the run's origin, recorded in the registry so run rows carry
+        // "fired by schedule S" from a record rather than id parsing. Both
+        // the cron lane and run-now flow through this fire path, so every
+        // scheduler-caused run is attributed identically.
+        origin: { kind: "schedule", scheduleId: schedule.id },
       });
     } catch (error) {
       log(`scheduler '${schedule.id}': could not begin run: ${error instanceof Error ? error.message : String(error)}`);

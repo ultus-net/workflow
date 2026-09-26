@@ -250,3 +250,47 @@ export function scheduleLineage(input: {
     };
   });
 }
+
+/**
+ * W153 (the view slice's run-row source): the last-N schedule-origin runs in
+ * the snapshot's insertion order (registry-structural — never timestamps),
+ * each row carrying the schedule attribution the view renders ("fired by
+ * schedule S"). Tombstoned schedules keep their runs attributed: the row says
+ * the schedule no longer exists rather than dangling. Reviewer runs are
+ * excluded by the three-segment origin shape, exactly as in scheduleLineage.
+ */
+export interface ScheduleRecentRun {
+  readonly runId: string;
+  readonly scheduleId: string;
+  /** The schedule's title when it still exists; its raw id when tombstoned. */
+  readonly scheduleTitle: string;
+  readonly tombstoned: boolean;
+  /** The run's own recorded title (the schedule's title at fire time). */
+  readonly title: string;
+  readonly state: string;
+}
+
+export function scheduleRecentRuns(input: {
+  readonly schedules: readonly { readonly id: string; readonly title: string }[];
+  readonly runTasks: readonly PostureRunTask[];
+  readonly limit?: number;
+}): ScheduleRecentRun[] {
+  const originRuns = input.runTasks.filter((task) => SCHEDULE_ORIGIN.test(task.runId));
+  const limit = input.limit ?? 10;
+  return originRuns
+    .slice(-limit)
+    .reverse()
+    .map((task) => {
+      const scheduleId = task.runId.split(":")[1] ?? "";
+      const known = input.schedules.find((schedule) => schedule.id === scheduleId);
+      return {
+        runId: task.runId,
+        scheduleId,
+        scheduleTitle: known?.title ?? scheduleId,
+        tombstoned: known === undefined,
+        title: task.title,
+        state: task.state,
+      };
+    })
+    .filter((row) => row.scheduleId !== "");
+}

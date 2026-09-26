@@ -8,7 +8,7 @@ import { shellExecutorFor, type WorkflowApplicationResolver, type WorkflowRunCon
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import type { SelfImprovementRegistry, SelfImprovementSpec } from "./self-improvement-registry.js";
 import type { ScheduleRegistry } from "./schedule-registry.js";
-import { operatorPosture } from "./operator-posture.js";
+import { operatorPosture, scheduleLineage, scheduleRecentRuns } from "./operator-posture.js";
 
 /**
  * The hub's host-neutral loopback HTTP server and discovery bridge.
@@ -210,7 +210,31 @@ async function handleRequest(
     if (request.url === "/schedule/list") {
       if (context.schedules === undefined) return send(response, 404, { error: "not found" });
       if (!isRecord(body)) return send(response, 400, { error: "invalid schedule list request" });
-      return send(response, 200, { schedules: context.schedules.list() });
+      // W153 (the view slice): the lineage rides the list — computed by the
+      // shared projection from the kernel's run states and the registry
+      // definitions, never from timestamps, and never by the view. The
+      // recent-runs rows answer "did my schedules fire while I was away?".
+      const schedules = context.schedules.list();
+      const workspace = typeof body.workspace === "string" ? body.workspace : undefined;
+      const lineageSnapshot = context.resolveApplication(workspace, undefined, { activateInteractiveTask: false }).snapshot();
+      const runTasks = lineageSnapshot.tasks
+        .filter((task) => task.id.startsWith("run:"))
+        .map((task) => ({ runId: task.id.slice("run:".length), title: task.title, state: task.state }));
+      const lineage = scheduleLineage({
+        schedules: schedules.map((schedule) => ({ id: schedule.id, title: schedule.title })),
+        runTasks,
+      });
+      const recentRuns = scheduleRecentRuns({
+        schedules: schedules.map((schedule) => ({ id: schedule.id, title: schedule.title })),
+        runTasks,
+      });
+      return send(response, 200, {
+        schedules: schedules.map((entry) => ({
+          ...entry,
+          lineage: lineage.find((row) => row.scheduleId === entry.id) ?? null,
+        })),
+        recentRuns,
+      });
     }
     if (request.url === "/schedule/save") {
       if (context.schedules === undefined) return send(response, 404, { error: "not found" });
@@ -253,6 +277,8 @@ async function handleRequest(
         reviewOutcomes: Object.fromEntries(gates.reviewOutcomes),
         blockingReasons: Object.fromEntries(gates.blockingReasons),
         completionClaims: Object.fromEntries(gates.completionClaims),
+        // W153: recorded schedule-origin attribution per run (observability).
+        ...(gates.runOrigins === undefined ? {} : { runOrigins: Object.fromEntries(gates.runOrigins) }),
         // Iteration 21: advisory reasoning-claim findings (observation only).
         ...(gates.reasoningClaims === undefined ? {} : { reasoningClaims: Object.fromEntries(gates.reasoningClaims) }),
         ...(gates.reasoningClaimMetrics === undefined ? {} : { reasoningClaimMetrics: gates.reasoningClaimMetrics }),

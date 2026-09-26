@@ -23,3 +23,30 @@ half-built: the projection side is already prepared
 with W045 authority attribution), so the badge's data path is the remaining
 work. Criterion 3's shared-constants rule is noted for that implementation:
 tier boundaries must derive from the guard's own constants.
+
+**Dated note (2026-09-27, wave-2 PR — the badge slice landed):** the
+per-session budget data path + badge/bar/incident card landed. The sessions
+LIST route (`/api/sessions`) now carries each session's recorded posture:
+effective caps (env budget merged with the session's persisted raise), the
+recorded usage readout, the live sticky refusal, and the tier derived by the
+guard's OWN predicates (`sessionBudgetTier` in session-budget.ts — abort is
+exactly `budgetViolation`, warn is exactly `budgetDowngradeActive` at the
+W118 downgrade fraction, so no threshold constant lives in the UI; tier is
+absent when no caps are configured and "unknown" when caps exist but the
+usage axes are incomplete). The agents view renders the tier-colored bar, the
+`paused: budget` badge exactly when the sticky refusal is recorded, and the
+incident card: "raise cap and resume" dispatches a trusted operator mutation
+(`POST /api/sessions/budget-raise` → the manager respawns the runtime under
+the merged caps, persisted on the record so later spawns keep them) and its
+denials render verbatim (no local guard, not paused, malformed raise, failed
+respawn) — criterion 2 pinned at the manager, the route, and the render
+levels. "Keep stopped (acknowledge)" is the EXPLICIT NO-OP the card states in
+text: an acknowledge button that mutated nothing would be a fake action, and
+persistent ack/dismissal state is cut per the spec's row-10 line. Residuals
+still open: the HUB's /snapshot posture still passes no `budgetIncidents`
+(the strip's budget-incident count keeps its honest "—" until the hub builds
+per-session incidents from the session registries — a separate wave's
+plumbing), and the new focused suites' `test:ci` inclusion still rides a
+manifest-touching PR after the guard's preflight lockfile false positive is
+fixed at source (the heuristic lives in the opencode-workflow-guard plugin
+repo, not this repo's toolbox copy).

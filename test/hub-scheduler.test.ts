@@ -109,16 +109,17 @@ test("createBudgetGuard cancels the turn on the first violating event", () => {
 // ── Scheduler (C1) ──────────────────────────────────────────────────────────
 
 function stubController() {
-  const calls: Array<{ kind: "begin" | "finish" | "reason"; runId: string; detail?: string; taskPrompt?: string }> = [];
+  const calls: Array<{ kind: "begin" | "finish" | "reason"; runId: string; detail?: string; taskPrompt?: string; origin?: import("../src/integrations/run-registry.js").RunOrigin }> = [];
   return {
     calls,
     controller: {
-      async begin(input: { runId: string; title: string; workspace?: string; requiresReview?: boolean; taskPrompt?: string }) {
+      async begin(input: { runId: string; title: string; workspace?: string; requiresReview?: boolean; taskPrompt?: string; origin?: import("../src/integrations/run-registry.js").RunOrigin }) {
         calls.push({
           kind: "begin",
           runId: input.runId,
           detail: input.requiresReview === undefined ? "unset" : String(input.requiresReview),
           ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }),
+          ...(input.origin === undefined ? {} : { origin: input.origin }),
         });
       },
       async finish(input: { runId: string; outcome: "verified" | "failed" }) {
@@ -200,6 +201,19 @@ test("configured prompt guidance is prepended to every scheduled prompt", async 
   const bare = schedulerHarness(t, { schedule: { id: "unguided" } });
   await bare.scheduler.tick(at);
   assert.equal(bare.turns[0]!.prompt, "nightly audit", "absent guidance leaves the prompt unchanged");
+});
+
+test("W153: every scheduler-caused run records its schedule origin — cron fires and run-now alike", async (t) => {
+  const { scheduler, calls } = schedulerHarness(t, { schedule: { id: "nightly" } });
+  await scheduler.tick(new Date(2026, 8, 18, 9, 0, 0, 0));
+  const tickBegin = calls.find(({ kind }) => kind === "begin");
+  assert.deepEqual(tickBegin?.origin, { kind: "schedule", scheduleId: "nightly" }, "a cron-fired run carries its origin at begin");
+
+  const runNow = schedulerHarness(t, { schedule: { id: "manual" } });
+  assert.equal(await runNow.scheduler.trigger("manual"), true);
+  const nowBegin = runNow.calls.find(({ kind }) => kind === "begin");
+  assert.ok(nowBegin !== undefined, "run-now fired");
+  assert.deepEqual(nowBegin.origin, { kind: "schedule", scheduleId: "manual" }, "run-now records origin attribution the same way");
 });
 
 test("a schedule does not fire twice within the same minute and not before it is due", async (t) => {

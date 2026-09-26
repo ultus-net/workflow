@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
+import { budgetDowngradeFromEnv, describeBudgetMechanism, mergeSessionBudget, sessionBudgetFromEnv, sessionBudgetTier, type SessionBudget, type SessionBudgetTier } from "../integrations/session-budget.js";
 import type { OperatorSessionItem } from "./operator-session.js";
 import type { PermissionBroker } from "./permission-broker.js";
 import { DEFAULT_WEB_AGENT, isWebAgentId, type WebAgentId } from "./web-agents.js";
@@ -22,7 +23,44 @@ export interface WebSessionMeta {
   readonly live: boolean;
   /** The live runtime's turn is in flight (parallel sessions run their own). */
   readonly busy: boolean;
+  /**
+   * W151 (Paperclip borrow wave 2): the session's recorded budget posture.
+   * Present whenever the server can state ANY budget fact for the session —
+   * the effective caps (env merged with the session's raised override), the
+   * recorded usage, the sticky refusal, or the enforcement mechanism. Absent
+   * only when the server itself cannot answer (no manager).
+   */
+  readonly budget: SessionBudgetPosture;
 }
+
+/** The per-session budget posture the badge, bar, and incident card render from. */
+export interface SessionBudgetPosture {
+  /**
+   * The tier derived by the guard's OWN predicates (`sessionBudgetTier`) over
+   * the recorded usage and the effective caps — "abort" when the sticky
+   * refusal is installed (the recorded state wins over recomputation),
+   * "unknown" when caps exist but the usage axes are incomplete, and ABSENT
+   * when no caps are configured (the honest "no local cap" state — never a
+   * fabricated 0%).
+   */
+  readonly tier?: SessionBudgetTier | "unknown";
+  /** The effective caps: env merged with the session's persisted raise override. Absent = no local caps. */
+  readonly caps?: SessionBudget;
+  /** The recorded usage readout (live meter merged with the persisted baseline); absent when nothing is recorded. */
+  readonly usage?: SessionUsageReadout;
+  /** The sticky refusal reason from the live runtime's guard; absent otherwise (non-live sessions have no guard state). */
+  readonly violation?: string;
+  /** The enforcement mechanism description — the live runtime's own when live, the effective caps' description otherwise. */
+  readonly mechanism: string;
+}
+
+/** W151: the per-axis cap override an operator raise installs on a session. */
+export type SessionBudgetRaise = {
+  readonly maxInputTokens?: number;
+  readonly maxOutputTokens?: number;
+  readonly maxTotalTokens?: number;
+  readonly maxCostUsd?: number;
+};
 
 interface SessionRecord {
   id: string;
@@ -31,6 +69,9 @@ interface SessionRecord {
   createdAt: string;
   updatedAt: string;
   agent?: WebAgentId;
+  /** W151: the session's operator-raised budget caps (per-axis over env);
+   * persisted so the raised caps survive restarts and agent switches. */
+  budgetOverride?: SessionBudgetRaise;
   /** Persisted transcript snapshot (bounded) — history is data, not control:
    * it stays viewable with no live runtime and no agent process. */
   items?: OperatorSessionItem[];
@@ -61,6 +102,39 @@ export type SessionSwitchResult =
   | { readonly kind: "unknown" }
   | { readonly kind: "failed"; readonly error: string };
 
+/** W151: the raise-and-resume outcome — every non-ok shape carries the reason the UI renders. */
+export type SessionBudgetRaiseResult =
+  | { readonly kind: "ok"; readonly meta: WebSessionMeta }
+  | { readonly kind: "denied"; readonly reason: string }
+  | { readonly kind: "unknown" }
+  | { readonly kind: "failed"; readonly error: string };
+
+/**
+ * W151: validate a budget-raise payload's shape. Only the four known axes,
+ * each a finite positive number when present, and at least one axis total —
+ * anything else is a malformed request (the route answers 400). Exported so
+ * the route's admission contract is pinnable without HTTP.
+ */
+export function parseSessionBudgetRaise(value: unknown): SessionBudgetRaise | undefined {
+  if (value === undefined || value === null || typeof value !== "object") return undefined;
+  const input = value as Record<string, unknown>;
+  const raise: {
+    maxInputTokens?: number;
+    maxOutputTokens?: number;
+    maxTotalTokens?: number;
+    maxCostUsd?: number;
+  } = {};
+  let any = false;
+  for (const axis of ["maxInputTokens", "maxOutputTokens", "maxTotalTokens", "maxCostUsd"] as const) {
+    const raw = input[axis];
+    if (raw === undefined) continue;
+    if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return undefined;
+    raise[axis] = raw;
+    any = true;
+  }
+  return any ? raise : undefined;
+}
+
 /** session/load gets this long to replay before the session proceeds without it. */
 const RESUME_LOAD_TIMEOUT_MS = 30_000;
 
@@ -80,7 +154,10 @@ const MAX_LIVE_RUNTIMES = 6;
  * through ACP session/load when the registry knows the agent id.
  */
 export class WebSessionManager {
-  readonly #factory: (agent: WebAgentId, resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
+  /** W151: the third parameter carries the session's persisted budget override,
+   * so every spawn of that session (focus, agent switch, raise-resume) runs
+   * with the same effective caps. */
+  readonly #factory: (agent: WebAgentId, resumeFrom?: string, budgetOverride?: SessionBudget | undefined) => Promise<WorkflowAcpRuntime>;
   readonly #registryPath: string;
   readonly #permissionBroker: PermissionBroker | undefined;
   #sessions: SessionRecord[];
@@ -98,9 +175,18 @@ export class WebSessionManager {
   /** Cooldown base, overridable in tests so the doubling schedule is provable
    * without waiting real seconds. */
   readonly #spawnCooldownBaseMs: number;
+  /** W151: the service-level budget facts, read once from the service's env
+   * (the same env the runtime factory's guards are built from). */
+  readonly #envBudget: SessionBudget | undefined;
+  /** W151: the warn-tier fraction the guard actually enforces (W118's downgrade
+   * fraction); undefined when the downgrade is off — no warn threshold exists
+   * then, and the tier can only be under or abort. The env parse is silenced
+   * here because a broken axis is already warned once per runtime composition
+   * (createOpencodeRuntime); re-warning on every list poll would be noise. */
+  readonly #warnFraction: number | undefined;
 
   constructor(options: {
-    readonly factory: (agent: WebAgentId, resumeFrom?: string) => Promise<WorkflowAcpRuntime>;
+    readonly factory: (agent: WebAgentId, resumeFrom?: string, budgetOverride?: SessionBudget | undefined) => Promise<WorkflowAcpRuntime>;
     readonly registryPath?: string;
     readonly permissionBroker?: PermissionBroker;
     readonly spawnCooldownBaseMs?: number;
@@ -113,6 +199,8 @@ export class WebSessionManager {
     // Focus continuity across restarts: the most recent record is the one the
     // operator was viewing when the service stopped.
     this.#focusId = this.#sessions[0]?.id;
+    this.#envBudget = sessionBudgetFromEnv();
+    this.#warnFraction = budgetDowngradeFromEnv(undefined, () => undefined)?.fraction;
   }
 
   list(): WebSessionMeta[] {
@@ -449,7 +537,7 @@ export class WebSessionManager {
   }
 
   async #attemptSpawn(record: SessionRecord, resumeFrom: string | undefined): Promise<ActiveSession> {
-    const runtime = await this.#factory(record.agent ?? DEFAULT_WEB_AGENT, resumeFrom);
+    const runtime = await this.#factory(record.agent ?? DEFAULT_WEB_AGENT, resumeFrom, record.budgetOverride);
     const channel = new SessionChannel(
       runtime.session,
       runtime.driver,
@@ -640,7 +728,95 @@ export class WebSessionManager {
       agent: record.agent ?? DEFAULT_WEB_AGENT,
       live: live !== undefined,
       busy: live?.channel.busy() ?? false,
+      budget: this.#budgetPosture(record, live),
     };
+  }
+
+  /**
+   * W151: the session's recorded budget posture — the badge, bar, and incident
+   * card's only data source. Every field comes from a record: the effective
+   * caps are the env budget merged with the session's persisted override, the
+   * usage is the live meter merged with the persisted baseline, the violation
+   * is the live guard's sticky refusal, and the tier is derived by
+   * `sessionBudgetTier` (the guard's own predicates) — or "abort" directly
+   * when the guard itself recorded a violation (recorded state wins over
+   * recomputation). Nothing is synthesized: with no caps configured there is
+   * no tier at all, and the mechanism string states the honest backstop.
+   */
+  #budgetPosture(record: SessionRecord, live: ActiveSession | undefined): SessionBudgetPosture {
+    const caps = mergeSessionBudget(this.#envBudget, record.budgetOverride);
+    const usage = live?.channel.usage() ?? record.usage;
+    const violation = live?.channel.budgetViolation();
+    const completeUsage = usage !== undefined
+      && usage.promptTokens !== undefined
+      && usage.completionTokens !== undefined
+      && usage.totalTokens !== undefined
+      && usage.costUsd !== undefined
+      ? { promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, totalTokens: usage.totalTokens, costUsd: usage.costUsd }
+      : undefined;
+    const tier: SessionBudgetTier | "unknown" | undefined = caps === undefined
+      ? undefined
+      : violation !== undefined
+        ? "abort"
+        : completeUsage === undefined
+          ? "unknown"
+          : sessionBudgetTier(completeUsage, caps, this.#warnFraction);
+    const mechanism = live === undefined
+      ? describeBudgetMechanism(caps)
+      : live.channel.budgetMechanism() ?? describeBudgetMechanism(caps);
+    return {
+      ...(tier === undefined ? {} : { tier }),
+      ...(caps === undefined ? {} : { caps }),
+      ...(usage === undefined ? {} : { usage }),
+      ...(violation === undefined ? {} : { violation }),
+      mechanism,
+    };
+  }
+
+  /**
+   * W151: raise a paused session's caps and resume it. The raise is a real
+   * operator mutation through this manager (the session registry's owner),
+   * and it fails closed: unknown session, no local guard to raise, not
+   * paused by budget, a cap-less or non-positive raise, or a failed respawn
+   * all come back as denials the UI renders verbatim — never a disabled-
+   * looking success path. The raised caps persist on the record, so later
+   * spawns (focus, agent switch) run with the same effective caps.
+   */
+  async raiseBudgetAndResume(id: string, raise: SessionBudgetRaise): Promise<SessionBudgetRaiseResult> {
+    const record = this.#sessions.find((entry) => entry.id === id);
+    if (record === undefined) return { kind: "unknown" };
+    if (this.#envBudget === undefined) {
+      return { kind: "denied", reason: "no local session-budget guard is configured — the active mechanism is the provider-side credit limit, which cannot be raised from here" };
+    }
+    const live = this.#live.get(id);
+    if (live === undefined || live.channel.budgetViolation() === undefined) {
+      return { kind: "denied", reason: "the session is not paused by budget — there is no violation to resume from" };
+    }
+    const axes = ["maxInputTokens", "maxOutputTokens", "maxTotalTokens", "maxCostUsd"] as const;
+    const raised = axes.filter((axis) => raise[axis] !== undefined);
+    if (raised.length === 0) {
+      return { kind: "denied", reason: "the raise needs at least one cap axis" };
+    }
+    for (const axis of raised) {
+      const value = raise[axis];
+      if (value === undefined || !Number.isFinite(value) || value <= 0) {
+        return { kind: "denied", reason: `raised ${axis} must be a positive number` };
+      }
+    }
+    record.budgetOverride = { ...raise };
+    this.#persist();
+    // Resume = respawn under the raised caps: the new runtime's guard starts
+    // with the merged budget, so the sticky refusal of the old runtime does
+    // not follow the session (a fresh guard is empty), and the persisted
+    // usage baseline keeps the meter honest.
+    await this.#disposeLive(id, live, "budget raise: respawning under raised caps");
+    try {
+      const respawned = await this.#attemptSpawn(record, record.agentSessionId);
+      return { kind: "ok", meta: this.#meta(respawned.record) };
+    } catch (error) {
+      // The raise is already recorded; the next focus spawn retries with it.
+      return { kind: "failed", error: `raised caps recorded, but the respawn failed: ${error instanceof Error ? error.message : String(error)}` };
+    }
   }
 
   #persist(): void {

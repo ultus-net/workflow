@@ -14,11 +14,13 @@ import { MarkdownText } from "./markdown-text.js";
 import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } from "./presenters.js";
 import { useSessionCommands, useSessionState, useSessionStatus, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog, type RoutingFacts } from "./settings-dialog.js";
-import { AgentsView } from "./agents-view.js";
+import { AgentsView, budgetRaiseOutcome } from "./agents-view.js";
 import { PostureStrip, usePosture } from "./posture-strip.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
+import type { ScheduleRecentRun } from "../../integrations/operator-posture.js";
 import { UsageView } from "./usage-view.js";
 import { InvariantsPanel } from "./invariants-panel.js";
+import type { SessionBudgetPosture } from "../web-sessions.js";
 import { listPalettes } from "./theme/palettes.js";
 import { usePalette } from "./theme.js";
 import type { OperatorSessionItem } from "../operator-session.js";
@@ -244,6 +246,8 @@ export interface SessionMeta {
   readonly busy?: boolean;
   /** The ACP handshake version, when this session's runtime reported one. */
   readonly version?: string;
+  /** W151: the session's recorded budget posture (tier, caps, usage, violation). */
+  readonly budget?: SessionBudgetPosture;
 }
 
 export interface AgentInfo {
@@ -316,10 +320,17 @@ function useSessions() {
 function useOperatorSurfaces() {
   const [schedules, setSchedules] = useState<ScheduleMeta[] | undefined>(undefined);
   const [loops, setLoops] = useState<LoopMeta[] | undefined>(undefined);
+  const [recentRuns, setRecentRuns] = useState<readonly ScheduleRecentRun[] | undefined>(undefined);
   const load = useCallback(async (): Promise<void> => {
     try {
       const schedulesResponse = await fetch("/api/schedules");
-      if (schedulesResponse.ok) setSchedules((await schedulesResponse.json() as { schedules: ScheduleMeta[] }).schedules);
+      if (schedulesResponse.ok) {
+        const payload = (await schedulesResponse.json()) as { schedules: ScheduleMeta[]; recentRuns?: ScheduleRecentRun[] };
+        setSchedules(payload.schedules);
+        // W153: the recent schedule-origin runs; absent from a hub predating
+        // the slice (the section renders that honestly).
+        setRecentRuns(payload.recentRuns);
+      }
       else setSchedules(undefined);
     } catch {
       // Keep the last good list; the next poll retries.
@@ -337,7 +348,7 @@ function useOperatorSurfaces() {
     const timer = setInterval(() => void load(), PANEL_POLL_MS);
     return () => clearInterval(timer);
   }, [load]);
-  return { schedules, loops, refresh: load };
+  return { schedules, loops, recentRuns, refresh: load };
 }
 
 function createSession(refresh: () => Promise<void>): void {
@@ -2164,7 +2175,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const gitStatus = useGitStatus();
   const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
-  const { schedules, loops, refresh: refreshSchedules } = useOperatorSurfaces();
+  const { schedules, loops, recentRuns, refresh: refreshSchedules } = useOperatorSurfaces();
   const posture = usePosture();
   const agents = useAgents();
   // The registry leads with the default agent (OpenCode); fall back to it while
@@ -2404,11 +2415,23 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
             switchSession(id);
             setView("chat");
           }}
+          onBudgetRaise={async (id, raise) => {
+            const response = await fetch("/api/sessions/budget-raise", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id, budget: raise }),
+            });
+            const payload = await response.json().catch(() => undefined) as { error?: string } | undefined;
+            const outcome = budgetRaiseOutcome(response.ok, response.status, payload?.error);
+            if (outcome === undefined) refreshSessions();
+            return outcome;
+          }}
         />
       ) : view === "schedules" ? (
         <SchedulesView
           schedules={schedules}
           loops={loops}
+          recentRuns={recentRuns}
           onCancelLoop={(id) => {
             void fetch("/api/loops/cancel", {
               method: "POST",
