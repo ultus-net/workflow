@@ -197,7 +197,14 @@ const rsiProposalApplicationFor = (target: string): WorkflowApplication => {
   const canonical = canonicalWorkspace(target);
   let bound = rsiProposalApplications.get(canonical);
   if (bound === undefined) {
-    bound = new WorkflowApplication(graph, application.host, [], new Set(["read", "process"]), canonical);
+    // read + process + spawn: the bounded proposal turn explores the repo
+    // (shell/grep) and may delegate exploration to a subagent (opencode's
+    // `task` tool classifies as spawn). Every call still crosses kernel
+    // authorization and the guard dispatcher; the grant only stops the
+    // fail-closed capability-withheld denial that opencode v2 escalates into
+    // a whole-step abort ("The user declined this tool call" -> "Step
+    // interrupted" — proven live via opencode.db, 2026-09-26).
+    bound = new WorkflowApplication(graph, application.host, [], new Set(["read", "process", "spawn"]), canonical);
     // The proposal turn's task is opened per turn (beginProposalTurnTask in
     // rsiAgentTurn) and closed when the turn ends — never parked IN_PROGRESS
     // on the shared kernel graph across turns.
