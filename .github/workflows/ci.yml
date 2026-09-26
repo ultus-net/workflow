@@ -104,14 +104,14 @@ jobs:
             '    # (run 12 PromptDismissedException), so this drives the D-Bus' \
             '    # calls directly: OpenSession(plain) -> CreateCollection with' \
             '    # the (oayts) secret struct the spec defines.' \
-            '    open_reply = conn.send_message(new_method_call(service_addr, "OpenSession", "sv", ("plain", ("s", ""))))' \
-            '    session_path = open_reply.body[1][1]' \
+            '    open_reply = conn.send_and_get_reply(new_method_call(service_addr, "OpenSession", "sv", ("plain", ("s", ""))))' \
+            '    session_path = open_reply[0][1][1]' \
             '    session_addr = DBusObject("org.freedesktop.secrets", session_path)' \
             '    collection_secret = (session_addr, "", _secrets.token_bytes(32), session_addr, 0)' \
-            '    create_reply = conn.send_message(new_method_call(' \
+            '    create_reply = conn.send_and_get_reply(new_method_call(' \
             '        service_addr, "CreateCollection", "a{sv}s(oayts)",' \
             '        ({"org.freedesktop.Secret.Collection.Label": ("s", "login")}, "login", collection_secret)))' \
-            '    create_body = create_reply.body[0]' \
+            '    create_body = create_reply[0]' \
             '    print("CreateCollection result:", create_body[0], create_body[1])' \
             '    if create_body[0] == "prompt":' \
             '        sys.exit("CreateCollection returned a prompt — the headless daemon refused to auto-create; W130 must fail closed")' \
