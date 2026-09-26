@@ -217,7 +217,7 @@ export function checkProbeVerdicts(options: { root?: string } = {}): DoctorCheck
       name,
       status: "fail",
       detail: `the probe verdict register failed validation (fail-closed): ${message}`,
-      fix: "repair docs/PROBE_VERDICTS.json — version 1, one dated row per gate (host/version, probe file, gate, result, posture, evidence); probe files must exist",
+      fix: "repair docs/PROBE_VERDICTS.json — version 1, one dated row per gate (host/version, probe file, gate, result, posture, evidence); probe files and cited evidence must exist",
     };
   }
   const tally = { green: 0, red: 0, negative: 0, pending: 0, blocked: 0 } as Record<ProbeVerdictResult, number>;

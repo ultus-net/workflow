@@ -20,7 +20,11 @@ import { checkProbeVerdicts } from "../src/cli/doctor.js";
  * must exist and name its gate, and every gate-style probe file in the test
  * corpus must have a register row — adding a gated probe without registering
  * it (or renaming/removing a gate the register still records) fails this
- * suite, so the register cannot quietly rot.
+ * suite, so the register cannot quietly rot. Every row's free-text `evidence`
+ * is pinned the same way: `loadProbeVerdicts` resolves each repo-relative path
+ * it cites (including the `acp-remote-sse-idle` row's
+ * `docs/HOST_ADAPTERS.md` idle-window citation) and throws when one is gone,
+ * so a verdict cannot outlive the write-up that earned it.
  */
 
 /** Repo root: one level up from this test file's directory. */
@@ -155,6 +159,22 @@ test("register validation fails closed on schema drift", () => {
     /probe file not found/,
     "a register row pointing at a deleted probe is drift, not a stale claim",
   );
+  // The cited write-up is pinned as hard as the executable gate: an `evidence`
+  // string naming a doc/test that is gone fails closed, so a verdict cannot
+  // outlive the write-up that earned it.
+  assert.throws(() => validateProbeVerdictRegister({
+    ...base,
+    verdicts: [{ ...base.verdicts[0]!, evidence: "docs/HOST_ADAPTERS.md row; docs/nowhere.md" }],
+  }, { exists: (path) => !path.endsWith("nowhere.md") }), /cited evidence not found: docs\/nowhere\.md/);
+  // Sentence punctuation is not part of the path, and a version string or an
+  // API route in the prose is not a citation: only the named path is resolved.
+  assert.equal(validateProbeVerdictRegister({
+    ...base,
+    verdicts: [{
+      ...base.verdicts[0]!,
+      evidence: "Live run on 2.0.10: /api/event is an observable SSE stream, matrix pinned in test/opencode-v2-route-class.test.ts.",
+    }],
+  }, { exists: (path) => path.endsWith("test/a-probe.test.ts") || path.endsWith("test/opencode-v2-route-class.test.ts") }).verdicts.length, 1);
   // Optional fields are typed too: a non-string blocker/note is drift.
   assert.throws(() => validateProbeVerdictRegister({
     ...base,
@@ -183,6 +203,7 @@ test("doctor: the register check renders counts, armed gates, and honest open st
   mkdirSync(join(root, "docs"), { recursive: true });
   mkdirSync(join(root, "test"), { recursive: true });
   writeFileSync(join(root, "test", "fixture-probe.test.ts"), 'const gated = process.env.WORKFLOW_TEST_FAKE === "1";');
+  writeFileSync(join(root, "docs", "FIXTURE_EVIDENCE.md"), "# fixture write-up\n");
   const verdictRow = {
     id: "fixture",
     host: "fixture",
@@ -192,7 +213,7 @@ test("doctor: the register check renders counts, armed gates, and honest open st
     date: "2026-09-20",
     result: "pending",
     posture: "unqualified",
-    evidence: "docs/nowhere.md",
+    evidence: "docs/FIXTURE_EVIDENCE.md fixture row",
     blocker: "no fixture credentials",
   };
   writeProbeRegister(root, { version: 1, updated: "2026-09-20", verdicts: [verdictRow] });
@@ -220,6 +241,18 @@ test("doctor: the register check renders counts, armed gates, and honest open st
   const decided = checkProbeVerdicts({ root });
   assert.equal(decided.status, "pass");
   assert.equal(decided.fix, undefined);
+
+  // A row citing a write-up that is gone fails closed, with the fix naming the
+  // citation requirement.
+  writeProbeRegister(root, {
+    version: 1,
+    updated: "2026-09-20",
+    verdicts: [{ ...verdictRow, result: "green", blocker: undefined, evidence: "docs/deleted-writeup.md" }],
+  });
+  const dangling = checkProbeVerdicts({ root });
+  assert.equal(dangling.status, "fail");
+  assert.match(dangling.detail, /cited evidence not found: docs\/deleted-writeup\.md/);
+  assert.match(dangling.fix ?? "", /cited evidence must exist/);
 
   writeFileSync(join(root, "docs", "PROBE_VERDICTS.json"), "{not json");
   const corrupt = checkProbeVerdicts({ root });

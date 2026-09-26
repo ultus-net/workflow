@@ -585,7 +585,7 @@ test("doctor e2e (TSX lane): the corrupt register seat is unreachable from the C
   assert.equal(corruptParsed.status, "fail");
   assert.match(corruptParsed.detail, /^the probe verdict register failed validation \(fail-closed\): invalid probe verdict register: /,
     `the parse error is surfaced verbatim — detail: ${corruptParsed.detail}`);
-  assert.equal(corruptParsed.fix, "repair docs/PROBE_VERDICTS.json — version 1, one dated row per gate (host/version, probe file, gate, result, posture, evidence); probe files must exist");
+  assert.equal(corruptParsed.fix, "repair docs/PROBE_VERDICTS.json — version 1, one dated row per gate (host/version, probe file, gate, result, posture, evidence); probe files and cited evidence must exist");
   assert.equal(corruptRun.stderr, "", "the fail is rendered, not a thrown stack");
 
   // (b) Missing register (ENOENT): also a loud fail — a missing register is
@@ -600,5 +600,5 @@ test("doctor e2e (TSX lane): the corrupt register seat is unreachable from the C
   assert.match(absentParsed.detail, /^the probe verdict register failed validation \(fail-closed\): cannot read the probe verdict register at /,
     `the ENOENT is surfaced verbatim — detail: ${absentParsed.detail}`);
   assert.match(absentParsed.detail, /ENOENT: no such file or directory/);
-  assert.equal(absentParsed.fix, "repair docs/PROBE_VERDICTS.json — version 1, one dated row per gate (host/version, probe file, gate, result, posture, evidence); probe files must exist");
+  assert.equal(absentParsed.fix, "repair docs/PROBE_VERDICTS.json — version 1, one dated row per gate (host/version, probe file, gate, result, posture, evidence); probe files and cited evidence must exist");
 });

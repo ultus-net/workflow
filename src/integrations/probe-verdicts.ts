@@ -19,7 +19,9 @@ import { fileURLToPath } from "node:url";
  * remains the human write-up; this register is the machine-checkable layer
  * that doctor renders and the anti-drift test pins against the real test
  * corpus (every registered probe file must exist and name its gate; every
- * gate-style probe file must be registered).
+ * gate-style probe file must be registered). Cited evidence is pinned the
+ * same way: the repo-relative paths a row's `evidence` names must exist, so a
+ * verdict cannot keep pointing at a write-up that was deleted or moved.
  */
 
 export type ProbeVerdictResult = "green" | "red" | "negative" | "pending" | "blocked";
@@ -86,6 +88,27 @@ const PROBE_PATTERN = /^test\/[A-Za-z0-9._/-]+\.test\.ts$/;
 const GATE_PATTERN = /^WORKFLOW_[A-Z0-9_]+$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * The repo-relative paths a row's free-text `evidence` may cite, e.g.
+ * `docs/HOST_ADAPTERS.md remote bridge entry; test/acp-remote-sse-probe.test.ts
+ * header`. The extension allowlist is what keeps version strings (`2.0.10`),
+ * section marks (`§11`) and API routes (`/api/event`) out of the citation
+ * set; the leading lookbehind keeps the tail of an absolute path from being
+ * read as a repo-relative one; the trailing guard plus the extension
+ * alternation mean a sentence-final period is not part of the path (the
+ * `test/opencode-v2-route-class.test.ts.` citation resolves as-is).
+ *
+ * Documented limit: a citation written in a shape this pattern does not
+ * recognize (a bare filename with no extension, a Windows separator) is left
+ * unpinned, not mis-resolved — the check never invents a path to fail on.
+ */
+const CITED_PATH_PATTERN = /(?<![\w./-])((?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.(?:md|mdx|json|ts|tsx|mjs|js|txt|yaml|yml))(?![\w/])/g;
+
+/** The distinct repo-relative paths an `evidence` string cites. */
+function citedEvidencePaths(evidence: string): string[] {
+  return [...new Set([...evidence.matchAll(CITED_PATH_PATTERN)].map((match) => match[1]!))];
+}
+
 const RESULTS: readonly string[] = ["green", "red", "negative", "pending", "blocked"];
 const POSTURES: readonly string[] = ["enforced", "enforced-eligible", "advisory", "spawn-denied", "unqualified"];
 
@@ -99,10 +122,11 @@ export interface ValidateProbeVerdictsOptions {
 /**
  * Validates one parsed register document, fail-closed: a wrong version, a
  * malformed record, an unknown result/posture, a non-ISO date, a duplicate
- * id, a probe path that is not a test file or does not exist on disk, or a
- * `blocked` entry without its blocker all throw. The probe existence check is
- * the runtime side of anti-drift: a register row pointing at a deleted probe
- * is an error, not a stale claim.
+ * id, a probe path that is not a test file or does not exist on disk, a cited
+ * evidence path that does not exist, or a `blocked` entry without its blocker
+ * all throw. The probe existence check is the runtime side of anti-drift: a
+ * register row pointing at a deleted probe is an error, not a stale claim —
+ * and the evidence check extends that to the write-up it cites.
  */
 export function validateProbeVerdictRegister(parsed: unknown, options: ValidateProbeVerdictsOptions = {}): ProbeVerdictRegister {
   if (typeof parsed !== "object" || parsed === null) {
@@ -139,6 +163,17 @@ export function validateProbeVerdictRegister(parsed: unknown, options: ValidateP
     }
     if (!exists(join(root, verdict.probe as string))) {
       throw new TypeError(`invalid probe verdict register: '${id}' — probe file not found: ${verdict.probe}`);
+    }
+    // The write-up is pinned too, not just the executable gate: every
+    // repo-relative path the row's `evidence` prose cites must still exist, so
+    // a verdict cannot outlive the doc (or test) that earned it. A citation
+    // that resolves nowhere is drift, and it fails closed like a deleted probe
+    // does. Scope is the `evidence` string alone — `blocker`/`note` are
+    // operator prose, not a citation surface.
+    for (const cited of citedEvidencePaths(verdict.evidence as string)) {
+      if (!exists(join(root, cited))) {
+        throw new TypeError(`invalid probe verdict register: '${id}' — cited evidence not found: ${cited}`);
+      }
     }
     if (!GATE_PATTERN.test(verdict.gate as string)) {
       throw new TypeError(`invalid probe verdict register: '${id}' — gate must be a WORKFLOW_* env name`);
