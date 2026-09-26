@@ -111,7 +111,7 @@ jobs:
             '    raw_addr = DBusObject("org.freedesktop.secrets", "/org/freedesktop/secrets")' \
             '    def call_method(method, signature, body):' \
             '        return raw.send_and_get_reply(new_method_call(raw_addr, method, signature=signature, body=body))' \
-            '    open_reply = call_method("OpenSession", "sv", (("plain", ("s", "")),))' \
+            '    open_reply = call_method("OpenSession", "sv", ("plain", ("s", "")))' \
             '    session_path = open_reply[0][1][1]' \
             '    session_addr = DBusObject("org.freedesktop.secrets", session_path)' \
             '    collection_secret = (session_addr, "", _secrets.token_bytes(32), session_addr, 0)' \
