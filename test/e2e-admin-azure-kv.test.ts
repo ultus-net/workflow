@@ -137,20 +137,26 @@ test("W156: the admin control plane serves the credential contract over the azur
   context.after(() => rmSync(home, { recursive: true, force: true }));
 
   const hookPath = join(repoRoot, "test", "fixtures", "kv-fetch-hook.cjs");
+  const childEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    HOME: home,
+    WORKFLOW_ADMIN_PORT: "0",
+    WORKFLOW_ADMIN_TOKEN: ADMIN_TOKEN,
+    WORKFLOW_SECRET_STORE: "azure-kv",
+    WORKFLOW_KEYVAULT_NAME: "kv-test",
+    WORKFLOW_TEST_KV_FAKE_TARGET: `http://127.0.0.1:${fake.port}`,
+    NODE_OPTIONS: `${process.env.NODE_OPTIONS ? `${process.env.NODE_OPTIONS} ` : ""}--require ${hookPath}`,
+  };
+  // Review P3-3: a locally set MSI_ENDPOINT/IDENTITY_ENDPOINT would move the
+  // IMDS hostname outside the hook's two-hostname set and break hermeticity.
+  // Deleting them pins the lane to the default IMDS endpoint the hook routes.
+  delete childEnv.MSI_ENDPOINT;
+  delete childEnv.IDENTITY_ENDPOINT;
   let output = "";
   let exitInfo: { code: number | null; signal: string | null } | undefined;
   const child = spawn(process.execPath, ["dist/cli/admin.js"], {
     cwd: repoRoot,
-    env: {
-      ...process.env,
-      HOME: home,
-      WORKFLOW_ADMIN_PORT: "0",
-      WORKFLOW_ADMIN_TOKEN: ADMIN_TOKEN,
-      WORKFLOW_SECRET_STORE: "azure-kv",
-      WORKFLOW_KEYVAULT_NAME: "kv-test",
-      WORKFLOW_TEST_KV_FAKE_TARGET: `http://127.0.0.1:${fake.port}`,
-      NODE_OPTIONS: `${process.env.NODE_OPTIONS ? `${process.env.NODE_OPTIONS} ` : ""}--require ${hookPath}`,
-    },
+    env: childEnv,
     stdio: ["ignore", "pipe", "pipe"],
     detached: true,
   });
