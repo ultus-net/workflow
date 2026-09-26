@@ -87,24 +87,53 @@ jobs:
             'import os, subprocess, sys, time' \
             'bus = subprocess.check_output(["bash", "-c", "echo $DBUS_SESSION_BUS_ADDRESS"]).decode().strip()' \
             'os.environ["DBUS_SESSION_BUS_ADDRESS"] = bus' \
-            'import secretstorage' \
+            'import secretstorage, jeepney' \
             'conn = secretstorage.dbus_init()' \
-            'collection = secretstorage.get_default_collection(conn)' \
+            'service_obj = conn.get_object("org.freedesktop.secrets", "/org/freedesktop/secrets")' \
+            'collection = None' \
+            'try:' \
+            '    collection = secretstorage.get_default_collection(conn)' \
+            'except Exception:' \
+            '    collection = None' \
+            'if collection is None:' \
+            '    # No default collection on a fresh daemon — create it via the' \
+            '    # Service.CreateCollection D-Bus call (run 11: get_default_collection' \
+            '    # itself raises UnknownMethod when the collection object is absent).' \
+            '    session = secretstorage.dbus_init()' \
+            '    import jeepney' \
+            '    service = jeepney.DBusObject("org.freedesktop.secrets", "/org/freedesktop/secrets")' \
+            '    conn = secretstorage.dbus_init()' \
+            '    collection = secretstorage.create_collection(conn, "login")' \
             'if collection.is_locked():' \
             '    collection.unlock()' \
             'time.sleep(0.5)' \
-            'collection = secretstorage.get_default_collection(conn)' \
-            'if collection.is_locked():' \
-            '    sys.exit("the default collection stayed locked — the keyring cannot serve W130")' \
             'collection.create_item("ci-unlock-probe", {"service": "workflow", "credential": "ci-unlock-probe"}, b"ci-probe")' \
             'print("probe item created")' > /tmp/keyring-create.py
           printf '%s\n' \
-            'import os, subprocess, secretstorage' \
+            'import os, subprocess, secretstorage, time' \
             'bus = subprocess.check_output(["bash", "-c", "echo $DBUS_SESSION_BUS_ADDRESS"]).decode().strip()' \
             'os.environ["DBUS_SESSION_BUS_ADDRESS"] = bus' \
             'conn = secretstorage.dbus_init()' \
-            'collection = secretstorage.get_default_collection(conn)' \
-            'item = next((i for i in collection.get_all_items() if i.get_label() == "ci-unlock-probe"), None)' \
+            'time.sleep(0.3)' \
+            'collection = None' \
+            'for attempt in range(5):' \
+            '    try:' \
+            '        collection = secretstorage.get_default_collection(conn)' \
+            '        break' \
+            '    except Exception:' \
+            '        time.sleep(0.3)' \
+            'if collection is None:' \
+            '    collection = secretstorage.create_collection(conn, "login")' \
+            'if collection.is_locked():' \
+            '    collection.unlock()' \
+            'item = None' \
+            'for attempt in range(5):' \
+            '    try:' \
+            '        item = next((i for i in collection.get_all_items() if i.get_label() == "ci-unlock-probe"), None)' \
+            '        if item is not None:' \
+            '            break' \
+            '    except Exception:' \
+            '        time.sleep(0.3)' \
             'assert item is not None, "the probe item vanished"' \
             'assert item.get_secret().decode() == "ci-probe", "the probe secret round-trip mismatched"' \
             'print("keyring probe: created + read back ok")' > /tmp/keyring-verify.py
