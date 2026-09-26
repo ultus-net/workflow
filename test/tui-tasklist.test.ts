@@ -113,6 +113,48 @@ test("TUI activity panel says the follow-up ledger is unavailable instead of sho
   consulted.unmount();
 });
 
+test("TUI activity panel marks a capped follow-up list as a window, not the whole debt", () => {
+  // The panel prints three of the open follow-ups. With more open, a bare
+  // three-item list under an honest "5 open" header reads as the complete
+  // debt, so the cap states how many findings the frame withheld.
+  const capped = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    reviewFollowUps: {
+      followUps: Array.from({ length: 5 }, (_unused, index) => ({
+        severity: "P2" as const, summary: `finding ${index}`, paths: ["src/x.ts"], id: String(index), reviewId: "r1", status: "open" as const, createdAt: index,
+      })),
+      truncated: false,
+      available: true,
+    },
+  }));
+
+  const frame = capped.lastFrame() ?? "";
+  assert.match(frame, /review follow-ups \(5 open\)/);
+  assert.match(frame, /… 2 more/);
+  const itemLines = frame.split("\n").filter((line) => /\[P[23]\]/.test(line));
+  assert.equal(itemLines.length, 3, "the cap marker must not turn into extra rendered findings");
+  assert.equal(/finding 3/.test(frame), false, "withheld findings stay withheld — only the count is stated");
+  capped.unmount();
+
+  // Three or fewer fit the window: there is nothing withheld, so a marker here
+  // would overstate the debt.
+  const exact = render(React.createElement(WorkflowTui, {
+    application: createApplication(),
+    reviewFollowUps: {
+      followUps: Array.from({ length: 3 }, (_unused, index) => ({
+        severity: "P3" as const, summary: `finding ${index}`, paths: [], id: String(index), reviewId: "r1", status: "open" as const, createdAt: index,
+      })),
+      truncated: false,
+      available: true,
+    },
+  }));
+
+  const exactFrame = exact.lastFrame() ?? "";
+  assert.match(exactFrame, /review follow-ups \(3 open\)/);
+  assert.equal(/… \d+ more/.test(exactFrame), false, "a full window needs no cap marker");
+  exact.unmount();
+});
+
 test("TUI renders an always-visible task list with states and progress", () => {
   const view = render(React.createElement(WorkflowTui, { application: createApplication() }));
 

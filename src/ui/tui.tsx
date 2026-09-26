@@ -999,6 +999,10 @@ function SessionActivityPanel({
           {openFollowUps.slice(0, 3).map((item) => (
             <Text key={item.id} dimColor>    [<Text color={ACCENT_WARNING}>{item.severity}</Text>] {item.summary}</Text>
           ))}
+          {/* The header count is the whole open debt; the list is a window. An
+              honest count beside a silent three-item window reads as "these are
+              all of them", so the cap states itself. */}
+          {openFollowUps.length > 3 ? <Text dimColor>    … {openFollowUps.length - 3} more</Text> : null}
         </Box>
       ) : null}
       {blockedRuns.length > 0 ? (
