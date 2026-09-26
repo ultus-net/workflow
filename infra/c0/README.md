@@ -28,10 +28,12 @@ re-hashed each run. Connection material lands in `infra/c0/c0.env` (chmod 600).
 ## Probe
 
     node infra/c0/probe.mjs
+    node infra/c0/probe.mjs --idle
 
 Gates: `/api/info` health (version-tolerant fallback to v1 `/global/health`),
 unauthenticated 401, SSE `text/event-stream` open, session create, stream bytes
-after create, session cleanup. Exit 0 only when all pass.
+after create, session cleanup. Exit 0 only when all pass. `--idle` adds a fourth
+gate: hold the SSE stream open through the full 240s ingress idle window.
 
 ## Operator attach (the point of all this)
 
@@ -66,6 +68,7 @@ browser). Easy Auth (Entra ID) is deliberately NOT here yet — that is C1.5.
 | 2026-09-25 | session create | PASS | `ses_f2822b94fffeEVeikiGTJYFocy` |
 | 2026-09-25 | SSE activity round-trip | PASS | 528 stream bytes received after create over the same ingress |
 | 2026-09-25 | session cleanup | PASS | 204 |
+| 2026-09-27 | idle stream survival (240s) | PENDING | `--idle` gate added; live run required |
 
 Image build: ACR run `cr3` (vendored binary verified in-container).
 Probe session created + deleted over the live plane.
@@ -75,7 +78,8 @@ Probe session created + deleted over the live plane.
 - **Quiet-stream idle survival unproven**: the 4-minute default ingress idle
   timeout reaps silent streams; opencode's own keepalive behavior under a real
   attached session is the next observation (operator attach session). The probe
-  proves activity-flow, not silence-survival.
+  proves activity-flow, not silence-survival. The `--idle` gate now tests
+  silence-survival; live verdict pending.
 - **State is ephemeral**: no Azure Files volume yet (C2 durability drill).
 - **Secret is an ACA-managed secret**, not Key Vault (C1 upgrade).
 - **No Easy Auth** (C1.5), **no gateway/broker** (C1) — stock serve only, by design.

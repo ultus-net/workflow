@@ -5,6 +5,9 @@
 //   2. negative-auth — unauthenticated request is rejected (401/403)
 //   3. sse roundtrip — open /api/event, create a session over the same ingress,
 //                      expect stream bytes within the window; delete the session.
+// Optional (--idle):
+//   4. idle survival — hold /api/event open through the full 240s ingress idle
+//                      window; PASS only if the stream is still open at the end.
 // Exit 0 only when all gates pass. Record the verdict in README.md afterward.
 import { readFileSync } from 'node:fs';
 
@@ -20,6 +23,7 @@ if (!env.C0_BASE_URL || !env.C0_SERVER_PASSWORD) {
 
 const base = env.C0_BASE_URL.replace(/\/+$/, '');
 const auth = 'Basic ' + Buffer.from('opencode:' + env.C0_SERVER_PASSWORD).toString('base64');
+const idleFlag = process.argv.includes('--idle');
 
 let failures = 0;
 function verdict(name, ok, detail) {
@@ -109,8 +113,55 @@ async function sseRoundTrip() {
   }
 }
 
+async function idle() {
+  const IDLE_WINDOW_MS = 240000;
+  const controller = new AbortController();
+  const hardStop = setTimeout(() => controller.abort(), IDLE_WINDOW_MS + 30000);
+  try {
+    const stream = await fetch(base + '/api/event', {
+      headers: { authorization: auth, accept: 'text/event-stream' },
+      signal: controller.signal,
+    });
+    const ct = stream.headers.get('content-type') || '';
+    if (stream.status !== 200 || !ct.includes('text/event-stream')) {
+      verdict('idle sse stream open', false, 'status ' + stream.status + ' content-type ' + ct);
+      return;
+    }
+    verdict('idle sse stream open', true, 'content-type ' + ct.split(';')[0]);
+
+    const reader = stream.body.getReader();
+    let bytes = 0;
+    let streamClosed = false;
+    let closedAt = 0;
+    const start = Date.now();
+    const drain = (async () => {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.value) bytes += chunk.value.length;
+        if (chunk.done) {
+          streamClosed = true;
+          closedAt = Date.now() - start;
+          break;
+        }
+      }
+    })();
+    await Promise.race([drain, new Promise((res) => setTimeout(res, IDLE_WINDOW_MS))]);
+    if (streamClosed) {
+      verdict('idle stream survival', false, 'stream closed after ' + closedAt + 'ms (' + bytes + ' bytes) — reaped before the 240s window');
+    } else {
+      verdict('idle stream survival', true, 'stream open after the full 240s idle window (' + bytes + ' bytes)');
+    }
+    controller.abort();
+  } catch (e) {
+    verdict('idle stream survival', false, String(e));
+  } finally {
+    clearTimeout(hardStop);
+  }
+}
+
 await health();
 await negative();
 await sseRoundTrip();
+if (idleFlag) await idle();
 console.log(failures === 0 ? 'C0 PROBE: PASS' : 'C0 PROBE: ' + failures + ' FAILURE(S)');
 process.exit(failures === 0 ? 0 : 1);
