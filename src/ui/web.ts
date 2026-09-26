@@ -112,6 +112,18 @@ export function createWorkflowWebServer(
     }
   };
 
+  /** W150: the ONE posture read route (the borrowings spec forbids a second
+   * aggregation endpoint — this proxies the hub's /snapshot posture block).
+   * Fail-closed: no hub, or a hub older than W150, answers posture: null with
+   * the reason, and the strip renders its degraded state — never a fabricated
+   * zero. The browser never sees a hub token. */
+  const hubPosture = async (): Promise<{ posture: unknown; reason?: string }> => {
+    const result = await hubPost("/snapshot", {});
+    const payload = result.payload as { posture?: unknown; error?: string } | undefined;
+    if (result.status === 200 && payload?.posture !== undefined) return { posture: payload.posture };
+    return { posture: null, reason: payload?.error ?? "hub unavailable" };
+  };
+
   /** Session-scoped channel: `?session=<id>` selects a parallel live session;
    * without the parameter the operator's focused session answers. */
   function sessionId(url: string | undefined): string | undefined {
@@ -175,6 +187,7 @@ export function createWorkflowWebServer(
       return asset(response, "image/png", renderIconPng(512));
     }
     if (request.method === "GET" && pathname === "/api/snapshot") return json(response, 200, application.snapshot());
+    if (request.method === "GET" && pathname === "/api/posture") return json(response, 200, await hubPosture());
     if (request.method === "GET" && pathname === "/api/git") {
       const workspace = application.workspaceRoot;
       if (workspace === undefined) return json(response, 503, { error: "workspace unavailable" });

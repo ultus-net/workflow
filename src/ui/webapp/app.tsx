@@ -15,6 +15,7 @@ import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } fro
 import { useSessionCommands, useSessionState, useSessionStatus, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog, type RoutingFacts } from "./settings-dialog.js";
 import { AgentsView } from "./agents-view.js";
+import { PostureStrip, usePosture } from "./posture-strip.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
 import { UsageView } from "./usage-view.js";
 import { InvariantsPanel } from "./invariants-panel.js";
@@ -2164,6 +2165,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
   const { schedules, loops, refresh: refreshSchedules } = useOperatorSurfaces();
+  const posture = usePosture();
   const agents = useAgents();
   // The registry leads with the default agent (OpenCode); fall back to it while
   // the agents list is still loading so the switcher never marks the wrong one.
@@ -2363,6 +2365,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
         </div>
       </header>
+      <PostureStrip state={posture} onAction={(target) => setView(target)} />
       {view === "agents" ? (
         <AgentsView
           sessions={sessions}

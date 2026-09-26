@@ -2949,3 +2949,23 @@ body {
 .context-row { display: flex; justify-content: space-between; gap: 1rem; margin: 0; font-size: 0.8rem; }
 .context-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.68rem; }
 .context-compaction { margin: 0.3rem 0 0; color: var(--text-muted); font-size: 0.72rem; }
+
+/* W150: the operator posture strip + decision inbox (projection-only). */
+.posture-strip { display: flex; flex-direction: column; gap: 0.35rem; padding: 0.5rem 0.9rem; border-bottom: 1px solid var(--border); background: var(--bg-elevated, transparent); }
+.posture-strip-degraded { color: var(--text-muted); }
+.posture-degraded-note { color: var(--text-muted); font-size: 0.72rem; }
+.posture-counts { display: flex; gap: 1.1rem; flex-wrap: wrap; }
+.posture-count { display: flex; align-items: baseline; gap: 0.35rem; }
+.posture-count-value { font-family: var(--font-mono, monospace); font-size: 0.95rem; }
+.posture-count-active .posture-count-value { color: var(--warn, #d97706); font-weight: 600; }
+.posture-count-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.68rem; }
+.posture-decisions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.posture-row { display: flex; align-items: center; gap: 0.6rem; font-size: 0.78rem; }
+.posture-kind { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.1rem 0.4rem; border-radius: 3px; border: 1px solid var(--border); color: var(--text-muted); }
+.posture-kind-review { color: var(--accent, #60a5fa); }
+.posture-kind-gate, .posture-kind-budget, .posture-kind-orphan, .posture-kind-schedule { color: var(--warn, #d97706); }
+.posture-row-body { display: flex; flex-direction: column; gap: 0.05rem; min-width: 0; flex: 1; }
+.posture-row-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.posture-row-attribution { color: var(--text-muted); font-size: 0.68rem; }
+.posture-row-action { white-space: nowrap; }
+.posture-row-action-absent { color: var(--text-muted); opacity: 0.55; font-size: 0.72rem; }
