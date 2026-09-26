@@ -108,10 +108,10 @@ jobs:
             '    # so a fresh blocking connection is opened for the raw messages.' \
             '    from jeepney.io.blocking import open_dbus_connection' \
             '    raw = open_dbus_connection(bus=bus)' \
-            '    def call_method(method, *args):' \
-            '        msg = new_method_call(service_addr, method, signature=args[0], body=args[1]) if len(args) == 2 and isinstance(args[0], str) else new_method_call(service_addr, method)' \
-            '        return raw.send_and_get_reply(msg)' \
-            '    open_reply = call_method("OpenSession", "sv", ("plain", ("s", "")))' \
+            '    raw_addr = DBusObject("org.freedesktop.secrets", "/org/freedesktop/secrets")' \
+            '    def call_method(method, signature, body):' \
+            '        return raw.send_and_get_reply(new_method_call(raw_addr, method, signature=signature, body=body))' \
+            '    open_reply = call_method("OpenSession", "sv", (("plain", ("s", "")),))' \
             '    session_path = open_reply[0][1][1]' \
             '    session_addr = DBusObject("org.freedesktop.secrets", session_path)' \
             '    collection_secret = (session_addr, "", _secrets.token_bytes(32), session_addr, 0)' \
@@ -120,7 +120,7 @@ jobs:
             '    print("CreateCollection result:", create_body[0], create_body[1])' \
             '    if create_body[0] == "prompt":' \
             '        sys.exit("CreateCollection returned a prompt — the headless daemon refused to auto-create; W130 must fail closed")' \
-            '    collection = Collection(conn, create_body[1][0])' \
+            '    collection = Collection(secretstorage.dbus_init(), create_body[1][0])' \
             'if collection.is_locked():' \
             '    collection.unlock()' \
             'collection.create_item("ci-unlock-probe", {"service": "workflow", "credential": "ci-unlock-probe"}, b"ci-probe")' \
