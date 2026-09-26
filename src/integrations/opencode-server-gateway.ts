@@ -54,7 +54,17 @@ export interface OpencodeServerGatewayOptions {
   readonly enforced?: boolean | undefined;
   /** Observation hook for tests/hub monitors. */
   readonly observedRequest?: ((path: string) => void) | undefined;
+  /** Observation hook for the event-stream keepalive timer (tests/monitors). */
+  readonly observedKeepalive?: ((event: OpencodeSseKeepaliveEvent) => void) | undefined;
 }
+
+/**
+ * The keepalive timer lifecycle: `armed` = a timer is pending, `fired` = a
+ * frame was written, `cleared` = a pending timer was dropped without a write.
+ * A timer is either fired or cleared, never both, and never left pending —
+ * so `armed === fired + cleared` once the stream is gone.
+ */
+export type OpencodeSseKeepaliveEvent = "armed" | "fired" | "cleared";
 
 export interface OpencodeServerGateway {
   readonly url: string;
@@ -67,6 +77,30 @@ const HOP_BY_HOP = new Set([
   "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
   "te", "trailer", "transfer-encoding", "upgrade",
 ]);
+
+/**
+ * Event-stream keepalive. An ingress proxy with a ~4-minute idle timeout
+ * closes a quiet `text/event-stream` response, and the attached session dies
+ * with it, so the gateway emits an SSE comment frame while the stream is
+ * silent. A comment frame carries no `event:`/`data:` field, so a conforming
+ * parser ignores it: the client sees byte activity, never a phantom event.
+ *
+ * ADVISORY: this is transport-level liveness only. It is not evidence that
+ * upstream is alive or that the hub is the authority — it holds a connection
+ * open, and nothing more.
+ */
+export const DEFAULT_SSE_KEEPALIVE_MS = 15_000;
+/** Exported so the infra/c0 recipe doc can be pinned to the real frame. */
+export const SSE_KEEPALIVE_FRAME = ": workflow-keepalive\n\n";
+
+/** WORKFLOW_SSE_KEEPALIVE_MS must be a positive integer; anything else keeps the default. */
+export function sseKeepaliveMs(env: NodeJS.ProcessEnv): number {
+  const raw = env.WORKFLOW_SSE_KEEPALIVE_MS;
+  if (raw === undefined) return DEFAULT_SSE_KEEPALIVE_MS;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) return DEFAULT_SSE_KEEPALIVE_MS;
+  return parsed;
+}
 
 export async function createOpencodeServerGateway(
   options: OpencodeServerGatewayOptions,
@@ -146,7 +180,7 @@ async function handle(
     });
     return;
   }
-  forward(request, response, upstream, upstreamAuth);
+  forward(request, response, upstream, upstreamAuth, options);
 }
 
 /** Decodes percent-escapes so `/…/%72eply` cannot dodge the reply-route match. */
@@ -200,6 +234,7 @@ function forward(
   response: ServerResponse,
   upstream: URL,
   upstreamAuth: string,
+  options: OpencodeServerGatewayOptions,
 ): void {
   const incoming = new URL(request.url ?? "/", "http://gateway.invalid");
   const target = new URL(upstream.toString());
@@ -221,14 +256,80 @@ function forward(
       if (value === undefined || HOP_BY_HOP.has(lower)) continue;
       responseHeaders[key] = value;
     }
+    const eventStream = isKeepaliveableEventStream(upstreamResponse.headers);
     response.writeHead(upstreamResponse.statusCode ?? 502, responseHeaders);
+    if (eventStream) {
+      // A quiet stream must deliver its head now, not on the first event: a
+      // buffered head leaves the client waiting on a body that may not arrive
+      // for minutes, which is exactly the liveness gap the keepalive closes.
+      response.flushHeaders();
+    }
     upstreamResponse.pipe(response);
+    // Armed after the pipe, so every forwarded upstream chunk resets the idle
+    // timer: a busy stream is never interleaved with a keepalive frame.
+    if (eventStream) {
+      startSseKeepalive(upstreamResponse, response, sseKeepaliveMs(process.env), options.observedKeepalive);
+    }
   });
   proxied.on("error", () => {
     if (!response.headersSent) sendJson(response, 502, { error: "gateway upstream unreachable" });
     else response.destroy();
   });
   request.pipe(proxied);
+}
+
+/**
+ * True when the upstream response is an event stream the gateway may inject
+ * plain comment frames into. A `content-encoding` other than identity is
+ * excluded on purpose: the frame would be spliced into a compressed byte
+ * stream and the client's decoder would fail — a broken stream is strictly
+ * worse than an un-kept-alive one, so that case simply keeps the old
+ * (drop-prone) behavior rather than corrupting anything.
+ */
+function isKeepaliveableEventStream(headers: IncomingMessage["headers"]): boolean {
+  if (!(headers["content-type"] ?? "").toLowerCase().includes("text/event-stream")) return false;
+  const encoding = (headers["content-encoding"] ?? "").toLowerCase();
+  return encoding === "" || encoding === "identity";
+}
+
+/**
+ * Writes one SSE comment frame per idle interval until the stream ends. The
+ * timer is re-armed on every upstream chunk and cleared on close/end/finish on
+ * either side, so a disconnected client never leaves a timer writing into a
+ * dead response. `unref()` keeps it from holding the process open on its own.
+ */
+function startSseKeepalive(
+  upstreamResponse: IncomingMessage,
+  response: ServerResponse,
+  intervalMs: number,
+  observed: ((event: OpencodeSseKeepaliveEvent) => void) | undefined,
+): void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stop = (): void => {
+    if (timer === undefined) return;
+    clearTimeout(timer);
+    timer = undefined;
+    observed?.("cleared");
+  };
+  const arm = (): void => {
+    stop();
+    timer = setTimeout(() => {
+      timer = undefined;
+      observed?.("fired");
+      if (response.writableEnded || response.destroyed) return;
+      response.write(SSE_KEEPALIVE_FRAME);
+      arm();
+    }, intervalMs);
+    timer.unref();
+    observed?.("armed");
+  };
+  arm();
+  upstreamResponse.on("data", arm);
+  upstreamResponse.once("end", stop);
+  upstreamResponse.once("error", stop);
+  upstreamResponse.once("close", stop);
+  response.once("close", stop);
+  response.once("finish", stop);
 }
 
 function basic(user: string, password: string): string {

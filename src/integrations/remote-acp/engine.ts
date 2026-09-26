@@ -128,7 +128,39 @@ export interface RemoteEngine {
     readonly reply: RemoteEngineReply;
     readonly cwd: string;
   }): Promise<void>;
+  /**
+   * The server event subscription. An implementation reconnects a dropped
+   * stream within its own bound, so the stream ends (or throws) only when the
+   * caller aborts, when the route cannot be opened at all, or when that bound is
+   * spent — never because a single connection died.
+   */
   events(input: { readonly cwd: string; readonly signal: AbortSignal }): AsyncIterable<RemoteEngineEvent>;
+}
+
+/**
+ * Bounded reconnect for the event subscription.
+ *
+ * A gateway keepalive (`src/integrations/opencode-server-gateway.ts`) reduces
+ * ingress drops, it does not prevent them: a `content-encoding: gzip` stream
+ * gets no keepalive by design, and a proxy may destroy an idle response
+ * anyway. A one-shot subscription turns such a drop into a silently dead
+ * session — the generator ends and nothing reports it — so `events()` re-opens
+ * the route instead, bounded by an attempt count and a capped backoff. The
+ * bound matters as much as the retry: a server that is genuinely gone must end
+ * the subscription (taking the authority loss with it) rather than retry
+ * forever or hot-loop.
+ *
+ * ADVISORY: transport liveness only. A re-opened route is never evidence that
+ * upstream is healthy, that the hub is the authority, or that no event was
+ * lost while the route was down — an SSE resume does not replay the gap.
+ */
+export const DEFAULT_EVENT_RECONNECT_ATTEMPTS = 10;
+export const DEFAULT_EVENT_RECONNECT_BACKOFF_MS = 250;
+export const EVENT_RECONNECT_MAX_BACKOFF_MS = 5_000;
+
+/** Reconnect backoff for `attempt` (0-based): the base doubled per attempt, capped. */
+export function eventReconnectBackoffMs(attempt: number, baseMs: number): number {
+  return Math.min(baseMs * 2 ** attempt, EVENT_RECONNECT_MAX_BACKOFF_MS);
 }
 
 export interface HttpRemoteEngineOptions {
@@ -142,6 +174,17 @@ export interface HttpRemoteEngineOptions {
   readonly password?: string;
   /** Injectable fetch, for tests. */
   readonly fetch?: typeof fetch;
+  /**
+   * Reconnect bounds for {@link HttpRemoteEngine.events}. Defaults to
+   * `DEFAULT_EVENT_RECONNECT_ATTEMPTS` reconnects spaced by
+   * `DEFAULT_EVENT_RECONNECT_BACKOFF_MS`. A non-integer or negative value
+   * falls back to the default rather than arming a broken bound; `maxAttempts:
+   * 0` restores the one-shot subscription (no reconnect at all).
+   */
+  readonly eventReconnect?: {
+    readonly maxAttempts?: number | undefined;
+    readonly backoffMs?: number | undefined;
+  } | undefined;
 }
 
 /** HTTP/SSE implementation of {@link RemoteEngine}. */
@@ -150,6 +193,8 @@ export class HttpRemoteEngine implements RemoteEngine {
   readonly #defaultCwd: string;
   readonly #auth: string | undefined;
   readonly #fetch: typeof fetch;
+  readonly #eventReconnectAttempts: number;
+  readonly #eventReconnectBackoffMs: number;
 
   constructor(options: HttpRemoteEngineOptions) {
     this.#baseUrl = options.baseUrl.replace(/\/$/, "");
@@ -158,6 +203,9 @@ export class HttpRemoteEngine implements RemoteEngine {
       ? undefined
       : `Basic ${Buffer.from(`${options.username ?? "opencode"}:${options.password}`).toString("base64")}`;
     this.#fetch = options.fetch ?? fetch;
+    const reconnect = options.eventReconnect ?? {};
+    this.#eventReconnectAttempts = boundOrDefault(reconnect.maxAttempts, DEFAULT_EVENT_RECONNECT_ATTEMPTS);
+    this.#eventReconnectBackoffMs = boundOrDefault(reconnect.backoffMs, DEFAULT_EVENT_RECONNECT_BACKOFF_MS);
   }
 
   async health(): Promise<{ healthy: boolean; version?: string }> {
@@ -313,23 +361,49 @@ export class HttpRemoteEngine implements RemoteEngine {
     // `/global/event` spelling is v1 and now answers with the web UI's HTML
     // catch-all — a 200 that is NOT an event stream. Try the documented v2
     // route first and fall back to the v1 spelling by content type, so the
-    // subscription is live on either pinned generation.
+    // subscription is live on either pinned generation. The fallback is
+    // re-evaluated on every attempt, so a reconnect never inherits a stale
+    // route choice.
     const open = async (path: string): Promise<Response> =>
       this.#fetch(this.#url(path, input.cwd), {
         method: "GET",
         headers: { ...this.#headers(), accept: "text/event-stream" },
         signal: input.signal,
       });
-    let response = await open("/api/event");
-    if (!response.ok || !(response.headers.get("content-type") ?? "").includes("text/event-stream")) {
-      response = await open("/global/event");
-    }
-    if (!response.ok || response.body === null) {
-      throw new Error(`remote engine event stream failed (${response.status})`);
-    }
-    for await (const data of sseData(response.body, input.signal)) {
-      const payload = parseEventPayload(data);
-      if (payload !== undefined) yield payload;
+    const openStream = async (): Promise<ReadableStream<Uint8Array>> => {
+      let response = await open("/api/event");
+      if (!response.ok || !(response.headers.get("content-type") ?? "").includes("text/event-stream")) {
+        response = await open("/global/event");
+      }
+      if (!response.ok || response.body === null) {
+        throw new Error(`remote engine event stream failed (${response.status})`);
+      }
+      return response.body;
+    };
+    for (let reconnect = 0; ; reconnect += 1) {
+      const body = await openStream();
+      // A dropped connection surfaces either as a clean premature end or as a
+      // read error (a proxy that resets the socket mid-stream), so both are the
+      // same fault here: a subscription that stopped without being told to.
+      let failure: unknown;
+      try {
+        for await (const data of sseData(body, input.signal)) {
+          const payload = parseEventPayload(data);
+          if (payload !== undefined) yield payload;
+        }
+      } catch (error) {
+        failure = error;
+      }
+      // A caller abort is never a fault, so it never re-opens the route.
+      if (input.signal.aborted) return;
+      if (reconnect >= this.#eventReconnectAttempts) {
+        // The bound is reached: end the subscription. A fault is rethrown, never
+        // swallowed, so the caller's stream-error path stays honest.
+        if (failure !== undefined) throw failure;
+        return;
+      }
+      await delay(eventReconnectBackoffMs(reconnect, this.#eventReconnectBackoffMs), input.signal);
+      if (input.signal.aborted) return;
     }
   }
 
@@ -365,6 +439,34 @@ export class HttpRemoteEngine implements RemoteEngine {
       throw new TypeError(`remote engine ${method} ${path} returned invalid JSON`);
     }
   }
+}
+
+/** A reconnect bound that is not a non-negative integer is ignored, not clamped. */
+function boundOrDefault(value: number | undefined, fallback: number): number {
+  return value === undefined || !Number.isInteger(value) || value < 0 ? fallback : value;
+}
+
+/**
+ * Sleeps for the reconnect backoff, resolving early when the caller's signal
+ * aborts. The timer is deliberately NOT `unref()`ed: it is always awaited, and
+ * an unref'd one would let a quiet daemon exit mid-backoff.
+ */
+function delay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 /** Parses `text/event-stream` bytes into `data:` payload strings. */
