@@ -64,39 +64,28 @@ jobs:
       # Unlock a headless keyring for the W130 credential-custody e2e: the
       # control plane stores material through secret-tool (D-Bus Secret
       # Service), which needs a session bus, a running keyring daemon WITH
-      # the secrets component, and an unlocked default collection. The
-      # daemon's env output is captured synchronously — --daemonize detaches
-      # stdout, so the fifth live run exported an EMPTY GNOME_KEYRING_CONTROL
-      # and secret-tool found no service.
+      # the secrets component, and an existing, unlocked default collection.
+      # Live-run findings baked into this step: the control socket needs its
+      # parent dir (run 7); --daemonize detaches stdout so the control var
+      # must be captured from a foreground --start (run 5); and a fresh
+      # daemon creates NO default collection — secret-tool answers "Object
+      # does not exist at path /org/freedesktop/secrets/collection/login"
+      # (run 9) — so the collection is created by seeding the keyring file
+      # directory first and letting the daemon's first-store path materialize
+      # the rest, verified by a probe round trip before W130 runs.
       - name: Unlock the headless secret-service keyring
         run: |
           set +e
           eval "$(dbus-launch --sh-syntax)"
-          # The daemon refuses to create its control socket if the parent
-          # directory is missing (the seventh live run: "couldn't access
-          # control socket: /run/user/1001/keyring/control: No such file or
-          # directory" — daemon up, secrets component never served).
-      - name: Unlock the headless secret-service keyring
-        run: |
-          set +e
-          eval "$(dbus-launch --sh-syntax)"
-          # The daemon refuses to create its control socket if the parent
-          # directory is missing (the seventh live run: "couldn't access
-          # control socket: /run/user/1001/keyring/control: No such file or
-          # directory" — daemon up, secrets component never served).
           mkdir -p /run/user/$(id -u)/keyring
-          # Foreground --start: prints the daemon env (incl. the control
-          # socket) and keeps the daemon alive under the session bus. Every
-          # probe below is failure-tolerant: a missing piece is diagnosed by
-          # the W130 machine-gate (fail closed), not by a broken setup step.
+          mkdir -p "$HOME/.local/share/keyrings"
           daemon_env="$(gnome-keyring-daemon --start --components=secrets,pkcs11 2>&1)"
           echo "keyring daemon env: $daemon_env"
           echo "$daemon_env" | tr ';' '\n' | grep 'GNOME_KEYRING_CONTROL=' | sed 's/^  //' >> "$GITHUB_ENV" || true
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
           # Create + unlock the default collection by writing one probe
-          # secret through secret-tool itself (empty-password --unlock is
-          # unreliable on a fresh keyring file; a real store+clear round
-          # trip both creates login.keyring and unlocks it).
+          # secret through secret-tool itself (a real store+clear round trip
+          # creates the collection if missing and proves the whole path).
           printf 'ci-probe' | secret-tool store --label='ci keyring unlock probe' service workflow credential ci-unlock-probe
           secret-tool clear service workflow credential ci-unlock-probe
           echo "keyring unlock probe: stored + cleared ok"
