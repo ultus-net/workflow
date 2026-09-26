@@ -88,8 +88,9 @@ jobs:
             'bus = subprocess.check_output(["bash", "-c", "echo $DBUS_SESSION_BUS_ADDRESS"]).decode().strip()' \
             'os.environ["DBUS_SESSION_BUS_ADDRESS"] = bus' \
             'import secretstorage, jeepney' \
+            'from secretstorage.collection import Collection' \
             'conn = secretstorage.dbus_init()' \
-            'service_obj = conn.get_object("org.freedesktop.secrets", "/org/freedesktop/secrets")' \
+            'service_obj = jeepney.DBusObject("org.freedesktop.secrets", "/org/freedesktop/secrets")' \
             'collection = None' \
             'try:' \
             '    collection = secretstorage.get_default_collection(conn)' \
@@ -100,9 +101,6 @@ jobs:
             '    # Service.CreateCollection D-Bus call (run 11: get_default_collection' \
             '    # itself raises UnknownMethod when the collection object is absent).' \
             '    session = secretstorage.dbus_init()' \
-            '    import jeepney' \
-            '    service = jeepney.DBusObject("org.freedesktop.secrets", "/org/freedesktop/secrets")' \
-            '    conn = secretstorage.dbus_init()' \
             '    collection = secretstorage.create_collection(conn, "login")' \
             'if collection.is_locked():' \
             '    collection.unlock()' \
@@ -111,6 +109,7 @@ jobs:
             'print("probe item created")' > /tmp/keyring-create.py
           printf '%s\n' \
             'import os, subprocess, secretstorage, time' \
+            'from secretstorage.collection import Collection' \
             'bus = subprocess.check_output(["bash", "-c", "echo $DBUS_SESSION_BUS_ADDRESS"]).decode().strip()' \
             'os.environ["DBUS_SESSION_BUS_ADDRESS"] = bus' \
             'conn = secretstorage.dbus_init()' \
@@ -121,9 +120,8 @@ jobs:
             '        collection = secretstorage.get_default_collection(conn)' \
             '        break' \
             '    except Exception:' \
-            '        time.sleep(0.3)' \
-            'if collection is None:' \
-            '    collection = secretstorage.create_collection(conn, "login")' \
+            '        collection = Collection(conn, "/org/freedesktop/secrets/collection/login")' \
+            '        break' \
             'if collection.is_locked():' \
             '    collection.unlock()' \
             'item = None' \
