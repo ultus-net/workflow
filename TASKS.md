@@ -5757,6 +5757,17 @@ choice decides the push target).
       `bubblewrap` and relaxes Ubuntu 24.04's AppArmor
       unprivileged-userns restriction in a documented setup step
       (docs/CI.md). The gate job stayed green throughout.
+  - Dated note (2026-09-26, fifth live run, same PR): the bwrap provisioning
+      VERIFIED LIVE — the W132/W144/`/bash` containment suites now pass on
+      the runner. One failure remained: W130's credential store —
+      `createSecretServiceStore` shells out to `secret-tool` over D-Bus, and
+      the runner has neither a session bus nor a keyring, so `store.put`
+      throws and the control plane correctly answers 400 (the test header's
+      documented machine-gate failing closed, again as designed). Fix: the
+      evidence job provisions a headless keyring (gnome-keyring + dbus-x11;
+      dbus-launch + `gnome-keyring-daemon --unlock --daemonize`, exported
+      through $GITHUB_ENV). No test was weakened: W130 still fails closed
+      wherever the keyring prerequisite is absent.
 
 **Source:** docs/CI.md (2026-09-26 design) — the operator's "start with CI
 design" direction. The repo has no CI at all today; this wires the existing

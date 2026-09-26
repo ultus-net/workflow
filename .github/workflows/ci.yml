@@ -50,14 +50,27 @@ jobs:
       # Linux Bubblewrap backend and correctly fail closed without it
       # ("containment backend unavailable" — the 2026-09-26 live CI finding).
       # ubuntu-latest ships no bwrap; Ubuntu 24.04 also restricts unprivileged
-      # user namespaces by default, which bwrap needs.
-      - name: Install Bubblewrap (the containment backend the suites prove)
+      # user namespaces by default, which bwrap needs. W130's credential
+      # custody test additionally drives the real secret-service store
+      # (secret-tool over D-Bus), so the job provisions a headless keyring.
+      - name: Install system prerequisites (bubblewrap, D-Bus secret service)
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap
+          sudo apt-get install -y bubblewrap gnome-keyring dbus-x11 libsecret-1-0
           if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
+      # Unlock a headless keyring for the W130 credential-custody e2e: the
+      # control plane stores material through secret-tool (D-Bus Secret
+      # Service), which needs a session bus + an unlocked default collection.
+      - name: Unlock the headless secret-service keyring
+        run: |
+          eval "$(dbus-launch --sh-syntax)"
+          echo "" | gnome-keyring-daemon --unlock --daemonize
+          {
+            echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS"
+            echo "GNOME_KEYRING_CONTROL=$GNOME_KEYRING_CONTROL"
+          } >> "$GITHUB_ENV"
       - run: npm ci
       - run: npm run build
       - run: npm run test:ci

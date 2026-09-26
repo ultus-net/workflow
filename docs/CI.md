@@ -119,7 +119,13 @@ default shim resolves a newer pnpm and pnpm refuses the mismatch);
 ("containment backend unavailable": `src/containment/linux-bwrap.ts` rejects
 ENOENT rather than executing with ambient authority — the honest boundary
 working as designed); Ubuntu 24.04's AppArmor unprivileged-userns
-restriction is relaxed in the same setup step. The guard build precondition
+restriction is relaxed in the same setup step; (3) the evidence job must
+also provision a headless secret-service keyring — W130's credential
+custody test drives the real `secret-tool` D-Bus store, and without a
+session bus + unlocked collection the control plane correctly answers 400
+(gnome-keyring + dbus-x11 installed, dbus-launch +
+`gnome-keyring-daemon --unlock --daemonize`, exported through $GITHUB_ENV).
+The guard build precondition
 turned out to be a REAL product defect: the root `postinstall` key sat at
 package.json top level (outside `scripts`), so npm never ran the hook
 anywhere — fixed by moving it into `scripts` (W137 dated correction).
