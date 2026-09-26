@@ -119,7 +119,7 @@ jobs:
             '    create_body = create_reply.body[0]' \
             '    print("CreateCollection result:", create_body[0], create_body[1])' \
             '    if create_body[0] == "prompt":' \
-            '        sys.exit("CreateCollection returned a prompt — the headless daemon refused to auto-create; W130 must fail closed")''
+            '        sys.exit("CreateCollection returned a prompt — the headless daemon refused to auto-create; W130 must fail closed")'
           printf '%s\n' \
             'import os, subprocess, secretstorage, time' \
             'from secretstorage.collection import Collection' \
