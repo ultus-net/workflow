@@ -124,7 +124,7 @@ jobs:
             '    daemon_obj = jeepney.DBusAddress("org.freedesktop.DBus", object_path="/org/freedesktop/DBus", interface="org.freedesktop.DBus.Peer")' \
             '    ping_reply = raw.send_and_get_reply(jeepney.new_method_call(daemon_obj, "Ping"))' \
             '    print("bus ping ok")' \
-            '    secrets_addr = jeepney.DBusAddress("org.freedesktop.secrets", object_path="/org/freedesktop/secrets", interface="org.freedesktop.DBus.Peer")' \
+            '    secrets_addr = jeepney.DBusAddress("org.freedesktop.secrets", object_path="/org/freedesktop/secrets")' \
             '    try:' \
             '        raw.send_and_get_reply(jeepney.new_method_call(secrets_addr, "Ping"))' \
             '        print("secrets service reachable")' \
