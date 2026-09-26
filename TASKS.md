@@ -5510,3 +5510,61 @@ duplicate-runId 500s remain queued (W142 finding (e)); the
 try/catch-rethrow shape is now duplicated at two call sites — extract a
 helper if a third route adopts the classification (the review's P3
 nit).
+
+### W150 - The operator posture strip and unified decision inbox (Planned - Paperclip borrow wave 1; spec: docs/superpowers/specs/2026-09-26-paperclip-dashboard-borrowings.md Wave 1) (2026-09-26)
+
+**Source:** the Paperclip borrowings spec, mapping rows 1/2/9 (dashboard overview cards, approvals queue, watchdog recovery surfacing). Four posture counts above the two-region layout — runs awaiting review/decision, open budget incidents (W045/W118 tiers), orphaned runs needing recover-or-discard, schedules whose last run failed — above one decision list merging run-gate reviews, recorded review decisions, budget incidents, and orphaned-run recovery, each row with actor + authority basis + an action link into an existing panel.
+
+**Acceptance criteria:**
+- [ ] Posture strip renders counts computed only from registry state; a fail-closed empty/degraded state when a registry is absent (focused test).
+- [ ] Zero mutations on render; every row's action is a link into an existing panel (no new write routes; test).
+- [ ] Decision-list coverage and attribution pinned by a focused projection-function test.
+- [ ] lint + typecheck + focused webapp tests green.
+
+**Residuals (recorded, not built):** if the dashboard is ever served beyond loopback, the new action dispatch must be token-gated per the azure spec's Easy Auth track.
+
+### W151 - Budget state as agent posture with incident actions (Planned - Paperclip borrow wave 2; spec Wave 2) (2026-09-26)
+
+**Source:** Paperclip costs/dashboard guides, mapped onto W045 session-budget guard state (mechanism, caps, sticky violation), W118 warn-tier stage, W111 usage views. Per-session budget bar with tier colorization (green under warn, amber at warn, red at abort), a paused-by-budget badge when the sticky violation is installed, and an incident card with two authority-gated actions: keep stopped (acknowledge) and raise cap and resume — dispatched as application-authority proposals, never direct mutations.
+
+**Acceptance criteria:**
+- [ ] Posture badge renders only from recorded tier state; no configured caps renders an honest "no local cap" state (not a fabricated 0%).
+- [ ] Raise-cap and resume fail closed when the authority withholds the capability (test proves the denial renders).
+- [ ] Tier boundaries derived from the same constants the guard enforces (no duplicated thresholds in the UI).
+
+**Residuals (cut):** no three-layer budget scopes, month-rollover, finance ledgers, or provider quota windows — no subscription billing model exists here.
+
+### W152 - Unified activity timeline with actor/authority attribution (Planned - Paperclip borrow wave 3; spec Wave 3) (2026-09-26)
+
+**Source:** Paperclip's activity log (every mutation with actor + entity + before/after), mapped onto the kernel transition log + run registry records via the existing History panel. One chronological feed: kernel transitions, run begin/review/finish, review verdicts, budget tier crossings, schedule fires — each row naming actor (operator/agent/system) and authority basis (kernel transition or authorization record).
+
+**Acceptance criteria:**
+- [ ] Every rendered row's actor/authority comes from the underlying record; missing attribution renders an explicit "unattributed" state (test — the UI never synthesizes attribution).
+- [ ] Append-only: a test proves no feed mutation path exists.
+- [ ] Retention wording matches the hub's actual persistence behavior (asserted in the same test).
+
+**Residuals (cut):** CSV export, permission tiers, "responsible user" (single operator), Paperclip's "permanent record" claim (the panel copies the hub's actual retention verbatim).
+
+### W153 - Schedules as routines with per-schedule run lineage and origin attribution (Planned - Paperclip borrow wave 4; spec Wave 4) (2026-09-26)
+
+**Source:** Paperclip routines (scheduled trigger creates a run with originKind attribution; per-routine run history), mapped onto W074 schedule-registry + hub-scheduler + schedules-view. The gap is the origin link and per-schedule history, not trigger mechanics: schedules-view gains last-run outcome, caused-run count with links, next fire, and a recent-runs filter; run rows anywhere carry "fired by schedule S" origin attribution. If the run registry lacks a schedule-origin field, the change lands in the hub integration layer first (schedule-registry.ts / run-registry.ts), view projects it — never the kernel.
+
+**Acceptance criteria:**
+- [ ] A schedule's caused runs and outcomes are registry-sourced, not UI-computed from timestamps (focused test).
+- [ ] Run-now stays the only manual trigger path and records origin attribution.
+- [ ] Deleting a schedule tombstones its origin rather than dangling historical runs (asserted).
+
+**Residuals (cut):** webhook triggers, variable templating, concurrency/catch-up policies, revision history with restore, cron-picker editor.
+
+### W154 - Work products over evidence, and the RSI objective lineage view (Planned - Paperclip borrow wave 5; spec Wave 5) (2026-09-26)
+
+**Source:** Paperclip's artifacts shelf + work-timeline discipline, mapped onto the Evidence/Changes panels and W073's self-improvement registry. Two panels, one wave: (a) an artifact strip in the Evidence and Changes panels — screenshots render inline, test outputs render as text, each linked to the owning run/evidence record; durable inspectable outputs are first-class while in-worktree paths are signposts and must not present as durable artifacts; (b) the RSI lineage view — objective → iteration → verdict → commit-ref chain projected from self-improvement registry records, one row per iteration, verdict and commit ref clickable into the run record.
+
+**Acceptance criteria:**
+- [ ] Evidence with image content renders a preview in place; without previewable content renders a plain record with its freshness state (no silent fallback).
+- [ ] The RSI lineage view renders the full chain for a registry objective with honest empty states for absent verdicts/commit refs.
+- [ ] A test proves the artifact strip refuses to render a bare filesystem path as a durable artifact.
+
+**Residuals (cut):** agent-initiated uploads (different trust model — Workflow evidence is environment-captured), anchored document comments, workspace file browser, cross-task stacks.
+
+**Design conventions for W150-W154 (from Paperclip DESIGN.md, projection-compatible):** one semantic status token set (running/paused/blocked/awaiting-review/over-budget) shared across badge/row/chart/log (styles.css/theme.ts before W150 lands); machine values monospace with shared formatters (presenters.ts); no redundant toasts; late terminal outcomes refresh silently. No Paperclip vocabulary (hire/CEO/board/company/heartbeat) enters Workflow copy — runs, schedules, reviews, evidence, objectives stay canonical.
