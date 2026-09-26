@@ -40,4 +40,5 @@ pinned open-core artifacts and supplies everything environment-specific.
     instances/azure/
       README.md           this file — the contract and checklist
       azure-pipelines.yml draft two-checkout pipeline skeleton (TODO markers)
+      verify-pin.sh       draft fail-closed digest-pin check (runs pre-deploy)
       params.bicepparam   draft parameter skeleton (TODO markers)

@@ -5511,6 +5511,7 @@ try/catch-rethrow shape is now duplicated at two call sites — extract a
 helper if a third route adopts the classification (the review's P3
 nit).
 
+<<<<<<< HEAD
 ### W150 - The operator posture strip and unified decision inbox (Planned - Paperclip borrow wave 1; spec: docs/superpowers/specs/2026-09-26-paperclip-dashboard-borrowings.md Wave 1) (2026-09-26)
 
 **Source:** the Paperclip borrowings spec, mapping rows 1/2/9 (dashboard overview cards, approvals queue, watchdog recovery surfacing). Four posture counts above the two-region layout — runs awaiting review/decision, open budget incidents (W045/W118 tiers), orphaned runs needing recover-or-discard, schedules whose last run failed — above one decision list merging run-gate reviews, recorded review decisions, budget incidents, and orphaned-run recovery, each row with actor + authority basis + an action link into an existing panel.
@@ -5569,7 +5570,7 @@ nit).
 
 **Design conventions for W150-W154 (from Paperclip DESIGN.md, projection-compatible):** one semantic status token set (running/paused/blocked/awaiting-review/over-budget) shared across badge/row/chart/log (styles.css/theme.ts before W150 lands); machine values monospace with shared formatters (presenters.ts); no redundant toasts; late terminal outcomes refresh silently. No Paperclip vocabulary (hire/CEO/board/company/heartbeat) enters Workflow copy — runs, schedules, reviews, evidence, objectives stay canonical.
 
-### W147 - Open core / deployment-instance repo split (seed)
+### W147 - Open core / deployment-instance repo split (Complete - the placement decision recorded with a gated extraction sequence; MIT root license, split spec, the instances/azure seed with the fail-closed pin check, recorded two-round five-axis review; the strip waits on the work instance repo per W148) (2026-09-26)
 
 **Source:** the operator's 2026-09-26 placement decision — the control plane
 stays an open GitHub project; the Azure deployment material (bicep params,
@@ -5587,28 +5588,58 @@ design spec (`docs/superpowers/specs/2026-09-25-azure-container-jobs-remote-sand
 which owns the plane design, not repo placement).
 
 **Acceptance criteria:**
-- [ ] Root `LICENSE` (MIT, copyright ultus-net) and `package.json`
+- [x] Root `LICENSE` (MIT, copyright ultus-net) and `package.json`
       `"license": "MIT"` present — the work tenant has a grant to run the
-      code (the root was previously all-rights-reserved).
-- [ ] Spec `docs/superpowers/specs/2026-09-26-deployment-instance-split.md`
+      code (the root was previously all-rights-reserved). Evidence: the
+      21-line MIT text plus the license field landed in f7df818; JSON parse
+      valid.
+- [x] Spec `docs/superpowers/specs/2026-09-26-deployment-instance-split.md`
       records: the seam table (open core vs instance), the one-way dependency
       rule (instance consumes pinned open artifacts; nothing work-specific
       flows open-side), the pinning scheme (image by digest, modules at a
       pinned tag, no work-side image rebuilds), the `infra/c0/` disposition
       (stays open-side as the qualified reference probe with its append-only
       verdicts), and the local-first guarantee (local surfaces never depend
-      on the instance).
+      on the instance). Landed in f17273a with the dated supersession notes
+      below.
   - Dated note (2026-09-26, operator direction): the `infra/c0/` disposition
       recorded in this criterion is superseded same-day — the test-deploy
       folder EXTRACTS to the work instance repo once that repo exists (spec
       §7 dated note and the §11 gated sequence); W148 carries the extraction.
       The verdict-preservation duty (append-only records; git history as the
       archive) is unchanged.
-- [ ] `instances/azure/` seed exists: README contract + checklist, draft
+- [x] `instances/azure/` seed exists: README contract + checklist, draft
       two-checkout pipeline skeleton, draft `.bicepparam` skeleton — every
       instance-specific value is a TODO marker, and the seed contains no real
-      org, subscription, digest, or secret values (greppable).
-- [ ] Independent five-axis review of the branch.
+      org, subscription, digest, or secret values (greppable). The refinement
+      loop added the fail-closed `verify-pin.sh` skeleton (the §10 Q2
+      mechanism) and the pipeline's step-1 script invocation.
+- [x] Independent five-axis review of the branch. Two recorded approvals: the
+      initial slice, and the extraction-direction delta in two rounds —
+      round 1 REVISE with three P2 + two P3 (the seed contradicted itself on
+      module sourcing; the recorded sweep list missed .gitignore, the §2
+      cell, and the Evidence-base line; the dated note sat under the wrong
+      criterion), all repaired in a51963e, round 2 APPROVE per-finding.
+      Both verdicts recorded and fingerprint-bound.
+
+W147 is complete. The placement decision is recorded with its extraction
+sequence gated behind W148: MIT at the root closes the all-rights-reserved gap
+the work tenant would have hit; the seam table, one-way dependency rule, and
+digest/tag pinning scheme are recorded; the operator's same-day extraction
+direction superseded the original infra/c0 disposition via dated notes (§7,
+§11, and the dated note under the disposition criterion) with verdict
+preservation as the unchanged duty. The seed ships the README contract +
+checklist, a draft two-checkout pipeline, a draft .bicepparam, and — refinement
+loop — a fail-closed verify-pin.sh skeleton that concretizes the §10 Q2
+mechanism (digest expectation shipped with the open release; the instance
+asserts equality pre-deploy). Remaining open question: §10 Q1 (registry
+choice), which decides W149's push target.
+
+**Verification:** npm run typecheck exit 0, npm run lint exit 0 (docs/
+decision slice, no runtime surface); package.json JSON parse valid;
+git diff --name-only origin/main..HEAD confined to the declared file set;
+security sweep grep over the new files green (no real org/subscription/
+digest/secret values — TODO markers only); verify-pin.sh bash -n syntax check.
 
 ### W148 - Extract `infra/c0/` into the work instance repo (strip)
 
@@ -5629,3 +5660,24 @@ instance repo consuming the material.
       re-run at execution time), and closes this entry with the pre-strip sha
       in the message.
 - [ ] Independent five-axis review of the strip.
+
+### W149 - The open-side publish workflow (tag → image push + recorded digest expectation)
+
+**Source:** the 2026-09-26 split spec §10 Q2 resolution — the fail-closed pin
+check has two halves; the instance half is the seed's verify-pin.sh, the open
+half is this workflow.
+
+**Depends on:** W147 (the recorded pinning scheme) and §10 Q1 (the registry
+choice decides the push target).
+
+**Acceptance criteria:**
+- [ ] A GitHub Actions workflow builds the product image from the tagged
+      commit, pushes it to the chosen registry, and records the pushed digest
+      as a RELEASE ASSET or release note at that tag — never as a mutating
+      file in the tagged tree (the digest cannot exist before the image is
+      pushed). The expectation and the artifact come from the same workflow
+      run; no hand-copied digests.
+- [ ] The record's format is what verify-pin.sh's contract consumes (a
+      sha256:<64-hex> line the instance can materialize at the pinned ref).
+- [ ] Adopter-facing docs record the publish/tag flow.
+- [ ] Independent five-axis review.

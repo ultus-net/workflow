@@ -111,15 +111,25 @@ operator-specific material here.
 - Work pays hosting and inference; the open project stays independent of
   whether that continues (§6).
 
-## 10. Open questions (requirements, not resolutions)
+## 10. Open questions and recorded resolutions
 
-1. GHCR vs a private ACR mirror for the published image (provenance vs
-   pull-cost/quota inside the work tenant).
-2. Does the instance pipeline verify the digest against a recorded expectation
-   (fail-closed pin check) or trust a pin file? Fail-closed is the repo's
-   posture; the mechanism is undecided.
-3. Secret custody work-side: Key Vault refs end-state, ACA secrets as the C0
-   probe shortcut only.
+1. OPEN — GHCR vs a private ACR mirror for the published image (provenance vs
+   pull-cost/quota inside the work tenant). Decision inputs: whether the work
+   tenant already pays for an ACR, GHCR pull egress cost, and the provenance
+   cost of a mirror standing between the reviewed artifact and the deployment.
+   Decides the publish workflow's target (W149).
+2. RECORDED (2026-09-26 refinement loop) — the pin check is fail-closed by
+   construction: the open release carries the expected image digest as a
+   RELEASE ASSET or release note at the pinned tag (not a mutating file in
+   the tagged tree — the digest cannot exist before the image is pushed), and
+   the instance pipeline checks out the open repo at that same pinned ref and
+   asserts the to-be-deployed digest equals the recorded expectation BEFORE
+   any deploy step, refusing on mismatch or absence. The seed's
+   `verify-pin.sh` is the skeleton; the open-side half (tag → GHCR push →
+   digest record) is W149.
+3. RECORDED — Key Vault references are the end-state and ACA-managed secrets
+   were the C0 probe shortcut only; that is the 2026-09-25 spec's C1 posture
+   verbatim, so this is a pointer, not an open question.
 
 ## 11. Extraction sequence — strip `infra/c0/` into the work instance repo (recorded 2026-09-26, gated; not executed)
 

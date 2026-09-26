@@ -31,8 +31,12 @@ stages:
                 - checkout: openCore
 
                 # 1. Verify the pin (fail closed) before anything deploys.
-                # TODO: assert imageDigest matches the expectation recorded for
-                # the pinned open-core tag; refuse to deploy on mismatch.
+                - script: ./verify-pin.sh "$(Pipeline.Workspace)/s/openCore/RELEASES.md" "$(imageDigest)"
+                  # TODO: the expectation file's name/format is fixed at the
+                  # first tagged release (the open-side publish workflow, W149,
+                  # records the digest as a release asset/note at the tag).
+                  # The check refuses on mismatch OR missing expectation —
+                  # a broken check never degrades to deploy-anyway.
 
                 # 2. Deploy the plane from instance-owned modules + params.
                 # TODO: az deployment --template-file <self-checkout>/infra/...bicep
