@@ -15,6 +15,41 @@ import {
   type ProposalSource,
 } from "./self-improvement-loop.js";
 import type { SelfImprovementSpec } from "./self-improvement-registry.js";
+import { taskId, type TaskId } from "../kernel/contracts.js";
+import type { WorkflowApplication } from "../application/workflow.js";
+
+/**
+ * The proposal turn's bookkeeping task lifecycle (2026-09-26): the proposal
+ * turn runs on a per-workspace application whose task shares the hub's single
+ * kernel graph. A task left IN_PROGRESS after the turn collides with the run
+ * begin's own IN_PROGRESS task — the next activation fails closed with
+ * "multiple IN_PROGRESS tasks require an explicit active task selection" and
+ * the loop dies at iters=0 (observed live; lesson 98dd6a33). So a proposal
+ * turn's task must be opened at turn start and completed (VERIFIED) or failed
+ * (FAILED) when the turn ends.
+ */
+export interface ProposalTurnTask {
+  readonly taskId: TaskId;
+  complete(): void;
+  fail(): void;
+}
+
+export function beginProposalTurnTask(application: WorkflowApplication): ProposalTurnTask {
+  const id = taskId(`rsi-proposal:${randomUUID()}`);
+  application.addTask({ id, title: "RSI proposal session", dependencies: [], requiredEvidence: [] });
+  application.transition(id, "IN_PROGRESS");
+  application.selectActiveTask(id);
+  return {
+    taskId: id,
+    // The kernel's transition table routes IN_PROGRESS -> VERIFYING -> VERIFIED
+    // (a direct IN_PROGRESS -> VERIFIED is rejected).
+    complete: () => {
+      application.transition(id, "VERIFYING");
+      application.transition(id, "VERIFIED");
+    },
+    fail: () => application.transition(id, "FAILED"),
+  };
+}
 
 /**
  * Checkpoint F — the production self-improvement loop wiring: an agent-driven

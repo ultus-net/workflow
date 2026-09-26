@@ -24,6 +24,7 @@ import { createScheduleRegistry } from "../integrations/schedule-registry.js";
 import { createSelfImprovementRegistry } from "../integrations/self-improvement-registry.js";
 import {
   createAgentDrivenRunLoop,
+  beginProposalTurnTask,
   createContainedGitRunner,
   type AgentTurnRunner,
 } from "../integrations/self-improvement-agent.js";
@@ -197,10 +198,9 @@ const rsiProposalApplicationFor = (target: string): WorkflowApplication => {
   let bound = rsiProposalApplications.get(canonical);
   if (bound === undefined) {
     bound = new WorkflowApplication(graph, application.host, [], new Set(["read"]), canonical);
-    const proposalTaskId: TaskId = taskId(`rsi-proposal:${randomUUID()}`);
-    bound.addTask({ id: proposalTaskId, title: "RSI proposal session", dependencies: [], requiredEvidence: [] });
-    bound.transition(proposalTaskId, "IN_PROGRESS");
-    bound.selectActiveTask(proposalTaskId);
+    // The proposal turn's task is opened per turn (beginProposalTurnTask in
+    // rsiAgentTurn) and closed when the turn ends — never parked IN_PROGRESS
+    // on the shared kernel graph across turns.
     rsiProposalApplications.set(canonical, bound);
   }
   return bound;
@@ -210,8 +210,13 @@ const rsiAgentTurn = (handles: WorkflowHubSchedulerHandles): AgentTurnRunner => 
   const turnApplication = input.runId === undefined
     ? rsiProposalApplicationFor(input.workspace)
     : handles.resolve(input.workspace, input.runId);
+  // Proposal turns open their own bookkeeping task and MUST close it when the
+  // turn ends (complete on success, failed on error): a task left IN_PROGRESS
+  // on the shared kernel graph collides with the run begin's own task and
+  // fails the loop closed at iters=0 (lesson 98dd6a33, 2026-09-26).
+  const proposalTurn = input.runId === undefined ? beginProposalTurnTask(turnApplication) : undefined;
   const turnTaskId: TaskId = input.runId === undefined
-    ? taskId(`rsi-${input.kind}:${randomUUID()}`)
+    ? proposalTurn!.taskId
     : taskId(`run:${input.runId}`);
   const runtime = await createConfiguredAcpRuntime(turnApplication, input.workspace, turnTaskId, undefined, guard);
   console.log(`rsi ${input.kind} turn budget mechanism: ${runtime.budgetMechanism}`);
@@ -222,8 +227,19 @@ const rsiAgentTurn = (handles: WorkflowHubSchedulerHandles): AgentTurnRunner => 
       const reason = snapshot.state === "failed" && typeof snapshot.reason === "string" ? `: ${snapshot.reason}` : "";
       throw new Error(`rsi ${input.kind} turn did not complete (state: ${snapshot.state}${reason})`);
     }
+    if (proposalTurn !== undefined) proposalTurn.complete();
     const usage = runtime.metrics?.();
     return { result: snapshot.result, costUsd: usage?.costUsd ?? 0 };
+  } catch (error) {
+    if (proposalTurn !== undefined) {
+      try {
+        proposalTurn.fail();
+      } catch {
+        // the task may already be terminal (e.g. the turn failed after
+        // completion was recorded) — the original error must not be masked
+      }
+    }
+    throw error;
   } finally {
     // Failed turns still spent money: the run-usage ledger records whatever
     // the metering proxy saw even when the turn did not complete (the loop's
