@@ -109,15 +109,14 @@ jobs:
             '    from jeepney.io.blocking import open_dbus_connection' \
             '    raw = open_dbus_connection(bus=bus)' \
             '    def call_method(method, *args):' \
-            '        msg = Message(MessageType.method_call, destination="org.freedesktop.secrets", interface="org.freedesktop.Secret.Service", path="/org/freedesktop/secrets", member=method, body=args)' \
-            '        reply = raw.send_messageAndGetReply(msg) if hasattr(raw, "send_messageAndGetReply") else raw.send_and_get_reply(msg)' \
-            '        return reply' \
-            '    open_reply = call_method("OpenSession", "sv", ("plain", ("s", "")))' \
-            '    session_path = open_reply.body[1][1]' \
+            '        msg = new_method_call(service_addr, method, signature=args[0], body=args[1]) if len(args) == 2 and isinstance(args[0], str) else new_method_call(service_addr, method)' \
+            '        return raw.send_and_get_reply(msg)' \
+            '    open_reply = call_method("OpenSession", "sv", (("plain", ("s", "")),))' \
+            '    session_path = open_reply[0][1][1]' \
             '    session_addr = DBusObject("org.freedesktop.secrets", session_path)' \
             '    collection_secret = (session_addr, "", _secrets.token_bytes(32), session_addr, 0)' \
-            '    create_reply = call_method("CreateCollection", "a{sv}s(oayts)", ({"org.freedesktop.Secret.Collection.Label": ("s", "login")}, "login", collection_secret))' \
-            '    create_body = create_reply.body[0]' \
+            '    create_reply = call_method("CreateCollection", "a{sv}s(oayts)", (({"org.freedesktop.Secret.Collection.Label": ("s", "login")}, "login", collection_secret),))' \
+            '    create_body = create_reply[0]' \
             '    print("CreateCollection result:", create_body[0], create_body[1])' \
             '    if create_body[0] == "prompt":' \
             '        sys.exit("CreateCollection returned a prompt — the headless daemon refused to auto-create; W130 must fail closed")' \
