@@ -136,7 +136,7 @@ function stubStatus(status: string | Error) {
 
 async function runnerWith(
   t: TestContext,
-  reviewer: { factory: ReviewerAgentSessionFactory; prompts: string[]; disposed: number },
+  reviewer: { factory: ReviewerAgentSessionFactory; prompts?: string[]; disposed?: number },
   diff: string | Error = "diff --git a/x b/x",
   status?: string | Error,
   store?: ReviewProvenanceStore,
@@ -748,4 +748,63 @@ test("createGitCommitSource trims HEAD and fails soft on error", async () => {
     throw new Error("exit 128");
   });
   assert.equal(await failing("/ws"), undefined);
+});
+
+// #134: the reviewer session's kernel task mirrors the session — completed
+// when review() returns (whatever the verdict gates then decide for the
+// RUN), failed when review() throws. A factory that opens no task omits
+// endTask and every existing test in this file still exercises that path.
+function stubRecordingReviewer(finalMessage: string | Error): {
+  factory: ReviewerAgentSessionFactory;
+  outcomes: Array<"completed" | "failed">;
+} {
+  const outcomes: Array<"completed" | "failed"> = [];
+  const factory: ReviewerAgentSessionFactory = {
+    async spawn() {
+      return {
+        async review() {
+          if (finalMessage instanceof Error) throw finalMessage;
+          return finalMessage;
+        },
+        async dispose() {},
+        endTask(outcome: "completed" | "failed") {
+          outcomes.push(outcome);
+        },
+      };
+    },
+  };
+  return { factory, outcomes };
+}
+
+test("#134: an approved review completes the session's kernel task", async (t) => {
+  const reviewer = stubRecordingReviewer(APPROVED_MESSAGE);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer);
+  await controller.begin({ runId: "author-134a", title: "Author run", workspace, requiresReview: true });
+  await runner.reviewRun({ runId: "author-134a", workspace, taskPrompt: "fix the bug" });
+  assert.deepEqual(reviewer.outcomes, ["completed"]);
+});
+
+test("#134: a changes_requested review still completes the session's kernel task (the task mirrors the session, not the verdict)", async (t) => {
+  const reviewer = stubRecordingReviewer(CHANGES_MESSAGE);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer);
+  await controller.begin({ runId: "author-134b", title: "Author run", workspace, requiresReview: true });
+  await runner.reviewRun({ runId: "author-134b", workspace });
+  assert.deepEqual(reviewer.outcomes, ["completed"]);
+});
+
+test("#134: an unparseable verdict completes the session's kernel task (the fail-closed gate is the run's outcome, not the session's)", async (t) => {
+  const reviewer = stubRecordingReviewer("looks good to me");
+  const { controller, workspace, runner } = await runnerWith(t, reviewer);
+  await controller.begin({ runId: "author-134c", title: "Author run", workspace, requiresReview: true });
+  const result = await runner.reviewRun({ runId: "author-134c", workspace });
+  assert.equal(result.parseFailure !== undefined || result.verdict === "changes_requested", true);
+  assert.deepEqual(reviewer.outcomes, ["completed"]);
+});
+
+test("#134: a throwing review fails the session's kernel task and the review aborts", async (t) => {
+  const reviewer = stubRecordingReviewer(new Error("reviewer agent exploded"));
+  const { controller, workspace, runner } = await runnerWith(t, reviewer);
+  await controller.begin({ runId: "author-134d", title: "Author run", workspace, requiresReview: true });
+  await assert.rejects(runner.reviewRun({ runId: "author-134d", workspace }), /reviewer agent exploded/);
+  assert.deepEqual(reviewer.outcomes, ["failed"]);
 });

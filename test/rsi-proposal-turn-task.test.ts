@@ -14,7 +14,7 @@ import { TaskGraph } from "../src/kernel/task-graph.js";
 import { taskId } from "../src/kernel/contracts.js";
 import { WorkflowApplication } from "../src/application/workflow.js";
 import { hostCapabilities } from "../src/adapters/host.js";
-import { beginProposalTurnTask } from "../src/integrations/self-improvement-agent.js";
+import { beginProposalTurnTask, beginKernelSessionTask } from "../src/integrations/self-improvement-agent.js";
 
 const WS = "/tmp/rsi-proposal-turn-task-test";
 
@@ -75,4 +75,27 @@ test("each turn opens a fresh task — a completed earlier turn never blocks the
   assert.equal(graph.get(turn2.taskId).state, "IN_PROGRESS");
   turn2.complete();
   assert.equal(graph.get(turn2.taskId).state, "VERIFIED");
+});
+
+test("#134: beginKernelSessionTask honors the caller's id prefix and title with the same lifecycle", () => {
+  const { graph, host } = compose();
+  const app = new WorkflowApplication(graph, host, [], new Set(["read"]), WS);
+  const session = beginKernelSessionTask(app, { idPrefix: "hub-reviewer", title: "Hub reviewer session" });
+  const state = graph.get(session.taskId);
+  assert.equal(state.state, "IN_PROGRESS");
+  assert.equal(state.title, "Hub reviewer session");
+  assert.ok(session.taskId.includes("hub-reviewer:"));
+  assert.equal(app.activeTaskId(), session.taskId);
+  session.complete();
+  assert.equal(graph.get(session.taskId).state, "VERIFIED");
+});
+
+test("#134: beginKernelSessionTask's fail path marks FAILED and unblocks activation (the reviewer session's error lifecycle)", () => {
+  const { graph, host } = compose();
+  const app = new WorkflowApplication(graph, host, [], new Set(["read"]), WS);
+  const session = beginKernelSessionTask(app, { idPrefix: "hub-reviewer", title: "Hub reviewer session" });
+  session.fail();
+  assert.equal(graph.get(session.taskId).state, "FAILED");
+  const app2 = new WorkflowApplication(graph, host, [], new Set(["read"]), WS);
+  assert.doesNotThrow(() => app2.startInteractiveTask());
 });

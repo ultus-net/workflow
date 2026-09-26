@@ -54,6 +54,16 @@ export type CommitSource = (workspace: string) => Promise<string | undefined>;
 export interface ReviewerAgentSession {
   review(prompt: string): Promise<string>;
   dispose(): Promise<void>;
+  /**
+   * The kernel-graph bookkeeping task this session's runtime opened (the
+   * `hub-reviewer:<id>` task). Completed when the session's review() RETURNS
+   * (the session did its job — the verdict gates then decide the run's
+   * outcome, which is the run lifecycle's job, not the task's); failed when
+   * review() THROWS or the runtime never came up. Implementations must be
+   * terminal-safe (a repeated endTask is a no-op, never a throw). Optional:
+   * factories that open no kernel task omit it (#134).
+   */
+  endTask?(outcome: "completed" | "failed"): void;
 }
 
 export interface ReviewerAgentSessionFactory {
@@ -197,6 +207,9 @@ export class HubReviewerRunner {
     // anti-rubber-stamp checks (existing, distinct reviewer) hold by construction.
     const reviewerRunId = `schedule:hub-reviewer-${randomUUID()}`;
     await this.#controller.begin({ runId: reviewerRunId, title: "Hub reviewer run", workspace: input.workspace });
+    // Hoisted for the catch: a session that exists when something throws
+    // must fail its kernel task (#134).
+    let session: ReviewerAgentSession | undefined;
     try {
       // W040: multi-component scope is reviewed unit by unit (fresh isolated
       // sessions, focused rules, one integration review), all fail-closed.
@@ -208,7 +221,7 @@ export class HubReviewerRunner {
         ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }),
         ...(manifest === undefined ? {} : { manifestText: renderReviewManifestText(manifest) }),
       });
-      const session = await this.#spawnReviewer.spawn({
+      session = await this.#spawnReviewer.spawn({
         workspace: input.workspace,
         ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }),
       });
@@ -222,6 +235,11 @@ export class HubReviewerRunner {
           // Dispose failure must not mask the review outcome.
         }
       }
+      // #134: review() returned — the session did its job, so its kernel task
+      // completes regardless of the verdict gates (the gates decide the RUN's
+      // outcome, which the run lifecycle already closes; the task mirrors the
+      // session, not the verdict).
+      session.endTask?.("completed");
       const parsed = parseReviewVerdict(finalMessage);
       if (parsed === undefined) {
         return this.#recordFailClosed(input, reviewerRunId, fingerprint, finalMessage, `unparseable reviewer verdict: ${finalMessage.slice(0, 200)}`, {
@@ -287,6 +305,11 @@ export class HubReviewerRunner {
       await this.#controller.finish({ runId: reviewerRunId, outcome: "verified" });
       return { reviewerRunId, verdict: parsed.verdict, recorded: recorded.recorded, summary: parsed.summary };
     } catch (error) {
+      // #134: a session whose review() threw (or that never came up) fails
+      // its kernel task — the shared graph never carries an IN_PROGRESS
+      // hub-reviewer task. Terminal-safe by contract, so a session that
+      // already completed is untouched.
+      session?.endTask?.("failed");
       // W041: journal the interruption best-effort — it must never mask the
       // original failure. An interrupted record is history, never approval.
       await this.#appendProvenance(input, reviewerRunId, fingerprint, {
@@ -449,6 +472,11 @@ export class HubReviewerRunner {
     let finalMessage: string;
     try {
       finalMessage = await session.review(prompt);
+    } catch (error) {
+      // #134: the unit session's review() threw — its kernel task fails here
+      // (the outer catch cannot see this session).
+      session.endTask?.("failed");
+      throw error;
     } finally {
       try {
         await session.dispose();
@@ -456,6 +484,9 @@ export class HubReviewerRunner {
         // Dispose failure must not mask the review outcome.
       }
     }
+    // #134: the unit session returned — its kernel task completes (the unit
+    // failure gates then decide the partitioned run's outcome).
+    session.endTask?.("completed");
     const parsed = parseReviewVerdict(finalMessage);
     if (parsed === undefined) {
       return { parseFailure: `unparseable reviewer verdict: ${finalMessage.slice(0, 200)}`, summary: finalMessage };

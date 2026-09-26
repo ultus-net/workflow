@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { appendFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -25,6 +24,7 @@ import { createSelfImprovementRegistry } from "../integrations/self-improvement-
 import {
   createAgentDrivenRunLoop,
   beginProposalTurnTask,
+  beginKernelSessionTask,
   createContainedGitRunner,
   type AgentTurnRunner,
 } from "../integrations/self-improvement-agent.js";
@@ -132,11 +132,18 @@ const reviewerFactory = createReviewerFactory({
       new Set(["read"]),
       reviewerWorkspace,
     );
-    const reviewerTaskId: TaskId = taskId(`hub-reviewer:${randomUUID()}`);
-    reviewerApplication.addTask({ id: reviewerTaskId, title: "Hub reviewer session", dependencies: [], requiredEvidence: [] });
-    reviewerApplication.transition(reviewerTaskId, "IN_PROGRESS");
-    reviewerApplication.selectActiveTask(reviewerTaskId);
-    const runtime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerTaskId, undefined, guard);
+    const reviewerTask = beginKernelSessionTask(reviewerApplication, { idPrefix: "hub-reviewer", title: "Hub reviewer session" });
+    const runtime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerTask.taskId, undefined, guard).catch((error: unknown) => {
+      // #134: a runtime that never came up still opened its kernel task —
+      // close it failed so the shared graph never carries an IN_PROGRESS
+      // hub-reviewer task.
+      try {
+        reviewerTask.fail();
+      } catch {
+        // already terminal
+      }
+      throw error;
+    });
     // W045: record the reviewer runtime's budget mechanism like every other
     // hub-composed runtime.
     console.log(`hub reviewer session budget mechanism: ${runtime.budgetMechanism}`);
@@ -144,6 +151,18 @@ const reviewerFactory = createReviewerFactory({
       submit: (prompt: string) => runtime.session.submit(prompt),
       snapshot: () => runtime.session.snapshot(),
       dispose: () => runtime.dispose(),
+      // #134: the reviewer session's kernel task mirrors the session —
+      // completed when review() returns, failed when it throws or the
+      // runtime never came up. Terminal-safe: a repeated endTask (e.g. a
+      // completed task whose run later failed) is a no-op, never a throw.
+      endTask: (outcome: "completed" | "failed") => {
+        try {
+          if (outcome === "completed") reviewerTask.complete();
+          else reviewerTask.fail();
+        } catch {
+          // already terminal — the session lifecycle must not throw here
+        }
+      },
     };
   },
 });
