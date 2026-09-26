@@ -87,10 +87,11 @@ jobs:
             'import os, subprocess, sys, time' \
             'bus = subprocess.check_output(["bash", "-c", "echo $DBUS_SESSION_BUS_ADDRESS"]).decode().strip()' \
             'os.environ["DBUS_SESSION_BUS_ADDRESS"] = bus' \
-            'import secretstorage, jeepney' \
+            'import secretstorage' \
+            'from jeepney.wrappers import DBusObject' \
             'from secretstorage.collection import Collection' \
             'conn = secretstorage.dbus_init()' \
-            'service_obj = jeepney.DBusObject("org.freedesktop.secrets", "/org/freedesktop/secrets")' \
+            'service_obj = DBusObject("org.freedesktop.secrets", "/org/freedesktop/secrets")' \
             'collection = None' \
             'try:' \
             '    collection = secretstorage.get_default_collection(conn)' \
