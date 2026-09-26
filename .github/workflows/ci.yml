@@ -109,7 +109,7 @@ jobs:
             '    from jeepney.io.blocking import open_dbus_connection' \
             '    # bus= must be "SESSION"/"SYSTEM" or a jeepney bus object — an' \
             '    # env-address string is misread and the socket resets (run 26).' \
-            '    raw = open_dbus_connection(bus="SESSION")' \
+            '    raw = open_dbus_connection(bus="SESSION", enable_fds=False)' \
             '    # The daemon only serves the Secret Service API over the bus it' \
             '    # authenticated on. The raw conn must be the same session bus' \
             '    # (it is: bus comes from DBUS_SESSION_BUS_ADDRESS).' \
