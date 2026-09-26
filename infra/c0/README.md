@@ -87,7 +87,7 @@ Probe session created + deleted over the live plane.
     az acr build --registry $(jq -r .C0_ACR /dev/null 2>/dev/null || cat infra/c0/c0.env | grep C0_ACR | cut -d= -f2) ...
     # or simply: bash infra/c0/deploy.sh
 
-# c0 — event-stream keepalive recipe
+## Event-stream keepalive recipe
 
 The pinned recipe for keeping the `/api/event` SSE stream alive behind ingress
 proxies that destroy an idle response after roughly 4 minutes, so an attached
