@@ -2,8 +2,9 @@
 // Fill every TODO in the work instance repo. Values only — secrets ride
 // Key Vault references configured in the pipeline, never this file.
 // `using` points at the instance-owned module: the C0-lineage bicep lives in
-// this repo post-extraction; the openCore checkout is for pin verification
-// only (and, later, generic modules contributed back open-side).
+// this repo post-extraction; the openCore checkout pins the verified open ref
+// for provenance (and, later, generic modules contributed back open-side);
+// the pin expectation is downloaded from the release, not read from that tree.
 
 using 'TODO_plane_modules.bicep'
 

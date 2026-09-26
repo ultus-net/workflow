@@ -15,6 +15,9 @@ resources:
 variables:
   # image is pinned by digest; never by a moving tag
   imageDigest: TODO_IMAGE_DIGEST # e.g. ghcr.io/ultus-net/workflow@sha256:...
+  # local path the step-1 download materializes the release-asset
+  # expectation into (the W149 record)
+  expectationFile: TODO_downloaded_expectation_path
 
 stages:
   - stage: deploy
@@ -28,7 +31,10 @@ stages:
             deploy:
               steps:
                 - checkout: self
+                  path: s/self # explicit: with a second checkout, self no
+                               # longer defaults to s/ (multi-repo checkout)
                 - checkout: openCore
+                  path: s/openCore
 
                 # 1. Materialize the digest expectation, then verify (fail closed).
                 # TODO: download the release asset/note for the pinned tag from
@@ -38,7 +44,7 @@ stages:
                 #       half of the mechanism and must exist work-side, e.g. a
                 #       REST call or gh release download with the GitHub
                 #       service connection) -> $(expectationFile)
-                - script: bash $(Pipeline.Workspace)/s/instances/azure/verify-pin.sh "$(expectationFile)" "$(imageDigest)"
+                - script: bash $(Pipeline.Workspace)/s/self/instances/azure/verify-pin.sh "$(expectationFile)" "$(imageDigest)"
                   # Invoked via bash with absolute paths: no exec-bit or
                   # working-directory dependency. The check refuses on
                   # mismatch OR missing expectation — a broken check never
@@ -48,9 +54,11 @@ stages:
                 # TODO: az deployment --template-file <self-checkout>/infra/...bicep
                 #       --parameters params.bicepparam
                 #       --service-connection TODO_service_connection
-                # The openCore checkout above exists for pin VERIFICATION (step 1)
-                # and, later, for generic modules contributed back open-side
-                # (spec §5); the C0-lineage modules live instance-side.
+                # The openCore checkout pins the verified open ref for
+                # provenance and, later, generic modules contributed back
+                # open-side (spec §5); the C0-lineage modules live
+                # instance-side, and the pin EXPECTATION itself is downloaded
+                # from the release (step 1), not read from this tree.
 
                 # 3. Wire secrets.
                 # TODO: Key Vault references for OPENCODE_SERVER_PASSWORD and
