@@ -10,3 +10,17 @@
 - [ ] Deleting a schedule tombstones its origin rather than dangling historical runs (asserted).
 
 **Residuals (cut):** webhook triggers, variable templating, concurrency/catch-up policies, revision history with restore, cron-picker editor.
+
+**Dated note (2026-09-27, partial — the registry slice landed with wave 1's PR):** the
+lineage projection (`scheduleLineage` in `operator-posture.ts`) joins caused
+runs on the registry id prefix (`schedule:<id>:<uuid>`; the three-segment
+shape excludes reviewer runs), takes the last outcome from the kernel
+snapshot's insertion order (registry-structural, never timestamps), and
+tombstones deleted schedules so their runs stay attributed rather than
+dangling — pinned in test/operator-posture.test.ts (criteria 1 and 3's
+registry-sourcing + tombstone halves, at the projection level). NOT yet
+landed: the schedules-view rendering of the lineage (caused-run counts, the
+recent-runs filter), and run-now's explicit origin-field recording
+(run-now's runIds already carry the `schedule:` prefix, so attribution is
+structural — the explicit origin field is still open). The view slice is
+the remaining wave-4 work.
