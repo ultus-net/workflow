@@ -5681,3 +5681,43 @@ choice decides the push target).
       sha256:<64-hex> line the instance can materialize at the pinned ref).
 - [ ] Adopter-facing docs record the publish/tag flow.
 - [ ] Independent five-axis review.
+  - Dated note (2026-09-26 loop): the machinery landed —
+      `.github/workflows/publish-image.yml` (v* tag push + manual dispatch;
+      downloads the operator-attached qualified opencode asset, sha-verifies
+      it against `images/control-plane/opencode.sha256`, builds
+      `images/control-plane/Dockerfile`, pushes to GHCR, records the pushed
+      digest as a release asset + note on the SAME tag's release) and the
+      first-cut Dockerfile (single-stage; carries the toolchain + vendored
+      opencode; the C-track's C1 refines the in-container composition). NOT
+      yet verified live: no GitHub run has executed, and docker was
+      unavailable to the authoring session — the Dockerfile is unverified
+      until the first tagged build. Operator gate: attach the qualified
+      opencode binary as a release asset on each pinned version's release
+      (v2.0.10 is not publicly fetchable); without that asset the workflow
+      fails closed at the download step. YAML-parse and the sha256sum -c
+      fail-closed mechanics verified locally; the digest-record format
+      matches verify-pin.sh's contract (sha256:<64-hex>, single line). CI
+      placement: tier D of docs/CI.md.
+
+### W150 - CI implementation (tiers per docs/CI.md; C deferred pending operator)
+
+**Source:** docs/CI.md (2026-09-26 design) — the operator's "start with CI
+design" direction. The repo has no CI at all today; this wires the existing
+local discipline into GitHub without violating the full-suite resource
+directive.
+
+**Depends on:** W147 (branch context); operator decision 1 (merge-gate scope)
+for the evidence job; operator decision 2 (tier C deferral).
+
+**Acceptance criteria:**
+- [ ] `.github/workflows/ci.yml` runs Tier A (lint, typecheck, build,
+      `toolbox:verify`) on every PR and push to main; fail-closed required
+      checks.
+- [ ] `npm run test:ci` enumerates the curated suites BY NAME (no globs) per
+      the curation rule (docs/CI.md §4); the enumerated set is exactly the
+      LESS-0051-contract suites plus unit suites.
+- [ ] If decision 1 = A+B: the evidence job runs `test:ci` on PRs, and the
+      GitHub settings' required checks name both jobs.
+- [ ] Tier C recorded as deferred (or implemented) per decision 2, dated in
+      docs/CI.md §6.
+- [ ] Independent five-axis review.

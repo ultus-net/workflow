@@ -113,11 +113,13 @@ operator-specific material here.
 
 ## 10. Open questions and recorded resolutions
 
-1. OPEN — GHCR vs a private ACR mirror for the published image (provenance vs
-   pull-cost/quota inside the work tenant). Decision inputs: whether the work
-   tenant already pays for an ACR, GHCR pull egress cost, and the provenance
-   cost of a mirror standing between the reviewed artifact and the deployment.
-   Decides the publish workflow's target (W149).
+1. OPEN, NARROWED (2026-09-26) — the open-side publish target is GHCR
+   unconditionally: an open project's release channel is its own platform
+   (W149 is unblocked on this). Q1 now decides only the INSTANCE pull path —
+   GHCR direct vs an ACR mirror inside the work tenant — with the same
+   inputs (work ACR spend, GHCR pull egress, the provenance cost of a mirror
+   standing between the reviewed artifact and the deployment). It is
+   instance-side and gates nothing open-side.
 2. RECORDED (2026-09-26 refinement loop) — the pin check is fail-closed by
    construction: the open release carries the expected image digest as a
    RELEASE ASSET or release note at the pinned tag (not a mutating file in
