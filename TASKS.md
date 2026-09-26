@@ -5746,6 +5746,17 @@ choice decides the push target).
       hook now genuinely runs on install, fresh checkouts include the guard
       dist, and W137's heavyweight-hook finding becomes real. Local:
       toolbox:verify + test:ci green after the fix.
+  - Dated note (2026-09-26, fourth live run, same PR): the postinstall fix
+      VERIFIED LIVE — `npm ci` now logs `prepare: toolbox ok` and the guard
+      dist exists at test time. The evidence job still failed the same six
+      containment suites, now on the backend itself: "Task: FAILED
+      (execution refused: containment backend unavailable)" — ubuntu-latest
+      ships no `bwrap`, and `src/containment/linux-bwrap.ts` rejects ENOENT
+      fail-closed instead of executing with ambient authority (the honest
+      boundary working as designed). Fix: the evidence job installs
+      `bubblewrap` and relaxes Ubuntu 24.04's AppArmor
+      unprivileged-userns restriction in a documented setup step
+      (docs/CI.md). The gate job stayed green throughout.
 
 **Source:** docs/CI.md (2026-09-26 design) — the operator's "start with CI
 design" direction. The repo has no CI at all today; this wires the existing

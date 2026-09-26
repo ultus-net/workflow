@@ -110,6 +110,20 @@ job's `npm ci` (scripts ON) provides the build; the Dockerfile's
 Local verification of the full enumerated set: 97/97 pass (~33s) after
 `node scripts/prepare-tool.mjs`.
 
+Live-run preconditions (found in the first PR-#132 CI runs, 2026-09-26):
+(1) pnpm must be pinned to the toolbox's declared version —
+`pnpm/action-setup@v4` reading `mcp-toolbox/package.json` (corepack's
+default shim resolves a newer pnpm and pnpm refuses the mismatch);
+(2) the evidence job must INSTALL Bubblewrap — `ubuntu-latest` ships no
+`bwrap`, and the containment suites correctly fail closed without it
+("containment backend unavailable": `src/containment/linux-bwrap.ts` rejects
+ENOENT rather than executing with ambient authority — the honest boundary
+working as designed); Ubuntu 24.04's AppArmor unprivileged-userns
+restriction is relaxed in the same setup step. The guard build precondition
+turned out to be a REAL product defect: the root `postinstall` key sat at
+package.json top level (outside `scripts`), so npm never ran the hook
+anywhere — fixed by moving it into `scripts` (W137 dated correction).
+
 ## 8. Honest residuals
 
 - The publish workflow and Dockerfile are **unverified until the first tagged
