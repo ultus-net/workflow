@@ -111,11 +111,11 @@ jobs:
             '    def call_method(method, *args):' \
             '        msg = new_method_call(service_addr, method, signature=args[0], body=args[1]) if len(args) == 2 and isinstance(args[0], str) else new_method_call(service_addr, method)' \
             '        return raw.send_and_get_reply(msg)' \
-            '    open_reply = call_method("OpenSession", "sv", (("plain", ("s", "")),))' \
+            '    open_reply = call_method("OpenSession", "sv", ("plain", ("s", "")))' \
             '    session_path = open_reply[0][1][1]' \
             '    session_addr = DBusObject("org.freedesktop.secrets", session_path)' \
             '    collection_secret = (session_addr, "", _secrets.token_bytes(32), session_addr, 0)' \
-            '    create_reply = call_method("CreateCollection", "a{sv}s(oayts)", (({"org.freedesktop.Secret.Collection.Label": ("s", "login")}, "login", collection_secret),))' \
+            '    create_reply = call_method("CreateCollection", "a{sv}s(oayts)", ({"org.freedesktop.Secret.Collection.Label": ("s", "login")}, "login", collection_secret))' \
             '    create_body = create_reply[0]' \
             '    print("CreateCollection result:", create_body[0], create_body[1])' \
             '    if create_body[0] == "prompt":' \
