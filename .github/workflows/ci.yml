@@ -56,7 +56,8 @@ jobs:
       - name: Install system prerequisites (bubblewrap, D-Bus secret service)
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap gnome-keyring dbus-x11 libsecret-1-0
+          sudo apt-get install -y bubblewrap gnome-keyring dbus-x11 libsecret-1-0 libsecret-tools
+          command -v secret-tool # fail the step here if the CLI is missing (the eighth run's ENOENT)
           if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
             sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           fi
