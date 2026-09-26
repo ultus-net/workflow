@@ -52,13 +52,23 @@ export interface LoopMeta {
 }
 
 /** The last-outcome label and class the lineage line renders — the recorded
- * outcome states only, never a computed guess. */
-const OUTCOME_LABELS: Record<ScheduleLineage["lastOutcome"], { readonly label: string; readonly className: string }> = {
+ * outcome states only, never a computed guess. Partial over the union so a
+ * future hub outcome value degrades to the raw value rendered verbatim
+ * (review round P3: never a render throw). */
+const OUTCOME_LABELS: Partial<Record<ScheduleLineage["lastOutcome"], { readonly label: string; readonly className: string }>> = {
   verified: { label: "last run verified", className: "schedule-lineage-outcome-verified" },
   failed: { label: "last run failed", className: "schedule-lineage-outcome-failed" },
   "in-progress": { label: "last run in progress", className: "schedule-lineage-outcome-running" },
   unrun: { label: "never fired", className: "schedule-lineage-outcome-unrun" },
 };
+
+/** The lineage line's outcome span — a future hub outcome value renders its
+ * raw recorded value verbatim with the neutral class (review round P3: never
+ * a render throw, never a paraphrase). */
+function ScheduleOutcomeLine({ outcome }: { readonly outcome: ScheduleLineage["lastOutcome"] }) {
+  const known = OUTCOME_LABELS[outcome];
+  return <span className={known?.className ?? "schedule-lineage-outcome-unrun"}>{known?.label ?? `last run ${outcome}`}</span>;
+}
 
 /**
  * The Schedules page (W074 + W085): the hub cron table projected live —
@@ -133,7 +143,7 @@ export function SchedulesView({ schedules, loops, recentRuns, onCancelLoop, onPa
             {entry.lineage !== undefined && entry.lineage !== null && (
               <footer className="session-card-meta schedule-lineage" title="run lineage, computed from the run registry">
                 <span className="schedule-lineage-count">{entry.lineage.causedRuns} run{entry.lineage.causedRuns === 1 ? "" : "s"}</span>
-                <span className={OUTCOME_LABELS[entry.lineage.lastOutcome].className}>{OUTCOME_LABELS[entry.lineage.lastOutcome].label}</span>
+                <ScheduleOutcomeLine outcome={entry.lineage.lastOutcome} />
                 {entry.lineage.tombstoned && <span className="schedule-lineage-tombstone">schedule deleted — runs stay attributed</span>}
               </footer>
             )}
