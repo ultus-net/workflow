@@ -125,6 +125,7 @@ jobs:
             '    collection.unlock()' \
             'collection.create_item("ci-unlock-probe", {"service": "workflow", "credential": "ci-unlock-probe"}, b"ci-probe")' \
             'print("probe item created")' > /tmp/keyring-create.py
+          printf '%s\n' \
             'import os, subprocess, secretstorage, time' \
             'from secretstorage.collection import Collection' \
             'bus = subprocess.check_output(["bash", "-c", "echo $DBUS_SESSION_BUS_ADDRESS"]).decode().strip()' \
