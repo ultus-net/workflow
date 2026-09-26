@@ -5023,6 +5023,14 @@ the shipped script — FIXED in this loop.
   consumer approving install scripts unknowingly installs the 391-entry
   vendored toolbox tree (~9.5s warm). Polish shape: a gate env (e.g.
   WORKFLOW_PREPARE_TOOL=1) or honest docs.
+  - Dated correction (2026-09-26, first CI run): the hook was NOT running
+    under npm at all — `postinstall` sat at package.json's TOP LEVEL
+    (outside `scripts`), which npm ignores; the W137 e2e drove the script
+    directly, so the gap was invisible. A fresh CI checkout therefore had no
+    guard dist, and the containment suites failed closed on it. Fixed by
+    moving the key into `scripts` (package-lock `hasInstallScript` synced).
+    The heavyweight-hook finding above becomes real from that fix onward —
+    which is exactly the consumer-facing cost this entry recorded.
 - **(b) THE WORKSPACE UPWALK MUTATION BLAST RADIUS** — the child pnpm
   resolves workspaces by walking UP from its cwd: when the target is not
   itself a workspace root, pnpm can mutate an ANCESTOR workspace's
@@ -5601,3 +5609,302 @@ nit).
 **Residuals (cut):** agent-initiated uploads (different trust model — Workflow evidence is environment-captured), anchored document comments, workspace file browser, cross-task stacks.
 
 **Design conventions for W150-W154 (from Paperclip DESIGN.md, projection-compatible):** one semantic status token set (running/paused/blocked/awaiting-review/over-budget) shared across badge/row/chart/log (styles.css/theme.ts before W150 lands); machine values monospace with shared formatters (presenters.ts); no redundant toasts; late terminal outcomes refresh silently. No Paperclip vocabulary (hire/CEO/board/company/heartbeat) enters Workflow copy — runs, schedules, reviews, evidence, objectives stay canonical.
+
+### W147 - Open core / deployment-instance repo split (Complete - the placement decision recorded with a gated extraction sequence; MIT root license, split spec, the instances/azure seed with the fail-closed pin check, recorded two-round five-axis review; the strip waits on the work instance repo per W148) (2026-09-26)
+
+**Source:** the operator's 2026-09-26 placement decision — the control plane
+stays an open GitHub project; the Azure deployment material (bicep params,
+pipelines, service connections, secrets) becomes a separate project on the
+work Azure DevOps account, with work paying hosting and inference
+(`azure_foundry` provider) while the tools stay the operator's.
+
+**Objective:** Resolve repo placement before deployment work rides the
+C-track: record the open-core / instance seam and seed the instance template,
+so the work repo starts thin instead of accumulating operator-specific
+material in the open repo.
+
+**Depends on:** none directly; complements the 2026-09-25 remote-sandbox
+design spec (`docs/superpowers/specs/2026-09-25-azure-container-jobs-remote-sandbox-design.md`,
+which owns the plane design, not repo placement).
+
+**Acceptance criteria:**
+- [x] Root `LICENSE` (MIT, copyright ultus-net) and `package.json`
+      `"license": "MIT"` present — the work tenant has a grant to run the
+      code (the root was previously all-rights-reserved). Evidence: the
+      21-line MIT text plus the license field landed in f7df818; JSON parse
+      valid.
+- [x] Spec `docs/superpowers/specs/2026-09-26-deployment-instance-split.md`
+      records: the seam table (open core vs instance), the one-way dependency
+      rule (instance consumes pinned open artifacts; nothing work-specific
+      flows open-side), the pinning scheme (image by digest, modules at a
+      pinned tag, no work-side image rebuilds), the `infra/c0/` disposition
+      (stays open-side as the qualified reference probe with its append-only
+      verdicts), and the local-first guarantee (local surfaces never depend
+      on the instance). Landed in f17273a with the dated supersession notes
+      below.
+  - Dated note (2026-09-26, operator direction): the `infra/c0/` disposition
+      recorded in this criterion is superseded same-day — the test-deploy
+      folder EXTRACTS to the work instance repo once that repo exists (spec
+      §7 dated note and the §11 gated sequence); W148 carries the extraction.
+      The verdict-preservation duty (append-only records; git history as the
+      archive) is unchanged.
+- [x] `instances/azure/` seed exists: README contract + checklist, draft
+      two-checkout pipeline skeleton, draft `.bicepparam` skeleton — every
+      instance-specific value is a TODO marker, and the seed contains no real
+      org, subscription, digest, or secret values (greppable). The refinement
+      loop added the fail-closed `verify-pin.sh` skeleton (the §10 Q2
+      mechanism) and the pipeline's step-1 script invocation.
+- [x] Independent five-axis review of the branch. Two recorded approvals: the
+      initial slice, and the extraction-direction delta in two rounds —
+      round 1 REVISE with three P2 + two P3 (the seed contradicted itself on
+      module sourcing; the recorded sweep list missed .gitignore, the §2
+      cell, and the Evidence-base line; the dated note sat under the wrong
+      criterion), all repaired in a51963e, round 2 APPROVE per-finding.
+      Both verdicts recorded and fingerprint-bound.
+
+W147 is complete. The placement decision is recorded with its extraction
+sequence gated behind W148: MIT at the root closes the all-rights-reserved gap
+the work tenant would have hit; the seam table, one-way dependency rule, and
+digest/tag pinning scheme are recorded; the operator's same-day extraction
+direction superseded the original infra/c0 disposition via dated notes (§7,
+§11, and the dated note under the disposition criterion) with verdict
+preservation as the unchanged duty. The seed ships the README contract +
+checklist, a draft two-checkout pipeline, a draft .bicepparam, and — refinement
+loop — a fail-closed verify-pin.sh skeleton that concretizes the §10 Q2
+mechanism (digest expectation shipped with the open release; the instance
+asserts equality pre-deploy). Remaining open question: §10 Q1 (registry
+choice), which decides W149's push target.
+
+**Verification:** npm run typecheck exit 0, npm run lint exit 0 (docs/
+decision slice, no runtime surface); package.json JSON parse valid;
+git diff --name-only origin/main..HEAD confined to the declared file set;
+security sweep grep over the new files green (no real org/subscription/
+digest/secret values — TODO markers only); verify-pin.sh bash -n syntax check.
+
+### W148 - Extract `infra/c0/` into the work instance repo (strip)
+
+**Source:** the operator's 2026-09-26 direction — the C0 test deploy leaves
+the open repo once the work Azure DevOps instance repo is ready to receive it.
+
+**Depends on:** W147 (the recorded seam + seed) and the existence of the work
+instance repo consuming the material.
+
+**Acceptance criteria:**
+- [ ] The work instance repo holds the extracted material: the bicep modules,
+      deploy script, probe, and the C0 pinned-recipe + verdict tables as
+      living instance docs.
+- [ ] The 2026-09-25 remote-sandbox spec's C-track gains the dated C0
+      verdict-preservation note naming the pre-strip sha; the 2026-09-26
+      split spec §7/§11 match what actually executed.
+- [ ] The strip commit deletes `infra/c0/`, fixes every reference (grep sweep
+      re-run at execution time), and closes this entry with the pre-strip sha
+      in the message.
+- [ ] Independent five-axis review of the strip.
+
+### W156 - The pluggable secret-store seam: Key Vault as the Azure end-state (keyring stays local-first) (2026-09-26)
+
+**Source:** the operator's 2026-09-26 direction — "if deployed in Azure we
+could configure it to connect to a Key Vault in the same resource group";
+rides the deployment-instance split (spec §10 Q3: Key Vault refs are the
+end-state; ACA secrets were the C0 probe shortcut only). The canonical
+record is `docs/ledger/W156-the-pluggable-secret-store-seam-key-vault-as-the-azure-end-state.md`
+(opened directly as a fragment per the post-migration rule).
+
+**What landed (this PR, with #132's CI work):**
+- `src/integrations/key-vault.ts`: `KeyVaultSecretStore` implementing the
+  existing `SecretStore` port (`has/get/put/delete`) against the vault REST
+  API (api-version 7.4). Auth is managed identity on Azure (IMDS) with the
+  azure-cli chain as the local developer fallback — no new SDK dependency;
+  the vault name/URI come from `WORKFLOW_KEYVAULT_NAME`/`WORKFLOW_KEYVAULT_URI`
+  and a non-canonical URI shape fails closed at construction. The token
+  cache honors the token source's real expiry (a conservative 5-minute floor
+  when none is stated — a fabricated lifetime once left a dead token cached
+  for an assumed hour) and a vault 401/403 clears the cache so the next call
+  refetches.
+- `src/integrations/secret-store.ts`: the selection seam —
+  `WORKFLOW_SECRET_STORE=keyring` (default, current behavior unchanged) |
+  `azure-kv`; unknown backend names throw; azure-kv with a missing vault
+  name fails closed at startup (never a silent keyring fallback).
+- `src/cli/admin.ts` + `src/cli/hub.ts` switched from hardcoding
+  `createSecretServiceStore()` to the seam; the admin `--help` contract
+  names the new env vars.
+- `test/key-vault-store.test.ts`: 5 behavioral pins — default/validation,
+  fail-closed startup, the REST request shape + Bearer auth against a
+  stubbed fetcher, vault API errors surfacing as credential-service-
+  unavailable (never partial state), and the token path's honesty (raw
+  propagation of token-fetch failures with the real cause; a vault 401
+  invalidates the cached token; a valid cached token is reused).
+
+**Acceptance criteria:**
+- [x] The selection seam resolves keyring (default) and azure-kv; admin and
+      hub consume it.
+- [x] `KeyVaultSecretStore` implements `SecretStore` via
+      DefaultAzureCredential-equivalent (IMDS + az cli chain); env-sourced
+      vault name; no new dependency.
+- [x] azure-kv with a missing vault name fails closed at startup.
+- [ ] W130's azure-kv lane gated on env (`WORKFLOW_TEST_KEYVAULT_*`) —
+      deferred to the residual decision (fake store vs gated live probe).
+- [x] The instance seed carries the Key Vault + managed-identity RBAC line
+      (instance-side config per the split spec's dependency rule).
+- [ ] Instance-side bicep (vault + identity RBAC + env) — work repo.
+- [ ] Independent five-axis review.
+
+**Residuals (recorded, not built):** the CI-side fake (an in-memory
+SecretStore for W130's azure-kv lane on unauthenticated runners) versus a
+gated live-vault probe — decided at implementation; the azure-kv posture
+stays Partial until a live vault exercises it.
+
+### W149 - The open-side publish workflow (tag → image push + recorded digest expectation)
+
+**Source:** the 2026-09-26 split spec §10 Q2 resolution — the fail-closed pin
+check has two halves; the instance half is the seed's verify-pin.sh, the open
+half is this workflow.
+
+**Depends on:** W147 (the recorded pinning scheme) and §10 Q1 (the registry
+choice decides the push target).
+
+**Acceptance criteria:**
+- [ ] A GitHub Actions workflow builds the product image from the tagged
+      commit, pushes it to the chosen registry, and records the pushed digest
+      as a RELEASE ASSET or release note at that tag — never as a mutating
+      file in the tagged tree (the digest cannot exist before the image is
+      pushed). The expectation and the artifact come from the same workflow
+      run; no hand-copied digests.
+- [ ] The record's format is what verify-pin.sh's contract consumes (a
+      sha256:<64-hex> line the instance can materialize at the pinned ref).
+- [ ] Adopter-facing docs record the publish/tag flow.
+- [ ] Independent five-axis review.
+  - Dated note (2026-09-26 loop): the machinery landed —
+      `.github/workflows/publish-image.yml` (v* tag push + manual dispatch;
+      downloads the operator-attached qualified opencode asset, sha-verifies
+      it against `images/control-plane/opencode.sha256`, builds
+      `images/control-plane/Dockerfile`, pushes to GHCR, records the pushed
+      digest as a release asset + note on the SAME tag's release) and the
+      first-cut Dockerfile (single-stage; carries the toolchain + vendored
+      opencode; the C-track's C1 refines the in-container composition). NOT
+      yet verified live: no GitHub run has executed, and docker was
+      unavailable to the authoring session — the Dockerfile is unverified
+      until the first tagged build. Operator gate: attach the qualified
+      opencode binary as a release asset on each pinned version's release
+      (v2.0.10 is not publicly fetchable); without that asset the workflow
+      fails closed at the download step. YAML-parse and the sha256sum -c
+      fail-closed mechanics verified locally; the digest-record format
+      matches verify-pin.sh's contract (sha256:<64-hex>, single line). CI
+      placement: tier D of docs/CI.md. Refinement-loop P2 (the review's
+      static catch): the Dockerfile's opencode COPY paths were
+      Dockerfile-dir-relative while the build context is the repo root —
+      fixed in the same commit as this note; exactly the class of defect the
+      unverified-until-first-build status exists to surface before a run.
+
+### W155 - CI implementation (tiers per docs/CI.md; C deferred; renumbered from W150 — the Paperclip borrow wave landed W150-W154 first)
+
+  - Dated note (2026-09-26, first live CI run on PR #132): the gate job
+      caught the pnpm pin mismatch — the toolbox declares
+      `packageManager: pnpm@11.5.2` (mcp-toolbox/package.json:4) while
+      corepack's default shim resolved pnpm 12.6.0, which pnpm itself
+      refuses (ERR_PNPM_BAD_PM_VERSION); and `npm ci`'s postinstall
+      prepare-tool skipped the toolbox build honestly (W137's always-exit-0
+      contract), leaving toolbox:verify to fail hard — the fail-closed
+      layering worked. Fix: `pnpm/action-setup@v4` reading the nested
+      declaration (no duplicated version literal), same discipline in the
+      image Dockerfile. The evidence job had not yet run at the time of the
+      failure (needs: gate).
+  - Dated note (2026-09-26, second live run, same PR): gate failed in the
+      guard corpus — W097's foreign-home denial only fired on ostree hosts
+      (/home -> /var/home made the realpath candidate match the /var
+      prefix); on the runner's conventional layout `/home/otheruser/x`
+      matched no rule and returned MISSING. A REAL policy gap, not just a
+      test fragility: fixed in path-policy.ts by adding /home and /root to
+      the system-space prefixes with canonical-form home membership (a
+      home-symlink escape into system space still fails; the legitimate
+      /home/<self> spelling stays user space), pinned by the new W097b test
+      (HOME swap). Gate went green on the next run.
+  - Dated note (2026-09-26, third live run, same PR): gate GREEN (pnpm pin +
+      the W097 fix verified live). The evidence job then failed 6/97 — all
+      the guard-seat containment suites (W130 admin, W132 x3, hub /bash,
+      W144). Root cause, traced through the missing guard dist: the root
+      `postinstall` key sat at package.json TOP LEVEL (outside `scripts`) —
+      npm never ran it, on any host or in CI (W137 dated correction records
+      this). The evidence job's `npm ci` built no toolbox, and the early
+      containment suites failed closed; a later test's live lane built the
+      toolbox mid-run, which is why only the early suites failed. Fix: move
+      the key into `scripts` (package-lock `hasInstallScript` synced) — the
+      hook now genuinely runs on install, fresh checkouts include the guard
+      dist, and W137's heavyweight-hook finding becomes real. Local:
+      toolbox:verify + test:ci green after the fix.
+  - Dated note (2026-09-26, fourth live run, same PR): the postinstall fix
+      VERIFIED LIVE — `npm ci` now logs `prepare: toolbox ok` and the guard
+      dist exists at test time. The evidence job still failed the same six
+      containment suites, now on the backend itself: "Task: FAILED
+      (execution refused: containment backend unavailable)" — ubuntu-latest
+      ships no `bwrap`, and `src/containment/linux-bwrap.ts` rejects ENOENT
+      fail-closed instead of executing with ambient authority (the honest
+      boundary working as designed). Fix: the evidence job installs
+      `bubblewrap` and relaxes Ubuntu 24.04's AppArmor
+      unprivileged-userns restriction in a documented setup step
+      (docs/CI.md). The gate job stayed green throughout.
+  - Dated note (2026-09-26, fifth live run, same PR): the bwrap provisioning
+      VERIFIED LIVE — the W132/W144/`/bash` containment suites now pass on
+      the runner. One failure remained: W130's credential store —
+      `createSecretServiceStore` shells out to `secret-tool` over D-Bus, and
+      the runner has neither a session bus nor a keyring, so `store.put`
+      throws and the control plane correctly answers 400 (the test header's
+      documented machine-gate failing closed, again as designed). Fix: the
+      evidence job provisions a headless keyring (gnome-keyring + dbus-x11;
+      dbus-launch + `gnome-keyring-daemon --unlock --daemonize`, exported
+      through $GITHUB_ENV). No test was weakened: W130 still fails closed
+      wherever the keyring prerequisite is absent.
+  - Dated note (2026-09-26, runs six through thirty-four, same PR): the
+      fifth note's keyring fix never worked, and the provisioning step's
+      `set +e` masked every failure — each broken unlock/creation attempt
+      exited 0, so W130's fail-closed pre-flight (or the control plane's
+      catch-all 400) carried the signal alone. Run 34's log made it
+      unambiguous: the python collection-creation script crashed on import
+      (`send_and_get_reply` does not exist in Ubuntu 24.04's secretstorage),
+      the verify script then found no collection, and the step still
+      "succeeded". The honest arc: the dbus-launch + $GITHUB_ENV handoff
+      worked mechanically (daemon env and bus address reached later steps),
+      but the collection was NEVER created in any run — run 12's
+      PromptDismissedException, runs 19-27's ECONNRESET, and run 34's
+      ImportError are one fight: hand-rolled D-Bus creation against the
+      headless prompter. Replacement, grounded in documentation before
+      shipping: gnome-keyring-daemon(1) says --unlock "read[s] a password
+      from stdin, and use[s] it to unlock the login keyring or create it if
+      the login keyring does not exist" — verified locally against
+      gnome-keyring 50 in the exact runner scenario (fresh HOME, headless,
+      dbus-run-session): canary store/lookup/clear round trip green and
+      login.keyring persisted; a no-daemon negative control proved the
+      harness detects absence; `--start --unlock` is rejected by the daemon
+      itself ("incompatible") and the PAM --login/--start two-step hangs.
+      Landed shape (apache/iggy#2868 hit the same unlock-state-loss class):
+      daemon, canary, and `npm run test:ci` share ONE dbus-run-session — no
+      cross-step env handoff, no daemon-lifetime races, no `set +e`, and a
+      canary that fails the step loudly. No control-dir mkdir: the daemon
+      creates it 0700 itself (a pre-made 0755 dir made it fall back to a
+      suffixed socket — run 34's warning, and the hardcoded $GITHUB_ENV
+      control path never matched the real one).
+
+**Source:** docs/CI.md (2026-09-26 design) — the operator's "start with CI
+design" direction. The repo has no CI at all today; this wires the existing
+local discipline into GitHub without violating the full-suite resource
+directive.
+
+**Depends on:** W147 (branch context); operator decision 1 (merge-gate scope)
+for the evidence job; operator decision 2 (tier C deferral).
+
+**Acceptance criteria:**
+- [x] `.github/workflows/ci.yml` runs Tier A (lint, typecheck, build,
+      `toolbox:verify`) on every PR and push to main; fail-closed required
+      checks. Landed with the `evidence` job alongside (decision 1 = A+B);
+      YAML-parse valid; the curated set ran locally against the same steps
+      (build → test:ci, 97/97).
+- [x] `npm run test:ci` enumerates the curated suites BY NAME (no globs) per
+      the curation rule (docs/CI.md §4); 21 suites — the 14
+      LESS-0051-contract e2e suites plus 7 unit suites hand-verified this
+      loop (no PTY/agent-spawn/env-gate markers); the enumerated set ran
+      green locally (97/97).
+- [x] Decision 1 = A+B (recorded docs/CI.md §6): both jobs exist and are
+      named for required checks; the settings toggle itself is the
+      operator's remaining click (residual, recorded in §7).
+- [x] Tier C recorded as deferred per decision 2, dated in docs/CI.md §6.
+- [ ] Independent five-axis review.

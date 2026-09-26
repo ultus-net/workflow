@@ -1,0 +1,100 @@
+# CI (W155, docs/CI.md tier model): Tier A gate + Tier B evidence.
+# Full suite and live probes are NOT here — they are tier C (release gate,
+# deferred per operator decision 2026-09-26) and stay out of PR CI by the
+# resource directive (AGENTS.md). Linux-only: the repo's containment is
+# Bubblewrap; no cross-OS jobs are promised.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: gate (lint, typecheck, build, toolbox)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: mcp-toolbox/package.json # the toolbox pins pnpm@11.5.2; corepack's default shim (12.x) is refused by pnpm itself
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+      - run: npm run toolbox:verify
+
+  evidence:
+    name: evidence (curated test set)
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: mcp-toolbox/package.json
+      # The containment suites (W130, W132 x3, hub /bash, W144) drive the real
+      # Linux Bubblewrap backend and correctly fail closed without it
+      # ("containment backend unavailable" — the 2026-09-26 live CI finding).
+      # ubuntu-latest ships no bwrap; Ubuntu 24.04 also restricts unprivileged
+      # user namespaces by default, which bwrap needs.
+      - name: Install system prerequisites (bubblewrap, D-Bus secret service)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap gnome-keyring dbus-x11 libsecret-1-0 libsecret-tools dbus
+          command -v secret-tool dbus-run-session gnome-keyring-daemon # fail the step here if a CLI is missing (the eighth run's ENOENT)
+          if [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - run: npm ci
+      - run: npm run build
+      # W130 stores credential MATERIAL through secret-tool (D-Bus Secret
+      # Service), so the suite runs INSIDE one dbus-run-session that owns the
+      # daemon's whole lifecycle: gnome-keyring-daemon(1) --unlock "read[s] a
+      # password from stdin, and use[s] it to unlock the login keyring or
+      # create it if the login keyring does not exist" — verified locally in
+      # the exact runner scenario (fresh HOME, headless, isolated bus): canary
+      # store/lookup/clear round trip green, login.keyring persisted. One
+      # session removes the cross-step env handoff and daemon lifetime
+      # entirely (the unlock-state-loss class apache/iggy#2868 fixed the same
+      # way); the canary fails the step loudly instead of leaving W130 to
+      # answer an opaque 400 (runs 6-34's scripted collection creation never
+      # succeeded and `set +e` masked every failure — W155 dated notes). No
+      # control-dir mkdir: the daemon creates it 0700 itself (a pre-made 0755
+      # dir made it fall back to a suffixed socket — run 34's warning).
+      - name: Evidence suite inside one D-Bus session with an unlocked keyring
+        run: |
+          dbus-run-session -- bash -euo pipefail -c '
+            printf "%s\n" ci-unlock-pass | gnome-keyring-daemon --unlock --components=secrets &
+            sleep 2
+            store_ok=""
+            for i in $(seq 1 40); do
+              if printf "%s" ci-probe | secret-tool store --label=ci-probe service workflow credential ci-unlock-probe 2>/dev/null; then
+                store_ok="yes"
+                break
+              fi
+              sleep 0.5
+            done
+            if [ "$store_ok" != "yes" ]; then
+              echo "the keyring daemon never became servable on the session bus; last attempt:" >&2
+              printf "%s" ci-probe | secret-tool store --label=ci-probe service workflow credential ci-unlock-probe || true
+              exit 1
+            fi
+            test "$(secret-tool lookup service workflow credential ci-unlock-probe)" = "ci-probe"
+            secret-tool clear service workflow credential ci-unlock-probe
+            echo "keyring canary round trip ok"
+            npm run test:ci
+          '

@@ -52,10 +52,25 @@ export function checkProtectedPath(path: string, workspaceRoot?: string): string
     const rel = relative(realHome, candidate);
     return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
   };
+  // W097 fix (2026-09-26, first CI run): foreign-home slices are protected
+  // on ANY host. The original rule leaned on the ostree /home -> /var/home
+  // symlink (the realpath candidate fired /var); on a conventional host
+  // (HOME=/home/<user>, no symlink) a foreign /home/<other> path matched
+  // nothing and the W097 denial silently became a MISSING allow. /home and
+  // /root now join the system-space prefixes: user-slice roots whose paths
+  // are denied unless the path is the CURRENT user's home space.
+  //
+  // "Current user's home space" is the CANONICAL form's home membership, not
+  // a per-spelling one: on ostree the legitimate spelling /home/<self>/x has
+  // a lexical candidate outside /var/home/<self> but a real candidate inside
+  // it, so per-candidate logic would newly deny it (a false positive). A
+  // symlink INSIDE the home pointing into system space still fails: its real
+  // candidate is outside the home, so neither candidate is exempt.
+  const realUnderHome = real !== undefined && isUnderRealHome(real.replaceAll("\\", "/"));
   for (const candidate of candidates) {
     const normalized = candidate.replaceAll("\\", "/");
-    const inUserHome = isUnderRealHome(normalized);
-    if (!inUserHome && (/^\/etc(?:\/|$)/.test(normalized) || /^\/usr(?:\/|$)/.test(normalized) || /^\/var(?:\/|$)/.test(normalized))) return "protected system or credential path";
+    const inUserHome = realUnderHome || isUnderRealHome(normalized);
+    if (!inUserHome && (/^\/etc(?:\/|$)/.test(normalized) || /^\/usr(?:\/|$)/.test(normalized) || /^\/var(?:\/|$)/.test(normalized) || /^\/home(?:\/|$)/.test(normalized) || /^\/root(?:\/|$)/.test(normalized))) return "protected system or credential path";
     if (/(?:^|\/)\.ssh(?:\/|$)/.test(normalized)) return "protected system or credential path";
     if (isSecretName(candidate)) return "secret credential path";
   }

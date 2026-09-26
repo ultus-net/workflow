@@ -5,6 +5,16 @@ import test from "node:test";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+// The pre-flight helper: a one-shot secret-tool invocation with captured
+// stderr (callback style keeps the promise chains in the probe below flat).
+function secretTool(args: string[], onDone: (error: Error | null) => void): void {
+  const child = spawn("secret-tool", args, { stdio: ["ignore", "ignore", "pipe"] });
+  let stderr = "";
+  child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+  child.once("error", (error) => onDone(error));
+  child.once("close", (code) => onDone(code === 0 ? null : new Error(`exit ${code}: ${stderr.trim()}`)));
+}
+
 import { distArtifact, ensureFresh, repoRoot } from "./fixtures/compiled-dist.js";
 
 // W130 — the admin control plane's HTTP contract e2e (the e2e stream's
@@ -151,6 +161,28 @@ test("W130: the compiled admin control plane serves the credential contract end 
   assert.equal(invalid.status, 400);
 
   // The happy path: store → list (metadata only) → revoke → observed state.
+  // Pre-flight: prove the secret-service round trip works from THIS process
+  // before blaming the control plane — a runner whose keyring daemon died
+  // between the setup step and here fails HERE with the direct stderr, not
+  // as an opaque 400 from the control plane's catch-all.
+  const probeId = "w130-e2e-unlock-probe";
+  const probe = spawn("secret-tool", ["store", "--label=ci keyring pre-flight", "service", "workflow", "credential", probeId], { stdio: ["pipe", "ignore", "pipe"] });
+  const probeFailure = await new Promise<string | undefined>((resolveProbe) => {
+    let stderr = "";
+    probe.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    probe.once("error", (error) => resolveProbe(`secret-tool unavailable: ${error.message}`));
+    probe.once("close", (code) => {
+      if (code === 0) {
+        secretTool(["clear", "service", "workflow", "credential", probeId], (clearError: Error | null) =>
+          resolveProbe(clearError ? `probe clear failed: ${clearError.message}` : undefined));
+      } else {
+        resolveProbe(`probe store failed (exit ${code}): ${stderr.trim()}`);
+      }
+    });
+    probe.stdin.end("ci-pre-flight");
+  });
+  assert.equal(probeFailure, undefined, `the secret-service pre-flight failed — the keyring is not servable from this process: ${probeFailure ?? ""}`);
+
   const put = await fetch(`${baseUrl}/api/admin/credentials`, {
     method: "PUT",
     headers: jsonHeaders,

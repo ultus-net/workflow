@@ -727,6 +727,28 @@ test("W097: another user's home and .ssh outside the home stay denied", () => {
   assert.match(checkProtectedPath("/root/.ssh/id_rsa") ?? "MISSING", /protected system or credential/);
 });
 
+test("W097b: the foreign-home denial holds on a conventional host layout (2026-09-26 CI finding)", () => {
+  // W097 passed on ostree hosts only: /home -> /var/home made the realpath
+  // candidate fire the /var prefix, masking that the /home spelling matched
+  // no rule at all. On a conventional host (no symlink — the GitHub runner)
+  // the denial vanished and checkProtectedPath returned undefined, failing
+  // the guard corpus in the first live CI run. This pin forces the
+  // conventional layout by swapping HOME around the check (homedir() follows
+  // HOME on Linux), exercising the /home prefix rule itself.
+  const original = process.env.HOME;
+  process.env.HOME = "/home/runner";
+  try {
+    assert.match(checkProtectedPath("/home/otheruser/x") ?? "MISSING", /protected system or credential/);
+    assert.match(checkProtectedPath("/home/otheruser/.ssh/id_rsa") ?? "MISSING", /protected system or credential/);
+    // the current user's own home stays user space (the canonical-form
+    // membership check keeps both host layouts honest)
+    assert.equal(checkProtectedPath("/home/runner/projects/x"), undefined);
+  } finally {
+    if (original === undefined) delete process.env.HOME;
+    else process.env.HOME = original;
+  }
+});
+
 // ---- W099/G5: branch-exit classifications pinned as found (frontier G5) ----
 // The agents-research assessment (§2 F1, §6 G5) found F1's
 // identical-intents-matched-inconsistently disease surviving its fix in a new

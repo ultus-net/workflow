@@ -27,7 +27,7 @@
   "discovery": {
     "strategy": "host-side-progressive",
     "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
-    "fullCatalogBytes": 1661,
+    "fullCatalogBytes": 1689,
     "toolIndexBytes": 613
   },
   "generatedBy": "@agent-tools/protocol-baseline",

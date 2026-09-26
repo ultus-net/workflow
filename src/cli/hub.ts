@@ -9,7 +9,7 @@ import { WorkflowApplication } from "../application/workflow.js";
 import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
 import { createCredentialBroker } from "../integrations/credentials.js";
-import { createSecretServiceStore } from "../integrations/secret-service.js";
+import { resolveSecretStore } from "../integrations/secret-store.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 import { hubPromptGuidanceFromEnv } from "../integrations/prompt-guidance.js";
 import { createReviewerFactory, createRunTestRunner } from "../integrations/hub-run-gates.js";
@@ -74,7 +74,7 @@ const teamTaskVerificationCommand = process.env.WORKFLOW_TEAM_TASK_VERIFY_COMMAN
 // stdio-env credentials through the broker — secret:// references only, never
 // values in this process's config.
 const credentialDefinitions = loadCredentialDefinitions();
-const credentialBroker = createCredentialBroker(createSecretServiceStore(), credentialDefinitions);
+const credentialBroker = createCredentialBroker(resolveSecretStore(), credentialDefinitions);
 const guardBindings = credentialDefinitions.flatMap((definition) =>
   definition.allowedConsumers.includes("mcp:workflow-guard")
     ? definition.allowedPurposes.flatMap((purpose) => purpose.startsWith("stdio-env:")

@@ -1,0 +1,11 @@
+# Build context is the repo root (the workflow passes context: .); these stay
+# out of the image build.
+.git
+.github
+.worktrees
+node_modules
+coverage
+*.log
+.tmp-*
+infra/c0
+instances
