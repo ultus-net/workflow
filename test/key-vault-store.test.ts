@@ -76,3 +76,38 @@ test("W156: vault API errors surface as credential-service-unavailable, never as
   await assert.rejects(store.put("w156-x", "v"), /credential service unavailable/);
   await assert.rejects(store.delete("w156-x"), /credential service unavailable/);
 });
+
+test("W156: the token path is honest — raw propagation, real expiries honored, a vault 401 clears the cache", async () => {
+  // Token-fetch failures propagate with their real cause (the
+  // "credential service unavailable" label is scoped to vault API errors;
+  // the token path fails closed with the actual reason visible).
+  const raw = createKeyVaultSecretStore({
+    vaultName: "kv-test",
+    getToken: async () => {
+      throw new Error("az: the cli is not logged in");
+    },
+    fetcher: async () => new Response(null, { status: 200 }),
+  });
+  await assert.rejects(raw.get("w156-x"), /az: the cli is not logged in/);
+
+  // A vault 401 invalidates the cached token; the next call refetches and
+  // succeeds — a dead token never outlives one call (the review's P2).
+  let tokenCalls = 0;
+  let status = 401;
+  const store = createKeyVaultSecretStore({
+    vaultName: "kv-test",
+    getToken: async () => {
+      tokenCalls += 1;
+      return { token: `token-${tokenCalls}`, expiresInSeconds: 3600 };
+    },
+    fetcher: async () =>
+      new Response(status === 200 ? JSON.stringify({ value: "after-reauth" }) : null, { status }),
+  });
+  await assert.rejects(store.get("w156-x"), /credential service unavailable/);
+  status = 200;
+  assert.equal(await store.get("w156-x"), "after-reauth");
+  assert.equal(tokenCalls, 2, "the 401 cleared the cache — the second call refetched the token");
+  // A healthy cached token is reused (no refetch per call).
+  assert.equal(await store.get("w156-x"), "after-reauth");
+  assert.equal(tokenCalls, 2, "the cached token is reused while valid");
+});

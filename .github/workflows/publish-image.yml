@@ -8,6 +8,12 @@
 # fetchable; see infra/c0/image/Dockerfile and images/control-plane/Dockerfile).
 # The digest the instance later verifies (spec Q2 / verify-pin.sh) is
 # recorded at the SAME tag, from the SAME run that pushed the image.
+#
+# Shell-safety note (the review's P2): git refnames may legally contain
+# shell metacharacters, so every run: step consumes the tag through an env
+# var — never by direct ${{ }} interpolation into the script text. The
+# repository name is alphanumeric-plus-dash/dot (GitHub-enforced), and
+# action-input interpolations (with:) are not shell.
 
 name: publish-image
 
@@ -26,12 +32,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # GHCR requires lowercase image names; GITHUB_REPOSITORY may contain
+      # uppercase (ultus-net/Workflow would break the push).
+      - name: Normalize the image reference (lowercase repository for GHCR)
+        run: |
+          printf 'IMAGE_REPOSITORY=%s\n' "$(printf '%s' "${GITHUB_REPOSITORY}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Download the qualified opencode release asset (fail closed)
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release download "${{ github.ref_name }}" \
-            --repo "${{ github.repository }}" \
+          gh release download "$RELEASE_TAG" \
+            --repo "${GITHUB_REPOSITORY}" \
             --pattern "opencode" \
             --dir images/control-plane
           if [ ! -f images/control-plane/opencode ]; then
@@ -61,16 +74,18 @@ jobs:
           file: images/control-plane/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository }}:sha-${{ github.sha }}
+            ghcr.io/${{ env.IMAGE_REPOSITORY }}:${{ github.ref_name }}
+            ghcr.io/${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}
 
       - name: Record the digest at the tagged release (the verify-pin contract)
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          printf 'sha256:%s\n' "${{ steps.push.outputs.digest }}" > image-digest.txt
-          gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" --json body --jq .body > body.md 2>/dev/null || : > body.md
+          printf 'sha256:%s\n' "$IMAGE_DIGEST" > image-digest.txt
+          gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" --json body --jq .body > body.md 2>/dev/null || : > body.md
           printf '\ncontrol-plane image digest:\n' >> body.md
           cat image-digest.txt >> body.md
-          gh release upload "${{ github.ref_name }}" image-digest.txt --clobber --repo "${{ github.repository }}"
-          gh release edit "${{ github.ref_name }}" --notes-file body.md --repo "${{ github.repository }}"
+          gh release upload "$RELEASE_TAG" image-digest.txt --clobber --repo "${GITHUB_REPOSITORY}"
+          gh release edit "$RELEASE_TAG" --notes-file body.md --repo "${GITHUB_REPOSITORY}"

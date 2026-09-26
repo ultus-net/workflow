@@ -5683,7 +5683,11 @@ record is `docs/ledger/W156-the-pluggable-secret-store-seam-key-vault-as-the-azu
   API (api-version 7.4). Auth is managed identity on Azure (IMDS) with the
   azure-cli chain as the local developer fallback — no new SDK dependency;
   the vault name/URI come from `WORKFLOW_KEYVAULT_NAME`/`WORKFLOW_KEYVAULT_URI`
-  and a non-canonical URI shape fails closed at construction.
+  and a non-canonical URI shape fails closed at construction. The token
+  cache honors the token source's real expiry (a conservative 5-minute floor
+  when none is stated — a fabricated lifetime once left a dead token cached
+  for an assumed hour) and a vault 401/403 clears the cache so the next call
+  refetches.
 - `src/integrations/secret-store.ts`: the selection seam —
   `WORKFLOW_SECRET_STORE=keyring` (default, current behavior unchanged) |
   `azure-kv`; unknown backend names throw; azure-kv with a missing vault
@@ -5691,10 +5695,12 @@ record is `docs/ledger/W156-the-pluggable-secret-store-seam-key-vault-as-the-azu
 - `src/cli/admin.ts` + `src/cli/hub.ts` switched from hardcoding
   `createSecretServiceStore()` to the seam; the admin `--help` contract
   names the new env vars.
-- `test/key-vault-store.test.ts`: 4 behavioral pins — default/validation,
+- `test/key-vault-store.test.ts`: 5 behavioral pins — default/validation,
   fail-closed startup, the REST request shape + Bearer auth against a
-  stubbed fetcher, and API errors surfacing as credential-service-
-  unavailable (never partial state).
+  stubbed fetcher, vault API errors surfacing as credential-service-
+  unavailable (never partial state), and the token path's honesty (raw
+  propagation of token-fetch failures with the real cause; a vault 401
+  invalidates the cached token; a valid cached token is reused).
 
 **Acceptance criteria:**
 - [x] The selection seam resolves keyring (default) and azure-kv; admin and

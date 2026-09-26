@@ -13,12 +13,13 @@ LESS-0051 safety contract recorded across the e2e ledger entries.
 
 ## 1. Current truth
 
-The repo has **no CI at all** today (`no .github/` as of 2026-09-26): every
-verification is local, enforced by the workflow guard (verify gate +
-fingerprinted five-axis review records). The first drafted workflow is
-`.github/workflows/publish-image.yml` (W149): tagged release → GHCR image →
-digest expectation recorded at the tag. This design decides what ELSE runs
-where, and what CI is allowed to claim.
+The repo had **no CI at all** until 2026-09-26, when this design landed as
+`.github/workflows/ci.yml` (W155) — until then every verification was local,
+enforced by the workflow guard (verify gate + fingerprinted five-axis review
+records), which remains the review discipline CI cannot replace. The first
+drafted workflow was `.github/workflows/publish-image.yml` (W149): tagged
+release → GHCR image → digest expectation recorded at the tag. This design
+decides what runs where, and what CI is allowed to claim.
 
 ## 2. Constraints the design must respect (verified, not invented)
 
@@ -140,6 +141,11 @@ anywhere — fixed by moving it into `scripts` (W137 dated correction).
 
 ## 8. Honest residuals
 
+- The evidence job relaxes Ubuntu 24.04's AppArmor unprivileged-userns
+  restriction (`kernel.apparmor_restrict_unprivileged_userns=0`) in its
+  setup step so bubblewrap can create user namespaces: acceptable on an
+  ephemeral runner, but it IS a host-policy change — recorded here rather
+  than silently assumed.
 - The publish workflow and Dockerfile are **unverified until the first tagged
   run** (the authoring environment has no docker); their design follows the
   C0 vendoring discipline (operator-attached qualified binary, sha pin,

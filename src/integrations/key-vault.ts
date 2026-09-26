@@ -3,18 +3,29 @@ import type { SecretStore } from "./credentials.js";
 // W156: the Azure Key Vault secret-store backend. Implements the same
 // SecretStore port as the D-Bus keyring store (secret-service.ts) so the
 // selection seam (secret-store.ts) can swap them per environment. Auth is
-// DefaultAzureCredential: managed identity on Azure (the deployment-instance
-// posture — the vault sits in the app's resource group with get/list RBAC on
-// the app identity), the developer credential chain locally.
+// DefaultAzureCredential-equivalent without the SDK dependency: managed
+// identity on Azure (the deployment-instance posture — the vault sits in the
+// app's resource group with get/list RBAC on the app identity), the
+// azure-cli credential locally.
 //
 // Fail-closed: a missing vault name throws at construction (never silently
-// falls back to the keyring); every API error surfaces as
-// "credential service unavailable" with the underlying status attached.
+// falls back to the keyring); vault API errors surface as "credential
+// service unavailable" with the underlying status attached. Token-fetch
+// failures (no IMDS endpoint reachable, azure-cli missing or unauthenticated)
+// DO propagate raw — still fail-closed, with the real cause visible; the
+// "unavailable" label is scoped to the vault API path, and the token-path
+// behavior is pinned in test/key-vault-store.test.ts.
 
 const API_VERSION = "7.4";
+// The cache floor when the token source states no expiry. A fabricated
+// lifetime is worse than a short one: refetching costs a round trip, while a
+// dead cached token costs availability for the whole fabricated TTL.
+const DEFAULT_TOKEN_TTL_MS = 300_000;
 
 export type KeyVaultFetcher = (url: string, init?: RequestInit) => Promise<Response>;
-export type AccessTokenFetcher = (scope: string) => Promise<string>;
+export type AccessTokenFetcher = (
+  scope: string,
+) => Promise<string | { token: string; expiresInSeconds?: number }>;
 
 export function createKeyVaultSecretStore(options: {
   vaultName?: string;
@@ -44,8 +55,15 @@ export function createKeyVaultSecretStore(options: {
         { headers: { Metadata: "true" } },
       ).catch(() => undefined);
       if (imdsResponse?.ok) {
-        const body = (await imdsResponse.json()) as { access_token?: string };
-        if (body.access_token) return body.access_token;
+        const body = (await imdsResponse.json()) as { access_token?: string; expires_in?: number | string };
+        if (body.access_token) {
+          const seconds =
+            typeof body.expires_in === "number" ? body.expires_in : Number.parseInt(body.expires_in ?? "", 10);
+          if (Number.isFinite(seconds) && seconds > 0) {
+            return { token: body.access_token, expiresInSeconds: seconds };
+          }
+          return body.access_token;
+        }
       }
       const { execFile } = await import("node:child_process");
       const { promisify } = await import("node:util");
@@ -67,9 +85,24 @@ export function createKeyVaultSecretStore(options: {
   async function token(): Promise<string> {
     const now = Date.now();
     if (cachedToken && cachedToken.expiresAt > now + 60_000) return cachedToken.token;
-    const raw = await getToken("https://vault.azure.net/.default");
-    cachedToken = { token: raw, expiresAt: now + 3_600_000 };
-    return raw;
+    const acquired = await getToken("https://vault.azure.net/.default");
+    const token = typeof acquired === "string" ? acquired : acquired.token;
+    const seconds = typeof acquired === "string" ? undefined : acquired.expiresInSeconds;
+    cachedToken = {
+      token,
+      // The source's real expiry when it states one (capped at an hour so a
+      // bogus value can never pin a dead token); the conservative floor
+      // otherwise.
+      expiresAt: now + (seconds !== undefined && seconds > 0 ? Math.min(seconds, 3_600) * 1000 : DEFAULT_TOKEN_TTL_MS),
+    };
+    return token;
+  }
+
+  // A vault 401/403 means the cached token is dead (or the identity lost
+  // access); drop the cache so the next call refetches instead of failing
+  // until the TTL runs out.
+  function noteAuthFailure(response: Response): void {
+    if (response.status === 401 || response.status === 403) cachedToken = undefined;
   }
 
   async function request(method: string, secretId: string, body?: string): Promise<Response | undefined> {
@@ -88,6 +121,7 @@ export function createKeyVaultSecretStore(options: {
   async function lookup(id: string): Promise<string | undefined> {
     const response = await request("GET", id);
     if (!response) throw unavailable(404);
+    noteAuthFailure(response);
     if (response.status === 404) return undefined;
     if (!response.ok) throw unavailable(response.status);
     const payload = (await response.json()) as { value?: string };
@@ -101,10 +135,12 @@ export function createKeyVaultSecretStore(options: {
     get: lookup,
     async put(id, value): Promise<void> {
       const response = await request("PUT", id, value);
+      if (response) noteAuthFailure(response);
       if (!response || !response.ok) throw unavailable(response?.status ?? 0);
     },
     async delete(id): Promise<void> {
       const response = await request("DELETE", id);
+      if (response) noteAuthFailure(response);
       if (!response || !(response.ok || response.status === 404)) throw unavailable(response?.status ?? 0);
     },
   };
