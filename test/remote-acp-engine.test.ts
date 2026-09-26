@@ -1,11 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { HttpRemoteEngine, sseData, type RemoteEngineEvent } from "../src/integrations/remote-acp/engine.js";
+import {
+  DEFAULT_EVENT_RECONNECT_ATTEMPTS,
+  DEFAULT_EVENT_RECONNECT_BACKOFF_MS,
+  EVENT_RECONNECT_MAX_BACKOFF_MS,
+  HttpRemoteEngine,
+  eventReconnectBackoffMs,
+  sseData,
+  type RemoteEngineEvent,
+} from "../src/integrations/remote-acp/engine.js";
+
+const encoder = new TextEncoder();
 
 async function* bytes(parts: readonly string[]): AsyncGenerator<Uint8Array> {
-  const encoder = new TextEncoder();
-  for (const part of parts) yield encoder.encode(part);
+  const e = new TextEncoder();
+  for (const part of parts) yield e.encode(part);
 }
 
 async function collect(stream: AsyncIterable<string>): Promise<string[]> {
@@ -13,6 +23,31 @@ async function collect(stream: AsyncIterable<string>): Promise<string[]> {
   for await (const item of stream) out.push(item);
   return out;
 }
+
+async function collectEvents(stream: AsyncIterable<RemoteEngineEvent>): Promise<RemoteEngineEvent[]> {
+  const out: RemoteEngineEvent[] = [];
+  for await (const item of stream) out.push(item);
+  return out;
+}
+
+/** A `text/event-stream` body that delivers `text` and then ends when `close`. */
+function sse(text: string, close: boolean): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      if (text.length > 0) controller.enqueue(encoder.encode(text));
+      if (close) controller.close();
+    },
+  });
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => undefined;
+  const promise = new Promise<void>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
+
+const status = (sessionID: string): string =>
+  `data: {"payload":{"type":"session.status","properties":{"sessionID":"${sessionID}","status":{"type":"idle"}}}}\n\n`;
 
 test("sseData extracts data payloads and joins multi-line data", async () => {
   const signal = new AbortController().signal;
@@ -102,10 +137,12 @@ test("HttpRemoteEngine posts the prompt and the permission reply to the document
 });
 
 test("HttpRemoteEngine events stream parses SSE event envelopes", async () => {
-  const encoder = new TextEncoder();
   const engine = new HttpRemoteEngine({
     baseUrl: "http://127.0.0.1:4096",
     cwd: "/w",
+    // One-shot: this test is about envelope parsing, and a stream that ends is
+    // reconnectable, not final (the resume cases below own that).
+    eventReconnect: { maxAttempts: 0 },
     fetch: async () =>
       new Response(
         new ReadableStream<Uint8Array>({
@@ -121,6 +158,208 @@ test("HttpRemoteEngine events stream parses SSE event envelopes", async () => {
   for await (const event of engine.events({ cwd: "/w", signal: new AbortController().signal })) events.push(event);
   assert.equal(events.length, 1);
   assert.equal(events[0]!.type, "session.status");
+});
+
+/**
+ * The reconnect cases below stand in for the ingress proxy that destroys a
+ * quiet `/api/event` response (~4-minute idle timeout). The drop is what the
+ * gateway keepalive cannot always prevent, and a one-shot subscription turned
+ * it into a silently dead session; these pin the bounded re-open.
+ */
+
+test("HttpRemoteEngine events re-opens the route after a dropped stream", async () => {
+  const paths: string[] = [];
+  const delivered = deferred();
+  let opens = 0;
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    eventReconnect: { maxAttempts: 3, backoffMs: 1 },
+    fetch: async (url, init) => {
+      opens += 1;
+      paths.push(new URL(String(url)).pathname);
+      if (opens === 1) {
+        // The first stream delivers one event and then dies mid-session.
+        return new Response(sse(status("before"), true), { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      // The second subscription stays open: the session must survive, not
+      // merely re-subscribe. Only the caller's abort tears it down.
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(status("after")));
+            init?.signal?.addEventListener("abort", () => controller.close(), { once: true });
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+  const controller = new AbortController();
+  const events: RemoteEngineEvent[] = [];
+  const pump = (async () => {
+    for await (const event of engine.events({ cwd: "/w", signal: controller.signal })) {
+      events.push(event);
+      if (events.length === 2) delivered.resolve();
+    }
+  })();
+  await delivered.promise;
+  controller.abort();
+  await pump;
+  assert.deepEqual(
+    events.map((event) => (event.properties as { sessionID: string }).sessionID),
+    ["before", "after"],
+    "the event delivered before the drop and the one after the reconnect must both reach the caller",
+  );
+  assert.deepEqual(paths, ["/api/event", "/api/event"]);
+});
+
+test("HttpRemoteEngine events re-evaluate the v1 route fallback on a reconnect", async () => {
+  const paths: string[] = [];
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    eventReconnect: { maxAttempts: 1, backoffMs: 1 },
+    fetch: async (url) => {
+      const path = new URL(String(url)).pathname;
+      paths.push(path);
+      // A reconnect must re-decide the route, never inherit the first choice:
+      // v2 answers the HTML catch-all and v1 still serves the stream.
+      return path === "/api/event"
+        ? new Response("<!doctype html>", { status: 200, headers: { "content-type": "text/html" } })
+        : new Response(sse(status("v1"), true), { status: 200, headers: { "content-type": "text/event-stream" } });
+    },
+  });
+  const events: RemoteEngineEvent[] = [];
+  for await (const event of engine.events({ cwd: "/w", signal: new AbortController().signal })) events.push(event);
+  assert.deepEqual(paths, ["/api/event", "/global/event", "/api/event", "/global/event"]);
+  assert.equal(events.length, 2, "both the dropped stream and its v1 reconnect delivered their event");
+});
+
+test("HttpRemoteEngine events stop at the attempt cap instead of reconnecting forever", async () => {
+  let opens = 0;
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    eventReconnect: { maxAttempts: 2, backoffMs: 1 },
+    fetch: async () => {
+      opens += 1;
+      // A server that keeps hanging up: the bound must end the subscription.
+      return new Response(sse("", true), { status: 200, headers: { "content-type": "text/event-stream" } });
+    },
+  });
+  const events: RemoteEngineEvent[] = [];
+  for await (const event of engine.events({ cwd: "/w", signal: new AbortController().signal })) events.push(event);
+  assert.equal(opens, 3, "the initial subscription plus exactly maxAttempts reconnects, then the generator ends");
+  assert.equal(events.length, 0);
+});
+
+test("HttpRemoteEngine events surface a dropped stream once the cap is spent", async () => {
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    eventReconnect: { maxAttempts: 0, backoffMs: 1 },
+    fetch: async () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) { controller.error(new Error("socket hang up")); },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      ),
+  });
+  // A fault is never swallowed into a silent end: the caller's stream-error
+  // path (the authority records it) has to see it.
+  await assert.rejects(
+    () => collectEvents(engine.events({ cwd: "/w", signal: new AbortController().signal })),
+    /socket hang up/,
+  );
+});
+
+test("HttpRemoteEngine events never re-open the route for an aborted subscription", async () => {
+  const controller = new AbortController();
+  let opens = 0;
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    eventReconnect: { maxAttempts: 5, backoffMs: 20 },
+    fetch: async () => {
+      opens += 1;
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller_) {
+            controller_.close();
+            // The caller aborts while the reconnect backoff is sleeping — the
+            // 0ms timer is armed before the 20ms one, so the abort lands there.
+            setTimeout(() => controller.abort(), 0);
+          },
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    },
+  });
+  const events: RemoteEngineEvent[] = [];
+  for await (const event of engine.events({ cwd: "/w", signal: controller.signal })) events.push(event);
+  assert.equal(opens, 1, "an abort during the backoff must end the subscription, not re-open it");
+  assert.equal(events.length, 0);
+  assert.equal(controller.signal.aborted, true);
+});
+
+test("eventReconnect bounds ignore nonsense values and back off by doubling", async () => {
+  assert.deepEqual(
+    [0, 1, 2, 3, 4, 5, 6].map((attempt) => eventReconnectBackoffMs(attempt, DEFAULT_EVENT_RECONNECT_BACKOFF_MS)),
+    [250, 500, 1000, 2000, 4000, EVENT_RECONNECT_MAX_BACKOFF_MS, EVENT_RECONNECT_MAX_BACKOFF_MS],
+  );
+  const dropper = async (): Promise<Response> =>
+    new Response(sse("", true), { status: 200, headers: { "content-type": "text/event-stream" } });
+  // A negative attempt bound falls back to the default — proven with a 1ms
+  // backoff so the assertion costs milliseconds, not the default 33s schedule.
+  let opens = 0;
+  const defaulted = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    eventReconnect: { maxAttempts: -1, backoffMs: 1 },
+    fetch: async () => {
+      opens += 1;
+      return dropper();
+    },
+  });
+  await collectEvents(defaulted.events({ cwd: "/w", signal: new AbortController().signal }));
+  assert.equal(opens, DEFAULT_EVENT_RECONNECT_ATTEMPTS + 1);
+
+  // A non-integer backoff is not a sub-millisecond backoff: it is ignored, so
+  // the reconnect waits the real default before re-opening the route.
+  const started = Date.now();
+  let paced = 0;
+  const pacedEngine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    eventReconnect: { maxAttempts: 1, backoffMs: 1.5 },
+    fetch: async () => {
+      paced += 1;
+      return dropper();
+    },
+  });
+  await collectEvents(pacedEngine.events({ cwd: "/w", signal: new AbortController().signal }));
+  assert.equal(paced, 2);
+  assert.ok(
+    Date.now() - started >= 200,
+    "a non-integer backoff must fall back to the 250ms default, never to 1.5ms",
+  );
+});
+
+test("HttpRemoteEngine events throws when the route cannot be opened at all", async () => {
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    eventReconnect: { maxAttempts: 3, backoffMs: 1 },
+    fetch: async () => new Response("unauthorized", { status: 401 }),
+  });
+  // A failed open is not a dropped stream: it surfaces, so a wrong credential
+  // is never retried into silence.
+  await assert.rejects(
+    () => collectEvents(engine.events({ cwd: "/w", signal: new AbortController().signal })),
+    /event stream failed \(401\)/,
+  );
 });
 
 test("HttpRemoteEngine fails loudly on a non-OK response", async () => {

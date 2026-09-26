@@ -5,6 +5,12 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 import {
+  DEFAULT_EVENT_RECONNECT_ATTEMPTS,
+  DEFAULT_EVENT_RECONNECT_BACKOFF_MS,
+  EVENT_RECONNECT_MAX_BACKOFF_MS,
+  eventReconnectBackoffMs,
+} from "../src/integrations/remote-acp/engine.js";
+import {
   DEFAULT_SSE_KEEPALIVE_MS,
   SSE_KEEPALIVE_FRAME,
   sseKeepaliveMs,
@@ -86,7 +92,11 @@ test("the recipe states the identity-only coverage and the deliberate gzip exclu
 });
 
 test("the recipe's re-verify commands name tests that exist", () => {
-  for (const file of ["opencode-server-gateway-ingress-probe.test.ts", "opencode-server-gateway.test.ts"]) {
+  for (const file of [
+    "opencode-server-gateway-ingress-probe.test.ts",
+    "opencode-server-gateway.test.ts",
+    "remote-acp-engine.test.ts",
+  ]) {
     assert.ok(
       readme.includes(`node --import tsx --test test/${file}`),
       `the recipe must give the focused re-verify command for ${file} (never the full npm test)`,
@@ -96,6 +106,45 @@ test("the recipe's re-verify commands name tests that exist", () => {
       `${file} must exist: a recipe pointing at a renamed test is drift`,
     );
   }
+});
+
+test("the recipe states the reconnect bounds the SSE client actually uses", () => {
+  assert.ok(
+    readme.includes("`src/integrations/remote-acp/engine.ts`"),
+    "the recipe must name the module that carries the reconnect half",
+  );
+  for (const constant of [
+    `DEFAULT_EVENT_RECONNECT_ATTEMPTS = ${DEFAULT_EVENT_RECONNECT_ATTEMPTS}`,
+    `DEFAULT_EVENT_RECONNECT_BACKOFF_MS = ${DEFAULT_EVENT_RECONNECT_BACKOFF_MS}`,
+    `EVENT_RECONNECT_MAX_BACKOFF_MS = ${EVENT_RECONNECT_MAX_BACKOFF_MS}`,
+  ]) {
+    assert.ok(readme.includes(constant), `the recipe must name the exported bound verbatim: ${constant}`);
+  }
+  // The schedule the doc lists must be the schedule the client computes.
+  const listed = [250, 500, 1000, 2000, 4000, EVENT_RECONNECT_MAX_BACKOFF_MS];
+  for (const attempt of [0, 1, 2, 3, 4, 5]) {
+    assert.ok(
+      readme.includes(`${eventReconnectBackoffMs(attempt, DEFAULT_EVENT_RECONNECT_BACKOFF_MS)},`),
+      `the recipe must list the ${attempt}th backoff the client actually waits`,
+    );
+    assert.equal(
+      eventReconnectBackoffMs(attempt, DEFAULT_EVENT_RECONNECT_BACKOFF_MS),
+      listed[attempt],
+      `backoff ${attempt} changed; the recipe's list is a pinned claim`,
+    );
+  }
+  assert.ok(
+    readme.includes("`eventReconnect: { maxAttempts, backoffMs }`"),
+    "the recipe must name the override, or an operator cannot tune the bound",
+  );
+  assert.ok(
+    readme.includes("never re-opens the route"),
+    "the recipe must state that a caller abort never re-opens the route",
+  );
+  assert.ok(
+    readme.includes("does not replay"),
+    "the recipe must state that a resume does not replay the events missed while the route was down",
+  );
 });
 
 test("the recipe keeps its claims advisory and states the residual", () => {
