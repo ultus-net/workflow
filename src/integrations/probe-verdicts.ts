@@ -22,6 +22,12 @@ import { fileURLToPath } from "node:url";
  * gate-style probe file must be registered). Cited evidence is pinned the
  * same way: the repo-relative paths a row's `evidence` names must exist, so a
  * verdict cannot keep pointing at a write-up that was deleted or moved.
+ *
+ * One row's *result* is re-derived rather than trusted: a `green` on the
+ * `WORKFLOW_ACP_REMOTE_SSE_IDLE` gate is recomputed from the idle-hold facts
+ * the row carries, through the same pure `classifySseIdleHold` the live arm
+ * decides with, so the register cannot claim a survival its own measurement
+ * denies.
  */
 
 export type ProbeVerdictResult = "green" | "red" | "negative" | "pending" | "blocked";
@@ -59,6 +65,15 @@ export interface ProbeVerdictRecord {
    */
   readonly result: ProbeVerdictResult;
   readonly posture: ProbePosture;
+  /**
+   * The facts one SSE idle hold recorded, verbatim from the gated arm's
+   * `classifySseIdleHold({...})` call. Optional because the arm has not run
+   * live yet (a `pending` row has no measurement), but a `green` row for the
+   * idle gate must carry them: the register re-derives the survival from
+   * these facts instead of trusting the result string, so a hand-edited green
+   * cannot outlive the hold that earned it. See `validateProbeVerdictRegister`.
+   */
+  readonly idleHold?: SseIdleHoldFacts | undefined;
   /** Where the dated verdict is written up (doc + section/row). */
   readonly evidence: string;
   /** Required for `blocked`: the missing operator environment/credential. */
@@ -112,6 +127,38 @@ function citedEvidencePaths(evidence: string): string[] {
 const RESULTS: readonly string[] = ["green", "red", "negative", "pending", "blocked"];
 const POSTURES: readonly string[] = ["enforced", "enforced-eligible", "advisory", "spawn-denied", "unqualified"];
 
+/**
+ * The gate env of the SSE idle-hold arm (`test/acp-remote-sse-probe.test.ts`).
+ * It is keyed on the gate rather than the row id because the gate is the
+ * register's canonical handle on a probe family: the corpus anti-drift scan
+ * arms on gates, and the arm's own facts are what a green here is measured on.
+ */
+const SSE_IDLE_HOLD_GATE = "WORKFLOW_ACP_REMOTE_SSE_IDLE";
+
+/**
+ * Re-derives one row's idle-hold survival from the facts the row carries, by
+ * calling the gated arm's own pure classifier — the same implementation, so a
+ * register row and the live arm cannot disagree about what a hold means.
+ *
+ * Fail-closed, with the row named: a non-object `idleHold`, or facts the
+ * classifier refuses to measure, is document drift, not a pass-through value.
+ */
+function readIdleHold(id: string, facts: unknown): SseIdleHoldVerdict {
+  if (typeof facts !== "object" || facts === null || Array.isArray(facts)) {
+    throw new TypeError(
+      `invalid probe verdict register: '${id}' — idleHold must be the facts object the idle arm recorded (heldMs, idleWindowMs, delivered, subscriptions, openedBefore)`,
+    );
+  }
+  try {
+    return classifySseIdleHold(facts as SseIdleHoldFacts);
+  } catch (error) {
+    throw new TypeError(
+      `invalid probe verdict register: '${id}' — idleHold facts are not a measurable hold: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+}
+
 export interface ValidateProbeVerdictsOptions {
   /** Existence check for the referenced probe file (injectable for tests). */
   readonly exists?: (path: string) => boolean;
@@ -123,10 +170,12 @@ export interface ValidateProbeVerdictsOptions {
  * Validates one parsed register document, fail-closed: a wrong version, a
  * malformed record, an unknown result/posture, a non-ISO date, a duplicate
  * id, a probe path that is not a test file or does not exist on disk, a cited
- * evidence path that does not exist, or a `blocked` entry without its blocker
- * all throw. The probe existence check is the runtime side of anti-drift: a
- * register row pointing at a deleted probe is an error, not a stale claim —
- * and the evidence check extends that to the write-up it cites.
+ * evidence path that does not exist, a `blocked` entry without its blocker,
+ * unmeasurable `idleHold` facts, or a `green` on the SSE idle-hold gate whose
+ * own facts do not classify as a survival all throw. The probe existence check
+ * is the runtime side of anti-drift: a register row pointing at a deleted
+ * probe is an error, not a stale claim — and the evidence check extends that
+ * to the write-up it cites.
  */
 export function validateProbeVerdictRegister(parsed: unknown, options: ValidateProbeVerdictsOptions = {}): ProbeVerdictRegister {
   if (typeof parsed !== "object" || parsed === null) {
@@ -196,6 +245,29 @@ export function validateProbeVerdictRegister(parsed: unknown, options: ValidateP
     }
     if (verdict.result === "blocked" && (typeof verdict.blocker !== "string" || (verdict.blocker as string).trim().length === 0)) {
       throw new TypeError(`invalid probe verdict register: '${id}' — a blocked verdict must name its blocker`);
+    }
+    // The idle arm's green is *re-derived*, not read. Its row may carry the
+    // hold facts the live run recorded; whenever it does they must classify,
+    // and a green on this gate additionally has to survive that
+    // classification. So a hand-edited `result: "green"` cannot outlive the
+    // measurement that earned it: facts that classify as `dropped`, `resumed`,
+    // `never-opened` or `short-hold` — or no facts at all, the register's other
+    // answer to a claim nothing backs — are an error, not a stale green.
+    // Every other result stays open with the facts optional: a `pending` row
+    // has not run, and a `red`/`negative` row reports a finding, not a
+    // survival, so it is never re-derived against a pass condition.
+    const idleHold = verdict.idleHold === undefined ? undefined : readIdleHold(id, verdict.idleHold);
+    if (verdict.gate === SSE_IDLE_HOLD_GATE && verdict.result === "green") {
+      if (idleHold === undefined) {
+        throw new TypeError(
+          `invalid probe verdict register: '${id}' — a green '${SSE_IDLE_HOLD_GATE}' verdict must record the idleHold facts of the run that earned it (heldMs, idleWindowMs, delivered, subscriptions, openedBefore)`,
+        );
+      }
+      if (!idleHold.survived) {
+        throw new TypeError(
+          `invalid probe verdict register: '${id}' — green contradicts its own idleHold facts: classifySseIdleHold reads this hold as '${idleHold.outcome}' — ${idleHold.reason}`,
+        );
+      }
     }
     return verdict as unknown as ProbeVerdictRecord;
   });

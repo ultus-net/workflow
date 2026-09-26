@@ -32,8 +32,8 @@ import { fileURLToPath } from "node:url";
  * and its exit rule (src/cli/workflow.ts:124-131 — exit 1 only when a check
  * has status "fail", warns are expected states); the check implementations
  * (src/cli/doctor.ts:60-348); the register loader's fail-closed discipline and
- * its module-derived package-root seat (src/integrations/probe-verdicts.ts:76-83
- * and 179-197); the real register this repo ships
+ * its module-derived package-root seat (src/integrations/probe-verdicts.ts:93-95
+ * and 180-260); the real register this repo ships
  * (docs/PROBE_VERDICTS.json); doctor's origin (TASKS.md W076). Every pin
  * below was OBSERVED first via the exact invocation recorded per test; the
  * register tally and fleet expectations are DERIVED from the repo's own
@@ -44,7 +44,7 @@ import { fileURLToPath } from "node:url";
  *   F-1  The register seat is NOT reachable from the CLI: checkProbeVerdicts
  *        is called with no options (src/cli/doctor.ts:344) and resolves its
  *        root from the doctor module's own location
- *        (probeVerdictsPackageRoot, probe-verdicts.ts:76-78), so neither
+ *        (probeVerdictsPackageRoot, probe-verdicts.ts:93-95), so neither
  *        HOME, cwd, nor --cwd can redirect it, and runDoctor never forwards
  *        DoctorOptions.root to it (only checkFleetPayload gets root). The
  *        corrupt-register fail-closed shape is therefore pinned at the
@@ -543,7 +543,7 @@ test("doctor e2e (TSX lane): a workflow-guard plugins entry warns the posture ro
 
 test("doctor e2e (TSX lane): the corrupt register seat is unreachable from the CLI — the fail-closed path is pinned at the programmatic seat (tsx child)", (context) => {
   // F-1: through the CLI verb the register seat resolves from the doctor
-  // module's package root (probe-verdicts.ts:76-83) — HOME/cwd/--cwd cannot
+  // module's package root (probe-verdicts.ts:93-95) — HOME/cwd/--cwd cannot
   // point it elsewhere, and runDoctor (doctor.ts:344) passes no root. The
   // fail-closed shapes ARE reachable programmatically: a tsx child imports
   // src/cli/doctor.ts with a crafted package root and pins what the check
