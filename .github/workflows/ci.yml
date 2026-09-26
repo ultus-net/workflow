@@ -71,13 +71,18 @@ jobs:
         run: |
           set +e
           eval "$(dbus-launch --sh-syntax)"
+          # The daemon refuses to create its control socket if the parent
+          # directory is missing (the seventh live run: "couldn't access
+          # control socket: /run/user/1001/keyring/control: No such file or
+          # directory" — daemon up, secrets component never served).
+          mkdir -p /run/user/$(id -u)/keyring
           # Foreground --start: prints the daemon env (incl. the control
           # socket) and keeps the daemon alive under the session bus. Every
           # probe below is failure-tolerant: a missing piece is diagnosed by
           # the W130 machine-gate (fail closed), not by a broken setup step.
           daemon_env="$(gnome-keyring-daemon --start --components=secrets 2>&1)"
           echo "keyring daemon env: $daemon_env"
-          echo "$daemon_env" | tr ';' '\n' | grep 'GNOME_KEYRING_CONTROL=' >> "$GITHUB_ENV" || true
+          echo "$daemon_env" | tr ';' '\n' | grep 'GNOME_KEYRING_CONTROL=' | sed 's/^  //' >> "$GITHUB_ENV" || true
           echo "DBUS_SESSION_BUS_ADDRESS=$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
           # Unlock the default collection (empty password for a fresh
           # login.keyring created by --start above).
