@@ -86,7 +86,7 @@ jobs:
           printf '%s\n' \
             'import os, subprocess, sys, time' \
             'import secretstorage' \
-            'from jeepney.wrappers import DBusObject, new_method_call' \
+            'from jeepney.wrappers import DBusObject, new_method_call, Message, MessageType, HeaderFields' \
             'from secretstorage.collection import Collection' \
             'bus = subprocess.check_output(["bash", "-c", "echo $DBUS_SESSION_BUS_ADDRESS"]).decode().strip()' \
             'os.environ["DBUS_SESSION_BUS_ADDRESS"] = bus' \
@@ -102,16 +102,22 @@ jobs:
             '    # No default collection on a fresh daemon. The prompt-based' \
             '    # path (secretstorage.create_collection) DISMISSES headless' \
             '    # (run 12 PromptDismissedException), so this drives the D-Bus' \
-            '    # calls directly: OpenSession(plain) -> CreateCollection with' \
-            '    # the (oayts) secret struct the spec defines.' \
-            '    open_reply = conn.send_and_get_reply(new_method_call(service_addr, "OpenSession", "sv", ("plain", ("s", ""))))' \
-            '    session_path = open_reply[0][1][1]' \
+            '    # calls directly with LOW-LEVEL messages: OpenSession(plain)' \
+            '    # -> CreateCollection with the (oayts) secret struct. The bus' \
+            '    # conn from secretstorage speaks only its own low-level dialect,' \
+            '    # so a fresh blocking connection is opened for the raw messages.' \
+            '    from jeepney.io.blocking import open_dbus_connection' \
+            '    raw = open_dbus_connection(bus=bus)' \
+            '    def call_method(method, *args):' \
+            '        msg = Message(MessageType.method_call, destination="org.freedesktop.secrets", interface="org.freedesktop.Secret.Service", path="/org/freedesktop/secrets", member=method, body=args)' \
+            '        reply = raw.send_messageAndGetReply(msg) if hasattr(raw, "send_messageAndGetReply") else raw.send_and_get_reply(msg)' \
+            '        return reply' \
+            '    open_reply = call_method("OpenSession", "sv", ("plain", ("s", "")))' \
+            '    session_path = open_reply.body[1][1]' \
             '    session_addr = DBusObject("org.freedesktop.secrets", session_path)' \
             '    collection_secret = (session_addr, "", _secrets.token_bytes(32), session_addr, 0)' \
-            '    create_reply = conn.send_and_get_reply(new_method_call(' \
-            '        service_addr, "CreateCollection", "a{sv}s(oayts)",' \
-            '        ({"org.freedesktop.Secret.Collection.Label": ("s", "login")}, "login", collection_secret)))' \
-            '    create_body = create_reply[0]' \
+            '    create_reply = call_method("CreateCollection", "a{sv}s(oayts)", ({"org.freedesktop.Secret.Collection.Label": ("s", "login")}, "login", collection_secret))' \
+            '    create_body = create_reply.body[0]' \
             '    print("CreateCollection result:", create_body[0], create_body[1])' \
             '    if create_body[0] == "prompt":' \
             '        sys.exit("CreateCollection returned a prompt — the headless daemon refused to auto-create; W130 must fail closed")' \
