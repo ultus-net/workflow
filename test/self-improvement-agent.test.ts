@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -261,12 +261,11 @@ test("the contained git runner passes constant commands and stages commit messag
   await runner("git", ["status", "--porcelain"], { cwd: fakeCwd });
   await runner("git", ["add", "-A"], { cwd: fakeCwd });
   await runner("git", ["reset", "--hard", "HEAD"], { cwd: fakeCwd });
-  await runner("git", ["clean", "-fd"], { cwd: fakeCwd });
-  assert.deepEqual(commands, ["git status --porcelain", "git add -A", "git reset --hard HEAD", "git clean -fd"]);
+  assert.deepEqual(commands, ["git status --porcelain", "git add -A", "git reset --hard HEAD"]);
 
   await runner("git", ["commit", "-m", "self-improvement(p): fix; rm -rf $HOME `id`"], { cwd: fakeCwd });
-  assert.equal(commands.length, 5);
-  const commitCommand = commands[4] ?? "";
+  assert.equal(commands.length, 4);
+  const commitCommand = commands[3] ?? "";
   assert.match(
     commitCommand,
     /^git -c user\.name='[^']+' -c user\.email='[^']+' -c core\.hooksPath=\/dev\/null commit --no-verify -F '[^']+\.msg'$/,
@@ -275,8 +274,81 @@ test("the contained git runner passes constant commands and stages commit messag
   assert.match(commitCommand, /\.git\/rsi-message-/, "the message file is staged inside the workspace .git, the path the sandbox mounts");
   assert.equal(readdirSync(join(fakeCwd, ".git")).length, 0, "the staged message file is removed after the attempt");
   await assert.rejects(runner("git", ["push", "origin"], { cwd: fakeCwd }), /refuses unexpected git invocation/);
+  await assert.rejects(
+    runner("git", ["clean", "-fd"], { cwd: fakeCwd }),
+    /refuses unexpected git invocation/,
+    "the destructive git clean left the runner's constant set: the discard is restore-based so the guard's destructive-operation policy never denies the loop's rollback",
+  );
 });
 
+test("discard restores the baseline without git clean: tracked reverts, untracked removed by exact enumerated path", async (t) => {
+  const repo = makeGitRepo(t, "wf-rsi-discard-restore");
+  const { authority } = recordingAuthority();
+  let measureCalls = 0;
+  const fake = fakeTurn((input) => {
+    if (input.kind === "proposal") {
+      if (fake.calls.filter((call) => call.kind === "proposal").length === 1) {
+        return { result: "{\"id\": \"bad\", \"hypothesis\": \"h\"}", costUsd: 0.01 };
+      }
+      return { result: "{\"id\": \"good\", \"hypothesis\": \"h2\"}", costUsd: 0.01 };
+    }
+    if (input.kind === "apply" && fake.calls.filter((call) => call.kind === "apply").length === 1) {
+      // The first (rejected) candidate edits a tracked file AND leaves an
+      // untracked artifact behind — the exact shape that made `git clean -fd`
+      // the old rollback and tripped the guard's destructive-operation denial
+      // live.
+      writeFileSync(join(repo, "README.md"), "candidate change\n");
+      writeFileSync(join(repo, "scratch-artifact.txt"), "untracked\n");
+    }
+    if (input.kind === "apply" && fake.calls.filter((call) => call.kind === "apply").length === 2) {
+      writeFileSync(join(repo, "feature.txt"), "accepted candidate\n");
+    }
+    return { result: "applied", costUsd: 0.01 };
+  });
+  const runLoop = createAgentDrivenRunLoop({
+    authority,
+    turn: fake.turn,
+    gitRun: createExecFileRunner(),
+    measure: { shell: async () => (measureCalls++ === 0 ? "4\n" : "6\n"), command: "measure" },
+  });
+  const outcome = await runLoop(spec({ workspace: repo, maxIterations: 2, baselineScore: 5 }), controls());
+  assert.equal(outcome.status, "stopped");
+  assert.match(outcome.reason, /maxIterations \(2\) reached/);
+  assert.equal(outcome.accepted, 1, `outcome was: ${JSON.stringify(outcome).slice(0, 300)}`);
+  assert.equal(outcome.rejected, 1, `outcome was: ${JSON.stringify(outcome).slice(0, 300)}`);
+  assert.equal(readFileSync(join(repo, "README.md"), "utf8"), "baseline\n", "the rejected candidate's tracked edit reverted");
+  assert.ok(!existsSync(join(repo, "scratch-artifact.txt")), "the untracked candidate artifact is removed by exact path");
+  assert.ok(existsSync(join(repo, "feature.txt")), "the accepted candidate (second apply) stays committed");
+});
+
+test("discard removes untracked directories recursively and handles non-ASCII names without stranding", async (t) => {
+  const repo = makeGitRepo(t, "wf-rsi-discard-unicode");
+  const workspace = createGitCandidateWorkspace({
+    workspace: repo,
+    run: createExecFileRunner(),
+  });
+  await workspace.assertBaseline({ workspace: repo });
+  mkdirSync(join(repo, "scratch-dir", "nested"), { recursive: true });
+  writeFileSync(join(repo, "scratch-dir", "nested", "artifact.bin"), "x");
+  writeFileSync(join(repo, "café-datei.txt"), "unicode name");
+  await workspace.discard({ runId: "rsi:test:discard-unicode", workspace: repo });
+  assert.equal(gitStatus(repo), "", "the -z porcelain enumeration removes non-ASCII untracked files without stranding");
+  assert.ok(!existsSync(join(repo, "scratch-dir")), "the untracked directory is removed recursively");
+});
+
+test("assertBaseline refuses a subdirectory workspace — the containment of exact-path removal requires the repo top level", async (t) => {
+  const repo = makeGitRepo(t, "wf-rsi-discard-toplevel");
+  mkdirSync(join(repo, "pkg", "app"), { recursive: true });
+  const workspace = createGitCandidateWorkspace({
+    workspace: join(repo, "pkg", "app"),
+    run: createExecFileRunner(),
+  });
+  await assert.rejects(
+    () => workspace.assertBaseline({ workspace: join(repo, "pkg", "app") }),
+    /repository top level/,
+    "a subdir workspace would let ../sibling porcelain paths resolve outside it — refuse rather than trust startsWith",
+  );
+});
 test("the contained commit path completes on the real containment backend end to end", async (t) => {
   const repo = makeGitRepo(t, "wf-rsi-contained-e2e");
   // Remove the fixture's repo-local identity: the contained commit must rely

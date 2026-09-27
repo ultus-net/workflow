@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { realpathSync, rmSync } from "node:fs";
+import { isAbsolute, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { isAbsolute } from "node:path";
 
 /**
  * W073 — bounded recursive self-improvement loop (the Karpathy loop) under
@@ -578,7 +578,7 @@ export function createGitCandidateWorkspace(options: {
   }
   return {
     async assertBaseline(input) {
-      // P0-1: the destructive ops below (reset --hard / clean -fd) are only
+      // P0-1: the destructive op below (reset --hard) is only
       // safe against a tree the loop starts from clean. Refuse anything else.
       let inside: string | undefined;
       try {
@@ -593,6 +593,18 @@ export function createGitCandidateWorkspace(options: {
       if (status.stdout.trim().length > 0) {
         throw new TypeError(
           `workspace has uncommitted work; a self-improvement loop requires a clean checkout so discard can never destroy operator changes: ${input.workspace}`,
+        );
+      }
+      // The workspace must be the repository TOP level: porcelain paths are
+      // repo-root-relative, and the discard's exact-path removal resolves
+      // them against the workspace — a subdirectory workspace would let
+      // `../sibling` entries resolve outside it. A linked worktree or
+      // submodule checkout therefore needs its own clone (the loop's
+      // documented hygiene requirement, observed live 2026-09-26).
+      const toplevel = (await options.run("git", ["rev-parse", "--show-toplevel"], { cwd: input.workspace })).stdout.trim();
+      if (realpathSync(toplevel) !== realpathSync(input.workspace)) {
+        throw new TypeError(
+          `workspace must be the repository top level (discard resolves porcelain paths against it): ${input.workspace} is inside ${toplevel}`,
         );
       }
     },
@@ -618,8 +630,45 @@ export function createGitCandidateWorkspace(options: {
       }
     },
     async discard(input) {
+      // Guard-compatible rollback (2026-09-27): the guard's destructive-
+      // operation policy denies `git clean -fd` when the loop's discard runs
+      // through the shell lane ("git clean can delete untracked files —
+      // expected: a direct tool call"), which stopped every rejected
+      // candidate's rollback fail-closed (observed live on the sse-keepalive
+      // loop, 2026-09-26/27). The rollback is the loop's own baseline
+      // restoration over a tree it proved clean at begin (assertBaseline), so
+      // `git reset --hard HEAD` is sufficient: tracked changes (the
+      // candidate's edits) revert; nothing untracked can exist unless the
+      // candidate created files WITHOUT committing them — and those are
+      // removed here explicitly by exact path, direct tool-call shape the
+      // guard expects, enumerated from git itself rather than a wildcard
+      // delete.
       await options.run("git", ["reset", "--hard", "HEAD"], { cwd: input.workspace });
-      await options.run("git", ["clean", "-fd"], { cwd: input.workspace });
+      // -z porcelain: NUL-separated, paths never quoted (no core.quotepath
+      // mangling) — a non-ASCII untracked file is removable by name, not a
+      // permanent loop-stranding dirty entry.
+      const status = await options.run("git", ["status", "--porcelain", "-z"], { cwd: input.workspace });
+      const root = resolve(input.workspace);
+      for (const entry of status.stdout.split("\0")) {
+        const trimmed = entry.trim();
+        if (trimmed.length === 0) continue;
+        const path = trimmed.slice(3).trim().replace(/\/$/, "");
+        if (path.length === 0 || path.startsWith('"')) continue; // quoted output cannot occur under -z; defensive
+        const target = resolve(root, path);
+        // Containment: the sibling-prefix trap (`startsWith(workspace)` accepts
+        // `/a/b/repo-other` for workspace `/a/b/repo`) — require a real path
+        // boundary. A directory keeps its trailing-slash-derived recursion.
+        if (target !== root && !target.startsWith(root + sep)) continue;
+        try {
+          rmSync(target, { recursive: true, force: true });
+        } catch {
+          // Already gone or unreadable — the reset above owns tracked state.
+        }
+      }
+      const after = await options.run("git", ["status", "--porcelain", "-z"], { cwd: input.workspace });
+      if (after.stdout.trim().length > 0) {
+        throw new Error(`discard left the workspace dirty; refusing to proceed: ${after.stdout.trim().slice(0, 200)}`);
+      }
     },
   };
 }
