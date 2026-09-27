@@ -1,4 +1,5 @@
 import type {
+  BlockedRecord,
   Evidence,
   EvidenceRequirement,
   StepId,
@@ -14,13 +15,22 @@ import type {
 import { stepId } from "./contracts.js";
 
 const LEGAL_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
-  BLOCKED: [],
-  READY: ["IN_PROGRESS"],
-  IN_PROGRESS: ["VERIFYING", "FAILED"],
+  // W159/W166: the explicit exit — legal only for a live blocked record whose
+  // named action the owner consumes (the gate lives in transition()).
+  BLOCKED: ["READY"],
+  READY: ["IN_PROGRESS", "BLOCKED"],
+  IN_PROGRESS: ["VERIFYING", "FAILED", "BLOCKED"],
   VERIFYING: ["VERIFIED", "FAILED"],
   VERIFIED: [],
   FAILED: ["READY", "BLOCKED"],
 };
+
+/**
+ * W159/W166: the W157 attribution vocabulary — the join the blocked record's
+ * owner must match. No new actor vocabulary is invented inside the kernel;
+ * a caller whose actor is outside this closed set can never name an owner.
+ */
+const ACTOR_VOCABULARY: readonly TransitionAttribution["actor"][] = ["operator", "agent", "system", "scheduler"];
 
 /** Legal child-step transitions. COMPLETED is terminal (reopen is a new step). */
 const LEGAL_STEP_TRANSITIONS: Readonly<Record<StepState, readonly StepState[]>> = {
@@ -53,17 +63,34 @@ export class TaskGraph {
   readonly #steps = new Map<StepId, WorkflowStep>();
   readonly #evidence: Evidence[] = [];
   #mutationEpoch = 0;
+  /** The readiness each task had at its previous recompute pass — the
+   * W159/W166 resolution signal: a live blocked record holds the block
+   * against a dependency-ready STEADY state, but the graph resolving on its
+   * own (readiness flipping false → true while the record is live) is the
+   * independent automatic exit. Kernel-private and derived purely from task
+   * states; it survives restore because a resolved record-block cannot be
+   * persisted (the resolution exits in the same recompute pass that observes
+   * it), so every persisted BLOCKED-with-record task restores as held. */
+  readonly #lastReady = new Map<TaskId, boolean>();
 
   constructor(tasks: readonly WorkflowTask[]) {
     for (const task of tasks) {
       if (this.#tasks.has(task.id)) {
         throw new TypeError(`duplicate task: ${task.id}`);
       }
-      this.#tasks.set(task.id, { ...task, dependencies: [...task.dependencies] });
+      if (task.blocked !== undefined) {
+        this.#assertBlockedShape(task.blocked);
+      }
+      this.#tasks.set(task.id, {
+        ...task,
+        dependencies: [...task.dependencies],
+        ...(task.blocked === undefined ? {} : { blocked: { ...task.blocked } }),
+      });
     }
 
     this.#validateDependencies();
     this.#assertAcyclic();
+    for (const id of this.#tasks.keys()) this.#seedReadiness(id);
     this.#recomputeReadiness();
   }
 
@@ -80,7 +107,10 @@ export class TaskGraph {
     for (const task of input.tasks) {
       if (task.state !== "READY" && task.state !== "BLOCKED") continue;
       const shouldBeReady = task.dependencies.every((dependency) => persistedStates.get(dependency) === "VERIFIED");
-      if ((task.state === "READY") !== shouldBeReady) {
+      // W159/W166: BLOCKED with verified dependencies is a legal persisted
+      // state when a live blocked record holds the block; the recordless
+      // invariant is unchanged.
+      if ((task.state === "READY") !== shouldBeReady && !(task.state === "BLOCKED" && task.blocked !== undefined)) {
         throw new TypeError(`persisted task ${task.id} has inconsistent dependency readiness`);
       }
     }
@@ -296,7 +326,14 @@ export class TaskGraph {
 
   addTask(task: WorkflowTask): void {
     if (this.#tasks.has(task.id)) throw new TypeError(`duplicate task: ${task.id}`);
-    this.#tasks.set(task.id, { ...task, dependencies: [...task.dependencies] });
+    if (task.blocked !== undefined) {
+      this.#assertBlockedShape(task.blocked);
+    }
+    this.#tasks.set(task.id, {
+      ...task,
+      dependencies: [...task.dependencies],
+      ...(task.blocked === undefined ? {} : { blocked: { ...task.blocked } }),
+    });
     try {
       this.#validateDependencies();
       this.#assertAcyclic();
@@ -304,6 +341,7 @@ export class TaskGraph {
       this.#tasks.delete(task.id);
       throw error;
     }
+    this.#seedReadiness(task.id);
     this.#recomputeReadiness();
   }
 
@@ -357,13 +395,28 @@ export class TaskGraph {
     return transitions;
   }
 
-  transition(id: TaskId, requested: TaskState, attribution?: TransitionAttribution): TransitionResult {
+  transition(id: TaskId, requested: TaskState, attribution?: TransitionAttribution, blocked?: BlockedRecord): TransitionResult {
     const task = this.get(id);
     if (!LEGAL_TRANSITIONS[task.state].includes(requested)) {
       return {
         kind: "rejected",
         code: "ILLEGAL_TRANSITION",
         reason: `cannot transition ${task.id} from ${task.state} to ${requested}`,
+        taskId: task.id,
+        from: task.state,
+        requested,
+      };
+    }
+
+    // W159/W166: the actor-initiated blocked record rides ONLY the
+    // IN_PROGRESS|READY → BLOCKED admission; anywhere else it is misplaced
+    // caller data the kernel refuses (never silently drops).
+    const admission = requested === "BLOCKED" && (task.state === "IN_PROGRESS" || task.state === "READY");
+    if (blocked !== undefined && !admission) {
+      return {
+        kind: "rejected",
+        code: "BLOCKED_RECORD_MISPLACED",
+        reason: `a blocked record rides only the IN_PROGRESS|READY → BLOCKED admission, not ${task.state} → ${requested}`,
         taskId: task.id,
         from: task.state,
         requested,
@@ -402,8 +455,115 @@ export class TaskGraph {
       };
     }
 
+    let nextTask: WorkflowTask = { ...task, state: requested };
+
+    // W159/W166 admission: entering BLOCKED from IN_PROGRESS|READY requires
+    // the named owner + action, and the caller may only name ITSELF as the
+    // owner (the W157 attribution vocabulary is the join; fail closed
+    // without attribution — an agent cannot volunteer another actor).
+    if (admission) {
+      if (blocked === undefined || blocked === null) {
+        return {
+          kind: "rejected",
+          code: "BLOCKED_RECORD_REQUIRED",
+          reason: `entering BLOCKED requires a named owner + action (the actor-initiated blocked record); admission from ${task.state} fails closed without one`,
+          taskId: task.id,
+          from: task.state,
+          requested,
+        };
+      }
+      const record = blocked;
+      if (
+        typeof record.action !== "string" || record.action.trim().length === 0 ||
+        typeof record.enteredAt !== "string" || record.enteredAt.trim().length === 0
+      ) {
+        return {
+          kind: "rejected",
+          code: "BLOCKED_RECORD_MALFORMED",
+          reason: "the blocked record needs a non-empty action and a caller-supplied enteredAt (the kernel reads no clock)",
+          taskId: task.id,
+          from: task.state,
+          requested,
+        };
+      }
+      if (attribution === undefined) {
+        return {
+          kind: "rejected",
+          code: "BLOCKED_OWNER_UNVERIFIED",
+          reason: "the blocked record's owner must equal the calling actor; without attribution the kernel cannot verify self-naming (fail closed)",
+          taskId: task.id,
+          from: task.state,
+          requested,
+        };
+      }
+      if (!ACTOR_VOCABULARY.includes(attribution.actor) || record.owner !== attribution.actor) {
+        return {
+          kind: "rejected",
+          code: "BLOCKED_OWNER_MISMATCH",
+          reason: `only the calling actor may name itself as the unblock owner (an actor cannot volunteer another actor); the caller is '${attribution.actor}', the record names '${record.owner}'`,
+          taskId: task.id,
+          from: task.state,
+          requested,
+        };
+      }
+      nextTask = { ...task, state: "BLOCKED", blocked: { ...record } };
+    }
+
+    // W159/W166 exit: the explicit BLOCKED → READY keeps today's
+    // dependency-derived readiness AND consumes the named action one-shot
+    // (the W112 grant-lifecycle shape), performed by the named owner itself.
+    if (requested === "READY" && task.state === "BLOCKED") {
+      const record = task.blocked;
+      if (record === undefined) {
+        return {
+          kind: "rejected",
+          code: "BLOCKED_EXIT_WITHOUT_ACTION",
+          reason: `no named action to consume; task ${task.id} is dependency-derived BLOCKED and exits automatically when the dependency graph resolves`,
+          taskId: task.id,
+          from: task.state,
+          requested,
+        };
+      }
+      const ready = task.dependencies.every((dependency) => this.get(dependency).state === "VERIFIED");
+      if (!ready) {
+        return {
+          kind: "rejected",
+          code: "DEPENDENCY_READINESS_REQUIRED",
+          reason: `BLOCKED → READY keeps dependency-derived readiness; task ${task.id}'s dependencies are not all VERIFIED`,
+          taskId: task.id,
+          from: task.state,
+          requested,
+        };
+      }
+      if (attribution === undefined) {
+        return {
+          kind: "rejected",
+          code: "BLOCKED_OWNER_UNVERIFIED",
+          reason: "consuming the named action requires attribution — the kernel cannot verify the actor is the named owner (fail closed)",
+          taskId: task.id,
+          from: task.state,
+          requested,
+        };
+      }
+      if (!ACTOR_VOCABULARY.includes(attribution.actor) || record.owner !== attribution.actor) {
+        return {
+          kind: "rejected",
+          code: "BLOCKED_OWNER_MISMATCH",
+          reason: `only the named owner consumes its action (the record names '${record.owner}', the caller is '${attribution.actor}')`,
+          taskId: task.id,
+          from: task.state,
+          requested,
+        };
+      }
+      // One-shot consumption: the action is spent and the record leaves the
+      // task entirely (the W112 grant-lifecycle shape).
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- the rest sibling IS the consumption: the record is discarded by design (the repo config lacks ignoreRestSiblings; disclosed per the W115 precedent)
+      const { blocked: consumedAction, ...withoutRecord } = task;
+      nextTask = { ...withoutRecord, state: "READY" };
+    }
+
     const from = task.state;
-    this.#tasks.set(id, { ...task, state: requested });
+    this.#tasks.set(id, nextTask);
     this.#recomputeReadiness();
     // W157: the caller's attribution rides the record verbatim; the kernel
     // fabricates none and reads no clock (observedAt is caller-supplied).
@@ -492,10 +652,41 @@ export class TaskGraph {
       const ready = task.dependencies.every(
         (dependency) => this.get(dependency).state === "VERIFIED",
       );
-      const state: TaskState = ready ? "READY" : "BLOCKED";
+      // W159/W166: a live blocked record holds the block against a
+      // dependency-ready STEADY state (the record is the block the owner
+      // owes an action for — this is what makes an admission stick). The
+      // graph resolving on its own — readiness flipping false → true while
+      // the record is live — is the independent automatic exit, after which
+      // the record rides as stale context (it is NOT consumed). A record on
+      // a READY task is already stale context and never re-blocks.
+      const graphResolved = ready && this.#lastReady.get(id) === false;
+      const recordHolds = task.state === "BLOCKED" && task.blocked !== undefined && !graphResolved;
+      const state: TaskState = ready && !recordHolds ? "READY" : "BLOCKED";
       if (task.state !== state) {
         this.#tasks.set(id, { ...task, state });
       }
+      this.#lastReady.set(id, ready);
+    }
+  }
+
+  /** Seeds the W159/W166 resolution signal for one task from its current states. */
+  #seedReadiness(id: TaskId): void {
+    this.#lastReady.set(
+      id,
+      this.get(id).dependencies.every((dependency) => this.get(dependency).state === "VERIFIED"),
+    );
+  }
+
+  /** W159/W166: the persisted/constructed record must be well-formed caller
+   * data — a named owner from the W157 vocabulary, a non-empty action, and a
+   * caller-supplied enteredAt (the kernel reads no clock). */
+  #assertBlockedShape(record: BlockedRecord): void {
+    if (
+      !ACTOR_VOCABULARY.includes(record.owner) ||
+      typeof record.action !== "string" || record.action.trim().length === 0 ||
+      typeof record.enteredAt !== "string" || record.enteredAt.trim().length === 0
+    ) {
+      throw new TypeError("malformed blocked record: needs an owner from the actor vocabulary, a non-empty action, and a caller-supplied enteredAt");
     }
   }
 }

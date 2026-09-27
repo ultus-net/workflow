@@ -97,6 +97,12 @@ export async function createWorkflowHub(
      */
     readBoardTasks?: () => Promise<import("./task-provider.js").BoardOutcome>;
     /**
+     * W162: the board's delegation capability (the hub-side single-issue read
+     * behind POST /board/delegate). Absent means the route 404s — capability
+     * withheld, never faked.
+     */
+    delegateBoardTask?: (issue: number) => Promise<import("./task-provider.js").BoardTaskOutcome>;
+    /**
      * W164: the project container's registry — when provided, the hub
      * exposes operator-token `/project/list|save|delete|scope` routes backed
      * by this registry. Absent means the routes 404. The composition root
@@ -164,6 +170,7 @@ export async function createWorkflowHub(
       options.schedules,
       options.contentStore,
       options.readBoardTasks,
+      options.delegateBoardTask,
       options.projects,
     );
     options.observeBridgeStarted?.(bridge.url);

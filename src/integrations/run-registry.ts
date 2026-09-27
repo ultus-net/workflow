@@ -89,16 +89,16 @@ export interface ReasoningClaimMetrics {
 /**
  * W153: explicit origin attribution on a run record. The scheduler has always
  * made attribution STRUCTURAL (run ids `schedule:<id>:<uuid>`); this field is
- * the recorded form — the scheduler states the origin at begin time, so run
+ * the recorded form — the recorder states the origin at begin time, so run
  * rows can name "fired by schedule S" from the registry rather than from id
- * parsing at the view. Only the scheduler records it: /run/begin and the RSI
- * and reviewer lanes pass no origin, and a client-supplied one would be
- * forgeable attribution, so the HTTP route deliberately does not accept it.
+ * parsing at the view. The scheduler AND the W162 board-delegation route
+ * record it, both hub-side: the route records what its OWN provider read
+ * returned — the client never supplies attribution, and /run/begin still
+ * accepts none (a client-supplied one would be forgeable attribution).
  */
-export interface RunOrigin {
-  readonly kind: "schedule";
-  readonly scheduleId: string;
-}
+export type RunOrigin =
+  | { readonly kind: "schedule"; readonly scheduleId: string }
+  | { readonly kind: "provider-task"; readonly provider: "github"; readonly key: string; readonly url: string };
 
 /**
  * W146: the typed classification for a client-shaped fault in a
@@ -380,11 +380,17 @@ export function createRunRegistry(
           : [],
       });
       // W157: the run lane stamps what it knows — a schedule-fired run's
-      // begin belongs to the scheduler (the origin record names it); any
-      // other begin is agent-driven through the registry surface.
+      // begin belongs to the scheduler (the origin record names it); a W162
+      // board-delegated run's begin belongs to the operator's delegate route
+      // (the provider-task origin record names it); any other begin is
+      // agent-driven through the registry surface.
       const started = application.transition(runTaskId, "IN_PROGRESS", {
-        actor: origin === undefined ? "agent" : "scheduler",
-        authority: origin === undefined ? "run begin (run registry)" : `schedule-fired run begin (origin ${origin.scheduleId})`,
+        actor: origin === undefined ? "agent" : origin.kind === "schedule" ? "scheduler" : "operator",
+        authority: origin === undefined
+          ? "run begin (run registry)"
+          : origin.kind === "schedule"
+            ? `schedule-fired run begin (origin ${origin.scheduleId})`
+            : `provider-task run begin (origin ${origin.key})`,
         observedAt: new Date().toISOString(),
       });
       if (started.kind !== "accepted") throw new Error(`cannot start run ${runId}: ${started.reason}`);

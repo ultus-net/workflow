@@ -532,10 +532,14 @@ test("W153: the registry records the scheduler's origin and exposes it through g
   assert.deepEqual(registry.runOrigins().get("schedule:nightly:abc"), { kind: "schedule", scheduleId: "nightly" });
 
   registry.recordRunOrigin({ runId: "schedule:sweep:def", origin: { kind: "schedule", scheduleId: "sweep" } });
-  assert.equal(registry.runOrigins().get("schedule:sweep:def")?.scheduleId, "sweep");
+  // W162 widened RunOrigin to a discriminated union; the narrowing keeps this
+  // assertion's discrimination exactly (a non-schedule record reads undefined and fails).
+  const sweep = registry.runOrigins().get("schedule:sweep:def");
+  assert.equal(sweep?.kind === "schedule" ? sweep.scheduleId : undefined, "sweep");
 
   const gates = registry.controller.gateObservability?.();
-  assert.equal(gates?.runOrigins?.get("schedule:nightly:abc")?.scheduleId, "nightly", "gate observability relays the recorded origins");
+  const nightly = gates?.runOrigins?.get("schedule:nightly:abc");
+  assert.equal(nightly?.kind === "schedule" ? nightly.scheduleId : undefined, "nightly", "gate observability relays the recorded origins");
 
   await registry.controller.begin({ runId: "author-no-origin", title: "Author run", workspace: process.cwd() });
   assert.equal(registry.runOrigins().has("author-no-origin"), false, "no origin declared, none recorded — attribution is never inferred");

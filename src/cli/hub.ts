@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createEvidenceContentStore } from "../integrations/evidence-content-store.js";
-import { boardProviderFromEnv, fetchBoardTasks } from "../integrations/task-provider.js";
+import { boardProviderFromEnv, fetchBoardTask, fetchBoardTasks } from "../integrations/task-provider.js";
 import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
 import { createCredentialBroker } from "../integrations/credentials.js";
@@ -425,6 +425,7 @@ try {
     // bounded, and credential-free on the wire. An unconfigured hub still
     // serves the route; the payload names the missing declaration.
     readBoardTasks: () => fetchBoardTasks(boardProviderFromEnv(process.env)),
+    delegateBoardTask: (issue: number) => fetchBoardTask(boardProviderFromEnv(process.env), issue),
     schedulerFactory,
     schedules: scheduleRegistry,
     projects: projectRegistry,

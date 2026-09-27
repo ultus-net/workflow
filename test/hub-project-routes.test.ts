@@ -78,6 +78,7 @@ async function compose(
     undefined,
     undefined,
     options.withBoard === true ? async () => boardOutcome : undefined,
+    undefined,
     registry,
   );
   context.after(() => bridge.close());

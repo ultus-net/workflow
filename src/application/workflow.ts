@@ -4,6 +4,7 @@ import { lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { evaluateTaskGraphInvariants } from "../kernel/invariants.js";
 import type {
+  BlockedRecord,
   Evidence,
   EvidenceRequirement,
   PolicyDecision,
@@ -274,7 +275,7 @@ export class WorkflowApplication {
     return { kind: "allow" };
   }
 
-  transition(taskId: TaskId, requested: TaskState, attribution?: TransitionAttribution): TransitionResult {
+  transition(taskId: TaskId, requested: TaskState, attribution?: TransitionAttribution, blocked?: BlockedRecord): TransitionResult {
     if (requested === "VERIFYING" && this.#pedagogyGate !== undefined) {
       const pendingInspection = verifyingGate(this.#pedagogyGate, taskId);
       if (pendingInspection !== undefined) {
@@ -289,7 +290,7 @@ export class WorkflowApplication {
         };
       }
     }
-    const result = this.#graph.transition(taskId, requested, attribution);
+    const result = this.#graph.transition(taskId, requested, attribution, blocked);
     if (result.kind === "accepted") this.#history.push(result.transition);
     return result;
   }
