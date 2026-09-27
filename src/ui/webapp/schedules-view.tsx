@@ -2,6 +2,7 @@ import { useState } from "react";
 
 import { formatScheduleFire } from "./presenters.js";
 import type { ScheduleLineage, ScheduleRecentRun } from "../../integrations/operator-posture.js";
+import type { LoopIterationRecord } from "../../integrations/self-improvement-loop.js";
 
 /** The schedule record as the hub's /schedule/list returns it. */
 export interface ScheduleMeta {
@@ -47,7 +48,12 @@ export interface LoopMeta {
   readonly state: "running" | "completed" | "stopped" | "cancelled";
   readonly startedAt: string;
   readonly cancelRequested: boolean;
-  readonly iterations: readonly unknown[];
+  /**
+   * W154: the RSI lineage records, typed from the registry's own shape so the
+   * lineage view renders exactly what the record carries — an absent
+   * commitRef or score renders its honest empty state, never a placeholder.
+   */
+  readonly iterations: readonly LoopIterationRecord[];
   readonly outcome?: { readonly reason: string; readonly accepted: number; readonly rejected: number };
 }
 
@@ -203,6 +209,29 @@ export function SchedulesView({ schedules, loops, recentRuns, onCancelLoop, onPa
               <span className="session-time" title={loop.spec.objective}>{loop.spec.objective}</span>
               <span className="session-agent-badge">{loop.iterations.length} iterations</span>
             </footer>
+            {/* W154: the RSI lineage view — objective → iteration → verdict →
+                commit-ref, one row per iteration, from the registry's records.
+                An absent commitRef renders its honest empty state; the run id
+                renders with the posture inbox's panel-pending pattern (no
+                run-inspection panel exists yet), never a dead link. */}
+            <ul className="rsi-lineage" aria-label={`RSI lineage: ${loop.spec.objective}`}>
+              {loop.iterations.length === 0 ? (
+                <li className="muted rsi-lineage-empty">no iterations recorded yet</li>
+              ) : (
+                loop.iterations.map((entry) => (
+                  <li key={entry.iteration} className="rsi-lineage-row">
+                    <span className="rsi-lineage-n">#{entry.iteration}</span>
+                    <span className={`rsi-lineage-verdict rsi-lineage-verdict-${entry.verdict}`}>
+                      {entry.verdict}{entry.score === undefined ? "" : ` · score ${entry.score}`}
+                    </span>
+                    <span className="rsi-lineage-run" title={`run ${entry.runId} — run inspection panel pending`}>run {entry.runId}</span>
+                    <span className="rsi-lineage-commit">
+                      {entry.commitRef === undefined ? "no commit — discarded or pending" : entry.commitRef}
+                    </span>
+                  </li>
+                ))
+              )}
+            </ul>
             <div className="session-card-actions">
               {loop.state === "running" && (
                 <button type="button" className="btn btn-ghost" onClick={() => onCancelLoop(loop.id)}>Cancel</button>

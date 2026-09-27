@@ -8,6 +8,7 @@ import { shellExecutorFor, type WorkflowApplicationResolver, type WorkflowRunCon
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import type { SelfImprovementRegistry, SelfImprovementSpec } from "./self-improvement-registry.js";
 import type { ScheduleRegistry } from "./schedule-registry.js";
+import { activityTimeline } from "./activity-timeline.js";
 import { operatorPosture, scheduleLineage, scheduleRecentRuns } from "./operator-posture.js";
 
 /**
@@ -309,10 +310,37 @@ async function handleRequest(
         }),
         ...(context.schedules === undefined ? {} : { schedules: context.schedules.list().map((schedule) => ({ id: schedule.id, title: schedule.title })) }),
       });
+      // W152: the unified activity timeline rides the same snapshot response —
+      // the projection over the kernel's transition log and the registry's
+      // gate records. Kernel transition rows are unattributed BY CONTRACT
+      // (the kernel records no actor/authority; W157 is the record change
+      // that would add it); the timeline's kernel segment is the fallback
+      // application's own log plus each recent run's log (bounded 64), never
+      // a fabricated union of things the kernel did not record.
+      const timeline = activityTimeline({
+        transitions: [
+          ...snapshot.history,
+          ...(gates === undefined
+            ? []
+            : [...(gates.transitionLogs ?? new Map()).values()].flat()),
+        ],
+        tasks: snapshot.tasks.map((task) => ({ id: task.id, title: task.title })),
+        ...(gates === undefined
+          ? {}
+          : {
+            reviewOutcomes: gates.reviewOutcomes,
+            blockingReasons: gates.blockingReasons,
+            completionClaims: gates.completionClaims,
+            runUsage: gates.runUsage,
+            runOrigins: gates.runOrigins,
+          }),
+        ...(context.schedules === undefined ? {} : { schedules: context.schedules.list().map((schedule) => ({ id: schedule.id, title: schedule.title })) }),
+      });
       return send(response, 200, {
         snapshot: { ...snapshot, tasks: snapshot.tasks.filter((task) => !hiddenTaskIds.has(task.id)) },
         ...(gateObservability === undefined ? {} : { gateObservability }),
         posture,
+        timeline,
       });
     }
     if (request.url === "/bash") {

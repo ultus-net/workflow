@@ -3031,3 +3031,35 @@ body {
 .posture-row-attribution { color: var(--text-muted); font-size: 0.68rem; }
 .posture-row-action { white-space: nowrap; }
 .posture-row-action-absent { color: var(--text-muted); opacity: 0.55; font-size: 0.72rem; }
+
+/* W152: the unified activity timeline in the History panel. One feed; rows
+ * carry their record's own attribution and time — kernel rows render the
+ * explicit unattributed state, never a guess. */
+.activity-timeline { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.5rem; }
+.activity-timeline-degraded-note { color: var(--text-muted); font-size: 0.68rem; }
+.activity-timeline-empty { margin: 0; }
+.activity-timeline-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; max-height: 22rem; overflow-y: auto; }
+.activity-row { display: flex; align-items: baseline; gap: 0.45rem; font-size: 0.72rem; }
+.activity-kind { font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.05rem 0.3rem; border: 1px solid var(--border); color: var(--text-muted); white-space: nowrap; }
+.activity-kind-review { color: var(--accent, #60a5fa); }
+.activity-kind-gate, .activity-kind-budget { color: var(--warn, #d97706); }
+.activity-kind-origin { color: var(--ok); }
+.activity-row-body { display: flex; flex-direction: column; gap: 0.05rem; min-width: 0; flex: 1; }
+.activity-row-summary { overflow-wrap: anywhere; }
+.activity-row-attribution { color: var(--text-muted); font-size: 0.62rem; }
+.activity-timeline-retention { margin: 0; font-size: 0.62rem; }
+.activity-local-note { margin: 0.4rem 0 0.2rem; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* W154: the artifact strip's discriminator rows and the RSI lineage view. */
+.evidence-row { overflow-wrap: anywhere; }
+.evidence-row-stale { color: var(--text-muted); }
+.evidence-signpost { color: var(--text-muted); font-style: italic; }
+.evidence-record-tag { color: var(--text-muted); font-size: 0.9em; }
+.git-signpost-note { margin: 0.4rem 0 0; font-size: 0.66rem; }
+.rsi-lineage { list-style: none; margin: 0.4rem 0 0; padding: 0.35rem 0.45rem; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.2rem; }
+.rsi-lineage-row { display: flex; align-items: baseline; gap: 0.45rem; font-size: 0.68rem; font-family: var(--font-mono); }
+.rsi-lineage-empty { font-size: 0.68rem; }
+.rsi-lineage-verdict-accepted { color: var(--ok); }
+.rsi-lineage-verdict-rejected { color: var(--danger, #e05252); }
+.rsi-lineage-run { color: var(--text-muted); overflow-wrap: anywhere; }
+.rsi-lineage-commit { color: var(--text-muted); overflow-wrap: anywhere; }

@@ -314,6 +314,21 @@ export function createRunRegistry(
           recall: "unmeasured" as const,
           timeToResponseMs: "unmeasured" as const,
         },
+        /**
+         * W152: each run's own kernel transition log (its application's
+         * `#history`), bounded to the most recent 64 runs in begin order — the
+         * same bounded-observability rule as the gate maps. The kernel records
+         * no actor or authority on transitions; the timeline renders those
+         * rows unattributed (W157 is the record change that would add it).
+         */
+        transitionLogs: (() => {
+          const bounded = [...runs.entries()].slice(-64);
+          const logs = new Map<string, readonly import("../kernel/contracts.js").TransitionRecord[]>();
+          for (const [runId, application] of bounded) {
+            logs.set(runId, application.snapshot().history);
+          }
+          return logs;
+        })(),
       };
     },
     async begin({ runId, title, workspace, requiresReview, taskPrompt, origin }) {

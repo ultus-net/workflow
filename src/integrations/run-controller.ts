@@ -58,6 +58,15 @@ export interface WorkflowRunController {
     runUsage?: ReadonlyMap<string, import("./run-registry.js").RunUsageSummary>;
     /** W153: recorded schedule-origin attribution per run (observability-only). */
     runOrigins?: ReadonlyMap<string, import("./run-registry.js").RunOrigin>;
+    /**
+     * W152: the per-run kernel transition logs, bounded to the most recent 64
+     * runs like the other observability maps. Each entry is that run's own
+     * application history (the kernel transition log is per application
+     * instance — workflow.ts `#history` — and each run composes its own), so
+     * the unified timeline can render run begin/finish rows without the
+     * kernel synthesizing attribution it does not record.
+     */
+    transitionLogs?: ReadonlyMap<string, readonly import("../kernel/contracts.js").TransitionRecord[]>;
   };
 }
 
