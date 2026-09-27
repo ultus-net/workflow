@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createEvidenceContentStore } from "../integrations/evidence-content-store.js";
+import { boardProviderFromEnv, fetchBoardTasks } from "../integrations/task-provider.js";
 import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
 import { createCredentialBroker } from "../integrations/credentials.js";
@@ -413,6 +414,11 @@ try {
     // /evidence-content read route and the test-runner capture records
     // content on the evidence the verification consumed.
     contentStore: createEvidenceContentStore(),
+    // W161: the external-task board's read closure — env-classified at hub
+    // start (WORKFLOW_GITHUB_REPO/WORKFLOW_GITHUB_TOKEN), fetched per read,
+    // bounded, and credential-free on the wire. An unconfigured hub still
+    // serves the route; the payload names the missing declaration.
+    readBoardTasks: () => fetchBoardTasks(boardProviderFromEnv(process.env)),
     schedulerFactory,
     schedules: scheduleRegistry,
     // W073 trigger surface / Checkpoint F: the registry is composed lazily

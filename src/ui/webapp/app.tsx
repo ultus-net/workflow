@@ -11,14 +11,16 @@ import { ActionPart, AttentionPart, CompletionPart, OutcomePart, PlanPart, Think
 import { ConfigField } from "./config-field.js";
 import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
-import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } from "./presenters.js";
+import { describeActivity, formatElapsed, formatRelativeTime, formatTokens, BOARD_POLL_MS } from "./presenters.js";
 import { useSessionCommands, useSessionState, useSessionStatus, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog, type RoutingFacts } from "./settings-dialog.js";
 import { AgentsView, budgetRaiseOutcome } from "./agents-view.js";
 import { ActivityTimelinePanel, useActivityTimeline } from "./activity-timeline.js";
 import { PostureStrip, usePosture } from "./posture-strip.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
+import { BoardView } from "./board-view.js";
 import type { ScheduleRecentRun } from "../../integrations/operator-posture.js";
+import type { BoardOutcome } from "../../integrations/task-provider.js";
 import { UsageView } from "./usage-view.js";
 import { InvariantsPanel } from "./invariants-panel.js";
 import type { SessionBudgetPosture } from "../web-sessions.js";
@@ -168,6 +170,8 @@ interface Snapshot {
 const NEXT_STATE: Record<string, string> = { READY: "IN_PROGRESS", IN_PROGRESS: "VERIFYING", VERIFYING: "VERIFIED" };
 const NEXT_STATE_ACTION: Record<string, string> = { READY: "Start", IN_PROGRESS: "Verify", VERIFYING: "Complete" };
 const PANEL_POLL_MS = 1500;
+// The external provider's own slower poll lane — the constant (and its quota
+// rationale) lives in presenters.ts next to the honesty span that renders it.
 
 interface GitChange {
   readonly path: string;
@@ -506,12 +510,36 @@ function useSessions() {
   return { sessions, refresh: load };
 }
 
-/** Polls the hub-backed schedule table and self-improvement loop registry
- * through the web service's hub proxy; undefined arrays mean "hub unavailable". */
+/** Polls the hub-backed schedule table, self-improvement loop registry, and
+ * external task board through the web service's hub proxy; undefined arrays
+ * mean "hub unavailable", and a null board means the board specifically is
+ * unavailable or the hub predates the /api/board route. The board rides its
+ * own slower poll lane (BOARD_POLL_MS) — never the 1.5s panel poll. */
 function useOperatorSurfaces() {
   const [schedules, setSchedules] = useState<ScheduleMeta[] | undefined>(undefined);
   const [loops, setLoops] = useState<LoopMeta[] | undefined>(undefined);
   const [recentRuns, setRecentRuns] = useState<readonly ScheduleRecentRun[] | undefined>(undefined);
+  const [board, setBoard] = useState<BoardOutcome | null | undefined>(undefined);
+  const [boardReason, setBoardReason] = useState<string | undefined>(undefined);
+  /** W161 (review P2): the relay's failure reason is carried to the view —
+   * a provider fault must render its own reason, never a bare "hub does not
+   * report a task board" that misreports whose fault it was. */
+  const loadBoard = useCallback(async (): Promise<void> => {
+    try {
+      const boardResponse = await fetch("/api/board");
+      if (boardResponse.ok) {
+        const payload = (await boardResponse.json()) as { board?: BoardOutcome; reason?: string };
+        setBoard(payload.board ?? null);
+        setBoardReason(payload.reason);
+      }
+      else {
+        setBoard(null);
+        setBoardReason(undefined);
+      }
+    } catch {
+      // Keep the last good board; the next poll retries.
+    }
+  }, []);
   const load = useCallback(async (): Promise<void> => {
     try {
       const schedulesResponse = await fetch("/api/schedules");
@@ -536,10 +564,16 @@ function useOperatorSurfaces() {
   }, []);
   useEffect(() => {
     void load();
+    void loadBoard();
     const timer = setInterval(() => void load(), PANEL_POLL_MS);
-    return () => clearInterval(timer);
-  }, [load]);
-  return { schedules, loops, recentRuns, refresh: load };
+    // W161: the provider's own slower lane (see BOARD_POLL_MS above).
+    const boardTimer = setInterval(() => void loadBoard(), BOARD_POLL_MS);
+    return () => {
+      clearInterval(timer);
+      clearInterval(boardTimer);
+    };
+  }, [load, loadBoard]);
+  return { schedules, loops, recentRuns, board, boardReason, refresh: load, refreshBoard: loadBoard };
 }
 
 function createSession(refresh: () => Promise<void>): void {
@@ -952,6 +986,17 @@ function AgentsIcon() {
       <rect x="2.5" y="9.3" width="11" height="4.2" />
       <circle cx="5" cy="4.6" r="0.7" fill="currentColor" stroke="none" />
       <circle cx="5" cy="11.4" r="0.7" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+/** Three-column kanban glyph for the Board slug. */
+function BoardIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2.5" y="2.5" width="3.2" height="11" />
+      <rect x="6.4" y="2.5" width="3.2" height="7.5" />
+      <rect x="10.3" y="2.5" width="3.2" height="9.5" />
     </svg>
   );
 }
@@ -2367,7 +2412,7 @@ function EnforcementBadge({ level, transport, copy }: {
  * via the /agents command, with /sessions kept as an alias. The settings
  * panel (W077-era operator surfaces) is reachable from the gear and the
  * Ctrl/Cmd+, command. */
-export type AppView = "chat" | "agents" | "schedules" | "usage" | "settings";
+export type AppView = "chat" | "agents" | "board" | "schedules" | "usage" | "settings";
 
 export function App() {
   // The chat view focuses one parallel session at a time; undefined = the
@@ -2384,6 +2429,10 @@ export function App() {
     }
     if (name === "/schedules") {
       setView("schedules");
+      return true;
+    }
+    if (name === "/board") {
+      setView("board");
       return true;
     }
     if (name === "/usage") {
@@ -2418,7 +2467,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const gitStatus = useGitStatus();
   const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
-  const { schedules, loops, recentRuns, refresh: refreshSchedules } = useOperatorSurfaces();
+  const { schedules, loops, recentRuns, board, boardReason, refresh: refreshSchedules } = useOperatorSurfaces();
   const posture = usePosture();
   const agents = useAgents();
   // The registry leads with the default agent (OpenCode); fall back to it while
@@ -2597,6 +2646,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
             {([
               ["chat", "Chat", <ChatIcon key="c" />],
               ["agents", "Agents", <AgentsIcon key="s" />],
+              ["board", "Board", <BoardIcon key="b" />],
               ["schedules", "Schedules", <SchedulesIcon key="d" />],
               ["usage", "Usage", <UsageIcon key="u" />],
               ["settings", "Settings", <GearIcon key="g" />],
@@ -2718,6 +2768,8 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
             }
           }}
         />
+      ) : view === "board" ? (
+        <BoardView board={board} reason={boardReason} />
       ) : view === "usage" ? (
         <UsageView />
       ) : view === "settings" ? (

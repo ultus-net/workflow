@@ -1,6 +1,20 @@
 import type { OperatorSessionItem } from "../operator-session.js";
 import type { WebConfigOption } from "../web-config-options.js";
 
+/**
+ * W161: the external provider's poll cadence is its OWN lane, deliberately
+ * not the 1.5s panel poll — a primary management seat polling GitHub at
+ * ~2,400 requests/hour per open tab would burn the provider quota that the
+ * dashboard's own roadmap (iterations 2+) depends on. 30s per open tab keeps
+ * an ordinary session near ~120 req/hour, far inside the provider's
+ * authenticated ceiling. Lives here (not app.tsx) so the board view's
+ * honesty span renders the SAME constant the poll uses — a cadence change
+ * can never silently desync the rendered claim. (Residual for a later
+ * iteration: hub-side ETag conditional requests so overlapping tabs share
+ * one upstream read.)
+ */
+export const BOARD_POLL_MS = 30_000;
+
 /** Token counts compacted for meters and readouts ("84.5k", "1.2M"). */
 export function formatTokens(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;

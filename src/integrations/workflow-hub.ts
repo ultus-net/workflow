@@ -87,6 +87,14 @@ export async function createWorkflowHub(
      * registry. Absent means the routes 404.
      */
     schedules?: ScheduleRegistry;
+    /**
+     * W161: the external-task board's read capability (a closure over the
+     * env-classified provider and its bounded fetch — see task-provider.ts).
+     * When provided, the hub exposes the operator-token `/board/tasks` read
+     * route; absent means the route 404s. The composition root builds the
+     * production closure from env so the hub's payload stays credential-free.
+     */
+    readBoardTasks?: () => Promise<import("./task-provider.js").BoardOutcome>;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -147,6 +155,7 @@ export async function createWorkflowHub(
       selfImprovement,
       options.schedules,
       options.contentStore,
+      options.readBoardTasks,
     );
     options.observeBridgeStarted?.(bridge.url);
     scheduler?.start();
