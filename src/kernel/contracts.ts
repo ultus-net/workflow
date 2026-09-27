@@ -32,6 +32,22 @@ export interface Evidence {
   readonly freshness: EvidenceFreshness;
   readonly mutationEpoch: number;
   readonly observedAt: string;
+  /**
+   * W158: an optional bounded-content REFERENCE — the kernel record carries
+   * only the reference (kind + ref + byte size); the bytes live in an
+   * integration-layer store and ride no kernel purity line. A record without
+   * content renders as its plain self (the honest absence the W154 strip
+   * already handles); an over-cap capture is never recorded as a fabricated
+   * empty reference.
+   */
+  readonly content?: EvidenceContentRef;
+}
+
+export interface EvidenceContentRef {
+  readonly kind: "test-output" | "screenshot";
+  /** The integration-layer store's key; the bytes never enter the kernel. */
+  readonly ref: string;
+  readonly byteSize: number;
 }
 
 export interface WorkflowTask {

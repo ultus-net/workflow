@@ -36,6 +36,10 @@ interface HubRequestContext {
   readonly guard: WorkflowGuardProvider | undefined;
   readonly selfImprovement: SelfImprovementRegistry | undefined;
   readonly schedules: ScheduleRegistry | undefined;
+  /** W158: the bounded content store behind the evidence content references; absent → the read route 404s. */
+  readonly contentStore?: {
+    get(ref: string): { readonly kind: "test-output" | "screenshot"; readonly mediaType: string; readonly bytes: string; readonly byteSize: number } | undefined;
+  };
 }
 
 export async function createWorkflowHubBridge(
@@ -49,10 +53,11 @@ export async function createWorkflowHubBridge(
   guard?: WorkflowGuardProvider,
   selfImprovement?: SelfImprovementRegistry,
   schedules?: ScheduleRegistry,
+  contentStore?: HubRequestContext["contentStore"],
 ): Promise<WorkflowHubBridge> {
   const token = randomBytes(32).toString("hex");
   const verificationToken = randomBytes(32).toString("hex");
-  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules };
+  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }) };
 
   const server = createServer((request, response) => {
     if (request.url !== undefined) observeRequest?.(new URL(request.url, "http://127.0.0.1").pathname);
@@ -100,6 +105,18 @@ async function handleRequest(
     if (!authorized(request, requiredToken)) return send(response, 401, { error: "unauthorized" });
     if (request.url === "/health") return send(response, 200, { status: "ok" });
     const body = await readJson(request);
+    if (request.url === "/evidence-content") {
+      // W158: the bounded content behind an evidence record's reference — the
+      // operator token serves it (the same read class as /snapshot); an
+      // absent store or an unknown/evicted ref answers honestly.
+      if (context.contentStore === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body) || typeof body.ref !== "string" || body.ref.length === 0) {
+        return send(response, 400, { error: "invalid evidence-content request" });
+      }
+      const stored = context.contentStore.get(body.ref);
+      if (stored === undefined) return send(response, 404, { error: "not found" });
+      return send(response, 200, { kind: stored.kind, mediaType: stored.mediaType, bytes: stored.bytes, byteSize: stored.byteSize });
+    }
     if (request.url === "/review/rubric") {
       if (!isRecord(body) || typeof body.diffText !== "string") {
         return send(response, 400, { error: "invalid review rubric request" });

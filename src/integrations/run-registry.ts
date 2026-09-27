@@ -144,6 +144,15 @@ export function createRunRegistry(
   options?: {
     readonly reviewer?: RunReviewerFactory;
     readonly testRunner?: RunTestRunner;
+    /**
+     * W158: the bounded content store behind the evidence content references.
+     * Absent → the capture is skipped (the evidence records render plain, the
+     * honest absence) — the strip's preview needs a hub that wired a store.
+     */
+    readonly contentStore?: {
+      put(kind: "test-output" | "screenshot", mediaType: string, payload: string): { readonly ref: string; readonly byteSize: number } | undefined;
+      get(ref: string): { readonly kind: "test-output" | "screenshot"; readonly mediaType: string; readonly bytes: string; readonly byteSize: number } | undefined;
+    };
   },
 ): {
   resolve: WorkflowApplicationResolver;
@@ -470,6 +479,11 @@ export function createRunRegistry(
             rememberBlockingReason(runId, reason);
             throw new Error(`cannot verify run ${runId}: ${reason}`);
           }
+          // W158: the PASSED test output is captured as bounded content ON the
+          // very evidence record the verification consumed — one record, not a
+          // parallel copy. Over-cap output is honest absence (no fabricated
+          // reference); the bytes never enter the kernel.
+          const storedContent = options?.contentStore?.put("test-output", "text/plain", testOutcome.output);
           application.recordEvidence({
             id: evidenceId(`test-evidence:${runId}`),
             observationId: observationId(`test-observation:${runId}`),
@@ -479,6 +493,7 @@ export function createRunRegistry(
             freshness: "fresh",
             mutationEpoch: application.snapshot().mutationEpoch,
             observedAt: new Date().toISOString(),
+            ...(storedContent === undefined ? {} : { content: { kind: "test-output" as const, ref: storedContent.ref, byteSize: storedContent.byteSize } }),
           });
           verified = application.transition(runTaskId, "VERIFIED");
           if (verified.kind !== "accepted") {

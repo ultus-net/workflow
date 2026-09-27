@@ -60,6 +60,11 @@ export async function createWorkflowHub(
     guard?: WorkflowGuardProvider;
     reviewerFactory?: RunReviewerFactory;
     testRunner?: RunTestRunner;
+    /** W158: the bounded evidence-content store; wired → the hub exposes the /evidence-content read route and the test-runner capture records content. */
+    contentStore?: {
+      put(kind: "test-output" | "screenshot", mediaType: string, payload: string): { readonly ref: string; readonly byteSize: number } | undefined;
+      get(ref: string): { readonly kind: "test-output" | "screenshot"; readonly mediaType: string; readonly bytes: string; readonly byteSize: number } | undefined;
+    };
     schedulerFactory?: (handles: WorkflowHubSchedulerHandles) => HubScheduler;
     /**
      * W073 trigger surface: when provided, the hub exposes operator-token
@@ -99,6 +104,7 @@ export async function createWorkflowHub(
     const runs = options.graph === undefined ? undefined : createRunRegistry(application, options.graph, {
       ...(options.reviewerFactory === undefined ? {} : { reviewer: options.reviewerFactory }),
       ...(options.testRunner === undefined ? {} : { testRunner: options.testRunner }),
+      ...(options.contentStore === undefined ? {} : { contentStore: options.contentStore }),
     });
     const scheduler = options.schedulerFactory !== undefined && runs !== undefined
       ? options.schedulerFactory({
@@ -142,6 +148,7 @@ export async function createWorkflowHub(
       options.guard,
       selfImprovement,
       options.schedules,
+      options.contentStore,
     );
     options.observeBridgeStarted?.(bridge.url);
     scheduler?.start();

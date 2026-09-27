@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
+import { createEvidenceContentStore } from "../integrations/evidence-content-store.js";
 import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
 import { createCredentialBroker } from "../integrations/credentials.js";
@@ -404,6 +405,10 @@ try {
     guard,
     ...(teamTaskVerificationCommand === undefined ? {} : { teamTaskVerificationCommand }),
     ...(testRunner === undefined ? {} : { testRunner }),
+    // W158: the bounded evidence-content store — the hub exposes the
+    // /evidence-content read route and the test-runner capture records
+    // content on the evidence the verification consumed.
+    contentStore: createEvidenceContentStore(),
     schedulerFactory,
     schedules: scheduleRegistry,
     // W073 trigger surface / Checkpoint F: the registry is composed lazily
