@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { TaskGraph } from "../kernel/task-graph.js";
 import { createWorkflowHubBridge, type WorkflowHubBridge } from "./hub-http.js";
+import type { EvidenceContentStore } from "./evidence-content-store.js";
 import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { createRunRegistry, type RunReviewerFactory, type RunTestRunner } from "./run-registry.js";
@@ -60,6 +61,8 @@ export async function createWorkflowHub(
     guard?: WorkflowGuardProvider;
     reviewerFactory?: RunReviewerFactory;
     testRunner?: RunTestRunner;
+    /** W158: the bounded evidence-content store; wired → the hub exposes the /evidence-content read route and the test-runner capture records content. */
+    contentStore?: EvidenceContentStore;
     schedulerFactory?: (handles: WorkflowHubSchedulerHandles) => HubScheduler;
     /**
      * W073 trigger surface: when provided, the hub exposes operator-token
@@ -99,6 +102,7 @@ export async function createWorkflowHub(
     const runs = options.graph === undefined ? undefined : createRunRegistry(application, options.graph, {
       ...(options.reviewerFactory === undefined ? {} : { reviewer: options.reviewerFactory }),
       ...(options.testRunner === undefined ? {} : { testRunner: options.testRunner }),
+      ...(options.contentStore === undefined ? {} : { contentStore: options.contentStore }),
     });
     const scheduler = options.schedulerFactory !== undefined && runs !== undefined
       ? options.schedulerFactory({
@@ -142,6 +146,7 @@ export async function createWorkflowHub(
       options.guard,
       selfImprovement,
       options.schedules,
+      options.contentStore,
     );
     options.observeBridgeStarted?.(bridge.url);
     scheduler?.start();
