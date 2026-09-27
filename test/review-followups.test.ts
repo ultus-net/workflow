@@ -10,10 +10,22 @@ import {
   UNAVAILABLE_REVIEW_FOLLOW_UPS,
   createReviewFollowUpsClient,
   createReviewFollowUpsSource,
+  readOpenReviewFollowUps,
   type OpenReviewFollowUps,
 } from "../src/integrations/review-followups.js";
 
 const serverScript = resolve("mcp-toolbox/apps/review-accountability-mcp/dist/server.js");
+
+/** A follow-up exactly as the ledger's own schema mints it. */
+const storedFollowUp = {
+  severity: "P2",
+  summary: "missing edge coverage",
+  paths: ["src/x.ts"],
+  id: "fu-1",
+  reviewId: "rev-1",
+  status: "open",
+  createdAt: 1_700_000_000_000,
+} as const;
 
 async function seedFollowUps(dataDir: string, findings: ReadonlyArray<{ readonly severity: "P2" | "P3"; readonly summary: string }>): Promise<void> {
   const client = new Client({ name: "seed", version: "1.0.0" });
@@ -85,6 +97,75 @@ test("a ledger the server refuses to list reads as unavailable, not as zero debt
 
   assert.equal(refused.available, false, "an unread ledger must be marked unavailable");
   assert.equal(refused.followUps.length, 0, "no follow-up was actually observed");
+});
+
+test("a P1 entry in the payload is debt the ledger never minted, so the read is unavailable", () => {
+  // The ledger only ever mints P2/P3 follow-ups. A blocking-severity entry
+  // arriving over the wire is not observed debt; the panel would render it as
+  // a live "[P1] …" line and count it as open.
+  const read = readOpenReviewFollowUps({ openFollowUps: [{ ...storedFollowUp, severity: "P1" }], followUpsTruncated: false }, 8);
+
+  assert.equal(read.available, false, "a payload outside the ledger's contract was not a consulted ledger");
+  assert.equal(read.followUps.length, 0, "no follow-up was actually observed");
+  assert.deepEqual(read, UNAVAILABLE_REVIEW_FOLLOW_UPS);
+});
+
+test("a follow-up the panel cannot identify reads as unavailable, not as open debt", () => {
+  // The Activity panel keys and counts by id (`key={item.id}`), so an entry
+  // with no id — or a repeated one — is not debt this surface can speak about.
+  const idless = readOpenReviewFollowUps({ openFollowUps: [{ ...storedFollowUp, id: undefined }], followUpsTruncated: false }, 8);
+  assert.equal(idless.available, false, "an unidentifiable follow-up must not be rendered as observed debt");
+  assert.equal(idless.followUps.length, 0);
+
+  const duplicate = readOpenReviewFollowUps({ openFollowUps: [storedFollowUp, { ...storedFollowUp, summary: "second" }], followUpsTruncated: false }, 8);
+  assert.equal(duplicate.available, false, "two entries sharing an id cannot both be one counted follow-up");
+  assert.equal(duplicate.followUps.length, 0);
+});
+
+test("a garbage truncation flag reads as unavailable, while an absent one still caps by window", () => {
+  // `followUpsTruncated` is what separates "N+ open" from "all debt shown".
+  // A flag of the wrong type is a broken read, not a missing one: trusting it
+  // either way states a completeness claim nobody made.
+  const garbage = readOpenReviewFollowUps({ openFollowUps: [storedFollowUp], followUpsTruncated: "nope" }, 8);
+  assert.equal(garbage.available, false, "a flag the ledger contract cannot produce must not be interpreted");
+  assert.equal(garbage.followUps.length, 0);
+
+  // An absent flag keeps the honest degradation: a window filled to the brim
+  // is not proof that no debt sits beyond it.
+  const absent = readOpenReviewFollowUps({ openFollowUps: [storedFollowUp] }, 1);
+  assert.equal(absent.available, true, "a well-formed read stays available");
+  assert.equal(absent.followUps.length, 1);
+  assert.equal(absent.truncated, true, "a full window without the ledger's flag stays 'capped', never 'all'");
+});
+
+test("an over-window payload is not the bounded read it claims to be, so it reads as unavailable", () => {
+  // The server caps `openFollowUps` at the limit it was handed, so nine
+  // entries against an 8-item window cannot be a ledger this surface read.
+  // Passing them through would let the Activity panel print "9 open" with no
+  // "+" as the total debt — a completeness claim no bounded read made.
+  const nine = Array.from({ length: 9 }, (_unused, index) => ({ ...storedFollowUp, id: `fu-${index}` }));
+  const read = readOpenReviewFollowUps({ openFollowUps: nine, followUpsTruncated: false }, 8);
+
+  assert.equal(read.available, false, "a payload wider than the requested window is a broken read, not a bigger ledger");
+  assert.equal(read.followUps.length, 0, "no follow-up in an unbounded payload was actually observed");
+  assert.deepEqual(read, UNAVAILABLE_REVIEW_FOLLOW_UPS);
+
+  // A window filled exactly is still inside the contract: the ledger says it
+  // is not truncated, so the panel may state that count as the whole debt.
+  const eight = Array.from({ length: 8 }, (_unused, index) => ({ ...storedFollowUp, id: `fu-${index}` }));
+  const exact = readOpenReviewFollowUps({ openFollowUps: eight, followUpsTruncated: false }, 8);
+
+  assert.equal(exact.available, true, "a payload exactly at the window is a bounded read");
+  assert.equal(exact.followUps.length, 8);
+  assert.equal(exact.truncated, false, "the ledger's own flag still outranks the window's length");
+});
+
+test("a valid payload passes through with the ledger's own truncation flag intact", () => {
+  const read = readOpenReviewFollowUps({ openFollowUps: [storedFollowUp, { ...storedFollowUp, id: "fu-2", severity: "P3", status: "resolved" }], followUpsTruncated: true }, 8);
+
+  assert.equal(read.available, true, "a ledger that answered within its contract is available");
+  assert.deepEqual(read.followUps.map((item) => item.id), ["fu-1", "fu-2"]);
+  assert.equal(read.truncated, true, "the ledger's own cap outranks the window's length");
 });
 
 test("the poller source re-reads the ledger instead of freezing a boot-time value", async () => {
