@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { realpathSync, rmSync, statSync } from "node:fs";
+import { realpathSync, rmSync } from "node:fs";
 import { isAbsolute, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
