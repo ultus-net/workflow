@@ -1075,7 +1075,14 @@ export function createWorkflowWebServer(
       try {
         const body = await readJson(request);
         if (!isTransitionRequest(body)) return json(response, 400, { error: "invalid transition request" });
-        const result = application.transition(taskId(body.taskId), body.requested);
+        // W157: this route IS the operator's task-transition surface (the
+        // webapp's Start/Verify/Complete); the trusted-mutation gate above is
+        // the operator boundary.
+        const result = application.transition(taskId(body.taskId), body.requested, {
+          actor: "operator",
+          authority: "operator task transition (web route, trusted mutation)",
+          observedAt: new Date().toISOString(),
+        });
         return json(response, result.kind === "accepted" ? 200 : 409, result);
       } catch {
         return json(response, 400, { error: "invalid request body" });
