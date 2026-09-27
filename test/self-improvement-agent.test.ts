@@ -320,6 +320,35 @@ test("discard restores the baseline without git clean: tracked reverts, untracke
   assert.ok(!existsSync(join(repo, "scratch-artifact.txt")), "the untracked candidate artifact is removed by exact path");
   assert.ok(existsSync(join(repo, "feature.txt")), "the accepted candidate (second apply) stays committed");
 });
+
+test("discard removes untracked directories recursively and handles non-ASCII names without stranding", async (t) => {
+  const repo = makeGitRepo(t, "wf-rsi-discard-unicode");
+  const workspace = createGitCandidateWorkspace({
+    workspace: repo,
+    run: createExecFileRunner(),
+  });
+  await workspace.assertBaseline({ workspace: repo });
+  mkdirSync(join(repo, "scratch-dir", "nested"), { recursive: true });
+  writeFileSync(join(repo, "scratch-dir", "nested", "artifact.bin"), "x");
+  writeFileSync(join(repo, "café-datei.txt"), "unicode name");
+  await workspace.discard({ runId: "rsi:test:discard-unicode", workspace: repo });
+  assert.equal(gitStatus(repo), "", "the -z porcelain enumeration removes non-ASCII untracked files without stranding");
+  assert.ok(!existsSync(join(repo, "scratch-dir")), "the untracked directory is removed recursively");
+});
+
+test("assertBaseline refuses a subdirectory workspace — the containment of exact-path removal requires the repo top level", async (t) => {
+  const repo = makeGitRepo(t, "wf-rsi-discard-toplevel");
+  mkdirSync(join(repo, "pkg", "app"), { recursive: true });
+  const workspace = createGitCandidateWorkspace({
+    workspace: join(repo, "pkg", "app"),
+    run: createExecFileRunner(),
+  });
+  await assert.rejects(
+    () => workspace.assertBaseline({ workspace: join(repo, "pkg", "app") }),
+    /repository top level/,
+    "a subdir workspace would let ../sibling porcelain paths resolve outside it — refuse rather than trust startsWith",
+  );
+});
 test("the contained commit path completes on the real containment backend end to end", async (t) => {
   const repo = makeGitRepo(t, "wf-rsi-contained-e2e");
   // Remove the fixture's repo-local identity: the contained commit must rely

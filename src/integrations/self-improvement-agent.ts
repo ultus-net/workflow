@@ -348,6 +348,7 @@ export function createContainedGitRunner(options: {
     "git add -A",
     "git rev-parse HEAD",
     "git rev-parse --is-inside-work-tree",
+    "git rev-parse --show-toplevel",
     "git reset --hard HEAD",
     // `git clean -fd` is deliberately ABSENT (2026-09-27): the guard's
     // destructive-operation policy denies it through the shell lane, which
