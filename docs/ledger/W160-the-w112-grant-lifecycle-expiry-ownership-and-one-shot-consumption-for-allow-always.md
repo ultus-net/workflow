@@ -1,0 +1,21 @@
+<!-- Ledger fragment: opened 2026-09-27 as a post-freeze W-item (TASKS.md is frozen; live tracking is the GitHub Project). Write-once record — append dated supersession notes, never rewrite. -->
+
+### W160 - The W112 grant lifecycle: expiry, ownership, and one-shot consumption for allow_always (Planned - design captured; the parked P2's design-not-started state ends here) (2026-09-27)
+
+**Source:** park P2 (docs/PARKED_AND_LIMITATIONS.md:31, operator-approved 2026-09-24): `allow_always` is tool-name-wide, immortal, and in-memory — expiry/ownership/consumption queued; the nearest building blocks named (the opencode-server authority's single-use consumption maps; the provenance-store fingerprint discipline). Verified 2026-09-27 on main@5e5d7ef: `PermissionDecisionChoice` carries `"allow_always"` (`src/adapters/acp-permission.ts:7`), the broker holds it as a bare tool-name `Set<string>` (`src/ui/permission-broker.ts:57`, consulted at `:156`), it survives until `clear()` (`:135`), and it is tool-NAME-wide — any invocation of that tool name, any session the broker serves, is authorized forever.
+
+**The design (captured before code):**
+
+- The grant becomes a record, not a set entry: `{ tool: string, grantedTo: ActorId, scope: "session" | "workspace", consumedUses?: number (undefined = unlimited), expiresAt?: string, fingerprint?: string }`. Defaults preserve today's behavior exactly (session-scoped, unlimited, no expiry) so the migration is invisible until an operator opts into a bound.
+- Expiry: the broker checks `expiresAt` at consult time (`:156`'s branch) — an expired grant denies with the reason named ("grant for tool X expired at T"), never silently falls through to a prompt. No timer, no reaper: laziness is the honest clock.
+- Ownership: only the granting actor's session consults its grants (today's broker is per-manager, so this is mostly already true — the change makes it a recorded invariant the web-sessions manager can surface per session, closing the "any session the broker serves" hole if the broker is ever shared).
+- Consumption: `allow_once` today is consumed at resolution; `allow_always` with a `consumedUses` bound decrements and auto-expires at zero with the denial reason named. The opencode-server authority's single-use maps are the pattern cited by the park entry.
+- The settings surface (the W151/W154 pattern): the operator shell's dialog lists live grants per session with per-grant revoke — today `patterns()` (`:71`) exposes the names but the UI offers only whole-set clear.
+
+**Acceptance criteria (not started):**
+- [ ] An expired bound grant denies with the expiry named in the refusal (focused pin), and a defaulted grant behaves byte-identically to today (the migration pin).
+- [ ] A use-bound grant decrements and auto-expires at zero with the reason named (pin).
+- [ ] Grants are per-actor invariant; the settings dialog lists and revokes per grant.
+- [ ] The persisted-session story is explicitly decided (in-memory stays; a persistence claim is made only with the provenance-store discipline behind it).
+
+**Residuals (cut):** wildcard/pattern grants, per-argument scoping, grant delegation between actors — the park's as-found scope stands.
