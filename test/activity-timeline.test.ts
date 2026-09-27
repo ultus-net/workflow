@@ -46,7 +46,10 @@ test("W152: registry rows carry the attribution and time their records actually 
     ]),
     blockingReasons: new Map([["author-3", "test evidence stale"]]),
     completionClaims: new Map([["author-4", { runId: "author-4", claim: "tests pass", verifiedAtClaim: false, observedAt: "2026-09-27T10:00:00.000Z" }]]),
-    runUsage: new Map([["author-5", { requests: 3, promptTokens: 100, completionTokens: 50, totalTokens: 150, costUsd: 0.01, recordedAt: "2026-09-27T11:00:00.000Z" }]]),
+    runUsage: new Map<string, { readonly recordedAt: string; readonly totalTokens: number; readonly costUsd: number; readonly cacheReadTokens?: number; readonly cacheCreateTokens?: number }>([
+      ["author-5", { totalTokens: 150, costUsd: 0.01, cacheReadTokens: 90, cacheCreateTokens: 10, recordedAt: "2026-09-27T11:00:00.000Z" }],
+      ["author-6", { totalTokens: 25, costUsd: 0.001, recordedAt: "2026-09-27T12:00:00.000Z" }],
+    ]),
     runOrigins: new Map([
       ["schedule:nightly:abc", { kind: "schedule", scheduleId: "nightly" }],
       ["schedule:gone:def", { kind: "schedule", scheduleId: "gone" }],
@@ -75,6 +78,13 @@ test("W152: registry rows carry the attribution and time their records actually 
   const usage = byKind("usage");
   assert.equal(usage[0]?.at, "2026-09-27T11:00:00.000Z");
   assert.match(usage[0]?.summary ?? "", /150 tokens/);
+  // P12: the cache components render when the record carries nonzero mass.
+  assert.match(usage[0]?.summary ?? "", /\(cache: 90 read, 10 created\)/);
+  // A measured zero (the OpenAI lane) renders no cache segment — noise, not
+  // an absence.
+  assert.equal(usage[1]?.at, "2026-09-27T12:00:00.000Z");
+  assert.match(usage[1]?.summary ?? "", /25 tokens/);
+  assert.equal((usage[1]?.summary ?? "").includes("cache:"), false, "no cache segment on a zero-cache record");
 
   const origin = byKind("origin");
   assert.equal(origin.length, 2);

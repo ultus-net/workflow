@@ -46,6 +46,14 @@ export interface RunUsageSummary {
   readonly completionTokens: number;
   readonly totalTokens: number;
   readonly costUsd: number;
+  /**
+   * P12 (W109 gap 2): the cache components ride the recorded totals — the
+   * metering proxy's first-class cache fields, so the cache-hit savings are
+   * observable per run. On the OpenAI chat-completions lane these stay 0
+   * (its cached reads are inside promptTokens; the recorded lane asymmetry).
+   */
+  readonly cacheReadTokens: number;
+  readonly cacheCreateTokens: number;
   readonly recordedAt: string;
 }
 

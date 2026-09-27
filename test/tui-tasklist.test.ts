@@ -307,6 +307,8 @@ test("TUI activity panel renders hub-recorded per-run usage (W044)", async () =>
           completionTokens: 353,
           totalTokens: 32947,
           costUsd: 0.003752536,
+          cacheReadTokens: 0,
+          cacheCreateTokens: 0,
           recordedAt: "2026-09-17T00:00:00.000Z",
         },
       },

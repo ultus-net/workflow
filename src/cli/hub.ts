@@ -302,6 +302,8 @@ const rsiAgentTurn = (handles: WorkflowHubSchedulerHandles): AgentTurnRunner => 
           completionTokens: usage.completionTokens,
           totalTokens: usage.totalTokens,
           costUsd: usage.costUsd,
+          cacheReadTokens: usage.cacheReadTokens,
+          cacheCreateTokens: usage.cacheCreateTokens,
         },
       });
     }
@@ -388,6 +390,8 @@ const schedulerFactory = (handles: WorkflowHubSchedulerHandles) => {
               completionTokens: usage.completionTokens,
               totalTokens: usage.totalTokens,
               costUsd: usage.costUsd,
+              cacheReadTokens: usage.cacheReadTokens,
+              cacheCreateTokens: usage.cacheCreateTokens,
             },
           });
         }

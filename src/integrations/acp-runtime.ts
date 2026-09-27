@@ -162,6 +162,8 @@ function aggregateUsage(a: ModelUsageMetrics, b: ModelUsageMetrics | undefined):
     totalTokens: a.totalTokens + b.totalTokens,
     costUsd: a.costUsd + b.costUsd,
     latestPromptTokens: a.latestPromptTokens,
+    cacheReadTokens: a.cacheReadTokens + b.cacheReadTokens,
+    cacheCreateTokens: a.cacheCreateTokens + b.cacheCreateTokens,
   };
 }
 

@@ -140,3 +140,21 @@ authored after the round, as the corrections).
 - [x] The discovered gaps queued with their costs (the messages-lane
       governance, the vendor probes, the breakpoint policy, the
       cached-token metering fields, the c1 audit scope).
+
+**2026-09-27 supersession (P12 landed — W109 gap 2 closed, PR #311):** the
+metrics model's first-class cache fields landed. `ModelUsageMetrics` and
+`MutableMetrics` carry `cacheReadTokens` / `cacheCreateTokens`; the
+anthropic messages lane meters them first-class from the values it already
+parsed (W123's seam honored — never re-derived from the wire) and they sum
+through the pool aggregate (`open-model-proxy.metrics()`), the runtime
+aggregate (`acp-runtime.aggregateUsage`), the hub's per-run
+`RunUsageSummary` (both hub.ts turn-end recordings), the `/snapshot`
+gateObservability usage block, and the activity timeline's usage row (the
+cache segment renders only on nonzero mass). The OpenAI chat-completions
+lane stays at its measured zero — its cached reads ride prompt_tokens per
+the recorded W123 normalization, so nothing double-meters; the
+cached-subset split (prompt_tokens_details) is named as a queued
+refinement, not silently absent. The lane-asymmetry doc note and the
+extended W123 pins (JSON + SSE lanes, 52/52 focused, test:ci 167/167) are
+the evidence. Gap 3 (the vendor-probe precondition) and the
+transform-governance half of gap 1 are UNCHANGED and still open.

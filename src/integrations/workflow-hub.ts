@@ -47,7 +47,7 @@ export interface WorkflowHubSchedulerHandles {
   /** Iteration 21: declare that the monitor observed a run (coverage denominator). */
   noteReasoningClaimMonitor: (input: { readonly runId: string }) => void;
   /** W044 (open clause): record a run turn's metering-proxy totals for the monitor. */
-  recordRunUsage: (input: { readonly runId: string; readonly usage: { readonly requests: number; readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number; readonly costUsd: number } }) => void;
+  recordRunUsage: (input: { readonly runId: string; readonly usage: { readonly requests: number; readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number; readonly costUsd: number; readonly cacheReadTokens: number; readonly cacheCreateTokens: number } }) => void;
 }
 
 export async function createWorkflowHub(

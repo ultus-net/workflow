@@ -22,6 +22,8 @@ const metrics = (totalTokens: number, costUsd: number): ModelUsageMetrics => ({
   totalTokens,
   costUsd,
   latestPromptTokens: undefined,
+  cacheReadTokens: 0,
+  cacheCreateTokens: 0,
 });
 
 // ── Config parsing ──────────────────────────────────────────────────────────

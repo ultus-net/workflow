@@ -66,6 +66,8 @@ test("model usage proxy injects the real key, forces usage accounting, and meter
       totalTokens: 150,
       costUsd: 0.0042,
       latestPromptTokens: 120,
+      cacheReadTokens: 0,
+      cacheCreateTokens: 0,
     });
   } finally {
     await proxy.close();
@@ -537,9 +539,14 @@ test("W123: the anthropic message JSON lane meters real tokens (the P9 pollution
       totalTokens: 250,
       costUsd: 0, // the anthropic usage carries no cost field — the OpenRouter lane's usage.cost stays the only local cost source
       latestPromptTokens: 220,
+      // P12: the cache components meter first-class — the cache-hit savings
+      // are observable in the metrics trail, not just on the raw wire record.
+      cacheReadTokens: 60,
+      cacheCreateTokens: 40,
     }, "the anthropic usage shape must record real tokens, not zeros");
-    // The raw anthropic fields ride onUsage untouched — P12's seam: first-class
-    // cache fields later never need re-deriving from the wire.
+    // The raw anthropic fields ride onUsage untouched — P12's seam: the raw
+    // wire record still rides even though the model now meters the cache
+    // fields first-class (consumers that need the exact shape keep it).
     assert.deepEqual(seen, [{ input_tokens: 120, output_tokens: 30, cache_creation_input_tokens: 40, cache_read_input_tokens: 60 }]);
     // The anthropic lane stays untransformed: no usage.include injection (the
     // messages wire always reports usage), the body forwards untouched.
@@ -590,6 +597,9 @@ test("W123: the anthropic SSE lane accumulates the cumulative stream into ONE us
       totalTokens: 102,
       costUsd: 0,
       latestPromptTokens: 79,
+      // P12: the SSE accumulator's last-observed cache values meter too.
+      cacheReadTokens: 50,
+      cacheCreateTokens: 20,
     }, "the cumulative stream must not double-count and must emit one event");
     assert.deepEqual(seen, [{ input_tokens: 9, output_tokens: 23, cache_creation_input_tokens: 20, cache_read_input_tokens: 50 }], "onUsage receives the merged per-message record exactly once");
   } finally {
@@ -622,6 +632,8 @@ test("W123: an anthropic error payload carries no usage and meters nothing (hold
       totalTokens: 0,
       costUsd: 0,
       latestPromptTokens: undefined,
+      cacheReadTokens: 0,
+      cacheCreateTokens: 0,
     }, "no usage record: nothing to meter");
   } finally {
     await proxy.close();
@@ -650,6 +662,11 @@ test("W123: a chat-completions usage with anthropic-style keys still records zer
       totalTokens: 0,
       costUsd: 0,
       latestPromptTokens: undefined,
+      // P12: the OpenAI lane meters no cache components — its prompt_tokens
+      // already includes cached reads (the recorded lane asymmetry), so these
+      // are measured zeros, not absent data.
+      cacheReadTokens: 0,
+      cacheCreateTokens: 0,
     }, "the detection keys on the wire type, not the usage shape — the chat-completions lane behaves exactly as before");
   } finally {
     await proxy.close();

@@ -49,7 +49,7 @@ export interface TimelineInput {
   readonly reviewOutcomes?: ReadonlyMap<string, { readonly reviewerRunId: string; readonly verdict: string; readonly recorded: boolean; readonly summary: string; readonly parseFailure?: string }>;
   readonly blockingReasons?: ReadonlyMap<string, string>;
   readonly completionClaims?: ReadonlyMap<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }>;
-  readonly runUsage?: ReadonlyMap<string, { readonly recordedAt: string; readonly totalTokens: number; readonly costUsd: number }>;
+  readonly runUsage?: ReadonlyMap<string, { readonly recordedAt: string; readonly totalTokens: number; readonly costUsd: number; readonly cacheReadTokens?: number; readonly cacheCreateTokens?: number }>;
   readonly runOrigins?: ReadonlyMap<string, { readonly kind: "schedule"; readonly scheduleId: string }>;
   readonly schedules?: readonly { readonly id: string; readonly title: string }[];
   readonly budgetIncidents?: readonly { readonly sessionId: string; readonly title?: string; readonly tier: string; readonly mechanism?: string; readonly reason?: string }[];
@@ -141,12 +141,17 @@ export function activityTimeline(input: TimelineInput): ActivityTimeline {
   }
 
   // Per-run usage: the metering proxy's recorded totals, with their time.
+  // P12: the cache components render only when the record carries nonzero
+  // mass (a measured zero on the OpenAI lane is noise, not an absence).
   for (const [runId, usage] of input.runUsage ?? []) {
+    const cacheSegment = (usage.cacheReadTokens ?? 0) > 0 || (usage.cacheCreateTokens ?? 0) > 0
+      ? ` (cache: ${usage.cacheReadTokens ?? 0} read, ${usage.cacheCreateTokens ?? 0} created)`
+      : "";
     rows.push({
       kind: "usage",
       actor: "system",
       authority: "metering-proxy usage record",
-      summary: `run ${runId} usage: ${usage.totalTokens} tokens, $${usage.costUsd.toFixed(4)}`,
+      summary: `run ${runId} usage: ${usage.totalTokens} tokens, $${usage.costUsd.toFixed(4)}${cacheSegment}`,
       at: usage.recordedAt,
     });
   }

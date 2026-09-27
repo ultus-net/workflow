@@ -72,6 +72,20 @@ export interface ModelUsageMetrics {
   readonly totalTokens: number;
   readonly costUsd: number;
   readonly latestPromptTokens: number | undefined;
+  /**
+   * P12 (W109 gap 2): the cache components, first-class so the cache-hit
+   * savings the cache-marker position rests on are observable in the metering
+   * trail. LANE ASYMMETRY (the W123 normalization carries over): the
+   * anthropic messages lane reports the cache components OUTSIDE
+   * input_tokens, so these are part of promptTokens (the prompt side sums
+   * all three); the OpenAI chat-completions lane reports cached reads INSIDE
+   * prompt_tokens and has no cache-create concept, so on that lane both stay
+   * at their measured zero — prompt_tokens itself is already metered. The
+   * cached-subset split for the OpenAI lane (prompt_tokens_details) is a
+   * queued refinement, not silently absent data.
+   */
+  readonly cacheReadTokens: number;
+  readonly cacheCreateTokens: number;
 }
 
 export interface ModelUsageProxy {
@@ -117,6 +131,8 @@ interface MutableMetrics {
   totalTokens: number;
   costUsd: number;
   latestPromptTokens: number | undefined;
+  cacheReadTokens: number;
+  cacheCreateTokens: number;
 }
 
 export interface AutoLatestProxyOptions {
@@ -194,7 +210,7 @@ export async function createModelUsageProxy(options: {
   if (upstream.protocol !== "https:" && upstream.hostname !== "localhost" && upstream.hostname !== "127.0.0.1") {
     throw new TypeError("model usage proxy upstream must be https (or loopback for tests)");
   }
-  const metrics: MutableMetrics = { requests: 0, usageEvents: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0, latestPromptTokens: undefined };
+  const metrics: MutableMetrics = { requests: 0, usageEvents: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0, latestPromptTokens: undefined, cacheReadTokens: 0, cacheCreateTokens: 0 };
   const autoLatest = options.autoLatest;
   const aliasResolver: AliasResolver | undefined =
     autoLatest === undefined
@@ -462,11 +478,17 @@ export async function createModelUsageProxy(options: {
     metrics.promptTokens += promptSide;
     metrics.completionTokens += outputTokens;
     metrics.totalTokens += promptSide + outputTokens;
+    // P12: the cache components enter the metrics sums first-class — the
+    // cache-hit savings are observable in the trail, never re-derived from
+    // the wire (these are the same numbers folded into promptSide above).
+    metrics.cacheCreateTokens += cacheCreation;
+    metrics.cacheReadTokens += cacheRead;
     if (typeof usage.input_tokens === "number" && Number.isFinite(usage.input_tokens)) {
       metrics.latestPromptTokens = promptSide;
     }
-    // The raw fields ride onUsage untouched — P12's seam: first-class cache
-    // fields in the metrics model later never re-derive from the wire.
+    // The raw fields ride onUsage untouched — P12's seam (the model now
+    // carries the cache fields first-class, above; the raw wire record still
+    // rides for consumers that need the exact shape).
     options.onUsage?.({ ...usage });
   }
 
@@ -566,7 +588,9 @@ function numberOrZero(value: unknown): number {
  * (the wire contract: input_tokens, output_tokens, and the cache components
  * cache_creation_input_tokens / cache_read_input_tokens — confirmed
  * cumulative across message_start/message_delta on the stream). Vendor
- * extras ride onUsage raw but never enter the metrics sums. */
+ * extras ride onUsage raw and never enter the metrics sums; the cache
+ * components stopped being "extras" in P12 — they meter first-class
+ * (recordAnthropicUsage), everything else stays raw-only. */
 function anthropicUsageNumbers(usage: Record<string, unknown>): Record<string, number> {
   const result: Record<string, number> = {};
   for (const field of ["input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"] as const) {

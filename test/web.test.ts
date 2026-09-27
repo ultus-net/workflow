@@ -839,7 +839,7 @@ assert.deepEqual(failure.items, []);
 test("web UI serves cumulative usage metrics for metered runtimes only", async (context) => {
   const dir = mkdtempSync(join(tmpdir(), "web-usage-test-"));
   context.after(() => rmSync(dir, { recursive: true, force: true }));
-  const metrics = { requests: 1, usageEvents: 1, promptTokens: 10, completionTokens: 5, totalTokens: 15, costUsd: 0.001, latestPromptTokens: 10 };
+  const metrics = { requests: 1, usageEvents: 1, promptTokens: 10, completionTokens: 5, totalTokens: 15, costUsd: 0.001, latestPromptTokens: 10, cacheReadTokens: 0, cacheCreateTokens: 0 };
   const manager = new WebSessionManager({
     registryPath: join(dir, "registry.json"),
     factory: async () => {

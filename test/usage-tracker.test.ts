@@ -8,7 +8,7 @@ const view = (totalTokens: number, costUsd: number): UsageView => ({ totalTokens
 test("usageViewFromMetrics maps the proxy's cumulative metrics", () => {
   assert.equal(usageViewFromMetrics(undefined), undefined);
   assert.deepEqual(
-    usageViewFromMetrics({ requests: 1, usageEvents: 1, promptTokens: 90, completionTokens: 30, totalTokens: 120, costUsd: 0.002, latestPromptTokens: 90 }),
+    usageViewFromMetrics({ requests: 1, usageEvents: 1, promptTokens: 90, completionTokens: 30, totalTokens: 120, costUsd: 0.002, latestPromptTokens: 90, cacheReadTokens: 0, cacheCreateTokens: 0 }),
     { totalTokens: 120, costUsd: 0.002 },
   );
 });

@@ -10,7 +10,7 @@ import type { ModelUsageMetrics } from "../src/integrations/model-usage-proxy.js
  */
 
 const usage = (overrides: Partial<Pick<ModelUsageMetrics, "promptTokens" | "completionTokens" | "totalTokens" | "costUsd">> = {}): ModelUsageMetrics => ({
-  requests: 1, usageEvents: 1, promptTokens: 10, completionTokens: 5, totalTokens: 15, costUsd: 0.001, latestPromptTokens: undefined, ...overrides,
+  requests: 1, usageEvents: 1, promptTokens: 10, completionTokens: 5, totalTokens: 15, costUsd: 0.001, latestPromptTokens: undefined, cacheReadTokens: 0, cacheCreateTokens: 0, ...overrides,
 });
 
 test("W071 budget: no caps crossed leaves the watcher clean", () => {

@@ -34,7 +34,7 @@ export interface HubGateObservability {
    * W044 (open clause): per-run metering-proxy totals, recorded hub-side at
    * run-turn end. Optional: hubs older than the aggregation omit the field.
    */
-  readonly usage?: Record<string, { readonly requests: number; readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number; readonly costUsd: number; readonly recordedAt: string }>;
+  readonly usage?: Record<string, { readonly requests: number; readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number; readonly costUsd: number; readonly cacheReadTokens: number; readonly cacheCreateTokens: number; readonly recordedAt: string }>;
 }
 
 interface SnapshotResponse {
