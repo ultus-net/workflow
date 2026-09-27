@@ -138,6 +138,23 @@ test("a garbage truncation flag reads as unavailable, while an absent one still 
   assert.equal(absent.truncated, true, "a full window without the ledger's flag stays 'capped', never 'all'");
 });
 
+test("a garbage reviews-truncation flag reads as unavailable, matching the follow-up flag's rule", () => {
+  // `truncated` is the ledger's own statement that its reviews window was
+  // capped — the same bounded-read contract as `followUpsTruncated`, which
+  // this validator already enforces. A flag of the wrong type is a broken
+  // read, not a missing one: riding it through as a bounded read would let a
+  // foreign payload state a completeness claim nobody made.
+  const garbage = readOpenReviewFollowUps({ openFollowUps: [storedFollowUp], followUpsTruncated: false, truncated: "nope" }, 8);
+  assert.equal(garbage.available, false, "a flag the ledger contract cannot produce must not be interpreted");
+  assert.equal(garbage.followUps.length, 0);
+
+  // An absent reviews flag stays tolerated, exactly like an absent follow-up
+  // flag: it caps, it never upgrades the read.
+  const absent = readOpenReviewFollowUps({ openFollowUps: [storedFollowUp], followUpsTruncated: false }, 8);
+  assert.equal(absent.available, true, "a payload missing only the reviews flag still matches every contract this surface checks");
+  assert.equal(absent.followUps.length, 1);
+});
+
 test("an over-window payload is not the bounded read it claims to be, so it reads as unavailable", () => {
   // The server caps `openFollowUps` at the limit it was handed, so nine
   // entries against an 8-item window cannot be a ledger this surface read.
