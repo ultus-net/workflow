@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { artifactKind, CommandPalette, ConfigChips, ConnectionsSection, ContextSection, EvidenceStripRow, McpConnections, PermissionPrompt, StatusBar, StepLedgerRow, TaskRefusal, UsageMeter, type EvidenceContentPreview, type SessionMeta } from "../src/ui/webapp/app.js";
 import { ScheduleForm, SchedulesView, scheduleIdCollisionError, type LoopMeta, type ScheduleMeta } from "../src/ui/webapp/schedules-view.js";
+import { ProjectsView, projectIdCollisionError, projectFormError, type ProjectMeta } from "../src/ui/webapp/projects-view.js";
 import { ActivityTimelinePanel, type TimelineState } from "../src/ui/webapp/activity-timeline.js";
 import { TIMELINE_RETENTION } from "../src/integrations/activity-timeline.js";
 import { AgentsView, budgetRaiseOutcome } from "../src/ui/webapp/agents-view.js";
@@ -985,5 +986,69 @@ test("W158: the same strip row serves local and hub records — the hub origin i
   const localPath = stripRow({ subject: "/tmp/strip-needle.ts", result: "passed", freshness: "fresh", origin: "local" });
   assert.ok(!localPath.includes("hub · "), "no hub label on a local row");
   assert.ok(localPath.includes("in-worktree signpost"), "the W154 signpost treatment rides the shared row");
+});
+
+// ── W164: the Projects view ────────────────────────────────────────────────
+
+const project = (overrides: Partial<ProjectMeta> = {}): ProjectMeta => ({
+  id: "workflow",
+  title: "Workflow",
+  repo: { provider: "github", fullName: "ultus-net/workflow", repoId: 911_496_128 },
+  status: "active",
+  workspaces: ["/ws/workflow"],
+  ...overrides,
+});
+
+test("W164: the projects cards render the record's identity, status, envelope, and bound workspaces — no fabricated fields", () => {
+  const markup = renderToStaticMarkup(createElement(ProjectsView, {
+    projects: [project({ budget: { maxTotalTokens: 50_000, maxCostUsd: 1.5 } })],
+    onDelete: noop,
+    onSaveProject: noop as () => Promise<string | undefined>,
+  }));
+  assert.match(markup, /Projects/, "the section exists");
+  assert.ok(markup.includes("ultus-net/workflow"), "the repo identity renders");
+  assert.ok(markup.includes("repo id 911496128"), "the provider-stable id renders in the identity tooltip");
+  assert.match(markup, /active/, "the status renders");
+  assert.ok(markup.includes("50000 tok"), "the budget envelope renders its caps verbatim");
+  assert.ok(markup.includes("workflow"), "the bound workspace renders (basename)");
+  assert.ok(!markup.includes("ghp_"), "no credential material renders — the record carries none");
+});
+
+test("W164: the projects empty states are honest — an absent hub and an empty table name themselves", () => {
+  const noHub = renderToStaticMarkup(createElement(ProjectsView, {
+    projects: undefined,
+    onDelete: noop,
+    onSaveProject: noop as () => Promise<string | undefined>,
+  }));
+  assert.match(noHub, /hub does not report projects/, "an undefined list renders the honest absence");
+  const empty = renderToStaticMarkup(createElement(ProjectsView, {
+    projects: [],
+    onDelete: noop,
+    onSaveProject: noop as () => Promise<string | undefined>,
+  }));
+  assert.match(empty, /no projects/, "an empty table renders the empty state");
+  const unbound = renderToStaticMarkup(createElement(ProjectsView, {
+    projects: [project({ workspaces: [] })],
+    onDelete: noop,
+    onSaveProject: noop as () => Promise<string | undefined>,
+  }));
+  assert.match(unbound, /no workspaces bound/, "a project with no bindings says so");
+});
+
+test("W164: the id-collision refusal and the shape validation refuse before the save crosses the proxy", () => {
+  assert.equal(
+    projectIdCollisionError({ id: "workflow", title: "t", fullName: "o/r", repoId: 1, status: "active", workspaces: [] }, [project()]),
+    "a project with id 'workflow' already exists — edit it instead",
+  );
+  assert.equal(projectIdCollisionError({ id: "fresh", title: "t", fullName: "o/r", repoId: 1, status: "active", workspaces: [] }, [project()]), undefined);
+  assert.match(
+    projectFormError({ id: "p", title: "t", fullName: "just-a-name", repoId: 1, status: "active", workspaces: [] }) ?? "",
+    /owner\/name/,
+  );
+  assert.match(
+    projectFormError({ id: "p", title: "t", fullName: "o/r", repoId: 0, status: "active", workspaces: [] }) ?? "",
+    /positive integer/,
+  );
+  assert.equal(projectFormError({ id: "p", title: "t", fullName: "o/r", repoId: 7, status: "active", workspaces: [] }), undefined);
 });
 

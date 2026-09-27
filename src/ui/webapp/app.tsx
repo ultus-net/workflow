@@ -18,6 +18,7 @@ import { AgentsView, budgetRaiseOutcome } from "./agents-view.js";
 import { ActivityTimelinePanel, useActivityTimeline } from "./activity-timeline.js";
 import { PostureStrip, usePosture } from "./posture-strip.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
+import { ProjectsView, type ProjectMeta } from "./projects-view.js";
 import { BoardView } from "./board-view.js";
 import type { ScheduleRecentRun } from "../../integrations/operator-posture.js";
 import type { BoardOutcome } from "../../integrations/task-provider.js";
@@ -517,6 +518,7 @@ function useSessions() {
  * own slower poll lane (BOARD_POLL_MS) — never the 1.5s panel poll. */
 function useOperatorSurfaces() {
   const [schedules, setSchedules] = useState<ScheduleMeta[] | undefined>(undefined);
+  const [projects, setProjects] = useState<ProjectMeta[] | undefined>(undefined);
   const [loops, setLoops] = useState<LoopMeta[] | undefined>(undefined);
   const [recentRuns, setRecentRuns] = useState<readonly ScheduleRecentRun[] | undefined>(undefined);
   const [board, setBoard] = useState<BoardOutcome | null | undefined>(undefined);
@@ -561,6 +563,15 @@ function useOperatorSurfaces() {
     } catch {
       // Keep the last good list; the next poll retries.
     }
+    // W164: the project container rides the same poll lane; undefined means
+    // the hub does not report projects (the view renders that honestly).
+    try {
+      const projectsResponse = await fetch("/api/projects");
+      if (projectsResponse.ok) setProjects((await projectsResponse.json() as { projects: ProjectMeta[] }).projects);
+      else setProjects(undefined);
+    } catch {
+      // Keep the last good list; the next poll retries.
+    }
   }, []);
   useEffect(() => {
     void load();
@@ -573,7 +584,7 @@ function useOperatorSurfaces() {
       clearInterval(boardTimer);
     };
   }, [load, loadBoard]);
-  return { schedules, loops, recentRuns, board, boardReason, refresh: load, refreshBoard: loadBoard };
+  return { schedules, projects, loops, recentRuns, board, boardReason, refresh: load, refreshBoard: loadBoard };
 }
 
 function createSession(refresh: () => Promise<void>): void {
@@ -1009,6 +1020,17 @@ function SchedulesIcon() {
       <path d="M2.5 6.5h11" />
       <path d="M5.5 2v3M10.5 2v3" />
       <path d="M5.5 9.5h2M5.5 11.5h5" />
+    </svg>
+  );
+}
+
+/** Container glyph for the Projects slug — a box holding one pinned record. */
+function ProjectsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M2.5 5.5 8 2.5l5.5 3v5L8 13.5 2.5 10.5z" />
+      <path d="M2.5 5.5 8 8.5l5.5-3" />
+      <path d="M8 8.5v5" />
     </svg>
   );
 }
@@ -2412,7 +2434,7 @@ function EnforcementBadge({ level, transport, copy }: {
  * via the /agents command, with /sessions kept as an alias. The settings
  * panel (W077-era operator surfaces) is reachable from the gear and the
  * Ctrl/Cmd+, command. */
-export type AppView = "chat" | "agents" | "board" | "schedules" | "usage" | "settings";
+export type AppView = "chat" | "agents" | "board" | "schedules" | "projects" | "usage" | "settings";
 
 export function App() {
   // The chat view focuses one parallel session at a time; undefined = the
@@ -2467,7 +2489,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const gitStatus = useGitStatus();
   const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
-  const { schedules, loops, recentRuns, board, boardReason, refresh: refreshSchedules } = useOperatorSurfaces();
+  const { schedules, projects, loops, recentRuns, board, boardReason, refresh: refreshSchedules } = useOperatorSurfaces();
   const posture = usePosture();
   const agents = useAgents();
   // The registry leads with the default agent (OpenCode); fall back to it while
@@ -2648,6 +2670,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
               ["agents", "Agents", <AgentsIcon key="s" />],
               ["board", "Board", <BoardIcon key="b" />],
               ["schedules", "Schedules", <SchedulesIcon key="d" />],
+              ["projects", "Projects", <ProjectsIcon key="p" />],
               ["usage", "Usage", <UsageIcon key="u" />],
               ["settings", "Settings", <GearIcon key="g" />],
             ] as const).map(([slug, label, icon]) => (
@@ -2753,6 +2776,50 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
             const body = base === undefined ? fields : { ...base, ...fields };
             try {
               const response = await fetch("/api/schedules/save", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(body),
+              });
+              if (response.ok) {
+                refreshSchedules();
+                return undefined;
+              }
+              const payload = await response.json().catch(() => undefined) as { error?: string } | undefined;
+              return payload?.error ?? `the hub refused the save (${response.status})`;
+            } catch {
+              return "the panel could not reach the hub proxy";
+            }
+          }}
+        />
+      ) : view === "projects" ? (
+        <ProjectsView
+          projects={projects}
+          onDelete={(id) => {
+            void fetch("/api/projects/delete", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ id }),
+            }).then(() => refreshSchedules());
+          }}
+          onSaveProject={async (fields, base) => {
+            // Editing spreads the full existing entry under the form's fields
+            // so the budget envelope (which the form does not collect)
+            // survives the proxy's field stripping.
+            const repo = base?.repo;
+            const body = {
+              ...(base === undefined ? {} : base),
+              id: fields.id,
+              title: fields.title,
+              repo: {
+                provider: repo?.provider ?? "github",
+                fullName: fields.fullName,
+                repoId: fields.repoId,
+              },
+              status: fields.status,
+              workspaces: [...fields.workspaces],
+            };
+            try {
+              const response = await fetch("/api/projects/save", {
                 method: "POST",
                 headers: { "content-type": "application/json" },
                 body: JSON.stringify(body),
