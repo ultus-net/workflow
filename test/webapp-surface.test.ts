@@ -777,7 +777,9 @@ test("W153: the schedules cards render the recorded lineage and the recent-runs 
     cron: "0 9 * * *",
     prompt: "audit",
     lineage: { scheduleId: "nightly", title: "Nightly audit", causedRuns: 3, lastOutcome: "failed", tombstoned: false },
-    nextRunAt: "2026-09-27T09:00:00.000Z",
+    // computed against now, never wall-clock-pinned: a pinned date only renders
+    // the relative countdown for ~23h of each day and fails CI on the boundary
+    nextRunAt: new Date(Date.now() + 6 * 3_600_000).toISOString(),
   }], [
     { runId: "schedule:nightly:abc", scheduleId: "nightly", scheduleTitle: "Nightly audit", tombstoned: false, title: "Nightly audit", state: "FAILED" },
     { runId: "schedule:old:def", scheduleId: "old", scheduleTitle: "old", tombstoned: true, title: "Old job", state: "VERIFIED" },
@@ -789,6 +791,15 @@ test("W153: the schedules cards render the recorded lineage and the recent-runs 
   assert.match(withLineage, /fired by Nightly audit/, "run rows carry the schedule attribution");
   assert.match(withLineage, /schedule deleted/, "a tombstoned schedule's runs say so rather than dangling");
   assert.ok(withLineage.includes("schedule:nightly:abc"), "the run's raw id renders (registry-sourced, not invented)");
+
+  const staleFire = render([{
+    id: "stale",
+    title: "Stale projection",
+    cron: "0 9 * * *",
+    prompt: "p",
+    nextRunAt: new Date(Date.now() - 3_600_000).toISOString(),
+  }], []);
+  assert.ok(!/next in /.test(staleFire), "a past fire never renders a fabricated countdown — the absolute timestamp is the honest render");
 
   const hubWithoutLineage = render([{ id: "n", title: "N", cron: "0 9 * * *", prompt: "p" }], undefined);
   assert.match(hubWithoutLineage, /hub does not report schedule-run history/, "a hub predating the slice renders the honest absence");
