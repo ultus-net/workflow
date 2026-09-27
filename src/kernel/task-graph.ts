@@ -5,6 +5,7 @@ import type {
   StepState,
   TaskId,
   TaskState,
+  TransitionAttribution,
   TransitionRecord,
   TransitionResult,
   WorkflowStep,
@@ -326,7 +327,7 @@ export class TaskGraph {
     return "the passing evidence is stale (a mutation landed after it)";
   }
 
-  recordMutation(subjects: readonly string[]): readonly TransitionRecord[] {
+  recordMutation(subjects: readonly string[], observedAt?: string): readonly TransitionRecord[] {
     this.#mutationEpoch += 1;
     const transitions: TransitionRecord[] = [];
     const affected = new Set(subjects);
@@ -340,14 +341,23 @@ export class TaskGraph {
     for (const [id, task] of this.#tasks) {
       if (task.state === "VERIFIED" && task.requiredEvidence.some((requirement) => affected.has(requirement.subject))) {
         this.#tasks.set(id, { ...task, state: "VERIFYING" });
-        transitions.push({ taskId: id, from: "VERIFIED", to: "VERIFYING" });
+        // W157: the invalidation IS the system's doing (deterministic kernel
+        // knowledge), so the actor/authority are stamped here; the time is
+        // the caller's (the kernel reads no clock) — without one the row
+        // stays unattributed, which stays legal.
+        transitions.push({
+          taskId: id,
+          from: "VERIFIED",
+          to: "VERIFYING",
+          ...(observedAt === undefined ? {} : { attribution: { actor: "system" as const, authority: "evidence invalidation (freshness)", observedAt } }),
+        });
       }
     }
     this.#recomputeReadiness();
     return transitions;
   }
 
-  transition(id: TaskId, requested: TaskState): TransitionResult {
+  transition(id: TaskId, requested: TaskState, attribution?: TransitionAttribution): TransitionResult {
     const task = this.get(id);
     if (!LEGAL_TRANSITIONS[task.state].includes(requested)) {
       return {
@@ -395,7 +405,12 @@ export class TaskGraph {
     const from = task.state;
     this.#tasks.set(id, { ...task, state: requested });
     this.#recomputeReadiness();
-    return { kind: "accepted", transition: { taskId: id, from, to: requested } };
+    // W157: the caller's attribution rides the record verbatim; the kernel
+    // fabricates none and reads no clock (observedAt is caller-supplied).
+    return {
+      kind: "accepted",
+      transition: { taskId: id, from, to: requested, ...(attribution === undefined ? {} : { attribution }) },
+    };
   }
 
   #hasEvidence(requirement: EvidenceRequirement): boolean {

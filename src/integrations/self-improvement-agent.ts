@@ -69,17 +69,35 @@ export function beginKernelSessionTask(
 ): KernelSessionTask {
   const id = taskId(`${options.idPrefix}:${randomUUID()}`);
   application.addTask({ id, title: options.title, dependencies: [], requiredEvidence: [] });
-  application.transition(id, "IN_PROGRESS");
+  // W157: the RSI loop's own kernel-session tasks are agent-driven — the
+  // lane stamps agent.
+  application.transition(id, "IN_PROGRESS", {
+    actor: "agent",
+    authority: "self-improvement loop kernel-session task (agent-driven)",
+    observedAt: new Date().toISOString(),
+  });
   application.selectActiveTask(id);
   return {
     taskId: id,
     // The kernel's transition table routes IN_PROGRESS -> VERIFYING -> VERIFIED
     // (a direct IN_PROGRESS -> VERIFIED is rejected).
     complete: () => {
-      application.transition(id, "VERIFYING");
-      application.transition(id, "VERIFIED");
+      application.transition(id, "VERIFYING", {
+        actor: "agent",
+        authority: "self-improvement loop kernel-session task (agent-driven)",
+        observedAt: new Date().toISOString(),
+      });
+      application.transition(id, "VERIFIED", {
+        actor: "agent",
+        authority: "self-improvement loop kernel-session task (agent-driven)",
+        observedAt: new Date().toISOString(),
+      });
     },
-    fail: () => application.transition(id, "FAILED"),
+    fail: () => application.transition(id, "FAILED", {
+      actor: "agent",
+      authority: "self-improvement loop kernel-session task (agent-driven)",
+      observedAt: new Date().toISOString(),
+    }),
   };
 }
 
