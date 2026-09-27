@@ -6,9 +6,9 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["test/fixtures/**/*.mjs"],
+    files: ["test/fixtures/**/*.mjs", "test/fixtures/**/*.cjs"],
     languageOptions: {
-      globals: { Buffer: "readonly", process: "readonly", console: "readonly", setTimeout: "readonly", WebSocket: "readonly" },
+      globals: { Buffer: "readonly", process: "readonly", console: "readonly", setTimeout: "readonly", WebSocket: "readonly", URL: "readonly" },
     },
   },
 );

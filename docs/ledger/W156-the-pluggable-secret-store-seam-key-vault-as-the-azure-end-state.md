@@ -30,7 +30,7 @@ without embedding any work-specific values open-side (the one-way rule).
       client dependency is added to package.json.
 - [x] `WORKFLOW_SECRET_STORE=azure-kv` with a missing vault name fails
       closed at startup (never silently falls back to the keyring).
-- [ ] W130's custody e2e gains an azure-kv lane gated on env
+- [x] W130's custody e2e gains an azure-kv lane gated on env
       (`WORKFLOW_TEST_KEYVAULT_*`), so the store is verifiable without
       gnome-keyring — the D-Bus machine-gate stays for the keyring lane.
 - [x] `docs/FEATURES.md` records the seam honestly (azure-kv = Partial until
@@ -58,3 +58,24 @@ fixes now in: the token cache honors the token source's real expiry
 dead token never outlives one call); and the "credential service
 unavailable" claim is scoped to vault API errors — token-fetch failures
 propagate raw, pinned by test.
+
+**Dated note (2026-09-26, second loop: the azure-kv lane landed):** the
+residual decision is made — the CI-side fake is a fake VAULT TRANSPORT, not
+an in-memory store stand-in. The compiled admin bin runs with
+`WORKFLOW_SECRET_STORE=azure-kv` against an in-test fake-vault HTTP server,
+reached through a preload fetch hook
+(`test/fixtures/kv-fetch-hook.cjs`, `NODE_OPTIONS=--require`) that redirects
+exactly two hostnames (the lane's canonical `kv-test.vault.azure.net` and
+the IMDS endpoint); every other request passes through untouched. Everything
+above the transport is real: `resolveSecretStore`'s env selection, the
+`KeyVaultSecretStore` token path (IMDS shape + `expires_in` parsing), the
+REST PUT/GET/DELETE shapes, and the control plane's contract plus its
+fail-closed error path. `test/e2e-admin-azure-kv.test.ts` pins the lane and
+joins `test:ci` BY NAME (22 suites; docs/CI.md updated per the curation
+rule). The residual's in-memory-store sketch was rejected because a fake
+store behind the control plane would never execute the azure-kv code at
+all; the gated live-vault probe stays deferred (`WORKFLOW_TEST_KEYVAULT_*`
+reserved for it) until a real vault exists. The lane runs ungated in tier B
+because it is hermetic — no keyring, no vault credentials, no network — and
+unlike the keyring lane it carries no orphan residual (the fake vault lives
+inside the test process).
