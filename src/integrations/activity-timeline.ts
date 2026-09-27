@@ -50,7 +50,7 @@ export interface TimelineInput {
   readonly blockingReasons?: ReadonlyMap<string, string>;
   readonly completionClaims?: ReadonlyMap<string, { readonly runId: string; readonly claim: string; readonly verifiedAtClaim: boolean; readonly observedAt: string }>;
   readonly runUsage?: ReadonlyMap<string, { readonly recordedAt: string; readonly totalTokens: number; readonly costUsd: number; readonly cacheReadTokens?: number; readonly cacheCreateTokens?: number }>;
-  readonly runOrigins?: ReadonlyMap<string, { readonly kind: "schedule"; readonly scheduleId: string }>;
+  readonly runOrigins?: ReadonlyMap<string, { readonly kind: "schedule"; readonly scheduleId: string } | { readonly kind: "provider-task"; readonly provider: string; readonly key: string; readonly url: string }>;
   readonly schedules?: readonly { readonly id: string; readonly title: string }[];
   readonly budgetIncidents?: readonly { readonly sessionId: string; readonly title?: string; readonly tier: string; readonly mechanism?: string; readonly reason?: string }[];
 }
@@ -156,9 +156,20 @@ export function activityTimeline(input: TimelineInput): ActivityTimeline {
     });
   }
 
-  // Run origins: the scheduler's begin-time attribution (W153's RunOrigin
-  // record) — the row names the schedule and the run it caused.
+  // Run origins: the scheduler's and the W162 board-delegation route's
+  // begin-time attribution (W153's RunOrigin record) — the row names what
+  // fired the run, per record kind.
   for (const [runId, origin] of input.runOrigins ?? []) {
+    if (origin.kind === "provider-task") {
+      rows.push({
+        kind: "origin",
+        actor: "operator",
+        authority: `run origin record (provider-task: ${origin.key})`,
+        summary: `board delegation from ${origin.key} (${origin.provider}) started run ${runId}`,
+        at: null,
+      });
+      continue;
+    }
     const scheduleTitle = input.schedules?.find((schedule) => schedule.id === origin.scheduleId)?.title ?? origin.scheduleId;
     rows.push({
       kind: "origin",
