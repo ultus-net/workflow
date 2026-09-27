@@ -90,7 +90,7 @@ passed, not that "the tests passed".
   `packageManager: pnpm@11.5.2` — corepack's default shim resolves a newer
   pnpm and pnpm refuses the mismatch, caught live in the first CI run
   2026-09-26); both on PRs and pushes to main.
-- `package.json`: `test:ci` enumerating 25 suites by name — the 15
+- `package.json`: `test:ci` enumerating 26 suites by name — the 15
   LESS-0051-contract e2e suites (`e2e-admin`, `e2e-admin-azure-kv`,
   `e2e-contained-shell`,
   `e2e-doctor`, `e2e-hub-bash`, `e2e-hub-routes`, `e2e-hub-schedule`,
