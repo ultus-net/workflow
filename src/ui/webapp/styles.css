@@ -776,6 +776,68 @@ body {
   flex-wrap: wrap;
 }
 
+/* W151: the per-session budget posture — bar, tier colors, badge, incident
+ * card. Tier colors reuse the theme tokens the rest of the app uses; the tier
+ * itself is computed server-side from the guard's own predicates, so no
+ * threshold constant lives here. */
+.session-budget { display: flex; flex-direction: column; gap: 0.3rem; margin-top: 0.45rem; }
+.session-budget-bar {
+  height: 6px;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  background: color-mix(in srgb, var(--text-muted) 12%, transparent);
+}
+.session-budget-bar-fill { height: 100%; background: var(--ok); transition: width 0.4s ease; }
+.session-budget-tier-warn .session-budget-bar-fill { background: var(--warn, #d97706); }
+.session-budget-tier-abort .session-budget-bar-fill { background: var(--danger, #e05252); }
+.session-budget-tier-unknown .session-budget-bar-fill { background: var(--text-muted); }
+.session-budget-uncapped { color: var(--text-muted); font-size: 0.72rem; }
+.session-budget-badge {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.1rem 0.4rem;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.session-budget-badge-abort { color: var(--danger, #e05252); border-color: var(--danger, #e05252); }
+.session-budget-incident {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  border: 1px solid var(--danger, #e05252);
+  padding: 0.5rem 0.6rem;
+  font-size: 0.75rem;
+}
+.session-budget-incident-title { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--danger, #e05252); }
+.session-budget-violation, .session-budget-mechanism { color: var(--text-muted); font-family: var(--font-mono); font-size: 0.68rem; overflow-wrap: anywhere; }
+.session-budget-raise { display: flex; flex-direction: column; gap: 0.35rem; }
+.session-budget-raise-field { display: flex; align-items: center; gap: 0.4rem; }
+.session-budget-raise-field span { color: var(--text-muted); font-size: 0.68rem; min-width: 6.5rem; }
+.session-budget-raise-field input {
+  width: 8rem;
+  background: var(--bg-elevated, transparent);
+  border: 1px solid var(--border);
+  color: var(--text-main, inherit);
+  padding: 0.15rem 0.35rem;
+  font-family: var(--font-mono);
+}
+.session-budget-raise-error { color: var(--danger, #e05252); font-size: 0.72rem; }
+.session-budget-keep-stopped { margin: 0; font-size: 0.68rem; }
+
+/* W153: the schedules page's lineage line and recent-runs rows. */
+.schedule-lineage { justify-content: flex-start; }
+.schedule-lineage-count { font-family: var(--font-mono); }
+.schedule-lineage-outcome-verified { color: var(--ok); }
+.schedule-lineage-outcome-failed { color: var(--danger, #e05252); }
+.schedule-lineage-outcome-running { color: var(--accent, #60a5fa); }
+.schedule-lineage-outcome-unrun { color: var(--text-muted); }
+.schedule-lineage-tombstone { color: var(--text-muted); font-style: italic; }
+.schedule-next-fire { color: var(--text-muted); }
+.schedule-recent-runs { margin-top: 0.5rem; }
+.schedule-recent-run .session-card-title { font-family: var(--font-mono); font-size: 0.68rem; }
+.schedule-run-origin { color: var(--text-muted); }
+
 /* W085: the schedule create/edit form on the Schedules page. */
 .schedule-form {
   display: grid;
@@ -2961,7 +3023,7 @@ body {
 .posture-count-label { color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.68rem; }
 .posture-decisions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
 .posture-row { display: flex; align-items: center; gap: 0.6rem; font-size: 0.78rem; }
-.posture-kind { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.1rem 0.4rem; border-radius: 3px; border: 1px solid var(--border); color: var(--text-muted); }
+.posture-kind { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.1rem 0.4rem; border: 1px solid var(--border); color: var(--text-muted); }
 .posture-kind-review { color: var(--accent, #60a5fa); }
 .posture-kind-gate, .posture-kind-budget, .posture-kind-orphan, .posture-kind-schedule { color: var(--warn, #d97706); }
 .posture-row-body { display: flex; flex-direction: column; gap: 0.05rem; min-width: 0; flex: 1; }

@@ -16,7 +16,7 @@ import { resolveToolboxCatalog } from "../integrations/toolbox-catalog.js";
 import { stepId, taskId, type TaskState } from "../kernel/contracts.js";
 import type { PendingPermissionRequest } from "./permission-broker.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
-import { WebSessionManager, type SessionSwitchResult } from "./web-sessions.js";
+import { WebSessionManager, parseSessionBudgetRaise, type SessionSwitchResult } from "./web-sessions.js";
 import { isWebAgentId, listWebAgents } from "./web-agents.js";
 import type { WebappBundle } from "./webapp/bundle.js";
 import { PWA_MANIFEST, renderIconPng, serviceWorkerSource } from "./webapp/pwa.js";
@@ -343,12 +343,15 @@ export function createWorkflowWebServer(
     if (request.method === "GET" && pathname === "/api/schedules") {
       const result = await hubPost("/schedule/list", {});
       if (result.status !== 200) return json(response, result.status, result.payload);
-      const schedules = (result.payload as { schedules?: ScheduleDefinition[] }).schedules ?? [];
+      const payload = result.payload as { schedules?: ScheduleDefinition[]; recentRuns?: unknown[] };
+      const schedules = payload.schedules ?? [];
       return json(response, 200, {
         schedules: schedules.map((entry) => ({
           ...entry,
           nextRunAt: nextCronMatch(entry.cron, new Date())?.toISOString() ?? null,
         })),
+        // W153: the hub-computed recent schedule-origin runs, relayed verbatim.
+        ...(payload.recentRuns === undefined ? {} : { recentRuns: payload.recentRuns }),
       });
     }
     if (request.method === "POST" && pathname === "/api/schedules/save") {
@@ -502,6 +505,31 @@ export function createWorkflowWebServer(
         const title = typeof input?.title === "string" ? input.title : undefined;
         if (id === undefined || title === undefined) return json(response, 400, { error: "invalid rename request" });
         return switchResult(response, manager.rename(id, title), 200);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    if (request.method === "POST" && pathname === "/api/sessions/budget-raise") {
+      // W151: raise a paused session's caps and resume it. The manager is the
+      // raise's authority; every denial carries its reason so the incident
+      // card renders the refusal verbatim (fail-closed, never a success-
+      // shaped 200). The browser never raises anything itself.
+      if (manager === undefined) return json(response, 503, { error: "session management unavailable" });
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const input = body as { id?: unknown; budget?: unknown } | null;
+        const id = typeof input?.id === "string" && input.id.length > 0 ? input.id : undefined;
+        const raise = parseSessionBudgetRaise(input?.budget);
+        if (id === undefined || raise === undefined) return json(response, 400, { error: "invalid budget-raise request" });
+        const result = await manager.raiseBudgetAndResume(id, raise);
+        if (result.kind === "ok") return json(response, 200, { session: result.meta });
+        if (result.kind === "unknown") return json(response, 404, { error: "unknown session" });
+        if (result.kind === "denied") return json(response, 409, { error: result.reason });
+        return json(response, 502, { error: result.error });
       } catch {
         return json(response, 400, { error: "invalid request body" });
       }

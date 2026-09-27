@@ -10,6 +10,7 @@ import {
   opencodeAuthPath,
   type WorkflowAcpRuntime,
 } from "../integrations/acp-runtime.js";
+import type { RunBudget } from "../integrations/hub-scheduler.js";
 import { globalClineEntrypoint } from "../integrations/cline-launch.js";
 import { globalGooseBinary, gooseProviderKind } from "../integrations/goose-agent-config.js";
 import { upstreamKeyPresent } from "../integrations/upstream-key.js";
@@ -122,7 +123,12 @@ export async function createAgentRuntime(
   workspace: string,
   taskId: TaskId,
   resumeFrom: string | undefined,
-  options: { readonly permissionBroker?: PermissionBroker | undefined; readonly settings?: WorkflowSettings | undefined },
+  options: {
+    readonly permissionBroker?: PermissionBroker | undefined;
+    readonly settings?: WorkflowSettings | undefined;
+    /** W151: the session's persisted operator-raised budget caps (per-axis override over env). */
+    readonly budgetOverride?: RunBudget | undefined;
+  },
 ): Promise<WorkflowAcpRuntime> {
   if (agent === "opencode") {
     return createConfiguredOpencodeAcpRuntime(application, workspace, taskId, resumeFrom, options);

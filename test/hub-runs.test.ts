@@ -508,3 +508,29 @@ test("recorded run usage rides the hub /snapshot projection for monitors", async
   assert.equal(gates.usage?.["schedule:usage-e2e"]?.costUsd, 0.0042);
 });
 
+// W153: explicit origin attribution. The scheduler states the origin at begin
+// time; the registry records it and /snapshot's gate observability relays it.
+// Runs begun without an origin (the /run/begin, RSI, and reviewer lanes) stay
+// absent — no origin is ever inferred.
+test("W153: the registry records the scheduler's origin and exposes it through gate observability", async () => {
+  const { registry } = registryWithReviewer({
+    result: { reviewerRunId: "schedule:hub-reviewer-origin", verdict: "approved", recorded: false, summary: AXES_SUMMARY },
+  });
+  await registry.controller.begin({
+    runId: "schedule:nightly:abc",
+    title: "Nightly audit",
+    workspace: process.cwd(),
+    origin: { kind: "schedule", scheduleId: "nightly" },
+  });
+  assert.deepEqual(registry.runOrigins().get("schedule:nightly:abc"), { kind: "schedule", scheduleId: "nightly" });
+
+  registry.recordRunOrigin({ runId: "schedule:sweep:def", origin: { kind: "schedule", scheduleId: "sweep" } });
+  assert.equal(registry.runOrigins().get("schedule:sweep:def")?.scheduleId, "sweep");
+
+  const gates = registry.controller.gateObservability?.();
+  assert.equal(gates?.runOrigins?.get("schedule:nightly:abc")?.scheduleId, "nightly", "gate observability relays the recorded origins");
+
+  await registry.controller.begin({ runId: "author-no-origin", title: "Author run", workspace: process.cwd() });
+  assert.equal(registry.runOrigins().has("author-no-origin"), false, "no origin declared, none recorded — attribution is never inferred");
+});
+

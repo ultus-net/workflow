@@ -236,6 +236,29 @@ test("operator routes list, save, delete, and run-now schedules", async (t) => {
   assert.deepEqual(triggered, ["nightly"]);
   assert.equal((await post(hub.url, token, "/schedule/run-now", { id: "nightly" })).status, 401, "the ordinary surface token cannot fire a schedule");
 
+  // W153: the lineage and recent-runs block rides /schedule/list, joined on
+  // the kernel's run states — here driven by a run task inserted into the
+  // shared graph with the scheduler-origin id shape.
+  graph.addTask({
+    id: taskId("run:schedule:nightly:abc"),
+    title: "nightly audit",
+    dependencies: [],
+    requiredEvidence: [],
+    state: "IN_PROGRESS",
+  });
+  const listedWithRun = await post(hub.url, token, "/schedule/list", {});
+  const nightlyLineage = (listedWithRun.body.schedules as Array<{ id: string; lineage?: { scheduleId: string; causedRuns: number; lastOutcome: string; tombstoned: boolean } }>)[0]?.lineage;
+  assert.deepEqual(nightlyLineage, { scheduleId: "nightly", title: (saved.body.schedules as Array<{ title: string }>)[0]!.title, causedRuns: 1, lastOutcome: "in-progress", tombstoned: false });
+  const recent = listedWithRun.body.recentRuns as Array<{ runId: string; scheduleId: string; scheduleTitle: string; tombstoned: boolean; state: string }>;
+  assert.deepEqual(recent, [{
+    runId: "schedule:nightly:abc",
+    scheduleId: "nightly",
+    scheduleTitle: (saved.body.schedules as Array<{ title: string }>)[0]!.title,
+    tombstoned: false,
+    title: "nightly audit",
+    state: "IN_PROGRESS",
+  }]);
+
   const verifier = await post(hub.url, hub.verificationToken, "/schedule/list", {});
   assert.equal(verifier.status, 401, "the verifier token is not an operator token");
 

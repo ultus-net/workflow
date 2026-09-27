@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { operatorPosture, scheduleLineage, type PostureRunTask } from "../src/integrations/operator-posture.js";
+import { operatorPosture, scheduleLineage, scheduleRecentRuns, type PostureRunTask } from "../src/integrations/operator-posture.js";
 
 // W150 — the operator posture strip + unified decision inbox's projection
 // function, pinned per the borrowings spec's acceptance criteria:
@@ -178,4 +178,35 @@ test("W153: an unrun schedule reports unrun; a reviewer run is not a schedule or
   assert.equal(fresh.causedRuns, 0);
   assert.equal(fresh.tombstoned, false);
   assert.equal(lineage.some((entry) => entry.scheduleId.startsWith("hub-reviewer")), false);
+});
+
+test("W153: recent runs are the last schedule-origin runs in insertion order, newest first, with tombstone attribution", () => {
+  const recent = scheduleRecentRuns({
+    schedules: [{ id: "sweep", title: "Sweep" }],
+    runTasks: [
+      runTask("schedule:nightly:1", "VERIFIED", "nightly run 1"),
+      runTask("schedule:hub-reviewer-xyz", "FAILED", "a reviewer run"),
+      runTask("schedule:sweep:2", "FAILED", "sweep run 2"),
+      runTask("schedule:sweep:3", "VERIFIED", "sweep run 3"),
+      runTask("author-plain", "VERIFIED", "a manual run — no schedule origin"),
+    ],
+    limit: 3,
+  });
+  // Insertion order (registry-structural), last-3, reversed to newest first.
+  assert.deepEqual(recent.map((row) => row.runId), ["schedule:sweep:3", "schedule:sweep:2", "schedule:nightly:1"]);
+  assert.equal(recent[0]?.scheduleTitle, "Sweep");
+  assert.equal(recent[0]?.tombstoned, false);
+  assert.equal(recent[0]?.state, "VERIFIED");
+  // The tombstoned nightly keeps its runs attributed, named by registry id.
+  assert.equal(recent[2]?.scheduleId, "nightly");
+  assert.equal(recent[2]?.tombstoned, true);
+  assert.equal(recent[2]?.scheduleTitle, "nightly");
+  // The reviewer run and the manual run never appear.
+  assert.equal(recent.some((row) => row.runId.includes("hub-reviewer")), false);
+  assert.equal(recent.some((row) => row.runId === "author-plain"), false);
+});
+
+test("W153: no schedule-origin runs yields an empty recent list", () => {
+  assert.deepEqual(scheduleRecentRuns({ schedules: [{ id: "s", title: "S" }], runTasks: [runTask("author-1", "VERIFIED")] }), []);
+  assert.deepEqual(scheduleRecentRuns({ schedules: [], runTasks: [] }), []);
 });

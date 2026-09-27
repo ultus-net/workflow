@@ -11,7 +11,8 @@ import { WorkflowCodingSession, type CodingSessionDriver } from "../application/
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import type { TaskId } from "../kernel/contracts.js";
 import { AcpSessionDriver } from "./acp-session.js";
-import { budgetDowngradeFromEnv, createSessionBudgetGuard, sessionBudgetFromEnv, sessionBudgetMechanism } from "./session-budget.js";
+import type { RunBudget } from "./hub-scheduler.js";
+import { budgetDowngradeFromEnv, createSessionBudgetGuard, describeBudgetMechanism, mergeSessionBudget, sessionBudgetFromEnv } from "./session-budget.js";
 import { globalClineEntrypoint, resolveClineLaunch } from "./cline-launch.js";
 import {
   globalGooseBinary,
@@ -119,6 +120,15 @@ export interface AcpRuntimeOptions {
   readonly agent?: AcpAgentKind | undefined;
   /** Canonical Workflow settings projected into the agent's launch config. */
   readonly settings?: WorkflowSettings | undefined;
+  /**
+   * W151: a session's operator-raised budget caps (persisted per session
+   * record, applied on every spawn of that session). Merged per-axis over the
+   * env budget; only the env's axes and the override's axes exist — nothing
+   * is invented. The azure-foundry direct path records no local usage, so a
+   * local guard over it would never fire; there the override is honestly
+   * inert (the mechanism string still describes the effective caps).
+   */
+  readonly budgetOverride?: RunBudget | undefined;
 }
 
 export async function createConfiguredAcpRuntime(
@@ -172,13 +182,13 @@ function aggregateUsage(a: ModelUsageMetrics, b: ModelUsageMetrics | undefined):
  * pre-existing honest statement). Latest prompt tokens stay the primary
  * lane's (display-only: no cap reads them).
  */
-export function composeSessionWithBudget(driver: CodingSessionDriver, proxy: ModelUsageProxy, additionalUsage?: () => ModelUsageMetrics | undefined): {
+export function composeSessionWithBudget(driver: CodingSessionDriver, proxy: ModelUsageProxy, additionalUsage?: () => ModelUsageMetrics | undefined, budgetOverride?: RunBudget | undefined): {
   readonly session: WorkflowCodingSession;
   readonly budgetViolation?: () => string | undefined;
   readonly budgetMechanism: string;
 } {
-  const budget = sessionBudgetFromEnv();
-  const budgetMechanism = sessionBudgetMechanism();
+  const budget = mergeSessionBudget(sessionBudgetFromEnv(), budgetOverride);
+  const budgetMechanism = describeBudgetMechanism(budget);
   if (budget === undefined) {
     return { session: new WorkflowCodingSession(driver), budgetMechanism };
   }
@@ -387,7 +397,7 @@ async function createOpencodeRuntime(
     });
     return {
       driver,
-      ...composeSessionWithBudget(driver, proxy, openPool === undefined ? undefined : () => openPool.metrics()),
+      ...composeSessionWithBudget(driver, proxy, openPool === undefined ? undefined : () => openPool.metrics(), options.budgetOverride),
       usage: (): ModelUsageMetrics => proxy.metrics(),
       metrics: (): ModelUsageMetrics => proxy.metrics(),
       async dispose() {
@@ -508,7 +518,7 @@ async function createClineRuntime(
     });
     return {
       driver,
-      ...composeSessionWithBudget(driver, proxy),
+      ...composeSessionWithBudget(driver, proxy, undefined, options.budgetOverride),
       usage: (): ModelUsageMetrics => proxy.metrics(),
       metrics: (): ModelUsageMetrics => proxy.metrics(),
       async dispose() {
@@ -711,7 +721,7 @@ async function createGooseRuntime(
             // backstop is OpenRouter-only).
             budgetMechanism: "server-side: azure_foundry provider-side spend limits (no local metering proxy on the direct path); no local interactive caps",
           }
-        : composeSessionWithBudget(driver, proxy)),
+        : composeSessionWithBudget(driver, proxy, undefined, options.budgetOverride)),
       ...(proxy === undefined ? {} : {
         usage: (): ModelUsageMetrics => proxy.metrics(),
         metrics: (): ModelUsageMetrics => proxy.metrics(),

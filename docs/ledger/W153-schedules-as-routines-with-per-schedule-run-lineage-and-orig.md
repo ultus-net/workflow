@@ -24,3 +24,26 @@ recent-runs filter), and run-now's explicit origin-field recording
 (run-now's runIds already carry the `schedule:` prefix, so attribution is
 structural — the explicit origin field is still open). The view slice is
 the remaining wave-4 work.
+
+**Dated note (2026-09-27, wave-2 PR — the view slice landed):** the remaining
+wave-4 work landed. The run registry records an explicit origin (a new
+`RunOrigin {kind: "schedule", scheduleId}` stated by the scheduler at begin —
+both cron fires and run-now flow through the same `fireOnce`, so every
+scheduler-caused run is attributed from a RECORD; the HTTP `/run/begin` route
+deliberately accepts no origin, since a client-supplied one would be forgeable
+attribution) and relays it through `/snapshot`'s gate observability. The
+hub's `/schedule/list` now carries per-entry lineage (the shared
+`scheduleLineage` projection over the kernel's run states — never timestamps)
+plus a `recentRuns` list (the new `scheduleRecentRuns`: last-N schedule-origin
+runs in snapshot insertion order, newest first, tombstoned schedules
+attributed by registry id); the web service relays it verbatim and the
+schedules view renders the caused-run count, last outcome, next fire, and the
+recent-runs section with "fired by <schedule>" attribution — an honest
+absence from a hub predating the slice. Criteria 1 and 3 were already pinned
+at the projection level (the 2026-09-27 registry slice); criterion 2's
+run-now-only rule is unchanged (the browser's run-now stays CLI-only by
+design — verifier credential, never the browser token). Residual: the
+lineage's caused-run LINKS render as the posture inbox's recorded
+"panel pending" pattern (no run-inspection panel exists yet), and the new
+focused suites' `test:ci` inclusion rides the manifest-touching PR after the
+preflight false positive is fixed.

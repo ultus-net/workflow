@@ -214,6 +214,7 @@ test("W128: the compiled hub publishes the discovery contract, serves the authen
       reviewOutcomes: {},
       blockingReasons: {},
       completionClaims: {},
+      runOrigins: {},
       reasoningClaims: {},
       reasoningClaimMetrics: { monitoredRuns: 0, flaggedRuns: 0, findings: 0, recall: "unmeasured", timeToResponseMs: "unmeasured" },
       usage: {},

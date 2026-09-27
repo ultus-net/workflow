@@ -268,8 +268,8 @@ test("W133: the compiled hub's routes enforce the operator/verifier token-class 
   assert.equal(freshList.status, 200);
   assert.deepEqual(
     freshList.body,
-    { schedules: [] },
-    "an absent schedule table means no schedules (hub-scheduler.ts:215-223) — observed on a fresh hub",
+    { schedules: [], recentRuns: [] },
+    "an absent schedule table means no schedules (hub-scheduler.ts:215-223) — observed on a fresh hub; W153's recent-runs block rides along",
   );
 
   const definition = {
@@ -285,7 +285,10 @@ test("W133: the compiled hub's routes enforce the operator/verifier token-class 
   // (schedule-registry.ts:7-19): the save is visible to the very next list
   // AND persisted to the WORKFLOW_HUB_SCHEDULES file before admission.
   const listedAfterSave = await postRoute(endpoint, "/schedule/list", token);
-  assert.deepEqual(listedAfterSave.body, { schedules: [definition] }, "the save is visible to the next list without a hub restart");
+  assert.deepEqual(listedAfterSave.body, {
+    schedules: [{ ...definition, lineage: { scheduleId: definition.id, title: definition.title, causedRuns: 0, lastOutcome: "unrun", tombstoned: false } }],
+    recentRuns: [],
+  }, "the save is visible to the next list without a hub restart; W153's lineage rides per entry");
   assert.deepEqual(
     JSON.parse(readFileSync(schedulesPath, "utf8")),
     { version: 1, schedules: [definition] },
@@ -311,7 +314,10 @@ test("W133: the compiled hub's routes enforce the operator/verifier token-class 
   const afterBadCron = await postRoute(endpoint, "/schedule/list", token);
   assert.deepEqual(
     afterBadCron.body,
-    { schedules: [definition] },
+    {
+      schedules: [{ ...definition, lineage: { scheduleId: definition.id, title: definition.title, causedRuns: 0, lastOutcome: "unrun", tombstoned: false } }],
+      recentRuns: [],
+    },
     "a rejected save leaves the table untouched (schedule-registry.ts:40-45 — persist before admit)",
   );
 
@@ -319,7 +325,7 @@ test("W133: the compiled hub's routes enforce the operator/verifier token-class 
   assert.equal(removed.status, 200);
   assert.deepEqual(removed.body, { schedules: [] }, "the delete removes exactly the named schedule");
   const listedAfterDelete = await postRoute(endpoint, "/schedule/list", token);
-  assert.deepEqual(listedAfterDelete.body, { schedules: [] });
+  assert.deepEqual(listedAfterDelete.body, { schedules: [], recentRuns: [] });
 
   // ── The self-improvement routes on a fresh hub (registry composed even
   // with WORKFLOW_RSI_AGENT=0 — hub.ts:249-264 arms only the runner) ───────
