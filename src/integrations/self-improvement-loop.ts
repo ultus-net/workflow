@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
+import { rmSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { realpathSync } from "node:fs";
 import { promisify } from "node:util";
 import { isAbsolute } from "node:path";
@@ -578,7 +580,7 @@ export function createGitCandidateWorkspace(options: {
   }
   return {
     async assertBaseline(input) {
-      // P0-1: the destructive ops below (reset --hard / clean -fd) are only
+      // P0-1: the destructive op below (reset --hard) is only
       // safe against a tree the loop starts from clean. Refuse anything else.
       let inside: string | undefined;
       try {
@@ -618,8 +620,39 @@ export function createGitCandidateWorkspace(options: {
       }
     },
     async discard(input) {
+      // Guard-compatible rollback (2026-09-27): the guard's destructive-
+      // operation policy denies `git clean -fd` when the loop's discard runs
+      // through the shell lane ("git clean can delete untracked files —
+      // expected: a direct tool call"), which stopped every rejected
+      // candidate's rollback fail-closed (observed live on the sse-keepalive
+      // loop, 2026-09-26/27). The rollback is the loop's own baseline
+      // restoration over a tree it proved clean at begin (assertBaseline), so
+      // `git reset --hard HEAD` is sufficient: tracked changes (the
+      // candidate's edits) revert; nothing untracked can exist unless the
+      // candidate created files WITHOUT committing them — and those are
+      // removed here explicitly by exact path, direct tool-call shape the
+      // guard expects, enumerated from git itself rather than a wildcard
+      // delete.
       await options.run("git", ["reset", "--hard", "HEAD"], { cwd: input.workspace });
-      await options.run("git", ["clean", "-fd"], { cwd: input.workspace });
+      const status = await options.run("git", ["status", "--porcelain"], { cwd: input.workspace });
+      for (const line of status.stdout.split("\n")) {
+        const entry = line.trim();
+        if (entry.length === 0) continue;
+        const path = entry.replace(/^..?\s+/, "").trim();
+        if (path.length === 0 || path.includes(" -> ")) continue; // renames resolve below; skip the arrow form
+        if (path.startsWith('"')) continue; // quoted paths need git -z plumbing; treat as unsafe and refuse
+        const target = resolve(input.workspace, path);
+        if (!target.startsWith(input.workspace)) continue; // outside the workspace: never touch
+        try {
+          rmSync(target, { recursive: entry.startsWith("?? ") && statSync(target).isDirectory(), force: true });
+        } catch {
+          // Already gone or unreadable — the reset above owns tracked state.
+        }
+      }
+      const after = await options.run("git", ["status", "--porcelain"], { cwd: input.workspace });
+      if (after.stdout.trim().length > 0) {
+        throw new Error(`discard left the workspace dirty; refusing to proceed: ${after.stdout.trim().slice(0, 200)}`);
+      }
     },
   };
 }

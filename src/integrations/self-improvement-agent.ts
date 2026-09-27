@@ -349,7 +349,11 @@ export function createContainedGitRunner(options: {
     "git rev-parse HEAD",
     "git rev-parse --is-inside-work-tree",
     "git reset --hard HEAD",
-    "git clean -fd",
+    // `git clean -fd` is deliberately ABSENT (2026-09-27): the guard's
+    // destructive-operation policy denies it through the shell lane, which
+    // fail-closed every rejected candidate's rollback. The discard is
+    // restore-based (git reset --hard + exact-path untracked removal in
+    // self-improvement-loop.ts), so the runner must not accept clean.
   ]);
   const quote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
   const identity = `-c user.name=${quote(options.authorName)} -c user.email=${quote(options.authorEmail)}`;
