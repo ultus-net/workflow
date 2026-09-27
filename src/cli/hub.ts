@@ -22,6 +22,7 @@ import {
   type BudgetGuard,
 } from "../integrations/hub-scheduler.js";
 import { createScheduleRegistry } from "../integrations/schedule-registry.js";
+import { createProjectRegistry } from "../integrations/project-registry.js";
 import { createSelfImprovementRegistry } from "../integrations/self-improvement-registry.js";
 import {
   createAgentDrivenRunLoop,
@@ -45,7 +46,7 @@ import { TaskGraph } from "../kernel/task-graph.js";
 // ANY argv; resolve help and exit before the first composition statement.
 if (process.argv.slice(2).some((argument) => argument === "--help" || argument === "-h")) {
   console.log("workflow-hub — the Workflow authority daemon (one hub, one journal)");
-  console.log("  state: ~/.workflow (env: WORKFLOW_HUB_PROVENANCE, WORKFLOW_HUB_SCHEDULES)");
+  console.log("  state: ~/.workflow (env: WORKFLOW_HUB_PROVENANCE, WORKFLOW_HUB_SCHEDULES, WORKFLOW_HUB_PROJECTS)");
   console.log("  --help  print this help");
   process.exit(0);
 }
@@ -193,6 +194,11 @@ const testRunner = teamTaskVerificationCommand !== undefined && teamTaskVerifica
 // hub restart. An absent or empty table means no scheduled runs.
 const schedulesPath = process.env.WORKFLOW_HUB_SCHEDULES ?? join(homedir(), ".workflow", "scheduler.json");
 const scheduleRegistry = createScheduleRegistry({ path: schedulesPath });
+// W164: the project container's persisted table — the same seat as the
+// schedule table (WORKFLOW_HUB_PROJECTS overrides the path). An absent or
+// empty table means no projects; the routes still answer.
+const projectsPath = process.env.WORKFLOW_HUB_PROJECTS ?? join(homedir(), ".workflow", "projects.json");
+const projectRegistry = createProjectRegistry({ path: projectsPath });
 // Plan Task G5 + W077 wiring: the hub composes scheduled prompts, so the
 // orientation block (W077 — static, versioned, no interpolation; the agent
 // learns the hub exists and which tools to reach for) and the operator's
@@ -422,6 +428,7 @@ try {
     delegateBoardTask: (issue: number) => fetchBoardTask(boardProviderFromEnv(process.env), issue),
     schedulerFactory,
     schedules: scheduleRegistry,
+    projects: projectRegistry,
     // W073 trigger surface / Checkpoint F: the registry is composed lazily
     // against the run-registry handles so the production loop (agent proposal
     // source + agent applier + measure) drives the real controller. With

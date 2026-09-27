@@ -11,6 +11,7 @@ import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { createOpenRouterAnalytics, usageTimeRange, type OpenRouterAnalytics } from "../integrations/openrouter-analytics.js";
 import { compactSession, fetchLiveMcp, fetchSessionStats } from "../integrations/opencode-live-state.js";
 import { nextCronMatch, type ScheduleDefinition } from "../integrations/hub-scheduler.js";
+import type { ProjectRecord, ProjectStatus } from "../integrations/project-registry.js";
 import { defaultSettings, mergeSettings, normalizeSettings, readSettingsFile, settingsPaths, writeSettingsFile } from "../integrations/workflow-settings.js";
 import { resolveToolboxCatalog } from "../integrations/toolbox-catalog.js";
 import { stepId, taskId, type TaskState } from "../kernel/contracts.js";
@@ -489,6 +490,72 @@ export function createWorkflowWebServer(
         const id = typeof (body as { id?: unknown } | null)?.id === "string" ? (body as { id: string }).id : undefined;
         if (id === undefined || id.length === 0) return json(response, 400, { error: "invalid schedule delete request" });
         const result = await hubPost("/schedule/delete", { id });
+        return json(response, result.status, result.payload);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    // ── W164: the project container's operator surfaces (hub proxy) ────────
+    // Same discipline as the schedules proxy: the hub is the single writer;
+    // these routes relay the operator-token class only (no run-now-style
+    // dispatch exists for projects — the record carries no dispatch seam).
+    if (request.method === "GET" && pathname === "/api/projects") {
+      const result = await hubPost("/project/list", {});
+      if (result.status !== 200) return json(response, result.status, result.payload);
+      return json(response, 200, { projects: (result.payload as { projects?: ProjectRecord[] }).projects ?? [] });
+    }
+    if (request.method === "POST" && pathname === "/api/projects/save") {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        if (
+          typeof body !== "object" || body === null ||
+          typeof (body as Record<string, unknown>).id !== "string" ||
+          typeof (body as Record<string, unknown>).title !== "string"
+        ) {
+          return json(response, 400, { error: "invalid project save request" });
+        }
+        // Forward only known project fields: the browser payload may carry
+        // arbitrary extras (and the form's `base` spread carries the record
+        // it edited); the proxy strips to the table schema so nothing beyond
+        // it is ever persisted by the hub.
+        const source = body as Record<string, unknown>;
+        const repo = source.repo as Record<string, unknown> | undefined;
+        const project: ProjectRecord = {
+          id: source.id as string,
+          title: source.title as string,
+          repo: {
+            provider: "github",
+            fullName: String(repo?.fullName ?? ""),
+            repoId: Number(repo?.repoId ?? 0),
+          },
+          status: (typeof source.status === "string" ? source.status : "active") as ProjectStatus,
+          ...(source.budget !== undefined && typeof source.budget === "object" && source.budget !== null
+            ? { budget: source.budget as NonNullable<ProjectRecord["budget"]> }
+            : {}),
+          workspaces: Array.isArray(source.workspaces)
+            ? (source.workspaces as unknown[]).filter((entry): entry is string => typeof entry === "string")
+            : [],
+        };
+        const result = await hubPost("/project/save", project);
+        return json(response, result.status, result.payload);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    if (request.method === "POST" && pathname === "/api/projects/delete") {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const id = typeof (body as { id?: unknown } | null)?.id === "string" ? (body as { id: string }).id : undefined;
+        if (id === undefined || id.length === 0) return json(response, 400, { error: "invalid project delete request" });
+        const result = await hubPost("/project/delete", { id });
         return json(response, result.status, result.payload);
       } catch {
         return json(response, 400, { error: "invalid request body" });

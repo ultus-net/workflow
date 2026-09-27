@@ -8,6 +8,8 @@ import { shellExecutorFor, type WorkflowApplicationResolver, type WorkflowRunCon
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import type { SelfImprovementRegistry, SelfImprovementSpec } from "./self-improvement-registry.js";
 import type { ScheduleRegistry } from "./schedule-registry.js";
+import type { ProjectRegistry } from "./project-registry.js";
+import { projectScopedBoard, type ProjectRecord } from "./project-registry.js";
 import { activityTimeline } from "./activity-timeline.js";
 import { operatorPosture, scheduleLineage, scheduleRecentRuns } from "./operator-posture.js";
 import type { BoardOutcome, BoardTaskOutcome } from "./task-provider.js";
@@ -38,6 +40,15 @@ interface HubRequestContext {
   readonly guard: WorkflowGuardProvider | undefined;
   readonly selfImprovement: SelfImprovementRegistry | undefined;
   readonly schedules: ScheduleRegistry | undefined;
+  /**
+   * W164: the project container's registry — the hub-owned "open a project"
+   * records (provider-stable repo identity, status, budget envelope,
+   * workspace bindings). Absent → the routes 404 (like the other optional
+   * registries). The record is credential-free by construction; the routes
+   * additionally strip anything beyond the schema so a hostile client cannot
+   * persist or echo credential-shaped fields.
+   */
+  readonly projects?: ProjectRegistry;
   /** W158: the bounded content store behind the evidence content references; absent → the read route 404s. */
   readonly contentStore?: {
     get(ref: string): { readonly kind: "test-output" | "screenshot"; readonly mediaType: string; readonly bytes: string; readonly byteSize: number } | undefined;
@@ -75,10 +86,11 @@ export async function createWorkflowHubBridge(
   contentStore?: HubRequestContext["contentStore"],
   readBoardTasks?: () => Promise<BoardOutcome>,
   delegateBoardTask?: (issue: number) => Promise<BoardTaskOutcome>,
+  projects?: ProjectRegistry,
 ): Promise<WorkflowHubBridge> {
   const token = randomBytes(32).toString("hex");
   const verificationToken = randomBytes(32).toString("hex");
-  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...(readBoardTasks === undefined ? {} : { readBoardTasks }), ...(delegateBoardTask === undefined ? {} : { delegateBoardTask }) };
+  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...(readBoardTasks === undefined ? {} : { readBoardTasks }), ...(delegateBoardTask === undefined ? {} : { delegateBoardTask }), ...(projects === undefined ? {} : { projects }) };
 
   const server = createServer((request, response) => {
     if (request.url !== undefined) observeRequest?.(new URL(request.url, "http://127.0.0.1").pathname);
@@ -302,6 +314,55 @@ async function handleRequest(
       }
       return send(response, 200, { fired: await context.schedules.runNow(body.id) });
     }
+    if (request.url === "/project/list") {
+      // W164: the project container's read — the operator-token read class,
+      // like /schedule/list. The record is credential-free by construction.
+      if (context.projects === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body)) return send(response, 400, { error: "invalid project list request" });
+      return send(response, 200, { projects: context.projects.list() });
+    }
+    if (request.url === "/project/save") {
+      // W164: create or replace a project. The route composes the record from
+      // VALIDATED schema fields only — a hostile body's extra keys (including
+      // credential-shaped ones like `token`) are dropped here, never
+      // persisted nor echoed, and a registry validation failure is a client
+      // fault that never partially admits.
+      if (context.projects === undefined) return send(response, 404, { error: "not found" });
+      const parsed = parseProjectRecord(body);
+      if (typeof parsed === "string") return send(response, 400, { error: parsed });
+      try {
+        return send(response, 200, { projects: context.projects.save(parsed) });
+      } catch (error) {
+        return send(response, 400, { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    if (request.url === "/project/delete") {
+      if (context.projects === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body) || typeof body.id !== "string" || body.id.length === 0) {
+        return send(response, 400, { error: "invalid project delete request" });
+      }
+      return send(response, 200, { projects: context.projects.remove(body.id) });
+    }
+    if (request.url === "/project/scope") {
+      // W164: the per-project scoping read — answers ONLY the project's
+      // bound workspaces and, when a board read is composed, the board bound
+      // to the project's own repo identity (a foreign repo's board is
+      // refused by name, never relayed). Reads only: nothing is dispatched,
+      // no task state moves.
+      if (context.projects === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body) || typeof body.id !== "string" || body.id.length === 0) {
+        return send(response, 400, { error: "invalid project scope request" });
+      }
+      const project = context.projects.get(body.id);
+      if (project === undefined) return send(response, 404, { error: "unknown project" });
+      const board = context.readBoardTasks === undefined ? undefined : await context.readBoardTasks();
+      const scope = projectScopedBoard(project, board);
+      return send(response, 200, {
+        project: { id: project.id, title: project.title, repo: project.repo, status: project.status },
+        workspaces: project.workspaces,
+        ...(scope.kind === "ok" ? { board } : { board: null, reason: scope.reason }),
+      });
+    }
     if (request.url === "/board/tasks") {
       // W161: the external-task board's read route — the provider outcome
       // (ok / unconfigured / error) relays verbatim; "unconfigured" is a
@@ -523,6 +584,51 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * W164: the project save route's schema strip — composes the record from
+ * validated fields ONLY. Anything else in the body (unknown keys, and
+ * credential-shaped keys like `token` in particular) is dropped, so the
+ * registry never persists nor echoes material beyond the project schema.
+ * Returns the record or the client-fault message.
+ */
+function parseProjectRecord(body: unknown): ProjectRecord | string {
+  if (!isRecord(body)) return "invalid project save request";
+  if (typeof body.id !== "string" || body.id.trim().length === 0) return "invalid project save request: id must be a non-empty string";
+  if (typeof body.title !== "string" || body.title.trim().length === 0) return "invalid project save request: title must be a non-empty string";
+  const repo = body.repo;
+  if (!isRecord(repo)) return "invalid project save request: repo must be an object";
+  if (repo.provider !== "github") return "invalid project save request: repo provider must be 'github'";
+  if (typeof repo.fullName !== "string" || repo.fullName.trim().length === 0) return "invalid project save request: repo fullName is required";
+  if (typeof repo.repoId !== "number" || !Number.isInteger(repo.repoId)) return "invalid project save request: repo repoId must be an integer";
+  if (body.status !== "active" && body.status !== "paused" && body.status !== "archived") {
+    return "invalid project save request: status must be active, paused, or archived";
+  }
+  if (!Array.isArray(body.workspaces) || body.workspaces.some((workspace) => typeof workspace !== "string")) {
+    return "invalid project save request: workspaces must be an array of strings";
+  }
+  let budget: ProjectRecord["budget"];
+  if (body.budget !== undefined) {
+    if (!isRecord(body.budget)) return "invalid project save request: budget must be an object";
+    budget = {};
+    for (const key of ["maxInputTokens", "maxOutputTokens", "maxTotalTokens", "maxCostUsd"] as const) {
+      const cap = (body.budget as Record<string, unknown>)[key];
+      if (cap === undefined) continue;
+      if (typeof cap !== "number" || !Number.isFinite(cap) || cap <= 0) {
+        return `invalid project save request: budget ${key} must be a positive number`;
+      }
+      budget = { ...budget, [key]: cap };
+    }
+  }
+  return {
+    id: body.id,
+    title: body.title,
+    repo: { provider: "github", fullName: repo.fullName, repoId: repo.repoId },
+    status: body.status,
+    ...(budget === undefined ? {} : { budget }),
+    workspaces: body.workspaces as readonly string[],
+  };
 }
 
 function send(response: ServerResponse, status: number, body: unknown): void {

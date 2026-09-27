@@ -13,6 +13,7 @@ import { createRunRegistry, type RunReviewerFactory, type RunTestRunner } from "
 import type { HubScheduler } from "./hub-scheduler.js";
 import type { SelfImprovementRegistry } from "./self-improvement-registry.js";
 import type { ScheduleRegistry } from "./schedule-registry.js";
+import type { ProjectRegistry } from "./project-registry.js";
 
 /**
  * The Workflow hub daemon: a long-running loopback authority that any Cline
@@ -101,6 +102,13 @@ export async function createWorkflowHub(
      * withheld, never faked.
      */
     delegateBoardTask?: (issue: number) => Promise<import("./task-provider.js").BoardTaskOutcome>;
+    /**
+     * W164: the project container's registry — when provided, the hub
+     * exposes operator-token `/project/list|save|delete|scope` routes backed
+     * by this registry. Absent means the routes 404. The composition root
+     * builds it from the persisted table (WORKFLOW_HUB_PROJECTS).
+     */
+    projects?: ProjectRegistry;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -163,6 +171,7 @@ export async function createWorkflowHub(
       options.contentStore,
       options.readBoardTasks,
       options.delegateBoardTask,
+      options.projects,
     );
     options.observeBridgeStarted?.(bridge.url);
     scheduler?.start();
