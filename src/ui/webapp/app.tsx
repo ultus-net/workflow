@@ -1854,9 +1854,12 @@ function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent,
       <details className="panel-disclosure">
         <summary><span>History</span><span className="panel-summary-meta">{snapshot?.history.length ?? 0}</span></summary>
         <section className="panel-disclosure-body">
-        {/* W152: the hub's unified feed first (runs, reviews, schedules, budget —
-            attribution and times exactly as the records carry them); the local
-            kernel's own transitions stay below, labeled as what they are. */}
+        {/* W152: the hub's unified feed first (kernel transitions, review
+            verdicts, gates, claims, usage, schedule origins — attribution and
+            times exactly as the records carry them; budget incidents are a
+            named absence until the hub wires them, W150's recorded residual);
+            the local kernel's own transitions stay below, labeled as what
+            they are. */}
         <ActivityTimelinePanel state={timeline} />
         <p className="muted activity-local-note">local kernel transitions (this service's own graph):</p>
         {snapshot === undefined || snapshot.history.length === 0
