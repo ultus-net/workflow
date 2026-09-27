@@ -534,3 +534,20 @@ test("W153: the registry records the scheduler's origin and exposes it through g
   assert.equal(registry.runOrigins().has("author-no-origin"), false, "no origin declared, none recorded — attribution is never inferred");
 });
 
+// W152: the kernel transition log is per application instance; the timeline
+// needs each run's own log through the observability surface — bounded like
+// the other maps, unattributed like every kernel row.
+test("W152: gate observability carries each run's own transition log", async () => {
+  const { registry } = registryWithReviewer({
+    result: { reviewerRunId: "schedule:hub-reviewer-logs", verdict: "approved", recorded: false, summary: AXES_SUMMARY },
+  });
+  await registry.controller.begin({ runId: "schedule:nightly:log", title: "Nightly audit", workspace: process.cwd() });
+  const gates = registry.controller.gateObservability?.();
+  const log = gates?.transitionLogs?.get("schedule:nightly:log");
+  assert.ok(log !== undefined && log.length >= 1, "the run's own kernel history rides the observability map");
+  assert.equal(log.some((row) => row.to === "IN_PROGRESS"), true, "the begin transition is in the run's log");
+  // The kernel's records carry no attribution fields at all — the type contract.
+  const first = log[0]!;
+  assert.equal("actor" in first, false, "no actor on a kernel TransitionRecord — W157 is the record change that would add it");
+});
+

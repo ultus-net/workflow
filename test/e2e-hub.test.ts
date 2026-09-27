@@ -221,6 +221,15 @@ test("W128: the compiled hub publishes the discovery contract, serves the authen
     },
     `gate observability is empty-but-present on a fresh hub — observed: ${JSON.stringify(snapshotBody.gateObservability)}`,
   );
+  // W152: the unified timeline rides the same response — an honest empty feed
+  // on a fresh hub; the only degraded name is the budget state (the hub's
+  // gate records are all present; the per-session budget state is not wired
+  // hub-side — the recorded W150/W151 residual).
+  const timelineBlock = (snapshotBody as { timeline?: { rows: unknown[]; degraded: string[]; retention: string } }).timeline;
+  assert.ok(timelineBlock !== undefined, "the timeline block rides /snapshot (W152)");
+  assert.deepEqual(timelineBlock.rows, [], "a fresh hub has recorded nothing — an honest empty feed");
+  assert.deepEqual(timelineBlock.degraded, ["per-session budget state"], "the budget state is the only named absence (the recorded W150/W151 residual)");
+  assert.match(timelineBlock.retention, /reset when the hub process restarts/, "the retention statement rides verbatim (criterion 3)");
 
   // The unauthenticated snapshot is refused honestly — 401, the same token
   // gate as /health (hub-http.ts:98; the auth check precedes body parsing).

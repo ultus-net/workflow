@@ -5,8 +5,10 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, PermissionPrompt, StatusBar, StepLedgerRow, TaskRefusal, UsageMeter, type SessionMeta } from "../src/ui/webapp/app.js";
-import { ScheduleForm, SchedulesView, scheduleIdCollisionError, type ScheduleMeta } from "../src/ui/webapp/schedules-view.js";
+import { artifactKind, CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, PermissionPrompt, StatusBar, StepLedgerRow, TaskRefusal, UsageMeter, type SessionMeta } from "../src/ui/webapp/app.js";
+import { ScheduleForm, SchedulesView, scheduleIdCollisionError, type LoopMeta, type ScheduleMeta } from "../src/ui/webapp/schedules-view.js";
+import { ActivityTimelinePanel, type TimelineState } from "../src/ui/webapp/activity-timeline.js";
+import { TIMELINE_RETENTION } from "../src/integrations/activity-timeline.js";
 import { AgentsView, budgetRaiseOutcome } from "../src/ui/webapp/agents-view.js";
 import type { SessionBudgetPosture } from "../src/ui/web-sessions.js";
 import type { ScheduleRecentRun } from "../src/integrations/operator-posture.js";
@@ -795,5 +797,94 @@ test("W153: the schedules cards render the recorded lineage and the recent-runs 
   const noRuns = render([{ id: "n", title: "N", cron: "0 9 * * *", prompt: "p", lineage: { scheduleId: "n", title: "N", causedRuns: 0, lastOutcome: "unrun", tombstoned: false } }], []);
   assert.match(noRuns, /no schedule-fired runs recorded yet/, "the empty recent-runs state is honest");
   assert.match(noRuns, /never fired/, "an unrun schedule says so");
+});
+
+// ── W152: the unified activity timeline panel ──────────────────────────────
+// Kernel rows render the explicit unattributed state (the kernel records no
+// actor/authority — W157 is the record change); rows carry their record's own
+// time or "no recorded time"; the retention line copies the projection's
+// statement verbatim.
+
+test("W152: the timeline panel renders rows with their record's attribution, honest absences, and the retention statement verbatim", () => {
+  const render = (state: TimelineState | undefined): string => renderToStaticMarkup(createElement(ActivityTimelinePanel, { state }));
+
+  const degraded = render({ timeline: null, reason: "hub unavailable" });
+  assert.match(degraded, /hub timeline unavailable \(hub unavailable\)/, "no hub renders the degraded state — never a fabricated feed");
+
+  const feed = render({
+    timeline: {
+      rows: [
+        { kind: "transition", actor: "unattributed", authority: "unattributed", summary: "Nightly audit: READY → IN_PROGRESS", at: null },
+        { kind: "review", actor: "agent (reviewer)", authority: "review-gate verdict record (admitted)", summary: "run author-1: review approved", at: null },
+        { kind: "usage", actor: "system", authority: "metering-proxy usage record", summary: "run author-5 usage: 150 tokens", at: "2026-09-27T11:00:00.000Z" },
+      ],
+      degraded: ["per-session budget state"],
+      retention: TIMELINE_RETENTION,
+    },
+  });
+  assert.ok(feed.includes("Nightly audit: READY → IN_PROGRESS"), "the row's summary renders");
+  assert.match(feed, /unattributed · unattributed/, "the kernel row's explicit unattributed actor/authority renders (criterion 1)");
+  assert.match(feed, /no recorded time/, "a timeless record renders the honest absence — never a fabricated timestamp");
+  assert.match(feed, /agent \(reviewer\) · review-gate verdict record/, "the review row's record-kind attribution renders");
+  assert.match(feed, /2026/, "a record's own time renders (the view formats the record's timestamp)");
+  assert.match(feed, /reset when the hub process restarts/, "the retention statement copies verbatim (criterion 3) — react escapes the apostrophes, so the fragment match");
+  assert.match(feed, /never claims a permanent record/, "the retention statement's honesty tail renders");
+  assert.match(feed, /state unavailable: per-session budget state/, "the named absence renders");
+
+  const empty = render({
+    timeline: { rows: [], degraded: ["run-gate observability", "completion-claims journal", "per-run usage records", "run origin records", "per-session budget state"], retention: TIMELINE_RETENTION },
+  });
+  assert.match(empty, /no recorded activity yet/, "an honest empty feed");
+});
+
+// ── W154: the artifact strip's discriminator and the RSI lineage view ──────
+
+test("W154: the artifact strip refuses to render a filesystem path as a durable artifact", () => {
+  assert.equal(artifactKind("/home/hunter/worktrees/feat/src/x.ts"), "workspace-path", "an absolute path is an in-worktree signpost, not a durable artifact");
+  assert.equal(artifactKind("C:\\repo\\file.ts"), "workspace-path", "a windows path is a signpost too");
+  assert.equal(artifactKind("~/.workflow/state.json"), "workspace-path");
+  assert.equal(artifactKind("reviewer verdict for author-1"), "record", "a record subject renders as the record it is");
+  assert.equal(artifactKind("step:write the tests"), "record");
+});
+
+test("W154: the RSI lineage view renders the objective's chain with honest absent-commit states", () => {
+  const render = (loops: LoopMeta[]): string =>
+    renderToStaticMarkup(createElement(SchedulesView, {
+      schedules: [],
+      loops,
+      recentRuns: undefined,
+      onCancelLoop: noop,
+      onPauseToggle: noop,
+      onDelete: noop,
+      onSaveSchedule: noop as () => Promise<string | undefined>,
+    }));
+
+  const lineage = render([{
+    id: "loop-1",
+    spec: { workspace: "/ws", objective: "shrink the hot loop", requiresReview: true },
+    state: "running",
+    startedAt: "2026-09-27T00:00:00.000Z",
+    cancelRequested: false,
+    iterations: [
+      { iteration: 1, proposalId: "p1", hypothesis: "hoist the lookup", changed: true, runId: "rsi:1:abc", verdict: "accepted", reason: "score improved", score: 0.9, commitRef: "abc1234", observedAt: "2026-09-27T01:00:00.000Z" },
+      { iteration: 2, proposalId: "p2", hypothesis: "unroll", changed: true, runId: "rsi:2:def", verdict: "rejected", reason: "score regressed", observedAt: "2026-09-27T02:00:00.000Z" },
+    ],
+  }]);
+  assert.match(lineage, /#1/, "one row per iteration");
+  assert.match(lineage, /accepted · score 0\.9/, "the verdict and score render from the record");
+  assert.ok(lineage.includes("abc1234"), "the commit ref renders");
+  assert.match(lineage, /no commit — discarded or pending/, "an absent commitRef renders the honest empty state (criterion 2)");
+  assert.match(lineage, /run rsi:1:abc/, "the run id renders (panel-pending attribution, like the posture inbox)");
+  assert.ok(lineage.includes("rsi-lineage-verdict-rejected"), "the rejected verdict carries its state class");
+
+  const empty = render([{
+    id: "loop-2",
+    spec: { workspace: "/ws", objective: "quiet objective", requiresReview: false },
+    state: "running",
+    startedAt: "2026-09-27T00:00:00.000Z",
+    cancelRequested: false,
+    iterations: [],
+  }]);
+  assert.match(empty, /no iterations recorded yet/, "the honest empty lineage");
 });
 

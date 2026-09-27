@@ -90,14 +90,18 @@ passed, not that "the tests passed".
   `packageManager: pnpm@11.5.2` — corepack's default shim resolves a newer
   pnpm and pnpm refuses the mismatch, caught live in the first CI run
   2026-09-26); both on PRs and pushes to main.
-- `package.json`: `test:ci` enumerating 22 suites by name — the 15
+- `package.json`: `test:ci` enumerating 25 suites by name — the 15
   LESS-0051-contract e2e suites (`e2e-admin`, `e2e-admin-azure-kv`,
   `e2e-contained-shell`,
   `e2e-doctor`, `e2e-hub-bash`, `e2e-hub-routes`, `e2e-hub-schedule`,
   `e2e-hub`, `e2e-packaged-seat`, `e2e-prepare-tool`, `e2e-rsi-cli`,
   `e2e-settings`, `e2e-webapp-assets`, `e2e-web-service`, `web-scoping`) plus
-  7 unit suites (`hub-rsi`, `hub-review`, `hub-runs`, `security-assurance`,
-  `text-hygiene`, `contracts`, `acp-runtime-args`).
+  11 unit suites (`hub-rsi`, `hub-review`, `hub-runs`, `security-assurance`,
+  `text-hygiene`, `contracts`, `acp-runtime-args`, `activity-timeline`,
+  `operator-posture`, `web-budget-posture`, `webapp-surface`) — the wave-3
+  additions land the W150-era deferral (the projection suites rode focused
+  runs until the guard's preflight lockfile false positive stopped blocking
+  manifest-touching PRs).
 - `release-gate.yml`: deferred per decision 2.
 - Branch protection: the operator flips the required-checks toggle in GitHub
   settings to name `gate` and `evidence` (CI defines the check names; the

@@ -15,6 +15,7 @@ import { describeActivity, formatElapsed, formatRelativeTime, formatTokens } fro
 import { useSessionCommands, useSessionState, useSessionStatus, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog, type RoutingFacts } from "./settings-dialog.js";
 import { AgentsView, budgetRaiseOutcome } from "./agents-view.js";
+import { ActivityTimelinePanel, useActivityTimeline } from "./activity-timeline.js";
 import { PostureStrip, usePosture } from "./posture-strip.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
 import type { ScheduleRecentRun } from "../../integrations/operator-posture.js";
@@ -40,6 +41,19 @@ interface SnapshotEvidence {
   readonly subject: string;
   readonly result: string;
   readonly freshness: string;
+}
+
+/**
+ * W154 (the artifact strip's discriminator): an evidence record whose subject
+ * is a filesystem path is an in-worktree SIGNPOST — the strip must never
+ * present it as a durable artifact (the borrowings spec's criterion 3, pinned
+ * by test). Everything else renders as the record it is. Exported so the
+ * refusal contract is pinnable without driving the panel.
+ */
+export function artifactKind(subject: string): "record" | "workspace-path" {
+  return subject.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(subject) || subject.startsWith("~")
+    ? "workspace-path"
+    : "record";
 }
 
 interface SnapshotHistory {
@@ -1750,6 +1764,8 @@ function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent,
   readonly ledger: StepLedger | undefined;
   readonly refreshSteps: () => Promise<void>;
 }) {
+  // W152: the hub's unified activity timeline, polled beside the posture strip.
+  const timeline = useActivityTimeline();
   const ledgerByTask = new Map((ledger?.tasks ?? []).map((entry) => [entry.id, entry]));
   // W110 (refusal legibility): the kernel's structured refusals, per task —
   // rendered verbatim until the next attempt succeeds.
@@ -1825,16 +1841,24 @@ function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent,
         {snapshot === undefined || snapshot.evidence.length === 0
           ? <p className="muted">none observed</p>
           : snapshot.evidence.map((entry, index) => (
-            <p className={entry.freshness === "stale" ? "muted" : ""} key={index}>
+            <p className={`evidence-row ${entry.freshness === "stale" ? "evidence-row-stale" : ""}`} key={index}>
+              {artifactKind(entry.subject) === "workspace-path"
+                ? <span className="evidence-signpost" title="in-worktree signpost — a path, not a durable artifact">workspace path · </span>
+                : <span className="evidence-record-tag">record · </span>}
               {entry.subject}: {entry.result} / {entry.freshness}
             </p>
           ))}
-        <p className="muted">evidence records are produced by the hub's own flows (test runner, review verdicts); operator claims are not recorded (W114).</p>
+        <p className="muted">evidence records are produced by the hub's own flows (test runner, review verdicts); operator claims are not recorded (W114). Workspace paths are signposts, never presented as durable artifacts (W154).</p>
         </section>
       </details>
       <details className="panel-disclosure">
         <summary><span>History</span><span className="panel-summary-meta">{snapshot?.history.length ?? 0}</span></summary>
         <section className="panel-disclosure-body">
+        {/* W152: the hub's unified feed first (runs, reviews, schedules, budget —
+            attribution and times exactly as the records carry them); the local
+            kernel's own transitions stay below, labeled as what they are. */}
+        <ActivityTimelinePanel state={timeline} />
+        <p className="muted activity-local-note">local kernel transitions (this service's own graph):</p>
         {snapshot === undefined || snapshot.history.length === 0
           ? <p className="muted">no transitions</p>
           : snapshot.history.slice(-8).map((entry, index) => (
@@ -1898,6 +1922,7 @@ function GitChanges({ status }: { readonly status: GitStatus | undefined }) {
             <span className="git-path" title={change.path}>{change.path}</span>
           </button>
         ))}
+        <p className="muted git-signpost-note">working-tree paths are in-worktree signposts — consultable, never durable artifacts (W154)</p>
       </div>
       {diff !== undefined && (
         <DiffDialog path={diff.path} diff={diff.diff} onClose={closeDiff} />
