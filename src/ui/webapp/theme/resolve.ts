@@ -54,6 +54,18 @@ export interface PaletteTokens {
   readonly ok: HexColor;
   readonly deny: HexColor;
   readonly fail: HexColor;
+  /**
+   * The status token set: `--warn` and `--danger` join the semantic color
+   * set so the three waves' badges (posture W150, budget W151, timeline
+   * W152/W153) stop hand-hardcoding amber/red hex fallbacks. `warn` comes
+   * from the theme's warning seed; `danger` derives from the error seed the
+   * same way `fail` does, so the two names resolve to the same theme tone by
+   * design — the names keep the badge call sites (border/fill usage) legible
+   * while the color vocabulary stays one seed per semantic. Both are AA
+   * against text/bg like the rest of the set.
+   */
+  readonly warn: HexColor;
+  readonly danger: HexColor;
   readonly composerFocus: HexColor;
   readonly codeBg: HexColor;
   readonly hljs: {
@@ -120,6 +132,10 @@ export function resolveVariant(variant: ThemeVariant, isDark: boolean): PaletteT
   const ok = ensureAA(contentTone(seeds.success, isDark), text, bg);
   const fail = ensureAA(contentTone(seeds.error, isDark), text, bg);
   const deny = ensureAA(contentTone(seeds.diffDelete ?? seeds.error, isDark), text, bg);
+  // The status token set: warn/danger join ok/fail so the waves' badges read
+  // one semantic vocabulary on every palette (see the PaletteTokens note).
+  const warn = ensureAA(contentTone(seeds.warning, isDark), text, bg);
+  const danger = ensureAA(contentTone(seeds.error, isDark), text, bg);
   const diffAdd = generateScale(seeds.diffAdd ?? shift(seeds.success, { c: isDark ? 0.7 : 0.55, l: isDark ? -0.18 : 0.14 }), isDark);
   const diffDelete = generateScale(seeds.diffDelete ?? shift(seeds.error, { c: isDark ? 0.82 : 0.7, l: isDark ? -0.08 : 0.08 }), isDark);
 
@@ -142,7 +158,7 @@ export function resolveVariant(variant: ThemeVariant, isDark: boolean): PaletteT
 
   return {
     bg, bgDeep, surface, surfaceRaised, border, borderStrong, text, textMuted,
-    accent, accentFill, accentInk, accentSoft, ok, deny, fail, composerFocus, codeBg, hljs,
+    accent, accentFill, accentInk, accentSoft, ok, deny, fail, warn, danger, composerFocus, codeBg, hljs,
   };
 }
 
@@ -165,6 +181,8 @@ export function variantToCss(tokens: PaletteTokens): string {
     `--ok: ${tokens.ok};`,
     `--deny: ${tokens.deny};`,
     `--fail: ${tokens.fail};`,
+    `--warn: ${tokens.warn};`,
+    `--danger: ${tokens.danger};`,
     `--composer-focus: ${tokens.composerFocus};`,
     `--code-bg: ${tokens.codeBg};`,
   ].join("\n    ");
