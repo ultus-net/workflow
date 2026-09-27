@@ -20,7 +20,15 @@ import { checkProbeVerdicts } from "../src/cli/doctor.js";
  * must exist and name its gate, and every gate-style probe file in the test
  * corpus must have a register row — adding a gated probe without registering
  * it (or renaming/removing a gate the register still records) fails this
- * suite, so the register cannot quietly rot.
+ * suite, so the register cannot quietly rot. Every row's free-text `evidence`
+ * is pinned the same way: `loadProbeVerdicts` resolves each repo-relative path
+ * it cites (including the `acp-remote-sse-idle` row's
+ * `docs/HOST_ADAPTERS.md` idle-window citation) and throws when one is gone,
+ * so a verdict cannot outlive the write-up that earned it. The
+ * `acp-remote-sse-idle` row's `green` is not read at all: the register
+ * re-derives the survival from the idle-hold facts the row carries, through
+ * the same `classifySseIdleHold` the gated arm decides with, so a hand-edited
+ * green cannot outlive the measurement that earned it.
  */
 
 /** Repo root: one level up from this test file's directory. */
@@ -155,6 +163,22 @@ test("register validation fails closed on schema drift", () => {
     /probe file not found/,
     "a register row pointing at a deleted probe is drift, not a stale claim",
   );
+  // The cited write-up is pinned as hard as the executable gate: an `evidence`
+  // string naming a doc/test that is gone fails closed, so a verdict cannot
+  // outlive the write-up that earned it.
+  assert.throws(() => validateProbeVerdictRegister({
+    ...base,
+    verdicts: [{ ...base.verdicts[0]!, evidence: "docs/HOST_ADAPTERS.md row; docs/nowhere.md" }],
+  }, { exists: (path) => !path.endsWith("nowhere.md") }), /cited evidence not found: docs\/nowhere\.md/);
+  // Sentence punctuation is not part of the path, and a version string or an
+  // API route in the prose is not a citation: only the named path is resolved.
+  assert.equal(validateProbeVerdictRegister({
+    ...base,
+    verdicts: [{
+      ...base.verdicts[0]!,
+      evidence: "Live run on 2.0.10: /api/event is an observable SSE stream, matrix pinned in test/opencode-v2-route-class.test.ts.",
+    }],
+  }, { exists: (path) => path.endsWith("test/a-probe.test.ts") || path.endsWith("test/opencode-v2-route-class.test.ts") }).verdicts.length, 1);
   // Optional fields are typed too: a non-string blocker/note is drift.
   assert.throws(() => validateProbeVerdictRegister({
     ...base,
@@ -177,12 +201,83 @@ test("register validation fails closed on schema drift", () => {
   }, { exists }), /predates the newest verdict date/);
 });
 
+test("the idle-hold gate's green is re-derived from the row's own facts, not trusted", () => {
+  const exists = () => true;
+  /** The facts a clean 240s no-event hold records. */
+  const cleanHold = { heldMs: 240_000, idleWindowMs: 240_000, delivered: 0, subscriptions: 1, openedBefore: 1 };
+  const idleRow = {
+    id: "acp-remote-sse-idle",
+    host: "opencode (remote/attached server)",
+    hostVersion: "2.0.10",
+    probe: "test/acp-remote-sse-probe.test.ts",
+    gate: "WORKFLOW_ACP_REMOTE_SSE_IDLE",
+    date: "2026-09-27",
+    result: "green",
+    posture: "advisory",
+    evidence: "docs/HOST_ADAPTERS.md remote ACP bridge entry",
+  };
+  const register = (verdicts: readonly unknown[]): unknown => ({ version: 1, updated: "2026-09-27", verdicts });
+
+  // A green backed by a clean hold stands: the register checks the facts, it
+  // does not refuse a survival the measurement supports.
+  assert.equal(validateProbeVerdictRegister(register([{ ...idleRow, idleHold: cleanHold }]), { exists }).verdicts.length, 1);
+
+  // No facts at all: a survival with nothing measured behind it is drift, not
+  // a pass — the register's other answer to a claim nothing backs.
+  assert.throws(() => validateProbeVerdictRegister(register([idleRow]), { exists }), /must record the idleHold facts/);
+
+  // Facts that deny the survival the row claims: every failing outcome the
+  // shared classifier can reach is refused, in the arm's own wording.
+  const contradicting: readonly (readonly [string, Record<string, unknown>])[] = [
+    ["dropped", { ...cleanHold, drop: "the event stream ended" }],
+    ["resumed", { ...cleanHold, subscriptions: 2 }],
+    ["never-opened", { ...cleanHold, subscriptions: 0, openedBefore: 0 }],
+    ["short-hold", { ...cleanHold, heldMs: 90_000 }],
+  ];
+  for (const [outcome, idleHold] of contradicting) {
+    assert.throws(
+      () => validateProbeVerdictRegister(register([{ ...idleRow, idleHold }]), { exists }),
+      new RegExp(`green contradicts its own idleHold facts: classifySseIdleHold reads this hold as '${outcome}'`),
+      `a green whose own facts classify as '${outcome}' must fail closed`,
+    );
+  }
+
+  // Facts present on a non-green row are still typed and still measured: a
+  // `pending` row has not run and needs no hold, but a row that carries facts
+  // must carry measurable ones.
+  assert.equal(
+    validateProbeVerdictRegister(register([{ ...idleRow, result: "pending", posture: "unqualified" }]), { exists }).verdicts.length,
+    1,
+  );
+  assert.throws(
+    () => validateProbeVerdictRegister(register([{ ...idleRow, result: "red", posture: "advisory", idleHold: "a hold happened" }]), { exists }),
+    /idleHold must be the facts object/,
+  );
+  assert.throws(
+    () => validateProbeVerdictRegister(register([{ ...idleRow, result: "red", posture: "advisory", idleHold: { ...cleanHold, heldMs: -1 } }]), { exists }),
+    /idleHold facts are not a measurable hold/,
+  );
+  // A `red` idle row may record the facts that say why: only a survival claim
+  // is re-derived against a pass condition.
+  assert.equal(
+    validateProbeVerdictRegister(register([{ ...idleRow, result: "red", posture: "advisory", idleHold: { ...cleanHold, drop: "the event stream ended" } }]), { exists }).verdicts.length,
+    1,
+  );
+
+  // The shipped row stays honestly unmeasured: pending, with no facts invented
+  // for a window that has never been held live.
+  const shipped = loadProbeVerdicts({ root: ROOT }).verdicts.find((verdict) => verdict.id === "acp-remote-sse-idle");
+  assert.equal(shipped?.result, "pending");
+  assert.equal(shipped?.idleHold, undefined, "a pending row has no hold facts to record");
+});
+
 test("doctor: the register check renders counts, armed gates, and honest open states", (t) => {
   const root = mkdtempSync(join(tmpdir(), "wf-probe-register-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, "docs"), { recursive: true });
   mkdirSync(join(root, "test"), { recursive: true });
   writeFileSync(join(root, "test", "fixture-probe.test.ts"), 'const gated = process.env.WORKFLOW_TEST_FAKE === "1";');
+  writeFileSync(join(root, "docs", "FIXTURE_EVIDENCE.md"), "# fixture write-up\n");
   const verdictRow = {
     id: "fixture",
     host: "fixture",
@@ -192,7 +287,7 @@ test("doctor: the register check renders counts, armed gates, and honest open st
     date: "2026-09-20",
     result: "pending",
     posture: "unqualified",
-    evidence: "docs/nowhere.md",
+    evidence: "docs/FIXTURE_EVIDENCE.md fixture row",
     blocker: "no fixture credentials",
   };
   writeProbeRegister(root, { version: 1, updated: "2026-09-20", verdicts: [verdictRow] });
@@ -220,6 +315,18 @@ test("doctor: the register check renders counts, armed gates, and honest open st
   const decided = checkProbeVerdicts({ root });
   assert.equal(decided.status, "pass");
   assert.equal(decided.fix, undefined);
+
+  // A row citing a write-up that is gone fails closed, with the fix naming the
+  // citation requirement.
+  writeProbeRegister(root, {
+    version: 1,
+    updated: "2026-09-20",
+    verdicts: [{ ...verdictRow, result: "green", blocker: undefined, evidence: "docs/deleted-writeup.md" }],
+  });
+  const dangling = checkProbeVerdicts({ root });
+  assert.equal(dangling.status, "fail");
+  assert.match(dangling.detail, /cited evidence not found: docs\/deleted-writeup\.md/);
+  assert.match(dangling.fix ?? "", /cited evidence must exist/);
 
   writeFileSync(join(root, "docs", "PROBE_VERDICTS.json"), "{not json");
   const corrupt = checkProbeVerdicts({ root });

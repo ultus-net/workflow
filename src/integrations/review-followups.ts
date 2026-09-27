@@ -68,11 +68,14 @@ function validReviewFollowUp(value: unknown): value is ReviewFollowUp {
  * itself validates is a ledger that could not be read, which is unknown debt
  * and never zero. The requested window is part of that contract: the server
  * caps `openFollowUps` at the limit it was handed, so a longer payload is not
- * a bigger ledger, it is a read this surface cannot bound.
+ * a bigger ledger, it is a read this surface cannot bound. The reviews
+ * window's truncation flag is part of that contract too: the server states
+ * both caps, so a `truncated` flag of the wrong type is a broken read, not a
+ * missing one.
  */
 export function readOpenReviewFollowUps(content: unknown, limit: number): OpenReviewFollowUps {
   if (!content || typeof content !== "object") return UNAVAILABLE_REVIEW_FOLLOW_UPS;
-  const payload = content as { openFollowUps?: unknown; followUpsTruncated?: unknown };
+  const payload = content as { openFollowUps?: unknown; followUpsTruncated?: unknown; truncated?: unknown };
   if (!Array.isArray(payload.openFollowUps)) return UNAVAILABLE_REVIEW_FOLLOW_UPS;
   // Checked before the walk, not after: an over-window payload is already a
   // broken read, so validating it entry by entry would spend unbounded work on
@@ -96,6 +99,13 @@ export function readOpenReviewFollowUps(content: unknown, limit: number): OpenRe
   if (typeof payload.followUpsTruncated === "boolean") truncated = payload.followUpsTruncated;
   else if (payload.followUpsTruncated === undefined) truncated = followUps.length >= limit;
   else return UNAVAILABLE_REVIEW_FOLLOW_UPS;
+  // The reviews window's flag is the ledger's own statement that its reviews
+  // window was capped — the same bounded-read contract as the follow-up flag
+  // above. The panel renders follow-ups only, so the value itself is not
+  // surfaced; what is enforced is the flag's shape. A flag of the wrong type
+  // is a broken read, not a missing one, exactly as above, and an absent flag
+  // stays tolerated: it caps, it never upgrades the read to "complete".
+  if (typeof payload.truncated !== "boolean" && payload.truncated !== undefined) return UNAVAILABLE_REVIEW_FOLLOW_UPS;
   return { followUps, truncated, available: true };
 }
 

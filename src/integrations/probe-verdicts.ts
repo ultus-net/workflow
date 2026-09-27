@@ -19,7 +19,15 @@ import { fileURLToPath } from "node:url";
  * remains the human write-up; this register is the machine-checkable layer
  * that doctor renders and the anti-drift test pins against the real test
  * corpus (every registered probe file must exist and name its gate; every
- * gate-style probe file must be registered).
+ * gate-style probe file must be registered). Cited evidence is pinned the
+ * same way: the repo-relative paths a row's `evidence` names must exist, so a
+ * verdict cannot keep pointing at a write-up that was deleted or moved.
+ *
+ * One row's *result* is re-derived rather than trusted: a `green` on the
+ * `WORKFLOW_ACP_REMOTE_SSE_IDLE` gate is recomputed from the idle-hold facts
+ * the row carries, through the same pure `classifySseIdleHold` the live arm
+ * decides with, so the register cannot claim a survival its own measurement
+ * denies.
  */
 
 export type ProbeVerdictResult = "green" | "red" | "negative" | "pending" | "blocked";
@@ -57,6 +65,15 @@ export interface ProbeVerdictRecord {
    */
   readonly result: ProbeVerdictResult;
   readonly posture: ProbePosture;
+  /**
+   * The facts one SSE idle hold recorded, verbatim from the gated arm's
+   * `classifySseIdleHold({...})` call. Optional because the arm has not run
+   * live yet (a `pending` row has no measurement), but a `green` row for the
+   * idle gate must carry them: the register re-derives the survival from
+   * these facts instead of trusting the result string, so a hand-edited green
+   * cannot outlive the hold that earned it. See `validateProbeVerdictRegister`.
+   */
+  readonly idleHold?: SseIdleHoldFacts | undefined;
   /** Where the dated verdict is written up (doc + section/row). */
   readonly evidence: string;
   /** Required for `blocked`: the missing operator environment/credential. */
@@ -86,8 +103,61 @@ const PROBE_PATTERN = /^test\/[A-Za-z0-9._/-]+\.test\.ts$/;
 const GATE_PATTERN = /^WORKFLOW_[A-Z0-9_]+$/;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * The repo-relative paths a row's free-text `evidence` may cite, e.g.
+ * `docs/HOST_ADAPTERS.md remote bridge entry; test/acp-remote-sse-probe.test.ts
+ * header`. The extension allowlist is what keeps version strings (`2.0.10`),
+ * section marks (`§11`) and API routes (`/api/event`) out of the citation
+ * set; the leading lookbehind keeps the tail of an absolute path from being
+ * read as a repo-relative one; the trailing guard plus the extension
+ * alternation mean a sentence-final period is not part of the path (the
+ * `test/opencode-v2-route-class.test.ts.` citation resolves as-is).
+ *
+ * Documented limit: a citation written in a shape this pattern does not
+ * recognize (a bare filename with no extension, a Windows separator) is left
+ * unpinned, not mis-resolved — the check never invents a path to fail on.
+ */
+const CITED_PATH_PATTERN = /(?<![\w./-])((?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.(?:md|mdx|json|ts|tsx|mjs|js|txt|yaml|yml))(?![\w/])/g;
+
+/** The distinct repo-relative paths an `evidence` string cites. */
+function citedEvidencePaths(evidence: string): string[] {
+  return [...new Set([...evidence.matchAll(CITED_PATH_PATTERN)].map((match) => match[1]!))];
+}
+
 const RESULTS: readonly string[] = ["green", "red", "negative", "pending", "blocked"];
 const POSTURES: readonly string[] = ["enforced", "enforced-eligible", "advisory", "spawn-denied", "unqualified"];
+
+/**
+ * The gate env of the SSE idle-hold arm (`test/acp-remote-sse-probe.test.ts`).
+ * It is keyed on the gate rather than the row id because the gate is the
+ * register's canonical handle on a probe family: the corpus anti-drift scan
+ * arms on gates, and the arm's own facts are what a green here is measured on.
+ */
+const SSE_IDLE_HOLD_GATE = "WORKFLOW_ACP_REMOTE_SSE_IDLE";
+
+/**
+ * Re-derives one row's idle-hold survival from the facts the row carries, by
+ * calling the gated arm's own pure classifier — the same implementation, so a
+ * register row and the live arm cannot disagree about what a hold means.
+ *
+ * Fail-closed, with the row named: a non-object `idleHold`, or facts the
+ * classifier refuses to measure, is document drift, not a pass-through value.
+ */
+function readIdleHold(id: string, facts: unknown): SseIdleHoldVerdict {
+  if (typeof facts !== "object" || facts === null || Array.isArray(facts)) {
+    throw new TypeError(
+      `invalid probe verdict register: '${id}' — idleHold must be the facts object the idle arm recorded (heldMs, idleWindowMs, delivered, subscriptions, openedBefore)`,
+    );
+  }
+  try {
+    return classifySseIdleHold(facts as SseIdleHoldFacts);
+  } catch (error) {
+    throw new TypeError(
+      `invalid probe verdict register: '${id}' — idleHold facts are not a measurable hold: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+}
 
 export interface ValidateProbeVerdictsOptions {
   /** Existence check for the referenced probe file (injectable for tests). */
@@ -99,10 +169,13 @@ export interface ValidateProbeVerdictsOptions {
 /**
  * Validates one parsed register document, fail-closed: a wrong version, a
  * malformed record, an unknown result/posture, a non-ISO date, a duplicate
- * id, a probe path that is not a test file or does not exist on disk, or a
- * `blocked` entry without its blocker all throw. The probe existence check is
- * the runtime side of anti-drift: a register row pointing at a deleted probe
- * is an error, not a stale claim.
+ * id, a probe path that is not a test file or does not exist on disk, a cited
+ * evidence path that does not exist, a `blocked` entry without its blocker,
+ * unmeasurable `idleHold` facts, or a `green` on the SSE idle-hold gate whose
+ * own facts do not classify as a survival all throw. The probe existence check
+ * is the runtime side of anti-drift: a register row pointing at a deleted
+ * probe is an error, not a stale claim — and the evidence check extends that
+ * to the write-up it cites.
  */
 export function validateProbeVerdictRegister(parsed: unknown, options: ValidateProbeVerdictsOptions = {}): ProbeVerdictRegister {
   if (typeof parsed !== "object" || parsed === null) {
@@ -140,6 +213,17 @@ export function validateProbeVerdictRegister(parsed: unknown, options: ValidateP
     if (!exists(join(root, verdict.probe as string))) {
       throw new TypeError(`invalid probe verdict register: '${id}' — probe file not found: ${verdict.probe}`);
     }
+    // The write-up is pinned too, not just the executable gate: every
+    // repo-relative path the row's `evidence` prose cites must still exist, so
+    // a verdict cannot outlive the doc (or test) that earned it. A citation
+    // that resolves nowhere is drift, and it fails closed like a deleted probe
+    // does. Scope is the `evidence` string alone — `blocker`/`note` are
+    // operator prose, not a citation surface.
+    for (const cited of citedEvidencePaths(verdict.evidence as string)) {
+      if (!exists(join(root, cited))) {
+        throw new TypeError(`invalid probe verdict register: '${id}' — cited evidence not found: ${cited}`);
+      }
+    }
     if (!GATE_PATTERN.test(verdict.gate as string)) {
       throw new TypeError(`invalid probe verdict register: '${id}' — gate must be a WORKFLOW_* env name`);
     }
@@ -161,6 +245,29 @@ export function validateProbeVerdictRegister(parsed: unknown, options: ValidateP
     }
     if (verdict.result === "blocked" && (typeof verdict.blocker !== "string" || (verdict.blocker as string).trim().length === 0)) {
       throw new TypeError(`invalid probe verdict register: '${id}' — a blocked verdict must name its blocker`);
+    }
+    // The idle arm's green is *re-derived*, not read. Its row may carry the
+    // hold facts the live run recorded; whenever it does they must classify,
+    // and a green on this gate additionally has to survive that
+    // classification. So a hand-edited `result: "green"` cannot outlive the
+    // measurement that earned it: facts that classify as `dropped`, `resumed`,
+    // `never-opened` or `short-hold` — or no facts at all, the register's other
+    // answer to a claim nothing backs — are an error, not a stale green.
+    // Every other result stays open with the facts optional: a `pending` row
+    // has not run, and a `red`/`negative` row reports a finding, not a
+    // survival, so it is never re-derived against a pass condition.
+    const idleHold = verdict.idleHold === undefined ? undefined : readIdleHold(id, verdict.idleHold);
+    if (verdict.gate === SSE_IDLE_HOLD_GATE && verdict.result === "green") {
+      if (idleHold === undefined) {
+        throw new TypeError(
+          `invalid probe verdict register: '${id}' — a green '${SSE_IDLE_HOLD_GATE}' verdict must record the idleHold facts of the run that earned it (heldMs, idleWindowMs, delivered, subscriptions, openedBefore)`,
+        );
+      }
+      if (!idleHold.survived) {
+        throw new TypeError(
+          `invalid probe verdict register: '${id}' — green contradicts its own idleHold facts: classifySseIdleHold reads this hold as '${idleHold.outcome}' — ${idleHold.reason}`,
+        );
+      }
     }
     return verdict as unknown as ProbeVerdictRecord;
   });
@@ -194,4 +301,149 @@ export function loadProbeVerdicts(options: { root?: string } = {}): ProbeVerdict
     throw new TypeError(`invalid probe verdict register: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
   return validateProbeVerdictRegister(parsed, { root });
+}
+
+/* ---------------------------------------------------------------------------
+ * SSE idle-hold classification — the `acp-remote-sse-idle` arm's verdict.
+ *
+ * The idle arm of `test/acp-remote-sse-probe.test.ts` holds ONE `/api/event`
+ * subscription open through a 4-minute window in which no events arrive, and
+ * fails only if the ingress dropped the stream or silently resumed it. That
+ * decision used to be inline asserts inside the arm, which means the arm's
+ * *honest reporting* was pinned by nothing a reviewer or CI can see: the arm
+ * runs only under its live gate, for 240 seconds, against a live server. A
+ * weakened condition (a dropped-stream check removed, the hold tolerance
+ * widened) would have stayed green in every normal run and surfaced only when
+ * someone spent four minutes of wall clock to find out.
+ *
+ * Extracted here, the conditions are a pure function the arm calls and the fast
+ * suite decides in milliseconds: a mid-window drop, a second
+ * `text/event-stream` subscription (the silent-resume signal), a short hold and
+ * a clean 240s hold are all pinned by `test/probe-verdict-sse-idle.test.ts`.
+ * One implementation, so the live arm and its unit tests cannot drift.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Wall-clock slack before a hold counts as short. The arm sleeps for the whole
+ * window, so a timer can land a millisecond or two early; a real truncation
+ * (a suspended host, a throttled timer) is orders of magnitude larger. Without
+ * this the arm would report probe jitter as a transport finding.
+ */
+const SSE_IDLE_HOLD_SLACK_MS = 1_000;
+
+/**
+ * What an idle hold proves:
+ * - `survived` — one subscription was open for the whole window, no drop.
+ * - `short-hold` — **probe integrity**, not a transport finding: the window
+ *   closed early, so it measured nothing either way. Checked first, because a
+ *   cut-short window can manufacture a drop and reporting that as an ingress
+ *   failure would be a false finding.
+ * - `never-opened` — no `text/event-stream` subscription ever arrived, so there
+ *   was no stream to survive. Fail-closed: without this, zero subscriptions
+ *   opened and zero seen compare equal and the arm would report a quiet
+ *   survival of a stream that never existed.
+ * - `dropped` — the ingress ended or errored the stream mid-window.
+ * - `resumed` — the subscription count moved during a window the probe never
+ *   re-opens, i.e. the engine silently resumed the stream and swallowed the
+ *   gap. Also fails on a count that moved the other way: a decreasing counter
+ *   is a broken measurement, and a broken measurement is never a pass.
+ */
+export type SseIdleHoldOutcome = "survived" | "short-hold" | "never-opened" | "dropped" | "resumed";
+
+/** The facts one idle hold is judged on, as the live arm recorded them. */
+export interface SseIdleHoldFacts {
+  /** Milliseconds the stream was actually held open after the window started. */
+  readonly heldMs: number;
+  /** The window the arm set out to hold (240_000 for the live arm). */
+  readonly idleWindowMs: number;
+  /** Events delivered during the window. */
+  readonly delivered: number;
+  /** `text/event-stream` subscriptions seen in total, at the end of the window. */
+  readonly subscriptions: number;
+  /** That same count when the window started. */
+  readonly openedBefore: number;
+  /** Why the event iterator ended or errored, when it did. */
+  readonly drop?: string | undefined;
+}
+
+export interface SseIdleHoldVerdict {
+  readonly outcome: SseIdleHoldOutcome;
+  /** True only for `survived`; the live arm asserts on this and `reason`. */
+  readonly survived: boolean;
+  /** The finding, worded for the probe's failure message. */
+  readonly reason: string;
+  /** Events delivered during the window. */
+  readonly delivered: number;
+  /**
+   * True when the window was event-free. False is NOT a failure — the stream
+   * still survived — but it does mean the idle premise was only partially
+   * exercised, so the arm reports it rather than banking it as a clean hold.
+   */
+  readonly eventFree: boolean;
+}
+
+/** Counts are instrumented integers; anything else is a broken measurement. */
+function idleHoldCount(name: string, value: number): number {
+  if (!Number.isInteger(value) || value < 0) {
+    throw new TypeError(`invalid SSE idle hold: ${name} must be a non-negative integer (got ${value})`);
+  }
+  return value;
+}
+
+/**
+ * Decides one SSE idle hold — the survival decision the `acp-remote-sse-idle`
+ * arm makes after its live window. Pure and total: it reads the recorded facts
+ * and nothing else, so the conditions that earn (or refuse) a survival verdict
+ * are testable without a server, a network, or four minutes of wall clock.
+ *
+ * Fail-closed on bad facts: a non-finite/negative hold, a non-positive window,
+ * or a non-integer counter throws rather than classifying, because a garbled
+ * measurement must never be reported as a survival.
+ */
+export function classifySseIdleHold(facts: SseIdleHoldFacts): SseIdleHoldVerdict {
+  if (!Number.isFinite(facts.heldMs) || facts.heldMs < 0) {
+    throw new TypeError(`invalid SSE idle hold: heldMs must be a non-negative number of milliseconds (got ${facts.heldMs})`);
+  }
+  if (!Number.isFinite(facts.idleWindowMs) || facts.idleWindowMs <= 0) {
+    throw new TypeError(`invalid SSE idle hold: idleWindowMs must be a positive number of milliseconds (got ${facts.idleWindowMs})`);
+  }
+  const delivered = idleHoldCount("delivered", facts.delivered);
+  const subscriptions = idleHoldCount("subscriptions", facts.subscriptions);
+  const openedBefore = idleHoldCount("openedBefore", facts.openedBefore);
+  const verdict = (outcome: SseIdleHoldOutcome, reason: string): SseIdleHoldVerdict => ({
+    outcome,
+    survived: outcome === "survived",
+    reason,
+    delivered,
+    eventFree: delivered === 0,
+  });
+
+  // Probe integrity first: a short hold proves nothing, and reporting it
+  // before a transport finding keeps a cut-short window from being reported as
+  // an ingress drop it may have manufactured.
+  if (facts.heldMs < facts.idleWindowMs - SSE_IDLE_HOLD_SLACK_MS) {
+    return verdict(
+      "short-hold",
+      `the window closed after ${facts.heldMs}ms of ${facts.idleWindowMs}ms — a short hold proves nothing`,
+    );
+  }
+  if (openedBefore === 0) {
+    return verdict(
+      "never-opened",
+      `no text/event-stream subscription ever opened, so no stream was measured (${delivered} event(s) delivered over ${facts.heldMs}ms)`,
+    );
+  }
+  if (facts.drop !== undefined) {
+    return verdict("dropped", `the ingress dropped the idle stream: ${facts.drop}`);
+  }
+  if (subscriptions !== openedBefore) {
+    return verdict(
+      "resumed",
+      `the stream silently resumed: ${subscriptions} SSE subscriptions during one idle window (${openedBefore} at the start)`,
+    );
+  }
+  return verdict(
+    "survived",
+    `one SSE subscription held ${facts.heldMs}ms through the ${facts.idleWindowMs}ms window, ${delivered === 0 ? "no events" : `${delivered} event(s)`} delivered`,
+  );
 }

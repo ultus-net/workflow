@@ -15,7 +15,7 @@ Workflow code rides on the transport. No Workflow code is in this image.
       infra.bicep        VNet + workload-profiles env + ACR + MI + acrpull
       app.bicep          container app (external ingress, pinned C0 recipe)
       deploy.sh          three-phase deploy; writes c0.env (gitignored)
-      probe.mjs          health / negative-auth / SSE round-trip gates
+      probe.mjs          health / negative-auth / SSE round-trip gates; optional --idle 240s idle-survival gate
       c0.env             FQDN + server password + vendored sha (never commit)
 
 ## Deploy
@@ -32,6 +32,18 @@ re-hashed each run. Connection material lands in `infra/c0/c0.env` (chmod 600).
 Gates: `/api/info` health (version-tolerant fallback to v1 `/global/health`),
 unauthenticated 401, SSE `text/event-stream` open, session create, stream bytes
 after create, session cleanup. Exit 0 only when all pass.
+
+Optional idle-survival gate (adds ~4 minutes):
+
+    node infra/c0/probe.mjs --idle
+
+On top of the standard gates, open `/api/event` and hold the stream open
+through the full 240s ingress idle window; PASS only if the stream is still
+open when the window elapses, and with --idle a fail here fails the run too.
+Survival proves the ingress carries a silent SSE stream past its 4-minute idle
+timeout with no keepalive help — the condition the keepalive recipe below
+exists to survive. A mid-window close is reported as a fail, not retried. No
+idle verdict is recorded in the table below until a live run records one.
 
 ## Operator attach (the point of all this)
 
