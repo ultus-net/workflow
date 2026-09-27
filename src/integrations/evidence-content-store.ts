@@ -8,6 +8,13 @@
  * content; a fabricated empty reference would be worse). The kernel reads
  * none of this: capture lives in the integration layer, exactly where the
  * environment produced the output.
+ *
+ * W158 capture contract (the strip's preview rendering consumes it): a
+ * test-output payload is stored VERBATIM (utf8 text — the /evidence-content
+ * route serves the same string back); a screenshot payload is stored
+ * BASE64-ENCODED and the preview builds its data URL from mediaType + the
+ * stored string. The runtime produces no hub-side screenshots today — the
+ * render path is live, the capture seam is the recorded W158 half.
  */
 
 import { randomBytes } from "node:crypto";

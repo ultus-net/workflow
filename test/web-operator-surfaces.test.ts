@@ -7,8 +7,9 @@ import { join } from "node:path";
 
 import { hostCapabilities } from "../src/adapters/host.js";
 import { WorkflowApplication } from "../src/application/workflow.js";
-import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
+import { evidenceId, observationId, taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
+import { createEvidenceContentStore } from "../src/integrations/evidence-content-store.js";
 import { createWorkflowHub, resolveHubDiscoveryPath } from "../src/integrations/workflow-hub.js";
 import { createScheduleRegistry } from "../src/integrations/schedule-registry.js";
 import { createSelfImprovementRegistry } from "../src/integrations/self-improvement-registry.js";
@@ -153,4 +154,128 @@ test("the web service proxies the hub schedule table and loop registry", async (
   context.after(() => new Promise<void>((resolve) => orphanServer.close(() => resolve())));
   const orphan = await fetch(`http://127.0.0.1:${orphanPort}/api/schedules`);
   assert.equal(orphan.status, 503);
+});
+
+test("W158: the web relays the hub's evidence block and serves content previews; the browser never sees a hub token", async (context) => {
+  const hubDir = mkdtempSync(join(tmpdir(), "wf-web-evidence-"));
+  const ws = mkdtempSync(join(tmpdir(), "wf-web-evidence-ws-"));
+  context.after(() => rmSync(hubDir, { recursive: true, force: true }));
+  context.after(() => rmSync(ws, { recursive: true, force: true }));
+
+  const tasks: WorkflowTask[] = [
+    { id: taskId("W1"), title: "interactive", state: "READY", dependencies: [], requiredEvidence: [] },
+  ];
+  const graph = new TaskGraph(tasks.map((task) => ({ ...task })));
+  const application = new WorkflowApplication(
+    graph,
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+    [],
+    new Set(["read", "mutation"]),
+    ws,
+  );
+  // The test owns the hub's content store so it can put a capture and hold
+  // the ref — the same composition the hub CLI wires (an always-present
+  // store → the route exists and captures ride).
+  const contentStore = createEvidenceContentStore();
+  const stored = contentStore.put("test-output", "text/plain", "163/163 pass");
+  assert.ok(stored !== undefined, "an under-cap capture stores");
+  const hub = await createWorkflowHub(application, { discoveryDir: hubDir, graph, contentStore });
+  context.after(() => hub.close());
+
+  // The capture rides the very evidence record (the run-registry capture
+  // shape): recorded into the hub's base application at the current epoch.
+  application.recordEvidence({
+    id: evidenceId("test-evidence:relay-preview"),
+    observationId: observationId("test-observation:relay-preview"),
+    authority: "environment",
+    subject: "test evidence for run:relay-preview",
+    result: "passed",
+    freshness: "fresh",
+    mutationEpoch: application.snapshot().mutationEpoch,
+    observedAt: new Date().toISOString(),
+    content: { kind: "test-output", ref: stored.ref, byteSize: stored.byteSize },
+  });
+
+  const webApplication = new WorkflowApplication(
+    new TaskGraph(tasks.map((task) => ({ ...task }))),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(webApplication, undefined, undefined, { hubDiscoveryDir: hubDir });
+  const port = await listen(server);
+  context.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const base = `http://127.0.0.1:${port}`;
+
+  // The evidence relay: the hub record rides with its content reference.
+  const relayed = await fetch(`${base}/api/evidence`).then((r) => r.json() as Promise<{ evidence: Array<{ subject: string; content?: { kind: string; ref: string; byteSize: number } }> | null; reason?: string }>);
+  assert.ok(Array.isArray(relayed.evidence), "the relay answers the hub's evidence block");
+  const row = relayed.evidence?.find((entry) => entry.subject === "test evidence for run:relay-preview");
+  assert.ok(row !== undefined, "the capture-carrying record is relayed");
+  assert.deepEqual(row.content, { kind: "test-output", ref: stored.ref, byteSize: stored.byteSize }, "the content reference rides verbatim");
+
+  // The hub token never rides the relay.
+  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(hubDir), "utf8")) as { token: string };
+  const relayText = JSON.stringify(relayed);
+  assert.ok(relayText.length > 0 && !relayText.includes(token), "the relay response never carries the hub token");
+
+  // The same-origin preview proxy serves the bytes the store holds.
+  const preview = await fetch(`${base}/api/evidence-content`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: base },
+    body: JSON.stringify({ ref: stored.ref }),
+  });
+  assert.equal(preview.status, 200);
+  assert.deepEqual(await preview.json(), { kind: "test-output", mediaType: "text/plain", bytes: "163/163 pass", byteSize: 12 }, "the capture rides verbatim");
+
+  // An unknown/evicted ref passes the hub's honest 404 through, unrewritten.
+  const missing = await fetch(`${base}/api/evidence-content`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: base },
+    body: JSON.stringify({ ref: "content:nope:404" }),
+  });
+  assert.equal(missing.status, 404);
+
+  // A malformed body is a client fault at this route.
+  const malformed = await fetch(`${base}/api/evidence-content`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: base },
+    body: JSON.stringify({}),
+  });
+  assert.equal(malformed.status, 400);
+
+  // The origin guard mirrors the other mutation proxies.
+  const crossOrigin = await fetch(`${base}/api/evidence-content`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: "https://attacker.example" },
+    body: JSON.stringify({ ref: stored.ref }),
+  });
+  assert.equal(crossOrigin.status, 403);
+  const wrongType = await fetch(`${base}/api/evidence-content`, {
+    method: "POST",
+    headers: { "content-type": "text/plain", origin: base },
+    body: JSON.stringify({ ref: stored.ref }),
+  });
+  assert.equal(wrongType.status, 415);
+
+  // No hub: the relay degrades to a named absence and the proxy answers 503 —
+  // never a fabricated list, never a token.
+  const orphanServer = createWorkflowWebServer(
+    new WorkflowApplication(new TaskGraph(tasks.map((task) => ({ ...task }))), hostCapabilities({ transport: "acp", authoritativePreMutation: false })),
+    undefined,
+    undefined,
+    { hubDiscoveryDir: mkdtempSync(join(tmpdir(), "wf-web-evidence-orphan-")) },
+  );
+  const orphanPort = await listen(orphanServer);
+  context.after(() => new Promise<void>((resolve) => orphanServer.close(() => resolve())));
+  const orphanBase = `http://127.0.0.1:${orphanPort}`;
+  const noHubRelay = await fetch(`${orphanBase}/api/evidence`).then((r) => r.json() as Promise<{ evidence: unknown; reason?: string }>);
+  assert.equal(noHubRelay.evidence, null);
+  assert.equal(noHubRelay.reason, "hub unavailable");
+  const noHubPreview = await fetch(`${orphanBase}/api/evidence-content`, {
+    method: "POST",
+    headers: { "content-type": "application/json", origin: orphanBase },
+    body: JSON.stringify({ ref: stored.ref }),
+  });
+  assert.equal(noHubPreview.status, 503);
+  const noHubBody = await noHubPreview.json() as { error?: string };
+  assert.equal(noHubBody.error, "hub unavailable");
 });

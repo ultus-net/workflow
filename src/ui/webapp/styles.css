@@ -3052,9 +3052,19 @@ body {
 
 /* W154: the artifact strip's discriminator rows and the RSI lineage view. */
 .evidence-row { overflow-wrap: anywhere; }
+.evidence-row-line { margin: 0; }
 .evidence-row-stale { color: var(--text-muted); }
 .evidence-signpost { color: var(--text-muted); font-style: italic; }
 .evidence-record-tag { color: var(--text-muted); font-size: 0.9em; }
+/* W158: the strip's in-place previews — hub-origin label, named content
+   states, the bounded inline captures. */
+.evidence-origin-hub { color: var(--accent, #60a5fa); font-size: 0.9em; }
+.evidence-content-state { margin: 0.15rem 0 0; color: var(--text-muted); font-size: 0.66rem; }
+.evidence-content-preview { margin: 0.3rem 0 0; border: 1px solid var(--border); max-width: 100%; }
+.evidence-content-screenshot { display: block; max-height: 16rem; object-fit: contain; }
+.evidence-content-output { padding: 0.35rem 0.45rem; font-family: var(--font-mono); font-size: 0.66rem; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 12rem; overflow-y: auto; }
+.evidence-row-cap { margin: 0.3rem 0 0; font-size: 0.66rem; }
+.evidence-local-note { margin: 0.4rem 0 0.2rem; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; }
 .git-signpost-note { margin: 0.4rem 0 0; font-size: 0.66rem; }
 .rsi-lineage { list-style: none; margin: 0.4rem 0 0; padding: 0.35rem 0.45rem; border: 1px solid var(--border); display: flex; flex-direction: column; gap: 0.2rem; }
 .rsi-lineage-row { display: flex; align-items: baseline; gap: 0.45rem; font-size: 0.68rem; font-family: var(--font-mono); }

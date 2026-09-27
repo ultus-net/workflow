@@ -41,6 +41,9 @@ interface SnapshotEvidence {
   readonly subject: string;
   readonly result: string;
   readonly freshness: string;
+  /** W158: the kernel record's optional bounded-content reference (rides the
+   * full kernel projection verbatim; the strip previews it in place). */
+  readonly content?: EvidenceContentRefView;
 }
 
 /**
@@ -54,6 +57,98 @@ export function artifactKind(subject: string): "record" | "workspace-path" {
   return subject.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(subject) || subject.startsWith("~")
     ? "workspace-path"
     : "record";
+}
+
+/** W158: the strip's view of a kernel content reference — exactly what the
+ * record carries (kind + ref + byteSize); the bytes live behind the ref in
+ * the hub's bounded store, fetched through the same-origin /api/evidence-content
+ * proxy. */
+export interface EvidenceContentRefView {
+  readonly kind: string;
+  readonly ref: string;
+  readonly byteSize: number;
+}
+
+/** W158: the strip's named preview states — every non-ready state says why,
+ * and "ready" carries exactly the bytes the hub's route answered. No state is
+ * fabricated: loading (fetch in flight), absent (the hub answered 404 — the
+ * ref is evicted, or the store restarted: the per-store nonce makes a
+ * persisted record miss honestly), unavailable (no hub to ask). */
+export type EvidenceContentPreview =
+  | { readonly status: "loading" }
+  | { readonly status: "ready"; readonly kind: string; readonly mediaType: string; readonly bytes: string }
+  | { readonly status: "absent" }
+  | { readonly status: "unavailable" };
+
+const EVIDENCE_OUTPUT_RENDER_CAP = 4096;
+
+/** W158 (the strip's preview rendering): ONE row renderer for local and hub
+ * evidence records. A record without content renders as its plain self (the
+ * W154 strip, unchanged); a record with content renders the capture inline —
+ * test-output as text, screenshot as a data-URL image (the capture contract:
+ * screenshots ride base64, test outputs ride utf8) — and every non-ready
+ * state is named, never a silent fallback or a fabricated payload. A long
+ * test-output renders its head plus a named truncation; the full bytes stay
+ * in the hub's bounded store. Exported so the render contract is pinnable
+ * without driving the panel. */
+export function EvidenceStripRow(props: {
+  readonly subject: string;
+  readonly result: string;
+  readonly freshness: string;
+  readonly origin: "local" | "hub";
+  readonly content?: EvidenceContentRefView | undefined;
+  readonly preview?: EvidenceContentPreview | undefined;
+}) {
+  const path = artifactKind(props.subject) === "workspace-path";
+  return (
+    <div className={`evidence-row ${props.freshness === "stale" ? "evidence-row-stale" : ""}`}>
+      <p className="evidence-row-line">
+        {path
+          ? <span className="evidence-signpost" title="in-worktree signpost — a path, not a durable artifact">workspace path · </span>
+          : <span className="evidence-record-tag">record · </span>}
+        {props.origin === "hub" && <span className="evidence-origin-hub" title="produced by the hub's own flows (run-registry verdicts, the test runner)">hub · </span>}
+        {props.subject}: {props.result} / {props.freshness}
+      </p>
+      {props.content !== undefined && <EvidenceContentPreviewBlock content={props.content} preview={props.preview ?? { status: "loading" }} />}
+    </div>
+  );
+}
+
+/** The strip's in-place preview block: only reached when the record carries a
+ * content reference. */
+function EvidenceContentPreviewBlock(props: { readonly content: EvidenceContentRefView; readonly preview: EvidenceContentPreview }) {
+  if (props.preview.status === "loading") {
+    return <p className="evidence-content-state">content · loading…</p>;
+  }
+  if (props.preview.status === "absent") {
+    return (
+      <p className="evidence-content-state" title="the ref is not in the hub's bounded store: evicted, a store restart (per-store nonce), or the capture was over-cap and never got a ref">
+        content not available — evicted from the bounded store ({props.content.byteSize} bytes were recorded)
+      </p>
+    );
+  }
+  if (props.preview.status === "unavailable") {
+    return <p className="evidence-content-state">content not available — the hub is unreachable</p>;
+  }
+  if (props.content.kind === "screenshot") {
+    return (
+      <img
+        className="evidence-content-preview evidence-content-screenshot"
+        src={`data:${props.preview.mediaType};base64,${props.preview.bytes}`}
+        alt={`${props.content.kind} capture (${props.content.byteSize} bytes)`}
+      />
+    );
+  }
+  // test-output: bounded rendering — the store caps captures at 256KB and a
+  // DOM node that big is a browser freeze, so the strip renders the head and
+  // NAMES the truncation (the full bytes stay in the hub's store).
+  const truncated = props.preview.bytes.length > EVIDENCE_OUTPUT_RENDER_CAP;
+  return (
+    <>
+      <pre className="evidence-content-preview evidence-content-output">{truncated ? props.preview.bytes.slice(0, EVIDENCE_OUTPUT_RENDER_CAP) : props.preview.bytes}</pre>
+      {truncated && <p className="evidence-content-state">first {EVIDENCE_OUTPUT_RENDER_CAP} bytes shown of {props.content.byteSize}; the full capture stays in the hub's bounded store</p>}
+    </>
+  );
 }
 
 interface SnapshotHistory {
@@ -128,6 +223,88 @@ function useSnapshot() {
     return () => clearInterval(timer);
   }, [load]);
   return { snapshot, refresh: load };
+}
+
+/** W158: a hub evidence record as the /api/evidence relay carries it — the
+ * hub's kernel projection narrowed to what the strip renders. */
+interface HubEvidenceRow {
+  readonly id?: string;
+  readonly subject: string;
+  readonly result: string;
+  readonly freshness: string;
+  readonly content?: EvidenceContentRefView;
+}
+
+/** W158: polls the hub's evidence relay. Degraded state is a NAMED absence:
+ * rows null with the reason (no hub, or a hub older than the relay) — never a
+ * fabricated empty list. */
+function useHubEvidence() {
+  const [rows, setRows] = useState<readonly HubEvidenceRow[] | null>(null);
+  const [reason, setReason] = useState<string | undefined>(undefined);
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const response = await fetch("/api/evidence");
+      if (response.ok) {
+        const payload = await response.json() as { evidence: readonly HubEvidenceRow[] | null; reason?: string };
+        setRows(payload.evidence);
+        setReason(payload.reason);
+      }
+    } catch {
+      // Keep the last good rows; the next poll retries.
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+    const timer = setInterval(() => void load(), PANEL_POLL_MS);
+    return () => clearInterval(timer);
+  }, [load]);
+  return { rows, reason };
+}
+
+/** W158: one preview fetch per content ref (deduped — two records citing the
+ * same capture fetch once, and a settled ref never re-fires on the poll
+ * cadence). Evicted/unknown refs stay absent; a hub outage marks
+ * unavailable. */
+function useContentPreviews(refs: readonly string[]): ReadonlyMap<string, EvidenceContentPreview> {
+  const [previews, setPreviews] = useState<ReadonlyMap<string, EvidenceContentPreview>>(new Map());
+  const requested = useRef<ReadonlySet<string>>(new Set());
+  const wanted = useMemo(() => [...new Set(refs)], [refs]);
+  const wantedKey = wanted.join("\u0000");
+  useEffect(() => {
+    const pending = wanted.filter((ref) => !requested.current.has(ref));
+    if (pending.length === 0) return;
+    for (const ref of pending) (requested.current as Set<string>).add(ref);
+    setPreviews((current) => {
+      const next = new Map(current);
+      for (const ref of pending) if (!next.has(ref)) next.set(ref, { status: "loading" });
+      return next;
+    });
+    for (const ref of pending) {
+      void (async () => {
+        try {
+          const response = await fetch("/api/evidence-content", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ ref }),
+          });
+          if (response.status === 200) {
+            const stored = await response.json() as { kind: string; mediaType: string; bytes: string };
+            setPreviews((current) => new Map(current).set(ref, { status: "ready", kind: stored.kind, mediaType: stored.mediaType, bytes: stored.bytes }));
+          } else if (response.status === 404) {
+            setPreviews((current) => new Map(current).set(ref, { status: "absent" }));
+          } else {
+            setPreviews((current) => new Map(current).set(ref, { status: "unavailable" }));
+          }
+        } catch {
+          setPreviews((current) => new Map(current).set(ref, { status: "unavailable" }));
+        }
+      })();
+    }
+    // wantedKey (not wanted) is the semantic dependency; wanted's identity
+    // changes with the poll cadence, and the requested-guard above turns
+    // those refires into no-ops.
+  }, [wantedKey, wanted]);
+  return previews;
 }
 
 /** One canonical step of a task's ledger (W072 kernel invariants; W083 surface).
@@ -1766,6 +1943,16 @@ function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent,
 }) {
   // W152: the hub's unified activity timeline, polled beside the posture strip.
   const timeline = useActivityTimeline();
+  // W158: the hub's evidence block (the flows this service's own graph never
+  // sees) polled beside the timeline; the strip's previews fetch once per ref.
+  const hubEvidence = useHubEvidence();
+  const evidenceRefs = useMemo(() => {
+    const refs: string[] = [];
+    for (const row of hubEvidence.rows ?? []) if (row.content !== undefined) refs.push(row.content.ref);
+    for (const entry of snapshot?.evidence ?? []) if (entry.content !== undefined) refs.push(entry.content.ref);
+    return refs;
+  }, [hubEvidence.rows, snapshot]);
+  const previews = useContentPreviews(evidenceRefs);
   const ledgerByTask = new Map((ledger?.tasks ?? []).map((entry) => [entry.id, entry]));
   // W110 (refusal legibility): the kernel's structured refusals, per task —
   // rendered verbatim until the next attempt succeeds.
@@ -1836,19 +2023,47 @@ function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent,
       <ConnectionsSection agents={agents} currentAgent={currentAgent} capabilities={capabilities} />
       <InvariantsPanel />
       <details className="panel-disclosure">
-        <summary><span>Evidence</span><span className="panel-summary-meta">{snapshot?.evidence.length ?? 0}</span></summary>
+        <summary><span>Evidence</span><span className="panel-summary-meta">{(snapshot?.evidence.length ?? 0) + (hubEvidence.rows?.length ?? 0)}</span></summary>
         <section className="panel-disclosure-body">
+        {/* W158: the hub's records first (the flows the note names — the test
+            runner's captures carry bounded content and render inline), then
+            this service's own graph. ONE strip row renderer for both; the
+            hub origin is labeled on every row. */}
+        {hubEvidence.rows === null
+          ? <p className="muted">{hubEvidence.reason !== undefined ? `hub evidence unavailable: ${hubEvidence.reason}` : "hub evidence unavailable"}</p>
+          : hubEvidence.rows.length === 0
+            ? <p className="muted">no hub evidence records yet</p>
+            : (
+              <>
+                {hubEvidence.rows.slice(-50).map((row, index) => (
+                  <EvidenceStripRow
+                    key={row.id ?? index}
+                    origin="hub"
+                    subject={row.subject}
+                    result={row.result}
+                    freshness={row.freshness}
+                    content={row.content}
+                    preview={row.content === undefined ? undefined : previews.get(row.content.ref)}
+                  />
+                ))}
+                {hubEvidence.rows.length > 50 && <p className="muted evidence-row-cap">showing the last 50 of {hubEvidence.rows.length} hub records</p>}
+              </>
+            )}
+        <p className="muted evidence-local-note">local records (this service's own graph):</p>
         {snapshot === undefined || snapshot.evidence.length === 0
           ? <p className="muted">none observed</p>
           : snapshot.evidence.map((entry, index) => (
-            <p className={`evidence-row ${entry.freshness === "stale" ? "evidence-row-stale" : ""}`} key={index}>
-              {artifactKind(entry.subject) === "workspace-path"
-                ? <span className="evidence-signpost" title="in-worktree signpost — a path, not a durable artifact">workspace path · </span>
-                : <span className="evidence-record-tag">record · </span>}
-              {entry.subject}: {entry.result} / {entry.freshness}
-            </p>
+            <EvidenceStripRow
+              key={index}
+              origin="local"
+              subject={entry.subject}
+              result={entry.result}
+              freshness={entry.freshness}
+              content={entry.content}
+              preview={entry.content === undefined ? undefined : previews.get(entry.content.ref)}
+            />
           ))}
-        <p className="muted">evidence records are produced by the hub's own flows (test runner, review verdicts); operator claims are not recorded (W114). Workspace paths are signposts, never presented as durable artifacts (W154).</p>
+        <p className="muted">evidence records are produced by the hub's own flows (test runner, review verdicts); operator claims are not recorded (W114). Workspace paths are signposts, never presented as durable artifacts (W154). Bounded captures render inline (W158); screenshot capture has no runtime producer yet — the recorded W158 half, never faked.</p>
         </section>
       </details>
       <details className="panel-disclosure">
