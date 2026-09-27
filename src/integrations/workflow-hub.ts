@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { TaskGraph } from "../kernel/task-graph.js";
 import { createWorkflowHubBridge, type WorkflowHubBridge } from "./hub-http.js";
+import type { EvidenceContentStore } from "./evidence-content-store.js";
 import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { createRunRegistry, type RunReviewerFactory, type RunTestRunner } from "./run-registry.js";
@@ -61,10 +62,7 @@ export async function createWorkflowHub(
     reviewerFactory?: RunReviewerFactory;
     testRunner?: RunTestRunner;
     /** W158: the bounded evidence-content store; wired → the hub exposes the /evidence-content read route and the test-runner capture records content. */
-    contentStore?: {
-      put(kind: "test-output" | "screenshot", mediaType: string, payload: string): { readonly ref: string; readonly byteSize: number } | undefined;
-      get(ref: string): { readonly kind: "test-output" | "screenshot"; readonly mediaType: string; readonly bytes: string; readonly byteSize: number } | undefined;
-    };
+    contentStore?: EvidenceContentStore;
     schedulerFactory?: (handles: WorkflowHubSchedulerHandles) => HubScheduler;
     /**
      * W073 trigger surface: when provided, the hub exposes operator-token

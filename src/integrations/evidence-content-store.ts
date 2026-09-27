@@ -10,6 +10,8 @@
  * environment produced the output.
  */
 
+import { randomBytes } from "node:crypto";
+
 export interface StoredEvidenceContent {
   readonly ref: string;
   readonly kind: "test-output" | "screenshot";
@@ -40,13 +42,17 @@ export function createEvidenceContentStore(options?: {
   const maxEntries = options?.maxEntries ?? MAX_ENTRIES;
   const maxBytes = options?.maxBytes ?? MAX_BYTES;
   const entries = new Map<string, StoredEvidenceContent>();
+  // W158 review P2: a per-store nonce in the ref — a persisted evidence
+  // record paired with a FRESH store after a restart resolves to an honest
+  // miss, never to another capture's bytes.
+  const nonce = randomBytes(4).toString("hex");
   let counter = 0;
   return {
     put(kind, mediaType, payload) {
       const byteSize = Buffer.byteLength(payload, "utf8");
       if (byteSize > maxBytes) return undefined;
       counter += 1;
-      const ref = `content:${counter}`;
+      const ref = `content:${nonce}:${counter}`;
       const stored: StoredEvidenceContent = { ref, kind, mediaType, bytes: payload, byteSize };
       entries.set(ref, stored);
       while (entries.size > maxEntries) {

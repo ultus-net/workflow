@@ -5,6 +5,7 @@ import { WorkflowApplication } from "../application/workflow.js";
 import { evidenceId, observationId, taskId, type TaskId } from "../kernel/contracts.js";
 import type { TaskGraph } from "../kernel/task-graph.js";
 import { countReferencedAxes, MIN_REFERENCED_AXES } from "../review/rubric.js";
+import type { EvidenceContentStore } from "./evidence-content-store.js";
 import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-controller.js";
 import type { HubReviewerResult } from "./hub-reviewer.js";
 
@@ -149,10 +150,7 @@ export function createRunRegistry(
      * Absent → the capture is skipped (the evidence records render plain, the
      * honest absence) — the strip's preview needs a hub that wired a store.
      */
-    readonly contentStore?: {
-      put(kind: "test-output" | "screenshot", mediaType: string, payload: string): { readonly ref: string; readonly byteSize: number } | undefined;
-      get(ref: string): { readonly kind: "test-output" | "screenshot"; readonly mediaType: string; readonly bytes: string; readonly byteSize: number } | undefined;
-    };
+    readonly contentStore?: EvidenceContentStore;
   },
 ): {
   resolve: WorkflowApplicationResolver;

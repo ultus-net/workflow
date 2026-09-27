@@ -15,7 +15,7 @@ test("W158: put stores bounded content and get resolves it by ref", () => {
   const store = createEvidenceContentStore();
   const stored = store.put("test-output", "text/plain", "3 passing\n0 failing");
   assert.ok(stored !== undefined);
-  assert.match(stored.ref, /^content:\d+$/);
+  assert.match(stored.ref, /^content:[0-9a-f]{8}:\d+$/, "the ref carries the store's per-instance nonce (a persisted record against a fresh store misses honestly, never cross-matches)");
   assert.equal(stored.kind, "test-output");
   assert.equal(stored.byteSize, Buffer.byteLength("3 passing\n0 failing", "utf8"));
   const fetched = store.get(stored.ref);
