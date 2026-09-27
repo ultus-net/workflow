@@ -22,6 +22,11 @@
   --ok: #4caf7d;
   --deny: #ea8070;
   --fail: #ff7377;
+  /* The status token set: warn/danger are the amber/red semantic states the
+     waves' badges share (posture, budget, timeline, lineage) — palette
+     variants override them from the theme's warning/error seeds. */
+  --warn: #d97706;
+  --danger: #e05252;
   --composer-focus: #262b33;
   --code-bg: #0e1013;
   --radius: 0;
@@ -53,6 +58,8 @@
   --ok: #17714a;
   --deny: #b23b2e;
   --fail: #c23340;
+  --warn: #96590c;
+  --danger: #b23b2e;
   --composer-focus: #ffffff;
   --code-bg: #f6f7f9;
   color-scheme: light;

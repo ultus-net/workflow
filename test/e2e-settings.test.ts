@@ -185,6 +185,22 @@ test("W131: the compiled settings panel serves the settings-document HTTP contra
   while (exit === undefined && !output.includes("Workflow settings panel:") && Date.now() < deadline) {
     await new Promise<void>((resolveWait) => setTimeout(resolveWait, 100));
   }
+  // The banner and the branch line are adjacent writes across one awaited
+  // promise — the pipe may deliver the banner's chunk a poll tick before the
+  // second line's chunk, and the immediate assert then sees a banner-only
+  // buffer (main's 02dcc4d evidence run and #312's first run failed exactly
+  // so, both without any related diff in the path; locally green 3/3). Wait
+  // for the DECISION line — either branch — before asserting, so a real
+  // regression (the opener branch taken) still fails loudly and fast.
+  const decisionDeadline = Date.now() + 5_000;
+  while (
+    exit === undefined &&
+    !output.includes("No browser opener available;") &&
+    !output.includes("Opening in your default browser") &&
+    Date.now() < decisionDeadline
+  ) {
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, 50));
+  }
   const banner = output.match(/Workflow settings panel: (http:\/\/127\.0\.0\.1:(\d+)) \(/);
   assert.ok(
     banner !== null,

@@ -25,7 +25,7 @@ test("every theme resolves to a complete Workflow token set in both modes", () =
   for (const theme of THEME_DATA) {
     for (const [mode, variant] of [["dark", theme.dark], ["light", theme.light]] as const) {
       const tokens = resolveVariant(variant, mode === "dark");
-      for (const key of ["bg", "bgDeep", "surface", "surfaceRaised", "border", "borderStrong", "text", "textMuted", "accent", "accentFill", "accentInk", "ok", "deny", "fail", "composerFocus", "codeBg"] as const) {
+      for (const key of ["bg", "bgDeep", "surface", "surfaceRaised", "border", "borderStrong", "text", "textMuted", "accent", "accentFill", "accentInk", "ok", "deny", "fail", "warn", "danger", "composerFocus", "codeBg"] as const) {
         assert.ok(typeof tokens[key] === "string" && (tokens[key] as string).startsWith("#"), `${theme.id}/${mode}: token ${key} must be a hex color`);
       }
     }
@@ -43,6 +43,9 @@ test("every theme passes WCAG AA text pairs in both modes (operator contrast bar
       assert.ok(contrastRatio(t.ok as HexColor, t.bg as HexColor) >= 4.5, `${label}: ok on bg below AA`);
       assert.ok(contrastRatio(t.deny as HexColor, t.bg as HexColor) >= 4.5, `${label}: deny on bg below AA`);
       assert.ok(contrastRatio(t.fail as HexColor, t.bg as HexColor) >= 4.5, `${label}: fail on bg below AA`);
+      // The status token set: warn/danger join the AA bar with the rest.
+      assert.ok(contrastRatio(t.warn as HexColor, t.bg as HexColor) >= 4.5, `${label}: warn on bg below AA`);
+      assert.ok(contrastRatio(t.danger as HexColor, t.bg as HexColor) >= 4.5, `${label}: danger on bg below AA`);
       assert.ok(contrastRatio(t.accentInk as HexColor, t.accentFill as HexColor) >= 4.5, `${label}: ink on accent fill below AA`);
     }
   }
@@ -54,6 +57,13 @@ test("palette CSS stays square and scopes to the data-palette attribute", () => 
   assert.match(css, new RegExp(`html\\[data-palette="${theme.id}"\\]`), "palette CSS must scope to its attribute");
   const declarations = [...css.matchAll(/border-radius:\s*([^;]+);/g)];
   assert.deepEqual(declarations.map((match) => match[1]), [], "palette CSS must not introduce border-radius");
+  // The status token set rides every palette: the waves' badges
+  // (posture/budget/timeline/lineage) read one semantic vocabulary on every
+  // theme, never a hardcoded fallback hex.
+  for (const token of ["--warn:", "--danger:"]) {
+    const count = css.split(token).length - 1;
+    assert.equal(count, 2, `palette CSS must declare ${token} once per variant (dark + light), found ${count}`);
+  }
 });
 
 test("the vendored theme JSONs stay byte-identical to their ids", () => {
