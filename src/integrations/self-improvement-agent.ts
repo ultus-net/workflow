@@ -18,6 +18,7 @@ import type { SelfImprovementSpec } from "./self-improvement-registry.js";
 import { taskId, type TaskId } from "../kernel/contracts.js";
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { ToolCapability } from "../application/host.js";
+import type { TransitionAttribution } from "../kernel/contracts.js";
 
 /**
  * The proposal turn's bookkeeping task lifecycle (2026-09-26): the proposal
@@ -69,17 +70,24 @@ export function beginKernelSessionTask(
 ): KernelSessionTask {
   const id = taskId(`${options.idPrefix}:${randomUUID()}`);
   application.addTask({ id, title: options.title, dependencies: [], requiredEvidence: [] });
-  application.transition(id, "IN_PROGRESS");
+  // W157: the RSI loop's own kernel-session tasks are agent-driven — the
+  // lane stamps agent (one attribution factory; observedAt is per-call).
+  const attribution = (): TransitionAttribution => ({
+    actor: "agent",
+    authority: "self-improvement loop kernel-session task (agent-driven)",
+    observedAt: new Date().toISOString(),
+  });
+  application.transition(id, "IN_PROGRESS", attribution());
   application.selectActiveTask(id);
   return {
     taskId: id,
     // The kernel's transition table routes IN_PROGRESS -> VERIFYING -> VERIFIED
     // (a direct IN_PROGRESS -> VERIFIED is rejected).
     complete: () => {
-      application.transition(id, "VERIFYING");
-      application.transition(id, "VERIFIED");
+      application.transition(id, "VERIFYING", attribution());
+      application.transition(id, "VERIFIED", attribution());
     },
-    fail: () => application.transition(id, "FAILED"),
+    fail: () => application.transition(id, "FAILED", attribution()),
   };
 }
 

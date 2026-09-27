@@ -10,6 +10,7 @@ import type {
   StepId,
   TaskId,
   TaskState,
+  TransitionAttribution,
   TransitionResult,
   WorkflowStep,
   WorkflowTask,
@@ -273,7 +274,7 @@ export class WorkflowApplication {
     return { kind: "allow" };
   }
 
-  transition(taskId: TaskId, requested: TaskState): TransitionResult {
+  transition(taskId: TaskId, requested: TaskState, attribution?: TransitionAttribution): TransitionResult {
     if (requested === "VERIFYING" && this.#pedagogyGate !== undefined) {
       const pendingInspection = verifyingGate(this.#pedagogyGate, taskId);
       if (pendingInspection !== undefined) {
@@ -288,7 +289,7 @@ export class WorkflowApplication {
         };
       }
     }
-    const result = this.#graph.transition(taskId, requested);
+    const result = this.#graph.transition(taskId, requested, attribution);
     if (result.kind === "accepted") this.#history.push(result.transition);
     return result;
   }
@@ -296,7 +297,12 @@ export class WorkflowApplication {
   retryFailedTask(taskId: TaskId): TransitionResult {
     const task = this.#graph.get(taskId);
     const dependenciesReady = task.dependencies.every((dependency) => this.#graph.get(dependency).state === "VERIFIED");
-    return this.transition(taskId, dependenciesReady ? "READY" : "BLOCKED");
+    // W157: retry is an operator-facing application command; the stamp says so.
+    return this.transition(taskId, dependenciesReady ? "READY" : "BLOCKED", {
+      actor: "operator",
+      authority: "operator task retry (application command)",
+      observedAt: new Date().toISOString(),
+    });
   }
 
   addTask(task: Omit<WorkflowTask, "state">): void {
@@ -389,6 +395,13 @@ export class WorkflowApplication {
       throw new TypeError("multiple READY tasks require an explicit active task selection");
     }
     const selected = ready[0]!.id;
+    // W157 (review round P1): deliberately UNATTRIBUTED — this auto-selection
+    // serves BOTH the operator's driving lane and the run-begin composition
+    // (run-registry's workspaceApplication activates the interactive task on
+    // every begin, scheduler-driven ones included), so the site cannot know
+    // its actor; absence is legal by contract and the timeline renders the
+    // explicit unattributed state. The operator's real task actions stamp
+    // operator in task-commands; the run lane stamps its own begins.
     const transition = this.transition(selected, "IN_PROGRESS");
     if (transition.kind !== "accepted") throw new TypeError(`cannot start interactive task ${selected}`);
     this.selectActiveTask(selected);
@@ -407,7 +420,10 @@ export class WorkflowApplication {
   }
 
   recordMutation(subjects: readonly string[]): void {
-    this.#history.push(...this.#graph.recordMutation(subjects));
+    // W157: the application layer owns the clock (the kernel reads none);
+    // the graph stamps the invalidation demotions system/evidence-invalidation
+    // with this observation time.
+    this.#history.push(...this.#graph.recordMutation(subjects, new Date().toISOString()));
   }
 
   snapshot(): WorkflowSnapshot {

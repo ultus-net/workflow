@@ -37,8 +37,13 @@
  */
 
 export interface TimelineInput {
-  /** The kernel's transition log, IN KERNEL ORDER (the graph's mutation order). */
-  readonly transitions: readonly { readonly taskId: string; readonly from: string; readonly to: string }[];
+  /**
+   * The kernel's transition log, IN KERNEL ORDER (the graph's mutation
+   * order). W157: a record MAY carry its caller-supplied attribution — the
+   * row consumes it verbatim; a record without one renders the explicit
+   * unattributed state (absence stays legal).
+   */
+  readonly transitions: readonly { readonly taskId: string; readonly from: string; readonly to: string; readonly attribution?: { readonly actor: string; readonly authority: string; readonly observedAt: string } }[];
   /** Task titles for the kernel-id join; a missing task renders its id (registry truth, not a fabricated title). */
   readonly tasks: readonly { readonly id: string; readonly title: string }[];
   readonly reviewOutcomes?: ReadonlyMap<string, { readonly reviewerRunId: string; readonly verdict: string; readonly recorded: boolean; readonly summary: string; readonly parseFailure?: string }>;
@@ -84,15 +89,18 @@ export function activityTimeline(input: TimelineInput): ActivityTimeline {
 
   const rows: TimelineRow[] = [];
 
-  // Kernel transitions, in the log's own order. The kernel records no actor,
-  // no authority basis, and no time — the row says so instead of guessing.
+  // Kernel transitions, in the log's own order. W157: a record's caller-
+  // supplied attribution is consumed verbatim (the run lane, the operator
+  // commands, and the invalidation demotions stamp what they know); a record
+  // without one renders the explicit unattributed state instead of a guess.
   for (const transition of input.transitions) {
+    const attribution = transition.attribution;
     rows.push({
       kind: "transition",
-      actor: UNATTRIBUTED,
-      authority: UNATTRIBUTED,
+      actor: attribution?.actor ?? UNATTRIBUTED,
+      authority: attribution?.authority ?? UNATTRIBUTED,
       summary: `${titleFor(transition.taskId)}: ${transition.from} → ${transition.to}`,
-      at: null,
+      at: attribution?.observedAt ?? null,
     });
   }
 

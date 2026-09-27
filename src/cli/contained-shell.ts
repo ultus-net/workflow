@@ -56,6 +56,9 @@ try {
       [],
       new Set(["read", "mutation", "process"]),
     );
+    // W157: deliberately UNATTRIBUTED — this is the e2e verification runner's
+    // scratch graph, not an operator- or agent-owned lane; absence is legal
+    // by contract and the timeline renders the explicit unattributed state.
     application.transition(id, "IN_PROGRESS");
     const proposal: ProposedToolAction = {
       sessionId: "interactive-session",
