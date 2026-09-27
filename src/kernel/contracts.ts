@@ -50,12 +50,39 @@ export interface EvidenceContentRef {
   readonly byteSize: number;
 }
 
+/**
+ * W159/W166: the actor-initiated blocked record — the canonical home for a
+ * task blocked for a REASON (awaiting a decision, an external dependency, a
+ * named unblocker). Plain caller data: the kernel reads no clock (enteredAt
+ * is caller-supplied), performs no IO, and invents no actor vocabulary — the
+ * owner reuses the W157 attribution vocabulary, and the admission/exit gates
+ * verify the caller names ITSELF (owner must equal the transition's calling
+ * actor; fail closed otherwise — an agent cannot volunteer another actor).
+ */
+export interface BlockedRecord {
+  /** The actor whose action unblocks; the caller may only name ITSELF (the W157 vocabulary join). */
+  readonly owner: TransitionAttribution["actor"];
+  /** The named action whose consumption exits the block one-shot on BLOCKED → READY. */
+  readonly action: string;
+  readonly reason?: string;
+  /** Caller-supplied entry time; the kernel reads no clock (purity). */
+  readonly enteredAt: string;
+}
+
 export interface WorkflowTask {
   readonly id: TaskId;
   readonly title: string;
   readonly state: TaskState;
   readonly dependencies: readonly TaskId[];
   readonly requiredEvidence: readonly EvidenceRequirement[];
+  /**
+   * W159/W166: the actor-initiated blocked record, present while the task
+   * carries a named block. A record on a non-BLOCKED task is stale context
+   * (the dependency graph resolved on its own and the block exited
+   * automatically); the explicit BLOCKED → READY exit consumes the named
+   * action one-shot and removes the record.
+   */
+  readonly blocked?: BlockedRecord;
 }
 
 /**
