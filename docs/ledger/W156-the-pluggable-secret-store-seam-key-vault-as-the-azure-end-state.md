@@ -79,3 +79,62 @@ reserved for it) until a real vault exists. The lane runs ungated in tier B
 because it is hermetic — no keyring, no vault credentials, no network — and
 unlike the keyring lane it carries no orphan residual (the fake vault lives
 inside the test process).
+
+**Dated note (2026-09-27, third loop: the residual decision is MADE — BOTH
+lanes):** the criterion's residual ("the CI-side fake versus a gated
+live-vault probe") is resolved as BOTH, completing the second loop's pair;
+the criterion's "gated on env (`WORKFLOW_TEST_KEYVAULT_*`)" wording is now
+genuinely satisfied — the fake lane stays ungated by design (hermetic) and
+the live lane carries the gate:
+
+- The hermetic fake-transport lane stands (landed 2026-09-26, PR #304: the
+  fake vault lives in the test process; the store's full code path — IMDS
+  shape, REST shapes, error surfacing — runs against it; tier-B ungated).
+  Its discrimination was re-proven this loop by scratch check, not by a
+  committed change: breaking the stub's answer (every PUT 500s) fails the
+  lane at the 204 assertion, then reverted — no src or fixture change
+  landed.
+- The gated LIVE lane lands here (`test/e2e-admin-azure-kv-live.test.ts`):
+  the same compiled-bin custody flow with NOTHING faked — the store's real
+  token path (live IMDS when the environment provides it, azure-cli
+  otherwise; the fake lane's MSI_ENDPOINT/IDENTITY_ENDPOINT clears are
+  deliberately absent because managed identity IS the legitimate live
+  source) and the real vault REST over real TLS. The gate is exactly
+  `WORKFLOW_TEST_KEYVAULT_URL` (the only `WORKFLOW_TEST_KEYVAULT_*`
+  variable the lane reads; the child receives it as `WORKFLOW_KEYVAULT_URI`,
+  the store seam's own env var): absent → the lane SKIPS with an honest
+  message naming the variable; set but malformed → FAILS at the shape
+  assert before any spawn or network call (an operator-set gate means "run
+  live"; a typo must never degrade into a skip that looks like a pass).
+  Live-only discipline: per-run unique `w156-kv-live-<8hex>` credential id
+  (runs never clobber each other or a real credential), in-flow revoke, an
+  after-hook best-effort revoke declared BEFORE the kill hook (W130's
+  verified FIFO ordering), and NO auto-purge — a revoked Key Vault secret
+  is soft-deleted and stays recoverable until the vault's retention window
+  auto-purges it; an irreversible purge of operator infrastructure is never
+  a test's call. Its discriminating evidence is independent of src: a
+  direct vault REST read (raw fetch + an azure-cli token) must see the
+  value after the PUT and answer 404 after the revoke — a store that lied
+  about success fails the lane twice. Scratch check (recorded run, not
+  committed): a well-formed bogus vault URL makes the lane RUN and FAIL at
+  the 204 assertion (`{"error":"invalid credential"}`, 400 !== 204) —
+  never skip.
+- CI posture: the live lane is NOT in `test:ci` (the curated tier-B set
+  stays hermetic — no live-network side effects from PR CI, the acp-probe
+  precedent). It runs when the operator sets the gate env.
+- Honesty state: the lane has never run against a real vault (no vault is
+  named for the lane — no `WORKFLOW_TEST_KEYVAULT_URL` exists yet; the
+  ambient subscription's unrelated vaults are not Workflow's and were not
+  touched), so live-vault verification
+  REMAINS OPEN and the azure-kv posture stays Partial — the lane's
+  existence is not evidence; only its future gated run will be. The
+  instance-side bicep (adding the vault + managed-identity `get/list` RBAC
+  and setting `WORKFLOW_SECRET_STORE=azure-kv`) is the natural moment the
+  first gated run happens. `docs/FEATURES.md` now states both lanes.
+
+Verification evidence (2026-09-27, focused runs only per the resource
+directive): `node --import tsx --test test/e2e-admin-azure-kv-live.test.ts
+test/e2e-admin-azure-kv.test.ts test/key-vault-store.test.ts` — 7 tests, 6
+pass, 1 honest skip (the live lane without the gate), 0 fail; `npm run
+lint` exit 0; `npm run typecheck` exit 0. No src/ behavior change (test-tier
++ docs only; the store, the seam, and both lanes' dependencies untouched).
