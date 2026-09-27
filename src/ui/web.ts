@@ -136,6 +136,19 @@ export function createWorkflowWebServer(
     return { timeline: null, reason: payload?.error ?? "hub unavailable" };
   };
 
+  /** W158: the ONE evidence relay — the hub's /snapshot evidence block, so
+   * the Evidence panel can show the hub flows' records (run-registry verdicts,
+   * the test runner's captures) beside this service's own graph. Fail-closed:
+   * no hub answers evidence: null with the reason — the panel renders its
+   * degraded state and keeps the local rows visible, never a fabricated
+   * empty list. The browser never sees a hub token. */
+  const hubEvidence = async (): Promise<{ evidence: unknown; reason?: string }> => {
+    const result = await hubPost("/snapshot", {});
+    const payload = result.payload as { snapshot?: { evidence?: unknown }; error?: string } | undefined;
+    if (result.status === 200 && payload?.snapshot?.evidence !== undefined) return { evidence: payload.snapshot.evidence };
+    return { evidence: null, reason: payload?.error ?? "hub unavailable" };
+  };
+
   /** Session-scoped channel: `?session=<id>` selects a parallel live session;
    * without the parameter the operator's focused session answers. */
   function sessionId(url: string | undefined): string | undefined {
@@ -201,6 +214,27 @@ export function createWorkflowWebServer(
     if (request.method === "GET" && pathname === "/api/snapshot") return json(response, 200, application.snapshot());
     if (request.method === "GET" && pathname === "/api/posture") return json(response, 200, await hubPosture());
     if (request.method === "GET" && pathname === "/api/timeline") return json(response, 200, await hubTimeline());
+    if (request.method === "GET" && pathname === "/api/evidence") return json(response, 200, await hubEvidence());
+    if (request.method === "POST" && pathname === "/api/evidence-content") {
+      // W158: the strip's same-origin preview fetch — the browser asks THIS
+      // service, which forwards the operator-token class upstream; the browser
+      // never holds a hub token. Status passthrough: 404 is the hub's honest
+      // evicted/unknown-ref answer and is never rewritten here.
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        if (typeof body !== "object" || body === null || typeof (body as Record<string, unknown>).ref !== "string") {
+          return json(response, 400, { error: "invalid evidence-content request" });
+        }
+        const result = await hubPost("/evidence-content", { ref: (body as Record<string, unknown>).ref });
+        return json(response, result.status, result.payload);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
     if (request.method === "GET" && pathname === "/api/git") {
       const workspace = application.workspaceRoot;
       if (workspace === undefined) return json(response, 503, { error: "workspace unavailable" });

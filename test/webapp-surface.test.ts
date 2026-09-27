@@ -5,7 +5,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { artifactKind, CommandPalette, ConfigChips, ConnectionsSection, ContextSection, McpConnections, PermissionPrompt, StatusBar, StepLedgerRow, TaskRefusal, UsageMeter, type SessionMeta } from "../src/ui/webapp/app.js";
+import { artifactKind, CommandPalette, ConfigChips, ConnectionsSection, ContextSection, EvidenceStripRow, McpConnections, PermissionPrompt, StatusBar, StepLedgerRow, TaskRefusal, UsageMeter, type EvidenceContentPreview, type SessionMeta } from "../src/ui/webapp/app.js";
 import { ScheduleForm, SchedulesView, scheduleIdCollisionError, type LoopMeta, type ScheduleMeta } from "../src/ui/webapp/schedules-view.js";
 import { ActivityTimelinePanel, type TimelineState } from "../src/ui/webapp/activity-timeline.js";
 import { TIMELINE_RETENTION } from "../src/integrations/activity-timeline.js";
@@ -886,5 +886,104 @@ test("W154: the RSI lineage view renders the objective's chain with honest absen
     iterations: [],
   }]);
   assert.match(empty, /no iterations recorded yet/, "the honest empty lineage");
+});
+
+// W158 (the strip's preview rendering): ONE row renderer for local and hub
+// records. A record without content renders as its plain self (the W154
+// strip); a record with content renders the capture inline; every non-ready
+// state is named. The render contract is pinned here without driving the
+// panel.
+const stripRow = (props: {
+  readonly subject: string;
+  readonly result: string;
+  readonly freshness: string;
+  readonly origin: "local" | "hub";
+  readonly content?: { readonly kind: string; readonly ref: string; readonly byteSize: number };
+  readonly preview?: EvidenceContentPreview;
+}): string => renderToStaticMarkup(createElement(EvidenceStripRow, props));
+
+test("W158: the strip renders a content-carrying record's capture inline and a plain record as its plain self", () => {
+  const plain = stripRow({ subject: "test evidence for run:1", result: "passed", freshness: "fresh", origin: "hub" });
+  assert.ok(plain.includes("test evidence for run:1"));
+  assert.ok(!plain.includes("evidence-content-preview"), "a record without content renders as its plain self — no empty preview box");
+
+  const output = stripRow({
+    subject: "test evidence for run:1",
+    result: "passed",
+    freshness: "fresh",
+    origin: "hub",
+    content: { kind: "test-output", ref: "content:aa:1", byteSize: 12 },
+    preview: { status: "ready", kind: "test-output", mediaType: "text/plain", bytes: "163/163 pass" },
+  });
+  assert.ok(output.includes("163/163 pass"), "the test-output capture renders inline");
+  assert.ok(output.includes("evidence-content-output"), "as the output preview block");
+
+  const screenshot = stripRow({
+    subject: "screenshot after the failed step",
+    result: "passed",
+    freshness: "fresh",
+    origin: "hub",
+    content: { kind: "screenshot", ref: "content:aa:2", byteSize: 900 },
+    preview: { status: "ready", kind: "screenshot", mediaType: "image/png", bytes: "aGk=" },
+  });
+  assert.ok(screenshot.includes("data:image/png;base64,aGk="), "the screenshot renders as a data-URL image (the store's capture contract: screenshots ride base64)");
+  assert.ok(screenshot.includes("evidence-content-screenshot"), "as the image preview block");
+});
+
+test("W158: the strip names every non-ready preview state — loading, absent, unavailable — never a fabricated payload", () => {
+  const absent = stripRow({
+    subject: "test evidence for run:2",
+    result: "passed",
+    freshness: "fresh",
+    origin: "hub",
+    content: { kind: "test-output", ref: "content:aa:3", byteSize: 5 },
+    preview: { status: "absent" },
+  });
+  assert.ok(absent.includes("evicted"), "the absent state names the honest cause");
+  assert.ok(absent.includes("5 bytes were recorded"), "the recorded size stays stated");
+
+  const unavailable = stripRow({
+    subject: "test evidence for run:3",
+    result: "passed",
+    freshness: "fresh",
+    origin: "hub",
+    content: { kind: "test-output", ref: "content:aa:4", byteSize: 5 },
+    preview: { status: "unavailable" },
+  });
+  assert.ok(unavailable.includes("unreachable"), "the unavailable state names the hub outage");
+
+  const loading = stripRow({
+    subject: "test evidence for run:4",
+    result: "passed",
+    freshness: "fresh",
+    origin: "hub",
+    content: { kind: "test-output", ref: "content:aa:5", byteSize: 5 },
+    preview: { status: "loading" },
+  });
+  assert.ok(loading.includes("loading"), "the in-flight state is named");
+});
+
+test("W158: a long test-output renders bounded — the head plus a named truncation, the full bytes stay in the store", () => {
+  const long = "x".repeat(5000);
+  const markup = stripRow({
+    subject: "test evidence for run:5",
+    result: "passed",
+    freshness: "fresh",
+    origin: "hub",
+    content: { kind: "test-output", ref: "content:aa:6", byteSize: 5000 },
+    preview: { status: "ready", kind: "test-output", mediaType: "text/plain", bytes: long },
+  });
+  assert.ok(markup.includes("first 4096 bytes shown of 5000"), "the truncation is named with both sizes");
+  assert.ok(!markup.includes("x".repeat(4100)), "the body is capped, not dumped whole");
+});
+
+test("W158: the same strip row serves local and hub records — the hub origin is labeled, a local path stays a signpost", () => {
+  const hub = stripRow({ subject: "reviewer verdict for author-1", result: "passed", freshness: "fresh", origin: "hub" });
+  assert.ok(hub.includes("hub · "), "the hub origin is labeled");
+  assert.ok(hub.includes("record · "), "a non-path subject stays a record");
+
+  const localPath = stripRow({ subject: "/tmp/strip-needle.ts", result: "passed", freshness: "fresh", origin: "local" });
+  assert.ok(!localPath.includes("hub · "), "no hub label on a local row");
+  assert.ok(localPath.includes("in-worktree signpost"), "the W154 signpost treatment rides the shared row");
 });
 
