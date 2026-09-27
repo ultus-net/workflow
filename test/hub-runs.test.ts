@@ -546,8 +546,28 @@ test("W152: gate observability carries each run's own transition log", async () 
   const log = gates?.transitionLogs?.get("schedule:nightly:log");
   assert.ok(log !== undefined && log.length >= 1, "the run's own kernel history rides the observability map");
   assert.equal(log.some((row) => row.to === "IN_PROGRESS"), true, "the begin transition is in the run's log");
-  // The kernel's records carry no attribution fields at all — the type contract.
-  const first = log[0]!;
-  assert.equal("actor" in first, false, "no actor on a kernel TransitionRecord — W157 is the record change that would add it");
+  // W157 landed: the begin transition carries the run lane's stamp. This
+  // begin declared no origin → agent; a schedule-origin begin stamps
+  // scheduler (pinned right after).
+  const beginRow = log.find((row) => row.to === "IN_PROGRESS")!;
+  assert.deepEqual(beginRow.attribution?.actor, "agent", "an origin-less begin is agent-driven through the registry surface");
+  assert.equal(beginRow.attribution?.authority, "run begin (run registry)");
+  assert.match(beginRow.attribution?.observedAt ?? "", /^\d{4}-\d{2}-\d{2}T/, "the observedAt is the caller's ISO stamp");
+});
+
+test("W157: a schedule-origin begin stamps the scheduler, and the origin-less vs origin distinction is the site's own knowledge", async () => {
+  const { registry } = registryWithReviewer({
+    result: { reviewerRunId: "schedule:hub-reviewer-logs2", verdict: "approved", recorded: false, summary: AXES_SUMMARY },
+  });
+  await registry.controller.begin({
+    runId: "schedule:sweep:log",
+    title: "Sweep",
+    workspace: process.cwd(),
+    origin: { kind: "schedule", scheduleId: "sweep" },
+  });
+  const log = registry.controller.gateObservability?.()?.transitionLogs?.get("schedule:sweep:log");
+  const beginRow = log?.find((row) => row.to === "IN_PROGRESS");
+  assert.deepEqual(beginRow?.attribution?.actor, "scheduler", "the schedule-origin begin is stamped scheduler");
+  assert.equal(beginRow?.attribution?.authority, "schedule-fired run begin (origin sweep)");
 });
 

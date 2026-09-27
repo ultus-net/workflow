@@ -114,6 +114,22 @@ test("W152: absent registries degrade with named absences and produce no rows �
   ], "the present registries are not named as degraded");
 });
 
+test("W157: an attributed kernel transition row consumes the record's attribution verbatim; an unattributed one stays explicit", () => {
+  const timeline = activityTimeline({
+    transitions: [
+      { taskId: "run:schedule:nightly:abc", from: "READY", to: "IN_PROGRESS", attribution: { actor: "scheduler", authority: "schedule-fired run begin (origin nightly)", observedAt: "2026-09-27T00:00:00.000Z" } },
+      { taskId: "run:author-1", from: "IN_PROGRESS", to: "VERIFYING" },
+    ],
+    tasks: [{ id: "run:schedule:nightly:abc", title: "Nightly audit" }],
+  });
+  const [attributed, bare] = timeline.rows;
+  assert.equal(attributed?.actor, "scheduler", "the record's stamp is consumed verbatim — the row does not re-derive it");
+  assert.equal(attributed?.authority, "schedule-fired run begin (origin nightly)");
+  assert.equal(attributed?.at, "2026-09-27T00:00:00.000Z", "the record's own time renders — no fabricated timestamp");
+  assert.equal(bare?.actor, "unattributed", "absence stays the explicit unattributed state (criterion 1's pinned case)");
+  assert.equal(bare?.at, null);
+});
+
 test("W152: the projection is pure — identical inputs produce identical feeds", () => {
   const input = () => ({
     transitions: [transition("run:x", "READY", "IN_PROGRESS")],

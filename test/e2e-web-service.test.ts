@@ -161,7 +161,13 @@ test("W128: the compiled web service serves the operator HTTP API end to end —
     body: JSON.stringify({ taskId: "W001", requested: "IN_PROGRESS" }),
   });
   assert.equal(transition.status, 200);
-  assert.deepEqual(await transition.json(), { kind: "accepted", transition: { taskId: "W001", from: "READY", to: "IN_PROGRESS" } });
+  // W157: the operator web route stamps the transition (the trusted-mutation
+  // gate above is the operator boundary) — the result carries the stamp and
+  // the observedAt is the route's own clock.
+  const transitionBody = await transition.json() as { transition: { attribution?: { actor: string; authority: string; observedAt: string } } };
+  assert.equal(transitionBody.transition.attribution?.actor, "operator");
+  assert.equal(transitionBody.transition.attribution?.authority, "operator task transition (web route, trusted mutation)");
+  assert.match(transitionBody.transition.attribution?.observedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
 
   // The state moved, the history recorded it, and the mutation epoch did not
   // move (a task-state transition is not a mutation — only recordMutation
@@ -171,7 +177,13 @@ test("W128: the compiled web service serves the operator HTTP API end to end —
   assert.equal(afterById.get("W001")?.state, "IN_PROGRESS");
   assert.equal(afterById.get("W002")?.state, "BLOCKED");
   assert.deepEqual(afterById.get("W002")?.blockers, ["W001"]);
-  assert.deepEqual(after.history, [{ taskId: "W001", from: "READY", to: "IN_PROGRESS" }]);
+  // W157: the history row carries the route's operator stamp verbatim.
+  assert.deepEqual(after.history, [{
+    taskId: "W001",
+    from: "READY",
+    to: "IN_PROGRESS",
+    attribution: { actor: "operator", authority: "operator task transition (web route, trusted mutation)", observedAt: transitionBody.transition.attribution!.observedAt },
+  }]);
   assert.equal(after.mutationEpoch, 0);
 
   // The PREBUILT bundle over HTTP (W127): the compiled module's
