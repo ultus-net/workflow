@@ -95,7 +95,13 @@ export function createTaskCommandPort(application: WorkflowApplication): TaskCom
         throw new Error(`cannot activate unknown task ${JSON.stringify(id)}`);
       }
       if (task.state === "READY") {
-        assertTransition(application.transition(id, "IN_PROGRESS"), id);
+        // W157: the operator's activate command; the application authority
+        // executed it.
+        assertTransition(application.transition(id, "IN_PROGRESS", {
+          actor: "operator",
+          authority: "operator task command (application authority)",
+          observedAt: new Date().toISOString(),
+        }), id);
       } else if (task.state !== "IN_PROGRESS") {
         // BLOCKED (dependencies unverified), VERIFIED, FAILED, VERIFYING —
         // never guess; the operator sees the blockers in the task list.
@@ -110,7 +116,14 @@ export function createTaskCommandPort(application: WorkflowApplication): TaskCom
         throw new Error(`cannot complete unknown task ${JSON.stringify(id)}`);
       }
       if (task.state === "IN_PROGRESS") {
-        assertTransition(application.transition(id, "VERIFYING"), id);
+        // W157: the operator's complete command moves the task to VERIFYING;
+        // the VERIFIED promotion below stays evidence-bound (never
+        // self-certified by the command itself).
+        assertTransition(application.transition(id, "VERIFYING", {
+          actor: "operator",
+          authority: "operator task command (application authority)",
+          observedAt: new Date().toISOString(),
+        }), id);
       } else if (task.state !== "VERIFYING") {
         throw new Error(`cannot complete task ${JSON.stringify(id)} in state ${task.state}`);
       }
@@ -133,7 +146,13 @@ export function createTaskCommandPort(application: WorkflowApplication): TaskCom
       // A kernel rejection here (e.g. EVIDENCE_REQUIRED for an unsatisfied
       // requiredEvidence subject, or CHECKPOINT_PENDING under a pedagogy
       // gate) is the operator-visible refusal — never a silent no-op.
-      assertTransition(application.transition(id, "VERIFIED"), id);
+      assertTransition(application.transition(id, "VERIFIED", {
+        // W157: the operator issued the completion; the KERNEL decided it —
+        // the stamp says the operator command drove the promotion attempt.
+        actor: "operator",
+        authority: "operator task command (evidence-bound completion)",
+        observedAt: new Date().toISOString(),
+      }), id);
     },
 
     retryTask(id) {

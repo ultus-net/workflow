@@ -73,6 +73,24 @@ export interface TransitionRecord {
   readonly taskId: TaskId;
   readonly from: TaskState;
   readonly to: TaskState;
+  /**
+   * W157: caller-supplied attribution. The kernel never fabricates it — a
+   * site that does not know its actor leaves the block absent, and absence
+   * is legal (the timeline renders the explicit "unattributed" state). The
+   * actor is a closed set (the same families the W150 posture projection
+   * named: operator, agent, system, scheduler); the authority string says
+   * WHERE the attribution came from; observedAt is caller-supplied so the
+   * kernel reads no clock (purity).
+   */
+  readonly attribution?: TransitionAttribution;
+}
+
+export interface TransitionAttribution {
+  readonly actor: "operator" | "agent" | "system" | "scheduler";
+  /** The authority basis the transition stands on — the site names its own source. */
+  readonly authority: string;
+  /** Caller-supplied observation time; the kernel reads no clock. */
+  readonly observedAt: string;
 }
 
 export type TransitionResult =

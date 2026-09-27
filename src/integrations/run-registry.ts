@@ -349,7 +349,14 @@ export function createRunRegistry(
             ]
           : [],
       });
-      const started = application.transition(runTaskId, "IN_PROGRESS");
+      // W157: the run lane stamps what it knows — a schedule-fired run's
+      // begin belongs to the scheduler (the origin record names it); any
+      // other begin is agent-driven through the registry surface.
+      const started = application.transition(runTaskId, "IN_PROGRESS", {
+        actor: origin === undefined ? "agent" : "scheduler",
+        authority: origin === undefined ? "run begin (run registry)" : `schedule-fired run begin (origin ${origin.scheduleId})`,
+        observedAt: new Date().toISOString(),
+      });
       if (started.kind !== "accepted") throw new Error(`cannot start run ${runId}: ${started.reason}`);
       application.selectActiveTask(runTaskId);
       if (testSubject !== undefined) {
@@ -399,7 +406,13 @@ export function createRunRegistry(
         // environment evidence that is supposed to validate this run.
         const current = application.snapshot().tasks.find((task) => task.id === runTaskId)?.state;
         if (current === "IN_PROGRESS") {
-          const verifying = application.transition(runTaskId, "VERIFYING");
+          // W157: the finish call only reports the session ended — the stamp
+          // says exactly that; the promotion below stays evidence-gated.
+          const verifying = application.transition(runTaskId, "VERIFYING", {
+            actor: "system",
+            authority: "run finish observation (session ended; promotion still evidence-gated)",
+            observedAt: new Date().toISOString(),
+          });
           if (verifying.kind !== "accepted") throw new Error(`cannot verify run ${runId}: ${verifying.reason}`);
         } else if (current !== "VERIFYING") {
           throw new Error(`cannot verify run ${runId}: task is ${current}`);
@@ -411,7 +424,13 @@ export function createRunRegistry(
         // /run/review (plus hub-run test evidence when a test runner is
         // wired, plan Task D1). Recording synthetic "passed" evidence
         // without a real observation would self-certify the run.
-        let verified = application.transition(runTaskId, "VERIFIED");
+        // W157: this promotion attempt is the finish's own; whose evidence
+        // satisfied the gate is visible in the kernel's evidence records.
+        let verified = application.transition(runTaskId, "VERIFIED", {
+          actor: "system",
+          authority: "run finish promotion (evidence gate decides)",
+          observedAt: new Date().toISOString(),
+        });
         const hasFreshReviewerEvidence = graph
           .evidenceFor(runId)
           .some((evidence) => evidence.authority === "reviewer" && evidence.result === "passed" && evidence.freshness === "fresh");
@@ -442,7 +461,12 @@ export function createRunRegistry(
             rememberBlockingReason(runId, reason);
             throw new Error(`cannot verify run ${runId}: ${reason}`);
           }
-          verified = application.transition(runTaskId, "VERIFIED");
+          verified = application.transition(runTaskId, "VERIFIED", {
+            // W157: the reviewer's admitted verdict is what verified the run.
+            actor: "agent",
+            authority: "review verdict record (reviewer approved; hub-reviewer)",
+            observedAt: new Date().toISOString(),
+          });
           if (verified.kind !== "accepted" && options?.testRunner === undefined) {
             rememberBlockingReason(runId, verified.reason);
             throw new Error(`cannot verify run ${runId}: ${verified.reason}`);
@@ -480,7 +504,13 @@ export function createRunRegistry(
             mutationEpoch: application.snapshot().mutationEpoch,
             observedAt: new Date().toISOString(),
           });
-          verified = application.transition(runTaskId, "VERIFIED");
+          verified = application.transition(runTaskId, "VERIFIED", {
+            // W157: the hub test runner's fresh environment evidence is what
+            // verified the run.
+            actor: "system",
+            authority: "environment test evidence (hub test runner)",
+            observedAt: new Date().toISOString(),
+          });
           if (verified.kind !== "accepted") {
             rememberBlockingReason(runId, verified.reason);
             throw new Error(`cannot verify run ${runId}: ${verified.reason}`);
@@ -503,7 +533,12 @@ export function createRunRegistry(
           mutationEpoch: application.snapshot().mutationEpoch,
           observedAt: new Date().toISOString(),
         });
-        application.transition(runTaskId, "FAILED");
+        application.transition(runTaskId, "FAILED", {
+          // W157: the finish outcome reported failure; the run lane records it.
+          actor: "system",
+          authority: "run failure record (finish outcome failed)",
+          observedAt: new Date().toISOString(),
+        });
       }
       finishedRunTaskIds.add(runTaskId);
       runs.delete(runId);

@@ -117,7 +117,13 @@ export function ensureOpencodeSessionTask(application: WorkflowApplication, sess
     }
   }
   try {
-    application.transition(id, "IN_PROGRESS");
+    // W157: this is the agent-side authority composing its session task —
+    // the stamp names the lane; authorize() still decides everything.
+    application.transition(id, "IN_PROGRESS", {
+      actor: "agent",
+      authority: "opencode server authority session task (agent-driven)",
+      observedAt: new Date().toISOString(),
+    });
   } catch {
     // Already IN_PROGRESS or terminal; authorize() decides.
   }
