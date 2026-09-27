@@ -450,17 +450,24 @@ test("recorded run usage is bounded, latest-per-run, and rides gateObservability
   const base = setupRegistry();
   const registry = createRunRegistry(base.application, base.graph);
 
-  // Two recordings on the same run: the latest wins.
-  registry.recordRunUsage({ runId: "usage-a", usage: { requests: 2, promptTokens: 100, completionTokens: 20, totalTokens: 120, costUsd: 0.01 } });
-  registry.recordRunUsage({ runId: "usage-a", usage: { requests: 5, promptTokens: 300, completionTokens: 50, totalTokens: 350, costUsd: 0.04 } });
+  // Two recordings on the same run: the latest wins. P12: the cache
+  // components ride the recorded totals (the metering proxy's first-class
+  // fields) and serialize through gateObservability.
+  registry.recordRunUsage({ runId: "usage-a", usage: { requests: 2, promptTokens: 100, completionTokens: 20, totalTokens: 120, costUsd: 0.01, cacheReadTokens: 40, cacheCreateTokens: 5 } });
+  registry.recordRunUsage({ runId: "usage-a", usage: { requests: 5, promptTokens: 300, completionTokens: 50, totalTokens: 350, costUsd: 0.04, cacheReadTokens: 120, cacheCreateTokens: 0 } });
   assert.equal(registry.runUsage().get("usage-a")?.totalTokens, 350, "the latest recording per run wins");
+  assert.deepEqual(
+    { read: registry.runUsage().get("usage-a")?.cacheReadTokens, create: registry.runUsage().get("usage-a")?.cacheCreateTokens },
+    { read: 120, create: 0 },
+    "the latest recording's cache components win with it",
+  );
   assert.match(registry.runUsage().get("usage-a")?.recordedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
 
   // The 64-cap discipline shared with the other gate maps: a flood evicts
   // the oldest entries first (usage-a and usage-b go; the newest survive).
-  registry.recordRunUsage({ runId: "usage-b", usage: { requests: 1, promptTokens: 10, completionTokens: 2, totalTokens: 12, costUsd: 0.001 } });
+  registry.recordRunUsage({ runId: "usage-b", usage: { requests: 1, promptTokens: 10, completionTokens: 2, totalTokens: 12, costUsd: 0.001, cacheReadTokens: 0, cacheCreateTokens: 0 } });
   for (let index = 0; index < 70; index += 1) {
-    registry.recordRunUsage({ runId: `usage-fill-${index}`, usage: { requests: 1, promptTokens: 1, completionTokens: 1, totalTokens: 2, costUsd: 0 } });
+    registry.recordRunUsage({ runId: `usage-fill-${index}`, usage: { requests: 1, promptTokens: 1, completionTokens: 1, totalTokens: 2, costUsd: 0, cacheReadTokens: 0, cacheCreateTokens: 0 } });
   }
 
   assert.equal(registry.runUsage().size, 64, "the usage map is bounded at 64 like the other gate maps");
@@ -491,7 +498,7 @@ test("recorded run usage rides the hub /snapshot projection for monitors", async
         recorded = true;
         handles.recordRunUsage({
           runId: "schedule:usage-e2e",
-          usage: { requests: 3, promptTokens: 1200, completionTokens: 80, totalTokens: 1280, costUsd: 0.0042 },
+          usage: { requests: 3, promptTokens: 1200, completionTokens: 80, totalTokens: 1280, costUsd: 0.0042, cacheReadTokens: 600, cacheCreateTokens: 40 },
         });
       },
       stop: () => undefined,

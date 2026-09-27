@@ -168,6 +168,8 @@ export async function createOpenModelMeteringPool(options: CreateOpenModelMeteri
       let completionTokens = 0;
       let totalTokens = 0;
       let costUsd = 0;
+      let cacheReadTokens = 0;
+      let cacheCreateTokens = 0;
       let latest: number | undefined;
       for (const provider of providers) {
         const metrics = provider.proxy.metrics();
@@ -177,9 +179,11 @@ export async function createOpenModelMeteringPool(options: CreateOpenModelMeteri
         completionTokens += metrics.completionTokens;
         totalTokens += metrics.totalTokens;
         costUsd += metrics.costUsd;
+        cacheReadTokens += metrics.cacheReadTokens;
+        cacheCreateTokens += metrics.cacheCreateTokens;
         if (metrics.latestPromptTokens !== undefined) latest = metrics.latestPromptTokens;
       }
-      return { requests, usageEvents, promptTokens, completionTokens, totalTokens, costUsd, latestPromptTokens: latest };
+      return { requests, usageEvents, promptTokens, completionTokens, totalTokens, costUsd, latestPromptTokens: latest, cacheReadTokens, cacheCreateTokens };
     },
     async close(): Promise<void> {
       await Promise.allSettled(providers.map((provider) => provider.proxy.close()));

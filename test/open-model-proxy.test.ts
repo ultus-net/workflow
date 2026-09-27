@@ -91,6 +91,10 @@ test("the pool composes one metering proxy per keyed vendor with the real key pr
     assert.equal(metrics.requests, 3);
     assert.equal(metrics.totalTokens, 120 + 240 + 360, "usage aggregates across vendor proxies");
     assert.equal(metrics.costUsd, 0.006);
+    // P12: the aggregate carries the cache fields; on the all-OpenAI lane
+    // they stay at their measured zero (cached reads ride prompt_tokens).
+    assert.equal(metrics.cacheReadTokens, 0);
+    assert.equal(metrics.cacheCreateTokens, 0);
     assert.equal(openModelProviderId("deepseek"), "workflow-deepseek");
   } finally {
     await pool.close();

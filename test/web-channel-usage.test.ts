@@ -13,6 +13,8 @@ const metrics: ModelUsageMetrics = {
   totalTokens: 110,
   costUsd: 0.001,
   latestPromptTokens: 90,
+  cacheReadTokens: 0,
+  cacheCreateTokens: 0,
 };
 
 function fakeDriver(contextWindow: number | undefined) {

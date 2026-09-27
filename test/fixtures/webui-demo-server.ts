@@ -74,6 +74,8 @@ const DEMO_USAGE: ModelUsageMetrics = {
   totalTokens: 90_743,
   costUsd: 0.4182,
   latestPromptTokens: 32_940,
+  cacheReadTokens: 51_200,
+  cacheCreateTokens: 4_096,
 };
 
 /** Scripted driver: streams a plan, tool cards, and an assistant reply, then

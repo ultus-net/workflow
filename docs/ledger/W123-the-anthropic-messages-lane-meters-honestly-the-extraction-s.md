@@ -82,3 +82,13 @@ pre-W123 baseline on that path was zero-token pollution, so no
 regression). Region note: W121 (and the
 LESS-0046 slot) stay free for the concurrent stream; this lands as
 W123/LESS-0047 off main@74a13a0.
+
+**2026-09-27 supersession (P12 landed, PR #311):** the metrics model's
+first-class cache fields (the "P12's next loop" clause above) are closed —
+`ModelUsageMetrics` carries `cacheReadTokens` / `cacheCreateTokens`, metered
+first-class on the anthropic lane from W123's seam and ridden through the
+pool/runtime aggregates, the hub's per-run `RunUsageSummary`, the /snapshot
+usage block, and the timeline's usage row. The OpenAI lane stays at its
+measured zero (cached reads ride prompt_tokens; the recorded asymmetry). The
+SSE failure-path asymmetry residual above remains open and unpinned — P12
+did not measure it; it stays a recorded residual on this item.

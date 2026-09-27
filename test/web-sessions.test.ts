@@ -392,7 +392,7 @@ test("session manager ingests replayed history when resuming a session", async (
 test("session manager syncs agent-provided titles and serves runtime usage", async (context) => {
   const dir = registryDir();
   context.after(() => rmSync(dir, { recursive: true, force: true }));
-  const metrics = { requests: 2, usageEvents: 1, promptTokens: 120, completionTokens: 45, totalTokens: 165, costUsd: 0.012, latestPromptTokens: 120 };
+  const metrics = { requests: 2, usageEvents: 1, promptTokens: 120, completionTokens: 45, totalTokens: 165, costUsd: 0.012, latestPromptTokens: 120, cacheReadTokens: 0, cacheCreateTokens: 0 };
   const manager = new WebSessionManager({
     registryPath: join(dir, "registry.json"),
     factory: async () => {
@@ -418,7 +418,7 @@ test("session history is readable from the registry without spawning a runtime",
   const dir = registryDir();
   context.after(() => rmSync(dir, { recursive: true, force: true }));
   const registryPath = join(dir, "registry.json");
-  const metrics = { requests: 1, usageEvents: 1, promptTokens: 90, completionTokens: 12, totalTokens: 102, costUsd: 0.004, latestPromptTokens: 90 };
+  const metrics = { requests: 1, usageEvents: 1, promptTokens: 90, completionTokens: 12, totalTokens: 102, costUsd: 0.004, latestPromptTokens: 90, cacheReadTokens: 0, cacheCreateTokens: 0 };
   let launches = 0;
   const factory = async () => {
     launches += 1;
