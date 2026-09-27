@@ -29,7 +29,7 @@ export interface WorkflowRunController {
     workspace?: string;
     requiresReview?: boolean;
     taskPrompt?: string;
-    /** W153: the scheduler's recorded origin attribution; only the scheduler supplies it. */
+    /** W153: the recorded origin attribution; only hub-side recorders supply it (the scheduler, the W162 board-delegation route). */
     origin?: RunOrigin;
   }): Promise<void>;
   finish(input: { runId: string; outcome: "verified" | "failed" }): Promise<void>;

@@ -32,6 +32,10 @@
  * No UI-side status inference: an assigned issue is still open, a labeled
  * issue is whatever its labels say, and the "delegated" column arrives in a
  * later iteration as hub-owned run linkage, not a timestamp heuristic.
+ *
+ * W162: the board card's delegate dispatch composes its run from THIS
+ * hub-side read (fetchBoardTask) — attribution comes from the hub's own
+ * provider read, never the browser's claim.
  */
 
 /** The neutral external-task record: what a GitHub issue and an Azure
@@ -227,6 +231,61 @@ export async function fetchBoardTasks(
       ...(received >= GITHUB_ISSUES_PAGE_SIZE ? { truncated: true as const } : {}),
     },
   };
+}
+
+/** The single-issue fetch outcome behind the W162 delegate dispatch. */
+export type BoardTaskOutcome =
+  | { readonly state: "ok"; readonly task: ExternalTask }
+  | { readonly state: "unconfigured"; readonly missing: readonly string[] }
+  | { readonly state: "error"; readonly reason: string };
+
+/**
+ * W162: fetches ONE provider issue with the same bounded fetch and shape
+ * guard as fetchBoardTasks — the hub-side read the delegate route composes
+ * its run from (the attribution is recorded from this read, never from the
+ * client's claim). A transport failure, a non-2xx answer, a non-issue body,
+ * or a pull request is an honest error state; nothing is fabricated into a
+ * task.
+ */
+export async function fetchBoardTask(
+  provider: BoardProviderState,
+  issueNumber: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<BoardTaskOutcome> {
+  if (provider.kind !== "github") return { state: "unconfigured", missing: provider.missing };
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(provider.owner)}/${encodeURIComponent(provider.repoName)}/issues/${issueNumber}`;
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      headers: {
+        authorization: `Bearer ${provider.token}`,
+        accept: "application/vnd.github+json",
+        "user-agent": "workflow-hub (task board projection)",
+        "x-github-api-version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch (error) {
+    return { state: "error", reason: error instanceof Error ? error.message : String(error) };
+  }
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    const suffix = detail.length > 0 && detail.length <= 200 ? `: ${detail}` : "";
+    return { state: "error", reason: `the provider answered ${response.status}${suffix}` };
+  }
+  let parsed: unknown;
+  try {
+    parsed = await response.json();
+  } catch (error) {
+    return { state: "error", reason: `the provider body was not JSON (${error instanceof Error ? error.message : String(error)})` };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { state: "error", reason: "the provider body was not an issue" };
+  }
+  if ("pull_request" in parsed) return { state: "error", reason: `#${issueNumber} is a pull request, not an issue` };
+  const task = externalTaskFromPayload(parsed as GitHubIssuePayload);
+  if (task === undefined) return { state: "error", reason: `#${issueNumber} did not match the task shape` };
+  return { state: "ok", task };
 }
 
 /** The board projection: columns from the provider-owned state field only,

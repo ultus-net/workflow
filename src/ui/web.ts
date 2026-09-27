@@ -230,6 +230,27 @@ export function createWorkflowWebServer(
     if (request.method === "GET" && pathname === "/api/evidence") return json(response, 200, await hubEvidence());
     // W161: the board read relay (see hubBoard above).
     if (request.method === "GET" && pathname === "/api/board") return json(response, 200, await hubBoard());
+    if (request.method === "POST" && pathname === "/api/board/delegate") {
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        const issue = (body as { issue?: unknown } | null)?.issue;
+        if (typeof issue !== "number" || !Number.isInteger(issue) || issue <= 0) {
+          return json(response, 400, { error: "invalid board delegate request" });
+        }
+        const source = body as Record<string, unknown>;
+        const forward: { issue: number; workspace?: string; requiresReview?: boolean } = { issue };
+        if (typeof source.workspace === "string" && source.workspace.length > 0) forward.workspace = source.workspace;
+        if (source.requiresReview === true) forward.requiresReview = true;
+        const result = await hubPost("/board/delegate", forward);
+        return json(response, result.status, result.payload);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
     if (request.method === "POST" && pathname === "/api/evidence-content") {
       // W158: the strip's same-origin preview fetch — the browser asks THIS
       // service, which forwards the operator-token class upstream; the browser

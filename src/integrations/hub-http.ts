@@ -10,7 +10,7 @@ import type { SelfImprovementRegistry, SelfImprovementSpec } from "./self-improv
 import type { ScheduleRegistry } from "./schedule-registry.js";
 import { activityTimeline } from "./activity-timeline.js";
 import { operatorPosture, scheduleLineage, scheduleRecentRuns } from "./operator-posture.js";
-import type { BoardOutcome } from "./task-provider.js";
+import type { BoardOutcome, BoardTaskOutcome } from "./task-provider.js";
 
 /**
  * The hub's host-neutral loopback HTTP server and discovery bridge.
@@ -51,6 +51,14 @@ interface HubRequestContext {
    * material.
    */
   readonly readBoardTasks?: () => Promise<BoardOutcome>;
+  /**
+   * W162: the external-task board's delegation capability — the hub-side
+   * single-issue provider read the delegate route composes its run from.
+   * Absent → the route 404s (capability withheld, like the other optional
+   * registries); present → the outcome carries its own honest
+   * unconfigured/error/ok state and never credential material.
+   */
+  readonly delegateBoardTask?: (issue: number) => Promise<BoardTaskOutcome>;
 }
 
 export async function createWorkflowHubBridge(
@@ -66,10 +74,11 @@ export async function createWorkflowHubBridge(
   schedules?: ScheduleRegistry,
   contentStore?: HubRequestContext["contentStore"],
   readBoardTasks?: () => Promise<BoardOutcome>,
+  delegateBoardTask?: (issue: number) => Promise<BoardTaskOutcome>,
 ): Promise<WorkflowHubBridge> {
   const token = randomBytes(32).toString("hex");
   const verificationToken = randomBytes(32).toString("hex");
-  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...(readBoardTasks === undefined ? {} : { readBoardTasks }) };
+  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...(readBoardTasks === undefined ? {} : { readBoardTasks }), ...(delegateBoardTask === undefined ? {} : { delegateBoardTask }) };
 
   const server = createServer((request, response) => {
     if (request.url !== undefined) observeRequest?.(new URL(request.url, "http://127.0.0.1").pathname);
@@ -302,6 +311,41 @@ async function handleRequest(
       // test/board-tasks.test.ts).
       if (context.readBoardTasks === undefined) return send(response, 404, { error: "not found" });
       return send(response, 200, { board: await context.readBoardTasks() });
+    }
+    if (request.url === "/board/delegate") {
+      // W162: the board card's delegate dispatch — the operator's own click
+      // through the web relay, so the OPERATOR token class (the same class
+      // as /run/begin, not verifier-only). The run composes from the hub's
+      // OWN provider read: the browser supplies only the issue number (and
+      // its workspace choice), never the attribution — the provider-task
+      // origin is recorded here from what the provider actually returned
+      // (the W153 principle: clients never supply attribution).
+      if (context.delegateBoardTask === undefined || context.runController === undefined) {
+        return send(response, 404, { error: "not found" });
+      }
+      if (!isRecord(body) || typeof body.issue !== "number" || !Number.isInteger(body.issue) || body.issue <= 0) {
+        return send(response, 400, { error: "invalid board delegate request" });
+      }
+      const outcome = await context.delegateBoardTask(body.issue);
+      if (outcome.state !== "ok") return send(response, 200, { delegation: outcome });
+      const task = outcome.task;
+      const runId = `board:github:${body.issue}:${randomBytes(8).toString("hex")}`;
+      try {
+        await context.runController.begin({
+          runId,
+          title: `${task.key} ${task.title}`,
+          ...(typeof body.workspace === "string" && body.workspace.length > 0 ? { workspace: body.workspace } : {}),
+          ...(body.requiresReview === true ? { requiresReview: true } : {}),
+          taskPrompt: `Work ${task.provider} issue ${task.key}: "${task.title}" (source: ${task.url})`,
+          origin: { kind: "provider-task", provider: task.provider, key: task.key, url: task.url },
+        });
+      } catch (error) {
+        if (error instanceof WorkspaceDeclarationError) {
+          return send(response, 400, { error: error.message });
+        }
+        throw error;
+      }
+      return send(response, 200, { delegation: { state: "ok", runId, task: { key: task.key, title: task.title, url: task.url } } });
     }
     if (request.url === "/snapshot") {
       if (!isRecord(body)) return send(response, 400, { error: "invalid snapshot request" });

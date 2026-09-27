@@ -95,6 +95,12 @@ export async function createWorkflowHub(
      * production closure from env so the hub's payload stays credential-free.
      */
     readBoardTasks?: () => Promise<import("./task-provider.js").BoardOutcome>;
+    /**
+     * W162: the board's delegation capability (the hub-side single-issue read
+     * behind POST /board/delegate). Absent means the route 404s — capability
+     * withheld, never faked.
+     */
+    delegateBoardTask?: (issue: number) => Promise<import("./task-provider.js").BoardTaskOutcome>;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -156,6 +162,7 @@ export async function createWorkflowHub(
       options.schedules,
       options.contentStore,
       options.readBoardTasks,
+      options.delegateBoardTask,
     );
     options.observeBridgeStarted?.(bridge.url);
     scheduler?.start();
