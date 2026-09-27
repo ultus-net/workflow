@@ -395,13 +395,14 @@ export class WorkflowApplication {
       throw new TypeError("multiple READY tasks require an explicit active task selection");
     }
     const selected = ready[0]!.id;
-    // W157: the interactive auto-selection starts the operator's driving
-    // lane — the site knows its lane, so it stamps operator.
-    const transition = this.transition(selected, "IN_PROGRESS", {
-      actor: "operator",
-      authority: "interactive task start (application auto-selection)",
-      observedAt: new Date().toISOString(),
-    });
+    // W157 (review round P1): deliberately UNATTRIBUTED — this auto-selection
+    // serves BOTH the operator's driving lane and the run-begin composition
+    // (run-registry's workspaceApplication activates the interactive task on
+    // every begin, scheduler-driven ones included), so the site cannot know
+    // its actor; absence is legal by contract and the timeline renders the
+    // explicit unattributed state. The operator's real task actions stamp
+    // operator in task-commands; the run lane stamps its own begins.
+    const transition = this.transition(selected, "IN_PROGRESS");
     if (transition.kind !== "accepted") throw new TypeError(`cannot start interactive task ${selected}`);
     this.selectActiveTask(selected);
     return selected;
