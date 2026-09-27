@@ -149,6 +149,19 @@ export function createWorkflowWebServer(
     return { evidence: null, reason: payload?.error ?? "hub unavailable" };
   };
 
+  /** W161: the ONE board read route — the hub's /board/tasks provider
+   * outcome relayed verbatim (ok / unconfigured / error are all PAYLOAD
+   * states the view renders honestly). Fail-closed: no hub, or a hub
+   * predating the slice, answers board: null with the reason — never a
+   * fabricated empty board. The browser never sees a hub token or the
+   * provider credential. */
+  const hubBoard = async (): Promise<{ board: unknown; reason?: string }> => {
+    const result = await hubPost("/board/tasks", {});
+    const payload = result.payload as { board?: unknown; error?: string } | undefined;
+    if (result.status === 200 && payload?.board !== undefined) return { board: payload.board };
+    return { board: null, reason: payload?.error ?? "hub unavailable" };
+  };
+
   /** Session-scoped channel: `?session=<id>` selects a parallel live session;
    * without the parameter the operator's focused session answers. */
   function sessionId(url: string | undefined): string | undefined {
@@ -215,6 +228,8 @@ export function createWorkflowWebServer(
     if (request.method === "GET" && pathname === "/api/posture") return json(response, 200, await hubPosture());
     if (request.method === "GET" && pathname === "/api/timeline") return json(response, 200, await hubTimeline());
     if (request.method === "GET" && pathname === "/api/evidence") return json(response, 200, await hubEvidence());
+    // W161: the board read relay (see hubBoard above).
+    if (request.method === "GET" && pathname === "/api/board") return json(response, 200, await hubBoard());
     if (request.method === "POST" && pathname === "/api/evidence-content") {
       // W158: the strip's same-origin preview fetch — the browser asks THIS
       // service, which forwards the operator-token class upstream; the browser

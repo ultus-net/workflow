@@ -132,11 +132,11 @@ From [DESIGN.md](https://raw.githubusercontent.com/paperclipai/paperclip/master/
 ## Risks and honesty notes
 
 - **Projection-only rule.** Every borrowed surface reads hub/kernel-owned state and dispatches actions through the application authority. Any panel that starts holding its own state (dismissals, optimistic approvals, synthesized attribution) has become a rival authority; the Wave 1 acceptance criteria pin this with tests.
-- **Management vs driving split.** Paperclip's UI is the management plane over autonomous agent companies; Workflow's stock UIs (OpenCode TUI/browser driving surfaces) remain the surfaces where work is driven. The hub dashboard observes and dispatches proposals; it must not grow into a second place where tasks are authored and agents are commanded, or the hub stops being the single authority the launchers resolve against.
+- **Management vs driving split.** Paperclip's UI is the management plane over autonomous agent companies; Workflow's stock UIs (OpenCode TUI/browser driving surfaces) remain the surfaces where work is driven. The hub dashboard observes and dispatches proposals; it must not grow into a second place where tasks are authored and agents are commanded, or the hub stops being the single authority the launchers resolve against. (SUPERSEDED 2026-09-27 by the operator direction recorded in the amendment at the end of this document — read that first before applying this note.)
 - **Kernel boundary.** The blocked-descriptor idea and any actor-attribution gap are kernel/record changes first. The dashboard waves must not ship attribution the kernel does not record; "unattributed" rendered honestly beats attribution inferred in the UI.
 - **Honest-claims discipline.** Paperclip documents promise real-time refresh and permanent records. Workflow's dashboard must state its actual refresh mechanism (whatever `/snapshot` polling is today) and actual retention, and any new surface starts `Partial` with its gaps recorded in `TASKS.md`, not silently promoted to Complete.
 - **Easy Auth / remote plane.** The azure remote-plane spec was not consulted in this research pass, so nothing here is an Easy Auth claim. Conditional note for the operator: waves 1 and 2 concentrate operator-consequential actions (review decisions, budget raises) into one surface; that raises the value of a compromised non-loopback session. If the dashboard is ever served beyond `127.0.0.1`, the existing hub token/verification model must gate the new action dispatch, and fail-closed behavior under missing authority is part of the Wave 1 and Wave 2 acceptance criteria above.
-- **Vocabulary guard.** No Paperclip terms (hire, CEO, board, company, heartbeat) leak into Workflow copy; per DESIGN.md's own one-name-per-concept rule, Workflow's existing terms (runs, schedules, reviews, evidence, objectives) stay canonical.
+- **Vocabulary guard.** No Paperclip terms (hire, CEO, board, company, heartbeat) leak into Workflow copy; per DESIGN.md's own one-name-per-concept rule, Workflow's existing terms (runs, schedules, reviews, evidence, objectives) stay canonical. (NARROWED 2026-09-27: "board" is Workflow's own term for the external-task projection surface — see the amendment at the end of this document; the guard's forbidden senses remain paperclip's product-vocabulary uses, and the other listed terms stay forbidden outright.)
 
 ## Source list (all fetched 2026-09-26)
 
@@ -157,3 +157,146 @@ From [DESIGN.md](https://raw.githubusercontent.com/paperclipai/paperclip/master/
 - https://docs.paperclip.ing/guides/projects-workflow/routines/
 
 Workflow side verified locally: `src/ui/webapp/` (app, agents-view, schedules-view, usage-view, invariants-panel, diff-text, failure-copy, presenters), `src/integrations/hub-http.ts` (`/health`, `/snapshot`, `/run/begin|review|finish`, `/review/rubric`, `/bash`; takes ScheduleRegistry and SelfImprovementRegistry), `session-budget.ts`, `opencode-server-budget.ts`, `schedule-registry.ts`, `hub-scheduler.ts`, `run-registry.ts`, `self-improvement-registry.ts`, `durable-state-attestation.ts`, `model-usage-proxy.ts`, `src/ui/usage.ts`; `TASKS.md` W045/W073/W074/W111/W118 entries.
+
+---
+
+## Amendment (2026-09-27, operator direction — supersedes one risk note, extends the roadmap)
+
+Three operator decisions taken during the board iteration (W161) amend this
+spec. Dated, append-only; nothing above is rewritten.
+
+1. **The "Management vs driving split" risk note is SUPERSEDED.** The
+dashboard is a first-class seat for every management capability the hub's
+application authority exposes — authoring runs, reviews, budget actions,
+schedules, RSI loops, permission answers, shell lanes. That is what makes
+Workflow the primary UI over the opencode CLI. What still holds, unchanged:
+the dashboard never OWNS canonical state (every action dispatches through
+the same authority-gated routes the CLI uses), denials render honestly, no
+optimistic mutations, no paperclip vocabulary in the copy.
+
+2. **Token classes stay split (W133).** Verifier-credential actions
+(`/schedule/run-now`, `/rsi/start`) remain CLI-only (operator choice
+2026-09-27); the browser never holds the verifier credential. A dashboard
+re-auth flow may be revisited later; it is not promised here.
+
+3. **Paperclip's UI is the capability roadmap; Workflow's theme is the only
+styling path.** The upstream page inventory (Dashboard, Approvals, Costs,
+Routines, Artifacts, Projects, Issues board, Issue detail) is the checklist
+the dashboard converges on. All borrowed surfaces style only through the
+existing tokens (`theme.ts`, `theme/resolve.ts`, the W155 status token set,
+`styles.css` custom properties, `presenters.ts` formatters) — no upstream
+CSS, colors, or fonts ever import. The board's 7-column target
+(backlog/todo/in_progress/in_review/blocked/done/cancelled, per
+`KanbanBoard.tsx`'s `boardStatuses`) lands column-by-column as each
+column's backing authority becomes hub-owned (`in_progress` ← delegation
+run linkage; `in_review` ← PR work-products; `blocked` ← the W159 admission
+rule). Until a column's authority exists, the board renders the honest
+subset (open/closed) rather than a label-guessed column.
+
+First dispatch-class addition under amendment 1: **delegate from a board
+card** — dispatch a run proposal via the application authority, with a
+rendered-deny test — the next iteration after the read-only board (W161,
+which landed the provider seam `src/integrations/task-provider.ts`, the
+`/board/tasks` read route, the `/api/board` relay, and the Board view).
+
+Board research input (fetched 2026-09-27, cited claims): Paperclip's board
+is `KanbanBoard.tsx` rendered by `IssuesList.tsx` (no standalone board page)
+— one column per status enum value via a pure projection, per-status server
+queries with a 200-per-column cap, server-owned ordering (no per-card rank),
+delegation via assign/checkout/release API verbs (checkout atomically
+exclusive via `expectedStatuses`), work products carrying PR state, and
+external-reference pills with `Fresh/Stale/Requires auth/Unreachable`
+liveness. Its UI-local state (`IssueViewState`) is view-preference only —
+the model for any board affordances we borrow.
+
+---
+
+## Work-item breakdown (2026-09-27, from the amendment + the board research)
+
+One change per iteration, each with its own registered prediction
+(RSI-loop discipline). Ids W162+ are provisional next-free numbers
+(W161 = the landed read-only board); ids are confirmed at each item's PR.
+Every item: projection-only, authority-gated dispatch, fail-closed, honest
+states, Workflow vocabulary only. Land order respects the dependency chain;
+the column set grows only as each column's backing authority becomes
+hub-owned (amendment 3).
+
+### W162 — delegate from a board card (the amendment's first dispatch-class addition)
+- **Behavior.** A card action opens a delegation proposal (run id, workspace,
+  task prompt prefilled from the issue's title + a reference to the issue
+  url) and dispatches through the hub's run-begin path — the same
+  authority-gated route the CLI uses. Refusals render verbatim (rendered-deny
+  test), never a disabled-looking success.
+- **Data.** The run's origin attribution gains a provider-task kind (the
+  runOrigins pattern, W153) linking run → (provider, issue key, url). The
+  `in_progress` column becomes hub-owned: open issues with an active linked
+  run, joined by the raw-id contract — never a timestamp heuristic.
+- **Cut** (per the research): no checkout/claim locks, no wake-on-assign, no
+  agent self-claim — Workflow runs start via the application authority.
+- **Accept.** Rendered-deny pin (capability withheld → denial rendered);
+  linkage registry-sourced, not UI-computed (the W153 pin pattern); focused
+  suite + lint + typecheck green.
+
+### W163 — column convergence + volume honesty
+- **Behavior.** GitHub's provider-owned `state_reason`
+  (completed / not_planned / duplicate / reopened) splits `closed` into
+  done / cancelled — provider-owned signal, no label guesses; no column
+  appears before its authority exists. Per-column caps with honest
+  "showing N of M received" bookkeeping; per-column page-size and density
+  view-preferences stay UI-local (the `IssueViewState` model, persisted per
+  browser, never task state).
+- **Data.** Hub-side ETag conditional requests (If-None-Match / 304) on the
+  provider read so overlapping tabs share one upstream read (LESS-0061's
+  recorded residual); cache TTL recorded honestly.
+- **Accept.** state_reason mapping pinned; cap/count honesty pinned; the
+  304 path pinned; no UI-owned task state (pinned by construction: prefs
+  live outside the board outcome).
+
+### W164 — the project container
+- **Behavior.** The "open a project" record the operator asked for: a
+  hub-owned project binding a provider-stable repo identity (fullName +
+  provider id, credential-free — paperclip's `ProjectRepository` pattern),
+  a status, a budget envelope (riding the existing W045/W118 budget
+  machinery), and workspace binding(s). The dashboard lists projects and
+  scopes the board (and later schedules/usage) per project.
+- **Cut.** No org charts, no goals layer (RSI objectives exist), no
+  multi-user membership.
+- **Accept.** The identity record provably carries no credential (pin by
+  value); per-project scoping pinned; single-authority dispatch preserved.
+
+### W165 — work products and the in_review column
+- **Behavior.** Run → PR linkage recorded hub-side; cards render the PR
+  state read-only from the provider; `in_review` appears when the linkage +
+  provider PR state exist (never from label guesses).
+- **Accept.** Linkage registry-sourced; absent linkage renders "unlinked"
+  honestly; PR state renders verbatim with its liveness stated.
+
+### W166 — blocked: the W159 admission rule, implemented
+- **Behavior.** The landed design fragment becomes a kernel transition
+  contract: entering BLOCKED requires unresolved blockers, a pending
+  approval, or a named owner + action; agents may only name themselves as
+  the unblock owner. The board's `blocked` column projects the kernel
+  record.
+- **Accept.** Kernel-level admission tests; the UI renders the unblock
+  descriptor from the record, never synthesized.
+
+### W167 — issue detail + external-reference liveness
+- **Behavior.** A read-only issue surface (thread, description) and
+  external-reference pills with the Fresh / Stale / Requires auth /
+  Unreachable liveness model on provider links. Operator-authored comments,
+  if taken, are operator-token dispatch through the authority (amendment 1
+  class) — decided at this item's proposal, not assumed.
+- **Accept.** Liveness renders honestly (dashed when not fresh, per the
+  research); no attribution the records don't carry.
+
+### W168 — Azure DevOps provider behind the same record shape
+- **Behavior.** The ADO work-item adapter (`provider: "azure_devops"`, PAT
+  env, org/project declaration) mapping System.Title/State/Tags/AssignedTo
+  onto `ExternalTask`; the same BoardOutcome contract and fail-closed pins.
+- **Accept.** The ADO state → column mapping table pinned per work-item
+  template (per-template states land on the one column enum); credential
+  never rides any payload (pin by value).
+
+**Carried P3s** (LESS-0061) ride their nearest item: the DOM-level
+reason-propagation pin rides the next browser-e2e wave (with W162/W163);
+nothing else is orphaned.

@@ -10,6 +10,7 @@ import type { SelfImprovementRegistry, SelfImprovementSpec } from "./self-improv
 import type { ScheduleRegistry } from "./schedule-registry.js";
 import { activityTimeline } from "./activity-timeline.js";
 import { operatorPosture, scheduleLineage, scheduleRecentRuns } from "./operator-posture.js";
+import type { BoardOutcome } from "./task-provider.js";
 
 /**
  * The hub's host-neutral loopback HTTP server and discovery bridge.
@@ -41,6 +42,15 @@ interface HubRequestContext {
   readonly contentStore?: {
     get(ref: string): { readonly kind: "test-output" | "screenshot"; readonly mediaType: string; readonly bytes: string; readonly byteSize: number } | undefined;
   };
+  /**
+   * W161: the external-task board's read capability — a closure over the
+   * provider classification + fetch (composed from env at startup). Absent
+   * → the route 404s (a hub composed without the capability, like the other
+   * optional registries); present → the outcome carries its own honest
+   * unconfigured/error/ok state, and the closure never returns credential
+   * material.
+   */
+  readonly readBoardTasks?: () => Promise<BoardOutcome>;
 }
 
 export async function createWorkflowHubBridge(
@@ -55,10 +65,11 @@ export async function createWorkflowHubBridge(
   selfImprovement?: SelfImprovementRegistry,
   schedules?: ScheduleRegistry,
   contentStore?: HubRequestContext["contentStore"],
+  readBoardTasks?: () => Promise<BoardOutcome>,
 ): Promise<WorkflowHubBridge> {
   const token = randomBytes(32).toString("hex");
   const verificationToken = randomBytes(32).toString("hex");
-  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }) };
+  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...(readBoardTasks === undefined ? {} : { readBoardTasks }) };
 
   const server = createServer((request, response) => {
     if (request.url !== undefined) observeRequest?.(new URL(request.url, "http://127.0.0.1").pathname);
@@ -281,6 +292,16 @@ async function handleRequest(
         return send(response, 400, { error: "invalid schedule run-now request" });
       }
       return send(response, 200, { fired: await context.schedules.runNow(body.id) });
+    }
+    if (request.url === "/board/tasks") {
+      // W161: the external-task board's read route — the provider outcome
+      // (ok / unconfigured / error) relays verbatim; "unconfigured" is a
+      // PAYLOAD state, not a 404, so the view can name the missing env
+      // declaration. Read class (the operator token), like /snapshot. The
+      // provider's credential never rides the payload (pinned in
+      // test/board-tasks.test.ts).
+      if (context.readBoardTasks === undefined) return send(response, 404, { error: "not found" });
+      return send(response, 200, { board: await context.readBoardTasks() });
     }
     if (request.url === "/snapshot") {
       if (!isRecord(body)) return send(response, 400, { error: "invalid snapshot request" });
