@@ -30,7 +30,22 @@ const LEGAL_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
  * owner must match. No new actor vocabulary is invented inside the kernel;
  * a caller whose actor is outside this closed set can never name an owner.
  */
-const ACTOR_VOCABULARY: readonly TransitionAttribution["actor"][] = ["operator", "agent", "system", "scheduler"];
+const ACTOR_VOCABULARY = ["operator", "agent", "system", "scheduler"] as const satisfies readonly TransitionAttribution["actor"][];
+
+/**
+ * W166 P3: compile-time drift pin, both directions — the vocabulary cannot
+ * drift from the transition-attribution union. The `satisfies` on the array
+ * above fails typecheck if the array names an actor the W157 union dropped;
+ * this fails typecheck ("'true' is not assignable to type 'never'") if
+ * contracts.ts grows an actor variant without adding it to the array.
+ */
+export type ActorVocabularyCoversUnion = Exclude<
+  TransitionAttribution["actor"],
+  (typeof ACTOR_VOCABULARY)[number]
+> extends never
+  ? true
+  : never;
+export const ACTOR_VOCABULARY_COVERS_UNION: ActorVocabularyCoversUnion = true;
 
 /** Legal child-step transitions. COMPLETED is terminal (reopen is a new step). */
 const LEGAL_STEP_TRANSITIONS: Readonly<Record<StepState, readonly StepState[]>> = {
