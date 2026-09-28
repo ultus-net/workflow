@@ -486,6 +486,16 @@ export class TaskGraph {
           requested,
         };
       }
+      if (record.reason !== undefined && typeof record.reason !== "string") {
+        return {
+          kind: "rejected",
+          code: "BLOCKED_RECORD_MALFORMED",
+          reason: "the blocked record's reason must be a string when present (an absent reason stays legal)",
+          taskId: task.id,
+          from: task.state,
+          requested,
+        };
+      }
       if (attribution === undefined) {
         return {
           kind: "rejected",
