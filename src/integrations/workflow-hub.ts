@@ -109,6 +109,12 @@ export async function createWorkflowHub(
      * builds it from the persisted table (WORKFLOW_HUB_PROJECTS).
      */
     projects?: ProjectRegistry;
+    /**
+     * W165: the board's pull-request-state read capability (the hub-side
+     * provider read the /board/tasks work-product join composes from — see
+     * task-provider.ts). Absent means the payload carries no workProducts.
+     */
+    readWorkProductState?: (issueNumber: number) => Promise<import("./task-provider.js").WorkProductStateOutcome>;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -172,6 +178,7 @@ export async function createWorkflowHub(
       options.readBoardTasks,
       options.delegateBoardTask,
       options.projects,
+      options.readWorkProductState,
     );
     options.observeBridgeStarted?.(bridge.url);
     scheduler?.start();
