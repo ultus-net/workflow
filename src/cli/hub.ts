@@ -7,6 +7,7 @@ import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createEvidenceContentStore } from "../integrations/evidence-content-store.js";
 import { boardProviderFromEnv, fetchBoardTask, fetchBoardTasks } from "../integrations/task-provider.js";
+import { createProviderReadLedger, fetchIssueDetail, recordProviderReads } from "../integrations/issue-detail.js";
 import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
 import { createCredentialBroker } from "../integrations/credentials.js";
@@ -409,6 +410,12 @@ const schedulerFactory = (handles: WorkflowHubSchedulerHandles) => {
   return scheduler;
 };
 
+// W167: the hub's provider-read ledger — the ONE record behind the board's
+// liveness pills. Every provider read below is wrapped so the hub records its
+// own read outcomes at read time (a failed read's verbatim reason rides the
+// record); an unconfigured hub performs no read and records nothing.
+const providerReadLedger = createProviderReadLedger();
+
 let hub: Awaited<ReturnType<typeof createWorkflowHub>>;
 try {
   hub = await createWorkflowHub(application, {
@@ -420,12 +427,18 @@ try {
     // /evidence-content read route and the test-runner capture records
     // content on the evidence the verification consumed.
     contentStore: createEvidenceContentStore(),
-    // W161: the external-task board's read closure — env-classified at hub
-    // start (WORKFLOW_GITHUB_REPO/WORKFLOW_GITHUB_TOKEN), fetched per read,
-    // bounded, and credential-free on the wire. An unconfigured hub still
-    // serves the route; the payload names the missing declaration.
-    readBoardTasks: () => fetchBoardTasks(boardProviderFromEnv(process.env)),
-    delegateBoardTask: (issue: number) => fetchBoardTask(boardProviderFromEnv(process.env), issue),
+    // W161/W162: the external-task board's read and delegate closures —
+    // env-classified at hub start (WORKFLOW_GITHUB_REPO/WORKFLOW_GITHUB_TOKEN),
+    // fetched per read, bounded, and credential-free on the wire. W167 wraps
+    // each with recordProviderReads so the hub records its own read outcome
+    // (the liveness pills' only source); the detail read joins the same
+    // ledger — a read performed for ANY route updates the record. An
+    // unconfigured hub still serves the routes; the payloads name the missing
+    // declaration and the ledger records nothing.
+    readBoardTasks: recordProviderReads(providerReadLedger, () => fetchBoardTasks(boardProviderFromEnv(process.env))),
+    delegateBoardTask: recordProviderReads(providerReadLedger, (issue: number) => fetchBoardTask(boardProviderFromEnv(process.env), issue)),
+    readIssueDetail: recordProviderReads(providerReadLedger, (issue: number) => fetchIssueDetail(boardProviderFromEnv(process.env), issue)),
+    providerReadState: () => providerReadLedger.current(),
     schedulerFactory,
     schedules: scheduleRegistry,
     projects: projectRegistry,

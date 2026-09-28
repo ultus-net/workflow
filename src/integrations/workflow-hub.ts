@@ -109,6 +109,19 @@ export async function createWorkflowHub(
      * builds it from the persisted table (WORKFLOW_HUB_PROJECTS).
      */
     projects?: ProjectRegistry;
+    /**
+     * W167: the read-only issue-detail capability (the hub-side provider read
+     * of an issue's description and comment thread — see issue-detail.ts).
+     * When provided, the hub exposes the operator-token `/board/task` route;
+     * absent means the route 404s.
+     */
+    readIssueDetail?: (issue: number) => Promise<import("./issue-detail.js").IssueDetailOutcome>;
+    /**
+     * W167: the hub-recorded provider read state accessor — the record the
+     * webapp's liveness pills derive from. When provided, the hub exposes the
+     * operator-token `/board/read-state` route; absent means the route 404s.
+     */
+    providerReadState?: () => import("./issue-detail.js").ProviderReadRecord | undefined;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -172,6 +185,8 @@ export async function createWorkflowHub(
       options.readBoardTasks,
       options.delegateBoardTask,
       options.projects,
+      options.readIssueDetail,
+      options.providerReadState,
     );
     options.observeBridgeStarted?.(bridge.url);
     scheduler?.start();

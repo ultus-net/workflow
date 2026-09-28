@@ -3129,3 +3129,59 @@ body {
 .board-env-var { font-family: var(--font-mono); font-size: 0.72rem; color: var(--text-muted); }
 .board-meta { font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-muted); }
 .board-missing { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.2rem; }
+
+/* W167: provider-read liveness and the read-only issue detail surface. The
+   pill speaks ONLY the hub's recorded provider read (fresh / stale /
+   requires auth / unreachable) — no pill renders without a record, so the
+   classes below exist for states the hub actually reported. The provider
+   link renders dashed whenever the recorded read is not fresh. Theme tokens
+   only — no literal colors. */
+.board-liveness {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-s);
+  padding: 0 0.3rem;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  color: var(--text-muted);
+}
+
+.board-liveness-fresh { color: var(--ok); border-color: var(--ok); }
+.board-liveness-stale { color: var(--warn); border-color: var(--warn); }
+.board-liveness-requires-auth { color: var(--fail); border-color: var(--fail); }
+.board-liveness-unreachable { color: var(--fail); border-color: var(--fail); }
+
+.board-card a.board-link-not-fresh { text-decoration: underline dashed; text-underline-offset: 0.2em; }
+
+/* The detail affordance and the rendered detail share the class — the button
+   keeps its own small-print styling, the container becomes a bordered
+   subregion of the card. */
+button.board-issue-detail {
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+}
+
+div.board-issue-detail {
+  margin-top: 0.3rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-s);
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.board-issue-description { margin: 0; font-size: 0.76rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.board-issue-thread {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.board-comment { display: flex; flex-direction: column; gap: 0.15rem; }
+.board-comment-meta { font-size: 0.66rem; }
+.board-comment-body { margin: 0; font-size: 0.72rem; white-space: pre-wrap; overflow-wrap: anywhere; }
