@@ -65,7 +65,7 @@
  * error.
  */
 
-import type { WorkProductLink } from "./run-registry.js";
+import type { RunOrigin, WorkProductLink } from "./run-registry.js";
 
 /** The neutral external-task record: what a GitHub issue and an Azure
  * DevOps work item can both map onto. `key` is the provider's human task
@@ -756,6 +756,31 @@ export type WorkProductCardState =
  * honest unreadable states naming the ambiguity verbatim. `discover` absent
  * keeps the W165 behavior byte-identical.
  */
+/**
+ * W162 slice 2: the hub-owned in_progress join — the OPEN board cards whose
+ * provider-task origin names their key on an ACTIVE registry run (the
+ * delegate route's recorded attribution, joined by the raw-id contract).
+ * Pure: the route supplies the registry facts (active run ids + recorded
+ * origins), the board supplies the cards. Nothing here reads clocks or
+ * infers state — a timestamp heuristic is exactly what this join must never
+ * be; a finished run's card is absent here because finish() removed its
+ * ACTIVE membership even though its origin record persists.
+ */
+export function inProgressBoardTasks(
+  board: BoardTasks,
+  origins: ReadonlyMap<string, RunOrigin>,
+  activeRunIds: readonly string[],
+): readonly string[] {
+  const activeProviderTaskKeys = new Set<string>();
+  for (const runId of activeRunIds) {
+    const origin = origins.get(runId);
+    if (origin?.kind === "provider-task") activeProviderTaskKeys.add(origin.key);
+  }
+  return board.tasks
+    .filter((task) => task.state === "open" && activeProviderTaskKeys.has(task.key))
+    .map((task) => task.key);
+}
+
 export async function workProductStates(
   board: BoardTasks,
   links: ReadonlyMap<string, WorkProductLink>,

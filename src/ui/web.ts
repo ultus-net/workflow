@@ -169,13 +169,20 @@ export function createWorkflowWebServer(
    * provider credential. W165: the work-product join rides the payload
    * when the hub computed one. W167: only a successful board read fetches
    * the recorded read state beside it — a failed board read answers
-   * read: null without a second hub call. */
-  const hubBoard = async (): Promise<{ board: unknown; reason?: string; read: unknown; workProducts?: unknown }> => {
+   * read: null without a second hub call. W162 slice 2: the registry-sourced
+   * inProgress keys ride the same honest-subset way — absent when the hub
+   * predates the slice or carries no active linked run. */
+  const hubBoard = async (): Promise<{ board: unknown; reason?: string; read: unknown; workProducts?: unknown; inProgress?: unknown }> => {
     const result = await hubPost("/board/tasks", {});
-    const payload = result.payload as { board?: unknown; error?: string; workProducts?: unknown } | undefined;
+    const payload = result.payload as { board?: unknown; error?: string; workProducts?: unknown; inProgress?: unknown } | undefined;
     if (result.status === 200 && payload?.board !== undefined) {
       const read = await hubReadState();
-      return { board: payload.board, read: read.read, ...(payload.workProducts === undefined ? {} : { workProducts: payload.workProducts }) };
+      return {
+        board: payload.board,
+        read: read.read,
+        ...(payload.workProducts === undefined ? {} : { workProducts: payload.workProducts }),
+        ...(payload.inProgress === undefined ? {} : { inProgress: payload.inProgress }),
+      };
     }
     return { board: null, reason: payload?.error ?? "hub unavailable", read: null };
   };

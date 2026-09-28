@@ -30,12 +30,21 @@ import { useState } from "react";
  * other honesty spans. The per-column page-size/density preferences arrive
  * via `viewState` (the browser-local IssueViewState — never a board-payload
  * field) and update through `onViewState`.
+ *
+ * W162 slice 2: the `in_progress` column derives ONLY from the hub's
+ * registry-sourced `inProgress` payload (open cards with an active linked
+ * run, joined by the raw-id contract) — rendered verbatim, never recomputed;
+ * no payload, no column (the honest subset rule). Precedence: while a run is
+ * active the card is in_progress — a still-executing run is not yet awaiting
+ * review, so in_progress outranks the work-product state; once the run
+ * finishes the payload drops the key and the W165 model decides.
  */
-export function BoardView({ board, reason, read, workProducts, viewState, onViewState }: {
+export function BoardView({ board, reason, read, workProducts, inProgress, viewState, onViewState }: {
   readonly board: BoardOutcome | null | undefined;
   readonly reason?: string | undefined;
   readonly read?: ProviderReadRecord | null | undefined;
   readonly workProducts?: Readonly<Record<string, WorkProductCardState>> | undefined;
+  readonly inProgress?: readonly string[] | undefined;
   readonly viewState?: IssueViewState | undefined;
   readonly onViewState?: ((next: IssueViewState) => void) | undefined;
 }) {
@@ -84,13 +93,21 @@ export function BoardView({ board, reason, read, workProducts, viewState, onView
       if (card?.state === "linked" && card.product.state === "open") inReviewKeys.add(task.key);
     }
   }
-  const open = columns.open.filter((task) => !inReviewKeys.has(task.key));
-  const closed = columns.closed.filter((task) => !inReviewKeys.has(task.key));
+  // W162 slice 2: the in_progress set is the hub's OWN payload (registry
+  // facts: open cards with an active linked run) — rendered verbatim, never
+  // recomputed. Precedence: while a run is active the card is in_progress
+  // (a still-executing run is not yet awaiting review), outranking the
+  // work-product state; once the run finishes the payload drops the key and
+  // the work-product state decides.
+  const inProgressKeys = new Set<string>(inProgress ?? []);
+  const inProgressTasks = board.board.tasks.filter((task) => inProgressKeys.has(task.key));
+  const open = columns.open.filter((task) => !inReviewKeys.has(task.key) && !inProgressKeys.has(task.key));
+  const closed = columns.closed.filter((task) => !inReviewKeys.has(task.key) && !inProgressKeys.has(task.key));
   // W163: the split columns reclassify the same way — a completed/cancelled
   // issue with a linked open PR lands in in_review like any other card.
   const done = columns.done.filter((task) => !inReviewKeys.has(task.key));
   const cancelled = columns.cancelled.filter((task) => !inReviewKeys.has(task.key));
-  const inReview = board.board.tasks.filter((task) => inReviewKeys.has(task.key));
+  const inReview = board.board.tasks.filter((task) => inReviewKeys.has(task.key) && !inProgressKeys.has(task.key));
   const cacheLabel = board.board.cache === undefined
     ? undefined
     : `provider read ${board.board.cache.hit ? "cached" : "fresh"} — cache TTL ${Math.round(board.board.cache.ttlMs / 1000)}s${
@@ -116,6 +133,9 @@ export function BoardView({ board, reason, read, workProducts, viewState, onView
       </header>
       <div className="board-columns">
         <BoardColumn title="open" tasks={open} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
+        {inProgress !== undefined && (
+          <BoardColumn title="in_progress" tasks={inProgressTasks} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
+        )}
         {workProducts !== undefined && (
           <BoardColumn title="in_review" tasks={inReview} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
         )}
@@ -151,7 +171,7 @@ const BOARD_COLUMN_PAGE_SIZES = [25, 50, 100] as const;
  * controls render only when the page supplies a handler — the preferences
  * live UI-local, never in the board payload. */
 function BoardColumn({ title, tasks, workProducts, read, viewState, onViewState }: {
-  readonly title: "open" | "in_review" | "done" | "cancelled" | "closed";
+  readonly title: "open" | "in_progress" | "in_review" | "done" | "cancelled" | "closed";
   readonly tasks: readonly ExternalTask[];
   readonly workProducts?: Readonly<Record<string, WorkProductCardState>> | undefined;
   readonly read: ProviderReadRecord | null | undefined;

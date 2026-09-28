@@ -530,6 +530,9 @@ function useOperatorSurfaces() {
   // record: no pill may claim a freshness the hub has no record of.
   const [boardRead, setBoardRead] = useState<ProviderReadRecord | null | undefined>(undefined);
   const [workProducts, setWorkProducts] = useState<Readonly<Record<string, WorkProductCardState>> | undefined>(undefined);
+  // W162 slice 2: the hub's registry-sourced in_progress card keys — absent
+  // when the hub predates the slice or carries no active linked run.
+  const [inProgress, setInProgress] = useState<readonly string[] | undefined>(undefined);
   /** W161 (review P2): the relay's failure reason is carried to the view —
    * a provider fault must render its own reason, never a bare "hub does not
    * report a task board" that misreports whose fault it was. */
@@ -537,11 +540,12 @@ function useOperatorSurfaces() {
     try {
       const boardResponse = await fetch("/api/board");
       if (boardResponse.ok) {
-        const payload = (await boardResponse.json()) as { board?: BoardOutcome; reason?: string; read?: ProviderReadRecord | null; workProducts?: Record<string, WorkProductCardState> };
+        const payload = (await boardResponse.json()) as { board?: BoardOutcome; reason?: string; read?: ProviderReadRecord | null; workProducts?: Record<string, WorkProductCardState>; inProgress?: readonly string[] };
         setBoard(payload.board ?? null);
         setBoardReason(payload.reason);
         setBoardRead(payload.read ?? null);
         setWorkProducts(payload.workProducts);
+        setInProgress(payload.inProgress);
       }
       else {
         setBoard(null);
@@ -594,7 +598,7 @@ function useOperatorSurfaces() {
       clearInterval(boardTimer);
     };
   }, [load, loadBoard]);
-  return { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, refresh: load, refreshBoard: loadBoard };
+  return { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, refresh: load, refreshBoard: loadBoard };
 }
 
 function createSession(refresh: () => Promise<void>): void {
@@ -2499,7 +2503,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const gitStatus = useGitStatus();
   const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
-  const { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, refresh: refreshSchedules } = useOperatorSurfaces();
+  const { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, refresh: refreshSchedules } = useOperatorSurfaces();
   // W163: the board's per-column view preferences live UI-local — read once
   // per browser from the persisted IssueViewState and saved on change; they
   // never ride any board payload (pinned by construction).
@@ -2854,7 +2858,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           }}
         />
       ) : view === "board" ? (
-        <BoardView board={board} reason={boardReason} read={boardRead} workProducts={workProducts} viewState={issueViewState} onViewState={updateIssueViewState} />
+        <BoardView board={board} reason={boardReason} read={boardRead} workProducts={workProducts} inProgress={inProgress} viewState={issueViewState} onViewState={updateIssueViewState} />
       ) : view === "usage" ? (
         <UsageView />
       ) : view === "settings" ? (
