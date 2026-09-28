@@ -678,15 +678,17 @@ export class TaskGraph {
   }
 
   /** W159/W166: the persisted/constructed record must be well-formed caller
-   * data — a named owner from the W157 vocabulary, a non-empty action, and a
-   * caller-supplied enteredAt (the kernel reads no clock). */
+   * data — a named owner from the W157 vocabulary, a non-empty action, a
+   * caller-supplied enteredAt (the kernel reads no clock), and a string
+   * reason when present. */
   #assertBlockedShape(record: BlockedRecord): void {
     if (
       !ACTOR_VOCABULARY.includes(record.owner) ||
       typeof record.action !== "string" || record.action.trim().length === 0 ||
+      (record.reason !== undefined && typeof record.reason !== "string") ||
       typeof record.enteredAt !== "string" || record.enteredAt.trim().length === 0
     ) {
-      throw new TypeError("malformed blocked record: needs an owner from the actor vocabulary, a non-empty action, and a caller-supplied enteredAt");
+      throw new TypeError("malformed blocked record: needs an owner from the actor vocabulary, a non-empty action, a caller-supplied enteredAt, and a string reason when present");
     }
   }
 }
