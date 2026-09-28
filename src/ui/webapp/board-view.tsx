@@ -1,5 +1,5 @@
 import { boardProjection, GITHUB_ISSUES_PAGE_SIZE } from "../../integrations/task-provider.js";
-import type { BoardOutcome, ExternalTask } from "../../integrations/task-provider.js";
+import type { BoardOutcome, ExternalTask, WorkProductCardState } from "../../integrations/task-provider.js";
 import { BOARD_POLL_MS } from "./presenters.js";
 import { useState } from "react";
 
@@ -13,9 +13,10 @@ import { useState } from "react";
  * synthesis); `undefined` means the board has not answered yet and `null`
  * means the hub is unavailable or predates the /api/board route.
  */
-export function BoardView({ board, reason }: {
+export function BoardView({ board, reason, workProducts }: {
   readonly board: BoardOutcome | null | undefined;
   readonly reason?: string | undefined;
+  readonly workProducts?: Readonly<Record<string, WorkProductCardState>> | undefined;
 }) {
   if (board === undefined) {
     return (
@@ -51,6 +52,20 @@ export function BoardView({ board, reason }: {
     );
   }
   const columns = boardProjection(board.board);
+  // W165: the in_review set is the cards whose REGISTRY-sourced link names a
+  // provider-owned open pull request — the hub's payload is the only source;
+  // without the payload the column does not exist at all (no authority, no
+  // column — the amendment's honest subset rule).
+  const inReviewKeys = new Set<string>();
+  if (workProducts !== undefined) {
+    for (const task of board.board.tasks) {
+      const card = workProducts[task.key];
+      if (card?.state === "linked" && card.product.state === "open") inReviewKeys.add(task.key);
+    }
+  }
+  const open = columns.open.filter((task) => !inReviewKeys.has(task.key));
+  const closed = columns.closed.filter((task) => !inReviewKeys.has(task.key));
+  const inReview = board.board.tasks.filter((task) => inReviewKeys.has(task.key));
   return (
     <section className="sessions-view" aria-label="Task board">
       <header className="sessions-view-head">
@@ -67,8 +82,11 @@ export function BoardView({ board, reason }: {
         <span className="board-meta" title="the hub re-reads the provider on this cadence">polled every {BOARD_POLL_MS / 1000}s</span>
       </header>
       <div className="board-columns">
-        <BoardColumn title="open" tasks={columns.open} />
-        <BoardColumn title="closed" tasks={columns.closed} />
+        <BoardColumn title="open" tasks={open} workProducts={workProducts} />
+        {workProducts !== undefined && (
+          <BoardColumn title="in_review" tasks={inReview} workProducts={workProducts} />
+        )}
+        <BoardColumn title="closed" tasks={closed} workProducts={workProducts} />
       </div>
     </section>
   );
@@ -76,17 +94,22 @@ export function BoardView({ board, reason }: {
 
 /** One board column: header count derives from the projected array itself,
  * and an empty column renders its honest empty note — never a fabricated card. */
-function BoardColumn({ title, tasks }: {
-  readonly title: "open" | "closed";
+function BoardColumn({ title, tasks, workProducts }: {
+  readonly title: "open" | "in_review" | "closed";
   readonly tasks: readonly ExternalTask[];
+  readonly workProducts?: Readonly<Record<string, WorkProductCardState>> | undefined;
 }) {
   return (
     <div className="board-column">
-      <h3>{title} ({tasks.length})</h3>
+      {/* One template-literal child: the column header must render as a
+          contiguous text node (the pins slice the markup on it). */}
+      <h3>{`${title} (${tasks.length})`}</h3>
       <ul aria-label={`${title} issues`}>
         {tasks.length === 0 ? (
           <li><p className="muted sessions-empty-note">no {title} issues</p></li>
-        ) : tasks.map((task) => <BoardCard key={task.key} task={task} />)}
+        ) : tasks.map((task) => (
+          <BoardCard key={task.key} task={task} workProduct={workProducts?.[task.key]} />
+        ))}
       </ul>
     </div>
   );
@@ -96,7 +119,10 @@ function BoardColumn({ title, tasks }: {
  * delegate affordance after the meta row. The delegate dispatch composes
  * hub-side — the browser sends only the issue number and its workspace
  * choice; refusals render verbatim (the rendered-deny rule). */
-function BoardCard({ task }: { readonly task: ExternalTask }) {
+function BoardCard({ task, workProduct }: {
+  readonly task: ExternalTask;
+  readonly workProduct: WorkProductCardState | undefined;
+}) {
   return (
     <li className="board-card">
       <a href={task.url} target="_blank" rel="noreferrer noopener">
@@ -111,6 +137,7 @@ function BoardCard({ task }: { readonly task: ExternalTask }) {
         {task.assignee !== undefined && <span className="board-meta">@{task.assignee}</span>}
         <span className="board-meta">{task.updatedAt.slice(0, 10)}</span>
       </div>
+      <WorkProductStateView workProduct={workProduct} />
       <BoardDelegateButton task={task} />
     </li>
   );
@@ -134,6 +161,30 @@ export function BoardDelegationResultView({ result }: { readonly result: BoardDe
       {result.detail}
       <span className="muted"> [{result.code}]</span>
     </span>
+  );
+}
+
+/** The card's work-product state (W165): the registry-sourced link and the
+ * provider-owned PR state rendered VERBATIM — unlinked is honest, an
+ * unreadable read renders its reason, and the read's as-of liveness is
+ * stated. No attribution is synthesized: only fields the hub payload
+ * carries render, and a card with no payload fact renders nothing. */
+function WorkProductStateView({ workProduct }: {
+  readonly workProduct: WorkProductCardState | undefined;
+}) {
+  if (workProduct === undefined) return null;
+  if (workProduct.state === "unlinked") {
+    return <div className="board-work-product">work product: unlinked</div>;
+  }
+  if (workProduct.state === "unreadable") {
+    return <div className="board-work-product">work product: {workProduct.reason}</div>;
+  }
+  const { product } = workProduct;
+  return (
+    <div className="board-work-product">
+      work product: <code>{product.key}</code> {product.state}
+      {product.draft === true ? " draft" : ""} as of {product.asOf}
+    </div>
   );
 }
 

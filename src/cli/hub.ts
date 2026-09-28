@@ -7,7 +7,7 @@ import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createEvidenceContentStore } from "../integrations/evidence-content-store.js";
 import { fetchBoardTasksFromEnv } from "../integrations/azure-devops-provider.js";
-import { boardProviderFromEnv, fetchBoardTask } from "../integrations/task-provider.js";
+import { boardProviderFromEnv, fetchBoardTask, fetchWorkProductState } from "../integrations/task-provider.js";
 import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
 import { createCredentialBroker } from "../integrations/credentials.js";
@@ -431,6 +431,9 @@ try {
     // hub still serves the route; the payload names the missing declaration.
     readBoardTasks: () => fetchBoardTasksFromEnv(process.env),
     delegateBoardTask: (issue: number) => fetchBoardTask(boardProviderFromEnv(process.env), issue),
+    // W165: the board's pull-request-state read closure — the same env-classified
+    // provider, one bounded read per linked reference.
+    readWorkProductState: (issue: number) => fetchWorkProductState(boardProviderFromEnv(process.env), issue),
     schedulerFactory,
     schedules: scheduleRegistry,
     projects: projectRegistry,

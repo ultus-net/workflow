@@ -156,10 +156,12 @@ export function createWorkflowWebServer(
    * predating the slice, answers board: null with the reason — never a
    * fabricated empty board. The browser never sees a hub token or the
    * provider credential. */
-  const hubBoard = async (): Promise<{ board: unknown; reason?: string }> => {
+  const hubBoard = async (): Promise<{ board: unknown; reason?: string; workProducts?: unknown }> => {
     const result = await hubPost("/board/tasks", {});
-    const payload = result.payload as { board?: unknown; error?: string } | undefined;
-    if (result.status === 200 && payload?.board !== undefined) return { board: payload.board };
+    const payload = result.payload as { board?: unknown; error?: string; workProducts?: unknown } | undefined;
+    if (result.status === 200 && payload?.board !== undefined) {
+      return { board: payload.board, ...(payload.workProducts === undefined ? {} : { workProducts: payload.workProducts }) };
+    }
     return { board: null, reason: payload?.error ?? "hub unavailable" };
   };
 
