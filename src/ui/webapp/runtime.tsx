@@ -107,6 +107,19 @@ function useShowThinking(): readonly [boolean, (value: boolean) => void] {
   return [showThinking, update];
 }
 
+/** The completion-notification preference key; the settings dialog owns the write. */
+const NOTIFY_KEY = "workflow.notify-completion";
+
+/** Whether the operator opted in to completion notifications (exported for the storage-guard pins). */
+export function readNotifyCompletion(): boolean {
+  try {
+    return window.localStorage.getItem(NOTIFY_KEY) === "true";
+  } catch {
+    // Storage withheld (block-all-cookies, quota): reads as the absent-key default - off.
+    return false;
+  }
+}
+
 /** Polls the Workflow-owned session projection; the browser holds no authority.
  * With a sessionId the poll targets that parallel live session explicitly. */
 function useWorkflowSession(sessionId: string | undefined) {
@@ -185,7 +198,7 @@ export function WorkflowRuntimeProvider({ children, sessionId, onCommandSession 
     setSeenState(envelope.state.state);
     const finished = envelope.state.state === "completed" || envelope.state.state === "failed";
     if (previous !== "running" || !finished) return;
-    if (window.localStorage.getItem("workflow.notify-completion") !== "true" || document.hidden === false) return;
+    if (!readNotifyCompletion() || document.hidden === false) return;
     const body = envelope.state.state === "completed" ? "The agent finished its turn." : "The agent turn failed.";
     if (typeof Notification !== "undefined" && Notification.permission === "granted") {
       new Notification("Workflow", { body });
