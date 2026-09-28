@@ -11,7 +11,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   boardProviderFromEnv,
   fetchBoardTasks,
-  type BoardProviderState,
   type GitHubBoardProviderState,
   type GitHubIssuePayload,
 } from "../src/integrations/task-provider.js";
