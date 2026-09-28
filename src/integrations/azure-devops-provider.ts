@@ -25,7 +25,7 @@
  * payload, record, or error text.
  */
 
-import { boardProviderFromEnv, fetchBoardTasks } from "./task-provider.js";
+import { boardProviderFromEnv, fetchBoardTasks, type BoardReadCache } from "./task-provider.js";
 import type { BoardOutcome, BoardProviderState, ExternalTask } from "./task-provider.js";
 
 /** The classified Azure DevOps declaration: the lane's unconfigured state
@@ -278,6 +278,7 @@ export async function fetchAzureDevOpsBoardTasks(
 export async function fetchBoardTasksFromEnv(
   env: NodeJS.ProcessEnv,
   fetchImpl: typeof fetch = fetch,
+  cache?: BoardReadCache,
 ): Promise<BoardOutcome> {
   const github = boardProviderFromEnv(env);
   const azure = azureDevOpsProviderFromEnv(env);
@@ -287,7 +288,9 @@ export async function fetchBoardTasksFromEnv(
       reason: "both providers are fully configured — the hub never silently picks one; unset one lane (GitHub: WORKFLOW_GITHUB_REPO/WORKFLOW_GITHUB_TOKEN, Azure DevOps: WORKFLOW_AZURE_DEVOPS_ORG/WORKFLOW_AZURE_DEVOPS_PROJECT/WORKFLOW_AZURE_DEVOPS_TOKEN)",
     };
   }
-  if (github.kind === "github") return fetchBoardTasks(github, fetchImpl);
+  // W163: the etag cache rides the GitHub lane (task-provider's
+  // fetchBoardTasks); the ADO lane's read stays uncached this slice.
+  if (github.kind === "github") return fetchBoardTasks(github, fetchImpl, cache);
   if (azure.kind === "azure_devops") return fetchAzureDevOpsBoardTasks(azure, fetchImpl);
   return {
     state: "unconfigured",

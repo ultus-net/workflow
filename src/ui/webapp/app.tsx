@@ -20,6 +20,7 @@ import { PostureStrip, usePosture } from "./posture-strip.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
 import { ProjectsView, type ProjectMeta } from "./projects-view.js";
 import { BoardView } from "./board-view.js";
+import { readIssueViewState, saveIssueViewState, type IssueViewState } from "./issue-view-state.js";
 import type { ScheduleRecentRun } from "../../integrations/operator-posture.js";
 import type { BoardOutcome, WorkProductCardState } from "../../integrations/task-provider.js";
 import type { ProviderReadRecord } from "../../integrations/issue-detail.js";
@@ -2499,6 +2500,14 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
   const { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, refresh: refreshSchedules } = useOperatorSurfaces();
+  // W163: the board's per-column view preferences live UI-local — read once
+  // per browser from the persisted IssueViewState and saved on change; they
+  // never ride any board payload (pinned by construction).
+  const [issueViewState, setIssueViewState] = useState<IssueViewState>(() => readIssueViewState(window.localStorage));
+  const updateIssueViewState = useCallback((next: IssueViewState): void => {
+    setIssueViewState(next);
+    saveIssueViewState(window.localStorage, next);
+  }, []);
   const posture = usePosture();
   const agents = useAgents();
   // The registry leads with the default agent (OpenCode); fall back to it while
@@ -2845,7 +2854,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           }}
         />
       ) : view === "board" ? (
-        <BoardView board={board} reason={boardReason} read={boardRead} workProducts={workProducts} />
+        <BoardView board={board} reason={boardReason} read={boardRead} workProducts={workProducts} viewState={issueViewState} onViewState={updateIssueViewState} />
       ) : view === "usage" ? (
         <UsageView />
       ) : view === "settings" ? (

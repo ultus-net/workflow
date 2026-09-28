@@ -2,28 +2,42 @@ import { boardProjection, GITHUB_ISSUES_PAGE_SIZE } from "../../integrations/tas
 import type { BoardOutcome, ExternalTask, WorkProductCardState } from "../../integrations/task-provider.js";
 import type { IssueDetailOutcome, ProviderReadRecord } from "../../integrations/issue-detail.js";
 import { BOARD_POLL_MS, BOARD_LINK_LIVENESS_LABELS, boardLinkLiveness } from "./presenters.js";
+import { withColumnDensity, withColumnPageSize, type IssueViewState } from "./issue-view-state.js";
 import { useState } from "react";
 
 /**
  * The Board page (W161): the hub's external task board projected live. The
- * two columns derive ONLY from the provider-owned `state` field via the
- * shared `boardProjection` (provider order preserved) — never a UI-side
- * status guess — and the hub's honest bookkeeping (skipped provider rows,
- * excluded pull requests, truncation) renders only when nonzero. The
- * provider's own timestamps render verbatim (date prefix, no relative-time
- * synthesis); `undefined` means the board has not answered yet and `null`
- * means the hub is unavailable or predates the /api/board route.
+ * columns derive ONLY from the provider-owned `state` field via the shared
+ * `boardProjection` (provider order preserved) — never a UI-side status
+ * guess — and the hub's honest bookkeeping (skipped provider rows, excluded
+ * pull requests, truncation) renders only when nonzero. The provider's own
+ * timestamps render verbatim (date prefix, no relative-time synthesis);
+ * `undefined` means the board has not answered yet and `null` means the hub
+ * is unavailable or predates the /api/board route.
  *
  * W167: the `read` record is the hub's own recorded provider-read state —
  * the ONLY source the card's liveness pill derives from (via the shared
  * `boardLinkLiveness`). No record renders no pill and no dashed link: nothing
  * may claim a freshness the hub has no record of. NOT-fresh renders dashed.
+ *
+ * W163: the closed column converges on the provider-owned state_reason —
+ * done (completed) and cancelled (not_planned/duplicate) render only when
+ * their authority exists, the legacy closed column stands for tasks without
+ * one (and always, byte-identically, when the board carries no state_reason
+ * at all). Each column renders at most BOARD_COLUMN_RENDER_CAP cards and
+ * states the truncation honestly ("showing N of M received", keyed on the
+ * RECEIVED count). The read cache's TTL/hit bookkeeping renders beside the
+ * other honesty spans. The per-column page-size/density preferences arrive
+ * via `viewState` (the browser-local IssueViewState — never a board-payload
+ * field) and update through `onViewState`.
  */
-export function BoardView({ board, reason, read, workProducts }: {
+export function BoardView({ board, reason, read, workProducts, viewState, onViewState }: {
   readonly board: BoardOutcome | null | undefined;
   readonly reason?: string | undefined;
   readonly read?: ProviderReadRecord | null | undefined;
   readonly workProducts?: Readonly<Record<string, WorkProductCardState>> | undefined;
+  readonly viewState?: IssueViewState | undefined;
+  readonly onViewState?: ((next: IssueViewState) => void) | undefined;
 }) {
   if (board === undefined) {
     return (
@@ -72,7 +86,18 @@ export function BoardView({ board, reason, read, workProducts }: {
   }
   const open = columns.open.filter((task) => !inReviewKeys.has(task.key));
   const closed = columns.closed.filter((task) => !inReviewKeys.has(task.key));
+  // W163: the split columns reclassify the same way — a completed/cancelled
+  // issue with a linked open PR lands in in_review like any other card.
+  const done = columns.done.filter((task) => !inReviewKeys.has(task.key));
+  const cancelled = columns.cancelled.filter((task) => !inReviewKeys.has(task.key));
   const inReview = board.board.tasks.filter((task) => inReviewKeys.has(task.key));
+  const cacheLabel = board.board.cache === undefined
+    ? undefined
+    : `provider read ${board.board.cache.hit ? "cached" : "fresh"} — cache TTL ${Math.round(board.board.cache.ttlMs / 1000)}s${
+      board.board.cache.revalidated === true
+        ? ", revalidated just now"
+        : board.board.cache.ageMs === undefined ? "" : `, ${Math.round(board.board.cache.ageMs / 1000)}s old`
+    }`;
   return (
     <section className="sessions-view" aria-label="Task board">
       <header className="sessions-view-head">
@@ -86,36 +111,91 @@ export function BoardView({ board, reason, read, workProducts }: {
         {board.board.truncated === true && (
           <span className="board-meta">showing the {GITHUB_ISSUES_PAGE_SIZE} most recently updated issues — more may exist</span>
         )}
+        {cacheLabel !== undefined && <span className="board-meta">{cacheLabel}</span>}
         <span className="board-meta" title="the hub re-reads the provider on this cadence">polled every {BOARD_POLL_MS / 1000}s</span>
       </header>
       <div className="board-columns">
-        <BoardColumn title="open" tasks={open} workProducts={workProducts} read={read} />
+        <BoardColumn title="open" tasks={open} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
         {workProducts !== undefined && (
-          <BoardColumn title="in_review" tasks={inReview} workProducts={workProducts} read={read} />
+          <BoardColumn title="in_review" tasks={inReview} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
         )}
-        <BoardColumn title="closed" tasks={closed} workProducts={workProducts} read={read} />
+        {done.length > 0 && (
+          <BoardColumn title="done" tasks={done} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
+        )}
+        {cancelled.length > 0 && (
+          <BoardColumn title="cancelled" tasks={cancelled} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
+        )}
+        {(columns.stateReasonAuthority ? closed.length > 0 : true) && (
+          <BoardColumn title="closed" tasks={closed} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
+        )}
       </div>
     </section>
   );
 }
 
-/** One board column: header count derives from the projected array itself,
- * and an empty column renders its honest empty note — never a fabricated card. */
-function BoardColumn({ title, tasks, workProducts, read }: {
-  readonly title: "open" | "in_review" | "closed";
+/** W163: the per-column render cap (paperclip's 200-per-column bound): the
+ * payload keeps every received task; the view renders at most this many per
+ * column and states the truncation honestly — "showing N of M received",
+ * keyed on the RECEIVED count, never the rendered count (the LESS-0061
+ * lesson). */
+export const BOARD_COLUMN_RENDER_CAP = 200;
+
+const BOARD_COLUMN_PAGE_SIZES = [25, 50, 100] as const;
+
+/** One board column: the header count derives from the RECEIVED array itself
+ * (the projection population, before any render cap); the render caps at the
+ * column's page-size preference or the default cap, and a capped column
+ * states "showing N of M received"; an empty column renders its honest empty
+ * note — never a fabricated card. W163: the density preference marks the
+ * container (data-density plus the compact class), and the per-column prefs
+ * controls render only when the page supplies a handler — the preferences
+ * live UI-local, never in the board payload. */
+function BoardColumn({ title, tasks, workProducts, read, viewState, onViewState }: {
+  readonly title: "open" | "in_review" | "done" | "cancelled" | "closed";
   readonly tasks: readonly ExternalTask[];
   readonly workProducts?: Readonly<Record<string, WorkProductCardState>> | undefined;
   readonly read: ProviderReadRecord | null | undefined;
+  readonly viewState?: IssueViewState | undefined;
+  readonly onViewState?: ((next: IssueViewState) => void) | undefined;
 }) {
+  const prefs = viewState?.[title];
+  const cap = prefs?.pageSize ?? BOARD_COLUMN_RENDER_CAP;
+  const rendered = tasks.length > cap ? tasks.slice(0, cap) : tasks;
   return (
-    <div className="board-column">
+    <div className={`board-column${prefs?.density === "compact" ? " board-column-compact" : ""}`} data-density={prefs?.density}>
       {/* One template-literal child: the column header must render as a
           contiguous text node (the pins slice the markup on it). */}
       <h3>{`${title} (${tasks.length})`}</h3>
+      {onViewState !== undefined && (
+        <div className="board-column-prefs">
+          <select
+            className="board-column-page-size"
+            aria-label={`${title} page size`}
+            value={prefs?.pageSize === undefined ? "" : String(prefs.pageSize)}
+            onChange={(event) => onViewState(withColumnPageSize(viewState ?? {}, title, event.target.value === "" ? undefined : Number(event.target.value)))}
+          >
+            <option value="">cap ({BOARD_COLUMN_RENDER_CAP})</option>
+            {BOARD_COLUMN_PAGE_SIZES.map((size) => (
+              <option key={size} value={size}>{size}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="board-column-density"
+            aria-label={`${title} density`}
+            onClick={() => onViewState(withColumnDensity(viewState ?? {}, title, prefs?.density === "compact" ? "cozy" : "compact"))}
+          >
+            {prefs?.density === "compact" ? "cozy" : "compact"}
+          </button>
+        </div>
+      )}
+      {rendered.length < tasks.length && (
+        <p className="board-meta board-column-count">{`showing ${rendered.length} of ${tasks.length} received`}</p>
+      )}
       <ul aria-label={`${title} issues`}>
         {tasks.length === 0 ? (
           <li><p className="muted sessions-empty-note">no {title} issues</p></li>
-        ) : tasks.map((task) => (
+        ) : rendered.map((task) => (
           <BoardCard key={task.key} task={task} workProduct={workProducts?.[task.key]} read={read} />
         ))}
       </ul>

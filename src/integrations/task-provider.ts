@@ -53,6 +53,16 @@
  * one discovered reference through the same read — the PR's own state
  * decides. Zero or multiple references stay honestly unreadable naming the
  * ambiguity; the join itself records nothing.
+ *
+ * W163: the closed column converges on the provider-owned state_reason —
+ * completed → done, not_planned/duplicate → cancelled; a closed issue with
+ * a missing or unknown reason keeps the legacy closed column (no authority,
+ * no split, no label guesses). The hub-side board read also carries an etag
+ * cache: an entry within the TTL serves the cached board with no upstream
+ * call (overlapping tabs share one read), a stale entry revalidates with
+ * If-None-Match (a 304 serves the cached board as a revalidated hit), and an
+ * entry past the TTL is never served — a failed revalidation is the honest
+ * error.
  */
 
 import type { WorkProductLink } from "./run-registry.js";
@@ -66,6 +76,12 @@ export interface ExternalTask {
   readonly key: string;
   readonly title: string;
   readonly state: "open" | "closed";
+  /** W163: the provider-owned state_reason behind a closed state (GitHub's
+   * completed/not_planned/duplicate/reopened). Absent is the honest absent
+   * case: a closed task without one has NO authority for a split and stays
+   * in the legacy closed column; an unrecognized string is the same honest
+   * absence — never a guessed column. */
+  readonly stateReason?: "completed" | "not_planned" | "duplicate" | "reopened";
   readonly url: string;
   readonly labels: readonly string[];
   readonly assignee?: string;
@@ -85,6 +101,70 @@ export interface BoardTasks {
   /** Set when the response filled the whole first page: more may exist, and
    * the board must say so rather than imply completeness. */
   readonly truncated?: true;
+  /** W163: the read cache's TTL/hit bookkeeping — present only when the hub
+   * read rides a cache (the composed hub lane); a cache-less caller's
+   * payload is unchanged. */
+  readonly cache?: BoardCacheMetadata;
+}
+
+/** W163: the hub-side read cache's honest bookkeeping on the board payload —
+ * the TTL the hub serves within, whether THIS answer came from the cache,
+ * and (for a hit) the cached board's age. A stale entry is never served: it
+ * revalidates with If-None-Match first, and `revalidated` marks that 304
+ * hit. */
+export interface BoardCacheMetadata {
+  readonly ttlMs: number;
+  readonly hit: boolean;
+  readonly ageMs?: number;
+  readonly revalidated?: true;
+}
+
+/** W163: the TTL the hub serves a cached board read within. Overlapping
+ * tabs share one upstream read inside it; past it the entry revalidates with
+ * If-None-Match — it is never served stale. */
+export const BOARD_CACHE_TTL_MS = 30_000;
+
+/** One cached board read: the etag the provider answered with (absent when
+ * the provider supplied none — the next stale read then goes out
+ * unconditionally), the ok board it served, and when the hub fetched or last
+ * revalidated it. Errors are never cached. */
+export interface BoardReadCacheEntry {
+  readonly etag?: string;
+  readonly board: BoardTasks;
+  readonly fetchedAt: number;
+}
+
+/** The hub-side board-read cache: keyed by repo, one in-flight read per repo
+ * shared across callers (overlapping tabs), entries served only within the
+ * TTL. The key set is the env-declared repos — bounded by construction. */
+export interface BoardReadCache {
+  readonly ttlMs: number;
+  get(repo: string): BoardReadCacheEntry | undefined;
+  set(repo: string, entry: BoardReadCacheEntry): void;
+  /** The read another caller already started for the repo, if any — awaiting
+   * it shares that upstream read. */
+  inflight(repo: string): Promise<BoardOutcome> | undefined;
+  beginInflight(repo: string, read: Promise<BoardOutcome>): void;
+  endInflight(repo: string): void;
+}
+
+export function createBoardReadCache(ttlMs: number = BOARD_CACHE_TTL_MS): BoardReadCache {
+  const entries = new Map<string, BoardReadCacheEntry>();
+  const inflights = new Map<string, Promise<BoardOutcome>>();
+  return {
+    ttlMs,
+    get: (repo) => entries.get(repo),
+    set: (repo, entry) => {
+      entries.set(repo, entry);
+    },
+    inflight: (repo) => inflights.get(repo),
+    beginInflight: (repo, read) => {
+      inflights.set(repo, read);
+    },
+    endInflight: (repo) => {
+      inflights.delete(repo);
+    },
+  };
 }
 
 /** The fetch outcome the hub route and the web relay carry. */
@@ -148,6 +228,10 @@ export interface GitHubIssuePayload {
   readonly number: number;
   readonly title: string;
   readonly state: string;
+  /** W163: the provider-owned closed reason (completed/not_planned/
+   * duplicate/reopened). Optional like labels: an ABSENT field is the
+   * honest absent case; a wrong-TYPED field makes the row malformed. */
+  readonly state_reason?: unknown;
   readonly html_url: string;
   readonly updated_at: string;
   readonly labels?: readonly ({ readonly name?: unknown } | string)[];
@@ -177,11 +261,21 @@ function externalTaskFromPayload(payload: GitHubIssuePayload): ExternalTask | un
     return typeof label?.name === "string" && label.name.length > 0 ? [label.name] : [];
   });
   const assignee = typeof payload.assignee?.login === "string" ? payload.assignee.login : undefined;
+  // W163: the provider-owned state_reason. A PRESENT wrong-typed field makes
+  // the row malformed (the labels precedent: never a coerced guess); an
+  // unrecognized string carries no split authority and maps to the honest
+  // absence — the projection keeps such a closed row in the legacy column.
+  if (payload.state_reason !== undefined && typeof payload.state_reason !== "string") return undefined;
+  const stateReason = payload.state_reason === "completed" || payload.state_reason === "not_planned"
+    || payload.state_reason === "duplicate" || payload.state_reason === "reopened"
+    ? payload.state_reason
+    : undefined;
   return {
     provider: "github",
     key: `#${payload.number}`,
     title: payload.title,
     state: payload.state,
+    ...(stateReason === undefined ? {} : { stateReason }),
     url: payload.html_url,
     labels,
     ...(assignee === undefined ? {} : { assignee }),
@@ -193,12 +287,59 @@ function externalTaskFromPayload(payload: GitHubIssuePayload): ExternalTask | un
  * Fetches the provider's issues (first page, updated-descending) with a
  * bounded 5s abort (the W144 lesson: no unbounded lane). A non-2xx answer
  * and a transport failure are honest error states that name what happened.
+ *
+ * W163: with a cache, the read is hub-side shared — an entry within the TTL
+ * serves the cached board with NO upstream call (overlapping tabs share one
+ * read); a stale entry revalidates with If-None-Match and a 304 serves the
+ * cached board as a revalidated hit; an entry past the TTL is never served
+ * (a failed revalidation is the honest error, never a stale serve); errors
+ * are never cached. Without a cache the read is the byte-identical W161
+ * path.
  */
 export async function fetchBoardTasks(
   provider: GitHubBoardProviderState,
   fetchImpl: typeof fetch = fetch,
+  cache?: BoardReadCache,
 ): Promise<BoardOutcome> {
   if (provider.kind !== "github") return { state: "unconfigured", missing: provider.missing };
+  if (cache === undefined) {
+    const answer = await readBoardTasksPage(provider, fetchImpl);
+    // notModified is unreachable without a conditional request (no etag is
+    // ever presented here); named, never guessed.
+    return answer.kind === "fresh"
+      ? answer.outcome
+      : { state: "error", reason: "the provider answered 304 to an unconditional read" };
+  }
+  const repo = provider.repo;
+  const cached = cache.get(repo);
+  if (cached !== undefined) {
+    const ageMs = Date.now() - cached.fetchedAt;
+    if (ageMs < cache.ttlMs) return boardOutcomeWithCache(cached.board, cache.ttlMs, { hit: true, ageMs });
+  }
+  const pending = cache.inflight(repo);
+  if (pending !== undefined) return pending;
+  const read = readWithCache(provider, fetchImpl, cache, cached);
+  cache.beginInflight(repo, read);
+  try {
+    return await read;
+  } finally {
+    cache.endInflight(repo);
+  }
+}
+
+/** One provider issues-page read: the outcome plus the etag the provider
+ * answered with (for the cache's conditional revalidation). A 304 to a
+ * conditional request is reported as notModified — the caller serves its
+ * cached board. */
+type BoardReadAnswer =
+  | { readonly kind: "fresh"; readonly outcome: BoardOutcome; readonly etag?: string }
+  | { readonly kind: "notModified" };
+
+async function readBoardTasksPage(
+  provider: Extract<BoardProviderState, { readonly kind: "github" }>,
+  fetchImpl: typeof fetch,
+  etag?: string,
+): Promise<BoardReadAnswer> {
   const url = `${GITHUB_API}/repos/${encodeURIComponent(provider.owner)}/${encodeURIComponent(provider.repoName)}/issues?state=all&sort=updated&direction=desc&per_page=${GITHUB_ISSUES_PAGE_SIZE}`;
   let response: Response;
   try {
@@ -208,24 +349,30 @@ export async function fetchBoardTasks(
         accept: "application/vnd.github+json",
         "user-agent": "workflow-hub (task board projection)",
         "x-github-api-version": "2022-11-28",
+        ...(etag === undefined ? {} : { "if-none-match": etag }),
       },
       signal: AbortSignal.timeout(5_000),
     });
   } catch (error) {
-    return { state: "error", reason: error instanceof Error ? error.message : String(error) };
+    return { kind: "fresh", outcome: { state: "error", reason: error instanceof Error ? error.message : String(error) } };
   }
+  // The 304 check precedes the !ok gate (304 is not an ok status) and keys
+  // on the etag that was actually presented — a 304 to an unconditional
+  // request is a provider protocol fault and falls through to the honest
+  // error.
+  if (response.status === 304 && etag !== undefined) return { kind: "notModified" };
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     const suffix = detail.length > 0 && detail.length <= 200 ? `: ${detail}` : "";
-    return { state: "error", reason: `the provider answered ${response.status}${suffix}`, status: response.status };
+    return { kind: "fresh", outcome: { state: "error", reason: `the provider answered ${response.status}${suffix}`, status: response.status } };
   }
   let parsed: unknown;
   try {
     parsed = await response.json();
   } catch (error) {
-    return { state: "error", reason: `the provider body was not JSON (${error instanceof Error ? error.message : String(error)})`, status: response.status };
+    return { kind: "fresh", outcome: { state: "error", reason: `the provider body was not JSON (${error instanceof Error ? error.message : String(error)})`, status: response.status } };
   }
-  if (!Array.isArray(parsed)) return { state: "error", reason: "the provider body was not an issue list", status: response.status };
+  if (!Array.isArray(parsed)) return { kind: "fresh", outcome: { state: "error", reason: "the provider body was not an issue list", status: response.status } };
   // Completeness honesty (review P1): the truncation flag keys on the RECEIVED
   // page count — before PRs and malformed rows are filtered — never on the
   // rendered count, which would hide a full page behind excluded rows.
@@ -248,15 +395,70 @@ export async function fetchBoardTasks(
     if (task === undefined) skipped += 1;
     else tasks.push(task);
   }
+  const wireEtag = response.headers.get("etag");
+  return {
+    kind: "fresh",
+    outcome: {
+      state: "ok",
+      board: {
+        provider: "github",
+        repo: provider.repo,
+        tasks,
+        skipped,
+        pullRequestsExcluded,
+        ...(received >= GITHUB_ISSUES_PAGE_SIZE ? { truncated: true as const } : {}),
+      },
+    },
+    ...(wireEtag === null ? {} : { etag: wireEtag }),
+  };
+}
+
+/** The cache-participating read: revalidates a stale entry (304 serves the
+ * cached board and refreshes its TTL window), stores a fresh ok board with
+ * its etag, and never stores an error — the next read retries upstream. */
+async function readWithCache(
+  provider: Extract<BoardProviderState, { readonly kind: "github" }>,
+  fetchImpl: typeof fetch,
+  cache: BoardReadCache,
+  cached: BoardReadCacheEntry | undefined,
+): Promise<BoardOutcome> {
+  const answer = await readBoardTasksPage(provider, fetchImpl, cached?.etag);
+  if (answer.kind === "notModified") {
+    // Unreachable without a cached etag (the conditional request is only
+    // sent when one exists); named, never guessed.
+    if (cached === undefined) return { state: "error", reason: "the provider answered 304 without a cached board" };
+    cache.set(provider.repo, { ...cached, fetchedAt: Date.now() });
+    return boardOutcomeWithCache(cached.board, cache.ttlMs, { hit: true, revalidated: true, ageMs: 0 });
+  }
+  if (answer.outcome.state === "ok") {
+    cache.set(provider.repo, {
+      ...(answer.etag === undefined ? {} : { etag: answer.etag }),
+      board: answer.outcome.board,
+      fetchedAt: Date.now(),
+    });
+  }
+  return answer.outcome.state === "ok"
+    ? boardOutcomeWithCache(answer.outcome.board, cache.ttlMs, { hit: false })
+    : answer.outcome;
+}
+
+/** The board outcome served at a cache participation point: the cached or
+ * freshly read board with the cache's honest TTL/hit bookkeeping attached. */
+function boardOutcomeWithCache(
+  board: BoardTasks,
+  ttlMs: number,
+  meta: { readonly hit: boolean; readonly ageMs?: number; readonly revalidated?: true },
+): BoardOutcome {
   return {
     state: "ok",
     board: {
-      provider: "github",
-      repo: provider.repo,
-      tasks,
-      skipped,
-      pullRequestsExcluded,
-      ...(received >= GITHUB_ISSUES_PAGE_SIZE ? { truncated: true as const } : {}),
+      ...board,
+      cache: {
+        ttlMs,
+        hit: meta.hit,
+        ...(meta.ageMs === undefined ? {} : { ageMs: meta.ageMs }),
+        ...(meta.revalidated === true ? { revalidated: true as const } : {}),
+      },
     },
   };
 }
@@ -620,11 +822,49 @@ export async function workProductStates(
   return Object.fromEntries(cards);
 }
 
-/** The board projection: columns from the provider-owned state field only,
- * provider order preserved (updated-descending), inputs never mutated. */
-export function boardProjection(board: BoardTasks): { readonly open: readonly ExternalTask[]; readonly closed: readonly ExternalTask[] } {
+/** The W163 column set: columns from the provider-owned state field plus the
+ * provider-owned state_reason split of closed — completed → done,
+ * not_planned/duplicate → cancelled; a closed task with a missing or unknown
+ * reason keeps the legacy closed column (no authority, no split, no label
+ * guesses). Provider order preserved per column, inputs never mutated. The
+ * `stateReasonAuthority` marker reports whether ANY task carries a
+ * provider-owned reason: once true, the legacy closed column stands only for
+ * tasks without one. */
+export interface BoardProjection {
+  readonly open: readonly ExternalTask[];
+  readonly done: readonly ExternalTask[];
+  readonly cancelled: readonly ExternalTask[];
+  /** Closed tasks without split authority (missing or unknown state_reason)
+   * — the legacy closed column's population. */
+  readonly closed: readonly ExternalTask[];
+  readonly stateReasonAuthority: boolean;
+}
+
+export function boardProjection(board: BoardTasks): BoardProjection {
+  const open: ExternalTask[] = [];
+  const done: ExternalTask[] = [];
+  const cancelled: ExternalTask[] = [];
+  const closed: ExternalTask[] = [];
+  for (const task of board.tasks) {
+    if (task.state === "open") {
+      open.push(task);
+      continue;
+    }
+    if (task.stateReason === "completed") {
+      done.push(task);
+      continue;
+    }
+    if (task.stateReason === "not_planned" || task.stateReason === "duplicate") {
+      cancelled.push(task);
+      continue;
+    }
+    closed.push(task);
+  }
   return {
-    open: board.tasks.filter((task) => task.state === "open"),
-    closed: board.tasks.filter((task) => task.state === "closed"),
+    open,
+    done,
+    cancelled,
+    closed,
+    stateReasonAuthority: board.tasks.some((task) => task.stateReason !== undefined),
   };
 }
