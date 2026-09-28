@@ -98,10 +98,25 @@ export function useSessionState(): Readonly<{
 /** Whether agent thinking blocks render in the transcript (presentation-only). */
 const SHOW_THINKING_KEY = "workflow.show-thinking";
 
+function readShowThinking(): boolean {
+  // A storage-denied browser (block-all-cookies throws on the property
+  // access itself; getItem rejects at call time) degrades to the toggle's
+  // own default, never a fabricated false.
+  try {
+    return window.localStorage.getItem(SHOW_THINKING_KEY) !== "false";
+  } catch {
+    return true;
+  }
+}
+
 function useShowThinking(): readonly [boolean, (value: boolean) => void] {
-  const [showThinking, setShowThinking] = useState(() => window.localStorage.getItem(SHOW_THINKING_KEY) !== "false");
+  const [showThinking, setShowThinking] = useState(readShowThinking);
   const update = useCallback((value: boolean): void => {
-    window.localStorage.setItem(SHOW_THINKING_KEY, String(value));
+    try {
+      window.localStorage.setItem(SHOW_THINKING_KEY, String(value));
+    } catch {
+      // Private browsing or quota: persistence is best-effort.
+    }
     setShowThinking(value);
   }, []);
   return [showThinking, update];
