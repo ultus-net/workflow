@@ -106,8 +106,8 @@ export function BoardView({ board, reason, read, workProducts, inProgress, viewS
   const closed = columns.closed.filter((task) => !inReviewKeys.has(task.key) && !inProgressKeys.has(task.key));
   // W163: the split columns reclassify the same way — a completed/cancelled
   // issue with a linked open PR lands in in_review like any other card.
-  const done = columns.done.filter((task) => !inReviewKeys.has(task.key));
-  const cancelled = columns.cancelled.filter((task) => !inReviewKeys.has(task.key));
+  const done = columns.done.filter((task) => !inReviewKeys.has(task.key) && !inProgressKeys.has(task.key));
+  const cancelled = columns.cancelled.filter((task) => !inReviewKeys.has(task.key) && !inProgressKeys.has(task.key));
   const inReview = board.board.tasks.filter((task) => inReviewKeys.has(task.key) && !inProgressKeys.has(task.key));
   const cacheLabel = board.board.cache === undefined
     ? undefined

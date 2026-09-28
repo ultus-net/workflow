@@ -738,25 +738,6 @@ export type WorkProductCardState =
   | { readonly state: "unlinked" };
 
 /**
- * W165: the hub-side join over the registry's recorded run→PR links and the
- * board's task rows — one WorkProductCardState per board card, keyed by the
- * card's own reference. The most recently recorded link per reference wins
- * (the registry map's iteration order IS its recording order); the read
- * receives the numeric issue the link's key names ("#N"). Cards without a
- * recorded link are never sent to the provider — they render the honest
- * unlinked state, and no state is ever inferred.
- *
- * W171: the join stays PURE. When a linked reference's read fails with the
- * not-a-pull-request marker and `discover` is provided, the join asks the
- * PROVIDER (never a client) for the issue's cross-referenced PRs: exactly one
- * discovered reference is reported through `onDiscovered` (recording is the
- * route's bookkeeping) and re-read through the SAME read callback, so the
- * PR's own state decides the card. Zero references keep the unchanged
- * not-a-pull-request reason; multiple references and discovery faults are
- * honest unreadable states naming the ambiguity verbatim. `discover` absent
- * keeps the W165 behavior byte-identical.
- */
-/**
  * W162 slice 2: the hub-owned in_progress join — the OPEN board cards whose
  * provider-task origin names their key on an ACTIVE registry run (the
  * delegate route's recorded attribution, joined by the raw-id contract).
@@ -781,6 +762,25 @@ export function inProgressBoardTasks(
     .map((task) => task.key);
 }
 
+/**
+ * W165: the hub-side join over the registry's recorded run→PR links and the
+ * board's task rows — one WorkProductCardState per board card, keyed by the
+ * card's own reference. The most recently recorded link per reference wins
+ * (the registry map's iteration order IS its recording order); the read
+ * receives the numeric issue the link's key names ("#N"). Cards without a
+ * recorded link are never sent to the provider — they render the honest
+ * unlinked state, and no state is ever inferred.
+ *
+ * W171: the join stays PURE. When a linked reference's read fails with the
+ * not-a-pull-request marker and `discover` is provided, the join asks the
+ * PROVIDER (never a client) for the issue's cross-referenced PRs: exactly one
+ * discovered reference is reported through `onDiscovered` (recording is the
+ * route's bookkeeping) and re-read through the SAME read callback, so the
+ * PR's own state decides the card. Zero references keep the unchanged
+ * not-a-pull-request reason; multiple references and discovery faults are
+ * honest unreadable states naming the ambiguity verbatim. `discover` absent
+ * keeps the W165 behavior byte-identical.
+ */
 export async function workProductStates(
   board: BoardTasks,
   links: ReadonlyMap<string, WorkProductLink>,
