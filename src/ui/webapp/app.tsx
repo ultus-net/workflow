@@ -20,7 +20,7 @@ import { PostureStrip, usePosture } from "./posture-strip.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
 import { ProjectsView, type ProjectMeta } from "./projects-view.js";
 import { BoardView } from "./board-view.js";
-import { readIssueViewState, saveIssueViewState, type IssueViewState } from "./issue-view-state.js";
+import { readIssueViewStateGuarded, saveIssueViewStateGuarded, type IssueViewState } from "./issue-view-state.js";
 import type { ScheduleRecentRun } from "../../integrations/operator-posture.js";
 import type { BoardOutcome, WorkProductCardState } from "../../integrations/task-provider.js";
 import type { ProviderReadRecord } from "../../integrations/issue-detail.js";
@@ -2492,7 +2492,7 @@ export function App() {
   );
 }
 
-function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
+export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   readonly view: AppView;
   readonly setView: (view: AppView) => void;
   readonly focusedSessionId: string | undefined;
@@ -2507,10 +2507,10 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   // W163: the board's per-column view preferences live UI-local — read once
   // per browser from the persisted IssueViewState and saved on change; they
   // never ride any board payload (pinned by construction).
-  const [issueViewState, setIssueViewState] = useState<IssueViewState>(() => readIssueViewState(window.localStorage));
+  const [issueViewState, setIssueViewState] = useState<IssueViewState>(() => readIssueViewStateGuarded(window.localStorage));
   const updateIssueViewState = useCallback((next: IssueViewState): void => {
     setIssueViewState(next);
-    saveIssueViewState(window.localStorage, next);
+    saveIssueViewStateGuarded(window.localStorage, next);
   }, []);
   const posture = usePosture();
   const agents = useAgents();

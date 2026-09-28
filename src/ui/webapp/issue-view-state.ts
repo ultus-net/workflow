@@ -69,6 +69,29 @@ export function saveIssueViewState(storage: IssueViewStorage, state: IssueViewSt
   storage.setItem(ISSUE_VIEW_STATE_KEY, JSON.stringify(state));
 }
 
+/** Reads the persisted view preferences, degrading to the honest default —
+ * the same empty state the absent-key and corrupt-read paths return — when
+ * the STORAGE ITSELF refuses access (denied or at quota): the shell render
+ * path must never throw on a storage the browser withheld. */
+export function readIssueViewStateGuarded(storage: IssueViewStorage): IssueViewState {
+  try {
+    return readIssueViewState(storage);
+  } catch {
+    return {};
+  }
+}
+
+/** Persists the view preferences verbatim, best-effort: a storage that
+ * refuses the write (denied or at quota) is a no-op — the preferences apply
+ * for this session only, and the shell's update path never throws. */
+export function saveIssueViewStateGuarded(storage: IssueViewStorage, state: IssueViewState): void {
+  try {
+    saveIssueViewState(storage, state);
+  } catch {
+    // Private browsing or quota: persistence is best-effort.
+  }
+}
+
 function withColumnEntry(state: IssueViewState, column: string, next: IssueViewColumnPrefs): IssueViewState {
   const record: Record<string, IssueViewColumnPrefs> = { ...state };
   if (next.pageSize === undefined && next.density === undefined) delete record[column];
