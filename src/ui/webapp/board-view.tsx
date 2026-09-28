@@ -39,7 +39,7 @@ import { useState } from "react";
  * review, so in_progress outranks the work-product state; once the run
  * finishes the payload drops the key and the W165 model decides.
  */
-export function BoardView({ board, reason, read, workProducts, inProgress, viewState, onViewState }: {
+export function BoardView({ board, reason, read, workProducts, inProgress, viewState, onViewState, projectWorkspaces }: {
   readonly board: BoardOutcome | null | undefined;
   readonly reason?: string | undefined;
   readonly read?: ProviderReadRecord | null | undefined;
@@ -47,6 +47,7 @@ export function BoardView({ board, reason, read, workProducts, inProgress, viewS
   readonly inProgress?: readonly string[] | undefined;
   readonly viewState?: IssueViewState | undefined;
   readonly onViewState?: ((next: IssueViewState) => void) | undefined;
+  readonly projectWorkspaces?: readonly string[] | undefined;
 }) {
   if (board === undefined) {
     return (
@@ -132,21 +133,21 @@ export function BoardView({ board, reason, read, workProducts, inProgress, viewS
         <span className="board-meta" title="the hub re-reads the provider on this cadence">polled every {BOARD_POLL_MS / 1000}s</span>
       </header>
       <div className="board-columns">
-        <BoardColumn title="open" tasks={open} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
+        <BoardColumn title="open" tasks={open} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} />
         {inProgress !== undefined && (
-          <BoardColumn title="in_progress" tasks={inProgressTasks} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
+          <BoardColumn title="in_progress" tasks={inProgressTasks} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} />
         )}
         {workProducts !== undefined && (
-          <BoardColumn title="in_review" tasks={inReview} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
+          <BoardColumn title="in_review" tasks={inReview} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} />
         )}
         {done.length > 0 && (
-          <BoardColumn title="done" tasks={done} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
+          <BoardColumn title="done" tasks={done} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} />
         )}
         {cancelled.length > 0 && (
-          <BoardColumn title="cancelled" tasks={cancelled} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
+          <BoardColumn title="cancelled" tasks={cancelled} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} />
         )}
         {(columns.stateReasonAuthority ? closed.length > 0 : true) && (
-          <BoardColumn title="closed" tasks={closed} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} />
+          <BoardColumn title="closed" tasks={closed} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} />
         )}
       </div>
     </section>
@@ -170,13 +171,14 @@ const BOARD_COLUMN_PAGE_SIZES = [25, 50, 100] as const;
  * container (data-density plus the compact class), and the per-column prefs
  * controls render only when the page supplies a handler — the preferences
  * live UI-local, never in the board payload. */
-function BoardColumn({ title, tasks, workProducts, read, viewState, onViewState }: {
+function BoardColumn({ title, tasks, workProducts, read, viewState, onViewState, projectWorkspaces }: {
   readonly title: "open" | "in_progress" | "in_review" | "done" | "cancelled" | "closed";
   readonly tasks: readonly ExternalTask[];
   readonly workProducts?: Readonly<Record<string, WorkProductCardState>> | undefined;
   readonly read: ProviderReadRecord | null | undefined;
   readonly viewState?: IssueViewState | undefined;
   readonly onViewState?: ((next: IssueViewState) => void) | undefined;
+  readonly projectWorkspaces?: readonly string[] | undefined;
 }) {
   const prefs = viewState?.[title];
   const cap = prefs?.pageSize ?? BOARD_COLUMN_RENDER_CAP;
@@ -216,7 +218,7 @@ function BoardColumn({ title, tasks, workProducts, read, viewState, onViewState 
         {tasks.length === 0 ? (
           <li><p className="muted sessions-empty-note">no {title} issues</p></li>
         ) : rendered.map((task) => (
-          <BoardCard key={task.key} task={task} workProduct={workProducts?.[task.key]} read={read} />
+          <BoardCard key={task.key} task={task} workProduct={workProducts?.[task.key]} read={read} projectWorkspaces={projectWorkspaces} />
         ))}
       </ul>
     </div>
@@ -232,10 +234,11 @@ function BoardColumn({ title, tasks, workProducts, read, viewState, onViewState 
  * (the pill's tooltip carries the record's verbatim reason, never laundered
  * into the label). W165: the card renders its registry-sourced work-product
  * state verbatim. */
-function BoardCard({ task, workProduct, read }: {
+function BoardCard({ task, workProduct, read, projectWorkspaces }: {
   readonly task: ExternalTask;
   readonly workProduct: WorkProductCardState | undefined;
   readonly read: ProviderReadRecord | null | undefined;
+  readonly projectWorkspaces?: readonly string[] | undefined;
 }) {
   const liveness = boardLinkLiveness(read, Date.now());
   const notFresh = liveness !== undefined && liveness !== "fresh";
@@ -259,7 +262,7 @@ function BoardCard({ task, workProduct, read }: {
         <span className="board-meta">{task.updatedAt.slice(0, 10)}</span>
       </div>
       <WorkProductStateView workProduct={workProduct} />
-      <BoardDelegateButton task={task} />
+      <BoardDelegateButton task={task} projectWorkspaces={projectWorkspaces} />
       <BoardIssueDetailButton task={task} />
     </li>
   );
@@ -314,10 +317,16 @@ function WorkProductStateView({ workProduct }: {
  * (plus the optional workspace) to /api/board/delegate — the run composes
  * hub-side from the hub's own provider read, the browser never supplies
  * attribution. Form state is UI-local (the IssueViewState model: view
- * preference, never task state); the refusal renders verbatim. */
-export function BoardDelegateButton({ task }: { readonly task: ExternalTask }) {
+ * preference, never task state); the refusal renders verbatim. W162
+ * deferral (c): on a scoped project with exactly one workspace binding the
+ * field comes up preselected (still user-editable); the POST body shape is
+ * unchanged. */
+export function BoardDelegateButton({ task, projectWorkspaces }: {
+  readonly task: ExternalTask;
+  readonly projectWorkspaces?: readonly string[] | undefined;
+}) {
   const [revealed, setRevealed] = useState(false);
-  const [workspace, setWorkspace] = useState("");
+  const [workspace, setWorkspace] = useState(delegateDefaultWorkspace(projectWorkspaces));
   const [result, setResult] = useState<BoardDelegationResult | undefined>(undefined);
   const [pending, setPending] = useState(false);
   if (task.state !== "open") return null;
@@ -381,20 +390,54 @@ export function BoardDelegateButton({ task }: { readonly task: ExternalTask }) {
     <div className="board-delegate-area">
       <button type="button" className="board-delegate" disabled={pending} onClick={() => setRevealed(true)}>delegate</button>
       {revealed && (
-        <div className="board-delegate-form">
-          <input
-            className="board-delegate-workspace"
-            aria-label="workspace"
-            placeholder="workspace (optional)"
-            value={workspace}
-            onChange={(event) => setWorkspace(event.target.value)}
-          />
-          <button type="button" className="board-delegate-start" disabled={pending} onClick={() => void submit()}>start run</button>
-          {result !== undefined && <BoardDelegationResultView result={result} />}
-        </div>
+        <BoardDelegateForm
+          workspace={workspace}
+          result={result}
+          pending={pending}
+          onWorkspaceChange={setWorkspace}
+          onStart={() => void submit()}
+        />
       )}
     </div>
   );
+}
+
+/** The revealed delegate form region (W162 deferral c): extracted as a
+ * presentational surface so the prefilled workspace value is SSR-pinnable —
+ * the live form renders only after the click-to-reveal state flips, so the
+ * value is invisible to renderToStaticMarkup through the button itself.
+ * The markup is identical to the region it replaced. */
+export function BoardDelegateForm({ workspace, result, pending, onWorkspaceChange, onStart }: {
+  readonly workspace: string;
+  readonly result: BoardDelegationResult | undefined;
+  readonly pending: boolean;
+  readonly onWorkspaceChange: (value: string) => void;
+  readonly onStart: () => void;
+}) {
+  return (
+    <div className="board-delegate-form">
+      <input
+        className="board-delegate-workspace"
+        aria-label="workspace"
+        placeholder="workspace (optional)"
+        value={workspace}
+        onChange={(event) => onWorkspaceChange(event.target.value)}
+      />
+      <button type="button" className="board-delegate-start" disabled={pending} onClick={onStart}>start run</button>
+      {result !== undefined && <BoardDelegationResultView result={result} />}
+    </div>
+  );
+}
+
+/** W162 deferral (c): the delegate form workspace preselection derives
+ * ONLY from the scoped project workspace bindings — the single binding is
+ * the honest default; zero, several, or an absent list leaves the field
+ * empty (never an invented choice). The Board page passes nothing until it
+ * gains project scoping (registered deferral), so the default is inert on
+ * the unscoped board. */
+export function delegateDefaultWorkspace(projectWorkspaces?: readonly string[]): string {
+  if (projectWorkspaces === undefined || projectWorkspaces.length !== 1) return "";
+  return projectWorkspaces[0] ?? "";
 }
 
 // ── W167: the read-only issue detail surface (this region only) ──
