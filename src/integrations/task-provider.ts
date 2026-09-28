@@ -36,7 +36,17 @@
  * W162: the board card's delegate dispatch composes its run from THIS
  * hub-side read (fetchBoardTask) — attribution comes from the hub's own
  * provider read, never the browser's claim.
+ *
+ * W165: the provider-owned pull-request state behind a board issue's
+ * run→work-product linkage. fetchWorkProductState reads ONE provider PR with
+ * the same bounded fetch and shape-guard discipline as fetchBoardTask, and
+ * workProductStates joins the registry's recorded links with the board's
+ * rows into the card-level states the board renders. Nothing here mutates
+ * the provider, the kernel, or any registry — the linkage is recorded
+ * hub-side by the delegate lane (run-registry), never composed here.
  */
+
+import type { WorkProductLink } from "./run-registry.js";
 
 /** The neutral external-task record: what a GitHub issue and an Azure
  * DevOps work item can both map onto. `key` is the provider's human task
@@ -291,6 +301,148 @@ export async function fetchBoardTask(
   const task = externalTaskFromPayload(parsed as GitHubIssuePayload);
   if (task === undefined) return { state: "error", reason: `#${issueNumber} did not match the task shape`, status: response.status };
   return { state: "ok", task };
+}
+
+/** The provider-owned pull-request state a linked board card renders (W165):
+ * the provider's own fields verbatim, the draft flag carried ONLY when the
+ * payload has one, and the read's as-of liveness stated. */
+export interface WorkProductPullRequestState {
+  readonly provider: "github";
+  /** The provider's human PR reference ("#34") — the join's link key. */
+  readonly key: string;
+  /** The provider's own https href, verbatim. */
+  readonly url: string;
+  /** The provider's own open/closed, verbatim. */
+  readonly state: "open" | "closed";
+  readonly draft?: boolean;
+  /** When the hub made the read (ISO) — the rendered "as of" liveness. */
+  readonly asOf: string;
+}
+
+/** The W165 PR-state read outcome: fetchBoardTask's honest-state posture —
+ * an unconfigured provider names its missing declaration, a fault carries
+ * its reason, and nothing is ever coerced into a guessed PR state. */
+export type WorkProductStateOutcome =
+  | { readonly state: "ok"; readonly product: WorkProductPullRequestState }
+  | { readonly state: "unconfigured"; readonly missing: readonly string[] }
+  | { readonly state: "error"; readonly reason: string };
+
+/**
+ * W165: fetches the provider's pull-request record behind a linked board
+ * reference with the SAME bounded fetch and shape-guard discipline as
+ * fetchBoardTask — the hub-side read the board's work-product join composes
+ * from. The "pull_request" row marker is required (a plain issue at the
+ * linked reference is the honest "not a pull request" error, never a guessed
+ * state), the state field must hold the provider's own open/closed contract,
+ * and the href is https-only like the board's row guard.
+ */
+export async function fetchWorkProductState(
+  provider: BoardProviderState,
+  issueNumber: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<WorkProductStateOutcome> {
+  if (provider.kind !== "github") return { state: "unconfigured", missing: provider.missing };
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(provider.owner)}/${encodeURIComponent(provider.repoName)}/issues/${issueNumber}`;
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      headers: {
+        authorization: `Bearer ${provider.token}`,
+        accept: "application/vnd.github+json",
+        "user-agent": "workflow-hub (task board projection)",
+        "x-github-api-version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch (error) {
+    return { state: "error", reason: error instanceof Error ? error.message : String(error) };
+  }
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    const suffix = detail.length > 0 && detail.length <= 200 ? `: ${detail}` : "";
+    return { state: "error", reason: `the provider answered ${response.status}${suffix}` };
+  }
+  let parsed: unknown;
+  try {
+    parsed = await response.json();
+  } catch (error) {
+    return { state: "error", reason: `the provider body was not JSON (${error instanceof Error ? error.message : String(error)})` };
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { state: "error", reason: "the provider body was not an issue" };
+  }
+  if (!("pull_request" in parsed)) return { state: "error", reason: `#${issueNumber} is not a pull request` };
+  const row = parsed as GitHubIssuePayload & { readonly draft?: unknown };
+  const prNumber = row.number;
+  const prState = row.state;
+  const href = row.html_url;
+  const draft = row.draft;
+  const shapeError = `#${issueNumber} did not match the pull-request shape`;
+  if (typeof prNumber !== "number") return { state: "error", reason: shapeError };
+  if (typeof row.title !== "string" || row.title.length === 0) return { state: "error", reason: shapeError };
+  if (prState !== "open" && prState !== "closed") return { state: "error", reason: shapeError };
+  // The URL becomes an href in the view: only the provider's https scheme is
+  // accepted — a hostile payload can never hand the dashboard a javascript:
+  // or data: link (the board's review-P1 guard, mirrored).
+  if (typeof href !== "string" || !href.startsWith("https://")) return { state: "error", reason: shapeError };
+  if (typeof row.updated_at !== "string" || row.updated_at.length === 0) return { state: "error", reason: shapeError };
+  // The draft flag: a wrong-typed one makes the row malformed; an absent one
+  // maps the honest absence (never draft:false by inference).
+  if (draft !== undefined && typeof draft !== "boolean") return { state: "error", reason: shapeError };
+  return {
+    state: "ok",
+    product: {
+      provider: "github",
+      key: `#${prNumber}`,
+      url: href,
+      state: prState,
+      ...(typeof draft === "boolean" ? { draft } : {}),
+      asOf: new Date().toISOString(),
+    },
+  };
+}
+
+/** The W165 card-level work-product state the board renders: the honest
+ * absence when no run is linked, the hub's own PR read when one is, or the
+ * read's failure reason verbatim when the provider would not answer. */
+export type WorkProductCardState =
+  | { readonly state: "linked"; readonly runId: string; readonly product: WorkProductPullRequestState }
+  | { readonly state: "unreadable"; readonly runId: string; readonly reason: string }
+  | { readonly state: "unlinked" };
+
+/**
+ * W165: the hub-side join over the registry's recorded run→PR links and the
+ * board's task rows — one WorkProductCardState per board card, keyed by the
+ * card's own reference. The most recently recorded link per reference wins
+ * (the registry map's iteration order IS its recording order); the read
+ * receives the numeric issue the link's key names ("#N"). Cards without a
+ * recorded link are never sent to the provider — they render the honest
+ * unlinked state, and no state is ever inferred.
+ */
+export async function workProductStates(
+  board: BoardTasks,
+  links: ReadonlyMap<string, WorkProductLink>,
+  read: (issueNumber: number) => Promise<WorkProductStateOutcome>,
+): Promise<Record<string, WorkProductCardState>> {
+  const latest = new Map<string, { readonly runId: string; readonly issueNumber: number }>();
+  for (const [runId, link] of links) {
+    const reference = /^#(\d+)$/.exec(link.key);
+    if (reference === null || reference[1] === undefined) continue;
+    latest.set(link.key, { runId, issueNumber: Number(reference[1]) });
+  }
+  const cards = await Promise.all(
+    board.tasks.map(async (task): Promise<readonly [string, WorkProductCardState]> => {
+      const link = latest.get(task.key);
+      if (link === undefined) return [task.key, { state: "unlinked" }];
+      const outcome = await read(link.issueNumber);
+      if (outcome.state === "ok") return [task.key, { state: "linked", runId: link.runId, product: outcome.product }];
+      if (outcome.state === "error") return [task.key, { state: "unreadable", runId: link.runId, reason: outcome.reason }];
+      // An unconfigured PR-state read cannot answer for a LINKED card — the
+      // honest unreadable state names the missing declaration.
+      return [task.key, { state: "unreadable", runId: link.runId, reason: `the provider is not configured (${outcome.missing.join(", ")})` }];
+    }),
+  );
+  return Object.fromEntries(cards);
 }
 
 /** The board projection: columns from the provider-owned state field only,

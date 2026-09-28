@@ -110,6 +110,12 @@ export async function createWorkflowHub(
      */
     projects?: ProjectRegistry;
     /**
+     * W165: the board's pull-request-state read capability (the hub-side
+     * provider read the /board/tasks work-product join composes from — see
+     * task-provider.ts). Absent means the payload carries no workProducts.
+     */
+    readWorkProductState?: (issueNumber: number) => Promise<import("./task-provider.js").WorkProductStateOutcome>;
+    /**
      * W167: the read-only issue-detail capability (the hub-side provider read
      * of an issue's description and comment thread — see issue-detail.ts).
      * When provided, the hub exposes the operator-token `/board/task` route;
@@ -185,6 +191,7 @@ export async function createWorkflowHub(
       options.readBoardTasks,
       options.delegateBoardTask,
       options.projects,
+      options.readWorkProductState,
       options.readIssueDetail,
       options.providerReadState,
     );

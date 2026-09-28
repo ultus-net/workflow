@@ -12,7 +12,8 @@ import type { ProjectRegistry } from "./project-registry.js";
 import { projectScopedBoard, type ProjectRecord } from "./project-registry.js";
 import { activityTimeline } from "./activity-timeline.js";
 import { operatorPosture, scheduleLineage, scheduleRecentRuns } from "./operator-posture.js";
-import type { BoardOutcome, BoardTaskOutcome } from "./task-provider.js";
+import { workProductStates } from "./task-provider.js";
+import type { BoardOutcome, BoardTaskOutcome, WorkProductStateOutcome } from "./task-provider.js";
 import type { IssueDetailOutcome, ProviderReadRecord } from "./issue-detail.js";
 
 /**
@@ -72,6 +73,13 @@ interface HubRequestContext {
    */
   readonly delegateBoardTask?: (issue: number) => Promise<BoardTaskOutcome>;
   /**
+   * W165: the board's pull-request-state read — the hub-side provider read
+   * the /board/tasks work-product join composes from. Absent → the payload
+   * carries no workProducts (the honest subset; the column never appears
+   * from fabricated data), like the other optional capabilities.
+   */
+  readonly readWorkProductState?: (issueNumber: number) => Promise<WorkProductStateOutcome>;
+  /**
    * W167: the issue-detail read capability — the hub-side provider read of
    * an issue's description and comment thread (composed from env at
    * startup, wrapped with the provider-read recorder). Absent → the route
@@ -105,14 +113,16 @@ export async function createWorkflowHubBridge(
   readBoardTasks?: () => Promise<BoardOutcome>,
   delegateBoardTask?: (issue: number) => Promise<BoardTaskOutcome>,
   projects?: ProjectRegistry,
-  /** W167: the issue-detail read capability (12th) — see HubRequestContext. */
+  /** W165: the board's pull-request-state read capability (12th) — see HubRequestContext. */
+  readWorkProductState?: (issueNumber: number) => Promise<WorkProductStateOutcome>,
+  /** W167: the issue-detail read capability (13th) — see HubRequestContext. */
   readIssueDetail?: (issue: number) => Promise<IssueDetailOutcome>,
-  /** W167: the hub-recorded provider read state accessor (13th). */
+  /** W167: the hub-recorded provider read state accessor (14th). */
   providerReadState?: () => ProviderReadRecord | undefined,
 ): Promise<WorkflowHubBridge> {
   const token = randomBytes(32).toString("hex");
   const verificationToken = randomBytes(32).toString("hex");
-  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...(readBoardTasks === undefined ? {} : { readBoardTasks }), ...(delegateBoardTask === undefined ? {} : { delegateBoardTask }), ...(projects === undefined ? {} : { projects }), ...(readIssueDetail === undefined ? {} : { readIssueDetail }), ...(providerReadState === undefined ? {} : { providerReadState }) };
+  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...(readBoardTasks === undefined ? {} : { readBoardTasks }), ...(delegateBoardTask === undefined ? {} : { delegateBoardTask }), ...(projects === undefined ? {} : { projects }), ...(readWorkProductState === undefined ? {} : { readWorkProductState }), ...(readIssueDetail === undefined ? {} : { readIssueDetail }), ...(providerReadState === undefined ? {} : { providerReadState }) };
 
   const server = createServer((request, response) => {
     if (request.url !== undefined) observeRequest?.(new URL(request.url, "http://127.0.0.1").pathname);
@@ -194,6 +204,9 @@ async function handleRequest(
       // refusal still precedes any composition: nothing composes, no run
       // task is created. Empty runId and duplicate runId keep the
       // catch-all's 500 (still queued under the W142 wave's finding (e)).
+      // W165: workProductLink is deliberately never accepted from clients —
+      // the run→PR linkage is recorded only by hub-side lanes (the board
+      // delegate flow's own provider read), never from a client's claim.
       try {
         await context.runController.begin({
           runId: body.runId,
@@ -393,7 +406,18 @@ async function handleRequest(
       // provider's credential never rides the payload (pinned in
       // test/board-tasks.test.ts).
       if (context.readBoardTasks === undefined) return send(response, 404, { error: "not found" });
-      return send(response, 200, { board: await context.readBoardTasks() });
+      // W165: the work-product states ride the read ONLY when every authority
+      // exists — the board read succeeded, the hub composes its OWN PR-state
+      // read, and the registry recorded at least one link. Otherwise the
+      // payload is the bare board outcome (the honest subset; the column
+      // never appears from fabricated data).
+      const board = await context.readBoardTasks();
+      const links = context.runController?.gateObservability?.().workProductLinks;
+      const workProducts =
+        board.state === "ok" && context.readWorkProductState !== undefined && links !== undefined && links.size > 0
+          ? await workProductStates(board.board, links, context.readWorkProductState)
+          : undefined;
+      return send(response, 200, { board, ...(workProducts === undefined ? {} : { workProducts }) });
     }
     if (request.url === "/board/delegate") {
       // W162: the board card's delegate dispatch — the operator's own click
@@ -421,6 +445,10 @@ async function handleRequest(
           ...(body.requiresReview === true ? { requiresReview: true } : {}),
           taskPrompt: `Work ${task.provider} issue ${task.key}: "${task.title}" (source: ${task.url})`,
           origin: { kind: "provider-task", provider: task.provider, key: task.key, url: task.url },
+          // W165: the run→PR linkage is recorded from the hub's OWN provider
+          // read at the same begin that records the origin — the client body's
+          // workProductLink is never read.
+          workProductLink: { provider: task.provider, key: task.key, url: task.url },
         });
       } catch (error) {
         if (error instanceof WorkspaceDeclarationError) {

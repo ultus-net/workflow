@@ -1,5 +1,5 @@
 import { boardProjection, GITHUB_ISSUES_PAGE_SIZE } from "../../integrations/task-provider.js";
-import type { BoardOutcome, ExternalTask } from "../../integrations/task-provider.js";
+import type { BoardOutcome, ExternalTask, WorkProductCardState } from "../../integrations/task-provider.js";
 import type { IssueDetailOutcome, ProviderReadRecord } from "../../integrations/issue-detail.js";
 import { BOARD_POLL_MS, BOARD_LINK_LIVENESS_LABELS, boardLinkLiveness } from "./presenters.js";
 import { useState } from "react";
@@ -19,10 +19,11 @@ import { useState } from "react";
  * `boardLinkLiveness`). No record renders no pill and no dashed link: nothing
  * may claim a freshness the hub has no record of. NOT-fresh renders dashed.
  */
-export function BoardView({ board, reason, read }: {
+export function BoardView({ board, reason, read, workProducts }: {
   readonly board: BoardOutcome | null | undefined;
   readonly reason?: string | undefined;
   readonly read?: ProviderReadRecord | null | undefined;
+  readonly workProducts?: Readonly<Record<string, WorkProductCardState>> | undefined;
 }) {
   if (board === undefined) {
     return (
@@ -58,6 +59,20 @@ export function BoardView({ board, reason, read }: {
     );
   }
   const columns = boardProjection(board.board);
+  // W165: the in_review set is the cards whose REGISTRY-sourced link names a
+  // provider-owned open pull request — the hub's payload is the only source;
+  // without the payload the column does not exist at all (no authority, no
+  // column — the amendment's honest subset rule).
+  const inReviewKeys = new Set<string>();
+  if (workProducts !== undefined) {
+    for (const task of board.board.tasks) {
+      const card = workProducts[task.key];
+      if (card?.state === "linked" && card.product.state === "open") inReviewKeys.add(task.key);
+    }
+  }
+  const open = columns.open.filter((task) => !inReviewKeys.has(task.key));
+  const closed = columns.closed.filter((task) => !inReviewKeys.has(task.key));
+  const inReview = board.board.tasks.filter((task) => inReviewKeys.has(task.key));
   return (
     <section className="sessions-view" aria-label="Task board">
       <header className="sessions-view-head">
@@ -74,8 +89,11 @@ export function BoardView({ board, reason, read }: {
         <span className="board-meta" title="the hub re-reads the provider on this cadence">polled every {BOARD_POLL_MS / 1000}s</span>
       </header>
       <div className="board-columns">
-        <BoardColumn title="open" tasks={columns.open} read={read} />
-        <BoardColumn title="closed" tasks={columns.closed} read={read} />
+        <BoardColumn title="open" tasks={open} workProducts={workProducts} read={read} />
+        {workProducts !== undefined && (
+          <BoardColumn title="in_review" tasks={inReview} workProducts={workProducts} read={read} />
+        )}
+        <BoardColumn title="closed" tasks={closed} workProducts={workProducts} read={read} />
       </div>
     </section>
   );
@@ -83,18 +101,23 @@ export function BoardView({ board, reason, read }: {
 
 /** One board column: header count derives from the projected array itself,
  * and an empty column renders its honest empty note — never a fabricated card. */
-function BoardColumn({ title, tasks, read }: {
-  readonly title: "open" | "closed";
+function BoardColumn({ title, tasks, workProducts, read }: {
+  readonly title: "open" | "in_review" | "closed";
   readonly tasks: readonly ExternalTask[];
+  readonly workProducts?: Readonly<Record<string, WorkProductCardState>> | undefined;
   readonly read: ProviderReadRecord | null | undefined;
 }) {
   return (
     <div className="board-column">
-      <h3>{title} ({tasks.length})</h3>
+      {/* One template-literal child: the column header must render as a
+          contiguous text node (the pins slice the markup on it). */}
+      <h3>{`${title} (${tasks.length})`}</h3>
       <ul aria-label={`${title} issues`}>
         {tasks.length === 0 ? (
           <li><p className="muted sessions-empty-note">no {title} issues</p></li>
-        ) : tasks.map((task) => <BoardCard key={task.key} task={task} read={read} />)}
+        ) : tasks.map((task) => (
+          <BoardCard key={task.key} task={task} workProduct={workProducts?.[task.key]} read={read} />
+        ))}
       </ul>
     </div>
   );
@@ -107,8 +130,13 @@ function BoardColumn({ title, tasks, read }: {
  * carries the liveness pill derived ONLY from the hub's recorded provider
  * read, and the provider link renders dashed whenever the read is not fresh
  * (the pill's tooltip carries the record's verbatim reason, never laundered
- * into the label). */
-function BoardCard({ task, read }: { readonly task: ExternalTask; readonly read: ProviderReadRecord | null | undefined }) {
+ * into the label). W165: the card renders its registry-sourced work-product
+ * state verbatim. */
+function BoardCard({ task, workProduct, read }: {
+  readonly task: ExternalTask;
+  readonly workProduct: WorkProductCardState | undefined;
+  readonly read: ProviderReadRecord | null | undefined;
+}) {
   const liveness = boardLinkLiveness(read, Date.now());
   const notFresh = liveness !== undefined && liveness !== "fresh";
   return (
@@ -130,6 +158,7 @@ function BoardCard({ task, read }: { readonly task: ExternalTask; readonly read:
         {task.assignee !== undefined && <span className="board-meta">@{task.assignee}</span>}
         <span className="board-meta">{task.updatedAt.slice(0, 10)}</span>
       </div>
+      <WorkProductStateView workProduct={workProduct} />
       <BoardDelegateButton task={task} />
       <BoardIssueDetailButton task={task} />
     </li>
@@ -154,6 +183,30 @@ export function BoardDelegationResultView({ result }: { readonly result: BoardDe
       {result.detail}
       <span className="muted"> [{result.code}]</span>
     </span>
+  );
+}
+
+/** The card's work-product state (W165): the registry-sourced link and the
+ * provider-owned PR state rendered VERBATIM — unlinked is honest, an
+ * unreadable read renders its reason, and the read's as-of liveness is
+ * stated. No attribution is synthesized: only fields the hub payload
+ * carries render, and a card with no payload fact renders nothing. */
+function WorkProductStateView({ workProduct }: {
+  readonly workProduct: WorkProductCardState | undefined;
+}) {
+  if (workProduct === undefined) return null;
+  if (workProduct.state === "unlinked") {
+    return <div className="board-work-product">work product: unlinked</div>;
+  }
+  if (workProduct.state === "unreadable") {
+    return <div className="board-work-product">work product: {workProduct.reason}</div>;
+  }
+  const { product } = workProduct;
+  return (
+    <div className="board-work-product">
+      work product: <code>{product.key}</code> {product.state}
+      {product.draft === true ? " draft" : ""} as of {product.asOf}
+    </div>
   );
 }
 

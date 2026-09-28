@@ -166,15 +166,16 @@ export function createWorkflowWebServer(
    * states the view renders honestly). Fail-closed: no hub, or a hub
    * predating the slice, answers board: null with the reason — never a
    * fabricated empty board. The browser never sees a hub token or the
-   * provider credential. W167: only a successful board read fetches the
-   * recorded read state beside it — a failed board read answers read: null
-   * without a second hub call. */
-  const hubBoard = async (): Promise<{ board: unknown; reason?: string; read: unknown }> => {
+   * provider credential. W165: the work-product join rides the payload
+   * when the hub computed one. W167: only a successful board read fetches
+   * the recorded read state beside it — a failed board read answers
+   * read: null without a second hub call. */
+  const hubBoard = async (): Promise<{ board: unknown; reason?: string; read: unknown; workProducts?: unknown }> => {
     const result = await hubPost("/board/tasks", {});
-    const payload = result.payload as { board?: unknown; error?: string } | undefined;
+    const payload = result.payload as { board?: unknown; error?: string; workProducts?: unknown } | undefined;
     if (result.status === 200 && payload?.board !== undefined) {
       const read = await hubReadState();
-      return { board: payload.board, read: read.read };
+      return { board: payload.board, read: read.read, ...(payload.workProducts === undefined ? {} : { workProducts: payload.workProducts }) };
     }
     return { board: null, reason: payload?.error ?? "hub unavailable", read: null };
   };

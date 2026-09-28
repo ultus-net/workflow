@@ -101,6 +101,24 @@ export type RunOrigin =
   | { readonly kind: "provider-task"; readonly provider: "github"; readonly key: string; readonly url: string };
 
 /**
+ * W165: the hub-recorded run→work-product (PR) linkage — the provider-stable
+ * reference the run's work product is tracked against (the provider, the
+ * reference key the provider's PR-state read keys on, the url). Recorded by
+ * the hub's own lanes only: the W162 board-delegation route records it from
+ * its OWN provider read at the same begin that records the provider-task
+ * origin (at begin time the tracked reference is the delegated board task's
+ * own record — a producer that knows a PR records its key), so the board's
+ * in_review column projects registry-sourced linkage plus the provider-owned
+ * PR state. The client never supplies attribution, /run/begin still accepts
+ * none, and the view never computes the linkage (the W153 pin pattern).
+ */
+export type WorkProductLink = {
+  readonly provider: "github";
+  readonly key: string;
+  readonly url: string;
+};
+
+/**
  * W146: the typed classification for a client-shaped fault in a
  * surface-declared workspace — the declaration violates the
  * canonicalization contract (`docs/HUB_PROTOCOL.md` §3) before any
@@ -181,6 +199,9 @@ export function createRunRegistry(
   /** W153: the recorded run origins (schedule-fired attribution), bounded like the other gate maps. */
   recordRunOrigin(input: { readonly runId: string; readonly origin: RunOrigin }): void;
   runOrigins(): ReadonlyMap<string, RunOrigin>;
+  /** W165: the recorded run→PR work-product links, bounded like the other gate maps. */
+  recordWorkProductLink(input: { readonly runId: string; readonly link: WorkProductLink }): void;
+  workProductLinks(): ReadonlyMap<string, WorkProductLink>;
 } {
   const workspaceApplications = new Map<string, WorkflowApplication>();
   const runs = new Map<string, WorkflowApplication>();
@@ -254,6 +275,16 @@ export function createRunRegistry(
       runOrigins.delete(oldest);
     }
   };
+  // W165: recorded run→PR work-product links, bounded like the other gate maps.
+  const workProductLinks = new Map<string, WorkProductLink>();
+  const rememberWorkProductLink = (runId: string, link: WorkProductLink): void => {
+    workProductLinks.set(runId, link);
+    while (workProductLinks.size > 64) {
+      const oldest = workProductLinks.keys().next().value;
+      if (oldest === undefined) break;
+      workProductLinks.delete(oldest);
+    }
+  };
   let reasoningClaimFindings = 0;
   let reasoningClaimFlaggedRuns = 0;
   let monitoredRuns = 0;
@@ -322,6 +353,7 @@ export function createRunRegistry(
         runUsage,
         reasoningClaims,
         runOrigins,
+        workProductLinks,
         reasoningClaimMetrics: {
           monitoredRuns,
           flaggedRuns: reasoningClaimFlaggedRuns,
@@ -346,13 +378,16 @@ export function createRunRegistry(
         })(),
       };
     },
-    async begin({ runId, title, workspace, requiresReview, taskPrompt, origin }) {
+    async begin({ runId, title, workspace, requiresReview, taskPrompt, origin, workProductLink }) {
       if (runId.trim().length === 0 || title.trim().length === 0) {
         throw new TypeError("run begin requires a non-empty runId and title");
       }
       if (runs.has(runId)) throw new TypeError(`duplicate run: ${runId}`);
       // W153: the scheduler's recorded origin attribution (if it declared one).
       if (origin !== undefined) rememberRunOrigin(runId, origin);
+      // W165: the delegate lane's recorded work-product link (if it declared
+      // one) — hub-side only, like the origin above.
+      if (workProductLink !== undefined) rememberWorkProductLink(runId, workProductLink);
       const parent = workspaceApplication(workspace);
       const application = new WorkflowApplication(
         graph,
@@ -655,6 +690,12 @@ export function createRunRegistry(
     },
     runOrigins(): ReadonlyMap<string, RunOrigin> {
       return runOrigins;
+    },
+    recordWorkProductLink(input: { readonly runId: string; readonly link: WorkProductLink }): void {
+      rememberWorkProductLink(input.runId, input.link);
+    },
+    workProductLinks(): ReadonlyMap<string, WorkProductLink> {
+      return workProductLinks;
     },
     reasoningClaimMetrics(): ReasoningClaimMetrics {
       return {

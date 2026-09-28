@@ -4,7 +4,7 @@ import { WorkflowContainedProcess } from "../containment/workflow-process.js";
 import { selectContainment } from "../containment/platform.js";
 import type { TaskId } from "../kernel/contracts.js";
 import { createContainedShellExecutor, type WorkflowContainedShellExecutor } from "./contained-shell-executor.js";
-import type { RunOrigin } from "./run-registry.js";
+import type { RunOrigin, WorkProductLink } from "./run-registry.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 
 /**
@@ -31,6 +31,8 @@ export interface WorkflowRunController {
     taskPrompt?: string;
     /** W153: the recorded origin attribution; only hub-side recorders supply it (the scheduler, the W162 board-delegation route). */
     origin?: RunOrigin;
+    /** W165: the recorded run→PR work-product link; only hub-side lanes supply it (the W162 board-delegation route) — /run/begin forwards none. */
+    workProductLink?: WorkProductLink;
   }): Promise<void>;
   finish(input: { runId: string; outcome: "verified" | "failed" }): Promise<void>;
   review(input: { runId: string; reviewerRunId: string; verdict: "approved" | "changes_requested" | "rejected"; summary: string }): Promise<{ recorded: boolean }>;
@@ -58,6 +60,8 @@ export interface WorkflowRunController {
     runUsage?: ReadonlyMap<string, import("./run-registry.js").RunUsageSummary>;
     /** W153: recorded schedule-origin attribution per run (observability-only). */
     runOrigins?: ReadonlyMap<string, import("./run-registry.js").RunOrigin>;
+    /** W165: recorded run→PR work-product links per run (observability-only). */
+    workProductLinks?: ReadonlyMap<string, import("./run-registry.js").WorkProductLink>;
     /**
      * W152: the per-run kernel transition logs, bounded to the most recent 64
      * runs like the other observability maps. Each entry is that run's own
