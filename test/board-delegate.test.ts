@@ -17,7 +17,8 @@ import { hostCapabilities } from "../src/adapters/host.js";
 import { WorkflowApplication } from "../src/application/workflow.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
-import { BoardDelegateButton, BoardDelegationResultView, type BoardDelegationResult } from "../src/ui/webapp/board-view.js";
+import { BoardDelegateButton, BoardDelegationResultView, BoardView, type BoardDelegationResult } from "../src/ui/webapp/board-view.js";
+import type { BoardOutcome } from "../src/integrations/task-provider.js";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -426,4 +427,53 @@ test("W162: the board view renders the delegate affordance on open cards and the
   const successMarkup = renderToStaticMarkup(createElement(BoardDelegationResultView, { result: success }));
   assert.ok(successMarkup.includes("board:github:12:abc"));
   assert.ok(!successMarkup.includes("alert"), "a success must not render as an alert");
+});
+
+test("W170: the delegate runId's provider prefix derives from the task's own provider — a stub-supplied azure_devops task names azure_devops in the run id (RED-first against the hardcoded template)", async () => {
+  const adoTask: ExternalTask = { ...okTask, provider: "azure_devops" as const };
+  const begins: Parameters<WorkflowRunController["begin"]>[0][] = [];
+  const spy: WorkflowRunController = {
+    async begin(input) { begins.push(input); },
+    async finish() {},
+    async review() { return { recorded: false }; },
+    hiddenSnapshotTaskIds() { return []; },
+  };
+  const bridge = await createWorkflowHubBridge(
+    new WorkflowApplication(new TaskGraph([seedTask]), hostCapabilities({ transport: "native", authoritativePreMutation: true })),
+    undefined,
+    spy,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    async () => ({ state: "ok" as const, task: adoTask }),
+  );
+  try {
+    const answered = await fetch(`${bridge.url}/board/delegate`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bridge.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ issue: 12 }),
+    });
+    assert.equal(answered.status, 200);
+    const payload = (await answered.json()) as { delegation?: { runId?: string } };
+    assert.match(payload.delegation?.runId ?? "", /^board:azure_devops:12:[0-9a-f]{16}$/);
+    const begun = begins[0];
+    assert.ok(begun !== undefined);
+    assert.deepEqual(begun.origin, { kind: "provider-task", provider: "azure_devops", key: "#12", url: "https://github.com/o/r/issues/12" });
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("W170: the capability boundary renders BEFORE the click — an ADO-fed card names the GitHub-only boundary instead of offering a delegate button (RED-first)", () => {
+  const adoTask: ExternalTask = { ...okTask, provider: "azure_devops" as const };
+  const adoBoard: BoardOutcome = { state: "ok", board: { provider: "azure_devops", repo: "org/project", tasks: [adoTask], skipped: 0, pullRequestsExcluded: 0 } };
+  const markup = renderToStaticMarkup(createElement("div", {}, createElement(BoardView, { board: adoBoard })));
+  assert.ok(markup.includes("delegation is GitHub-only in this slice"), "the boundary renders as an honest note");
+  assert.ok(!markup.includes(">delegate</button>"), "no delegate button is offered on the ADO card");
+  const githubBoard: BoardOutcome = { state: "ok", board: { provider: "github", repo: "o/r", tasks: [{ ...okTask }], skipped: 0, pullRequestsExcluded: 0 } };
+  const githubMarkup = renderToStaticMarkup(createElement("div", {}, createElement(BoardView, { board: githubBoard })));
+  assert.ok(githubMarkup.includes(">delegate</button>"), "the github card keeps the affordance");
 });

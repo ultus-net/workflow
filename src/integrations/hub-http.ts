@@ -436,7 +436,7 @@ async function handleRequest(
       const outcome = await context.delegateBoardTask(body.issue);
       if (outcome.state !== "ok") return send(response, 200, { delegation: outcome });
       const task = outcome.task;
-      const runId = `board:github:${body.issue}:${randomBytes(8).toString("hex")}`;
+      const runId = `board:${task.provider}:${body.issue}:${randomBytes(8).toString("hex")}`;
       try {
         await context.runController.begin({
           runId,

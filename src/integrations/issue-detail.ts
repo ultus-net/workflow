@@ -28,7 +28,9 @@
  * the webapp presenters; here the record only stores what the provider
  * actually answered. A 401/403-class answer records `requires-auth`; a
  * transport failure, a 5xx, and the other refusals (a 404 unknown repo, a
- * 429 rate limit, an unreadable body) record `unreachable` with the
+ * 429 rate limit, an unreadable body, and the both-lanes-configured
+ * ambiguity refusal — the hub never silently picks a provider, so no
+ * provider contact happened at all) record `unreachable` with the
  * verbatim reason carried alongside — the label stays within the
  * four-class vocabulary while the tooltip states what actually happened.
  * An unconfigured hub performs NO provider read and records NOTHING: no

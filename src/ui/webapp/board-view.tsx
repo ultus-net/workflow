@@ -221,6 +221,18 @@ export function BoardDelegateButton({ task }: { readonly task: ExternalTask }) {
   const [result, setResult] = useState<BoardDelegationResult | undefined>(undefined);
   const [pending, setPending] = useState(false);
   if (task.state !== "open") return null;
+  // W170: the capability boundary renders BEFORE the click — the delegate
+  // lane is GitHub-only this slice, so an ADO-fed card offers no button that
+  // could only ever end in the hub's unconfigured refusal naming the GitHub
+  // vars; it names the boundary instead (the rendered-deny rule, moved
+  // earlier).
+  if (task.provider !== "github") {
+    return (
+      <div className="board-delegate-area">
+        <p className="muted sessions-empty-note">delegation is GitHub-only in this slice</p>
+      </div>
+    );
+  }
   const parsed = /^#(\d+)$/.exec(task.key);
   if (parsed === null || parsed[1] === undefined) return null;
   const issue = Number(parsed[1]);
@@ -395,9 +407,14 @@ export function BoardIssueDetailButton({ task }: { readonly task: ExternalTask }
 
 /** The relay payload's shape guard: only an object carrying one of the
  * outcome's own states passes — anything else renders as the honest
- * "unexpected" refusal instead of being coerced into a detail. */
-function isIssueDetailOutcome(value: unknown): value is IssueDetailOutcome {
+ * "unexpected" refusal instead of being coerced into a detail. An ok state
+ * must actually carry its detail object (W170): a state-shaped answer
+ * without its payload is the unexpected refusal too, not a render-time
+ * throw. Unconfigured/error states keep their own render paths. */
+export function isIssueDetailOutcome(value: unknown): value is IssueDetailOutcome {
   if (typeof value !== "object" || value === null) return false;
   const state = (value as { state?: unknown }).state;
-  return state === "ok" || state === "unconfigured" || state === "error";
+  if (state !== "ok" && state !== "unconfigured" && state !== "error") return false;
+  if (state === "ok" && (typeof (value as { detail?: unknown }).detail !== "object" || (value as { detail: unknown }).detail === null)) return false;
+  return true;
 }
