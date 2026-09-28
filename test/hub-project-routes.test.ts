@@ -77,9 +77,10 @@ async function compose(
     undefined,
     undefined,
     undefined,
-    options.withBoard === true ? async () => boardOutcome : undefined,
-    undefined,
-    registry,
+    {
+      ...(options.withBoard === true ? { readBoardTasks: async () => boardOutcome } : {}),
+      projects: registry,
+    },
   );
   context.after(() => bridge.close());
   return { bridge, registry, application };

@@ -188,8 +188,7 @@ test("W162: the delegate route composes through the run-begin path and records t
     undefined,
     undefined,
     undefined,
-    undefined,
-    async () => ({ state: "ok", task: okTask }),
+    { delegateBoardTask: async () => ({ state: "ok", task: okTask }) },
   );
   try {
     const denied = await fetch(`${bridge.url}/board/delegate`, {
@@ -263,7 +262,7 @@ test("W162: the delegate route's refusals render verbatim — capability withhel
   const application = new WorkflowApplication(new TaskGraph([seedTask]), hostCapabilities({ transport: "native", authoritativePreMutation: true }));
   // A hub composed WITHOUT the delegation capability: 404 like the other
   // optional registries — the capability is withheld, not faked.
-  const withheld = await createWorkflowHubBridge(application, undefined, spy, undefined, undefined, undefined, undefined, undefined, undefined, undefined);
+  const withheld = await createWorkflowHubBridge(application, undefined, spy, undefined, undefined, undefined, undefined, undefined);
   try {
     const absent = await fetch(`${withheld.url}/board/delegate`, {
       method: "POST",
@@ -283,13 +282,14 @@ test("W162: the delegate route's refusals render verbatim — capability withhel
     undefined,
     undefined,
     undefined,
-    undefined,
-    async (issueNumber: number) =>
-      issueNumber === 12
-        ? { state: "ok" as const, task: okTask }
-        : issueNumber === 5
-          ? { state: "unconfigured" as const, missing: ["WORKFLOW_GITHUB_REPO", "WORKFLOW_GITHUB_TOKEN"] }
-          : { state: "error" as const, reason: "the provider answered 500" },
+    {
+      delegateBoardTask: async (issueNumber: number) =>
+        issueNumber === 12
+          ? { state: "ok" as const, task: okTask }
+          : issueNumber === 5
+            ? { state: "unconfigured" as const, missing: ["WORKFLOW_GITHUB_REPO", "WORKFLOW_GITHUB_TOKEN"] }
+            : { state: "error" as const, reason: "the provider answered 500" },
+    },
   );
   try {
     const post = (body: unknown): Promise<Response> =>
@@ -311,8 +311,8 @@ test("W162: the delegate route's refusals render verbatim — capability withhel
       },
     };
     const faulting = await createWorkflowHubBridge(
-      application, undefined, workspaceSpy, undefined, undefined, undefined, undefined, undefined, undefined,
-      async () => ({ state: "ok" as const, task: okTask }),
+      application, undefined, workspaceSpy, undefined, undefined, undefined, undefined, undefined,
+      { delegateBoardTask: async () => ({ state: "ok" as const, task: okTask }) },
     );
     try {
       const fault = await fetch(`${faulting.url}/board/delegate`, {
@@ -360,8 +360,6 @@ test("W162: /run/begin stays client-origin-free — the forgeable-attribution re
     new WorkflowApplication(new TaskGraph([seedTask]), hostCapabilities({ transport: "native", authoritativePreMutation: true })),
     undefined,
     spy,
-    undefined,
-    undefined,
     undefined,
     undefined,
     undefined,

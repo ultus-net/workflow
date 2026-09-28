@@ -450,12 +450,10 @@ test("W167: the /board/task route serves the issue detail on the operator token 
     undefined,
     undefined,
     undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    async () => detailOutcome,
-    () => readRecord,
+    {
+      readIssueDetail: async () => detailOutcome,
+      providerReadState: () => readRecord,
+    },
   );
   try {
     const denied = await fetch(`${bridge.url}/board/task`, {
@@ -503,7 +501,7 @@ test("W167: the /board/task route serves the issue detail on the operator token 
 });
 
 test("W167: withheld capabilities answer 404 like the other optional registries — never faked", async () => {
-  const bridge = await createWorkflowHubBridge(application(), undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined);
+  const bridge = await createWorkflowHubBridge(application(), undefined, undefined, undefined, undefined, undefined, undefined, undefined);
   try {
     for (const path of ["/board/task", "/board/read-state"]) {
       const absent = await fetch(`${bridge.url}${path}`, {

@@ -188,12 +188,14 @@ export async function createWorkflowHub(
       selfImprovement,
       options.schedules,
       options.contentStore,
-      options.readBoardTasks,
-      options.delegateBoardTask,
-      options.projects,
-      options.readWorkProductState,
-      options.readIssueDetail,
-      options.providerReadState,
+      {
+        ...(options.readBoardTasks === undefined ? {} : { readBoardTasks: options.readBoardTasks }),
+        ...(options.delegateBoardTask === undefined ? {} : { delegateBoardTask: options.delegateBoardTask }),
+        ...(options.projects === undefined ? {} : { projects: options.projects }),
+        ...(options.readWorkProductState === undefined ? {} : { readWorkProductState: options.readWorkProductState }),
+        ...(options.readIssueDetail === undefined ? {} : { readIssueDetail: options.readIssueDetail }),
+        ...(options.providerReadState === undefined ? {} : { providerReadState: options.providerReadState }),
+      },
     );
     options.observeBridgeStarted?.(bridge.url);
     scheduler?.start();
