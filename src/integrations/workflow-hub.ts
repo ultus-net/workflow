@@ -128,6 +128,13 @@ export async function createWorkflowHub(
      * operator-token `/board/read-state` route; absent means the route 404s.
      */
     providerReadState?: () => import("./issue-detail.js").ProviderReadRecord | undefined;
+    /**
+     * W171: the provider-owned discovery capability (the linked board issue's
+     * timeline cross-references — the hub records the actual PR reference it
+     * discovers there, exactly-one rule). Absent means no discovery: the join
+     * keeps the honest unreadable states.
+     */
+    discoverIssueCrossReferences?: (issueNumber: number) => Promise<import("./task-provider.js").CrossReferenceOutcome>;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -195,6 +202,7 @@ export async function createWorkflowHub(
         ...(options.readWorkProductState === undefined ? {} : { readWorkProductState: options.readWorkProductState }),
         ...(options.readIssueDetail === undefined ? {} : { readIssueDetail: options.readIssueDetail }),
         ...(options.providerReadState === undefined ? {} : { providerReadState: options.providerReadState }),
+        ...(options.discoverIssueCrossReferences === undefined ? {} : { discoverIssueCrossReferences: options.discoverIssueCrossReferences }),
       },
     );
     options.observeBridgeStarted?.(bridge.url);

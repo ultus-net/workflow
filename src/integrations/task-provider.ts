@@ -44,6 +44,15 @@
  * rows into the card-level states the board renders. Nothing here mutates
  * the provider, the kernel, or any registry — the linkage is recorded
  * hub-side by the delegate lane (run-registry), never composed here.
+ *
+ * W171: provider-owned PR discovery. The linked+open in_review state is
+ * unreachable while the only producer records the delegated board ISSUE's
+ * reference (the PR-state read honestly refuses it). The honest producer is
+ * discovery: fetchIssueCrossReferences reads the issue timeline's
+ * cross-referenced PRs, and the join (given `discover`) re-reads the exactly-
+ * one discovered reference through the same read — the PR's own state
+ * decides. Zero or multiple references stay honestly unreadable naming the
+ * ambiguity; the join itself records nothing.
  */
 
 import type { WorkProductLink } from "./run-registry.js";
@@ -330,11 +339,14 @@ export interface WorkProductPullRequestState {
 
 /** The W165 PR-state read outcome: fetchBoardTask's honest-state posture —
  * an unconfigured provider names its missing declaration, a fault carries
- * its reason, and nothing is ever coerced into a guessed PR state. */
+ * its reason, and nothing is ever coerced into a guessed PR state. W171: the
+ * not-a-pull-request error additionally carries the machine marker
+ * (`notPullRequest: true`) the discovery join keys on — every other error
+ * site omits it. */
 export type WorkProductStateOutcome =
   | { readonly state: "ok"; readonly product: WorkProductPullRequestState }
   | { readonly state: "unconfigured"; readonly missing: readonly string[] }
-  | { readonly state: "error"; readonly reason: string };
+  | { readonly state: "error"; readonly reason: string; readonly notPullRequest?: true };
 
 /**
  * W165: fetches the provider's pull-request record behind a linked board
@@ -386,7 +398,7 @@ export async function fetchWorkProductState(
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     return { state: "error", reason: "the provider body was not an issue" };
   }
-  if (!("pull_request" in parsed)) return { state: "error", reason: `#${issueNumber} is not a pull request` };
+  if (!("pull_request" in parsed)) return { state: "error", reason: `#${issueNumber} is not a pull request`, notPullRequest: true };
   const row = parsed as GitHubIssuePayload & { readonly draft?: unknown };
   const prNumber = row.number;
   const prState = row.state;
@@ -417,9 +429,107 @@ export async function fetchWorkProductState(
   };
 }
 
-/** The W165 card-level work-product state the board renders: the honest
+/** The W171 issue-timeline cross-reference discovery outcome: the guarded
+ * cross-referenced pull requests behind a board issue, or the honest
+ * unconfigured/error states (the same posture as every provider read). */
+export type CrossReferenceOutcome =
+  | {
+      readonly state: "ok";
+      /** The cross-referenced PR references — the provider's own "#N" key
+       * and https href, verbatim. */
+      readonly refs: readonly { readonly key: string; readonly url: string }[];
+      /** Timeline rows that failed the guard — counted, never guessed. */
+      readonly skipped: number;
+    }
+  | { readonly state: "unconfigured"; readonly missing: readonly string[] }
+  | { readonly state: "error"; readonly reason: string; readonly status?: number };
+
+/**
+ * W171: fetches the issue timeline's cross-referenced pull requests with the
+ * SAME bounded fetch and shape-guard discipline as fetchBoardTasks — the
+ * provider-owned discovery the board's work-product join composes from when
+ * a linked reference holds a board issue rather than a PR. Only rows with a
+ * "cross-referenced" event whose source issue carries the pull_request
+ * marker, a positive numeric reference, and an https href count; malformed
+ * rows are skipped and COUNTED. Zero matches is an honest empty list, never
+ * an error.
+ */
+export async function fetchIssueCrossReferences(
+  provider: BoardProviderState,
+  issueNumber: number,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CrossReferenceOutcome> {
+  // The cross-reference read is GitHub-only this slice: an ADO-configured
+  // hub answers unconfigured NAMING the gap (the work-product read's arm) —
+  // never a fabricated discovery through the wrong lane.
+  if (provider.kind === "azure_devops") {
+    return { state: "unconfigured", missing: ["WORKFLOW_GITHUB_REPO (the cross-reference read is GitHub-only; the azure_devops lane serves no cross-reference read)"] };
+  }
+  if (provider.kind !== "github") return { state: "unconfigured", missing: provider.missing };
+  const url = `${GITHUB_API}/repos/${encodeURIComponent(provider.owner)}/${encodeURIComponent(provider.repoName)}/issues/${issueNumber}/timeline`;
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      headers: {
+        authorization: `Bearer ${provider.token}`,
+        accept: "application/vnd.github+json",
+        "user-agent": "workflow-hub (task board projection)",
+        "x-github-api-version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(5_000),
+    });
+  } catch (error) {
+    return { state: "error", reason: error instanceof Error ? error.message : String(error) };
+  }
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    const suffix = detail.length > 0 && detail.length <= 200 ? `: ${detail}` : "";
+    return { state: "error", reason: `the provider answered ${response.status}${suffix}`, status: response.status };
+  }
+  let parsed: unknown;
+  try {
+    parsed = await response.json();
+  } catch (error) {
+    return { state: "error", reason: `the provider body was not JSON (${error instanceof Error ? error.message : String(error)})`, status: response.status };
+  }
+  if (!Array.isArray(parsed)) return { state: "error", reason: "the provider body was not a timeline", status: response.status };
+  const refs: { key: string; url: string }[] = [];
+  let skipped = 0;
+  // The guard runs per row and only ever adds to the counter: a provider row
+  // of any shape can degrade its own reference, never the whole discovery.
+  for (const entry of parsed) {
+    if (typeof entry !== "object" || entry === null) {
+      skipped += 1;
+      continue;
+    }
+    const row = entry as { readonly event?: unknown; readonly source?: unknown };
+    const source = typeof row.source === "object" && row.source !== null ? (row.source as { readonly issue?: unknown }) : undefined;
+    const sourceIssue = typeof source?.issue === "object" && source.issue !== null
+      ? (source.issue as { readonly number?: unknown; readonly html_url?: unknown; readonly pull_request?: unknown })
+      : undefined;
+    if (
+      row.event !== "cross-referenced" ||
+      sourceIssue === undefined ||
+      !("pull_request" in sourceIssue) ||
+      typeof sourceIssue.number !== "number" ||
+      !Number.isInteger(sourceIssue.number) ||
+      sourceIssue.number <= 0 ||
+      typeof sourceIssue.html_url !== "string" ||
+      !sourceIssue.html_url.startsWith("https://")
+    ) {
+      skipped += 1;
+      continue;
+    }
+    refs.push({ key: `#${sourceIssue.number}`, url: sourceIssue.html_url });
+  }
+  return { state: "ok", refs, skipped };
+}
+
+/**
+ * The W165 card-level work-product state the board renders: the honest
  * absence when no run is linked, the hub's own PR read when one is, or the
- * read's failure reason verbatim when the provider would not answer. */
+ * read's failure reason verbatim when the provider would not answer.
+ */
 export type WorkProductCardState =
   | { readonly state: "linked"; readonly runId: string; readonly product: WorkProductPullRequestState }
   | { readonly state: "unreadable"; readonly runId: string; readonly reason: string }
@@ -433,11 +543,23 @@ export type WorkProductCardState =
  * receives the numeric issue the link's key names ("#N"). Cards without a
  * recorded link are never sent to the provider — they render the honest
  * unlinked state, and no state is ever inferred.
+ *
+ * W171: the join stays PURE. When a linked reference's read fails with the
+ * not-a-pull-request marker and `discover` is provided, the join asks the
+ * PROVIDER (never a client) for the issue's cross-referenced PRs: exactly one
+ * discovered reference is reported through `onDiscovered` (recording is the
+ * route's bookkeeping) and re-read through the SAME read callback, so the
+ * PR's own state decides the card. Zero references keep the unchanged
+ * not-a-pull-request reason; multiple references and discovery faults are
+ * honest unreadable states naming the ambiguity verbatim. `discover` absent
+ * keeps the W165 behavior byte-identical.
  */
 export async function workProductStates(
   board: BoardTasks,
   links: ReadonlyMap<string, WorkProductLink>,
   read: (issueNumber: number) => Promise<WorkProductStateOutcome>,
+  discover?: (issueNumber: number) => Promise<CrossReferenceOutcome>,
+  onDiscovered?: (runId: string, ref: { readonly key: string; readonly url: string }) => void,
 ): Promise<Record<string, WorkProductCardState>> {
   const latest = new Map<string, { readonly runId: string; readonly issueNumber: number }>();
   for (const [runId, link] of links) {
@@ -451,7 +573,45 @@ export async function workProductStates(
       if (link === undefined) return [task.key, { state: "unlinked" }];
       const outcome = await read(link.issueNumber);
       if (outcome.state === "ok") return [task.key, { state: "linked", runId: link.runId, product: outcome.product }];
-      if (outcome.state === "error") return [task.key, { state: "unreadable", runId: link.runId, reason: outcome.reason }];
+      if (outcome.state === "error") {
+        // W171: the not-a-pull-request marker is the discovery trigger — the
+        // delegated board ISSUE's reference can never satisfy the PR-state
+        // read; the provider's own timeline discovers the actual PR.
+        if (outcome.notPullRequest === true && discover !== undefined) {
+          const discovery = await discover(link.issueNumber);
+          if (discovery.state === "error") return [task.key, { state: "unreadable", runId: link.runId, reason: discovery.reason }];
+          if (discovery.state === "unconfigured") {
+            return [task.key, { state: "unreadable", runId: link.runId, reason: `the provider is not configured (${discovery.missing.join(", ")})` }];
+          }
+          if (discovery.refs.length === 0) {
+            // Zero cross-referenced PRs: the unchanged not-a-pull-request
+            // reason — discovery found nothing, so the honest state stands.
+            return [task.key, { state: "unreadable", runId: link.runId, reason: outcome.reason }];
+          }
+          if (discovery.refs.length > 1) {
+            return [task.key, { state: "unreadable", runId: link.runId, reason: `the issue's timeline cross-references ${discovery.refs.length} pull requests; the work product is ambiguous` }];
+          }
+          const ref = discovery.refs[0];
+          if (ref === undefined) {
+            // Unreachable (refs.length === 1 passed); named, never guessed.
+            return [task.key, { state: "unreadable", runId: link.runId, reason: "the discovered cross-reference is not a pull-request reference" }];
+          }
+          const discovered = /^#(\d+)$/.exec(ref.key);
+          if (discovered === null || discovered[1] === undefined) {
+            // Unreachable from the provider's own guard (its rows are guarded
+            // to a numeric "#N" reference); a nonconforming discover is named,
+            // never guessed.
+            return [task.key, { state: "unreadable", runId: link.runId, reason: "the discovered cross-reference is not a pull-request reference" }];
+          }
+          const prNumber = Number(discovered[1]);
+          onDiscovered?.(link.runId, ref);
+          const product = await read(prNumber);
+          if (product.state === "ok") return [task.key, { state: "linked", runId: link.runId, product: product.product }];
+          if (product.state === "error") return [task.key, { state: "unreadable", runId: link.runId, reason: product.reason }];
+          return [task.key, { state: "unreadable", runId: link.runId, reason: `the provider is not configured (${product.missing.join(", ")})` }];
+        }
+        return [task.key, { state: "unreadable", runId: link.runId, reason: outcome.reason }];
+      }
       // An unconfigured PR-state read cannot answer for a LINKED card — the
       // honest unreadable state names the missing declaration.
       return [task.key, { state: "unreadable", runId: link.runId, reason: `the provider is not configured (${outcome.missing.join(", ")})` }];

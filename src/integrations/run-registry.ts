@@ -339,6 +339,13 @@ export function createRunRegistry(
         ...finishedRunTaskIds,
       ];
     },
+    // W171: the discovery lane's record path — the controller exposes the
+    // registry's existing bounded map writer so the /board/tasks route can
+    // record a PROVIDER-OWNED discovery (the timeline's cross-referenced PR)
+    // without the route ever touching the map itself.
+    recordWorkProductLink(input) {
+      rememberWorkProductLink(input.runId, input.link);
+    },
     /**
      * Plan Task A3: run-gate observability for hub-attached surfaces — the
      * latest reviewer verdicts, blocking reasons, and unverified completion

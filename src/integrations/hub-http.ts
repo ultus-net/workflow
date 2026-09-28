@@ -13,7 +13,7 @@ import { projectScopedBoard, type ProjectRecord } from "./project-registry.js";
 import { activityTimeline } from "./activity-timeline.js";
 import { operatorPosture, scheduleLineage, scheduleRecentRuns } from "./operator-posture.js";
 import { workProductStates } from "./task-provider.js";
-import type { BoardOutcome, BoardTaskOutcome, WorkProductStateOutcome } from "./task-provider.js";
+import type { BoardOutcome, BoardTaskOutcome, CrossReferenceOutcome, WorkProductStateOutcome } from "./task-provider.js";
 import type { IssueDetailOutcome, ProviderReadRecord } from "./issue-detail.js";
 
 /**
@@ -96,6 +96,10 @@ interface HubRequestContext {
    * has no record of.
    */
   readonly providerReadState?: () => ProviderReadRecord | undefined;
+  /** W171: the provider-owned discovery read — the linked board issue's
+   * timeline cross-references, from which the hub records the actual PR
+   * reference (exactly-one rule; never a guess). */
+  readonly discoverIssueCrossReferences?: (issueNumber: number) => Promise<CrossReferenceOutcome>;
 }
 
 export interface HubBridgeCapabilities {
@@ -105,6 +109,9 @@ export interface HubBridgeCapabilities {
   readonly readWorkProductState?: (issueNumber: number) => Promise<WorkProductStateOutcome>;
   readonly readIssueDetail?: (issue: number) => Promise<IssueDetailOutcome>;
   readonly providerReadState?: () => ProviderReadRecord | undefined;
+  /** W171: the discovery capability — a FIELD on the capabilities object (the
+   * post-#330 extension point), never a positional. */
+  readonly discoverIssueCrossReferences?: (issueNumber: number) => Promise<CrossReferenceOutcome>;
 }
 
 /**
@@ -421,9 +428,20 @@ async function handleRequest(
       // never appears from fabricated data).
       const board = await context.readBoardTasks();
       const links = context.runController?.gateObservability?.().workProductLinks;
+      // W171: the discovery lane — when the hub carries the discovery
+      // capability AND a controller able to record, the join receives the
+      // provider-owned discovery read and the record path. The discovered
+      // reference is the hub's OWN timeline observation (exactly-one rule);
+      // the join itself stays pure — the route does the recording.
+      const onDiscovered =
+        context.discoverIssueCrossReferences !== undefined && context.runController?.recordWorkProductLink !== undefined
+          ? (runId: string, ref: { readonly key: string; readonly url: string }): void => {
+              context.runController?.recordWorkProductLink?.({ runId, link: { provider: "github", key: ref.key, url: ref.url } });
+            }
+          : undefined;
       const workProducts =
         board.state === "ok" && context.readWorkProductState !== undefined && links !== undefined && links.size > 0
-          ? await workProductStates(board.board, links, context.readWorkProductState)
+          ? await workProductStates(board.board, links, context.readWorkProductState, context.discoverIssueCrossReferences, onDiscovered)
           : undefined;
       return send(response, 200, { board, ...(workProducts === undefined ? {} : { workProducts }) });
     }
