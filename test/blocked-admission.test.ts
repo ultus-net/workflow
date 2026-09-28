@@ -162,7 +162,7 @@ test("W166: a record without a usable action or enteredAt is refused (BLOCKED_RE
   assert.equal(graph.get(taskId("A")).state, "IN_PROGRESS");
 });
 
-test("W166: a record whose reason is present but not a string is refused (BLOCKED_RECORD_MALFORMED) (guard)", () => {
+test("W166: a record whose reason is present but not a string is refused (BLOCKED_RECORD_MALFORMED) — red-first", () => {
   const graph = new TaskGraph([task("A")]);
   graph.transition(taskId("A"), "IN_PROGRESS");
   // The optional reason rides the admitted task verbatim; when present it
