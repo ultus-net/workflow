@@ -98,7 +98,7 @@ export interface ReasoningClaimMetrics {
  */
 export type RunOrigin =
   | { readonly kind: "schedule"; readonly scheduleId: string }
-  | { readonly kind: "provider-task"; readonly provider: "github"; readonly key: string; readonly url: string };
+  | { readonly kind: "provider-task"; readonly provider: "github" | "azure_devops"; readonly key: string; readonly url: string };
 
 /**
  * W146: the typed classification for a client-shaped fault in a

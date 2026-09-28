@@ -6,6 +6,7 @@ import {
   fetchBoardTask,
   type BoardProviderState,
   type ExternalTask,
+  type GitHubBoardProviderState,
   type GitHubIssuePayload,
 } from "../src/integrations/task-provider.js";
 import { createWorkflowHubBridge } from "../src/integrations/hub-http.js";
@@ -89,7 +90,7 @@ const stubFetch = (status: number, body: string) => {
   return { impl, calls };
 };
 
-const provider = (env: Record<string, string | undefined> = { WORKFLOW_GITHUB_REPO: "o/r", WORKFLOW_GITHUB_TOKEN: "t" }): BoardProviderState => {
+const provider = (env: Record<string, string | undefined> = { WORKFLOW_GITHUB_REPO: "o/r", WORKFLOW_GITHUB_TOKEN: "t" }): GitHubBoardProviderState => {
   const state = boardProviderFromEnv(env);
   assert.equal(state.kind, "github");
   return state as BoardProviderState & { kind: "github" };

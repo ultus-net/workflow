@@ -43,7 +43,7 @@
  * reference ("#12"); `url` links OUT of the dashboard; `updatedAt` is the
  * provider's own timestamp, rendered verbatim. */
 export interface ExternalTask {
-  readonly provider: "github";
+  readonly provider: "github" | "azure_devops";
   readonly key: string;
   readonly title: string;
   readonly state: "open" | "closed";
@@ -55,7 +55,7 @@ export interface ExternalTask {
 
 /** One fetched page of provider records plus its honest bookkeeping. */
 export interface BoardTasks {
-  readonly provider: "github";
+  readonly provider: "github" | "azure_devops";
   /** The configured "owner/name" repository declaration, verbatim. */
   readonly repo: string;
   readonly tasks: readonly ExternalTask[];
@@ -74,11 +74,20 @@ export type BoardOutcome =
   | { readonly state: "unconfigured"; readonly missing: readonly string[] }
   | { readonly state: "error"; readonly reason: string };
 
-/** The classified env declaration. The token rides the "github" variant
- * ONLY — the unconfigured/error states carry no secret material. */
+/** The classified env declaration (W168: one union — the Azure DevOps lane
+ * is a provider VARIANT of this record shape, never a fork). The token
+ * rides ONLY the provider variants — the unconfigured/error states carry
+ * no secret material. */
 export type BoardProviderState =
   | { readonly kind: "unconfigured"; readonly missing: readonly string[] }
-  | { readonly kind: "github"; readonly owner: string; readonly repo: string; readonly repoName: string; readonly token: string };
+  | { readonly kind: "github"; readonly owner: string; readonly repo: string; readonly repoName: string; readonly token: string }
+  | { readonly kind: "azure_devops"; readonly org: string; readonly project: string; readonly token: string };
+
+/** The BoardProviderState lanes the GitHub fetchers serve: unconfigured
+ * plus github. The W168 azure_devops lane dispatches to the Azure DevOps
+ * provider instead (fetchBoardTasksFromEnv), so the fetchers' input stays
+ * type-honest while the GitHub logic below stays byte-identical. */
+export type GitHubBoardProviderState = Extract<BoardProviderState, { readonly kind: "unconfigured" | "github" }>;
 
 export const GITHUB_ISSUES_PAGE_SIZE = 100;
 const GITHUB_API = "https://api.github.com";
@@ -90,7 +99,7 @@ const REPO_DECLARATION = /^[^/\s]+\/[^/\s]+$/;
  * are listed under their NAMES; a malformed repo declaration is named as
  * invalid instead of being silently coerced into an owner/repo split.
  */
-export function boardProviderFromEnv(env: NodeJS.ProcessEnv): BoardProviderState {
+export function boardProviderFromEnv(env: NodeJS.ProcessEnv): GitHubBoardProviderState {
   const missing: string[] = [];
   const declaration = env.WORKFLOW_GITHUB_REPO;
   if (declaration === undefined || declaration.trim().length === 0) {
@@ -167,7 +176,7 @@ function externalTaskFromPayload(payload: GitHubIssuePayload): ExternalTask | un
  * and a transport failure are honest error states that name what happened.
  */
 export async function fetchBoardTasks(
-  provider: BoardProviderState,
+  provider: GitHubBoardProviderState,
   fetchImpl: typeof fetch = fetch,
 ): Promise<BoardOutcome> {
   if (provider.kind !== "github") return { state: "unconfigured", missing: provider.missing };
@@ -248,7 +257,7 @@ export type BoardTaskOutcome =
  * task.
  */
 export async function fetchBoardTask(
-  provider: BoardProviderState,
+  provider: GitHubBoardProviderState,
   issueNumber: number,
   fetchImpl: typeof fetch = fetch,
 ): Promise<BoardTaskOutcome> {

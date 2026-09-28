@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createEvidenceContentStore } from "../integrations/evidence-content-store.js";
-import { boardProviderFromEnv, fetchBoardTask, fetchBoardTasks } from "../integrations/task-provider.js";
+import { fetchBoardTasksFromEnv } from "../integrations/azure-devops-provider.js";
+import { boardProviderFromEnv, fetchBoardTask } from "../integrations/task-provider.js";
 import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
 import { createCredentialBroker } from "../integrations/credentials.js";
@@ -420,11 +421,15 @@ try {
     // /evidence-content read route and the test-runner capture records
     // content on the evidence the verification consumed.
     contentStore: createEvidenceContentStore(),
-    // W161: the external-task board's read closure — env-classified at hub
-    // start (WORKFLOW_GITHUB_REPO/WORKFLOW_GITHUB_TOKEN), fetched per read,
-    // bounded, and credential-free on the wire. An unconfigured hub still
-    // serves the route; the payload names the missing declaration.
-    readBoardTasks: () => fetchBoardTasks(boardProviderFromEnv(process.env)),
+    // W161/W168: the external-task board's read closure — env-classified at
+    // hub start across BOTH provider lanes (GitHub:
+    // WORKFLOW_GITHUB_REPO/WORKFLOW_GITHUB_TOKEN; Azure DevOps:
+    // WORKFLOW_AZURE_DEVOPS_ORG/WORKFLOW_AZURE_DEVOPS_PROJECT/
+    // WORKFLOW_AZURE_DEVOPS_TOKEN), fetched per read, bounded, and
+    // credential-free on the wire. Both lanes fully configured is an honest
+    // ambiguity error — the hub never silently picks one. An unconfigured
+    // hub still serves the route; the payload names the missing declaration.
+    readBoardTasks: () => fetchBoardTasksFromEnv(process.env),
     delegateBoardTask: (issue: number) => fetchBoardTask(boardProviderFromEnv(process.env), issue),
     schedulerFactory,
     schedules: scheduleRegistry,
