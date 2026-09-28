@@ -82,7 +82,7 @@ export interface BoardTasks {
 export type BoardOutcome =
   | { readonly state: "ok"; readonly board: BoardTasks }
   | { readonly state: "unconfigured"; readonly missing: readonly string[] }
-  | { readonly state: "error"; readonly reason: string };
+  | { readonly state: "error"; readonly reason: string; readonly status?: number };
 
 /** The classified env declaration (W168: one union — the Azure DevOps lane
  * is a provider VARIANT of this record shape, never a fork). The token
@@ -208,15 +208,15 @@ export async function fetchBoardTasks(
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     const suffix = detail.length > 0 && detail.length <= 200 ? `: ${detail}` : "";
-    return { state: "error", reason: `the provider answered ${response.status}${suffix}` };
+    return { state: "error", reason: `the provider answered ${response.status}${suffix}`, status: response.status };
   }
   let parsed: unknown;
   try {
     parsed = await response.json();
   } catch (error) {
-    return { state: "error", reason: `the provider body was not JSON (${error instanceof Error ? error.message : String(error)})` };
+    return { state: "error", reason: `the provider body was not JSON (${error instanceof Error ? error.message : String(error)})`, status: response.status };
   }
-  if (!Array.isArray(parsed)) return { state: "error", reason: "the provider body was not an issue list" };
+  if (!Array.isArray(parsed)) return { state: "error", reason: "the provider body was not an issue list", status: response.status };
   // Completeness honesty (review P1): the truncation flag keys on the RECEIVED
   // page count — before PRs and malformed rows are filtered — never on the
   // rendered count, which would hide a full page behind excluded rows.
@@ -252,11 +252,16 @@ export async function fetchBoardTasks(
   };
 }
 
-/** The single-issue fetch outcome behind the W162 delegate dispatch. */
+/** The single-issue fetch outcome behind the W162 delegate dispatch. The
+ * error state's `status` (W167) is the provider's machine-readable answer
+ * code where one exists — the human reason already states the number; the
+ * field structures it (for the liveness record's 401/403 classification)
+ * instead of leaving it to be parsed back out of the string. A transport
+ * failure has no answer, so no status. */
 export type BoardTaskOutcome =
   | { readonly state: "ok"; readonly task: ExternalTask }
   | { readonly state: "unconfigured"; readonly missing: readonly string[] }
-  | { readonly state: "error"; readonly reason: string };
+  | { readonly state: "error"; readonly reason: string; readonly status?: number };
 
 /**
  * W162: fetches ONE provider issue with the same bounded fetch and shape
@@ -290,20 +295,20 @@ export async function fetchBoardTask(
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     const suffix = detail.length > 0 && detail.length <= 200 ? `: ${detail}` : "";
-    return { state: "error", reason: `the provider answered ${response.status}${suffix}` };
+    return { state: "error", reason: `the provider answered ${response.status}${suffix}`, status: response.status };
   }
   let parsed: unknown;
   try {
     parsed = await response.json();
   } catch (error) {
-    return { state: "error", reason: `the provider body was not JSON (${error instanceof Error ? error.message : String(error)})` };
+    return { state: "error", reason: `the provider body was not JSON (${error instanceof Error ? error.message : String(error)})`, status: response.status };
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return { state: "error", reason: "the provider body was not an issue" };
+    return { state: "error", reason: "the provider body was not an issue", status: response.status };
   }
-  if ("pull_request" in parsed) return { state: "error", reason: `#${issueNumber} is a pull request, not an issue` };
+  if ("pull_request" in parsed) return { state: "error", reason: `#${issueNumber} is a pull request, not an issue`, status: response.status };
   const task = externalTaskFromPayload(parsed as GitHubIssuePayload);
-  if (task === undefined) return { state: "error", reason: `#${issueNumber} did not match the task shape` };
+  if (task === undefined) return { state: "error", reason: `#${issueNumber} did not match the task shape`, status: response.status };
   return { state: "ok", task };
 }
 

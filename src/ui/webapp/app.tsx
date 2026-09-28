@@ -22,6 +22,7 @@ import { ProjectsView, type ProjectMeta } from "./projects-view.js";
 import { BoardView } from "./board-view.js";
 import type { ScheduleRecentRun } from "../../integrations/operator-posture.js";
 import type { BoardOutcome, WorkProductCardState } from "../../integrations/task-provider.js";
+import type { ProviderReadRecord } from "../../integrations/issue-detail.js";
 import { UsageView } from "./usage-view.js";
 import { InvariantsPanel } from "./invariants-panel.js";
 import type { SessionBudgetPosture } from "../web-sessions.js";
@@ -523,6 +524,10 @@ function useOperatorSurfaces() {
   const [recentRuns, setRecentRuns] = useState<readonly ScheduleRecentRun[] | undefined>(undefined);
   const [board, setBoard] = useState<BoardOutcome | null | undefined>(undefined);
   const [boardReason, setBoardReason] = useState<string | undefined>(undefined);
+  // W167: the hub's recorded provider-read state beside the board — the
+  // liveness pills' only source. null (or absent) means the hub has no
+  // record: no pill may claim a freshness the hub has no record of.
+  const [boardRead, setBoardRead] = useState<ProviderReadRecord | null | undefined>(undefined);
   const [workProducts, setWorkProducts] = useState<Readonly<Record<string, WorkProductCardState>> | undefined>(undefined);
   /** W161 (review P2): the relay's failure reason is carried to the view —
    * a provider fault must render its own reason, never a bare "hub does not
@@ -531,14 +536,16 @@ function useOperatorSurfaces() {
     try {
       const boardResponse = await fetch("/api/board");
       if (boardResponse.ok) {
-        const payload = (await boardResponse.json()) as { board?: BoardOutcome; reason?: string; workProducts?: Record<string, WorkProductCardState> };
+        const payload = (await boardResponse.json()) as { board?: BoardOutcome; reason?: string; read?: ProviderReadRecord | null; workProducts?: Record<string, WorkProductCardState> };
         setBoard(payload.board ?? null);
         setBoardReason(payload.reason);
+        setBoardRead(payload.read ?? null);
         setWorkProducts(payload.workProducts);
       }
       else {
         setBoard(null);
         setBoardReason(undefined);
+        setBoardRead(null);
       }
     } catch {
       // Keep the last good board; the next poll retries.
@@ -586,7 +593,7 @@ function useOperatorSurfaces() {
       clearInterval(boardTimer);
     };
   }, [load, loadBoard]);
-  return { schedules, projects, loops, recentRuns, board, boardReason, workProducts, refresh: load, refreshBoard: loadBoard };
+  return { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, refresh: load, refreshBoard: loadBoard };
 }
 
 function createSession(refresh: () => Promise<void>): void {
@@ -2491,7 +2498,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   const gitStatus = useGitStatus();
   const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
-  const { schedules, projects, loops, recentRuns, board, boardReason, workProducts, refresh: refreshSchedules } = useOperatorSurfaces();
+  const { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, refresh: refreshSchedules } = useOperatorSurfaces();
   const posture = usePosture();
   const agents = useAgents();
   // The registry leads with the default agent (OpenCode); fall back to it while
@@ -2838,7 +2845,7 @@ function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
           }}
         />
       ) : view === "board" ? (
-        <BoardView board={board} reason={boardReason} workProducts={workProducts} />
+        <BoardView board={board} reason={boardReason} read={boardRead} workProducts={workProducts} />
       ) : view === "usage" ? (
         <UsageView />
       ) : view === "settings" ? (

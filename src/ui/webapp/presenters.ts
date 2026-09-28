@@ -1,5 +1,6 @@
 import type { OperatorSessionItem } from "../operator-session.js";
 import type { WebConfigOption } from "../web-config-options.js";
+import type { ProviderReadRecord } from "../../integrations/issue-detail.js";
 
 /**
  * W161: the external provider's poll cadence is its OWN lane, deliberately
@@ -14,6 +15,44 @@ import type { WebConfigOption } from "../web-config-options.js";
  * one upstream read.)
  */
 export const BOARD_POLL_MS = 30_000;
+
+/**
+ * W167: the liveness horizon for a recorded provider read. Twice the poll
+ * cadence — a read younger than the TTL is "fresh" (the hub has talked to the
+ * provider inside this window), beyond it the record is "stale" but still
+ * shown. Lives beside BOARD_POLL_MS so the claim and the cadence stay
+ * proportioned in one module.
+ */
+export const BOARD_LIVENESS_TTL_MS = BOARD_POLL_MS * 2;
+
+/** The liveness class a board card's provider link renders from the hub's
+ * recorded provider read (and nothing else). */
+export type BoardLinkLiveness = "fresh" | "stale" | "requires-auth" | "unreachable";
+
+/** The pill labels, verbatim: "requires auth" states the hub's auth fault in
+ * operator language, the other classes speak for themselves. */
+export const BOARD_LINK_LIVENESS_LABELS: Readonly<Record<BoardLinkLiveness, string>> = {
+  fresh: "fresh",
+  stale: "stale",
+  "requires-auth": "requires auth",
+  unreachable: "unreachable",
+};
+
+/**
+ * W167: derives the provider link's liveness class from the hub's recorded
+ * provider read — and NOTHING else. No record (the hub has performed no
+ * provider read, or predates the record) claims no pill; an unparseable
+ * recorded instant claims nothing either. A fault record (requires-auth,
+ * unreachable) renders verbatim regardless of age — stale means "successful
+ * but old", never "broken but old". The TTL boundary is inclusive.
+ */
+export function boardLinkLiveness(record: ProviderReadRecord | null | undefined, now: number): BoardLinkLiveness | undefined {
+  if (record === null || record === undefined) return undefined;
+  const at = new Date(record.at).getTime();
+  if (Number.isNaN(at)) return undefined;
+  if (record.outcome === "requires-auth" || record.outcome === "unreachable") return record.outcome;
+  return now - at <= BOARD_LIVENESS_TTL_MS ? "fresh" : "stale";
+}
 
 /** Token counts compacted for meters and readouts ("84.5k", "1.2M"). */
 export function formatTokens(count: number): string {

@@ -8,6 +8,7 @@ import { WorkflowApplication } from "../application/workflow.js";
 import { createEvidenceContentStore } from "../integrations/evidence-content-store.js";
 import { fetchBoardTasksFromEnv } from "../integrations/azure-devops-provider.js";
 import { boardProviderFromEnv, fetchBoardTask, fetchWorkProductState } from "../integrations/task-provider.js";
+import { createProviderReadLedger, fetchIssueDetail, recordProviderReads } from "../integrations/issue-detail.js";
 import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
 import { createCredentialBroker } from "../integrations/credentials.js";
@@ -410,6 +411,12 @@ const schedulerFactory = (handles: WorkflowHubSchedulerHandles) => {
   return scheduler;
 };
 
+// W167: the hub's provider-read ledger — the ONE record behind the board's
+// liveness pills. Every provider read below is wrapped so the hub records its
+// own read outcomes at read time (a failed read's verbatim reason rides the
+// record); an unconfigured hub performs no read and records nothing.
+const providerReadLedger = createProviderReadLedger();
+
 let hub: Awaited<ReturnType<typeof createWorkflowHub>>;
 try {
   hub = await createWorkflowHub(application, {
@@ -427,13 +434,22 @@ try {
     // WORKFLOW_AZURE_DEVOPS_ORG/WORKFLOW_AZURE_DEVOPS_PROJECT/
     // WORKFLOW_AZURE_DEVOPS_TOKEN), fetched per read, bounded, and
     // credential-free on the wire. Both lanes fully configured is an honest
-    // ambiguity error — the hub never silently picks one. An unconfigured
-    // hub still serves the route; the payload names the missing declaration.
-    readBoardTasks: () => fetchBoardTasksFromEnv(process.env),
-    delegateBoardTask: (issue: number) => fetchBoardTask(boardProviderFromEnv(process.env), issue),
+    // ambiguity error — the hub never silently picks one. W167 wraps it with
+    // recordProviderReads so the hub records its own read outcome (the
+    // liveness pills' only source); the detail read joins the same ledger —
+    // a read performed for ANY route updates the record. An unconfigured hub
+    // still serves the routes; the payloads name the missing declaration and
+    // the ledger records nothing (the ambiguity error's verbatim reason rides
+    // the pill tooltip — no pill fabricates freshness).
+    readBoardTasks: recordProviderReads(providerReadLedger, () => fetchBoardTasksFromEnv(process.env)),
+    delegateBoardTask: recordProviderReads(providerReadLedger, (issue: number) => fetchBoardTask(boardProviderFromEnv(process.env), issue)),
     // W165: the board's pull-request-state read closure — the same env-classified
-    // provider, one bounded read per linked reference.
+    // provider, one bounded read per linked reference. It stays UNwrapped: its
+    // own `as of` fact carries its freshness on the payload, and the liveness
+    // ledger describes the BOARD reads the pills render beside.
     readWorkProductState: (issue: number) => fetchWorkProductState(boardProviderFromEnv(process.env), issue),
+    readIssueDetail: recordProviderReads(providerReadLedger, (issue: number) => fetchIssueDetail(boardProviderFromEnv(process.env), issue)),
+    providerReadState: () => providerReadLedger.current(),
     schedulerFactory,
     schedules: scheduleRegistry,
     projects: projectRegistry,

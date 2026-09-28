@@ -150,19 +150,34 @@ export function createWorkflowWebServer(
     return { evidence: null, reason: payload?.error ?? "hub unavailable" };
   };
 
+  /** W167: the hub's recorded provider-read state — the liveness pills' ONLY
+   * source, recorded hub-side by the wrapped reads. Fail-closed: no hub, or a
+   * hub predating the slice, answers read: null — no pill may claim a
+   * freshness the hub has no record of. The browser never sees a hub token. */
+  const hubReadState = async (): Promise<{ read: unknown }> => {
+    const result = await hubPost("/board/read-state", {});
+    const payload = result.payload as { read?: unknown } | undefined;
+    if (result.status === 200 && payload?.read !== undefined) return { read: payload.read };
+    return { read: null };
+  };
+
   /** W161: the ONE board read route — the hub's /board/tasks provider
    * outcome relayed verbatim (ok / unconfigured / error are all PAYLOAD
    * states the view renders honestly). Fail-closed: no hub, or a hub
    * predating the slice, answers board: null with the reason — never a
    * fabricated empty board. The browser never sees a hub token or the
-   * provider credential. */
-  const hubBoard = async (): Promise<{ board: unknown; reason?: string; workProducts?: unknown }> => {
+   * provider credential. W165: the work-product join rides the payload
+   * when the hub computed one. W167: only a successful board read fetches
+   * the recorded read state beside it — a failed board read answers
+   * read: null without a second hub call. */
+  const hubBoard = async (): Promise<{ board: unknown; reason?: string; read: unknown; workProducts?: unknown }> => {
     const result = await hubPost("/board/tasks", {});
     const payload = result.payload as { board?: unknown; error?: string; workProducts?: unknown } | undefined;
     if (result.status === 200 && payload?.board !== undefined) {
-      return { board: payload.board, ...(payload.workProducts === undefined ? {} : { workProducts: payload.workProducts }) };
+      const read = await hubReadState();
+      return { board: payload.board, read: read.read, ...(payload.workProducts === undefined ? {} : { workProducts: payload.workProducts }) };
     }
-    return { board: null, reason: payload?.error ?? "hub unavailable" };
+    return { board: null, reason: payload?.error ?? "hub unavailable", read: null };
   };
 
   /** Session-scoped channel: `?session=<id>` selects a parallel live session;
@@ -233,6 +248,16 @@ export function createWorkflowWebServer(
     if (request.method === "GET" && pathname === "/api/evidence") return json(response, 200, await hubEvidence());
     // W161: the board read relay (see hubBoard above).
     if (request.method === "GET" && pathname === "/api/board") return json(response, 200, await hubBoard());
+    // W167: the read-only issue-detail relay — the browser asks THIS service,
+    // which carries the hub token upstream; the browser never sees it. The
+    // key rides the query string, and the hub's own answer passes through —
+    // 200 detail, 400 invalid key, 404 withheld capability, 503 no hub.
+    if (request.method === "GET" && pathname === "/api/board/task") {
+      const key = new URL(request.url ?? "/", "http://workflow.local").searchParams.get("key");
+      if (key === null) return json(response, 400, { error: "invalid board task request" });
+      const result = await hubPost("/board/task", { key });
+      return json(response, result.status, result.payload);
+    }
     if (request.method === "POST" && pathname === "/api/board/delegate") {
       if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
       if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {

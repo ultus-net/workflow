@@ -14,6 +14,7 @@ import { activityTimeline } from "./activity-timeline.js";
 import { operatorPosture, scheduleLineage, scheduleRecentRuns } from "./operator-posture.js";
 import { workProductStates } from "./task-provider.js";
 import type { BoardOutcome, BoardTaskOutcome, WorkProductStateOutcome } from "./task-provider.js";
+import type { IssueDetailOutcome, ProviderReadRecord } from "./issue-detail.js";
 
 /**
  * The hub's host-neutral loopback HTTP server and discovery bridge.
@@ -78,6 +79,23 @@ interface HubRequestContext {
    * from fabricated data), like the other optional capabilities.
    */
   readonly readWorkProductState?: (issueNumber: number) => Promise<WorkProductStateOutcome>;
+  /**
+   * W167: the issue-detail read capability — the hub-side provider read of
+   * an issue's description and comment thread (composed from env at
+   * startup, wrapped with the provider-read recorder). Absent → the route
+   * 404s (capability withheld, like the other optional registries); present
+   * → the outcome carries its own honest unconfigured/error/ok state and
+   * never credential material.
+   */
+  readonly readIssueDetail?: (issue: number) => Promise<IssueDetailOutcome>;
+  /**
+   * W167: the hub-recorded provider read state accessor — the record the
+   * liveness pills derive from (recorded hub-side by the composition
+   * root's wrapped provider reads; the routes never classify). Absent →
+   * the read-state route 404s, and no pill may claim a freshness the hub
+   * has no record of.
+   */
+  readonly providerReadState?: () => ProviderReadRecord | undefined;
 }
 
 export async function createWorkflowHubBridge(
@@ -95,11 +113,16 @@ export async function createWorkflowHubBridge(
   readBoardTasks?: () => Promise<BoardOutcome>,
   delegateBoardTask?: (issue: number) => Promise<BoardTaskOutcome>,
   projects?: ProjectRegistry,
+  /** W165: the board's pull-request-state read capability (12th) — see HubRequestContext. */
   readWorkProductState?: (issueNumber: number) => Promise<WorkProductStateOutcome>,
+  /** W167: the issue-detail read capability (13th) — see HubRequestContext. */
+  readIssueDetail?: (issue: number) => Promise<IssueDetailOutcome>,
+  /** W167: the hub-recorded provider read state accessor (14th). */
+  providerReadState?: () => ProviderReadRecord | undefined,
 ): Promise<WorkflowHubBridge> {
   const token = randomBytes(32).toString("hex");
   const verificationToken = randomBytes(32).toString("hex");
-  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...(readBoardTasks === undefined ? {} : { readBoardTasks }), ...(delegateBoardTask === undefined ? {} : { delegateBoardTask }), ...(projects === undefined ? {} : { projects }), ...(readWorkProductState === undefined ? {} : { readWorkProductState }) };
+  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...(readBoardTasks === undefined ? {} : { readBoardTasks }), ...(delegateBoardTask === undefined ? {} : { delegateBoardTask }), ...(projects === undefined ? {} : { projects }), ...(readWorkProductState === undefined ? {} : { readWorkProductState }), ...(readIssueDetail === undefined ? {} : { readIssueDetail }), ...(providerReadState === undefined ? {} : { providerReadState }) };
 
   const server = createServer((request, response) => {
     if (request.url !== undefined) observeRequest?.(new URL(request.url, "http://127.0.0.1").pathname);
@@ -434,6 +457,36 @@ async function handleRequest(
         throw error;
       }
       return send(response, 200, { delegation: { state: "ok", runId, task: { key: task.key, title: task.title, url: task.url } } });
+    }
+    // ── W167: the read-only issue-detail routes (this region only; a
+    // parallel hub item lands elsewhere) ──
+    // /board/task: the operator-token detail read (the same read class as
+    // /board/tasks — reads never widen the token blast radius). The record's
+    // own "#<number>" form parses strictly and a non-positive number never
+    // reaches the provider read; withheld → 404 like the other optional
+    // capabilities. The outcome relays verbatim (ok / unconfigured / error
+    // are all PAYLOAD states); the provider credential never rides it.
+    if (request.url === "/board/task") {
+      if (context.readIssueDetail === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body) || typeof body.key !== "string") {
+        return send(response, 400, { error: "invalid board task request" });
+      }
+      const parsed = /^#(\d+)$/.exec(body.key);
+      const issue = parsed === null ? Number.NaN : Number(parsed[1]);
+      if (Number.isNaN(issue) || issue <= 0) {
+        return send(response, 400, { error: "invalid board task request: key must be '#<positive number>'" });
+      }
+      return send(response, 200, { detail: await context.readIssueDetail(issue) });
+    }
+    // /board/read-state: the hub's OWN recorded provider-read record (the
+    // only thing the liveness pills may derive from) — recorded hub-side by
+    // the composition root's wrapped reads, never claimed from a client.
+    // No record → { read: null }; withheld → 404. Read class.
+    if (request.url === "/board/read-state") {
+      if (context.providerReadState === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body)) return send(response, 400, { error: "invalid read-state request" });
+      const record = context.providerReadState();
+      return send(response, 200, { read: record ?? null });
     }
     if (request.url === "/snapshot") {
       if (!isRecord(body)) return send(response, 400, { error: "invalid snapshot request" });
