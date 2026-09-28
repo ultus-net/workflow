@@ -98,6 +98,22 @@ interface HubRequestContext {
   readonly providerReadState?: () => ProviderReadRecord | undefined;
 }
 
+export interface HubBridgeCapabilities {
+  readonly readBoardTasks?: () => Promise<BoardOutcome>;
+  readonly delegateBoardTask?: (issue: number) => Promise<BoardTaskOutcome>;
+  readonly projects?: ProjectRegistry;
+  readonly readWorkProductState?: (issueNumber: number) => Promise<WorkProductStateOutcome>;
+  readonly readIssueDetail?: (issue: number) => Promise<IssueDetailOutcome>;
+  readonly providerReadState?: () => ProviderReadRecord | undefined;
+}
+
+/**
+ * The bridge's capability extension point is THIS OBJECT, never a positional
+ * parameter: a new capability adds a field here, a field on HubRequestContext,
+ * and its route — the bridge's own positional list stays frozen. The tail-append
+ * positional shape was the conflict class that made parallel board items
+ * collide on the same signature line (PRs #327/#328/#329, W165/W168/W167).
+ */
 export async function createWorkflowHubBridge(
   application: WorkflowApplication,
   resolveApplication: WorkflowApplicationResolver = (_workspace, _runId, options) => {
@@ -110,19 +126,11 @@ export async function createWorkflowHubBridge(
   selfImprovement?: SelfImprovementRegistry,
   schedules?: ScheduleRegistry,
   contentStore?: HubRequestContext["contentStore"],
-  readBoardTasks?: () => Promise<BoardOutcome>,
-  delegateBoardTask?: (issue: number) => Promise<BoardTaskOutcome>,
-  projects?: ProjectRegistry,
-  /** W165: the board's pull-request-state read capability (12th) — see HubRequestContext. */
-  readWorkProductState?: (issueNumber: number) => Promise<WorkProductStateOutcome>,
-  /** W167: the issue-detail read capability (13th) — see HubRequestContext. */
-  readIssueDetail?: (issue: number) => Promise<IssueDetailOutcome>,
-  /** W167: the hub-recorded provider read state accessor (14th). */
-  providerReadState?: () => ProviderReadRecord | undefined,
+  capabilities: HubBridgeCapabilities = {},
 ): Promise<WorkflowHubBridge> {
   const token = randomBytes(32).toString("hex");
   const verificationToken = randomBytes(32).toString("hex");
-  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...(readBoardTasks === undefined ? {} : { readBoardTasks }), ...(delegateBoardTask === undefined ? {} : { delegateBoardTask }), ...(projects === undefined ? {} : { projects }), ...(readWorkProductState === undefined ? {} : { readWorkProductState }), ...(readIssueDetail === undefined ? {} : { readIssueDetail }), ...(providerReadState === undefined ? {} : { providerReadState }) };
+  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...capabilities };
 
   const server = createServer((request, response) => {
     if (request.url !== undefined) observeRequest?.(new URL(request.url, "http://127.0.0.1").pathname);

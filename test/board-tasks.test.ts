@@ -299,7 +299,7 @@ test("W161: the hub route serves the board on the operator token class, verbatim
     undefined,
     undefined,
     undefined,
-    async () => outcome,
+    { readBoardTasks: async () => outcome },
   );
   try {
     const denied = await fetch(`${bridge.url}/board/tasks`, {
