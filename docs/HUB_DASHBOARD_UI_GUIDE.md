@@ -99,7 +99,14 @@ here argues for a full shadcn-style rebuild. The gap is **capacity**: a
 already owns, and detail surfaces that exist only as chat panels are invisible
 to an operator who starts on another view.
 
-### Target shell (evolutionary, not a rewrite)
+### Target shell (superseded in shape — see the spec)
+
+> **Superseded 2026-09-29** by
+> `docs/superpowers/specs/2026-09-29-hub-dashboard-redesign-design.md`: the
+> spec replaces top-bar navigation with the sidebar rail, makes the **Overview
+> page the landing**, and sequences the work in five phases. The groupings and
+> badge sources below still describe the target nav; the "keep the top bar"
+> framing in this section does not survive the spec.
 
 Keep the top bar for the working surfaces (Chat, Board, Agents), add a
 collapsible **sidebar rail** grouped as:
@@ -133,7 +140,7 @@ panels, which an operator on another view cannot see.
 | Built surface | Record source | Current UI | Missing element |
 |---|---|---|---|
 | **Run records** | run-registry run tasks via `/snapshot`; `RunOrigin` (schedule/provider-task attribution, W153) | schedule-origin rows only (runId + title + state, last 10) in `SchedulesView`; feed rows in the chat timeline | A **Runs page**: all registry runs (not schedule-lane only), one row per run — state, origin attribution, duration, work-product link — with a detail panel. The registry is the hub's core product; it is the least-rendered surface. |
-| **Review outcomes** | `run-registry.reviewOut()` (`HubReviewerResult`), `blockingReasons()`, surfaced via `/run/review` + timeline | feed rows only ("review", "gate" kinds) | A **Reviews page** (or Runs-page tab): five-axis verdict per review-gated run, blocking reasons verbatim, approval provenance. The repo's review discipline (five axes, anti-rubber-stamp) is currently invisible to the operator. |
+| **Review outcomes** | `run-registry.reviewOutcomes()` (`HubReviewerResult`), `blockingReasons()`, surfaced via `/run/review` + timeline | feed rows only ("review", "gate" kinds) | A **Reviews page** (or Runs-page tab): five-axis verdict per review-gated run, blocking reasons verbatim, approval provenance. The repo's review discipline (five axes, anti-rubber-stamp) is currently invisible to the operator. |
 | **Per-run cost/usage** | `RunUsageSummary` (requests, prompt/completion/total tokens, `costUsd`, cache read/create, `recordedAt`) via `runUsage()` | UsageView covers **session** usage only | Run rows on the Runs page render cost+tokens; UsageView gains a per-run section. `cacheReadTokens`/`cacheCreateTokens` render as the P12 record they are (0 on the OpenAI lane — the asymmetry is recorded, not hidden). |
 | **Completion claims** | `recordCompletionClaim` / `completionClaims()` (runId, claim, verified-at-claim flag, observedAt) | feed rows only | Run detail shows the claim **with its verified-at-claim flag rendered** — the W114 honesty line (operator claims are not evidence) made legible per run. |
 | **Reasoning-claim feed** | `reasoningClaims()` + `reasoningClaimMetrics()` (monitored/flagged/findings; recall + TTR explicitly `"unmeasured"`) | chat timeline only | Runs-page advisory section; the metrics line must render the unmeasured fields *as unmeasured* (the code's own comment forbids reporting them as measured). |
@@ -186,7 +193,13 @@ concerns, not ours.
    preconditions the record does not support renders the refusal, not a
    disabled-by-tooltip guess (rendered-deny rule).
 
-## Suggested implementation order
+## Suggested implementation order (superseded)
+
+> **Superseded 2026-09-29** by the spec's five-phase sequence
+> (`docs/superpowers/specs/2026-09-29-hub-dashboard-redesign-design.md` §
+> Sequencing): shell + Overview first, then Runs + detail panel, then Reviews
+> + Activity + remaining Tier-1 surfaces, then Audit. The list below is kept
+> for provenance only — do not implement from it.
 
 1. **Runs page, read-only** (Tier 0): registry rows already flow through
    `/snapshot` → schedule `recentRuns` proves the shape; widen to all runs +

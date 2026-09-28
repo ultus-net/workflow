@@ -36,7 +36,7 @@ of scan; refusals rendered, never guessed — the rendered-deny rule).
    Evidence for the call: the layout work is net-new shell + new pages written
    once either way, while Tailwind/shadcn adoption would add a restyle pass
    over ~8,000 lines of existing view TSX plus a token-translation layer to
-   re-map 50 palettes onto shadcn's vocabulary. New chrome written against the
+   re-map the 37 palettes onto shadcn's vocabulary. New chrome written against the
    existing tokens inherits all palettes with zero extra work.
 3. **Scope = everything in `docs/HUB_DASHBOARD_UI_GUIDE.md`** (Tier 0 + Tier
    1), delivered as the phased sequence below. Desktop-first; deep responsive
