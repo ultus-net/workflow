@@ -30,7 +30,22 @@ const LEGAL_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
  * owner must match. No new actor vocabulary is invented inside the kernel;
  * a caller whose actor is outside this closed set can never name an owner.
  */
-const ACTOR_VOCABULARY: readonly TransitionAttribution["actor"][] = ["operator", "agent", "system", "scheduler"];
+const ACTOR_VOCABULARY = ["operator", "agent", "system", "scheduler"] as const satisfies readonly TransitionAttribution["actor"][];
+
+/**
+ * W166 P3: compile-time drift pin, both directions — the vocabulary cannot
+ * drift from the transition-attribution union. The `satisfies` on the array
+ * above fails typecheck if the array names an actor the W157 union dropped;
+ * this fails typecheck ("'true' is not assignable to type 'never'") if
+ * contracts.ts grows an actor variant without adding it to the array.
+ */
+export type ActorVocabularyCoversUnion = Exclude<
+  TransitionAttribution["actor"],
+  (typeof ACTOR_VOCABULARY)[number]
+> extends never
+  ? true
+  : never;
+export const ACTOR_VOCABULARY_COVERS_UNION: ActorVocabularyCoversUnion = true;
 
 /** Legal child-step transitions. COMPLETED is terminal (reopen is a new step). */
 const LEGAL_STEP_TRANSITIONS: Readonly<Record<StepState, readonly StepState[]>> = {
@@ -507,6 +522,20 @@ export class TaskGraph {
         };
       }
       nextTask = { ...task, state: "BLOCKED", blocked: { ...record } };
+    }
+
+    // W166 P2-1: a BLOCKED entry that is NOT an admission is the FAILED →
+    // BLOCKED retry, and that path is dependency-derived by construction (a
+    // record there is misplaced — the gate above refuses a caller-supplied
+    // one). The spread at the nextTask initializer must not resurrect a
+    // carried stale-context record as a live block (recordHolds would hold
+    // the retried task on a resolved graph, reading a dependency wait — or a
+    // resolved graph — as an owed action): the recordless re-entry lands
+    // without the record.
+    if (requested === "BLOCKED" && !admission) {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- the rest sibling IS the drop: the stale record is discarded by design (the repo config lacks ignoreRestSiblings; disclosed per the W115 precedent)
+      const { blocked: staleContext, ...withoutRecord } = task;
+      nextTask = { ...withoutRecord, state: "BLOCKED" };
     }
 
     // W159/W166 exit: the explicit BLOCKED → READY keeps today's
