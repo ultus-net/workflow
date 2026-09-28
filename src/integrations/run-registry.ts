@@ -202,6 +202,8 @@ export function createRunRegistry(
   /** W165: the recorded run→PR work-product links, bounded like the other gate maps. */
   recordWorkProductLink(input: { readonly runId: string; readonly link: WorkProductLink }): void;
   workProductLinks(): ReadonlyMap<string, WorkProductLink>;
+  /** W162 slice 2: the ACTIVE run ids, bounded to the most recent 64 in begin order (the transitionLogs bound). */
+  activeRunIds(): readonly string[];
 } {
   const workspaceApplications = new Map<string, WorkflowApplication>();
   const runs = new Map<string, WorkflowApplication>();
@@ -345,6 +347,14 @@ export function createRunRegistry(
     // without the route ever touching the map itself.
     recordWorkProductLink(input) {
       rememberWorkProductLink(input.runId, input.link);
+    },
+    // W162 slice 2: the ACTIVE run ids (the runs map's membership), bounded
+    // to the most recent 64 in begin order — the transitionLogs bound. The
+    // board's in_progress join keys on this registry fact: finish() removes
+    // membership while the origin record persists, so the join can never key
+    // on origins alone.
+    activeRunIds() {
+      return [...runs.keys()].slice(-64);
     },
     /**
      * Plan Task A3: run-gate observability for hub-attached surfaces — the
@@ -703,6 +713,9 @@ export function createRunRegistry(
     },
     workProductLinks(): ReadonlyMap<string, WorkProductLink> {
       return workProductLinks;
+    },
+    activeRunIds(): readonly string[] {
+      return [...runs.keys()].slice(-64);
     },
     reasoningClaimMetrics(): ReasoningClaimMetrics {
       return {

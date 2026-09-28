@@ -43,6 +43,14 @@ export interface WorkflowRunController {
    * discipline as begin's workProductLink; the client never supplies it.
    */
   recordWorkProductLink?(input: { readonly runId: string; readonly link: WorkProductLink }): void;
+  /**
+   * W162 slice 2: the ACTIVE run ids — registry membership, bounded to the
+   * most recent 64 in begin order (the transitionLogs bound). The
+   * /board/tasks in_progress join keys on this registry fact, never a
+   * timestamp heuristic; absent on a controller predating the slice (the
+   * honest subset: no authority, no field, no column).
+   */
+  activeRunIds?(): readonly string[];
   hiddenSnapshotTaskIds(): readonly string[];
   /**
    * Plan Task A3: optional run-gate observability surfaced on /snapshot for

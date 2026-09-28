@@ -7,7 +7,7 @@ import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createEvidenceContentStore } from "../integrations/evidence-content-store.js";
 import { fetchBoardTasksFromEnv } from "../integrations/azure-devops-provider.js";
-import { boardProviderFromEnv, fetchBoardTask, fetchIssueCrossReferences, fetchWorkProductState } from "../integrations/task-provider.js";
+import { boardProviderFromEnv, createBoardReadCache, fetchBoardTask, fetchIssueCrossReferences, fetchWorkProductState } from "../integrations/task-provider.js";
 import { createProviderReadLedger, fetchIssueDetail, recordProviderReads } from "../integrations/issue-detail.js";
 import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
@@ -417,6 +417,12 @@ const schedulerFactory = (handles: WorkflowHubSchedulerHandles) => {
 // record); an unconfigured hub performs no read and records nothing.
 const providerReadLedger = createProviderReadLedger();
 
+// W163: the hub-side board-read cache — overlapping web tabs share one
+// upstream provider read: an entry serves within the TTL, a stale entry
+// revalidates with If-None-Match (a 304 serves the cached board as a hit),
+// and an entry past the TTL is never served.
+const boardReadCache = createBoardReadCache();
+
 let hub: Awaited<ReturnType<typeof createWorkflowHub>>;
 try {
   hub = await createWorkflowHub(application, {
@@ -441,7 +447,7 @@ try {
     // still serves the routes; the payloads name the missing declaration and
     // the ledger records nothing (the ambiguity error's verbatim reason rides
     // the pill tooltip — no pill fabricates freshness).
-    readBoardTasks: recordProviderReads(providerReadLedger, () => fetchBoardTasksFromEnv(process.env)),
+    readBoardTasks: recordProviderReads(providerReadLedger, () => fetchBoardTasksFromEnv(process.env, fetch, boardReadCache)),
     delegateBoardTask: recordProviderReads(providerReadLedger, (issue: number) => fetchBoardTask(boardProviderFromEnv(process.env), issue)),
     // W165: the board's pull-request-state read closure — the same env-classified
     // provider, one bounded read per linked reference. It stays UNwrapped: its

@@ -12,7 +12,7 @@ import type { ProjectRegistry } from "./project-registry.js";
 import { projectScopedBoard, type ProjectRecord } from "./project-registry.js";
 import { activityTimeline } from "./activity-timeline.js";
 import { operatorPosture, scheduleLineage, scheduleRecentRuns } from "./operator-posture.js";
-import { workProductStates } from "./task-provider.js";
+import { inProgressBoardTasks, workProductStates } from "./task-provider.js";
 import type { BoardOutcome, BoardTaskOutcome, CrossReferenceOutcome, WorkProductStateOutcome } from "./task-provider.js";
 import type { IssueDetailOutcome, ProviderReadRecord } from "./issue-detail.js";
 
@@ -443,7 +443,27 @@ async function handleRequest(
         board.state === "ok" && context.readWorkProductState !== undefined && links !== undefined && links.size > 0
           ? await workProductStates(board.board, links, context.readWorkProductState, context.discoverIssueCrossReferences, onDiscovered)
           : undefined;
-      return send(response, 200, { board, ...(workProducts === undefined ? {} : { workProducts }) });
+      // W162 slice 2: the hub-owned in_progress join — OPEN cards with a
+      // provider-task origin on an ACTIVE registry run (the pure join in
+      // task-provider, supplied registry facts only: the accessor's active
+      // ids and the gate map's recorded origins). The field rides ONLY when
+      // the active-run authority exists AND the join is nonempty — the
+      // honest subset (no authority, no field, no column; never a fabricated
+      // state from a timestamp heuristic).
+      const activeRunIds = context.runController?.activeRunIds?.();
+      const inProgress =
+        board.state === "ok" && activeRunIds !== undefined && activeRunIds.length > 0
+          ? inProgressBoardTasks(
+              board.board,
+              context.runController?.gateObservability?.().runOrigins ?? new Map(),
+              activeRunIds,
+            )
+          : undefined;
+      return send(response, 200, {
+        board,
+        ...(workProducts === undefined ? {} : { workProducts }),
+        ...(inProgress === undefined || inProgress.length === 0 ? {} : { inProgress }),
+      });
     }
     if (request.url === "/board/delegate") {
       // W162: the board card's delegate dispatch — the operator's own click
