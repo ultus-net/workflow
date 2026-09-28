@@ -22,7 +22,7 @@ import {
   type IssueDetailOutcome,
 } from "../src/integrations/issue-detail.js";
 import { BOARD_LIVENESS_TTL_MS, boardLinkLiveness } from "../src/ui/webapp/presenters.js";
-import { BoardIssueDetailView, BoardView, type IssueDetailAnswer } from "../src/ui/webapp/board-view.js";
+import { BoardIssueDetailView, BoardView, isIssueDetailOutcome, type IssueDetailAnswer } from "../src/ui/webapp/board-view.js";
 import { createWorkflowHubBridge } from "../src/integrations/hub-http.js";
 import { createWorkflowHub } from "../src/integrations/workflow-hub.js";
 import { createWorkflowWebServer } from "../src/ui/web.js";
@@ -419,6 +419,18 @@ test("W167: the detail surface's failure states render honestly — unconfigured
     answer: { kind: "refusal", code: "unreachable", detail: "hub unavailable" } satisfies IssueDetailAnswer,
   }));
   assert.ok(unreachable.includes("hub unavailable"));
+});
+
+test("W170: the relay payload's shape guard refuses a state-shaped answer that carries no detail — the unexpected refusal renders instead of a render-time throw (RED-first)", () => {
+  const malformed = { state: "ok" };
+  assert.equal(isIssueDetailOutcome(malformed), false);
+  const refused = renderToStaticMarkup(createElement(BoardIssueDetailView, {
+    answer: isIssueDetailOutcome(malformed)
+      ? { kind: "detail", outcome: malformed }
+      : { kind: "refusal", code: "unexpected", detail: "the hub's answer was not an issue detail" } satisfies IssueDetailAnswer,
+  }));
+  assert.ok(refused.includes("answer was not an issue detail"), "the refusal detail renders (the apostrophe is markup-escaped)");
+  assert.ok(refused.includes("unexpected"));
 });
 
 // ── 6. The hub routes: operator-token reads, records only, no credential ──
