@@ -147,7 +147,7 @@ test("W165: the registry records the delegate flow's work-product link at begin 
     },
   };
   const bridge = await createWorkflowHubBridge(
-    application(), undefined, spy, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    application(), undefined, spy, undefined, undefined, undefined, undefined, undefined,
   );
   try {
     const response = await fetch(`${bridge.url}/run/begin`, {
@@ -290,10 +290,10 @@ test("W165: /board/tasks carries the work-product states computed from the hub's
   };
   const bridge = await createWorkflowHubBridge(
     application(), undefined, spy, undefined, undefined, undefined, undefined, undefined,
-    async () => boardOutcome,
-    undefined,
-    undefined,
-    async (issueNumber: number) => reads.get(`#${issueNumber}`) ?? { state: "error", reason: "unexpected read" },
+    {
+      readBoardTasks: async () => boardOutcome,
+      readWorkProductState: async (issueNumber: number) => reads.get(`#${issueNumber}`) ?? { state: "error", reason: "unexpected read" },
+    },
   );
   try {
     const answered = await fetch(`${bridge.url}/board/tasks`, {
@@ -318,7 +318,7 @@ test("W165: /board/tasks carries the work-product states computed from the hub's
   // does not appear from fabricated data.
   const bareBridge = await createWorkflowHubBridge(
     application(), undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-    async () => boardOutcome, undefined, undefined, undefined,
+    { readBoardTasks: async () => boardOutcome },
   );
   try {
     const answered = await fetch(`${bareBridge.url}/board/tasks`, {
@@ -389,10 +389,8 @@ test("W165: the delegate flow records the work-product linkage at begin — from
     url: "https://github.com/o/r/issues/12", labels: [], updatedAt: "2026-09-28T00:00:00Z",
   };
   const bridge = await createWorkflowHubBridge(
-    application(), undefined, spy, undefined, undefined, undefined, undefined, undefined, undefined,
-    async () => ({ state: "ok", task: okTask }),
-    undefined,
-    undefined,
+    application(), undefined, spy, undefined, undefined, undefined, undefined, undefined,
+    { delegateBoardTask: async () => ({ state: "ok", task: okTask }) },
   );
   try {
     const response = await fetch(`${bridge.url}/board/delegate`, {
