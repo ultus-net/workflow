@@ -98,7 +98,7 @@ export interface ReasoningClaimMetrics {
  */
 export type RunOrigin =
   | { readonly kind: "schedule"; readonly scheduleId: string }
-  | { readonly kind: "provider-task"; readonly provider: "github"; readonly key: string; readonly url: string };
+  | { readonly kind: "provider-task"; readonly provider: "github" | "azure_devops"; readonly key: string; readonly url: string };
 
 /**
  * W165: the hub-recorded run→work-product (PR) linkage — the provider-stable
@@ -113,7 +113,7 @@ export type RunOrigin =
  * none, and the view never computes the linkage (the W153 pin pattern).
  */
 export type WorkProductLink = {
-  readonly provider: "github";
+  readonly provider: "github" | "azure_devops";
   readonly key: string;
   readonly url: string;
 };
