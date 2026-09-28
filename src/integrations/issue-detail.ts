@@ -203,6 +203,12 @@ export async function fetchIssueDetail(
   issueNumber: number,
   fetchImpl: typeof fetch = fetch,
 ): Promise<IssueDetailOutcome> {
+  // The detail read is GitHub-only this slice: an ADO-configured hub answers
+  // unconfigured NAMING the gap (fail-closed, the W161 pattern) — never a
+  // fabricated detail read through the wrong lane.
+  if (provider.kind === "azure_devops") {
+    return { state: "unconfigured", missing: ["WORKFLOW_GITHUB_REPO (the issue-detail read is GitHub-only; the azure_devops lane serves no detail/thread read)"] };
+  }
   if (provider.kind !== "github") return { state: "unconfigured", missing: provider.missing };
   const issueUrl = `${GITHUB_ISSUES_API}/repos/${encodeURIComponent(provider.owner)}/${encodeURIComponent(provider.repoName)}/issues/${issueNumber}`;
   let response: Response;

@@ -12,6 +12,7 @@ import {
   boardProviderFromEnv,
   fetchBoardTasks,
   type BoardProviderState,
+  type GitHubBoardProviderState,
   type GitHubIssuePayload,
 } from "../src/integrations/task-provider.js";
 import {
@@ -50,10 +51,10 @@ import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 //      iteration.
 // Scope cut (registered): no comment composition, no checkout locks.
 
-const provider = (env: Record<string, string | undefined> = { WORKFLOW_GITHUB_REPO: "o/r", WORKFLOW_GITHUB_TOKEN: "t" }): BoardProviderState => {
+const provider = (env: Record<string, string | undefined> = { WORKFLOW_GITHUB_REPO: "o/r", WORKFLOW_GITHUB_TOKEN: "t" }): GitHubBoardProviderState => {
   const state = boardProviderFromEnv(env);
   assert.equal(state.kind, "github");
-  return state as BoardProviderState & { kind: "github" };
+  return state as GitHubBoardProviderState & { kind: "github" };
 };
 
 /** A fetch stub routed by URL fragment — the detail read makes TWO provider

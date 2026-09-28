@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createEvidenceContentStore } from "../integrations/evidence-content-store.js";
-import { boardProviderFromEnv, fetchBoardTask, fetchBoardTasks, fetchWorkProductState } from "../integrations/task-provider.js";
+import { fetchBoardTasksFromEnv } from "../integrations/azure-devops-provider.js";
+import { boardProviderFromEnv, fetchBoardTask, fetchWorkProductState } from "../integrations/task-provider.js";
 import { createProviderReadLedger, fetchIssueDetail, recordProviderReads } from "../integrations/issue-detail.js";
 import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
@@ -427,15 +428,20 @@ try {
     // /evidence-content read route and the test-runner capture records
     // content on the evidence the verification consumed.
     contentStore: createEvidenceContentStore(),
-    // W161/W162: the external-task board's read and delegate closures —
-    // env-classified at hub start (WORKFLOW_GITHUB_REPO/WORKFLOW_GITHUB_TOKEN),
-    // fetched per read, bounded, and credential-free on the wire. W167 wraps
-    // each with recordProviderReads so the hub records its own read outcome
-    // (the liveness pills' only source); the detail read joins the same
-    // ledger — a read performed for ANY route updates the record. An
-    // unconfigured hub still serves the routes; the payloads name the missing
-    // declaration and the ledger records nothing.
-    readBoardTasks: recordProviderReads(providerReadLedger, () => fetchBoardTasks(boardProviderFromEnv(process.env))),
+    // W161/W168: the external-task board's read closure — env-classified at
+    // hub start across BOTH provider lanes (GitHub:
+    // WORKFLOW_GITHUB_REPO/WORKFLOW_GITHUB_TOKEN; Azure DevOps:
+    // WORKFLOW_AZURE_DEVOPS_ORG/WORKFLOW_AZURE_DEVOPS_PROJECT/
+    // WORKFLOW_AZURE_DEVOPS_TOKEN), fetched per read, bounded, and
+    // credential-free on the wire. Both lanes fully configured is an honest
+    // ambiguity error — the hub never silently picks one. W167 wraps it with
+    // recordProviderReads so the hub records its own read outcome (the
+    // liveness pills' only source); the detail read joins the same ledger —
+    // a read performed for ANY route updates the record. An unconfigured hub
+    // still serves the routes; the payloads name the missing declaration and
+    // the ledger records nothing (the ambiguity error's verbatim reason rides
+    // the pill tooltip — no pill fabricates freshness).
+    readBoardTasks: recordProviderReads(providerReadLedger, () => fetchBoardTasksFromEnv(process.env)),
     delegateBoardTask: recordProviderReads(providerReadLedger, (issue: number) => fetchBoardTask(boardProviderFromEnv(process.env), issue)),
     // W165: the board's pull-request-state read closure — the same env-classified
     // provider, one bounded read per linked reference. It stays UNwrapped: its
