@@ -445,8 +445,7 @@ test("W170: the delegate runId's provider prefix derives from the task's own pro
     undefined,
     undefined,
     undefined,
-    undefined,
-    async () => ({ state: "ok" as const, task: adoTask }),
+    { delegateBoardTask: async () => ({ state: "ok" as const, task: adoTask }) },
   );
   try {
     const answered = await fetch(`${bridge.url}/board/delegate`, {
