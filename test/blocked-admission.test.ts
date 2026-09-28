@@ -162,6 +162,20 @@ test("W166: a record without a usable action or enteredAt is refused (BLOCKED_RE
   assert.equal(graph.get(taskId("A")).state, "IN_PROGRESS");
 });
 
+test("W166: a record whose reason is present but not a string is refused (BLOCKED_RECORD_MALFORMED) — red-first", () => {
+  const graph = new TaskGraph([task("A")]);
+  graph.transition(taskId("A"), "IN_PROGRESS");
+  // The optional reason rides the admitted task verbatim; when present it
+  // must still be a string — non-string caller data is malformed, not context.
+  const numericReason = graph.transition(taskId("A"), "BLOCKED", agentSays(), { ...agentBlock(), reason: 42 } as unknown as BlockedRecord);
+  assert.equal(numericReason.kind, "rejected");
+  if (numericReason.kind === "rejected") assert.equal(numericReason.code, "BLOCKED_RECORD_MALFORMED");
+  const objectReason = graph.transition(taskId("A"), "BLOCKED", agentSays(), { ...agentBlock(), reason: { evil: true } } as unknown as BlockedRecord);
+  assert.equal(objectReason.kind, "rejected");
+  if (objectReason.kind === "rejected") assert.equal(objectReason.code, "BLOCKED_RECORD_MALFORMED");
+  assert.equal(graph.get(taskId("A")).state, "IN_PROGRESS");
+});
+
 test("W166: a blocked record supplied on a non-admission transition is refused (BLOCKED_RECORD_MISPLACED)", () => {
   const graph = new TaskGraph([task("A")]);
   graph.transition(taskId("A"), "IN_PROGRESS");
@@ -173,6 +187,22 @@ test("W166: a blocked record supplied on a non-admission transition is refused (
   const onRetry = graph.transition(taskId("A"), "BLOCKED", operatorSays(), operatorBlock());
   assert.equal(onRetry.kind, "rejected");
   if (onRetry.kind === "rejected") assert.equal(onRetry.code, "BLOCKED_RECORD_MISPLACED");
+});
+
+test("W166: a blocked record supplied on the explicit BLOCKED → READY exit is refused (BLOCKED_RECORD_MISPLACED) (guard)", () => {
+  const graph = new TaskGraph([task("A")]);
+  graph.transition(taskId("A"), "IN_PROGRESS");
+  assert.equal(graph.transition(taskId("A"), "BLOCKED", agentSays(), agentBlock()).kind, "accepted");
+  // The explicit exit rides owner attribution only; a caller-supplied record
+  // there is misplaced caller data — refused, and the one-shot consumption
+  // never fires (the record stays held on the task).
+  const exit = graph.transition(taskId("A"), "READY", agentSays("agent resumes (the named action)"), agentBlock({ action: "a record riding the exit" }));
+  assert.equal(exit.kind, "rejected");
+  if (exit.kind === "rejected") assert.equal(exit.code, "BLOCKED_RECORD_MISPLACED");
+  const held = graph.get(taskId("A"));
+  assert.equal(held.state, "BLOCKED");
+  // The stored record is untouched — the refused exit never consumed it.
+  assert.deepEqual(held.blocked, agentBlock());
 });
 
 test("W166: the named owner's action consumes the record one-shot on the explicit BLOCKED → READY exit", () => {
