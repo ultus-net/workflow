@@ -36,6 +36,13 @@ export interface WorkflowRunController {
   }): Promise<void>;
   finish(input: { runId: string; outcome: "verified" | "failed" }): Promise<void>;
   review(input: { runId: string; reviewerRunId: string; verdict: "approved" | "changes_requested" | "rejected"; summary: string }): Promise<{ recorded: boolean }>;
+  /**
+   * W171: records a discovered work-product reference — the provider-owned
+   * fact the /board/tasks discovery lane observed in its OWN timeline read
+   * (exactly-one cross-referenced PR). Only hub-side lanes call it, the same
+   * discipline as begin's workProductLink; the client never supplies it.
+   */
+  recordWorkProductLink?(input: { readonly runId: string; readonly link: WorkProductLink }): void;
   hiddenSnapshotTaskIds(): readonly string[];
   /**
    * Plan Task A3: optional run-gate observability surfaced on /snapshot for

@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   boardProviderFromEnv,
+  fetchIssueCrossReferences,
   fetchWorkProductState,
   workProductStates,
   type BoardProviderState,
@@ -404,6 +405,243 @@ test("W165: the delegate flow records the work-product linkage at begin — from
       begins[0]?.workProductLink,
       { provider: "github", key: "#12", url: "https://github.com/o/r/issues/12" },
       "the linkage comes from the hub's OWN provider read — a client-supplied link in the body is ignored",
+    );
+  } finally {
+    await bridge.close();
+  }
+});
+
+// W171 — provider-owned PR discovery (the linked+open in_review state is
+// unreachable while the only producer records the delegated board ISSUE's
+// reference): the issue timeline's cross-referenced PR is discovered
+// PROVIDER-SIDE, reported hub-side through the route's onDiscovered, and the
+// PR's own state decides the card. Zero or multiple cross-references stay
+// honestly unreadable naming the ambiguity — never a guess.
+// Focused-run discipline: node --import tsx --test
+// test/work-product-linkage.test.ts.
+
+const crossReference = (number: number, overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  event: "cross-referenced",
+  source: {
+    type: "issue",
+    issue: {
+      number,
+      html_url: `https://github.com/o/r/pull/${number}`,
+      pull_request: { url: `https://api.github.com/repos/o/r/pulls/${number}` },
+    },
+  },
+  ...overrides,
+});
+
+// A URL-routed stub: the discovery lane reads the board issue, the issue's
+// timeline, and the discovered PR through one bounded fetch (the stubFetch
+// pattern, routed per URL).
+const routingFetch = (routes: Record<string, string>) => {
+  const calls: string[] = [];
+  const impl = (async (input: RequestInfo | URL): Promise<Response> => {
+    const url = String(input);
+    calls.push(url);
+    const body = routes[url];
+    if (body === undefined) return new Response("not found", { status: 404 });
+    return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  return { impl, calls };
+};
+
+test("W171: the not-a-pull-request read error carries the machine marker the discovery lane keys on — every other error site omits it", async () => {
+  const provider = githubProvider();
+  const notAPullRequest = await fetchWorkProductState(provider, 12, stubFetch(200, JSON.stringify(plainIssue(12))).impl);
+  assert.equal(notAPullRequest.state, "error");
+  if (notAPullRequest.state !== "error") return assert.fail("expected the not-a-pull-request error");
+  assert.equal(notAPullRequest.reason, "#12 is not a pull request");
+  assert.equal(notAPullRequest.notPullRequest, true, "the marker rides ONLY the not-a-pull-request error site");
+  // Every other error site omits the marker — the discovery join keys on it.
+  const rejected = await fetchWorkProductState(provider, 12, stubFetch(401, "{}").impl);
+  if (rejected.state !== "error") return assert.fail("expected the provider-fault error");
+  assert.equal(rejected.notPullRequest, undefined, "a provider fault carries no marker");
+  const malformed = await fetchWorkProductState(provider, 12, stubFetch(200, JSON.stringify({ pull_request: {} })).impl);
+  if (malformed.state !== "error") return assert.fail("expected the malformed-shape error");
+  assert.equal(malformed.notPullRequest, undefined, "a malformed row carries no marker");
+});
+
+test("W171: fetchIssueCrossReferences reads the timeline's cross-referenced PRs — guarded rows, skipped counted, honest faults", async () => {
+  // Distinctive on purpose: the no-leak assertion searches for the VALUE.
+  const provider = githubProvider({ WORKFLOW_GITHUB_REPO: "o/r", WORKFLOW_GITHUB_TOKEN: "tok-sup3r-secret-value-9f2c" });
+  const timeline = JSON.stringify([
+    crossReference(34),
+    { event: "closed" },
+    crossReference(35, { source: { type: "issue", issue: { number: 35, html_url: "https://github.com/o/r/pull/35" } } }),
+    crossReference(36, { source: { type: "issue", issue: { number: 36, html_url: "javascript:alert(1)", pull_request: {} } } }),
+    "junk",
+    crossReference(37, { source: { type: "issue", issue: { number: "37", html_url: "https://github.com/o/r/pull/37", pull_request: {} } } }),
+  ]);
+  const { impl, calls } = stubFetch(200, timeline);
+  const outcome = await fetchIssueCrossReferences(provider, 12, impl);
+  assert.equal(outcome.state, "ok");
+  if (outcome.state !== "ok") return assert.fail("expected ok");
+  assert.deepEqual(outcome.refs, [{ key: "#34", url: "https://github.com/o/r/pull/34" }], "exactly the guarded cross-references");
+  assert.equal(outcome.skipped, 5, "malformed rows are skipped and COUNTED, never rendered");
+  assert.equal(calls.length, 1, "one bounded, explicitly addressed request");
+  assert.equal(calls[0]?.url, "https://api.github.com/repos/o/r/issues/12/timeline");
+  assert.equal(calls[0]?.headers.accept, "application/vnd.github+json", "the timeline accepts the same header");
+  assert.ok(!JSON.stringify(outcome).includes("tok-sup3r-secret-value-9f2c"), "the credential never rides the outcome");
+
+  // The azure_devops-configured hub mirrors the work-product read's arm:
+  // unconfigured NAMING the GitHub declaration — never a fabricated
+  // discovery through the wrong lane.
+  const ado = await fetchIssueCrossReferences({ kind: "azure_devops", org: "o", project: "p", token: "t" }, 12, impl);
+  assert.deepEqual(
+    ado,
+    { state: "unconfigured", missing: ["WORKFLOW_GITHUB_REPO (the cross-reference read is GitHub-only; the azure_devops lane serves no cross-reference read)"] },
+  );
+  const unconfigured = await fetchIssueCrossReferences(boardProviderFromEnv({}), 12, impl);
+  assert.equal(unconfigured.state, "unconfigured");
+
+  const rejected = await fetchIssueCrossReferences(provider, 12, stubFetch(401, "{}").impl);
+  assert.equal(rejected.state, "error");
+  assert.match(rejected.state === "error" ? rejected.reason : "", /401/);
+  const failing = (async (): Promise<Response> => {
+    throw new Error("connection refused");
+  }) as typeof fetch;
+  const unreachable = await fetchIssueCrossReferences(provider, 12, failing);
+  assert.equal(unreachable.state, "error");
+  assert.match(unreachable.state === "error" ? unreachable.reason : "", /connection refused/);
+  const notJson = await fetchIssueCrossReferences(provider, 12, stubFetch(200, "not json").impl);
+  assert.equal(notJson.state, "error");
+  const notList = await fetchIssueCrossReferences(provider, 12, stubFetch(200, "{}").impl);
+  assert.equal(notList.state, "error");
+});
+
+test("W171: the join discovers the linked board issue's actual PR from the provider timeline — exactly one cross-referenced PR lands the linked card state via the PR's own read", async () => {
+  const provider = githubProvider();
+  const { impl, calls } = routingFetch({
+    "https://api.github.com/repos/o/r/issues/12": JSON.stringify(plainIssue(12)),
+    "https://api.github.com/repos/o/r/issues/12/timeline": JSON.stringify([crossReference(34)]),
+    "https://api.github.com/repos/o/r/issues/34": JSON.stringify(pr(34, { draft: true })),
+  });
+  const links = new Map([["board:github:12:r1", { provider: "github" as const, key: "#12", url: "https://github.com/o/r/issues/12" }]]);
+  const reported: { runId: string; key: string; url: string }[] = [];
+  const joined = await workProductStates(
+    board,
+    links,
+    (issueNumber) => fetchWorkProductState(provider, issueNumber, impl),
+    (issueNumber) => fetchIssueCrossReferences(provider, issueNumber, impl),
+    (runId, ref) => {
+      reported.push({ runId, key: ref.key, url: ref.url });
+    },
+  );
+  // The exact shape the W165 render test pins for card #12 → product #34,
+  // now produced by the pipeline from a timeline fixture.
+  if (joined["#12"]?.state !== "linked") return assert.fail("expected the discovered linked state");
+  assert.equal(joined["#12"].runId, "board:github:12:r1");
+  assert.deepEqual(
+    { key: joined["#12"].product.key, url: joined["#12"].product.url, state: joined["#12"].product.state, draft: joined["#12"].product.draft },
+    { key: "#34", url: "https://github.com/o/r/pull/34", state: "open", draft: true },
+    "the PR's own state decides the card",
+  );
+  assert.match(joined["#12"].product.asOf, /^\d{4}-\d{2}-\d{2}T/, "the read's as-of liveness rides the discovered product");
+  assert.deepEqual(
+    calls,
+    [
+      "https://api.github.com/repos/o/r/issues/12",
+      "https://api.github.com/repos/o/r/issues/12/timeline",
+      "https://api.github.com/repos/o/r/issues/34",
+    ],
+    "the discovery pipeline: the issue read, the timeline read, the PR's own read",
+  );
+  assert.deepEqual(
+    reported,
+    [{ runId: "board:github:12:r1", key: "#34", url: "https://github.com/o/r/pull/34" }],
+    "the join REPORTS the discovered reference — the recording is the route's onDiscovered",
+  );
+});
+
+test("W171: the join stays honestly unreadable when discovery is ambiguous, empty, faulted, or unconfigured", async () => {
+  const links = new Map([["board:github:12:r1", { provider: "github" as const, key: "#12", url: "https://github.com/o/r/issues/12" }]]);
+  const read = async (): Promise<WorkProductStateOutcome> => ({ state: "error", reason: "#12 is not a pull request", notPullRequest: true });
+
+  // Two cross-referenced PRs — the ambiguity is NAMED with its count, never
+  // a guess between them.
+  const ambiguous = await workProductStates(
+    board,
+    links,
+    read,
+    async () => ({
+      state: "ok",
+      refs: [
+        { key: "#34", url: "https://github.com/o/r/pull/34" },
+        { key: "#35", url: "https://github.com/o/r/pull/35" },
+      ],
+      skipped: 0,
+    }),
+  );
+  assert.deepEqual(
+    ambiguous["#12"],
+    { state: "unreadable", runId: "board:github:12:r1", reason: "the issue's timeline cross-references 2 pull requests; the work product is ambiguous" },
+  );
+
+  // Zero cross-referenced PRs — the unchanged not-a-pull-request reason.
+  const empty = await workProductStates(board, links, read, async () => ({ state: "ok", refs: [], skipped: 0 }));
+  assert.deepEqual(empty["#12"], { state: "unreadable", runId: "board:github:12:r1", reason: "#12 is not a pull request" });
+
+  // A faulted discovery rides its verbatim reason.
+  const faulted = await workProductStates(board, links, read, async () => ({ state: "error", reason: "the provider answered 502" }));
+  assert.deepEqual(faulted["#12"], { state: "unreadable", runId: "board:github:12:r1", reason: "the provider answered 502" });
+
+  // An unconfigured discovery names the missing declaration.
+  const unconfigured = await workProductStates(board, links, read, async () => ({ state: "unconfigured", missing: ["WORKFLOW_GITHUB_REPO"] }));
+  assert.deepEqual(unconfigured["#12"], { state: "unreadable", runId: "board:github:12:r1", reason: "the provider is not configured (WORKFLOW_GITHUB_REPO)" });
+});
+
+test("W171: discover absent keeps today's join behavior — the not-a-pull-request reason rides unreadable unchanged (green-by-construction)", async () => {
+  // The W165 join pin above stays the byte-identical proof; this pin states
+  // the degrade contract explicitly: without the discovery capability the
+  // join performs one read per linked card and never invents a discovery.
+  const links = new Map([["board:github:12:r1", { provider: "github" as const, key: "#12", url: "https://github.com/o/r/issues/12" }]]);
+  let reads = 0;
+  const joined = await workProductStates(board, links, async (issueNumber) => {
+    reads += 1;
+    return { state: "error", reason: `#${issueNumber} is not a pull request`, notPullRequest: true };
+  });
+  assert.deepEqual(joined["#12"], { state: "unreadable", runId: "board:github:12:r1", reason: "#12 is not a pull request" });
+  assert.equal(reads, 1, "one read per linked card — no discovery lane exists");
+});
+
+test("W171: /board/tasks records the discovered PR through the controller — the registry map gains the cross-referenced reference", async () => {
+  const registry = createRunRegistry(application(), new TaskGraph([seedTask]));
+  registry.recordWorkProductLink({ runId: "board:github:12:r1", link: { provider: "github", key: "#12", url: "https://github.com/o/r/issues/12" } });
+  const provider = githubProvider();
+  const { impl } = routingFetch({
+    "https://api.github.com/repos/o/r/issues/12": JSON.stringify(plainIssue(12)),
+    "https://api.github.com/repos/o/r/issues/12/timeline": JSON.stringify([crossReference(34)]),
+    "https://api.github.com/repos/o/r/issues/34": JSON.stringify(pr(34, { draft: true })),
+  });
+  const boardOutcome = { state: "ok", board } as const;
+  const bridge = await createWorkflowHubBridge(
+    application(), undefined, registry.controller, undefined, undefined, undefined, undefined, undefined,
+    {
+      readBoardTasks: async () => boardOutcome,
+      readWorkProductState: (issueNumber: number) => fetchWorkProductState(provider, issueNumber, impl),
+      discoverIssueCrossReferences: (issueNumber: number) => fetchIssueCrossReferences(provider, issueNumber, impl),
+    },
+  );
+  try {
+    const answered = await fetch(`${bridge.url}/board/tasks`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bridge.token}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(answered.status, 200);
+    const payload = (await answered.json()) as { workProducts?: Record<string, WorkProductCardState> };
+    if (payload.workProducts?.["#12"]?.state !== "linked") return assert.fail("expected the discovered linked state on the route payload");
+    assert.equal(payload.workProducts["#12"]?.runId, "board:github:12:r1");
+    assert.equal(payload.workProducts["#12"]?.product.key, "#34");
+    // The recording is registry-backed through the controller's OPTIONAL
+    // method: the NEXT read composes from the discovered reference directly.
+    assert.deepEqual(
+      registry.workProductLinks().get("board:github:12:r1"),
+      { provider: "github", key: "#34", url: "https://github.com/o/r/pull/34" },
+      "the registry map gains the discovered reference — hub-side bookkeeping, never client-supplied",
     );
   } finally {
     await bridge.close();
