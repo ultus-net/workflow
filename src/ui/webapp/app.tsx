@@ -26,6 +26,10 @@ import { readIssueViewStateGuarded, saveIssueViewStateGuarded, type IssueViewSta
 // through rail-state.ts (the two-shape guarded-localStorage pattern).
 import { ShellHeader, ShellRail, commandView, defaultAppView, ENFORCEMENT_COPY, hashForView, shellRailSections, shellViewTitle, viewForHash, type AppView } from "./shell.js";
 import { readRailStateFromWindow, saveRailStateToWindow, withRailCollapsed, type RailState } from "./rail-state.js";
+// W174 phase 1b: the Overview landing — five zones fed by the shell's
+// existing polls plus the W175 runs relay (named absence until the relay
+// answers; the recorded-spend tile aggregates the relay's per-run usage).
+import { OverviewView, useRunsRecord } from "./overview-view.js";
 import type { ScheduleRecentRun } from "../../integrations/operator-posture.js";
 import type { BoardOutcome, WorkProductCardState } from "../../integrations/task-provider.js";
 import type { ProviderReadRecord } from "../../integrations/issue-detail.js";
@@ -2535,6 +2539,13 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
     });
   }, []);
   const railCollapsed = railState.collapsed ?? false;
+  // W174 phase 1b: the Overview's recorded-spend lane — the /api/runs relay
+  // polled beside the shell's other surfaces; a hub without the relay answers
+  // the named absence (the tile says where the record lives).
+  const runsRecord = useRunsRecord();
+  // The Overview's recent-activity zone reads the same W152 timeline lane the
+  // chat panel polls; each consumer owns its poll instance.
+  const timeline = useActivityTimeline();
 
   // Keyboard shortcuts: "/" focuses the composer, Escape cancels a running
   // turn (when no popover/input has focus), Alt+N starts a new session,
@@ -2813,7 +2824,18 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
       ) : view === "usage" ? (
         <UsageView />
       ) : view === "overview" ? (
-        <PhasePlaceholder page="Overview" phase="the dashboard strip and lanes ship with phase 1b" />
+        <OverviewView
+          runTasks={(snapshot?.tasks ?? []).filter((task) => task.id.startsWith("run:"))}
+          inProgressCount={inProgress?.length}
+          pendingPermission={permissions.pending !== null}
+          awaitingReview={posture?.posture?.counts.awaitingReview ?? null}
+          decisions={posture?.posture?.decisions ?? []}
+          recentRuns={recentRuns}
+          schedules={schedules}
+          timeline={timeline}
+          runsRecord={runsRecord}
+          onNavigate={setView}
+        />
       ) : view === "runs" ? (
         <PhasePlaceholder page="Runs" phase="the run inspector ships with phase 1b" />
       ) : view === "reviews" ? (

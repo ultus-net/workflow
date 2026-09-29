@@ -24,6 +24,7 @@ import {
 } from "../src/ui/webapp/rail-state.js";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { OverviewView } from "../src/ui/webapp/overview-view.js";
 
 // W174 phase 1a — the dashboard shell: rail, header, hash routing,
 // record-backed badges. Red-first pins so the shell refactor cannot silently
@@ -226,9 +227,8 @@ test("collapsed-state persistence survives both storage-denial shapes", () => {
   );
 });
 
-test("the five new pages are named absences — routes live now, content arrives with its phase", () => {
+test("the phase pages are named absences — routes live now, content arrives with its phase", () => {
   const pages: readonly (readonly [AppView, string])[] = [
-    ["overview", "Overview"],
     ["runs", "Runs"],
     ["reviews", "Reviews"],
     ["activity", "Activity"],
@@ -289,4 +289,72 @@ test("the shell header stays presentational chrome — the enforcement fact is c
   assert.ok(markup.includes("enforcement-transport"), "the transport rides the badge");
   assert.ok(markup.includes("acp"), "the transport renders verbatim");
   assert.ok(markup.includes("rail-toggle"), "the rails (focus-mode) toggle stays header chrome");
+});
+
+// ── W174 phase 1b: the Overview landing — five zones, all fed by records ──
+
+const DECISION_ROW = {
+  kind: "review" as const,
+  actor: "system" as const,
+  authority: "hub-reviewer",
+  summary: "run schedule:w1:abc awaits the reviewer verdict",
+  action: { label: "open schedules", target: "#schedules" },
+};
+
+function overviewProps(): Parameters<typeof OverviewView>[0] {
+  return {
+    runTasks: [{ id: "run:sched:abc", title: "nightly sweep", state: "IN_PROGRESS", blockers: [] }],
+    inProgressCount: 2,
+    pendingPermission: true,
+    awaitingReview: 1,
+    decisions: [DECISION_ROW],
+    recentRuns: [{ runId: "run:sched:abc", scheduleId: "w1", scheduleTitle: "nightly sweep", tombstoned: false, title: "nightly sweep", state: "FAILED" }],
+    schedules: [{ id: "w1", title: "nightly sweep", nextRunAt: "2026-10-01T03:00:00Z" }],
+    timeline: { timeline: { rows: [], degraded: [], retention: "in-memory only: the hub's transition log and the run registry's bounded (64-entry) gate journals reset when the hub process restarts; this feed never claims a permanent record" } },
+    runsRecord: { runs: null, reason: "hub unavailable" },
+    onNavigate: noop,
+  };
+}
+
+test("the Overview renders its five zones from the records passed in — never a derivation", () => {
+  const markup = renderToStaticMarkup(createElement(OverviewView, overviewProps()));
+  assert.ok(markup.includes("overview-stats"), "the stat strip zone renders");
+  assert.ok(markup.includes("overview-needs-you"), "the needs-you zone renders");
+  assert.ok(markup.includes("overview-live-runs"), "the live-runs zone renders");
+  assert.ok(markup.includes("overview-next-fires"), "the next-fires zone renders");
+  assert.ok(markup.includes("overview-recent-activity"), "the recent-activity zone renders");
+  assert.ok(markup.includes("nightly sweep"), "the live-run row renders its record verbatim");
+});
+
+test("the recorded-spend tile aggregates the runs relay's per-run usage and says so — the absent relay renders named absence", () => {
+  const withUsage = overviewProps();
+  (withUsage as unknown as { runsRecord: unknown }).runsRecord = {
+    runs: { rows: [{ runId: "run:a", state: "VERIFIED" }, { runId: "run:b", state: "FAILED" }], usage: { "run:a": { requests: 1, promptTokens: 10, completionTokens: 10, totalTokens: 20, costUsd: 0.25, cacheReadTokens: 0, cacheCreateTokens: 0, recordedAt: "t" }, "run:b": { requests: 1, promptTokens: 5, completionTokens: 5, totalTokens: 10, costUsd: 0.75, cacheReadTokens: 0, cacheCreateTokens: 0, recordedAt: "t" } } },
+  };
+  const markup = renderToStaticMarkup(createElement(OverviewView, withUsage));
+  assert.ok(markup.includes("$1.0000"), "the tile sums the recorded per-run costs (0.25 + 0.75) in the house cost format");
+  assert.ok(markup.includes("recorded"), "the tile labels the aggregation recorded — never a live meter");
+
+  const withoutRelay = overviewProps();
+  const absent = renderToStaticMarkup(createElement(OverviewView, withoutRelay));
+  assert.ok(absent.includes("recorded spend arrives with the runs relay"), "the absent relay renders its named absence");
+});
+
+test("needs-you links the parked permission and the review-gated decisions to their surfaces", () => {
+  const markup = renderToStaticMarkup(createElement(OverviewView, overviewProps()));
+  assert.ok(markup.includes("parked permission"), "the parked prompt rides the needs-you zone");
+  assert.ok(markup.includes("awaits the reviewer verdict"), "the posture decision renders its record verbatim");
+  assert.ok(markup.includes("open schedules"), "the decision's action label renders as the link");
+});
+
+test("empty zones name the first action; absent registries say so", () => {
+  const markup = renderToStaticMarkup(createElement(OverviewView, {
+    ...overviewProps(),
+    runTasks: [],
+    decisions: [],
+    inProgressCount: undefined,
+    awaitingReview: null,
+  }));
+  assert.ok(markup.includes("no runs recorded yet"), "the empty live-runs zone names the first action");
+  assert.ok(markup.includes("state unavailable"), "an absent posture registry renders the honest mark, never a fabricated zero");
 });

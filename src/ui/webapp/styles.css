@@ -3312,3 +3312,107 @@ div.board-issue-detail {
 .board-comment { display: flex; flex-direction: column; gap: 0.15rem; }
 .board-comment-meta { font-size: 0.66rem; }
 .board-comment-body { margin: 0; font-size: 0.72rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* W174 phase 1b: the Overview landing — five zones, every element a record
+   the hub returned; square edges, mono machine values, token colors only. */
+.overview {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  padding: 0.9rem clamp(0.9rem, 2vw, 1.75rem) 1.4rem;
+  overflow-y: auto;
+}
+.overview-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.5rem;
+}
+.overview-stat {
+  border: 1px solid var(--border);
+  background: var(--bg-deep);
+  padding: 0.55rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+.overview-stat-value {
+  font-family: var(--font-mono);
+  font-size: 1.05rem;
+  color: var(--text);
+}
+.overview-stat-label { font-size: 0.68rem; color: var(--text-muted); }
+.overview-stat-absent { font-size: 0.72rem; color: var(--text-muted); font-style: italic; }
+
+.overview h3 {
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 0 0 0.4rem;
+}
+.overview section {
+  border: 1px solid var(--border);
+  padding: 0.7rem 0.8rem;
+}
+.overview-needs-list, .overview-run-list, .overview-fire-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.overview-needs-list li, .overview-run-row, .overview-fire-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+}
+.overview-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.overview-decision-summary { color: var(--text); }
+.overview-empty { margin: 0; font-size: 0.76rem; color: var(--text-muted); font-style: italic; }
+.overview-run-id {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.overview-run-title { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overview-run-state {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+.overview-recent-note { margin: 0.45rem 0 0; font-size: 0.72rem; color: var(--text-muted); }
+.overview-fire-time {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+/* The status dot a live-run row renders — its color IS the recorded state's
+   semantics (green verified, amber in-progress/verifying, red failed, muted
+   blocked/ready). */
+.status-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  flex-shrink: 0;
+  background: var(--text-muted);
+}
+.status-in_progress, .status-verifying { background: var(--warn); }
+.status-verified { background: var(--ok); }
+.status-failed { background: var(--danger); }
+.status-blocked, .status-ready { background: var(--text-muted); }
