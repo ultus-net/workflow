@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { splitShellSegments, unwrapShellWords } from "./shell.js";
+import { splitShellSegments, unwrapShellWords, unwrapWords } from "./shell.js";
 
 // Ported from upstream opencode-workflow-guard (#134/#135, W084): `git tag`
 // publish flows are release operations, not branch mutations — only tag
@@ -488,10 +488,23 @@ export function wrapperCommands(command: string): string[] {
   // bypass (W102 review round 1 P1). env/timeout/VAR= prefixes are consumed
   // by unwrapShellWords, so prefixed wrappers ARE detected (the W101-era
   // "env limitation" note was factually wrong — corrected by review round 1
-  // P2). busybox sh / exotic interpreter names remain the honest edge.
+  // P2). busybox sh / exotic interpreter names REMAINED the honest edge
+  // (SUPERSEDED 2026-09-30, P18: the busybox applet composites and xsh
+  // join the detection below.)
   return splitShellSegments(command).flatMap((segment) => {
-    const words = unwrapShellWords(segment);
-    if (!/^(?:ba|z|da|k)?sh$/i.test(basename(words[0] ?? ""))) return [];
+    let words = unwrapShellWords(segment);
+    // P18 (b): exotic interpreter names joined the sh-family detection.
+    // busybox composes the family through its applet form (`busybox sh -c
+    // '...'`, repeated busybox levels, and a wrapper applet in between —
+    // `busybox env sh -c`), so the applet args unwrap WORD-WISE (the same
+    // helper the shell lane uses — no string round trip, a quoted -c
+    // argument stays one word and its inner compound survives), each
+    // busybox level consuming one word (progress guaranteed). xsh — one of
+    // busybox sh's alternate names — joins the family regex below.
+    while (/^busybox$/i.test(basename(words[0] ?? "")) && words.length > 1) {
+      words = unwrapWords(words.slice(1));
+    }
+    if (!/^(?:ba|z|da|k|x)?sh$/i.test(basename(words[0] ?? ""))) return [];
     for (let i = 1; i < words.length; i++) {
       const word = words[i]!;
       if (word === "--") return [];
@@ -507,6 +520,15 @@ export function wrapperCommands(command: string): string[] {
       // is why the sequential walk exists); after the c option, a
       // non-empty remainder is the fused command and an empty remainder
       // means the command is the next word.
+      // P18 (c): an `-c=`-shaped word (`zsh -c='git commit -m x'` — the
+      // EQUALS-expansion spelling) extracts `=git commit -m x`: the
+      // option-argument KEEPS its leading `=`, so the inner head is `=git`,
+      // not `git`, and the inner classification reads it as a non-git
+      // command — parser-consistent with sh/bash, where the spelling is
+      // rejected outright (verified live: `bash -c='echo hi'` → "invalid
+      // option"). zsh's default EQUALS expansion would execute the resolved
+      // path — the recorded runtime caveat (parked row P18 / the coverage
+      // log), not silently absorbed.
       const cMatch = /^-[a-zA-Z]*c(.*)$/s.exec(word);
       if (cMatch) {
         const fused = cMatch[1]!.replace(/^['"]|['"]$/g, "");

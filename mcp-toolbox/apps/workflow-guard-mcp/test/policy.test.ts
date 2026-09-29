@@ -1152,12 +1152,16 @@ test("W102 review round 1: fused -c spellings are detected; the env-prefix note 
   assert.equal(checkPolicy({ action: "shell", command: "env sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
   assert.equal(checkPolicy({ action: "shell", command: "VAR=val sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
   assert.equal(checkPolicy({ action: "shell", command: "timeout 30 sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
-  // The honest residual edge that REMAINS: exotic interpreter names
-  // (busybox sh, xsh) are outside the sh-family detection — queued; and
-  // the zsh-only EQUALS expansion (`zsh -c='git commit -m x'` executes
-  // =git via zsh's default equals expansion) is a parser-consistent allow
-  // queued with it (sh/bash harmlessly reject the command).
-  assert.equal(checkPolicy({ action: "shell", command: "busybox sh -c 'git commit -m x'", currentBranch: "main" }).decision, "allow");
+  // The honest residual edge that REMAINED: exotic interpreter names
+  // (busybox sh, xsh) were outside the sh-family detection, and the
+  // zsh-only EQUALS expansion (`zsh -c='git commit -m x'` executes =git
+  // via zsh's default equals expansion) was a parser-consistent allow
+  // (sh/bash harmlessly reject the command). SUPERSEDED (2026-09-30, P18):
+  // busybox sh now classifies through the transparency lens — the pin move
+  // below is the sanctioned closure (the residual pre-registered its own
+  // successor, the W103 precedent) — and the -c= allow is pinned explicitly
+  // in the P18 block.
+  assert.equal(checkPolicy({ action: "shell", command: "busybox sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
 });
 
 test("W102 review round 2: bundled-flag wrappers are detected (the getopt -Xc family)", () => {
@@ -1227,6 +1231,92 @@ test("W102 review round 4: the -O/+O shopt family and the faithful positional st
   // argument — bash rejects the shopt name and executes nothing, so allow
   // is harmless-in-practice; pinned as-found so the walker edge is visible.
   assert.equal(checkPolicy({ action: "shell", command: "bash -O -c 'git commit -m x'", currentBranch: "main" }).decision, "allow");
+});
+
+// ---- P18 (docs/PARKED_AND_LIMITATIONS.md row P18, GitHub issue #296): the
+// open wrapper/push residual edges ----
+
+test("P18 (a): nested busybox forms classify through the wrapper-transparency lens (the W088 single-level asymmetry closed)", () => {
+  // The W088-era busybox port was single-level: `busybox env top`,
+  // `busybox timeout top`, and `busybox sh -c top` stayed allowed while
+  // their non-busybox forms ask. The nested forms classify through the
+  // same lens as their direct forms — the applet command's own wrapper
+  // words unwrap (word-wise: a quoted argv word stays data, so `busybox
+  // env 'a; top'` matches `env 'a; top'` and allows like its direct form).
+  assert.equal(checkPolicy({ action: "shell", command: "busybox env top" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "busybox timeout top" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "busybox sh -c top" }).decision, "ask");
+  // Deeper nesting composes: a wrapper applet inside the busybox args
+  // unwraps too, and a timeout duration argument is consumed like the
+  // direct spelling consumes it.
+  assert.equal(checkPolicy({ action: "shell", command: "busybox env sh -c top" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "busybox timeout 5 top" }).decision, "ask");
+  // The direct forms the lens mirrors (unchanged behavior, restated as the
+  // lens anchors).
+  assert.equal(checkPolicy({ action: "shell", command: "env top" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "timeout top" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c top" }).decision, "ask");
+  // The word-wise discipline: env's argument is a program NAME, not a
+  // command string — a quoted `a; top` cannot pose as command syntax, and
+  // the busybox form allows exactly like its direct form.
+  assert.equal(checkPolicy({ action: "shell", command: "env 'a; top'" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "busybox env 'a; top'" }).decision, "allow");
+});
+
+test("P18 (b): busybox sh and xsh join the W102 wrapper transparency (exotic interpreter names)", () => {
+  // The W102-era honest edge: exotic interpreter names were outside the
+  // sh-family detection. busybox composes the sh family through its applet
+  // form and xsh is one of busybox sh's alternate names. TRANSPARENCY per
+  // seat: the with-facts protected seat denies (the inner command denies
+  // unwrapped), the factless seat inherits the inner factless allow (the
+  // W090 fail-open class) — except the target-gated shapes, whose
+  // base-set deny fires factlessly too (the W102 principle).
+  for (const currentBranch of ["main", undefined]) {
+    const context = currentBranch ? { currentBranch } : {};
+    assert.equal(checkPolicy({ action: "shell", command: "busybox sh -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `busybox commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "xsh -c 'git commit -m x'", ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `xsh commit ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "busybox sh -c 'git branch -f main abc'", ...(currentBranch ? { currentBranch } : {}) }).decision, "deny", `busybox branch -f ${String(currentBranch)}`);
+    assert.equal(checkPolicy({ action: "shell", command: "xsh -c 'git branch -f main abc'", ...(currentBranch ? { currentBranch } : {}) }).decision, "deny", `xsh branch -f ${String(currentBranch)}`);
+  }
+  // Nested wrapper applets unwrap: an env prefix on the busybox (consumed
+  // by the unwrapper, as always) and an env applet inside the busybox args
+  // both reach the inner classification.
+  assert.equal(checkPolicy({ action: "shell", command: "env busybox sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "busybox env sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  // The inner compound survives: a quoted -c argument stays ONE word, so
+  // the segment split inside it is still seen (no string round trip).
+  assert.equal(checkPolicy({ action: "shell", command: "busybox sh -c 'echo hi; git commit -m x'", currentBranch: "main" }).decision, "deny");
+  // Wrapped benign commands stay transparent (passthrough, not a blanket).
+  assert.equal(checkPolicy({ action: "shell", command: "busybox sh -c 'echo hi'", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "xsh -c 'git switch feat/g5'", currentBranch: "main" }).decision, "allow");
+  // busybox without an sh-family applet is not a wrapper.
+  assert.equal(checkPolicy({ action: "shell", command: "busybox echo sh -c 'git commit -m x'", currentBranch: "main" }).decision, "allow");
+});
+
+test("P18 (c): the -c= EQUALS-expansion spelling classifies like sh/bash (the parser-consistent allow, explicit)", () => {
+  // `Xsh -c='git commit -m x'`: getopt makes the remainder of the word the
+  // -c option-argument, so the parser extracts `=git commit -m x` — and
+  // classifies it by its literal text: the head is `=git`, not `git`, so it
+  // is not a git invocation. sh/bash REJECT the spelling outright (verified
+  // live: `bash -c='echo hi'` → "invalid option", exit 2) — harmlessness.
+  // zsh's default EQUALS option would expand `=git` to the resolved path
+  // and EXECUTE it — the recorded runtime caveat (parked row P18 / the
+  // coverage log): the classification stays parser-consistent (the same
+  // shape classifies the same way for every interpreter) and the zsh
+  // delta stays a recorded residual, not silently absorbed.
+  for (const interpreter of ["sh", "bash", "zsh"]) {
+    assert.equal(checkPolicy({ action: "shell", command: `${interpreter} -c='git commit -m x'`, currentBranch: "main" }).decision, "allow", `commit ${interpreter}`);
+  }
+  // The spelling CLASS is explicit, not just the recorded commit shape:
+  // a target-gated inner shape reads the same `=git` head (not a git
+  // invocation). Under zsh this is the same recorded runtime caveat.
+  for (const interpreter of ["sh", "bash", "zsh"]) {
+    assert.equal(checkPolicy({ action: "shell", command: `${interpreter} -c='git branch -f main abc'` }).decision, "allow", `branch ${interpreter}`);
+  }
+  // The recognized -c spellings around it stay denies (the -c= allow is
+  // the deliberate parser position, not a general wrapper gap).
+  assert.equal(checkPolicy({ action: "shell", command: "zsh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "zsh -c'git commit -m x'", currentBranch: "main" }).decision, "deny");
 });
 
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {

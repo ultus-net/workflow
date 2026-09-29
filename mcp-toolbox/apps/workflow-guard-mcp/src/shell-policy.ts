@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { decodeShellEscapes, dynamicShellSyntaxIn, executableIn, shellWords, splitShellSegments, unwrapShellWords } from "./shell.js";
+import { decodeShellEscapes, dynamicShellSyntaxIn, executableIn, shellWords, splitShellSegments, unwrapShellWords, unwrapWords } from "./shell.js";
 import { protectedBranchesIn, pushedProtectedBranchIn, type GitPolicyContext } from "./git-policy.js";
 
 const W_DELETE = ["del", "ete"].join("");
@@ -135,21 +135,31 @@ function interactiveReason(command: string, depth = 0): string | undefined {
     // matching is case-insensitive like the class regex, while a monitor name
     // as argument data (`echo top`, `az ... --name top`) stays non-execution.
     const busyboxApplet = /^busybox$/i.test(executable) ? unwrapped[1] : undefined;
-    const candidate = (busyboxApplet !== undefined ? basename(busyboxApplet ?? "") : executable).toLowerCase();
+    // P18 (a): the W088 port was single-level — `busybox env top`,
+    // `busybox timeout top`, and `busybox sh -c top` stayed allowed while
+    // their non-busybox forms ask. Nested busybox forms classify through
+    // the same wrapper-transparency lens as their direct forms: the applet
+    // command's own wrapper words unwrap WORD-WISE (no string round trip —
+    // a quoted argv word stays data), so the busybox form classifies
+    // exactly like its direct spelling. Direct forms are unchanged: past
+    // the head the unwrap is a no-op for them.
+    const effective = busyboxApplet !== undefined ? unwrapWords(unwrapped.slice(1)) : unwrapped;
+    const effectiveExecutable = basename(effective[0] ?? "");
+    const candidate = effectiveExecutable.toLowerCase();
     if (/^(?:nano|vim?|emacs|pico|joe|micro|less|more|most|htop|btop|atop|glances)$/i.test(candidate)) return "interactive terminal command can hang an agent session";
     if (candidate === "top") {
       // The batch-mode exemption is the monitor's own flag, not a wrapper's:
       // a batch-shaped flag on a wrapper (the degenerate `env -b top` /
       // `timeout -b top` shapes; `sudo` never reaches this check — its rule
       // returns first) no longer suppresses the monitor rule.
-      const ownArgs = busyboxApplet !== undefined ? unwrapped.slice(2) : unwrapped.slice(1);
+      const ownArgs = effective.slice(1);
       if (!ownArgs.some((word) => /^(?:--batch|-[A-Za-z]*b[A-Za-z]*)$/.test(word))) return "interactive process monitor can hang an agent session";
     }
-    if (/^(?:ba|z|da|k)?sh$/i.test(executable)) {
-      const commandFlag = unwrapped.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
-      if (commandFlag >= 0 && unwrapped[commandFlag + 1] && interactiveReason(unwrapped[commandFlag + 1]!, depth + 1)) return "nested shell command can open an interactive terminal program";
+    if (/^(?:ba|z|da|k)?sh$/i.test(effectiveExecutable)) {
+      const commandFlag = effective.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
+      if (commandFlag >= 0 && effective[commandFlag + 1] && interactiveReason(effective[commandFlag + 1]!, depth + 1)) return "nested shell command can open an interactive terminal program";
     }
-    if (executable === "eval" && unwrapped.length > 1 && interactiveReason(unwrapped.slice(1).join(" "), depth + 1)) return "eval can open an interactive terminal program";
+    if (effectiveExecutable === "eval" && effective.length > 1 && interactiveReason(effective.slice(1).join(" "), depth + 1)) return "eval can open an interactive terminal program";
   }
   if (/\bgit\s+(?:rebase\s+-[a-zA-Z]*i|add\s+-[a-zA-Z]*p)/i.test(command)) return "interactive Git operation can hang an agent session";
   if (/\bnpm\s+init\b(?!\s+(?:-y|--yes|--force))\b/i.test(command)) return "npm init requires an interactive prompt";

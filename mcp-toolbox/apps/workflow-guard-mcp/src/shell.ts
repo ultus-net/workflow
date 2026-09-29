@@ -108,7 +108,15 @@ export function executableIn(segment: string): string {
 }
 
 export function unwrapShellWords(command: string): string[] {
-  const words = shellWords(decodeShellEscapes(command.trim()));
+  return unwrapWords(shellWords(decodeShellEscapes(command.trim())));
+}
+
+// P18 (a/b): the word-level core of unwrapShellWords, callable on already
+// tokenized words (the busybox applet args) so the nested wrapper words
+// unwrap WITHOUT a string round trip — a quoted argv word stays one word and
+// cannot pose as command syntax. The env -S branch splices the array, so
+// callers pass their own.
+export function unwrapWords(words: string[]): string[] {
   let i = 0;
   while (i < words.length) {
     const word = words[i]!;
