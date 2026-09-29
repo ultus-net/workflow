@@ -78,6 +78,13 @@ export interface WorkflowRunController {
     /** W165: recorded run→PR work-product links per run (observability-only). */
     workProductLinks?: ReadonlyMap<string, import("./run-registry.js").WorkProductLink>;
     /**
+     * W175: the recorded begin times — the begin transition's own attribution
+     * observedAt per run, bounded 64 like the sibling maps. The /api/runs rows
+     * carry startedAt only where this record has one; a run without a record
+     * renders the named absence, never a derived timestamp.
+     */
+    runStarts?: ReadonlyMap<string, string>;
+    /**
      * W152: the per-run kernel transition logs, bounded to the most recent 64
      * runs like the other observability maps. Each entry is that run's own
      * application history (the kernel transition log is per application

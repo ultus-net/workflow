@@ -605,11 +605,38 @@ async function handleRequest(
           }),
         ...(context.schedules === undefined ? {} : { schedules: context.schedules.list().map((schedule) => ({ id: schedule.id, title: schedule.title })) }),
       });
+      // W175: the runs block — the run-registry projection the /api/runs relay
+      // serves (all run rows; origins; work-product links; review outcomes +
+      // blocking reasons; completion claims; per-run usage; reasoning-claim
+      // findings + metrics). Rows come from the UNFILTERED run: snapshot tasks
+      // (the posture's population: finished runs stay visible) and carry
+      // startedAt ONLY when the registry recorded the begin time — a row
+      // without one is the named absence, never a derived timestamp. Absent
+      // entirely when the controller predates the slice (no authority, no
+      // block).
+      const runsBlock = gates === undefined ? undefined : {
+        rows: snapshot.tasks
+          .filter((task) => task.id.startsWith("run:"))
+          .map((task) => {
+            const runId = task.id.slice("run:".length);
+            const startedAt = gates.runStarts?.get(runId);
+            return { runId, title: task.title, state: task.state, ...(startedAt === undefined ? {} : { startedAt }) };
+          }),
+        ...(gates.runOrigins === undefined ? {} : { origins: Object.fromEntries(gates.runOrigins) }),
+        ...(gates.workProductLinks === undefined ? {} : { workProducts: Object.fromEntries(gates.workProductLinks) }),
+        reviewOutcomes: Object.fromEntries(gates.reviewOutcomes),
+        blockingReasons: Object.fromEntries(gates.blockingReasons),
+        completionClaims: Object.fromEntries(gates.completionClaims),
+        ...(gates.runUsage === undefined ? {} : { usage: Object.fromEntries(gates.runUsage) }),
+        ...(gates.reasoningClaims === undefined ? {} : { reasoningClaims: Object.fromEntries(gates.reasoningClaims) }),
+        ...(gates.reasoningClaimMetrics === undefined ? {} : { reasoningClaimMetrics: gates.reasoningClaimMetrics }),
+      };
       return send(response, 200, {
         snapshot: { ...snapshot, tasks: snapshot.tasks.filter((task) => !hiddenTaskIds.has(task.id)) },
         ...(gateObservability === undefined ? {} : { gateObservability }),
         posture,
         timeline,
+        ...(runsBlock === undefined ? {} : { runs: runsBlock }),
       });
     }
     if (request.url === "/bash") {

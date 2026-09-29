@@ -287,6 +287,20 @@ export function createRunRegistry(
       workProductLinks.delete(oldest);
     }
   };
+  // W175: the recorded begin times — the begin transition's own attribution
+  // observedAt per run, bounded 64 like the sibling gate maps. The /api/runs
+  // rows carry startedAt only where this record has one; a run begun before
+  // the window (or without a registry begin at all) renders the named
+  // absence, never a derived timestamp.
+  const runStarts = new Map<string, string>();
+  const rememberRunStart = (runId: string, startedAt: string): void => {
+    runStarts.set(runId, startedAt);
+    while (runStarts.size > 64) {
+      const oldest = runStarts.keys().next().value;
+      if (oldest === undefined) break;
+      runStarts.delete(oldest);
+    }
+  };
   let reasoningClaimFindings = 0;
   let reasoningClaimFlaggedRuns = 0;
   let monitoredRuns = 0;
@@ -371,6 +385,10 @@ export function createRunRegistry(
         reasoningClaims,
         runOrigins,
         workProductLinks,
+        // W175: the recorded begin times (the begin transition's own
+        // attribution observedAt, bounded 64) — the run rows' startedAt
+        // source, never a view-side derivation.
+        runStarts,
         reasoningClaimMetrics: {
           monitoredRuns,
           flaggedRuns: reasoningClaimFlaggedRuns,
@@ -436,6 +454,9 @@ export function createRunRegistry(
       // board-delegated run's begin belongs to the operator's delegate route
       // (the provider-task origin record names it); any other begin is
       // agent-driven through the registry surface.
+      // W175: the begin stamp IS the start record — the /api/runs rows carry
+      // this exact attribution time as startedAt, never a derived one.
+      const beganAt = new Date().toISOString();
       const started = application.transition(runTaskId, "IN_PROGRESS", {
         actor: origin === undefined ? "agent" : origin.kind === "schedule" ? "scheduler" : "operator",
         authority: origin === undefined
@@ -443,9 +464,10 @@ export function createRunRegistry(
           : origin.kind === "schedule"
             ? `schedule-fired run begin (origin ${origin.scheduleId})`
             : `provider-task run begin (origin ${origin.key})`,
-        observedAt: new Date().toISOString(),
+        observedAt: beganAt,
       });
       if (started.kind !== "accepted") throw new Error(`cannot start run ${runId}: ${started.reason}`);
+      rememberRunStart(runId, beganAt);
       application.selectActiveTask(runTaskId);
       if (testSubject !== undefined) {
         runTestSubjects.set(runId, testSubject);
