@@ -951,7 +951,17 @@ export function createWorkflowWebServer(
         ) {
           return json(response, 400, { error: "invalid permission decision request" });
         }
-        if (!active.answerPermission(id, decision)) {
+        const answered = active.answerPermission(id, decision);
+        if (typeof answered === "object") {
+          // P10 (residual #26): the server-side approvability gate refused to
+          // authorize a parked payload that failed the parking-time inspection
+          // classification (the SAME classification the card renders as
+          // NOT-APPROVABLE-WITH-REASON). Render the structured refusal — the
+          // response never implies success, and the park survives for a
+          // rejection.
+          return json(response, 409, { error: answered.refused, reason: answered.reason });
+        }
+        if (!answered) {
           return json(response, 404, { error: "unknown or stale permission request" });
         }
         return json(response, 200, {

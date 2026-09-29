@@ -5,7 +5,7 @@ import type { AcpConfigOptionValue, AcpSessionConfig } from "../adapters/acp-sub
 import type { ModelUsageMetrics } from "../integrations/model-usage-proxy.js";
 import { appendOperatorItem, projectOperatorSessionEvent, type OperatorSessionImage, type OperatorSessionItem } from "./operator-session.js";
 import { sanitizeControlPlaneText } from "../application/text-hygiene.js";
-import type { PermissionBroker, PermissionDecisionChoice, PermissionMode, PermissionPatterns, PendingPermissionRequest } from "./permission-broker.js";
+import type { PermissionAnswerRefusal, PermissionBroker, PermissionDecisionChoice, PermissionMode, PermissionPatterns, PendingPermissionRequest } from "./permission-broker.js";
 import { normalizeConfigOptions, type WebConfigOption } from "./web-config-options.js";
 
 /** Four images at ≤ 5 MB base64 payload each, plus the prompt body margin. */
@@ -303,9 +303,11 @@ export class SessionChannel {
   }
 
   /** Answers the parked permission request; false when unknown/stale or
-   * (W141) owned by another session's park. The channel's own permission key
+   * (W141) owned by another session's park, or (P10, residual #26) the
+   * structured approvability refusal when the parked payload failed the
+   * parking-time inspection classification. The channel's own permission key
    * scopes the answer — the poll is session-scoped, so the answer is too. */
-  answerPermission(id: string, choice: PermissionDecisionChoice): boolean {
+  answerPermission(id: string, choice: PermissionDecisionChoice): boolean | PermissionAnswerRefusal {
     return this.#broker?.answer(id, choice, this.#permissionKey?.()) ?? false;
   }
 

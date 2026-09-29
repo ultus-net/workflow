@@ -104,7 +104,10 @@ from fingerprinted provenance, never from stale approvals
 - **Residual risks stay stated** — `docs/SECURITY_ASSURANCE.md` keeps its
   residual risks on record (26 as of the W115 answer-route entry,
   2026-09-24; previously 25 as of the W106-era homedir-trust entry,
-  2026-09-23), and its checker pins the honesty statements.
+  2026-09-23; #26's answer-route approvability gate landed 2026-09-30 as a
+  dated disposition note — the count stays 26 because stated entries keep
+  their number with dated dispositions, not because the risk is open), and
+  its checker pins the honesty statements.
 - Probe-gated, never date-gated: an agent version bump without a re-run of
   its probes caps that surface `advisory`.
 
