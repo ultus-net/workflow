@@ -129,6 +129,12 @@ export async function createWorkflowHub(
      */
     providerReadState?: () => import("./issue-detail.js").ProviderReadRecord | undefined;
     /**
+     * W177: the review-provenance journal reader — the lane the /snapshot
+     * audit block (and the webapp's audit page through it) relays. Absent
+     * means the audit block omits the lane (the honest subset).
+     */
+    reviewProvenance?: () => Promise<readonly import("../review/provenance.js").ReviewProvenanceRecord[]>;
+    /**
      * W171: the provider-owned discovery capability (the linked board issue's
      * timeline cross-references — the hub records the actual PR reference it
      * discovers there, exactly-one rule). Absent means no discovery: the join
@@ -202,6 +208,7 @@ export async function createWorkflowHub(
         ...(options.readWorkProductState === undefined ? {} : { readWorkProductState: options.readWorkProductState }),
         ...(options.readIssueDetail === undefined ? {} : { readIssueDetail: options.readIssueDetail }),
         ...(options.providerReadState === undefined ? {} : { providerReadState: options.providerReadState }),
+        ...(options.reviewProvenance === undefined ? {} : { reviewProvenance: options.reviewProvenance }),
         ...(options.discoverIssueCrossReferences === undefined ? {} : { discoverIssueCrossReferences: options.discoverIssueCrossReferences }),
       },
     );
