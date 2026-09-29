@@ -166,24 +166,6 @@ body {
   padding: 0.45rem clamp(0.9rem, 2vw, 1.75rem) 0;
 }
 
-/* W174 phase 1a: the five dashboard pages ship routes first — a named
-   absence, not a fabricated empty panel. */
-.phase-placeholder {
-  margin: auto;
-  padding: var(--space-4);
-  border: 1px dashed var(--border-strong);
-  color: var(--text-muted);
-  max-width: 46rem;
-}
-.phase-placeholder-title {
-  font-family: var(--font-sans);
-  font-size: 1rem;
-  font-weight: 700;
-  margin: 0 0 0.35rem;
-  color: var(--text);
-}
-.phase-placeholder-copy { margin: 0; font-size: 0.8rem; }
-
 /* W174 phase 1a: the navigation rail — grouped pages, square edges, mono.
    Collapsed, it narrows to the icon column; the collapsed preference
    persists per browser under `workflow.shell.rail` (rail-state.ts). */
@@ -3556,6 +3538,45 @@ div.board-issue-detail {
 .runs-row-time { font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-muted); }
 .runs-absent { margin: 0; font-size: 0.76rem; color: var(--text-muted); font-style: italic; }
 .runs-muted { margin: 0.25rem 0 0; font-size: 0.7rem; color: var(--text-muted); }
+
+/* W176 phase 3 (#347): the Reviews page — one row per review-gated run. The
+   rows reuse the runs-row precedent's chrome (mono ids, hover/focus/selected,
+   muted-italic absences); the grid re-cuts to the review row's six columns
+   and the verdict cell styles ONLY through the record-derived token
+   (approved/failed/pending — a verdict outside the recorded vocabulary
+   renders lowercased verbatim, unstyled by guess). The same dock region
+   (.runs-detail) hosts the shared detail panel on this page. */
+.reviews-body { flex: 1; display: flex; min-height: 0; }
+
+.reviews-view {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  overflow-y: auto;
+  padding: var(--space-3) clamp(0.9rem, 2vw, 1.75rem);
+}
+
+.reviews-head, .reviews-row {
+  grid-template-columns: minmax(9rem, 1.2fr) minmax(7rem, 0.9fr) minmax(5.5rem, 0.55fr) minmax(10rem, 1.7fr) minmax(9rem, 1.2fr) minmax(6.5rem, 0.7fr);
+  align-items: start;
+}
+.reviews-row-axes {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+.runs-verdict { font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-muted); }
+.runs-verdict-approved { color: var(--ok); }
+.runs-verdict-failed { color: var(--fail); }
+.runs-verdict-pending { color: var(--warn); }
+.reviews-row-blocking { font-size: 0.72rem; color: var(--fail); overflow-wrap: anywhere; }
 
 /* The detail panel: the shell's right-side contextual region. */
 .runs-detail {
