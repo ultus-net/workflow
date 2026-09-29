@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import type { OperatorDecisionKind, OperatorDecisionRow, OperatorPosture } from "../../integrations/operator-posture.js";
+import type { OperatorDecisionKind, OperatorDecisionRow, OperatorPosture, PostureBudgetIncident } from "../../integrations/operator-posture.js";
 
 /**
  * W150 — the operator posture strip + unified decision inbox (the Paperclip
@@ -26,6 +26,22 @@ import type { OperatorDecisionKind, OperatorDecisionRow, OperatorPosture } from 
 export interface PostureState {
   readonly posture: OperatorPosture | null;
   readonly reason?: string;
+}
+
+/**
+ * W176: the budget incident ROWS the posture poll carried — the ONLY source
+ * an incidents view may read (never derived from anything else, never a
+ * second poll). Three honest answers:
+ *   - `undefined` — the poll has not answered yet (render nothing yet);
+ *   - `null` — a named absence: the poll degraded, or the posture block
+ *     carries no incident records (the hub predates the rows or composes no
+ *     incident source — never presented as "none recorded");
+ *   - the records — the posture block's own `budgetIncidents` verbatim.
+ */
+export function postureBudgetIncidents(state: PostureState | undefined): readonly PostureBudgetIncident[] | null | undefined {
+  if (state === undefined) return undefined;
+  if (state.posture === null) return null;
+  return state.posture.budgetIncidents ?? null;
 }
 
 const COUNT_LABELS: ReadonlyArray<{ readonly key: keyof OperatorPosture["counts"]; readonly label: string }> = [
