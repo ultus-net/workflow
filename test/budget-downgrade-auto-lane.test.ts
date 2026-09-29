@@ -360,3 +360,43 @@ test("P15a: the metering trail records identically across the narrowing (unchang
     await upstream.close();
   }
 });
+
+// The no-seam fallback: with the autoLatest seam UNCOMPOSED (e.g.
+// WORKFLOW_OPENROUTER_AUTO_LATEST=0), an openrouter/auto session has no
+// injection point to narrow — the recorded conservative fallback is the W118
+// rewrite (switch OFF the router to the target). Deliberate, recorded, and
+// now pinned so the fallback cannot silently become a no-op downgrade.
+test("P15a: without the autoLatest seam the auto-router lane falls back to the W118 rewrite", async () => {
+  const usageHolder = { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20, cost: 0.001 };
+  const upstream = await fakeUpstream((req, _body, res) => {
+    if (req.url?.endsWith("/api/v1/models")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(CATALOG));
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [], usage: { ...usageHolder } }));
+  });
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    budgetDowngrade: { targetModel: TARGET, budget: BUDGET, fraction: 0.5 },
+  });
+  const ask = async (): Promise<void> => {
+    await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "openrouter/auto", messages: [] }),
+    });
+  };
+  try {
+    await ask(); // 20 recorded
+    usageHolder.total_tokens = 900;
+    await ask(); // lag: still inactive
+    await ask(); // crossed: the rewrite fires (no seam to narrow through)
+    assert.equal(parseForwarded(upstream, 2).model, TARGET, "the no-seam fallback rewrites off the router (the recorded conservative fallback)");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
