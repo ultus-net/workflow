@@ -55,6 +55,22 @@ function isNonEmptyString(value: unknown): value is string {
 /** Default bounded TTL recorded on every grant (a day). */
 const DEFAULT_GRANT_TTL_MS = 24 * 60 * 60 * 1000;
 
+/** P10 (residual #26): the machine-readable refusal an answer returns when the
+ * parked payload failed the parking-time approvability classification. The
+ * card's NOT-APPROVABLE-WITH-REASON and the W115 transport strip are the SAME
+ * classification — this is its server-side enforcement at the answer (one
+ * field read; no new cap, no new display logic). */
+export interface PermissionAnswerRefusal {
+  readonly refused: "not-approvable";
+  readonly reason: string;
+}
+
+/** P10 (residual #26): the refusal reason for an approval the parking-time
+ * classification marked uninspectable — fail closed: only a rejection can
+ * resolve such a park. */
+export const NOT_APPROVABLE_REASON =
+  "the parked input exceeds the approval card's inspection cap — only a rejection can resolve it";
+
 export interface PermissionBrokerOptions {
   /** Injectable clock (tests); expiry is judged against it. */
   readonly now?: (() => number) | undefined;
@@ -172,11 +188,23 @@ export class PermissionBroker {
    * a session-scoped poll must not let another session's route consume its
    * park. `sessionKey === undefined` keeps the legacy unscoped shape (the
    * keyless channel's poll surfaces the oldest parked request OVERALL, so
-   * what it shows is what it may answer). */
-  answer(id: string, choice: PermissionDecisionChoice, sessionKey?: string): boolean {
+   * what it shows is what it may answer).
+   * P10 (residual #26): a decision that would AUTHORIZE a parked payload the
+   * parking-time classification flagged over the inspection cap returns the
+   * structured refusal instead — fail closed, and the park is NOT consumed
+   * (a rejection can still resolve it). Rejections always resolve. */
+  answer(id: string, choice: PermissionDecisionChoice, sessionKey?: string): boolean | PermissionAnswerRefusal {
     const parked = this.#parked.get(id);
     if (parked === undefined) return false;
     if (sessionKey !== undefined && parked.sessionKey !== sessionKey) return false;
+    // The approvability gate: the SAME classification the card renders as
+    // NOT-APPROVABLE-WITH-REASON, recorded once at parking (`inputOverCap`) —
+    // one field read here, no new cap, no new display logic. An approval of
+    // the uninspectable payload never resolves; the parked request stays for
+    // the operator to reject.
+    if (parked.request.inputOverCap && (choice === "allow_once" || choice === "allow_always")) {
+      return { refused: "not-approvable", reason: NOT_APPROVABLE_REASON };
+    }
     this.#parked.delete(id);
     const tool = parked.request.tool;
     switch (choice) {
