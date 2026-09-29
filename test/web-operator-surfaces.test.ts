@@ -10,6 +10,7 @@ import { WorkflowApplication } from "../src/application/workflow.js";
 import { evidenceId, observationId, taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
 import { createEvidenceContentStore } from "../src/integrations/evidence-content-store.js";
+import { createProviderReadLedger, recordProviderReads } from "../src/integrations/issue-detail.js";
 import { createWorkflowHub, resolveHubDiscoveryPath, type WorkflowHubSchedulerHandles } from "../src/integrations/workflow-hub.js";
 import { createScheduleRegistry } from "../src/integrations/schedule-registry.js";
 import { createSelfImprovementRegistry } from "../src/integrations/self-improvement-registry.js";
@@ -416,5 +417,166 @@ test("W175: the web relays the hub's run-registry projection (/api/runs); the br
   context.after(() => new Promise<void>((resolve) => orphanServer.close(() => resolve())));
   const noHub = await fetch(`http://127.0.0.1:${orphanPort}/api/runs`).then((r) => r.json() as Promise<{ runs: unknown; reason?: string }>);
   assert.equal(noHub.runs, null);
+  assert.equal(noHub.reason, "hub unavailable");
+});
+
+// W177: the audit relay — the hub's /snapshot audit block, the THREE recorded
+// authorization-adjacent lanes the hub actually keeps: the W167 provider-read
+// ledger, the timeline's kernel transition + gate rows, and the W041
+// fingerprinted review-provenance journal. Read-only observability — it
+// relays records the hub already keeps; the same guard pattern as the
+// evidence relay: the hub token stays server-side, and a hub without the
+// block answers the named absence, never a fabricated ledger.
+test("W177: the web relays the hub's audit block (/api/audit) — the three recorded lanes; the browser never sees a hub token", async (context) => {
+  const hubDir = mkdtempSync(join(tmpdir(), "wf-web-audit-"));
+  const ws = mkdtempSync(join(tmpdir(), "wf-web-audit-ws-"));
+  context.after(() => rmSync(hubDir, { recursive: true, force: true }));
+  context.after(() => rmSync(ws, { recursive: true, force: true }));
+
+  const tasks: WorkflowTask[] = [
+    { id: taskId("W1"), title: "interactive", state: "READY", dependencies: [], requiredEvidence: [] },
+  ];
+  const graph = new TaskGraph(tasks.map((task) => ({ ...task })));
+  const application = new WorkflowApplication(
+    graph,
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+    [],
+    new Set(["read", "mutation"]),
+    ws,
+  );
+  // Lane 1 composition, exactly as the composition root wires it: the wrapped
+  // board read records its outcome, the accessor answers the ledger's record.
+  const ledger = createProviderReadLedger();
+  const auditBoardOutcome = {
+    state: "ok",
+    board: {
+      provider: "github",
+      repo: "o/r",
+      tasks: [{
+        provider: "github", key: "#12", title: "a task", state: "open",
+        url: "https://github.com/o/r/issues/12", labels: [], updatedAt: "2026-09-27T00:00:00Z",
+      }],
+      skipped: 0,
+      pullRequestsExcluded: 0,
+    },
+  } as const;
+  // Lane 3 composition: the journal reader the composition root wires (the
+  // records are what a W041 review appended); the test stubs it the same way.
+  const provenanceRecord = {
+    version: 1 as const,
+    workspace: ws,
+    fingerprint: {
+      commitHash: "0".repeat(40),
+      promptDigest: "1".repeat(64),
+      diffDigest: "2".repeat(64),
+      manifestDigest: "3".repeat(64),
+      partitionDigest: "4".repeat(64),
+      ruleSetDigest: "5".repeat(64),
+    },
+    reviewer: "hub-reviewer:test",
+    inspectedUnits: ["manifest"],
+    coveredPaths: ["src/main.ts"],
+    findings: "no blocking findings",
+    verification: ["lint exit 0"],
+    disposition: "approved" as const,
+    recordedAt: "2026-09-30T00:00:00.000Z",
+  };
+  const captured: WorkflowHubSchedulerHandles[] = [];
+  const hub = await createWorkflowHub(application, {
+    discoveryDir: hubDir,
+    graph,
+    readBoardTasks: recordProviderReads(ledger, async () => auditBoardOutcome),
+    providerReadState: () => ledger.current(),
+    reviewProvenance: async () => [provenanceRecord],
+    schedulerFactory: (handles) => {
+      captured.push(handles);
+      return { tick: async () => undefined, trigger: async () => false, start: () => undefined, stop: () => undefined };
+    },
+  });
+  context.after(() => hub.close());
+  const handles = captured[0];
+  assert.ok(handles !== undefined, "the hub composes the run registry when a graph is wired");
+
+  // Lane 2 records: a begin transition (the run lane's W157 attribution) and
+  // a gate record (the blocking reason).
+  const runId = "schedule:nightly:audit";
+  await handles.controller.begin({
+    runId,
+    title: "Nightly audit",
+    workspace: ws,
+    origin: { kind: "schedule", scheduleId: "nightly" },
+  });
+  handles.recordBlockingReason({ runId, reason: "reviewer not yet run" });
+
+  const webApplication = new WorkflowApplication(
+    new TaskGraph(tasks.map((task) => ({ ...task }))),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(webApplication, undefined, undefined, { hubDiscoveryDir: hubDir });
+  const port = await listen(server);
+  context.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const base = `http://127.0.0.1:${port}`;
+
+  // The wrapped provider read only records when a read happens: the board
+  // relay triggers one (a read performed for ANY route updates the record).
+  const board = await fetch(`${base}/api/board`).then((r) => r.json() as Promise<{ board?: unknown; read?: unknown }>);
+  assert.equal((board.board as { state?: string } | undefined)?.state, "ok", "the board read answered so the ledger recorded");
+
+  const relayed = await fetch(`${base}/api/audit`).then((r) => r.json() as Promise<{
+    audit: {
+      providerReads: { at: string; outcome: string; reason?: string } | null;
+      kernelGates: Array<{ kind: string; actor: string; authority: string; summary: string; at: string | null }>;
+      kernelGatesRetention: string;
+      reviewProvenance?: Array<{ reviewer: string; disposition: string; recordedAt: string; workspace: string }> | null;
+    } | null;
+    reason?: string;
+  }>);
+  const audit = relayed.audit;
+  assert.ok(audit != null, "a live hub answers the audit block, not a named absence");
+
+  // Lane 1 — the provider-read ledger: the wrapped read's recorded outcome.
+  assert.ok(audit.providerReads !== null, "a hub that performed a provider read answers its record");
+  assert.equal(audit.providerReads?.outcome, "ok");
+  assert.match(audit.providerReads?.at ?? "", /^\d{4}-\d{2}-\d{2}T/, "the record carries its own recorded instant");
+
+  // Lane 2 — the kernel transition / gate log: the timeline's kernel + gate
+  // rows ONLY (never the review/claim/usage/origin/budget kinds), composed
+  // from the same projection the /api/timeline relay serves.
+  const kinds = new Set(audit.kernelGates.map((row) => row.kind));
+  assert.equal(
+    [...kinds].every((kind) => kind === "transition" || kind === "gate"),
+    true,
+    "the lane carries ONLY the kernel transition + gate record kinds",
+  );
+  const begin = audit.kernelGates.find((row) => row.summary.includes("Nightly audit") && row.summary.includes("IN_PROGRESS"));
+  assert.ok(begin !== undefined, "the run's begin transition rides as a kernel row");
+  assert.equal(begin?.kind, "transition");
+  const gate = audit.kernelGates.find((row) => row.summary.includes("blocked: reviewer not yet run"));
+  assert.ok(gate !== undefined, "the recorded blocking reason rides as a gate row");
+  assert.equal(gate?.kind, "gate");
+  assert.match(audit.kernelGatesRetention, /in-memory only/, "the lane carries the projection's retention statement");
+
+  // Lane 3 — the review provenance: the fingerprinted records, verbatim.
+  assert.ok(audit.reviewProvenance != null, "a hub wiring the provenance lane answers its records");
+  assert.equal(audit.reviewProvenance?.[0]?.reviewer, "hub-reviewer:test");
+  assert.equal(audit.reviewProvenance?.[0]?.disposition, "approved");
+  assert.equal(audit.reviewProvenance?.[0]?.workspace, ws);
+
+  // The hub token never rides the relay.
+  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(hubDir), "utf8")) as { token: string };
+  const relayText = JSON.stringify(relayed);
+  assert.ok(relayText.length > 0 && !relayText.includes(token), "the relay response never carries the hub token");
+
+  // No hub: the relay degrades to the named absence — never a fabricated ledger.
+  const orphanServer = createWorkflowWebServer(
+    new WorkflowApplication(new TaskGraph(tasks.map((task) => ({ ...task }))), hostCapabilities({ transport: "acp", authoritativePreMutation: false })),
+    undefined,
+    undefined,
+    { hubDiscoveryDir: mkdtempSync(join(tmpdir(), "wf-web-audit-orphan-")) },
+  );
+  const orphanPort = await listen(orphanServer);
+  context.after(() => new Promise<void>((resolve) => orphanServer.close(() => resolve())));
+  const noHub = await fetch(`http://127.0.0.1:${orphanPort}/api/audit`).then((r) => r.json() as Promise<{ audit: unknown; reason?: string }>);
+  assert.equal(noHub.audit, null);
   assert.equal(noHub.reason, "hub unavailable");
 });

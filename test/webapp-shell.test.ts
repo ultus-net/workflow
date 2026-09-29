@@ -228,12 +228,10 @@ test("collapsed-state persistence survives both storage-denial shapes", () => {
 });
 
 test("the phase pages are named absences — routes live now, content arrives with its phase", () => {
-  // W175 phase 2 shipped the runs page (its pins live in test/webapp-runs.test.ts);
-  // W176 phase 3 shipped the Activity page (its pins live in test/webapp-activity.test.ts).
-  // Reviews and Audit remain placeholders until their phases land.
+  // Every dashboard page has shipped except Reviews (batch 3): runs landed
+  // with W175 phase 2, Activity with W176, Audit with W177.
   const pages: readonly (readonly [AppView, string])[] = [
     ["reviews", "Reviews"],
-    ["audit", "Audit"],
   ];
   const { restore } = installWindowStorage();
   try {
@@ -251,6 +249,18 @@ test("the phase pages are named absences — routes live now, content arrives wi
       );
       assert.ok(markup.includes(">" + title + "</h2>"), "the header titles the " + title + " page");
     }
+    // W177: the audit page shipped its content — it is no longer a
+    // placeholder; the shell renders the AuditView (its own named absences:
+    // the boundary element + the unanswered relay), never the phase copy.
+    const audit = renderToStaticMarkup(createElement(AppShell, {
+      view: "audit",
+      setView: noop,
+      focusedSessionId: undefined,
+      setFocusedSessionId: noop,
+    }));
+    assert.ok(!audit.includes("phase-placeholder"), "the audit page no longer renders the phase placeholder");
+    assert.ok(audit.includes("audit-boundary"), "the audit page renders its boundary element");
+    assert.ok(audit.includes(">Audit</h2>"), "the header titles the Audit page");
   } finally {
     restore();
   }

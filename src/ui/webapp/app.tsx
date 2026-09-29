@@ -43,6 +43,9 @@ import { clearRunDetailOpenToWindow, readRunDetailOpenFromWindow, saveRunDetailO
 import { EvidenceStripRow, useContentPreviews, useHubEvidence, type EvidenceContentRefView } from "./evidence-preview.js";
 export { artifactKind, EvidenceStripRow } from "./evidence-preview.js";
 export type { EvidenceContentPreview, EvidenceContentRefView } from "./evidence-preview.js";
+// W177: the Audit page — the three recorded authorization-adjacent lanes the
+// hub actually keeps, plus the verbatim in-memory permission-decision boundary.
+import { AuditView, useAuditRecord } from "./audit-view.js";
 import type { ScheduleRecentRun } from "../../integrations/operator-posture.js";
 import type { BoardOutcome, WorkProductCardState } from "../../integrations/task-provider.js";
 import type { ProviderReadRecord } from "../../integrations/issue-detail.js";
@@ -2272,9 +2275,11 @@ export function ChatPageHead({ session, refresh, onNew }: {
   );
 }
 
-/** W174 phase 1a: the five new dashboard pages ship their ROUTES in this
- * phase and their content in the next — each renders a named absence (what
- * the page is, when it arrives), never a fabricated empty panel. */
+/** W174 phase 1a: the new dashboard pages ship their ROUTES in this phase and
+ * their content with their phase's slice — each renders a named absence (what
+ * the page is, when it arrives), never a fabricated empty panel. W177: the
+ * audit page's content landed (audit-view.tsx); runs / reviews / activity
+ * still wait for their slices. */
 function PhasePlaceholder({ page, phase }: { readonly page: string; readonly phase: string }) {
   return (
     <div className="phase-placeholder" role="status">
@@ -2398,6 +2403,10 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
   // polled beside the shell's other surfaces; a hub without the relay answers
   // the named absence (the tile says where the record lives).
   const runsRecord = useRunsRecord();
+  // W177: the Audit page's lane — the /api/audit relay polled beside the
+  // shell's other surfaces; a hub without the block answers the named
+  // absence (the page also states the in-memory permission boundary).
+  const auditRecord = useAuditRecord();
   // The Overview's recent-activity zone reads the same W152 timeline lane the
   // chat panel polls; each consumer owns its poll instance.
   const timeline = useActivityTimeline();
@@ -2731,7 +2740,7 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
       ) : view === "activity" ? (
         <ActivityPage />
       ) : view === "audit" ? (
-        <PhasePlaceholder page="Audit" phase="the audit ledger ships with phase 1b" />
+        <AuditView record={auditRecord} />
       ) : view === "settings" ? (
         <SettingsDialog
           onClose={() => setView("chat")}

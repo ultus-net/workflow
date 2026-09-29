@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import { buildReviewRubric } from "../review/rubric.js";
+import type { ReviewProvenanceRecord } from "../review/provenance.js";
 import { WorkspaceDeclarationError } from "./run-registry.js";
 import { shellExecutorFor, type WorkflowApplicationResolver, type WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
@@ -107,6 +108,14 @@ interface HubRequestContext {
    * has no record of.
    */
   readonly providerReadState?: () => ProviderReadRecord | undefined;
+  /**
+   * W177: the review-provenance journal reader — the lane the /snapshot audit
+   * block relays (the W041 fingerprinted records, verbatim). Absent → the
+   * block omits the lane (the honest subset: no authority, no field); a
+   * failing read answers null (the lane exists, its journal read failed
+   * closed) — never a fabricated empty journal.
+   */
+  readonly reviewProvenance?: () => Promise<readonly ReviewProvenanceRecord[]>;
   /** W171: the provider-owned discovery read — the linked board issue's
    * timeline cross-references, from which the hub records the actual PR
    * reference (exactly-one rule; never a guess). */
@@ -120,6 +129,12 @@ export interface HubBridgeCapabilities {
   readonly readWorkProductState?: (issueNumber: number) => Promise<WorkProductStateOutcome>;
   readonly readIssueDetail?: (issue: number) => Promise<IssueDetailOutcome>;
   readonly providerReadState?: () => ProviderReadRecord | undefined;
+  /**
+   * W177: the review-provenance journal reader (see HubRequestContext) — a
+   * FIELD on the capabilities object (the post-#330 extension point), never a
+   * positional.
+   */
+  readonly reviewProvenance?: () => Promise<readonly ReviewProvenanceRecord[]>;
   /** W171: the discovery capability — a FIELD on the capabilities object (the
    * post-#330 extension point), never a positional. */
   readonly discoverIssueCrossReferences?: (issueNumber: number) => Promise<CrossReferenceOutcome>;
@@ -650,12 +665,35 @@ async function handleRequest(
         ...(gates.reasoningClaims === undefined ? {} : { reasoningClaims: Object.fromEntries(gates.reasoningClaims) }),
         ...(gates.reasoningClaimMetrics === undefined ? {} : { reasoningClaimMetrics: gates.reasoningClaimMetrics }),
       };
+      // W177: the audit block — the three recorded authorization-adjacent
+      // lanes the hub actually keeps, composed from the SAME serializations
+      // the other blocks use (the projection builders are not duplicated):
+      //   1. the provider-read ledger's record (W167) — null when the hub has
+      //      performed no read (or predates the accessor);
+      //   2. the timeline's kernel transition + gate rows (the same
+      //      activityTimeline rows computed above, narrowed to their record
+      //      kinds) with the retention statement the view copies verbatim;
+      //   3. the review-provenance journal (W041) when the hub wires the lane
+      //      — a failing read answers null (the lane exists, its read failed
+      //      closed), never a fabricated empty journal.
+      // Observability only: the block relays records the hub already keeps
+      // and authorizes nothing.
+      const auditProvenance = context.reviewProvenance === undefined
+        ? undefined
+        : await context.reviewProvenance().catch(() => null);
+      const auditBlock = {
+        providerReads: context.providerReadState?.() ?? null,
+        kernelGates: timeline.rows.filter((row) => row.kind === "transition" || row.kind === "gate"),
+        kernelGatesRetention: timeline.retention,
+        ...(auditProvenance === undefined ? {} : { reviewProvenance: auditProvenance }),
+      };
       return send(response, 200, {
         snapshot: { ...snapshot, tasks: snapshot.tasks.filter((task) => !hiddenTaskIds.has(task.id)) },
         ...(gateObservability === undefined ? {} : { gateObservability }),
         posture,
         timeline,
         ...(runsBlock === undefined ? {} : { runs: runsBlock }),
+        audit: auditBlock,
       });
     }
     if (request.url === "/bash") {
