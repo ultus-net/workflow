@@ -1,0 +1,19 @@
+<!-- Ledger fragment: opened 2026-09-30 as a post-freeze W-item (TASKS.md is frozen; live tracking is the GitHub Project). Write-once record — append dated supersession notes, never rewrite. -->
+
+### W112 - The grant lifecycle (Partial - allow_always becomes a lifecycle-bound grant: bounded expiry, owning-session scope, consumption accounting, fail-closed on unknown/stale/malformed state; the un-expired same-session path pinned behaviorally identical) (2026-09-30)
+
+**Source:** PARKED_AND_LIMITATIONS.md row P2 (operator-approved 2026-09-24), GitHub issue #281: `allow_always` was tool-name-wide, immortal, in-memory. The parked row named the building blocks — the opencode-server authority's single-use consumption maps and the provenance-store fingerprint discipline (fail-closed validators over seeded state). Dispatched as task 4 of the 2026-09-30 wave's batch 1 (five parallel executor worktrees off origin/main@c73541f).
+
+**What landed (branch `feat/p2-grants`, PR to be linked at open):**
+
+- **The grant record** (`src/ui/permission-broker.ts`): `AllowAlwaysGrant { tool, sessionId, expiresAt, consumed }` — the broker's `#alwaysAllow` Set becomes a Map of these records. A `allow_always` answer records the grant with the parked request's owning session scope (`parked.sessionKey`) and an expiry bounded by `grantTtlMs` (default 24h; injectable `now` clock for tests — the provenance-style validator seam).
+- **Ownership:** a grant-backed auto-allow only fires for the session that created it — a foreign session re-asks (the parked red proved the live bug: session B rode session A's tool-wide Set).
+- **Expiry:** `now() >= expiresAt` re-asks; the boundary instant itself is stale (fail closed). Expired records stay in `grants` as history; `alwaysAllow` lists live grants only.
+- **Consumption accounting:** every grant-backed intercept increments `consumed` (including policy-denied ones — the bypass was attempted), mirroring the authority's single-use consumption maps as observability.
+- **Fail-closed on state:** seeded `grants` are validated (`isAllowAlwaysGrant`, the provenance-store discipline); unknown/stale/malformed grant state re-asks, never auto-allows.
+- **Additive transport:** `patterns()` returns `{ alwaysAllow, alwaysReject, grants }` — the W115 discipline (additive fields, no removals); `web-session-channel.ts` and the web relay fallback gain `grants: []`.
+- **Pins (red-first, `test/permission-grants.test.ts`, red 6/6 fail captured verbatim pre-implementation):** expiry boundary both sides; the cross-session leak (the live bug) refused; consumption increments; the unchanged un-expired path (`allow` decisions, policy denials override, `alwaysReject` blocks without parking); malformed seed refusal; the additive-shape pin. One existing whole-object `permissionPatterns()` deepEqual adapted additively in two held-out files (test/permission-broker.test.ts, test/web-sessions.test.ts) — list pins byte-unchanged.
+
+**Evidence:** red-first 6/6 → green 6/6 (`test/permission-grants.test.ts`); combined focused run of the six touched suites 98/98 (`permission-grants` + `permission-broker` 11 + `web` 27 + `web-scoping` 11 + `acp-session` 23 + `web-sessions` 19/20 pre-fix → the one remaining red was the executor's pending additive deepEqual, fixed by the orchestrator's tail round); `npm run lint` exit 0; `npm run typecheck` exit 0 unpiped (one strict-mode union narrowing in the new test's parked-guard assert fixed at tail). Batch-1 orchestrator round; PR + review records to be linked by the wave's serialized review step.
+
+**Boundaries (remains, per the parked row's amendment):** durability (the map is still in-memory — a hub restart forgets grants), a `reject_always` lifecycle, webapp rendering of the grant records, and the P10 pairing (the server-side approvability gate on the answer route) — dispatched as this wave's batch-2 task 8.
