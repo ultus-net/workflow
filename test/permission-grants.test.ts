@@ -197,6 +197,21 @@ test("W112 grants: malformed grant state fails closed (re-asks, never auto-allow
   assert.equal(broker.answer(broker.pendingRequest("session")!.id, "reject_once", "session"), true);
 });
 
+test("W112 grants: an unscoped park's allow_always records no grant (the legacy edge, pinned)", async () => {
+  // A park with no session scope could not be owned — the operator's "always"
+  // resolves THIS request only and records nothing (fail closed; the review's
+  // P3: the legacy edge is pinned so it cannot silently become a grant).
+  const broker = new PermissionBroker();
+  broker.setMode("ask");
+  const pending = broker.intercept(action("run_commands", { sessionId: undefined as never }), allowAll());
+  await settle();
+  const request = broker.pendingRequest();
+  assert.ok(request !== undefined, "the unscoped park still parks");
+  assert.equal(broker.answer(request.id, "allow_always"), true, "the unscoped answer resolves");
+  assert.deepEqual(await pending, { kind: "allow" }, "this request's allow rides the answer, not a grant");
+  assert.deepEqual(broker.patterns().grants, [], "no grant record exists — nothing was ownable");
+});
+
 test("W112 grants: a well-formed seeded grant restores the lifecycle", async () => {
   const control = new PermissionBroker({
     grants: [{ tool: "run_commands", sessionId: "session", expiresAt: Number.MAX_SAFE_INTEGER, consumed: 7 }],

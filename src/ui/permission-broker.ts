@@ -20,8 +20,10 @@ export interface AllowAlwaysGrant {
    * A grant auto-allows only while now() < expiresAt — at the boundary it is
    * stale and the request re-asks (fail closed). */
   readonly expiresAt: number;
-  /** Consumption accounting (observability): every grant-backed automatic
-   * allow increments the counter. */
+  /** Consumption accounting (observability): every grant-backed intercept
+   * increments the counter BEFORE the policy's decision — so a bypass the
+   * policy then denies also counts (the bypass was attempted; the record
+   * says so). */
   readonly consumed: number;
 }
 
@@ -56,7 +58,12 @@ const DEFAULT_GRANT_TTL_MS = 24 * 60 * 60 * 1000;
 export interface PermissionBrokerOptions {
   /** Injectable clock (tests); expiry is judged against it. */
   readonly now?: (() => number) | undefined;
-  /** The bounded TTL recorded at grant time. Default 24h. */
+  /** The bounded TTL recorded at grant time. Default 24h. TRUSTED-SEAM note:
+   * the value (like the seed and the clock) is an in-process composition
+   * option — the web transport never reaches it (the POST /api/permission
+   * body carries only id/decision), so there is no operator-reachable upper
+   * bound to clamp; a host composing a pathological TTL is a trusted-code
+   * defect, not an injection surface. */
   readonly grantTtlMs?: number | undefined;
   /** Grant records to seed (a restore/validation seam). Malformed entries are
    * dropped fail-closed — they can never auto-allow. */
