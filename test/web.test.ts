@@ -1303,6 +1303,111 @@ test("W115: the answer response's next-parked field rides the transport view", a
   assert.equal(broker.answer(stillParked.id, "reject_once"), true);
 });
 
+// P10 (residual #26): the server-side approvability gate rendered at the
+// route. The card's NOT-APPROVABLE-WITH-REASON and the W115 transport strip
+// are the SAME parking-time classification; the answer route now enforces it
+// — allow decisions on an over-cap park render the broker's structured
+// refusal as a 409 and never imply success, the park survives for a
+// rejection, and every success-shape path stays byte-compatible.
+test("P10: the permission answer route refuses to approve an over-cap parked request", async (context) => {
+  const dir = mkdtempSync(join(tmpdir(), "web-permission-approvability-test-"));
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const broker = new PermissionBroker();
+  broker.setMode("ask");
+  const fakeRuntimeFactory = async () => {
+    const driver: CodingSessionDriver = {
+      async start(_prompt, emit) { emit({ type: "completed", result: "done" }); },
+      async cancel() {},
+    };
+    return {
+      driver: {
+        ...driver,
+        agentSessionId: () => "agent-x",
+        connect: async () => {},
+        subscribe: () => () => {},
+      } as never,
+      session: new WorkflowCodingSession(driver),
+      budgetMechanism: "test: no local caps (fake runtime)",
+      async dispose() {},
+    };
+  };
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: fakeRuntimeFactory,
+    permissionBroker: broker,
+  });
+  context.after(() => manager.dispose());
+  const application = new WorkflowApplication(
+    new TaskGraph([]),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+    [],
+    new Set(["read", "mutation"]),
+    "/repo",
+  );
+  const server = createWorkflowWebServer(application, manager);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => server.close());
+  const { port } = server.address() as AddressInfo;
+  const base = `http://127.0.0.1:${port}`;
+
+  broker.intercept(
+    {
+      sessionId: "agent-x",
+      taskId: "T1" as never,
+      tool: "run_commands",
+      mutating: true,
+      subjects: [],
+      input: "y".repeat(200 * 1024),
+    },
+    () => ({ kind: "allow" }),
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const poll = await fetch(`${base}/api/permission`).then((response) => response.json()) as {
+    pending: { id?: string } | null;
+  };
+  assert.ok(poll.pending !== null, "the over-cap request serves on the poll");
+
+  const allowOnce = await fetch(`${base}/api/permission`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: poll.pending?.id, decision: "allow_once" }),
+  });
+  assert.equal(allowOnce.status, 409, "an over-cap allow_once is refused, not resolved");
+  const refusal = await allowOnce.json() as { error?: string; reason?: string };
+  assert.equal(refusal.error, "not-approvable", "the structured refusal names the error");
+  assert.match(refusal.reason ?? "", /inspection cap/, "the refusal carries the machine-readable reason");
+
+  const allowAlways = await fetch(`${base}/api/permission`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: poll.pending?.id, decision: "allow_always" }),
+  });
+  assert.equal(allowAlways.status, 409, "an over-cap allow_always is refused too");
+  const alwaysRefusal = await allowAlways.json() as { error?: string; reason?: string };
+  assert.equal(alwaysRefusal.error, "not-approvable");
+  const afterRefusals = await fetch(`${base}/api/permission`).then((response) => response.json()) as {
+    pending: { id?: string } | null;
+    patterns: { grants?: unknown[]; alwaysAllow?: string[] };
+  };
+  assert.ok(afterRefusals.pending !== null, "the refused answers do NOT consume the park");
+  assert.equal(afterRefusals.pending?.id, poll.pending?.id);
+  assert.deepEqual(afterRefusals.patterns.grants, [], "the refused allow_always records NO grant");
+  assert.deepEqual(afterRefusals.patterns.alwaysAllow, []);
+
+  // The rejection path resolves through the SAME route with the unchanged
+  // success shape — the gate refuses authorizations, never rejections.
+  const reject = await fetch(`${base}/api/permission`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: poll.pending?.id, decision: "reject_once" }),
+  });
+  assert.equal(reject.status, 200, "the rejection still resolves through the route");
+  const rejected = await reject.json() as { mode?: string; pending?: unknown };
+  assert.equal(rejected.mode, "ask");
+  assert.equal(rejected.pending, null, "the success shape is unchanged");
+});
+
 test("web UI guards session rename, task retry/add, and the removed evidence endpoint (W114)", async (context) => {
   const dir = mkdtempSync(join(tmpdir(), "web-batch5-test-"));
   context.after(() => rmSync(dir, { recursive: true, force: true }));

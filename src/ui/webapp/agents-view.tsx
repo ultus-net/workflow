@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { formatRelativeTime } from "./presenters.js";
 import type { AgentInfo, SessionMeta } from "./app.js";
 import type { SessionBudgetPosture } from "../web-sessions.js";
+import type { PostureBudgetIncident } from "../../integrations/operator-posture.js";
 
 /** Card glyphs — same 1.4 stroke as the nav slugs, no text-glyph stand-ins. */
 function PencilIcon() {
@@ -67,7 +68,7 @@ export function budgetRaiseOutcome(ok: boolean, status: number, error: string | 
  * Session history lives here and behind /agents (the /sessions command stays
  * as an alias) — never in a sidebar panel.
  */
-export function AgentsView({ sessions, agents, onActivate, onCreate, onSwitchAgent, onRename, onDismiss, onClearUnused, onOpenChat, onBudgetRaise }: {
+export function AgentsView({ sessions, agents, onActivate, onCreate, onSwitchAgent, onRename, onDismiss, onClearUnused, onOpenChat, onBudgetRaise, budgetIncidents }: {
   readonly sessions: readonly SessionMeta[] | undefined;
   readonly agents: readonly AgentInfo[];
   readonly onActivate: (id: string) => void;
@@ -80,6 +81,14 @@ export function AgentsView({ sessions, agents, onActivate, onCreate, onSwitchAge
   /** W151: dispatches the raise-and-resume proposal; resolves the denial's
    * reason to render, or undefined on success (the caller refreshes). */
   readonly onBudgetRaise: (id: string, raise: { maxTotalTokens?: number; maxCostUsd?: number }) => Promise<string | undefined>;
+  /**
+   * W176: the budget incident rows BESIDE the cards — sourced ONLY from the
+   * posture poll's records (the shell threads `postureBudgetIncidents`);
+   * undefined = the poll has not answered, null = the named absence, an
+   * array = the records. The cards' own recorded violations NEVER leak into
+   * these rows (a fabricated incident fails the pin).
+   */
+  readonly budgetIncidents?: readonly PostureBudgetIncident[] | null | undefined;
 }) {
   const [newAgent, setNewAgent] = useState<string | undefined>(undefined);
   const [renaming, setRenaming] = useState<{ id: string; title: string } | undefined>(undefined);
@@ -195,6 +204,46 @@ export function AgentsView({ sessions, agents, onActivate, onCreate, onSwitchAge
         ))}
         {sessions.length === 0 && <p className="muted sessions-empty-note">no sessions — start one above</p>}
       </div>
+      <BudgetIncidentRows incidents={budgetIncidents} />
+    </section>
+  );
+}
+
+/**
+ * W176 (issue #347, phase 3): the budget incident ROWS rendered beside the
+ * budget cards. Sourced ONLY from the posture poll's records
+ * (`postureBudgetIncidents` in posture-strip.tsx — the posture block's own
+ * `budgetIncidents` verbatim): never derived from the session cards' budget
+ * state, never a second poll. Each row renders the PostureBudgetIncident
+ * record's fields verbatim (sessionId, title when recorded, tier, mechanism
+ * and reason when recorded). The empty record set says so; a poll that
+ * carries no records renders the named absence; a poll that has not
+ * answered yet renders nothing (the strip above already says "loading…").
+ */
+export function BudgetIncidentRows({ incidents }: {
+  readonly incidents: readonly PostureBudgetIncident[] | null | undefined;
+}) {
+  if (incidents === undefined) return null;
+  return (
+    <section className="budget-incidents" aria-label="Budget incidents">
+      <h3>Budget incidents</h3>
+      {incidents === null ? (
+        <p className="muted budget-incidents-absent">state unavailable — the posture poll carries no budget incident records</p>
+      ) : incidents.length === 0 ? (
+        <p className="muted budget-incidents-empty">no budget incidents recorded</p>
+      ) : (
+        <ul className="budget-incident-list">
+          {incidents.map((incident, index) => (
+            <li key={`${incident.sessionId}:${index}`} className={`budget-incident-row budget-incident-row-${incident.tier}`}>
+              <span className="budget-incident-tier">{incident.tier}</span>
+              <span className="budget-incident-session">{incident.title ?? incident.sessionId}</span>
+              {incident.title !== undefined && <code className="budget-incident-session-id">{incident.sessionId}</code>}
+              {incident.mechanism !== undefined && <span className="budget-incident-mechanism">{incident.mechanism}</span>}
+              {incident.reason !== undefined && <span className="budget-incident-reason">{incident.reason}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
