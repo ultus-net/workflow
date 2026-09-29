@@ -103,6 +103,14 @@ export interface OperatorPosture {
   /** Absent registries named so the strip can explain the "—" marks and the degraded rows. */
   readonly degraded: readonly string[];
   readonly decisions: readonly OperatorDecisionRow[];
+  /**
+   * W176 (additive): the budget incident RECORDS the count composes from,
+   * riding verbatim so a view can render the rows beside the agents page's
+   * budget cards without a second poll or a re-derivation. Fail-closed like
+   * the decision rows: absent input, absent field — no records were given,
+   * so none ride and nothing pretends an empty registry.
+   */
+  readonly budgetIncidents?: readonly PostureBudgetIncident[];
 }
 
 /** The scheduler-origin run id shape: three segments, `schedule:<id>:<uuid>`. */
@@ -201,6 +209,9 @@ export function operatorPosture(input: OperatorPostureInput): OperatorPosture {
     },
     degraded,
     decisions,
+    // W176: the rows ride only when the input carried them (see the field's
+    // contract above).
+    ...(input.budgetIncidents === undefined ? {} : { budgetIncidents: input.budgetIncidents }),
   };
 }
 

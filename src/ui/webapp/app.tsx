@@ -16,7 +16,7 @@ import { useSessionCommands, useSessionState, useSessionStatus, useSessionUsage,
 import { SettingsDialog, type RoutingFacts } from "./settings-dialog.js";
 import { AgentsView, budgetRaiseOutcome } from "./agents-view.js";
 import { ActivityTimelinePanel, useActivityTimeline } from "./activity-timeline.js";
-import { PostureStrip, usePosture } from "./posture-strip.js";
+import { PostureStrip, postureBudgetIncidents, usePosture } from "./posture-strip.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
 import { ProjectsView, type ProjectMeta } from "./projects-view.js";
 import { BoardView } from "./board-view.js";
@@ -190,7 +190,9 @@ interface GitChange {
   readonly status: "added" | "deleted" | "modified" | "renamed" | "untracked";
 }
 
-interface GitStatus {
+/** The /api/git record: the workspace's branch and its changed paths. W176:
+ * exported so the Board header's workspace strip types its record source. */
+export interface GitStatus {
   readonly branch: string;
   readonly changes: readonly GitChange[];
 }
@@ -2726,6 +2728,7 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
             if (outcome === undefined) refreshSessions();
             return outcome;
           }}
+          budgetIncidents={postureBudgetIncidents(posture)}
         />
       ) : view === "schedules" ? (
         <SchedulesView
@@ -2820,7 +2823,7 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
           }}
         />
       ) : view === "board" ? (
-        <BoardView board={board} reason={boardReason} read={boardRead} workProducts={workProducts} inProgress={inProgress} viewState={issueViewState} onViewState={updateIssueViewState} />
+        <BoardView board={board} reason={boardReason} read={boardRead} workProducts={workProducts} inProgress={inProgress} viewState={issueViewState} onViewState={updateIssueViewState} gitStatus={gitStatus} worktrees={worktrees} />
       ) : view === "usage" ? (
         <UsageView />
       ) : view === "overview" ? (

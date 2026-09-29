@@ -950,6 +950,46 @@ body {
 .session-budget-raise-error { color: var(--danger, #e05252); font-size: 0.72rem; }
 .session-budget-keep-stopped { margin: 0; font-size: 0.68rem; }
 
+/* W176: the budget incident rows beside the agents page's budget cards, and
+ * the Board header's workspace strip. Both render only recorded state (the
+ * posture poll's incident records; the polled git/worktree state) — the
+ * styles frame that state, they never synthesize it. */
+.budget-incidents { margin-top: 0.75rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.budget-incidents h3 { margin: 0; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.budget-incident-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.budget-incident-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  font-size: 0.75rem;
+  border-left: 2px solid var(--border);
+  padding: 0.15rem 0 0.15rem 0.5rem;
+  flex-wrap: wrap;
+}
+.budget-incident-row-abort { border-left-color: var(--danger, #e05252); }
+.budget-incident-row-warn { border-left-color: var(--warn, #d97706); }
+.budget-incident-tier { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); }
+.budget-incident-row-abort .budget-incident-tier { color: var(--danger, #e05252); }
+.budget-incident-row-warn .budget-incident-tier { color: var(--warn, #d97706); }
+.budget-incident-session { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.budget-incident-session-id, .budget-incident-mechanism, .budget-incident-reason { color: var(--text-muted); font-family: var(--font-mono); font-size: 0.68rem; overflow-wrap: anywhere; }
+.workspace-strip {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.workspace-strip-frame { font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; }
+.workspace-strip-branch { font-family: var(--font-mono); color: var(--text-main, inherit); }
+.workspace-strip-degraded { color: var(--warn, #d97706); }
+.workspace-worktrees { list-style: none; margin: 0; padding: 0; display: flex; gap: 0.6rem; flex-wrap: wrap; }
+.workspace-worktree { display: flex; gap: 0.35rem; align-items: baseline; }
+.workspace-worktree-branch { font-family: var(--font-mono); color: var(--text-main, inherit); }
+.workspace-worktree-status { color: var(--text-muted); }
+
 /* W153: the schedules page's lineage line and recent-runs rows. */
 .schedule-lineage { justify-content: flex-start; }
 .schedule-lineage-count { font-family: var(--font-mono); }
