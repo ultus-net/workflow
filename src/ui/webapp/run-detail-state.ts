@@ -7,6 +7,12 @@
  * This is view state, never application state: nothing here imports a
  * payload type, and no payload carries it.
  *
+ * W176 phase 3 (#347): a SECOND record shape in the SAME guarded module —
+ * the board card detail panel's opener memory (`CardDetailOpen`, under
+ * `workflow.board.card-detail`), validated and guarded identically
+ * ("opened from Board, back returns to Board"). One guarded module, two
+ * record shapes: the shell's contextual panels share the one discipline.
+ *
  * The guard encloses BOTH storage-denial shapes — the window.sessionStorage
  * PROPERTY access itself (browsers throw on access in denied contexts) and
  * the getItem/setItem/removeItem CALLS (denied or at quota) — and a corrupt
@@ -120,6 +126,107 @@ export function saveRunDetailOpenToWindow(open: RunDetailOpen): void {
 export function clearRunDetailOpenToWindow(): void {
   try {
     clearRunDetailOpenGuarded(window.sessionStorage);
+  } catch {
+    // No window, access denied, or quota: persistence is best-effort.
+  }
+}
+
+// ── W176 phase 3: the card detail panel's opener memory (second record
+//    shape, same guarded module and storage interface) ──
+
+/** The persisted opener record: the card and the page that opened it. */
+export interface CardDetailOpen {
+  readonly opener: string;
+  readonly cardKey: string;
+}
+
+/** The storage key — namespaced beside the run detail's memory. */
+export const CARD_DETAIL_STATE_KEY = "workflow.board.card-detail";
+
+/** Reads the persisted opener. Malformed JSON, a wrong-typed field, an empty
+ * card key, or an opener outside the shell's views is dropped — nothing is
+ * coerced. */
+export function readCardDetailOpen(storage: RunDetailStorage): CardDetailOpen | undefined {
+  const raw = storage.getItem(CARD_DETAIL_STATE_KEY);
+  if (raw === null) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
+  const record = parsed as { readonly opener?: unknown; readonly cardKey?: unknown };
+  if (typeof record.opener !== "string" || typeof record.cardKey !== "string") return undefined;
+  if (record.cardKey.length === 0) return undefined;
+  if (!(APP_VIEWS as readonly string[]).includes(record.opener)) return undefined;
+  return { opener: record.opener, cardKey: record.cardKey };
+}
+
+/** Persists the opener verbatim (the browser's own storage). */
+export function saveCardDetailOpen(storage: RunDetailStorage, open: CardDetailOpen): void {
+  storage.setItem(CARD_DETAIL_STATE_KEY, JSON.stringify(open));
+}
+
+/** Clears the opener (the panel closed). */
+export function clearCardDetailOpen(storage: RunDetailStorage): void {
+  storage.removeItem(CARD_DETAIL_STATE_KEY);
+}
+
+/** Reads the persisted opener, degrading to no opener when the storage CALLS
+ * refuse access: the shell render path must never throw on a storage the
+ * browser withheld. */
+export function readCardDetailOpenGuarded(storage: RunDetailStorage): CardDetailOpen | undefined {
+  try {
+    return readCardDetailOpen(storage);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Persists the opener, best-effort: a storage that refuses the write is a
+ * no-op — the memory applies for this session only. */
+export function saveCardDetailOpenGuarded(storage: RunDetailStorage, open: CardDetailOpen): void {
+  try {
+    saveCardDetailOpen(storage, open);
+  } catch {
+    // Private browsing or quota: persistence is best-effort.
+  }
+}
+
+/** Clears the opener, best-effort. */
+export function clearCardDetailOpenGuarded(storage: RunDetailStorage): void {
+  try {
+    clearCardDetailOpen(storage);
+  } catch {
+    // Private browsing or quota: persistence is best-effort.
+  }
+}
+
+/** Window-level pair: the guards enclose the window.sessionStorage PROPERTY
+ * access itself (access-time denial) as well as the calls, so the shell's
+ * render and update paths never throw on a storage the browser withheld —
+ * or on a context without a window at all (a non-browser surface degrades
+ * to no opener too). */
+export function readCardDetailOpenFromWindow(): CardDetailOpen | undefined {
+  try {
+    return readCardDetailOpenGuarded(window.sessionStorage);
+  } catch {
+    return undefined;
+  }
+}
+
+export function saveCardDetailOpenToWindow(open: CardDetailOpen): void {
+  try {
+    saveCardDetailOpenGuarded(window.sessionStorage, open);
+  } catch {
+    // No window, access denied, or quota: persistence is best-effort.
+  }
+}
+
+export function clearCardDetailOpenToWindow(): void {
+  try {
+    clearCardDetailOpenGuarded(window.sessionStorage);
   } catch {
     // No window, access denied, or quota: persistence is best-effort.
   }

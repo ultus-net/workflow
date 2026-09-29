@@ -20,7 +20,7 @@ import { ActivityTimelinePanel, useActivityTimeline } from "./activity-timeline.
 import { PostureStrip, postureBudgetIncidents, usePosture } from "./posture-strip.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
 import { ProjectsView, type ProjectMeta } from "./projects-view.js";
-import { BoardView } from "./board-view.js";
+import { BoardView, BoardCardDetailPanel } from "./board-view.js";
 import { readIssueViewStateGuarded, saveIssueViewStateGuarded, type IssueViewState } from "./issue-view-state.js";
 // W174 phase 1a: the shell chrome (rail / header) and its plain hash routing
 // live beside it in shell.tsx; the rail's collapsed preference persists
@@ -39,7 +39,7 @@ import { OverviewView } from "./overview-view.js";
 import { RunsView } from "./runs-view.js";
 import { RunDetailPanel } from "./run-detail-panel.js";
 import { useRunsRecord } from "./runs-record.js";
-import { clearRunDetailOpenToWindow, readRunDetailOpenFromWindow, saveRunDetailOpenToWindow, type RunDetailOpen } from "./run-detail-state.js";
+import { clearRunDetailOpenToWindow, readRunDetailOpenFromWindow, saveRunDetailOpenToWindow, clearCardDetailOpenToWindow, readCardDetailOpenFromWindow, saveCardDetailOpenToWindow, type CardDetailOpen, type RunDetailOpen } from "./run-detail-state.js";
 import { EvidenceStripRow, useContentPreviews, useHubEvidence, type EvidenceContentRefView } from "./evidence-preview.js";
 export { artifactKind, EvidenceStripRow } from "./evidence-preview.js";
 export type { EvidenceContentPreview, EvidenceContentRefView } from "./evidence-preview.js";
@@ -2399,6 +2399,29 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
     }
     if (opener !== view && (APP_VIEWS as readonly string[]).includes(opener)) setView(opener as AppView);
   }, [runDetail, view, setView]);
+  // W176 phase 3 (#347): the Board's card detail panel — the same contextual
+  // region composition as the run detail above, with its OWN opener memory
+  // record (run-detail-state.ts's second shape, workflow.board.card-detail):
+  // opened from a card's detail affordance, closed by Esc or the back
+  // affordance, focus returning to the invoking card and the view to the
+  // opener page ("opened from Board, back returns to Board").
+  const [cardDetail, setCardDetail] = useState<CardDetailOpen | undefined>(() => readCardDetailOpenFromWindow());
+  const openCardDetail = useCallback((cardKey: string): void => {
+    const next: CardDetailOpen = { opener: "board", cardKey };
+    saveCardDetailOpenToWindow(next);
+    setCardDetail(next);
+  }, []);
+  const closeCardDetail = useCallback((): void => {
+    const opener = cardDetail?.opener ?? "board";
+    const cardKey = cardDetail?.cardKey;
+    clearCardDetailOpenToWindow();
+    setCardDetail(undefined);
+    // Focus returns to the invoking card.
+    if (cardKey !== undefined) {
+      document.querySelector<HTMLElement>('[data-board-card="' + CSS.escape(cardKey) + '"]')?.focus();
+    }
+    if (opener !== view && (APP_VIEWS as readonly string[]).includes(opener)) setView(opener as AppView);
+  }, [cardDetail, view, setView]);
   // W174 phase 1b: the Overview's recorded-spend lane — the /api/runs relay
   // polled beside the shell's other surfaces; a hub without the relay answers
   // the named absence (the tile says where the record lives).
@@ -2424,15 +2447,19 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
         event.preventDefault();
         document.querySelector<HTMLElement>(".composer-input")?.focus();
       } else if (
-        event.key === "Escape" && runDetail !== undefined && !typing &&
-        // The runs detail panel owns Escape while it is open (it closes and
-        // focus returns to the invoking row) — but any open chrome
+        event.key === "Escape" && (runDetail !== undefined || cardDetail !== undefined) && !typing &&
+        // A contextual detail panel owns Escape while one is open (it closes
+        // and focus returns to the invoking element) — but any open chrome
         // (settings page, command palette, model combobox) still wins, and a
         // focused input keeps its own Escape.
         document.querySelector(".settings-dialog, .palette, .config-combobox-pop") === null
       ) {
         event.preventDefault();
-        closeRunDetail();
+        // The panel open on THIS view owns Escape: the Board's card detail
+        // when the shell shows the Board, the run detail otherwise.
+        if (cardDetail !== undefined && view === "board") closeCardDetail();
+        else if (runDetail !== undefined) closeRunDetail();
+        else closeCardDetail();
       } else if (
         event.key === "Escape" && isRunning && !typing &&
         // Any open chrome (settings page, command palette, model combobox)
@@ -2460,7 +2487,7 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [isRunning, refreshSessions, focusedSessionId, view, setView, runDetail, closeRunDetail]);
+  }, [isRunning, refreshSessions, focusedSessionId, view, setView, runDetail, closeRunDetail, cardDetail, closeCardDetail]);
 
   const activeSession = sessions?.find((session) => session.active);
   const hasUnused = (sessions ?? []).some((session) => !session.active && session.title === "New session");
@@ -2695,7 +2722,24 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
           }}
         />
       ) : view === "board" ? (
-        <BoardView board={board} reason={boardReason} read={boardRead} workProducts={workProducts} inProgress={inProgress} viewState={issueViewState} onViewState={updateIssueViewState} gitStatus={gitStatus} worktrees={worktrees} />
+        // W176 phase 3 (#347): the Board's card detail panel docks in the
+        // shell's right-side contextual region — the same region composition
+        // the run detail uses: opened from a card's detail affordance,
+        // closed by Esc or the back affordance (focus returns to the
+        // invoking card; the opener memory rides sessionStorage beside the
+        // run detail's). The W167 issue-detail surface renders inside AS-IS.
+        <div className="shell-body board-body">
+          <BoardView board={board} reason={boardReason} read={boardRead} workProducts={workProducts} inProgress={inProgress} viewState={issueViewState} onViewState={updateIssueViewState} gitStatus={gitStatus} worktrees={worktrees} onOpenDetail={openCardDetail} />
+          {cardDetail !== undefined && (
+            <aside className="board-card-detail" aria-label="Board card detail">
+              <BoardCardDetailPanel
+                cardKey={cardDetail.cardKey}
+                opener={cardDetail.opener}
+                onBack={closeCardDetail}
+              />
+            </aside>
+          )}
+        </div>
       ) : view === "usage" ? (
         <UsageView />
       ) : view === "overview" ? (
