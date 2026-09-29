@@ -218,7 +218,9 @@ export function OverviewView({
 
       <section className="overview-next-fires" aria-label="Next fires">
         <h3>Next fires</h3>
-        {nextFires.length === 0 ? (
+        {schedules === undefined ? (
+          <p className="overview-empty">state unavailable — the schedules registry has not answered</p>
+        ) : nextFires.length === 0 ? (
           <p className="overview-empty">no schedules armed — arm one from the Schedules page</p>
         ) : (
           <ul className="overview-fire-list">
@@ -241,9 +243,10 @@ export function OverviewView({
 }
 
 /** A posture decision's action target mapped into the shell's views — the
- * same mapping the posture strip uses; an unmapped target falls back to
- * schedules (the inbox's home). */
+ * same mapping the posture strip uses (today the schedules inbox is the
+ * decision rows' only in-shell home; a future target extends this map,
+ * never a per-row guess). */
+const DECISION_TARGETS: Readonly<Record<string, AppView>> = { "#schedules": "schedules" };
 function decisionTarget(row: OperatorDecisionRow): AppView {
-  if (row.action.target === "#schedules") return "schedules";
-  return "schedules";
+  return DECISION_TARGETS[row.action.target] ?? "schedules";
 }

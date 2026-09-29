@@ -358,3 +358,15 @@ test("empty zones name the first action; absent registries say so", () => {
   assert.ok(markup.includes("no runs recorded yet"), "the empty live-runs zone names the first action");
   assert.ok(markup.includes("state unavailable"), "an absent posture registry renders the honest mark, never a fabricated zero");
 });
+
+test("an absent schedules registry renders the honest mark, never a fabricated no-schedules zero", () => {
+  const markup = renderToStaticMarkup(createElement(OverviewView, {
+    ...overviewProps(),
+    schedules: undefined,
+  }));
+  assert.ok(
+    markup.includes("state unavailable — the schedules registry has not answered"),
+    "the absent schedules registry is named (the review's P2: no fabricated 'no schedules armed' zero)",
+  );
+  assert.ok(!markup.includes("no schedules armed"), "the fabricated zero does not render for an absent registry");
+});
