@@ -6,6 +6,70 @@ import type { ProposedToolAction, ReadFingerprint, ToolCapability } from "../app
 export type PermissionMode = "auto" | "ask";
 export type PermissionDecisionChoice = "allow_once" | "allow_always" | "reject_once" | "reject_always";
 
+/** W112: the lifecycle record behind one allow_always grant (previously the
+ * grant was an immortal, tool-name-wide, in-memory Set entry — nearest
+ * building blocks: the opencode-server authority's single-use consumption
+ * maps and the provenance-store fingerprint discipline). */
+export interface AllowAlwaysGrant {
+  readonly tool: string;
+  /** Ownership: the ACP session scope that created the grant — a grant
+   * auto-allows only actions from that session, never another session's
+   * identical tool. */
+  readonly sessionId: string;
+  /** Expiry recorded at grant time: the bounded TTL as an absolute deadline.
+   * A grant auto-allows only while now() < expiresAt — at the boundary it is
+   * stale and the request re-asks (fail closed). */
+  readonly expiresAt: number;
+  /** Consumption accounting (observability): every grant-backed intercept
+   * increments the counter BEFORE the policy's decision — so a bypass the
+   * policy then denies also counts (the bypass was attempted; the record
+   * says so). */
+  readonly consumed: number;
+}
+
+/** The broker's patterns state: the legacy tool lists plus (W112) the grant
+ * lifecycle records. Additive only — no field may be removed (the W115
+ * transport-view discipline governs every surface that relays this). */
+export interface PermissionPatterns {
+  readonly alwaysAllow: readonly string[];
+  readonly alwaysReject: readonly string[];
+  readonly grants: readonly AllowAlwaysGrant[];
+}
+
+/** Fail-closed grant validation (the provenance-store discipline): a record
+ * that is not exactly a well-formed grant is untrusted — dropped at the seed
+ * boundary, and it can never auto-allow. */
+export function isAllowAlwaysGrant(value: unknown): value is AllowAlwaysGrant {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return isNonEmptyString(record.tool) &&
+    isNonEmptyString(record.sessionId) &&
+    typeof record.expiresAt === "number" && Number.isFinite(record.expiresAt) &&
+    typeof record.consumed === "number" && Number.isInteger(record.consumed) && record.consumed >= 0;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+/** Default bounded TTL recorded on every grant (a day). */
+const DEFAULT_GRANT_TTL_MS = 24 * 60 * 60 * 1000;
+
+export interface PermissionBrokerOptions {
+  /** Injectable clock (tests); expiry is judged against it. */
+  readonly now?: (() => number) | undefined;
+  /** The bounded TTL recorded at grant time. Default 24h. TRUSTED-SEAM note:
+   * the value (like the seed and the clock) is an in-process composition
+   * option — the web transport never reaches it (the POST /api/permission
+   * body carries only id/decision), so there is no operator-reachable upper
+   * bound to clamp; a host composing a pathological TTL is a trusted-code
+   * defect, not an injection surface. */
+  readonly grantTtlMs?: number | undefined;
+  /** Grant records to seed (a restore/validation seam). Malformed entries are
+   * dropped fail-closed — they can never auto-allow. */
+  readonly grants?: readonly unknown[] | undefined;
+}
+
 /** One parked permission request as shown on the prompt card.
  * W112 (amux C5): the card renders the COMPLETE proposal payload — the
  * broker retains the full action at parking time (it is in scope there), so
@@ -50,13 +114,29 @@ interface ParkedRequest {
  * violations, task gates) never prompt — fail-closed stays fail-closed.
  *
  * Parked requests are keyed per ACP session so parallel agent runtimes each
- * park their own prompts; mode and remembered patterns are operator-global.
+ * park their own prompts; mode and the always-reject list are operator-global.
+ * W112: an allow_always grant is lifecycle-bound — a bounded expiry recorded
+ * at grant time, the owning session scope, and a consumption counter exposed
+ * through patterns(); unknown, stale, malformed, or foreign-session grant
+ * state re-asks (fail closed).
  */
 export class PermissionBroker {
   #mode: PermissionMode = "auto";
-  readonly #alwaysAllow = new Set<string>();
+  /** W112: tool name -> lifecycle record (was an immortal Set of tool names). */
+  readonly #alwaysAllow = new Map<string, AllowAlwaysGrant>();
   readonly #alwaysReject = new Set<string>();
   #parked = new Map<string, ParkedRequest>();
+  readonly #now: () => number;
+  readonly #grantTtlMs: number;
+
+  constructor(options: PermissionBrokerOptions = {}) {
+    this.#now = options.now ?? (() => Date.now());
+    const ttl = options.grantTtlMs;
+    this.#grantTtlMs = typeof ttl === "number" && Number.isFinite(ttl) && ttl > 0 ? ttl : DEFAULT_GRANT_TTL_MS;
+    for (const record of options.grants ?? []) {
+      if (isAllowAlwaysGrant(record)) this.#alwaysAllow.set(record.tool, record);
+    }
+  }
 
   mode(): PermissionMode {
     return this.#mode;
@@ -68,8 +148,16 @@ export class PermissionBroker {
     this.cancelPending("permission mode switched to auto");
   }
 
-  patterns(): { readonly alwaysAllow: readonly string[]; readonly alwaysReject: readonly string[] } {
-    return { alwaysAllow: [...this.#alwaysAllow], alwaysReject: [...this.#alwaysReject] };
+  /** The operator's stored decisions: the legacy tool lists plus (W112) the
+   * grant lifecycle records. `alwaysAllow` lists LIVE grants only; an expired
+   * record stays in `grants` as history until replaced or reset. */
+  patterns(): PermissionPatterns {
+    const grants = [...this.#alwaysAllow.values()];
+    return {
+      alwaysAllow: grants.filter((grant) => this.#now() < grant.expiresAt).map((grant) => grant.tool),
+      alwaysReject: [...this.#alwaysReject],
+      grants,
+    };
   }
 
   /** The parked request awaiting the operator for one session (or the oldest
@@ -95,11 +183,23 @@ export class PermissionBroker {
       case "allow_once":
         parked.resolve({ kind: "allow" });
         return true;
-      case "allow_always":
-        this.#alwaysAllow.add(tool);
+      case "allow_always": {
+        // W112: the grant records the parked session as its owner plus the
+        // bounded TTL. A park without a session scope records no grant — it
+        // could not be owned (fail closed).
+        const owner = parked.sessionKey;
+        if (typeof owner === "string" && owner.length > 0) {
+          this.#alwaysAllow.set(tool, {
+            tool,
+            sessionId: owner,
+            expiresAt: this.#now() + this.#grantTtlMs,
+            consumed: 0,
+          });
+        }
         this.#alwaysReject.delete(tool);
         parked.resolve({ kind: "allow" });
         return true;
+      }
       case "reject_once":
         parked.resolve({ kind: "deny", code: "OPERATOR_REJECTED", reason: "rejected by operator" });
         return true;
@@ -153,7 +253,15 @@ export class PermissionBroker {
         reason: `tool ${action.tool} is always rejected by the operator`,
       });
     }
-    if (this.#mode === "auto" || this.#alwaysAllow.has(action.tool)) return authorize(action);
+    if (this.#mode === "auto") return authorize(action);
+    // W112: a live, same-session grant bypasses the prompt — never the policy.
+    // Stale (expired), foreign-session, or otherwise unknown grant state falls
+    // through to the ask path: nothing auto-allows on ambiguity.
+    const grant = this.#liveAllowGrant(action);
+    if (grant !== undefined) {
+      this.#alwaysAllow.set(action.tool, { ...grant, consumed: grant.consumed + 1 });
+      return authorize(action);
+    }
     return (async (): Promise<PolicyDecision> => {
       const decision = await authorize(action);
       if (decision.kind === "deny") return decision;
@@ -188,6 +296,17 @@ export class PermissionBroker {
         this.#parked.set(request.id, { request, sessionKey: action.sessionId, resolve });
       });
     })();
+  }
+
+  /** The grant for this action when it is live: well-formed (by construction
+   * at the answer and seed boundaries), owned by the action's session, and
+   * not past its recorded expiry (the boundary itself is stale — fail closed). */
+  #liveAllowGrant(action: ProposedToolAction): AllowAlwaysGrant | undefined {
+    const grant = this.#alwaysAllow.get(action.tool);
+    if (grant === undefined) return undefined;
+    if (grant.sessionId !== action.sessionId) return undefined;
+    if (this.#now() >= grant.expiresAt) return undefined;
+    return grant;
   }
 
   #parkedByActionSession(sessionId: string): ParkedRequest[] {

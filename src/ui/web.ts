@@ -927,7 +927,9 @@ export function createWorkflowWebServer(
         available: active?.permissionAskingAvailable() ?? false,
         mode: active?.permissionMode() ?? "auto",
         pending: transportPermissionView(active?.pendingPermission() ?? null),
-        patterns: active?.permissionPatterns() ?? { alwaysAllow: [], alwaysReject: [] },
+        // W112: patterns gained the additive grant lifecycle records; the
+        // relay stays shape-compatible (additive fields only).
+        patterns: active?.permissionPatterns() ?? { alwaysAllow: [], alwaysReject: [], grants: [] },
       });
     }
     if (request.method === "POST" && pathname === "/api/permission") {

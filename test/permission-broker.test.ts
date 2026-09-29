@@ -163,9 +163,18 @@ test("always patterns bypass or block without prompting", async () => {
   assert.equal(rejected.kind, "deny");
   assert.equal(broker.pendingRequest(), undefined, "always-reject never parks");
 
-  assert.deepEqual(broker.patterns(), { alwaysAllow: ["run_commands"], alwaysReject: ["web_search"] });
+  // W112: patterns gained the additive grant-lifecycle records — the legacy
+  // tool lists stay the same shape, and the consumed count is observable.
+  const patterns = broker.patterns();
+  assert.deepEqual(patterns.alwaysAllow, ["run_commands"]);
+  assert.deepEqual(patterns.alwaysReject, ["web_search"]);
+  const grant = patterns.grants[0];
+  assert.ok(grant !== undefined, "the allow grant is recorded");
+  assert.equal(grant.tool, "run_commands");
+  assert.equal(grant.sessionId, "session");
+  assert.equal(grant.consumed, 2, "two grant-backed intercepts consumed the grant");
   broker.resetPatterns();
-  assert.deepEqual(broker.patterns(), { alwaysAllow: [], alwaysReject: [] });
+  assert.deepEqual(broker.patterns(), { alwaysAllow: [], alwaysReject: [], grants: [] });
 });
 
 test("a second concurrent request fails closed while one is parked", async () => {

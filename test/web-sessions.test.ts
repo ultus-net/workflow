@@ -543,7 +543,7 @@ test("session manager wires the permission broker: cancel and switch deny parked
   assert.equal(channel.permissionMode(), "auto");
   channel.setPermissionMode("ask");
   assert.equal(channel.permissionMode(), "ask");
-  assert.deepEqual(channel.permissionPatterns(), { alwaysAllow: [], alwaysReject: [] });
+  assert.deepEqual(channel.permissionPatterns(), { alwaysAllow: [], alwaysReject: [], grants: [] });
 
   const action = {
     // The broker parks under ProposedToolAction.sessionId — the workflow

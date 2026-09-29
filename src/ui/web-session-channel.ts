@@ -5,7 +5,7 @@ import type { AcpConfigOptionValue, AcpSessionConfig } from "../adapters/acp-sub
 import type { ModelUsageMetrics } from "../integrations/model-usage-proxy.js";
 import { appendOperatorItem, projectOperatorSessionEvent, type OperatorSessionImage, type OperatorSessionItem } from "./operator-session.js";
 import { sanitizeControlPlaneText } from "../application/text-hygiene.js";
-import type { PermissionBroker, PermissionDecisionChoice, PermissionMode, PendingPermissionRequest } from "./permission-broker.js";
+import type { PermissionBroker, PermissionDecisionChoice, PermissionMode, PermissionPatterns, PendingPermissionRequest } from "./permission-broker.js";
 import { normalizeConfigOptions, type WebConfigOption } from "./web-config-options.js";
 
 /** Four images at ≤ 5 MB base64 payload each, plus the prompt body margin. */
@@ -286,9 +286,10 @@ export class SessionChannel {
     return this.#broker?.pendingRequest(this.#permissionKey?.());
   }
 
-  /** Stored always-allow/always-reject tool patterns. */
-  permissionPatterns(): { readonly alwaysAllow: readonly string[]; readonly alwaysReject: readonly string[] } {
-    return this.#broker?.patterns() ?? { alwaysAllow: [], alwaysReject: [] };
+  /** Stored always-allow/always-reject tool patterns plus (W112) the grant
+   * lifecycle records (additive only — the W115 transport-view discipline). */
+  permissionPatterns(): PermissionPatterns {
+    return this.#broker?.patterns() ?? { alwaysAllow: [], alwaysReject: [], grants: [] };
   }
 
   /** Switches the operator permission mode (guarded routes call this). */
