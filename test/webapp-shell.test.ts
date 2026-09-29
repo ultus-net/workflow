@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { AppShell, ChatPageHead, type AppView } from "../src/ui/webapp/app.js";
+import { AppShell, ChatPageHead, CommandPalette, filterPaletteCommands, isPaletteChord, palettePageEntries, StatusBar, type AppView, type PaletteCommand } from "../src/ui/webapp/app.js";
 import {
   ShellHeader,
   ShellRail,
   commandView,
   defaultAppView,
   hashForView,
+  shellViewTitle,
   viewForHash,
   type RailEntry,
   type RailSection,
@@ -88,6 +89,7 @@ test("the command dispatch routes the new pages and keeps every existing command
   assert.equal(commandView("/agents"), "agents");
   assert.equal(commandView("/sessions"), "agents", "/sessions stays the documented /agents alias");
   assert.equal(commandView("/board"), "board");
+  assert.equal(commandView("/projects"), "projects");
   assert.equal(commandView("/schedules"), "schedules");
   assert.equal(commandView("/usage"), "usage");
   assert.equal(commandView("/settings"), "settings");
@@ -380,4 +382,91 @@ test("an absent schedules registry renders the honest mark, never a fabricated n
     "the absent schedules registry is named (the review's P2: no fabricated 'no schedules armed' zero)",
   );
   assert.ok(!markup.includes("no schedules armed"), "the fabricated zero does not render for an absent registry");
+});
+
+// ── W174 stretch: the ⌘K palette — the shell's pages join the session's slash
+// commands in the ONE existing palette list (no second palette). Red-first
+// pins: the chord wiring, the page entries' dispatch through commandView, the
+// as-you-type filter, and the modal chrome the global Escape arbitration keys
+// on. The palette's Enter-dispatch / Esc-close / focus-return manners predate
+// this slice (pinned at component level by webapp-surface) and are unchanged
+// here; the repo has no DOM-event harness, so the chord is pinned at its pure
+// decision point (isPaletteChord) and the filter at its pure decision point
+// (filterPaletteCommands).
+
+test("the ⌘K chord joins ctrl+p — both open the palette; a bare key or Alt never does", () => {
+  assert.equal(isPaletteChord({ key: "k", ctrlKey: true, metaKey: false, altKey: false }), true, "Ctrl+K opens the palette");
+  assert.equal(isPaletteChord({ key: "k", ctrlKey: false, metaKey: true, altKey: false }), true, "Cmd+K opens the palette (the mac chord)");
+  assert.equal(isPaletteChord({ key: "p", ctrlKey: true, metaKey: false, altKey: false }), true, "the OpenCode ctrl+p affordance keeps opening the palette");
+  assert.equal(isPaletteChord({ key: "K", ctrlKey: true, metaKey: false, altKey: false }), true, "a shifted K still names the chord");
+  assert.equal(isPaletteChord({ key: "k", ctrlKey: false, metaKey: false, altKey: false }), false, "a bare k is composer text, never the chord");
+  assert.equal(isPaletteChord({ key: "k", ctrlKey: true, metaKey: false, altKey: true }), false, "Alt is not part of the chord");
+  assert.equal(isPaletteChord({ key: "Enter", ctrlKey: true, metaKey: false, altKey: false }), false, "other ctrl chords are not the palette chord");
+});
+
+test("the palette gains the shell's pages in rail order, each dispatching through commandView", () => {
+  const navigated: AppView[] = [];
+  const entries = palettePageEntries((view) => void navigated.push(view));
+  assert.equal(entries.length, VIEWS.length, "one entry per shell page — no invented pages");
+  assert.ok(entries.every((entry) => entry.group === "page"), "page entries carry the page group");
+  for (const [position, view] of VIEWS.entries()) {
+    const entry = entries[position]!;
+    assert.equal(entry.id, "page-" + view, "the \"" + view + "\" entry keeps its slug id");
+    assert.equal(entry.title, "Go to " + shellViewTitle(view), "page entries are labeled \"Go to <page>\"");
+    entry.run();
+    assert.equal(navigated[position], view, "the \"" + view + "\" entry dispatches to its page, in rail order");
+    assert.equal(commandView("/" + view), view, "the palette's route for \"" + view + "\" rides the same commandView mapping the composer's slash dispatch uses");
+  }
+});
+
+test("pages and the session's slash commands share ONE palette list (one listbox, distinct groups)", () => {
+  const commands: readonly PaletteCommand[] = [
+    { id: "new-session", title: "New session", group: "command", run: noop },
+    ...palettePageEntries(noop),
+    { id: "slash-runs", title: "/runs", group: "slash", note: "ask the agent", run: noop },
+  ];
+  const markup = renderToStaticMarkup(createElement(CommandPalette, { commands, onClose: noop }));
+  assert.ok(markup.includes('class="palette-list"') && markup.includes('role="listbox"'), "one list renders every vocabulary");
+  assert.ok(markup.includes(">Commands</span>") && markup.includes(">Pages</span>") && markup.includes(">Slash commands</span>"), "group headers separate commands, pages, and slash commands");
+  assert.ok(markup.includes("Go to Overview") && markup.includes("Go to Settings"), "the shell's pages render as \"Go to <page>\" entries");
+  assert.ok(markup.includes("/runs"), "the session's slash commands share the one list");
+  assert.ok(markup.includes('aria-modal="true"') && markup.includes("palette-backdrop"), "the modal chrome the global Escape arbitration keys on renders");
+});
+
+test("the palette filters as-you-type — trimmed, case-insensitive, on the title", () => {
+  const commands: readonly PaletteCommand[] = [
+    { id: "page-runs", title: "Go to Runs", group: "page", run: noop },
+    { id: "slash-compact", title: "/compact", group: "slash", run: noop },
+  ];
+  assert.equal(filterPaletteCommands(commands, "").length, 2, "an empty query keeps the full list");
+  assert.equal(filterPaletteCommands(commands, "   ").length, 2, "a whitespace query keeps the full list");
+  assert.deepEqual(
+    filterPaletteCommands(commands, "RUNS").map((entry) => entry.id),
+    ["page-runs"],
+    "the filter is case-insensitive on the title",
+  );
+  assert.deepEqual(
+    filterPaletteCommands(commands, " comp ").map((entry) => entry.id),
+    ["slash-compact"],
+    "a trimmed substring matches",
+  );
+  assert.deepEqual(
+    filterPaletteCommands(commands, "COMPACT").map((entry) => entry.id),
+    ["slash-compact"],
+    "case-insensitivity holds on the slash-command side too",
+  );
+  assert.equal(filterPaletteCommands(commands, "nope").length, 0, "no matches empties the list (the component renders its named empty state)");
+});
+
+test("the ⌘K hint rides the status bar's keybind strip — the affordance, no new button", () => {
+  const markup = renderToStaticMarkup(createElement(StatusBar, {
+    agent: undefined,
+    model: undefined,
+    usage: undefined,
+    branch: undefined,
+    isRunning: false,
+  }));
+  assert.ok(markup.includes("status-bar-keys"), "the keybind strip renders");
+  assert.ok(markup.includes(">K</kbd>") && markup.includes("palette"), "the Ctrl+K hint rides the strip beside the existing ctrl+p hint");
+  assert.ok(markup.includes(">P</kbd>"), "the OpenCode ctrl+p hint stays");
 });

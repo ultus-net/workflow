@@ -77,6 +77,7 @@ export function commandView(command: string): AppView | undefined {
   if (name === "/agents" || name === "/sessions") return "agents";
   if (name === "/schedules") return "schedules";
   if (name === "/board") return "board";
+  if (name === "/projects") return "projects";
   if (name === "/usage") return "usage";
   if (name === "/settings") return "settings";
   if (name === "/chat") return "chat";
