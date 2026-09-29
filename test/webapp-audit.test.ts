@@ -43,12 +43,18 @@ test("the audit page states the permission-decision boundary verbatim, as its ow
   assert.ok(markup.includes("audit-boundary"), "the boundary renders as its own element");
   for (const fragment of [
     "operator permission decisions (allow/deny) are resolved in-memory (src/ui/permission-broker.ts)",
-    "not durably recorded",
-    "recording them hub-side is a recorded follow-up, out of scope",
+    "not durably recorded — the page states this boundary verbatim rather than implying completeness",
+    "recording permission outcomes hub-side is a recorded follow-up, out of scope here",
   ]) {
     assert.ok(markup.includes(fragment), "the boundary element is missing the verbatim fragment: " + fragment);
   }
-  assert.equal(AUDIT_BOUNDARY_COPY.includes("are resolved in-memory (src/ui/permission-broker.ts) and are not durably recorded"), true, "the exported copy is the pinned source");
+  // The exported constant IS the spec's boundary sentence (the review's
+  // warning: a fragment pin cannot catch a paraphrase — the whole-constant
+  // equality pins the exact sentence).
+  assert.equal(
+    AUDIT_BOUNDARY_COPY,
+    "operator permission decisions (allow/deny) are resolved in-memory (src/ui/permission-broker.ts) and are not durably recorded — the page states this boundary verbatim rather than implying completeness; recording permission outcomes hub-side is a recorded follow-up, out of scope here",
+  );
   assert.ok(markup.includes("the audit relay has not answered yet"), "the unanswered relay is a named absence, never a fabricated ledger");
 });
 

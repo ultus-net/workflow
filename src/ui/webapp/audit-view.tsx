@@ -32,7 +32,7 @@ import { BOARD_LINK_LIVENESS_LABELS, boardLinkLiveness } from "./presenters.js";
 
 /** The page-level named absence, VERBATIM (the spec's exact line; pinned by
  * test/webapp-audit.test.ts). Its own element — never a footnote on a lane. */
-export const AUDIT_BOUNDARY_COPY = "operator permission decisions (allow/deny) are resolved in-memory (src/ui/permission-broker.ts) and are not durably recorded; recording them hub-side is a recorded follow-up, out of scope";
+export const AUDIT_BOUNDARY_COPY = "operator permission decisions (allow/deny) are resolved in-memory (src/ui/permission-broker.ts) and are not durably recorded — the page states this boundary verbatim rather than implying completeness; recording permission outcomes hub-side is a recorded follow-up, out of scope here";
 
 /** One kernel transition / gate row — the timeline row shape narrowed to the
  * two record kinds the audit lane carries (the hub narrows; the view does
