@@ -26,26 +26,14 @@
  * the source patchable under the guard shell classifier.)
  */
 
-import { useEffect, useState } from "react";
-
 import { ActivityTimelinePanel, type TimelineState } from "./activity-timeline.js";
 import type { AppView } from "./shell.js";
-import { formatScheduleFire } from "./presenters.js";
+import { formatScheduleFire, statusToken } from "./presenters.js";
+// W175 phase 2: the /api/runs mirror + poll moved beside their consumers in
+// runs-record.ts (one definition for Overview, Runs, and the detail panel).
+import type { RunsRecordState } from "./runs-record.js";
 import type { OperatorDecisionRow } from "../../integrations/operator-posture.js";
 import type { ScheduleRecentRun } from "../../integrations/operator-posture.js";
-
-/** The per-run usage summary the /api/runs relay carries (the registry's
- * RunUsageSummary shape, mirrored structurally — the view derives nothing). */
-export interface RunUsageSummaryView {
-  readonly requests: number;
-  readonly promptTokens: number;
-  readonly completionTokens: number;
-  readonly totalTokens: number;
-  readonly costUsd: number;
-  readonly cacheReadTokens: number;
-  readonly cacheCreateTokens: number;
-  readonly recordedAt: string;
-}
 
 /** One run row as the kernel snapshot's task population carries it. */
 export interface OverviewRunTask {
@@ -60,43 +48,6 @@ export interface OverviewSchedule {
   readonly id: string;
   readonly title: string;
   readonly nextRunAt?: string | null;
-}
-
-/** The /api/runs relay's record state — the W175 lane, mirrored. `runs`
- * null (or the fetch failing) is the named absence, never an empty list. */
-export interface RunsRecordState {
-  readonly runs:
-    | {
-        readonly rows: readonly { readonly runId: string; readonly title?: string; readonly state: string }[];
-        readonly usage?: Readonly<Record<string, RunUsageSummaryView>>;
-      }
-    | null;
-  readonly reason?: string;
-}
-
-/** Polls the W175 runs relay. Undefined until the first answer; a hub that
- * predates the relay answers runs: null with the reason. */
-export function useRunsRecord(): RunsRecordState | undefined {
-  const [state, setState] = useState<RunsRecordState | undefined>(undefined);
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const response = await fetch("/api/runs");
-        const payload = (await response.json()) as RunsRecordState;
-        if (!cancelled) setState(payload);
-      } catch {
-        if (!cancelled) setState({ runs: null, reason: "hub unavailable" });
-      }
-    };
-    void load();
-    const timer = setInterval(() => void load(), 1500);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, []);
-  return state;
 }
 
 /** The stat strip's recorded spend: the SUM of the relay's per-run recorded
@@ -201,7 +152,7 @@ export function OverviewView({
           <ul className="overview-run-list">
             {runTasks.map((task) => (
               <li key={task.id} className="overview-run-row">
-                <span className={"status-dot status-" + task.state.toLowerCase()} aria-hidden="true" />
+                <span className={"status-dot status-" + statusToken(task.state)} aria-hidden="true" />
                 <span className="overview-run-id">{task.id}</span>
                 <span className="overview-run-title">{task.title}</span>
                 <span className="overview-run-state">{task.state}</span>
