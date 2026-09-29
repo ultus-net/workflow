@@ -11,3 +11,4 @@ infra/c0/image/opencode
 *.key
 .DS_Store
 .tmp-*
+.superpowers/
