@@ -220,6 +220,13 @@ test("the board card carries its opener identity for the focus return, and the c
     source.includes("onOpenDetail?.(task.key)"),
     "the card's detail affordance routes through the shell's panel state (the opener callback)",
   );
+  // The disabled-without-wiring claim, pinned: a bare BoardView (no shell
+  // wiring) renders the affordance DISABLED — never a silent click.
+  const bareMarkup = renderToStaticMarkup(createElement(BoardView, { board: boardOutcome }));
+  assert.ok(
+    /<button[^>]*class="board-issue-detail"[^>]*disabled/.test(bareMarkup),
+    "without an opener the affordance renders disabled (the review's P2)",
+  );
 });
 
 // ── the shell mounts the panel region for the stored opener record ──

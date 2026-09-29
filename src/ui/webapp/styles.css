@@ -3492,6 +3492,7 @@ div.board-issue-detail {
    edges (radius stays 0), mono machine values (run ids, states, costs,
    times); absences render in the muted-italic register the other pages use. */
 .runs-body { flex: 1; display: flex; min-height: 0; }
+.board-body { flex: 1; display: flex; min-height: 0; }
 
 .runs-view {
   flex: 1;
