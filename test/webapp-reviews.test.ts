@@ -58,6 +58,7 @@ const RUN_APPROVED = "schedule:w1:rev-approved";
 const RUN_FAILED = "board:github:12:rev-changes";
 const RUN_PENDING = "schedule:w2:rev-verifying";
 const RUN_UNGATED = "agent-run:777";
+const RUN_BLOCKING_ONLY = "schedule:w4:blocking-only";
 const RUN_MAP_ONLY = "schedule:w3:map-only";
 
 const APPROVED_AXES = "test integrity: pinned; task completeness: full; cleanliness: clean; security: sound; platform: exact";
@@ -155,6 +156,23 @@ test("a run carried only by its verdict or blocking record is still review-gated
   assert.ok(markup.includes(RUN_MAP_ONLY), "a recorded verdict gates its run into the page even when no registry row carries it");
   assert.equal(count(markup, "data-run-row="), 1, "exactly the record-gated run renders");
   assert.ok(markup.includes("no recorded time"), "a run without a registry row renders the named absence — never a derived time");
+
+  // The blocking-map-only case (the review's P3: the map-only pin above
+  // exercises only the outcomes map): a run in blockingReasons with no
+  // registry row and no outcome renders too, verdict pending, blocking
+  // absent, time absent — never dropped.
+  const blockingOnly: RunsRecordState = {
+    runs: {
+      rows: [],
+      reviewOutcomes: {},
+      blockingReasons: { [RUN_BLOCKING_ONLY]: "the reviewer never returned" },
+      completionClaims: {},
+    },
+  };
+  const blockingMarkup = renderToStaticMarkup(createElement(ReviewsView, reviewsProps({ record: blockingOnly })));
+  assert.ok(blockingMarkup.includes(RUN_BLOCKING_ONLY), "a blocking record alone gates its run into the page");
+  assert.equal(reviewRowVerdict(undefined), "pending", "the blocking-only row's verdict is pending");
+  assert.ok(blockingMarkup.includes("no recorded time"), "the blocking-only row renders the named absence for time");
 });
 
 // ── the verdict column ──
