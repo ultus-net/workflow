@@ -68,8 +68,16 @@ test("operator UI boots, streams a turn, and stays console-clean in real Chromiu
       "enforcement badge must resolve from 'connecting'",
     );
 
-    // 2. Composer is present and focusable.
-    assert.equal(await cdp.evaluate(`!!document.querySelector('.composer-input')`), true, "composer input must render");
+    // 2. Navigate to the chat page (the W174 shell lands on Overview by
+    // default) — the composer renders only on the chat view.
+    assert.ok(
+      await cdp.waitFor(`(window.location.hash = '#/chat') !== undefined`, 5_000),
+      "navigating to the chat page must not throw",
+    );
+    assert.ok(
+      await cdp.waitFor(`document.querySelector('.composer-input') !== null`, 5_000),
+      "composer input must render on the chat page",
+    );
 
     // 3. Submit a prompt through the real composer and watch it stream.
     await cdp.evaluate(`
@@ -105,8 +113,8 @@ test("operator UI boots, streams a turn, and stays console-clean in real Chromiu
     // 5. Palette switch: pick Dracula from settings; the html attribute and the
     // computed background token must both change, and the base must return
     // after choosing the amber default.
-    await cdp.evaluate(`[...document.querySelectorAll('.shell-nav-slug')].find((slug) => slug.textContent?.includes('Settings'))?.click()`);
-    assert.ok(await cdp.waitFor(`!!document.querySelector('.settings-dialog')`, 5_000), "settings page must open from the nav slug");
+    await cdp.evaluate(`[...document.querySelectorAll('.rail-entry')].find((entry) => entry.textContent?.includes('Settings'))?.click()`);
+    assert.ok(await cdp.waitFor(`!!document.querySelector('.settings-dialog')`, 5_000), "settings page must open from the rail");
     await cdp.evaluate(`
       (() => {
         const chips = [...document.querySelectorAll('.palette-chip')];

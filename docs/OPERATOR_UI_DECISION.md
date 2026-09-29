@@ -1,6 +1,8 @@
 # Operator UI decision: adopt assistant-ui as the presentation layer
 
 **Status:** Accepted - 2026-09-15
+
+> **Dated supersession note (2026-09-30, W174 phase 1, spec: `docs/superpowers/specs/2026-09-29-hub-dashboard-redesign-design.md`, approved 2026-09-29):** the hub's LANDING changes. From the W174 shell, the browser UI opens on the **Overview** page (the default view and the `#/overview` route) instead of the de-facto chat-first landing this decision's adoption produced (the `App()` default view was `"chat"`). History marked, not deleted: the note above stands; **chat's role is unchanged** — it remains the working surface, one nav item away, and `/chat` keeps routing to it. The decision recorded here (assistant-ui as the presentation layer) is NOT superseded — only the landing is.
 **Decision owner:** operator
 **Context:** `docs/OPERATOR_UI.md`, `docs/UI_INTEGRATION.md`, `docs/HUB_PROTOCOL.md`
 
