@@ -363,7 +363,7 @@ split spec guarantees (§6); it simply leaves the recorded motivation
 **Sequencing note regardless of the decision:** the publish machinery's
 first live tagged run is the prerequisite for any hosted option that
 consumes the image, and it is currently unverified (W149: "NOT yet verified
-live" — `publish-image.yml` header comment; `docs/CI.md:109`;
+live" — `publish-image.yml` header comment; `docs/CI.md:53`;
 `TASKS.md:5786-5787`). If the operator chooses stay-local, W149 remains
 adopter-facing work; if either hosted option is chosen, the first tagged run
 plus the seed checklist are the next gates.
