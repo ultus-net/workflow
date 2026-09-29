@@ -9,7 +9,7 @@ docs/ledger/W099-g5-branch-exit-consistency-pins-complete-pins-landed-asymmet.md
 docs/ledger/W100-branch-exit-branch-pointer-unification-position-complete-pos.md,
 docs/ledger/W101-the-protected-target-gate-unified-branch-pointer-classificat.md;
 the pin blocks mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts and
-test/redirect.test.ts; the vendored core src/git-policy.ts; the parity log
+test/redirect.test.ts; the vendored core mcp-toolbox/apps/workflow-guard-mcp/src/git-policy.ts; the parity log
 mcp-toolbox/apps/workflow-guard-mcp/docs/policy-coverage.md;
 docs/SECURITY_ASSURANCE.md residuals #20–#24.
 
@@ -27,7 +27,7 @@ queued:
   design comment), :277–477 (the parsers and `checkPointerTarget`),
   :573–584 (the gate runs per segment inside `checkGitPolicy`).
 - The W101 ledger fragment records the landing red-first
-  (docs/ledger/W101-*.md:37–46) with five subsequent review rounds folded
+  (docs/ledger/W101-*.md:37–46) with seven subsequent review rounds folded (rounds 2–8; round 6 lives in the ledger fragment, rounds 7–8 in §7)
   in (W101-*.md:66–125), and the parity log carries the W101 divergence
   entry (mcp-toolbox/apps/workflow-guard-mcp/docs/policy-coverage.md:286).
 - The W100 policy doc itself carries the implementation addendum (§7,
@@ -36,7 +36,7 @@ queued:
 - The companion residuals closed after it: W102 (wrapper recursion,
   SECURITY_ASSURANCE #20 — RESOLVED note at docs/SECURITY_ASSURANCE.md:260)
   and W103 (alias-push #22, symbolic-ref #21's matcher half; parity-log
-  entries at policy-coverage.md:411, :489).
+  entries at the parity log — W102 at mcp-toolbox/apps/workflow-guard-mcp/docs/mcp-toolbox/apps/workflow-guard-mcp/docs/policy-coverage.md:411, W103 at :489).
 
 So the decision P16 actually queues is narrower than the row's framing:
 **the pointer-write half of the W099 asymmetry is decided and implemented;
@@ -92,21 +92,21 @@ predates round 3 and is superseded by appendix A's ACCEPT record :464–481):
   (queued separately).
 - The implementation addendum (§7, :483–523): W101 landed §4's letter with
   honest deltas — one W099 pin superseded by design (§7 item 1), three
-  review-hardened fail-opens pinned (§7 item 2), and review rounds 2–8
-  each closing a real gap (fetch destination sweep, `--refmap` veto,
+  review-hardened fail-opens pinned (§7 item 2), and review rounds 2–8 (six round entries — rounds 2,3,4,5,7,8 in §7 plus round 6 in the ledger fragment; round 7's blocker claim was FALSIFIED to an attribution fix, round 6 found no new bypass)
+  — the rounds closed real gaps (fetch destination sweep, `--refmap` veto,
   both-operand one-arg rename, variadic delete, pull spelling, #24
   mirror/all pushes; §7 items 5–8, 11).
 
 **W101 (2026-09-23) — the implementation.** docs/ledger/W101-*.md:8–35:
 `gitWriteRe` widened (the checkout clause exempts `-B`; a switch clause
 joins for detach/discard; the branch clause stays `-[dDM]`), the
-protected-target gate added (`src/git-policy.ts:186–477`),
+protected-target gate added (`mcp-toolbox/apps/workflow-guard-mcp/src/git-policy.ts:186–477`),
 `hasGitMutation` widened identically per the §2.3 twin-matcher discipline
 (:49–73), and the one deliberate with-facts loosening recorded:
 `git checkout -B <feature>` on a protected branch flips as-found deny →
 allow, unifying with `switch -C`'s pinned allow (W101-*.md:25–31; the
 supersession note lives in the test at
-mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:785–790, the
+mcp-toolbox/apps/workflow-guard-mcp/test/mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:785–790, the
 superseding assertion at :886–894). Evidence: red-first 59/10 → green;
 the 28-row family re-probed 56/56 against the rebuilt dist
 (W101-*.md:37–46); repo lint/typecheck exit 0 at every review tip.
@@ -141,12 +141,12 @@ rejected with reasons and are not restated as live options here.
 
 The W099 block (mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:752–801,
 four tests) and the redirect pin
-(test/redirect.test.ts:41–49) freeze 12 active cells + 1 already-superseded
+(mcp-toolbox/apps/workflow-guard-mcp/test/redirect.test.ts:41–49) freeze 12 active cells + 1 already-superseded
 cell:
 
 | # | Pinned cell | Verdict pinned | Test (test name, line) |
 |---|---|---|---|
-| 1 | `git checkout -b feat/g5` on main | allow | "W099/G5: the allowed branch-exit spellings on a protected branch (as-found, not an endorsement)", policy.test.ts:767 |
+| 1 | `git checkout -b feat/g5` on main | allow | "W099/G5: the allowed branch-exit spellings on a protected branch (as-found, not an endorsement)", mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:767 |
 | 2 | `git switch -c feat/g5` on main | allow | same test, :768 |
 | 3 | `git switch feat/g5` on main | allow | same test, :769 |
 | 4 | `git switch -C feat/g5` on main | allow | same test, :770 |
@@ -160,7 +160,7 @@ cell:
 | 12 | `git checkout -- src/a.ts` factless | allow (W090 fail-open) | same test, :800 |
 | 13 | the `protected-branch-write` redirect names `git checkout -b` | guidance pin | "W099/G5: the protected-branch-write redirect names a checkout exit the matcher partly blocks", redirect.test.ts:41–49 |
 
-The W101 block (17 pin tests, policy.test.ts:813–1011 plus the twin-matcher
+The W101 block (17 pin tests, mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:813–1011 plus the twin-matcher
 test :1337) pins the landed target gate; no option below inverts any W101
 pin cell except where stated (Option B touches none of them — only the
 plain-switch-exit cell above).
@@ -178,7 +178,7 @@ plain-switch-exit cell above).
   (cell 8) already happened in W101 with its dated supersession note.
 - **Security posture delta:** none further — this is the landed baseline.
   The W090 factless fail-open class stays the documented deliberate
-  boundary (:183–206; policy.test.ts:798–801).
+  boundary (:183–206; mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:798–801).
 - **Migration/compat:** none further (dist rebuilt and re-probed; the
   upstream divergence recorded at policy-coverage.md:286).
 - **Cost:** zero code. The residual cost is the one the position accepts:
@@ -195,13 +195,13 @@ plain-switch-exit cell above).
   and force-creates (`switch -C`/`-B`) stay allowed — they are the
   sanctioned exits and, post-W101, target-gated.
 - **Pins that flip:** exactly one classification cell — cell 3
-  (`git switch feat/g5` on main, policy.test.ts:769) — which needs a dated
+  (`git switch feat/g5` on main, mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:769) — which needs a dated
   supersession note under the pin discipline; cells 2, 4, 5 stay green.
   The redirect pin's assertion (redirect.test.ts:48) survives, but the
-  guidance text it pins (src/redirect.ts:21, "create **or switch to** a
+  guidance text it pins (mcp-toolbox/apps/workflow-guard-mcp/src/redirect.ts:21, "create **or switch to** a
   feature branch (git checkout -b)") names a route Option B blocks, so the
   guidance's "or switch to" clause and the W099 block comments
-  (policy.test.ts:752–760; the W101 row-8 rationale :890–893, which cites
+  (mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:752–760; the W101 row-8 rationale :890–893, which cites
   "`switch -C`'s pinned allow" as the unification twin) must be updated in
   the same change.
 - **Security posture delta:** strictly tighter (a deny added), and it
@@ -237,7 +237,7 @@ plain-switch-exit cell above).
   branch; sha/path/unresolvable tokens keep the ambiguity deny; factless
   seats keep today's allow (cell 11 unchanged).
 - **Pins that flip:** cell 6 (`git checkout feat/g5` on main,
-  policy.test.ts:776–778) needs a dated supersession for the
+  mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:776–778) needs a dated supersession for the
   fact-confirmed case, replaced by fact-shaped pins (listed branch →
   allow; unlisted/ambiguous token → deny; absent/stale fact → deny,
   fail-closed). Cell 7 (the path-discard deny) and cells 11–12 stay green.
@@ -250,8 +250,8 @@ plain-switch-exit cell above).
   name — so the residual risk is low, but it is a NEW trust input where
   today there is none.
 - **Migration/compat:** the widest surface of the three — the guard's
-  input schema (src/policy.ts:31, the zod schema at src/server.ts:46) and
-  the fact plumbing (src/policy.ts:121, :125, :181), plus every host/surface
+  input schema (mcp-toolbox/apps/workflow-guard-mcp/src/policy.ts:31, the zod schema at mcp-toolbox/apps/workflow-guard-mcp/src/server.ts:46) and
+  the fact plumbing (mcp-toolbox/apps/workflow-guard-mcp/src/policy.ts:121, :125, :181), plus every host/surface
   that supplies `currentBranch`/`protectedBranches` facts must now also
   supply the branch list.
 - **Cost:** the doc's own assessment is that the benefit is thin: "row 4's
@@ -263,7 +263,7 @@ plain-switch-exit cell above).
 
 **Recommendation: take no further code change (Option A stands).** The
 recorded position was frontier-verified to ACCEPT, implemented red-first,
-and hardened through eight review rounds that each closed a real
+and hardened through the review rounds recorded in §7 and the ledger fragment (round 7's blocker claim falsified to an attribution fix; round 6 found no new bypass)
 fail-open; nothing in the record suggests the landed gate is wrong. The
 remaining asymmetry (cells 3 vs 6) is documented, pinned as-found, and
 routeable at the cost of one word (`switch` for `checkout`); its severity
@@ -307,9 +307,9 @@ follow-up docs commit links W101's PR when retiring the row.
    `protectedBranchWriteReason`, git-policy.ts:586). `hasGitMutation`
    (:68) already counts any switch/checkout presence as the mutation
    signal — no twin change needed for this member.
-2. `src/redirect.ts:21` — reword the guidance to name only a route the
+2. `mcp-toolbox/apps/workflow-guard-mcp/src/redirect.ts:21` — reword the guidance to name only a route the
    matcher still allows ("create a feature branch (git checkout -b)").
-3. Pins: dated supersession note on cell 3 (policy.test.ts:769) + the new
+3. Pins: dated supersession note on cell 3 (mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:769) + the new
    deny cell; the block comments :752–760 and :890–893 updated; the
    redirect pin's comment (redirect.test.ts:44–45) updated (assertion
    survives). Red-first: the new deny cell must fail against unmodified
@@ -326,15 +326,15 @@ follow-up docs commit links W101's PR when retiring the row.
 
 **Option C (if chosen) — its own iteration, one change:**
 
-1. `src/git-policy.ts` — `GitPolicyContext` gains `localBranches?:
+1. `mcp-toolbox/apps/workflow-guard-mcp/src/git-policy.ts` — `GitPolicyContext` gains `localBranches?:
    string[]`; the checkout ambiguity lane allows only a fact-confirmed
    branch token and keeps the deny for path/sha/uncertain tokens
    (fail-closed on staleness: an unusable fact denies).
-2. Fact plumbing: `src/policy.ts:31` (input type), `:121`, `:125`, `:181`
-   (context construction), `src/server.ts:46` (the zod schema), then every
+2. Fact plumbing: `mcp-toolbox/apps/workflow-guard-mcp/src/policy.ts:31` (input type), `:121`, `:125`, `:181`
+   (context construction), `mcp-toolbox/apps/workflow-guard-mcp/src/server.ts:46` (the zod schema), then every
    host surface that supplies branch facts — the compatibility audit is
    the real work.
-3. Pins: supersession for cell 6 (policy.test.ts:776–778) with the
+3. Pins: supersession for cell 6 (mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:776–778) with the
    fact-shaped pins listed in §3.4; cells 7, 11–12 re-asserted green.
 4. Records: SECURITY_ASSURANCE residual for the fact's trust boundary
    (stale caches); parity-log note (upstream has no such fact); the

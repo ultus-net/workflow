@@ -43,12 +43,12 @@ frontier-ACCEPT at round 3). The 2026-09-30 wave's brief subtask
 **Pin-flip enumeration (the brief's §3):** the W099 set = 12 active cells
 + 1 W101-superseded cell across 4 policy tests
 (mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:752–801) + 1
-redirect pin (test/redirect.test.ts:41–49). Option A flips 0 further (the
+redirect pin (mcp-toolbox/apps/workflow-guard-mcp/test/redirect.test.ts:41–49). Option A flips 0 further (the
 one required flip — `checkout -B <feature>` on a protected branch
 deny→allow — already happened in W101 with its dated supersession note at
-policy.test.ts:785–790). Option B flips 1 classification cell
-(`git switch feat/g5` on main, policy.test.ts:769) + the redirect
-guidance's "or switch to" clause (src/redirect.ts:21). Option C flips 1
+mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:785–790). Option B flips 1 classification cell
+(`git switch feat/g5` on main, mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:769) + the redirect
+guidance's "or switch to" clause (mcp-toolbox/apps/workflow-guard-mcp/src/redirect.ts:21). Option C flips 1
 deny cell (`checkout feat/g5` on main, :776–778) into fact-qualified
 allows and adds the seat-fact surface. The W101 block's 17 pin tests are
 inverted by no option.
