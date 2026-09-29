@@ -24,6 +24,8 @@ wiring shape clear.
   the mutating metrics object). The FIFTH bounded deviation from pure
   pass-through and the THIRD transformBody consumer (the header
   enumeration synced — it already anticipated this consumer).
+
+  > **Dated supersession note (2026-09-30, the P15a round, branch `feat/p15a-downgrade`): the BEFORE/AFTER prose above is WRONG — the code and the W118 order pin (`test/open-model-proxy.test.ts:282-286`) compose the downgrade stage BEFORE the caller's transformBody** (the caller sees the already-downgraded body; the P15a diff corrected the option doc-comment that repeated the prose error). Recorded here rather than silently edited: the fragment is write-once.
 - The governed-lane composition (open-model-proxy.ts + acp-runtime.ts):
   the open-source lane's transformBody (the only production
   transformBody consumer per the round-3 review) composes the stage;

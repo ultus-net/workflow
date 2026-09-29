@@ -186,14 +186,27 @@ export async function createModelUsageProxy(options: {
    * W118 (the W095 budget-downgrade consumer): when set, requests whose
    * session usage has crossed the WARN fraction of the budget (any cap
    * dimension at >= fraction * cap, the same comparison budgetViolation
-   * uses at the abort tier) have their body.model rewritten to the
-   * target — composed AFTER the caller's transformBody (the rewrite
-   * applies to the shaped body). Absent leaves traffic untouched (the
-   * pass-through posture is the default; a downgrade is opt-in). The
-   * activation reads the proxy's OWN recorded usage — per-family on the
-   * open-source lane (the granularity residual: a session spreading
-   * traffic across family proxies sums separately). The abort tier is
-   * untouched: the W045 guard still cancels at the full cap.
+   * uses at the abort tier) are downgraded to the target — composed
+   * BEFORE the caller's transformBody (the rewrite applies before the
+   * profile-keyed shaping, the W109 ordering guidance the W118 pin
+   * discriminates). Absent leaves traffic untouched (the pass-through
+   * posture is the default; a downgrade is opt-in). The activation reads
+   * the proxy's OWN recorded usage — per-family on the open-source lane
+   * (the granularity residual: a session spreading traffic across family
+   * proxies sums separately). The abort tier is untouched: the W045 guard
+   * still cancels at the full cap.
+   *
+   * P15 part (a): the LANE decides the enforcement shape. On a concrete
+   * model the body.model is rewritten to the target (the W118 stage). On
+   * the Auto Router lane (the autoLatest seam composed, body.model an
+   * auto-router slug) the rewrite is SKIPPED and the injected
+   * `allowed_models` narrows to exactly the target instead — the router
+   * keeps resolving, constrained. Narrow-before-inject: the narrowing
+   * decides what the injection injects and does not consume the catalog
+   * resolution (the target is operator-configured, not alias-resolved —
+   * a catalog outage cannot silently un-apply an active downgrade; the
+   * resolver's fail-open still governs the un-narrowed pool exactly as
+   * before).
    */
   readonly budgetDowngrade?: BudgetDowngradeRuntime | undefined;
   /**
@@ -232,13 +245,20 @@ export async function createModelUsageProxy(options: {
   // for the downgraded-TO model; a target without a pool profile passes
   // through unshaped (the order-discriminating pin asserts the original
   // model's shaping artifacts are absent on downgraded requests).
+  // P15 part (a): on the Auto Router lane the stage does NOT rewrite — the
+  // narrowing at the injection site below carries the downgrade, because a
+  // body.model rewrite would switch the session OFF the router the
+  // constraint acts through. The skip requires the autoLatest seam: without
+  // it there is no plugin to narrow and the W118 rewrite stays the only
+  // downgrade mechanism.
   const downgrade = options.budgetDowngrade;
   const downgradeStage = downgrade === undefined
     ? undefined
-    : (body: Record<string, unknown>): Record<string, unknown> =>
-        budgetDowngradeActive(metrics, downgrade.budget, downgrade.fraction)
-          ? { ...body, model: downgrade.targetModel }
-          : body;
+    : (body: Record<string, unknown>): Record<string, unknown> => {
+        if (!budgetDowngradeActive(metrics, downgrade.budget, downgrade.fraction)) return body;
+        if (aliasResolver !== undefined && isAutoRouterModel(body.model)) return body;
+        return { ...body, model: downgrade.targetModel };
+      };
   // Both consumers set → the downgrade composes BEFORE the caller's
   // transformBody (the rewrite applies before the profile-keyed shaping, per
   // the W109 ordering guidance); a single consumer
@@ -319,9 +339,19 @@ export async function createModelUsageProxy(options: {
       // slugs and inject them so the router's `allowed_models` (which does not
       // understand aliases) actually has candidates. Fail open on resolution
       // failure so traffic is never blocked by a catalog hiccup.
+      // P15 part (a): an active downgrade NARROWS the injected pool to the
+      // target BEFORE the injection — the same applyAutoRouterPlugin call
+      // with one candidate, and the resolution is not consulted for the
+      // narrowed request (the target is operator-configured, not
+      // catalog-resolved, so a catalog outage cannot silently un-apply the
+      // downgrade; the fail-open resolve still governs the un-narrowed pool
+      // exactly as before). Narrow-before-inject: the injected list IS the
+      // narrowed list — no post-injection patch.
       let routed = parsed;
       if (aliasResolver !== undefined && isAutoRouterModel(parsed.model)) {
-        const allowedModels = await aliasResolver.resolve();
+        const allowedModels = downgrade !== undefined && budgetDowngradeActive(metrics, downgrade.budget, downgrade.fraction)
+          ? [downgrade.targetModel]
+          : await aliasResolver.resolve();
         if (allowedModels.length > 0) {
           routed = applyAutoRouterPlugin(parsed, parsed.model, allowedModels, autoLatest?.costTier);
         }
