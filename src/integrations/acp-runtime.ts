@@ -226,21 +226,30 @@ async function createOpencodeRuntime(
   // Hub-owned Auto Router pool (default on for OpenRouter upstreams): resolve
   // `~...-latest` aliases in the proxy so agents never need a client plugin.
   const autoLatest = autoLatestConfigFromEnv({ upstream });
-  const proxy = await createModelUsageProxy({ upstream, apiKey, ...(autoLatest === undefined ? {} : { autoLatest }) });
-  // W070a: compose the open-source vendors through their own loopback proxies
-  // when their keys are present. With no vendor keys the pool stays empty and
-  // the agent keeps the existing OpenRouter/Auto-Router surface unchanged
-  // (the closed-model operator override path is untouched).
-  const openKeys = loadOpenModelKeys();
   // W118: the downgrade axes are parsed once from the env; the downgrade
   // additionally requires budget caps to exist (no caps = nothing to warn
-  // about). Absent either leaves the pool without a downgrade (the
+  // about). Absent either leaves the lanes without a downgrade (the
   // pass-through default).
   const budgetDowngradeConfig = budgetDowngradeFromEnv();
   const sessionBudget = sessionBudgetFromEnv();
   const budgetDowngrade = budgetDowngradeConfig !== undefined && sessionBudget !== undefined
     ? { ...budgetDowngradeConfig, budget: sessionBudget }
     : undefined;
+  // P15 part (a): the OpenRouter lane composes the downgrade too — on the
+  // Auto Router lane the proxy's narrowing variant carries it; the open pool
+  // below keeps the W118 body-rewrite lane. The Cline/goose runtime sites
+  // stay unwired (the W118 wiring breadth remains queued).
+  const proxy = await createModelUsageProxy({
+    upstream,
+    apiKey,
+    ...(autoLatest === undefined ? {} : { autoLatest }),
+    ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }),
+  });
+  // W070a: compose the open-source vendors through their own loopback proxies
+  // when their keys are present. With no vendor keys the pool stays empty and
+  // the agent keeps the existing OpenRouter/Auto-Router surface unchanged
+  // (the closed-model operator override path is untouched).
+  const openKeys = loadOpenModelKeys();
   let openPool: OpenModelMeteringPool | undefined;
   try {
     openPool = Object.keys(openKeys.keys).length > 0
