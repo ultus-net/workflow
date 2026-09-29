@@ -41,6 +41,46 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
 
 ## Upstream parity log
 
+- **2026-09-30 (P18, the wave's batch-1 task 3, branch `feat/p18-guard`): the
+  parked P18 residual edges closed.**
+
+  > **Dated review-round note (2026-09-30, the fresh-eyes review's two P2s, fixed in code):** (1) the shell lane's busybox lens is a LOOP now (the git lane's while-lens mirrored) — `busybox busybox sh -c top` classifies like `busybox sh -c top` (ask), one busybox word per pass; the round-1 prose below claimed the shell lane handled repeated busybox — the trace allowed it, the claim was unsupported, and the loop + its pin close it; (2) the interactive lane's sh-family regex gains `x` so `xsh -c top` asks like `sh -c top` — the lanes' regexes now match (`(?:ba|z|da|k|x)?sh`). Both pins added; dist rebuilt + re-probed (the two cells ask on dist too); 96/0 policy suite.
+
+  (a) The busybox single-level asymmetry
+  (W088's recorded "busybox env top / busybox timeout top / busybox sh -c top
+  stay allowed while their non-busybox forms ask") is fixed: `interactiveReason`
+  and the git-lane wrapper lens unwrap the words AFTER the busybox applet word
+  (word-wise, no string round trip — `shell.ts` exports `unwrapWords` for both
+  lanes to share), so `busybox env top`, `busybox timeout 5 top`,
+  `busybox sh -c top`, `busybox env sh -c top`, `busybox busybox sh -c top` all
+  classify like their direct forms (ask), while the quoted-argv-word discipline
+  survives (`env 'a; top'` and `busybox env 'a; top'` stay allow). (b) The
+  exotic-interpreter edge: `xsh` joins the sh-family regex
+  (`(?:ba|z|da|k|x)?sh`) alongside `busybox sh`, and the wrapper-transparency
+  lens covers both per-seat (main deny for the target-gated
+  `busybox|xsh -c 'git branch -f main abc'` factless form; factless allow
+  elsewhere as the W102 pins record). One W102-round-1 as-found pin flips
+  allow→deny with a dated SUPERSEDED note in the test (the fused `-c` spelling
+  the round deliberately pinned allow is now caught — the flip is the fix).
+  (c) The zsh EQUALS expansion caveat (`-c='git commit -m x'`) is pinned an
+  explicit, documented allow for sh/bash/zsh — parser-consistent: sh and bash
+  reject the spelling live (verified: "invalid option", exit 2), zsh executes
+  `=git` via equals expansion but only after the same `-c` consumption; the
+  classification names the recorded caveat rather than leaving the spelling in
+  the recognized set. **No red exists for (c) by construction** — the allow
+  already held as-found; the pins make the classification explicit so it cannot
+  drift. zsh itself is not installed in this environment (the equals-expansion
+  execution path rests on the recorded caveat, not a live probe — stated
+  honestly). Remains open from the parked row: the ref-adjacent filesystem
+  routes (direct `.git/` writes) — covered only by the workspace-boundary
+  lanes, unchanged. Evidence: red-first 92/3 (95 tests, 3 fail captured
+  verbatim against unmodified src) → 95/0, then the review round's two P2
+  fixes + pins → 96/0; full toolbox corpus
+  `pnpm run verify` exit 0 in the worktree (typecheck+build+tests across the
+  workspace, dist rebuilt and probed: nested-busybox ask cells, xsh/busybox
+  git-lane denies, the three `-c=` allows all match dist); repo lint +
+  typecheck exit 0 unpiped.
+
 - **2026-09-20 (W084):** ported the upstream policy fixes that landed after the
   2026-09-12 vendoring (upstream `ec097d4..HEAD`, PRs #134/#135/#136/#144/#152):
   quoted-residue redirect/tamper matching (`prepareRedirectResidue`; verb
