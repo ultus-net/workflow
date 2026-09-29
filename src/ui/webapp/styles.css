@@ -3601,3 +3601,89 @@ div.board-issue-detail {
 .run-blocking { margin: 0.3rem 0 0; color: var(--fail); font-size: 0.74rem; }
 .run-unmeasured { color: var(--text-muted); font-style: italic; }
 .run-finding { margin: 0.3rem 0 0; color: var(--warn); font-size: 0.72rem; }
+
+/* W177: the Audit page — the three recorded authorization-adjacent lanes and
+   the page-level in-memory permission boundary. Square edges (the shell's
+   --radius: 0), mono machine values, token colors only; every record renders
+   verbatim, every empty lane names its absence. */
+.audit {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+  padding: 0.9rem clamp(0.9rem, 2vw, 1.75rem) 1.4rem;
+  overflow-y: auto;
+}
+
+.audit-boundary {
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  border: 1px dashed var(--warn);
+  background: var(--bg-deep);
+  font-size: 0.76rem;
+  color: var(--text);
+}
+
+.audit-absence, .audit-empty { margin: 0; font-size: 0.76rem; color: var(--text-muted); font-style: italic; }
+
+.audit h3 {
+  font-family: var(--font-sans);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 0 0 0.4rem;
+}
+
+.audit section {
+  border: 1px solid var(--border);
+  padding: 0.7rem 0.8rem;
+}
+
+/* Lane 1: the recorded provider read — the W167 pill classes are reused (the
+   freshness vocabulary has one source), dashed underline when not fresh. */
+.audit-read-row { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; font-size: 0.72rem; }
+.audit-read-instant { font-family: var(--font-mono); color: var(--text-muted); overflow-wrap: anywhere; }
+.audit-read-outcome { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.audit-read-reason { color: var(--text-muted); font-size: 0.66rem; overflow-wrap: anywhere; }
+.audit .board-link-not-fresh { text-decoration: underline dashed; text-underline-offset: 0.2em; }
+
+/* Lane 2: the kernel transition / gate rows + the retention statement copied
+   verbatim from the projection. */
+.audit-gate-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.3rem; max-height: 24rem; overflow-y: auto; }
+.audit-gate-row { display: flex; align-items: baseline; gap: 0.45rem; font-size: 0.72rem; }
+.audit-gate-kind {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.05rem 0.3rem;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.audit-gate-gate { color: var(--warn); border-color: var(--warn); }
+.audit-gate-body { display: flex; flex-direction: column; gap: 0.05rem; min-width: 0; flex: 1; }
+.audit-gate-summary { overflow-wrap: anywhere; }
+.audit-gate-attribution { color: var(--text-muted); font-size: 0.62rem; }
+.audit-retention { margin: 0.45rem 0 0; font-size: 0.62rem; color: var(--text-muted); }
+
+/* Lane 3: the fingerprinted review-provenance records. */
+.audit-provenance-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; max-height: 24rem; overflow-y: auto; }
+.audit-provenance-row { display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; font-size: 0.72rem; }
+.audit-provenance-head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; }
+.audit-provenance-disposition {
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-s);
+  padding: 0 0.3rem;
+  color: var(--text-muted);
+}
+.audit-provenance-approved { color: var(--ok); border-color: var(--ok); }
+.audit-provenance-changes_requested { color: var(--warn); border-color: var(--warn); }
+.audit-provenance-interrupted { color: var(--fail); border-color: var(--fail); }
+.audit-provenance-reviewer, .audit-provenance-at { font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-muted); overflow-wrap: anywhere; }
+.audit-provenance-body { display: flex; flex-direction: column; gap: 0.05rem; min-width: 0; }
+.audit-provenance-workspace { font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-muted); overflow-wrap: anywhere; }
+.audit-provenance-findings { overflow-wrap: anywhere; }

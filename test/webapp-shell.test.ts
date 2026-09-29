@@ -233,7 +233,6 @@ test("the phase pages are named absences — routes live now, content arrives wi
   const pages: readonly (readonly [AppView, string])[] = [
     ["reviews", "Reviews"],
     ["activity", "Activity"],
-    ["audit", "Audit"],
   ];
   const { restore } = installWindowStorage();
   try {
@@ -251,6 +250,18 @@ test("the phase pages are named absences — routes live now, content arrives wi
       );
       assert.ok(markup.includes(">" + title + "</h2>"), "the header titles the " + title + " page");
     }
+    // W177: the audit page shipped its content — it is no longer a
+    // placeholder; the shell renders the AuditView (its own named absences:
+    // the boundary element + the unanswered relay), never the phase copy.
+    const audit = renderToStaticMarkup(createElement(AppShell, {
+      view: "audit",
+      setView: noop,
+      focusedSessionId: undefined,
+      setFocusedSessionId: noop,
+    }));
+    assert.ok(!audit.includes("phase-placeholder"), "the audit page no longer renders the phase placeholder");
+    assert.ok(audit.includes("audit-boundary"), "the audit page renders its boundary element");
+    assert.ok(audit.includes(">Audit</h2>"), "the header titles the Audit page");
   } finally {
     restore();
   }

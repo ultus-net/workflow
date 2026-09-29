@@ -5,7 +5,7 @@ import {
   createGitStatusSource,
   type ReviewerAgentSessionFactory,
 } from "./hub-reviewer.js";
-import { createJsonReviewProvenanceStore } from "./review-provenance-store.js";
+import { createJsonReviewProvenanceStore, type ReviewProvenanceStore } from "./review-provenance-store.js";
 import type { RunReviewer, RunReviewerFactory, RunTestRunner } from "./run-registry.js";
 
 /**
@@ -53,7 +53,16 @@ export function createReviewerFactory(options: {
   readonly createRuntime: (input: { readonly workspace: string; readonly taskPrompt?: string }) => Promise<ReviewerRuntimeSession>;
   /** When set, review provenance (W041) is journaled at this hub-state path. */
   readonly provenancePath?: string;
+  /**
+   * W177: the SHARED store instance the composition root also reads the audit
+   * lane from — one journal, one store, so the writer (the reviewer) and the
+   * reader (the /snapshot audit block) bind the same path. Given, it wins
+   * over provenancePath; neither set means no journaling.
+   */
+  readonly provenanceStore?: ReviewProvenanceStore;
 }): RunReviewerFactory {
+  const provenanceStore = options.provenanceStore
+    ?? (options.provenancePath === undefined ? undefined : createJsonReviewProvenanceStore(options.provenancePath));
   return (controller) => {
     const spawnReviewer: ReviewerAgentSessionFactory = {
       async spawn(input) {
@@ -86,9 +95,7 @@ export function createReviewerFactory(options: {
       diffSource: (workspace) => createGitDiffSource(options.shell)(workspace),
       statusSource: (workspace) => createGitStatusSource(options.shell)(workspace),
       commitSource: (workspace) => createGitCommitSource(options.shell)(workspace),
-      ...(options.provenancePath === undefined
-        ? {}
-        : { provenanceStore: createJsonReviewProvenanceStore(options.provenancePath) }),
+      ...(provenanceStore === undefined ? {} : { provenanceStore }),
       spawnReviewer,
     });
     const reviewer: RunReviewer = async (input) => {

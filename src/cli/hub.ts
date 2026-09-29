@@ -16,6 +16,7 @@ import { resolveSecretStore } from "../integrations/secret-store.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 import { hubPromptGuidanceFromEnv } from "../integrations/prompt-guidance.js";
 import { createReviewerFactory, createRunTestRunner } from "../integrations/hub-run-gates.js";
+import { createJsonReviewProvenanceStore } from "../integrations/review-provenance-store.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { canonicalWorkspace } from "../integrations/run-registry.js";
 import {
@@ -125,11 +126,15 @@ const containedShell = (writableWorkspace: boolean) => (command: string, cwd: st
 // Review provenance (W041) journals every hub review decision in hub state —
 // never inside a reviewed workspace, where it would mutate the very
 // fingerprint the records are bound to. WORKFLOW_HUB_PROVENANCE overrides.
+// W177: ONE store instance shared by the writer (the reviewer factory) and
+// the reader (the audit lane the /snapshot audit block relays) — the reader
+// sees exactly what the reviews append, never a second binding of the path.
 const reviewProvenancePath = process.env.WORKFLOW_HUB_PROVENANCE ?? join(homedir(), ".workflow", "review-provenance.jsonl");
+const reviewProvenanceStore = createJsonReviewProvenanceStore(reviewProvenancePath);
 
 const reviewerFactory = createReviewerFactory({
   shell: containedShell(false),
-  provenancePath: reviewProvenancePath,
+  provenanceStore: reviewProvenanceStore,
   createRuntime: async ({ workspace: reviewerWorkspace }) => {
     const reviewerApplication = new WorkflowApplication(
       graph,
@@ -460,6 +465,9 @@ try {
     discoverIssueCrossReferences: recordProviderReads(providerReadLedger, (issue: number) => fetchIssueCrossReferences(boardProviderFromEnv(process.env), issue)),
     readIssueDetail: recordProviderReads(providerReadLedger, (issue: number) => fetchIssueDetail(boardProviderFromEnv(process.env), issue)),
     providerReadState: () => providerReadLedger.current(),
+    // W177: the audit lane's provenance reader — the same shared store the
+    // reviewer factory journals through.
+    reviewProvenance: () => reviewProvenanceStore.records(),
     schedulerFactory,
     schedules: scheduleRegistry,
     projects: projectRegistry,

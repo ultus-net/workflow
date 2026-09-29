@@ -202,6 +202,21 @@ export function createWorkflowWebServer(
     return { runs: null, reason: payload?.error ?? "hub unavailable" };
   };
 
+  /** W177: the ONE audit read route — the hub's /snapshot audit block, the
+   * three recorded authorization-adjacent lanes the hub actually keeps (the
+   * W167 provider-read ledger, the timeline's kernel transition + gate rows,
+   * and the W041 fingerprinted review provenance). Read-only observability:
+   * it relays records the hub already keeps and authorizes nothing. Fail-
+   * closed: no hub, or a hub predating the block, answers audit: null with
+   * the reason — the page renders its named-absence state, never a fabricated
+   * empty ledger. The browser never sees a hub token. */
+  const hubAudit = async (): Promise<{ audit: unknown; reason?: string }> => {
+    const result = await hubPost("/snapshot", {});
+    const payload = result.payload as { audit?: unknown; error?: string } | undefined;
+    if (result.status === 200 && payload?.audit !== undefined) return { audit: payload.audit };
+    return { audit: null, reason: payload?.error ?? "hub unavailable" };
+  };
+
   /** Session-scoped channel: `?session=<id>` selects a parallel live session;
    * without the parameter the operator's focused session answers. */
   function sessionId(url: string | undefined): string | undefined {
@@ -273,6 +288,9 @@ export function createWorkflowWebServer(
     // W175: the runs read relay (see hubRuns above) — the run-registry
     // projection lane the Runs/Reviews pages and the detail panel read.
     if (request.method === "GET" && pathname === "/api/runs") return json(response, 200, await hubRuns());
+    // W177: the audit read relay (see hubAudit above) — the three recorded
+    // authorization-adjacent lanes the audit page renders.
+    if (request.method === "GET" && pathname === "/api/audit") return json(response, 200, await hubAudit());
     // W167: the read-only issue-detail relay — the browser asks THIS service,
     // which carries the hub token upstream; the browser never sees it. The
     // key rides the query string, and the hub's own answer passes through —
