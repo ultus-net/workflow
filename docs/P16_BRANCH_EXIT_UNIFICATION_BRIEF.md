@@ -180,7 +180,7 @@ plain-switch-exit cell above).
   The W090 factless fail-open class stays the documented deliberate
   boundary (:183–206; mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts:798–801).
 - **Migration/compat:** none further (dist rebuilt and re-probed; the
-  upstream divergence recorded at policy-coverage.md:286).
+  upstream divergence recorded at mcp-toolbox/apps/workflow-guard-mcp/docs/policy-coverage.md:286).
 - **Cost:** zero code. The residual cost is the one the position accepts:
   row 4's ambiguity deny over-delies `checkout <branch>` exits on
   protected seats (models must use `switch <branch>` or the redirect's
@@ -316,7 +316,7 @@ follow-up docs commit links W101's PR when retiring the row.
    src before the fix.
 4. Append-only records: a dated supersession note on the policy doc's §5
    rejection and §4 statement (appendix-A discipline :310–315); a
-   parity-log divergence entry (policy-coverage.md); TASKS.md/ledger item
+   parity-log divergence entry (mcp-toolbox/apps/workflow-guard-mcp/docs/policy-coverage.md); TASKS.md/ledger item
    for the iteration.
 5. Verification: focused policy + redirect + mcp suites
    (`node --import tsx --test`, never `npm test` — operator directive);

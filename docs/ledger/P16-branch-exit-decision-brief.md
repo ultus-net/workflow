@@ -30,7 +30,7 @@ frontier-ACCEPT at round 3). The 2026-09-30 wave's brief subtask
   (2026-09-24, W116) — the recorded position's implementation landed as
   W101 on 2026-09-23 (the protected-target gate in
   mcp-toolbox/apps/workflow-guard-mcp/src/git-policy.ts:186–477, the
-  parity-log entry at the guard's docs/policy-coverage.md:286, the W101
+  parity-log entry at mcp-toolbox/apps/workflow-guard-mcp/docs/policy-coverage.md:286, the W101
   ledger fragment, the policy doc's §7 addendum). What P16 still queues is
   the residual decision scope: the pure-exit spelling asymmetry (the
   position doc's rows 3 vs 4 — `switch <branch>` allowed,
