@@ -10,7 +10,7 @@ import { WorkflowApplication } from "../src/application/workflow.js";
 import { evidenceId, observationId, taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
 import { createEvidenceContentStore } from "../src/integrations/evidence-content-store.js";
-import { createWorkflowHub, resolveHubDiscoveryPath } from "../src/integrations/workflow-hub.js";
+import { createWorkflowHub, resolveHubDiscoveryPath, type WorkflowHubSchedulerHandles } from "../src/integrations/workflow-hub.js";
 import { createScheduleRegistry } from "../src/integrations/schedule-registry.js";
 import { createSelfImprovementRegistry } from "../src/integrations/self-improvement-registry.js";
 import { createWorkflowWebServer } from "../src/ui/web.js";
@@ -278,4 +278,143 @@ test("W158: the web relays the hub's evidence block and serves content previews;
   assert.equal(noHubPreview.status, 503);
   const noHubBody = await noHubPreview.json() as { error?: string };
   assert.equal(noHubBody.error, "hub unavailable");
+});
+
+// W175: the runs relay — the hub's /snapshot runs block (the run-registry
+// projection) served through the same guard pattern as the evidence relay:
+// the hub token stays server-side, a hub without the block answers the named
+// absence, and the registry's shape-honesty records ride verbatim.
+test("W175: the web relays the hub's run-registry projection (/api/runs); the browser never sees a hub token", async (context) => {
+  const hubDir = mkdtempSync(join(tmpdir(), "wf-web-runs-"));
+  const ws = mkdtempSync(join(tmpdir(), "wf-web-runs-ws-"));
+  context.after(() => rmSync(hubDir, { recursive: true, force: true }));
+  context.after(() => rmSync(ws, { recursive: true, force: true }));
+
+  const tasks: WorkflowTask[] = [
+    { id: taskId("W1"), title: "interactive", state: "READY", dependencies: [], requiredEvidence: [] },
+  ];
+  const graph = new TaskGraph(tasks.map((task) => ({ ...task })));
+  const application = new WorkflowApplication(
+    graph,
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+    [],
+    new Set(["read", "mutation"]),
+    ws,
+  );
+  // The test captures the run-registry handles the way the composition
+  // root's scheduler does: the begin stamp, the usage totals, the claims,
+  // and the blocking reason are hub-side records the browser never supplies.
+  const captured: WorkflowHubSchedulerHandles[] = [];
+  const hub = await createWorkflowHub(application, {
+    discoveryDir: hubDir,
+    graph,
+    schedulerFactory: (handles) => {
+      captured.push(handles);
+      return { tick: async () => undefined, trigger: async () => false, start: () => undefined, stop: () => undefined };
+    },
+  });
+  context.after(() => hub.close());
+  const handles = captured[0];
+  assert.ok(handles !== undefined, "the hub composes the run registry when a graph is wired");
+
+  const runId = "schedule:nightly:relay";
+  await handles.controller.begin({
+    runId,
+    title: "Nightly audit",
+    workspace: ws,
+    origin: { kind: "schedule", scheduleId: "nightly" },
+  });
+  handles.recordRunUsage({
+    runId,
+    usage: { requests: 3, promptTokens: 1200, completionTokens: 80, totalTokens: 1280, costUsd: 0.0042, cacheReadTokens: 600, cacheCreateTokens: 40 },
+  });
+  handles.recordCompletionClaim({ runId, claim: "audit complete" });
+  handles.recordReasoningClaim({ runId, sentence: "claimed the audit verified with no observed action" });
+  handles.noteReasoningClaimMonitor({ runId });
+  handles.recordBlockingReason({ runId, reason: "reviewer not yet run" });
+  handles.controller.recordWorkProductLink?.({ runId, link: { provider: "github", key: "#346", url: "https://github.com/ultus-net/Workflow/pull/346" } });
+
+  // A run row WITHOUT a registry begin record: the kernel task id is the
+  // identity, so a synthetic run: task pins the "no recorded time" absence —
+  // the row renders without a derived timestamp.
+  application.addTask({ id: taskId("run:ghost"), title: "Ghost run (no begin record)", dependencies: [], requiredEvidence: [] });
+
+  const webApplication = new WorkflowApplication(
+    new TaskGraph(tasks.map((task) => ({ ...task }))),
+    hostCapabilities({ transport: "acp", authoritativePreMutation: false }),
+  );
+  const server = createWorkflowWebServer(webApplication, undefined, undefined, { hubDiscoveryDir: hubDir });
+  const port = await listen(server);
+  context.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const base = `http://127.0.0.1:${port}`;
+
+  const relayed = await fetch(`${base}/api/runs`).then((r) => r.json() as Promise<{
+    runs: {
+      rows: Array<{ runId: string; title: string; state: string; startedAt?: string }>;
+      origins?: Record<string, { kind: string; scheduleId?: string }>;
+      workProducts?: Record<string, { provider: string; key: string; url: string }>;
+      blockingReasons?: Record<string, string>;
+      completionClaims?: Record<string, { claim: string; verifiedAtClaim: boolean; observedAt: string }>;
+      usage?: Record<string, { totalTokens: number; costUsd: number; cacheReadTokens: number; cacheCreateTokens: number }>;
+      reasoningClaims?: Record<string, { sentence: string }>;
+      reasoningClaimMetrics?: { monitoredRuns: number; flaggedRuns: number; findings: number; recall: string; timeToResponseMs: string };
+    } | null;
+    reason?: string;
+  }>);
+  const runs = relayed.runs;
+  assert.ok(runs != null, "a live hub answers the run-registry projection, not a named absence");
+
+  // Every run row, not schedule-lane only; startedAt only where the record
+  // carries one (the timeline house rule).
+  const begun = runs.rows.find((row) => row.runId === "schedule:nightly:relay");
+  assert.ok(begun !== undefined, "the begun run's row is relayed");
+  assert.equal(begun.title, "Nightly audit");
+  assert.equal(begun.state, "IN_PROGRESS");
+  assert.match(begun.startedAt ?? "", /^\d{4}-\d{2}-\d{2}T/, "the row carries the begin record's own observedAt");
+  const ghost = runs.rows.find((row) => row.runId === "ghost");
+  assert.ok(ghost !== undefined, "a kernel run: task without a begin record is still a row");
+  assert.equal(ghost.startedAt, undefined, "no recorded time: the row carries no derived timestamp");
+  assert.deepEqual(runs.origins?.["schedule:nightly:relay"], { kind: "schedule", scheduleId: "nightly" }, "the recorded origin rides verbatim");
+  assert.deepEqual(
+    runs.workProducts?.["schedule:nightly:relay"],
+    { provider: "github", key: "#346", url: "https://github.com/ultus-net/Workflow/pull/346" },
+    "the recorded work-product link rides verbatim",
+  );
+  assert.equal(runs.blockingReasons?.["schedule:nightly:relay"], "reviewer not yet run");
+  const claim = runs.completionClaims?.["schedule:nightly:relay"];
+  assert.equal(claim?.claim, "audit complete");
+  assert.equal(claim?.verifiedAtClaim, false, "the verified-at-claim flag rides beside the claim (the W114 honesty line)");
+  const usage = runs.usage?.["schedule:nightly:relay"];
+  assert.equal(usage?.totalTokens, 1280);
+  assert.equal(usage?.costUsd, 0.0042);
+  // The cache components ride the recorded totals with their lane asymmetry
+  // (the RunUsageSummary comment: 0 on the OpenAI chat-completions lane,
+  // where cached reads sit inside promptTokens) — present, never absent, so
+  // the view can render the asymmetry instead of guessing it.
+  assert.equal(usage?.cacheReadTokens, 600);
+  assert.equal(usage?.cacheCreateTokens, 40);
+  assert.ok(runs.reasoningClaims?.["schedule:nightly:relay"] !== undefined, "the advisory reasoning-claim finding rides");
+  assert.deepEqual(
+    runs.reasoningClaimMetrics,
+    { monitoredRuns: 1, flaggedRuns: 1, findings: 1, recall: "unmeasured", timeToResponseMs: "unmeasured" },
+    "the monitor metrics carry the unmeasured axes literally",
+  );
+
+  // The hub token never rides the relay.
+  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(hubDir), "utf8")) as { token: string };
+  const relayText = JSON.stringify(relayed);
+  assert.ok(relayText.length > 0 && !relayText.includes(token), "the relay response never carries the hub token");
+
+  // No hub: the relay degrades to the named absence — never a fabricated list.
+  const orphanServer = createWorkflowWebServer(
+    new WorkflowApplication(new TaskGraph(tasks.map((task) => ({ ...task }))), hostCapabilities({ transport: "acp", authoritativePreMutation: false })),
+    undefined,
+    undefined,
+    { hubDiscoveryDir: mkdtempSync(join(tmpdir(), "wf-web-runs-orphan-")) },
+  );
+  const orphanPort = await listen(orphanServer);
+  context.after(() => new Promise<void>((resolve) => orphanServer.close(() => resolve())));
+  const noHub = await fetch(`http://127.0.0.1:${orphanPort}/api/runs`).then((r) => r.json() as Promise<{ runs: unknown; reason?: string }>);
+  assert.equal(noHub.runs, null);
+  assert.equal(noHub.reason, "hub unavailable");
 });

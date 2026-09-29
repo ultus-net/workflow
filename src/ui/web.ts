@@ -187,6 +187,21 @@ export function createWorkflowWebServer(
     return { board: null, reason: payload?.error ?? "hub unavailable", read: null };
   };
 
+  /** W175: the ONE runs read route — the hub's /snapshot runs block, the
+   * run-registry projection (all run rows with their recorded origins,
+   * work-product links, review outcomes, blocking reasons, completion claims,
+   * per-run usage, and reasoning-claim findings/metrics) so the Runs page,
+   * the Reviews page, the Overview tiles, and the detail panel read one lane.
+   * Fail-closed: no hub, or a hub older than W175, answers runs: null with
+   * the reason — the page renders its named-absence state, never a fabricated
+   * empty list. The browser never sees a hub token. */
+  const hubRuns = async (): Promise<{ runs: unknown; reason?: string }> => {
+    const result = await hubPost("/snapshot", {});
+    const payload = result.payload as { runs?: unknown; error?: string } | undefined;
+    if (result.status === 200 && payload?.runs !== undefined) return { runs: payload.runs };
+    return { runs: null, reason: payload?.error ?? "hub unavailable" };
+  };
+
   /** Session-scoped channel: `?session=<id>` selects a parallel live session;
    * without the parameter the operator's focused session answers. */
   function sessionId(url: string | undefined): string | undefined {
@@ -255,6 +270,9 @@ export function createWorkflowWebServer(
     if (request.method === "GET" && pathname === "/api/evidence") return json(response, 200, await hubEvidence());
     // W161: the board read relay (see hubBoard above).
     if (request.method === "GET" && pathname === "/api/board") return json(response, 200, await hubBoard());
+    // W175: the runs read relay (see hubRuns above) — the run-registry
+    // projection lane the Runs/Reviews pages and the detail panel read.
+    if (request.method === "GET" && pathname === "/api/runs") return json(response, 200, await hubRuns());
     // W167: the read-only issue-detail relay — the browser asks THIS service,
     // which carries the hub token upstream; the browser never sees it. The
     // key rides the query string, and the hub's own answer passes through —
