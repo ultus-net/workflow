@@ -21,6 +21,11 @@ import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-vie
 import { ProjectsView, type ProjectMeta } from "./projects-view.js";
 import { BoardView } from "./board-view.js";
 import { readIssueViewStateGuarded, saveIssueViewStateGuarded, type IssueViewState } from "./issue-view-state.js";
+// W174 phase 1a: the shell chrome (rail / header) and its plain hash routing
+// live beside it in shell.tsx; the rail's collapsed preference persists
+// through rail-state.ts (the two-shape guarded-localStorage pattern).
+import { ShellHeader, ShellRail, commandView, defaultAppView, ENFORCEMENT_COPY, hashForView, shellRailSections, shellViewTitle, viewForHash, type AppView } from "./shell.js";
+import { readRailStateFromWindow, saveRailStateToWindow, withRailCollapsed, type RailState } from "./rail-state.js";
 import type { ScheduleRecentRun } from "../../integrations/operator-posture.js";
 import type { BoardOutcome, WorkProductCardState } from "../../integrations/task-provider.js";
 import type { ProviderReadRecord } from "../../integrations/issue-detail.js";
@@ -975,79 +980,7 @@ function useConfigOptions(sessionId: string | undefined, agent: string) {
   return { options, setOption };
 }
 
-function GearIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" aria-hidden="true">
-      <circle cx="8" cy="8" r="5.1" />
-      <circle cx="8" cy="8" r="2" />
-      <path d="M8 1.2v1.7M8 13.1v1.7M14.8 8h-1.7M2.9 8H1.2M12.7 3.3l-1.2 1.2M4.5 11.5l-1.2 1.2M12.7 12.7l-1.2-1.2M4.5 4.5L3.3 3.3" />
-    </svg>
-  );
-}
 
-/** Nav slug glyphs — the icon sits over the label (icons over names). */
-function ChatIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2.5 3.5h11v7h-5l-3 3v-3h-3z" />
-    </svg>
-  );
-}
-
-/** Coin-stack glyph for the Usage slug. */
-function UsageIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <ellipse cx="8" cy="4.2" rx="5" ry="2.2" />
-      <path d="M3 4.2v3.6c0 1.2 2.24 2.2 5 2.2s5-1 5-2.2V4.2" />
-      <path d="M3 7.8v3.6c0 1.2 2.24 2.2 5 2.2s5-1 5-2.2V7.8" />
-    </svg>
-  );
-}
-function AgentsIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="2.5" y="2.5" width="11" height="4.2" />
-      <rect x="2.5" y="9.3" width="11" height="4.2" />
-      <circle cx="5" cy="4.6" r="0.7" fill="currentColor" stroke="none" />
-      <circle cx="5" cy="11.4" r="0.7" fill="currentColor" stroke="none" />
-    </svg>
-  );
-}
-
-/** Three-column kanban glyph for the Board slug. */
-function BoardIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="2.5" y="2.5" width="3.2" height="11" />
-      <rect x="6.4" y="2.5" width="3.2" height="7.5" />
-      <rect x="10.3" y="2.5" width="3.2" height="9.5" />
-    </svg>
-  );
-}
-
-/** Calendar glyph for the Schedules slug. */
-function SchedulesIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="2.5" y="3.5" width="11" height="10" />
-      <path d="M2.5 6.5h11" />
-      <path d="M5.5 2v3M10.5 2v3" />
-      <path d="M5.5 9.5h2M5.5 11.5h5" />
-    </svg>
-  );
-}
-
-/** Container glyph for the Projects slug — a box holding one pinned record. */
-function ProjectsIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M2.5 5.5 8 2.5l5.5 3v5L8 13.5 2.5 10.5z" />
-      <path d="M2.5 5.5 8 8.5l5.5-3" />
-      <path d="M8 8.5v5" />
-    </svg>
-  );
-}
 
 /** Per-category glyph for the composer chips — the icon carries the category
  * so the controls need no uppercase labels. One consistent 1.4 stroke. */
@@ -1437,25 +1370,7 @@ export function CommandPalette({ commands, onClose }: {
  * button always read/write the same setting. */
 const RAILS_KEY = "workflow.rails";
 
-function RailsToggle({ off, onToggle }: {
-  readonly off: boolean;
-  readonly onToggle: (off: boolean) => void;
-}) {
-  return (
-    <button
-      type="button"
-      className="rail-toggle"
-      aria-pressed={off}
-      title={off ? "Show the git rail and inspector panels" : "Focus the conversation — hide the side panels"}
-      onClick={() => onToggle(!off)}
-    >
-      <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
-        <path d="M5.8 2.5v11M10.2 2.5v11" />
-      </svg>
-    </button>
-  );
-}
+
 
 /** Live activity while a turn runs: what the agent is doing plus elapsed time.
  * The status reads the same projection the transcript renders — no extra
@@ -2415,80 +2330,121 @@ function AddTaskForm({ refresh }: { readonly refresh: () => Promise<void> }) {
   );
 }
 
-const ENFORCEMENT_COPY: Record<string, string> = {
-  advisory: "Advisory: the agent's actions are reviewed and recorded, but file and command mutations are not pre-authorized before they run.",
-  enforced: "Enforced: agent file and command mutations require Workflow authorization before they run.",
-};
-
-/**
- * Safety-relevant fact, styled as one: advisory can never render equivalent
- * to enforced (PRODUCT.md invariant), so advisory is a persistent amber
- * outline badge and enforced a neutral filled one in the header.
- */
-function EnforcementBadge({ level, transport, copy }: {
-  readonly level: string | undefined;
-  readonly transport: string | undefined;
-  readonly copy: string | undefined;
-}) {
-  if (level === undefined) return <span className="shell-host">connecting</span>;
-  return (
-    <span
-      className={`enforcement-badge enforcement-${level}`}
-      title={copy}
-      aria-label={copy ?? "enforcement level unavailable"}
-    >
-      {level.toUpperCase()}
-      {transport !== undefined && <span className="enforcement-transport"> / {transport}</span>}
-    </span>
-  );
-}
+// W174 phase 1a: the enforcement fact's copy and badge, the rails toggle,
+// and the nav glyphs moved to shell.tsx (the shell owns its chrome); this
+// file composes them.
 
 /** Top-bar views. Agents (renamed from "Sessions" 2026-09-19) and Schedules
  * are pages (nav slugs); session history stays reachable from the composer
  * via the /agents command, with /sessions kept as an alias. The settings
  * panel (W077-era operator surfaces) is reachable from the gear and the
- * Ctrl/Cmd+, command. */
-export type AppView = "chat" | "agents" | "board" | "schedules" | "projects" | "usage" | "settings";
+ * Ctrl/Cmd+, command. W174 phase 1a adds the dashboard pages: overview at
+ * the rail's top, plus runs / reviews / activity / audit — routes live now,
+ * their content arrives with the next phase. */
+export type { AppView } from "./shell.js";
+
+/** The hash's view on first paint; anything unreadable keeps the default. */
+function initialHashView(): AppView {
+  try {
+    return viewForHash(window.location.hash) ?? defaultAppView;
+  } catch {
+    return defaultAppView;
+  }
+}
+
+/** Mirrors the view state into the location hash. Best-effort: a context
+ * without a window (or a denied location) keeps state-only routing. */
+function syncHash(view: AppView): void {
+  try {
+    const next = hashForView(view);
+    if (window.location.hash !== next) window.location.hash = next;
+  } catch {
+    // Not a browser surface: the shell keeps its state-only routing.
+  }
+}
 
 export function App() {
   // The chat view focuses one parallel session at a time; undefined = the
   // server's focused session. State lives above the runtime provider so the
   // poll and every session-scoped fetch carry the same session id.
-  const [view, setView] = useState<AppView>("chat");
+  // W174 phase 1a: the view state mirrors the location hash — the shell's
+  // routes are plain "#/" + slug (default #/overview, no router dependency).
+  const [view, setView] = useState<AppView>(initialHashView);
   const [focusedSessionId, setFocusedSessionId] = useState<string | undefined>(undefined);
-  const handleCommand = useCallback((command: string): boolean => {
-    const name = command.split(/\s+/)[0]?.toLowerCase() ?? "";
-    // /agents is the truthful name; /sessions stays as a documented alias.
-    if (name === "/agents" || name === "/sessions") {
-      setView("agents");
-      return true;
-    }
-    if (name === "/schedules") {
-      setView("schedules");
-      return true;
-    }
-    if (name === "/board") {
-      setView("board");
-      return true;
-    }
-    if (name === "/usage") {
-      setView("usage");
-      return true;
-    }
-    if (name === "/settings") {
-      setView("settings");
-      return true;
-    }
-    if (name === "/chat") {
-      setView("chat");
-      return true;
-    }
-    return false;
+  const updateView = useCallback((next: AppView): void => {
+    setView(next);
+    syncHash(next);
   }, []);
+  // Browser back/forward drives the shell through the hashchange lane.
+  useEffect(() => {
+    const onHash = (): void => {
+      const next = viewForHash(window.location.hash);
+      if (next !== undefined) setView(next);
+    };
+    try {
+      window.addEventListener("hashchange", onHash);
+    } catch {
+      // Not a browser surface: the shell keeps its state-only routing.
+    }
+    return () => {
+      try {
+        window.removeEventListener("hashchange", onHash);
+      } catch {
+        // Not a browser surface.
+      }
+    };
+  }, []);
+  // Land on #/overview so reloads and the back stack start on the default.
+  useEffect(() => {
+    try {
+      if (window.location.hash === "" && typeof window.history?.replaceState === "function") {
+        window.history.replaceState(null, "", hashForView(defaultAppView));
+      }
+    } catch {
+      // Not a browser surface.
+    }
+  }, []);
+  const handleCommand = useCallback((command: string): boolean => {
+    const next = commandView(command);
+    if (next === undefined) return false;
+    updateView(next);
+    return true;
+  }, [updateView]);
   return (
     <WorkflowRuntimeProvider sessionId={focusedSessionId} onCommandSession={handleCommand}>
-      <AppShell view={view} setView={setView} focusedSessionId={focusedSessionId} setFocusedSessionId={setFocusedSessionId} />
+      <AppShell view={view} setView={updateView} focusedSessionId={focusedSessionId} setFocusedSessionId={setFocusedSessionId} />
     </WorkflowRuntimeProvider>
+  );
+}
+
+/** W174 phase 1a: the chat page's own head — the "+ New thread" affordance
+ * moved here from the old global top bar; the focused session's editable
+ * title rides beside it. The shell header above keeps the per-page title
+ * and the enforcement fact. */
+export function ChatPageHead({ session, refresh, onNew }: {
+  readonly session: SessionMeta | undefined;
+  readonly refresh: () => Promise<void>;
+  readonly onNew: () => void;
+}) {
+  return (
+    <div className="page-head chat-page-head">
+      <SessionTitle session={session} refresh={refresh} />
+      <button type="button" className="btn btn-ghost new-thread" title="Start a new thread (Alt+N)" onClick={onNew}>
+        <span aria-hidden="true">+</span> New
+      </button>
+    </div>
+  );
+}
+
+/** W174 phase 1a: the five new dashboard pages ship their ROUTES in this
+ * phase and their content in the next — each renders a named absence (what
+ * the page is, when it arrives), never a fabricated empty panel. */
+function PhasePlaceholder({ page, phase }: { readonly page: string; readonly phase: string }) {
+  return (
+    <div className="phase-placeholder" role="status">
+      <h3 className="phase-placeholder-title">{page}</h3>
+      <p className="phase-placeholder-copy">the page arrives with its phase ({phase})</p>
+    </div>
   );
 }
 
@@ -2566,6 +2522,19 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
       // Storage unavailable: the toggle applies for this session only.
     }
   }, [railsOff]);
+  // W174 phase 1a: the rail's collapsed preference persists per browser
+  // under the two-shape guarded-localStorage pattern (issue-view-state
+  // precedent): a denied or corrupt storage degrades to the expanded
+  // default, and nothing in the render/update path throws.
+  const [railState, setRailState] = useState<RailState>(() => readRailStateFromWindow());
+  const toggleRailCollapsed = useCallback((): void => {
+    setRailState((state) => {
+      const next = withRailCollapsed(state, !(state.collapsed ?? false));
+      saveRailStateToWindow(next);
+      return next;
+    });
+  }, []);
+  const railCollapsed = railState.collapsed ?? false;
 
   // Keyboard shortcuts: "/" focuses the composer, Escape cancels a running
   // turn (when no popover/input has focus), Alt+N starts a new session,
@@ -2672,49 +2641,31 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
     await refreshSessions();
   }, [refreshSessions]);
 
+  // The rail's groups. Badges ride the shell's existing polls — each badge
+  // is a recorded count, never a view-side derivation:
+  //   Board: the hub registry's in_progress keys on the board payload.
+  //   Agents: the session registry's count.
+  //   Chat: one pending operator permission prompt (presence, not a count).
+  const railSections = shellRailSections({
+    chat: permissions.pending === null ? undefined : 1,
+    board: inProgress?.length,
+    agents: sessions?.length,
+  });
+
   return (
     <div className="shell">
-      <header className="shell-header">
-        <div className="shell-header-left">
-          <RailsToggle off={railsOff} onToggle={setRailsOff} />
-          <h1 className="shell-wordmark">Workflow</h1>
-          <button
-            type="button"
-            className="btn btn-ghost new-thread"
-            title="Start a new thread (Alt+N)"
-            onClick={() => createSession(refreshSessions)}
-          >
-            <span aria-hidden="true">+</span> New
-          </button>
-          <nav className="shell-nav" aria-label="Views">
-            {([
-              ["chat", "Chat", <ChatIcon key="c" />],
-              ["agents", "Agents", <AgentsIcon key="s" />],
-              ["board", "Board", <BoardIcon key="b" />],
-              ["schedules", "Schedules", <SchedulesIcon key="d" />],
-              ["projects", "Projects", <ProjectsIcon key="p" />],
-              ["usage", "Usage", <UsageIcon key="u" />],
-              ["settings", "Settings", <GearIcon key="g" />],
-            ] as const).map(([slug, label, icon]) => (
-              <button
-                key={slug}
-                type="button"
-                className={`shell-nav-slug ${view === slug ? "shell-nav-slug-on" : ""}`}
-                aria-current={view === slug ? "page" : undefined}
-                onClick={() => setView(slug)}
-              >
-                {icon}
-                <span>{label}</span>
-              </button>
-            ))}
-          </nav>
-          {view === "chat" && <SessionTitle session={activeSession} refresh={refreshSessions} />}
-        </div>
-        <div className="shell-header-actions">
-          <EnforcementBadge level={snapshot?.enforcementLevel} transport={snapshot?.transport} copy={enforcementCopy} />
-        </div>
-      </header>
+      <ShellRail view={view} onSelect={setView} sections={railSections} collapsed={railCollapsed} onToggleCollapsed={toggleRailCollapsed} />
+      <div className="shell-main">
+      <ShellHeader
+        title={shellViewTitle(view)}
+        railsOff={railsOff}
+        onRailsToggle={setRailsOff}
+        enforcement={{ level: snapshot?.enforcementLevel, transport: snapshot?.transport, copy: enforcementCopy }}
+      />
       <PostureStrip state={posture} onAction={(target) => setView(target)} />
+      {view === "chat" && (
+        <ChatPageHead session={activeSession} refresh={refreshSessions} onNew={() => createSession(refreshSessions)} />
+      )}
       {view === "agents" ? (
         <AgentsView
           sessions={sessions}
@@ -2861,6 +2812,16 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
         <BoardView board={board} reason={boardReason} read={boardRead} workProducts={workProducts} inProgress={inProgress} viewState={issueViewState} onViewState={updateIssueViewState} />
       ) : view === "usage" ? (
         <UsageView />
+      ) : view === "overview" ? (
+        <PhasePlaceholder page="Overview" phase="the dashboard strip and lanes ship with phase 1b" />
+      ) : view === "runs" ? (
+        <PhasePlaceholder page="Runs" phase="the run inspector ships with phase 1b" />
+      ) : view === "reviews" ? (
+        <PhasePlaceholder page="Reviews" phase="the review inbox ships with phase 1b" />
+      ) : view === "activity" ? (
+        <PhasePlaceholder page="Activity" phase="the activity timeline ships with phase 1b" />
+      ) : view === "audit" ? (
+        <PhasePlaceholder page="Audit" phase="the audit ledger ships with phase 1b" />
       ) : view === "settings" ? (
         <SettingsDialog
           onClose={() => setView("chat")}
@@ -2942,6 +2903,7 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
         usage={usage}
         isRunning={isRunning}
       />
+      </div>
       {paletteOpen && (
         <CommandPalette commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
       )}
