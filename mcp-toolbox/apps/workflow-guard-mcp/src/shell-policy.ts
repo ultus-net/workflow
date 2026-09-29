@@ -134,7 +134,6 @@ function interactiveReason(command: string, depth = 0): string | undefined {
     // (`busybox top`) names the same command. The candidate is lowercased so
     // matching is case-insensitive like the class regex, while a monitor name
     // as argument data (`echo top`, `az ... --name top`) stays non-execution.
-    const busyboxApplet = /^busybox$/i.test(executable) ? unwrapped[1] : undefined;
     // P18 (a): the W088 port was single-level — `busybox env top`,
     // `busybox timeout top`, and `busybox sh -c top` stayed allowed while
     // their non-busybox forms ask. Nested busybox forms classify through
@@ -142,8 +141,17 @@ function interactiveReason(command: string, depth = 0): string | undefined {
     // command's own wrapper words unwrap WORD-WISE (no string round trip —
     // a quoted argv word stays data), so the busybox form classifies
     // exactly like its direct spelling. Direct forms are unchanged: past
-    // the head the unwrap is a no-op for them.
-    const effective = busyboxApplet !== undefined ? unwrapWords(unwrapped.slice(1)) : unwrapped;
+    // the head the unwrap is a no-op for them. The review's P2: the lens is
+    // a LOOP (the git lane's while-lens mirrored) — `busybox busybox sh -c
+    // top` must classify like `busybox sh -c top`, one busybox head per
+    // pass (length strictly decreases; termination guaranteed).
+    let effective = unwrapped;
+    if (/^busybox$/i.test(executable)) {
+      effective = unwrapWords(effective.slice(1));
+      while (/^busybox$/i.test(basename(effective[0] ?? "")) && effective.length > 1) {
+        effective = unwrapWords(effective.slice(1));
+      }
+    }
     const effectiveExecutable = basename(effective[0] ?? "");
     const candidate = effectiveExecutable.toLowerCase();
     if (/^(?:nano|vim?|emacs|pico|joe|micro|less|more|most|htop|btop|atop|glances)$/i.test(candidate)) return "interactive terminal command can hang an agent session";
@@ -155,7 +163,7 @@ function interactiveReason(command: string, depth = 0): string | undefined {
       const ownArgs = effective.slice(1);
       if (!ownArgs.some((word) => /^(?:--batch|-[A-Za-z]*b[A-Za-z]*)$/.test(word))) return "interactive process monitor can hang an agent session";
     }
-    if (/^(?:ba|z|da|k)?sh$/i.test(effectiveExecutable)) {
+    if (/^(?:ba|z|da|k|x)?sh$/i.test(effectiveExecutable)) {
       const commandFlag = effective.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
       if (commandFlag >= 0 && effective[commandFlag + 1] && interactiveReason(effective[commandFlag + 1]!, depth + 1)) return "nested shell command can open an interactive terminal program";
     }

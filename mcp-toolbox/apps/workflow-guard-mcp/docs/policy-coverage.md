@@ -42,7 +42,11 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
 ## Upstream parity log
 
 - **2026-09-30 (P18, the wave's batch-1 task 3, branch `feat/p18-guard`): the
-  parked P18 residual edges closed.** (a) The busybox single-level asymmetry
+  parked P18 residual edges closed.**
+
+  > **Dated review-round note (2026-09-30, the fresh-eyes review's two P2s, fixed in code):** (1) the shell lane's busybox lens is a LOOP now (the git lane's while-lens mirrored) — `busybox busybox sh -c top` classifies like `busybox sh -c top` (ask), one busybox word per pass; the round-1 prose below claimed the shell lane handled repeated busybox — the trace allowed it, the claim was unsupported, and the loop + its pin close it; (2) the interactive lane's sh-family regex gains `x` so `xsh -c top` asks like `sh -c top` — the lanes' regexes now match (`(?:ba|z|da|k|x)?sh`). Both pins added; dist rebuilt + re-probed (the two cells ask on dist too); 96/0 policy suite.
+
+  (a) The busybox single-level asymmetry
   (W088's recorded "busybox env top / busybox timeout top / busybox sh -c top
   stay allowed while their non-busybox forms ask") is fixed: `interactiveReason`
   and the git-lane wrapper lens unwrap the words AFTER the busybox applet word
@@ -70,7 +74,8 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   honestly). Remains open from the parked row: the ref-adjacent filesystem
   routes (direct `.git/` writes) — covered only by the workspace-boundary
   lanes, unchanged. Evidence: red-first 92/3 (95 tests, 3 fail captured
-  verbatim against unmodified src) → 95/0; full toolbox corpus
+  verbatim against unmodified src) → 95/0, then the review round's two P2
+  fixes + pins → 96/0; full toolbox corpus
   `pnpm run verify` exit 0 in the worktree (typecheck+build+tests across the
   workspace, dist rebuilt and probed: nested-busybox ask cells, xsh/busybox
   git-lane denies, the three `-c=` allows all match dist); repo lint +

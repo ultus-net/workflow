@@ -1261,6 +1261,21 @@ test("P18 (a): nested busybox forms classify through the wrapper-transparency le
   // the busybox form allows exactly like its direct form.
   assert.equal(checkPolicy({ action: "shell", command: "env 'a; top'" }).decision, "allow");
   assert.equal(checkPolicy({ action: "shell", command: "busybox env 'a; top'" }).decision, "allow");
+  // The review's P2: the lens is a LOOP — a repeated busybox head
+  // (`busybox busybox sh -c top`) must classify like `busybox sh -c top`,
+  // one busybox word per pass, not stall at the second level.
+  assert.equal(checkPolicy({ action: "shell", command: "busybox busybox sh -c top" }).decision, "ask");
+});
+
+test("P18 (b, review round): xsh joins the interactive-monitor lens too — the shell lane's sh-family regex matches the git lane's", () => {
+  // The review's second P2: the git lane's sh-family regex gained x
+  // (xsh = busybox sh's alternate name) but the interactive lane's regex
+  // had not — `xsh -c top` allowed while `sh -c top` asks (the same
+  // single-level asymmetry class the busybox fix closed). The lanes match
+  // now; the pin holds both directions.
+  assert.equal(checkPolicy({ action: "shell", command: "xsh -c top" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c top" }).decision, "ask");
+  assert.equal(checkPolicy({ action: "shell", command: "zsh -c top" }).decision, "ask");
 });
 
 test("P18 (b): busybox sh and xsh join the W102 wrapper transparency (exotic interpreter names)", () => {
