@@ -3,6 +3,7 @@ import type { BoardOutcome, ExternalTask, WorkProductCardState } from "../../int
 import type { IssueDetailOutcome, ProviderReadRecord } from "../../integrations/issue-detail.js";
 import { BOARD_POLL_MS, BOARD_LINK_LIVENESS_LABELS, boardLinkLiveness } from "./presenters.js";
 import { withColumnDensity, withColumnPageSize, type IssueViewState } from "./issue-view-state.js";
+import type { GitStatus, GitWorktree } from "./app.js";
 import { useState } from "react";
 
 /**
@@ -39,7 +40,7 @@ import { useState } from "react";
  * review, so in_progress outranks the work-product state; once the run
  * finishes the payload drops the key and the W165 model decides.
  */
-export function BoardView({ board, reason, read, workProducts, inProgress, viewState, onViewState, projectWorkspaces }: {
+export function BoardView({ board, reason, read, workProducts, inProgress, viewState, onViewState, projectWorkspaces, gitStatus, worktrees }: {
   readonly board: BoardOutcome | null | undefined;
   readonly reason?: string | undefined;
   readonly read?: ProviderReadRecord | null | undefined;
@@ -48,6 +49,13 @@ export function BoardView({ board, reason, read, workProducts, inProgress, viewS
   readonly viewState?: IssueViewState | undefined;
   readonly onViewState?: ((next: IssueViewState) => void) | undefined;
   readonly projectWorkspaces?: readonly string[] | undefined;
+  /**
+   * W176: the ALREADY-polled /api/git + /api/worktrees state (AppShell's
+   * `useGitStatus`/`useWorktrees` passed through) — the ONLY source the
+   * Board header's workspace strip may render.
+   */
+  readonly gitStatus?: GitStatus | undefined;
+  readonly worktrees?: readonly GitWorktree[] | undefined;
 }) {
   if (board === undefined) {
     return (
@@ -131,6 +139,7 @@ export function BoardView({ board, reason, read, workProducts, inProgress, viewS
         )}
         {cacheLabel !== undefined && <span className="board-meta">{cacheLabel}</span>}
         <span className="board-meta" title="the hub re-reads the provider on this cadence">polled every {BOARD_POLL_MS / 1000}s</span>
+        <WorkspaceStrip gitStatus={gitStatus} worktrees={worktrees} />
       </header>
       <div className="board-columns">
         <BoardColumn title="open" tasks={open} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} />
@@ -151,6 +160,56 @@ export function BoardView({ board, reason, read, workProducts, inProgress, viewS
         )}
       </div>
     </section>
+  );
+}
+
+/** W176: the Board header's workspace strip — the workspace-level branch and
+ * worktree live state from the ALREADY-polled `/api/git` + `/api/worktrees`
+ * (AppShell's `useGitStatus`/`useWorktrees`, passed through `BoardView`).
+ * WORKSPACE-level live state — never presented as a per-run record: the
+ * framing is the strip's own title/hint element, and no row is attached to
+ * or derived from any run card. Each worktree row renders its recorded
+ * branch (or the honest "—" when git reports none) plus its recorded flags
+ * (current / detached HEAD / bare); the workspace's change count comes from
+ * the git-status poll. A poll that answered nothing renders the degraded
+ * naming — "git unavailable" when nothing arrived, the missing record's name
+ * when only one did — never a fabricated workspace state. */
+export const WORKSPACE_STRIP_FRAMING = "workspace-level live state — never presented as a per-run record";
+
+export function WorkspaceStrip({ gitStatus, worktrees }: {
+  readonly gitStatus?: GitStatus | undefined;
+  readonly worktrees?: readonly GitWorktree[] | undefined;
+}) {
+  const bothAbsent = gitStatus === undefined && worktrees === undefined;
+  return (
+    <div className="workspace-strip" role="status">
+      <span className="workspace-strip-frame" title={WORKSPACE_STRIP_FRAMING}>workspace-level live state</span>
+      {bothAbsent && <span className="workspace-strip-degraded">workspace live state unavailable — git unavailable</span>}
+      {gitStatus !== undefined && (
+        <span className="workspace-strip-branch">
+          {gitStatus.branch} — {gitStatus.changes.length} changed path{gitStatus.changes.length === 1 ? "" : "s"}
+        </span>
+      )}
+      {!bothAbsent && gitStatus === undefined && <span className="workspace-strip-degraded">git status unavailable</span>}
+      {worktrees !== undefined && (
+        <ul className="workspace-worktrees">
+          {worktrees.map((worktree) => {
+            const status = [
+              ...(worktree.current ? ["current"] : []),
+              ...(worktree.detached ? ["detached HEAD"] : []),
+              ...(worktree.bare ? ["bare"] : []),
+            ].join(", ");
+            return (
+              <li key={worktree.path} className="workspace-worktree" title={worktree.path}>
+                <span className="workspace-worktree-branch">{worktree.branch ?? "—"}</span>
+                {status !== "" && <span className="workspace-worktree-status">{status}</span>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {!bothAbsent && worktrees === undefined && <span className="workspace-strip-degraded">worktree list unavailable</span>}
+    </div>
   );
 }
 

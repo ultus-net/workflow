@@ -228,10 +228,10 @@ test("collapsed-state persistence survives both storage-denial shapes", () => {
 });
 
 test("the phase pages are named absences — routes live now, content arrives with its phase", () => {
-  // W176 phase 3: the Activity page shipped (its own slice) — Runs, Reviews,
-  // and Audit remain placeholders until their phases land.
+  // W175 phase 2 shipped the runs page (its pins live in test/webapp-runs.test.ts);
+  // W176 phase 3 shipped the Activity page (its pins live in test/webapp-activity.test.ts).
+  // Reviews and Audit remain placeholders until their phases land.
   const pages: readonly (readonly [AppView, string])[] = [
-    ["runs", "Runs"],
     ["reviews", "Reviews"],
     ["audit", "Audit"],
   ];

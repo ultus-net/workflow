@@ -11,13 +11,13 @@ import { ActionPart, AttentionPart, CompletionPart, OutcomePart, PlanPart, Think
 import { ConfigField } from "./config-field.js";
 import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
-import { describeActivity, formatElapsed, formatRelativeTime, formatTokens, BOARD_POLL_MS } from "./presenters.js";
+import { describeActivity, formatElapsed, formatRelativeTime, formatTokens, statusToken, BOARD_POLL_MS } from "./presenters.js";
 import { useSessionCommands, useSessionState, useSessionStatus, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog, type RoutingFacts } from "./settings-dialog.js";
 import { AgentsView, budgetRaiseOutcome } from "./agents-view.js";
 import { ActivityPage } from "./activity-page.js";
 import { ActivityTimelinePanel, useActivityTimeline } from "./activity-timeline.js";
-import { PostureStrip, usePosture } from "./posture-strip.js";
+import { PostureStrip, postureBudgetIncidents, usePosture } from "./posture-strip.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
 import { ProjectsView, type ProjectMeta } from "./projects-view.js";
 import { BoardView } from "./board-view.js";
@@ -25,12 +25,24 @@ import { readIssueViewStateGuarded, saveIssueViewStateGuarded, type IssueViewSta
 // W174 phase 1a: the shell chrome (rail / header) and its plain hash routing
 // live beside it in shell.tsx; the rail's collapsed preference persists
 // through rail-state.ts (the two-shape guarded-localStorage pattern).
-import { ShellHeader, ShellRail, commandView, defaultAppView, ENFORCEMENT_COPY, hashForView, shellRailSections, shellViewTitle, viewForHash, type AppView } from "./shell.js";
+import { ShellHeader, ShellRail, APP_VIEWS, commandView, defaultAppView, ENFORCEMENT_COPY, hashForView, shellRailSections, shellViewTitle, viewForHash, type AppView } from "./shell.js";
 import { readRailStateFromWindow, saveRailStateToWindow, withRailCollapsed, type RailState } from "./rail-state.js";
 // W174 phase 1b: the Overview landing — five zones fed by the shell's
 // existing polls plus the W175 runs relay (named absence until the relay
 // answers; the recorded-spend tile aggregates the relay's per-run usage).
-import { OverviewView, useRunsRecord } from "./overview-view.js";
+import { OverviewView } from "./overview-view.js";
+// W175 phase 2: the Runs page and the run detail panel; the runs record's
+// ONE mirror + poll (runs-record.ts); the detail opener's guarded
+// sessionStorage memory (run-detail-state.ts); the W158 evidence primitives
+// and hooks in their shared home (evidence-preview.tsx), re-exported below
+// so the pinnable surface stays stable.
+import { RunsView } from "./runs-view.js";
+import { RunDetailPanel } from "./run-detail-panel.js";
+import { useRunsRecord } from "./runs-record.js";
+import { clearRunDetailOpenToWindow, readRunDetailOpenFromWindow, saveRunDetailOpenToWindow, type RunDetailOpen } from "./run-detail-state.js";
+import { EvidenceStripRow, useContentPreviews, useHubEvidence, type EvidenceContentRefView } from "./evidence-preview.js";
+export { artifactKind, EvidenceStripRow } from "./evidence-preview.js";
+export type { EvidenceContentPreview, EvidenceContentRefView } from "./evidence-preview.js";
 import type { ScheduleRecentRun } from "../../integrations/operator-posture.js";
 import type { BoardOutcome, WorkProductCardState } from "../../integrations/task-provider.js";
 import type { ProviderReadRecord } from "../../integrations/issue-detail.js";
@@ -61,111 +73,6 @@ interface SnapshotEvidence {
   readonly content?: EvidenceContentRefView;
 }
 
-/**
- * W154 (the artifact strip's discriminator): an evidence record whose subject
- * is a filesystem path is an in-worktree SIGNPOST — the strip must never
- * present it as a durable artifact (the borrowings spec's criterion 3, pinned
- * by test). Everything else renders as the record it is. Exported so the
- * refusal contract is pinnable without driving the panel.
- */
-export function artifactKind(subject: string): "record" | "workspace-path" {
-  return subject.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(subject) || subject.startsWith("~")
-    ? "workspace-path"
-    : "record";
-}
-
-/** W158: the strip's view of a kernel content reference — exactly what the
- * record carries (kind + ref + byteSize); the bytes live behind the ref in
- * the hub's bounded store, fetched through the same-origin /api/evidence-content
- * proxy. */
-export interface EvidenceContentRefView {
-  readonly kind: string;
-  readonly ref: string;
-  readonly byteSize: number;
-}
-
-/** W158: the strip's named preview states — every non-ready state says why,
- * and "ready" carries exactly the bytes the hub's route answered. No state is
- * fabricated: loading (fetch in flight), absent (the hub answered 404 — the
- * ref is evicted, or the store restarted: the per-store nonce makes a
- * persisted record miss honestly), unavailable (no hub to ask). */
-export type EvidenceContentPreview =
-  | { readonly status: "loading" }
-  | { readonly status: "ready"; readonly kind: string; readonly mediaType: string; readonly bytes: string }
-  | { readonly status: "absent" }
-  | { readonly status: "unavailable" };
-
-const EVIDENCE_OUTPUT_RENDER_CAP = 4096;
-
-/** W158 (the strip's preview rendering): ONE row renderer for local and hub
- * evidence records. A record without content renders as its plain self (the
- * W154 strip, unchanged); a record with content renders the capture inline —
- * test-output as text, screenshot as a data-URL image (the capture contract:
- * screenshots ride base64, test outputs ride utf8) — and every non-ready
- * state is named, never a silent fallback or a fabricated payload. A long
- * test-output renders its head plus a named truncation; the full bytes stay
- * in the hub's bounded store. Exported so the render contract is pinnable
- * without driving the panel. */
-export function EvidenceStripRow(props: {
-  readonly subject: string;
-  readonly result: string;
-  readonly freshness: string;
-  readonly origin: "local" | "hub";
-  readonly content?: EvidenceContentRefView | undefined;
-  readonly preview?: EvidenceContentPreview | undefined;
-}) {
-  const path = artifactKind(props.subject) === "workspace-path";
-  return (
-    <div className={`evidence-row ${props.freshness === "stale" ? "evidence-row-stale" : ""}`}>
-      <p className="evidence-row-line">
-        {path
-          ? <span className="evidence-signpost" title="in-worktree signpost — a path, not a durable artifact">workspace path · </span>
-          : <span className="evidence-record-tag">record · </span>}
-        {props.origin === "hub" && <span className="evidence-origin-hub" title="produced by the hub's own flows (run-registry verdicts, the test runner)">hub · </span>}
-        {props.subject}: {props.result} / {props.freshness}
-      </p>
-      {props.content !== undefined && <EvidenceContentPreviewBlock content={props.content} preview={props.preview ?? { status: "loading" }} />}
-    </div>
-  );
-}
-
-/** The strip's in-place preview block: only reached when the record carries a
- * content reference. */
-function EvidenceContentPreviewBlock(props: { readonly content: EvidenceContentRefView; readonly preview: EvidenceContentPreview }) {
-  if (props.preview.status === "loading") {
-    return <p className="evidence-content-state">content · loading…</p>;
-  }
-  if (props.preview.status === "absent") {
-    return (
-      <p className="evidence-content-state" title="the ref is not in the hub's bounded store: evicted, a store restart (per-store nonce), or the capture was over-cap and never got a ref">
-        content not available — evicted from the bounded store ({props.content.byteSize} bytes were recorded)
-      </p>
-    );
-  }
-  if (props.preview.status === "unavailable") {
-    return <p className="evidence-content-state">content not available — the hub is unreachable</p>;
-  }
-  if (props.content.kind === "screenshot") {
-    return (
-      <img
-        className="evidence-content-preview evidence-content-screenshot"
-        src={`data:${props.preview.mediaType};base64,${props.preview.bytes}`}
-        alt={`${props.content.kind} capture (${props.content.byteSize} bytes)`}
-      />
-    );
-  }
-  // test-output: bounded rendering — the store caps captures at 256KB and a
-  // DOM node that big is a browser freeze, so the strip renders the head and
-  // NAMES the truncation (the full bytes stay in the hub's store).
-  const truncated = props.preview.bytes.length > EVIDENCE_OUTPUT_RENDER_CAP;
-  return (
-    <>
-      <pre className="evidence-content-preview evidence-content-output">{truncated ? props.preview.bytes.slice(0, EVIDENCE_OUTPUT_RENDER_CAP) : props.preview.bytes}</pre>
-      {truncated && <p className="evidence-content-state">first {EVIDENCE_OUTPUT_RENDER_CAP} bytes shown of {props.content.byteSize}; the full capture stays in the hub's bounded store</p>}
-    </>
-  );
-}
-
 interface SnapshotHistory {
   readonly taskId: string;
   readonly from: string;
@@ -191,7 +98,9 @@ interface GitChange {
   readonly status: "added" | "deleted" | "modified" | "renamed" | "untracked";
 }
 
-interface GitStatus {
+/** The /api/git record: the workspace's branch and its changed paths. W176:
+ * exported so the Board header's workspace strip types its record source. */
+export interface GitStatus {
   readonly branch: string;
   readonly changes: readonly GitChange[];
 }
@@ -242,87 +151,9 @@ function useSnapshot() {
   return { snapshot, refresh: load };
 }
 
-/** W158: a hub evidence record as the /api/evidence relay carries it — the
- * hub's kernel projection narrowed to what the strip renders. */
-interface HubEvidenceRow {
-  readonly id?: string;
-  readonly subject: string;
-  readonly result: string;
-  readonly freshness: string;
-  readonly content?: EvidenceContentRefView;
-}
-
-/** W158: polls the hub's evidence relay. Degraded state is a NAMED absence:
- * rows null with the reason (no hub, or a hub older than the relay) — never a
- * fabricated empty list. */
-function useHubEvidence() {
-  const [rows, setRows] = useState<readonly HubEvidenceRow[] | null>(null);
-  const [reason, setReason] = useState<string | undefined>(undefined);
-  const load = useCallback(async (): Promise<void> => {
-    try {
-      const response = await fetch("/api/evidence");
-      if (response.ok) {
-        const payload = await response.json() as { evidence: readonly HubEvidenceRow[] | null; reason?: string };
-        setRows(payload.evidence);
-        setReason(payload.reason);
-      }
-    } catch {
-      // Keep the last good rows; the next poll retries.
-    }
-  }, []);
-  useEffect(() => {
-    void load();
-    const timer = setInterval(() => void load(), PANEL_POLL_MS);
-    return () => clearInterval(timer);
-  }, [load]);
-  return { rows, reason };
-}
-
-/** W158: one preview fetch per content ref (deduped — two records citing the
- * same capture fetch once, and a settled ref never re-fires on the poll
- * cadence). Evicted/unknown refs stay absent; a hub outage marks
- * unavailable. */
-function useContentPreviews(refs: readonly string[]): ReadonlyMap<string, EvidenceContentPreview> {
-  const [previews, setPreviews] = useState<ReadonlyMap<string, EvidenceContentPreview>>(new Map());
-  const requested = useRef<ReadonlySet<string>>(new Set());
-  const wanted = useMemo(() => [...new Set(refs)], [refs]);
-  const wantedKey = wanted.join("\u0000");
-  useEffect(() => {
-    const pending = wanted.filter((ref) => !requested.current.has(ref));
-    if (pending.length === 0) return;
-    for (const ref of pending) (requested.current as Set<string>).add(ref);
-    setPreviews((current) => {
-      const next = new Map(current);
-      for (const ref of pending) if (!next.has(ref)) next.set(ref, { status: "loading" });
-      return next;
-    });
-    for (const ref of pending) {
-      void (async () => {
-        try {
-          const response = await fetch("/api/evidence-content", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ ref }),
-          });
-          if (response.status === 200) {
-            const stored = await response.json() as { kind: string; mediaType: string; bytes: string };
-            setPreviews((current) => new Map(current).set(ref, { status: "ready", kind: stored.kind, mediaType: stored.mediaType, bytes: stored.bytes }));
-          } else if (response.status === 404) {
-            setPreviews((current) => new Map(current).set(ref, { status: "absent" }));
-          } else {
-            setPreviews((current) => new Map(current).set(ref, { status: "unavailable" }));
-          }
-        } catch {
-          setPreviews((current) => new Map(current).set(ref, { status: "unavailable" }));
-        }
-      })();
-    }
-    // wantedKey (not wanted) is the semantic dependency; wanted's identity
-    // changes with the poll cadence, and the requested-guard above turns
-    // those refires into no-ops.
-  }, [wantedKey, wanted]);
-  return previews;
-}
+/** W158: polls the hub's evidence relay and fetches its content previews —
+ * the hooks moved to evidence-preview.tsx (the shared home beside the run
+ * detail panel's Evidence tab). */
 
 /** One canonical step of a task's ledger (W072 kernel invariants; W083 surface).
  * Steps live in the kernel's TaskGraph — the browser only ever sees the
@@ -1989,7 +1820,7 @@ function Panels({ snapshot, refresh, worktrees, gitStatus, agents, currentAgent,
           return (
             <div className={`task ${task.state === "BLOCKED" ? "task-blocked" : ""}`} key={task.id}>
               <strong>{task.id}</strong>
-              <span className={`task-state task-state-${task.state.toLowerCase()}`}>{task.state}</span>
+              <span className={`task-state task-state-${statusToken(task.state)}`}>{task.state}</span>
               <span className="task-title">
                 {task.title}
                 {task.blockers.length > 0 && <span className="task-blockers">blocked by {task.blockers.join(", ")}</span>}
@@ -2241,7 +2072,7 @@ export function StepLedgerRow({ step, taskState, refreshSteps }: {
   const actionable = taskState === "IN_PROGRESS";
   return (
     <li className="step-row">
-      <span className={`task-state task-state-${step.state.toLowerCase()}`}>{STEP_LABEL[step.state]}</span>
+      <span className={`task-state task-state-${statusToken(step.state)}`}>{STEP_LABEL[step.state]}</span>
       <span className="step-content">{step.content}</span>
       <span className="step-evidence">
         {step.requiredEvidence.length} evidence requirement{step.requiredEvidence.length === 1 ? "" : "s"}
@@ -2540,6 +2371,29 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
     });
   }, []);
   const railCollapsed = railState.collapsed ?? false;
+  // W175 phase 2: the runs page's contextual detail panel. The opened run and
+  // the page that opened it persist per browser through sessionStorage (the
+  // guarded pair in run-detail-state.ts): a reload restores the panel, the
+  // back affordance names the opener verbatim, and closing returns focus to
+  // the invoking row and the opener page ("opened from Runs, back returns to
+  // Runs").
+  const [runDetail, setRunDetail] = useState<RunDetailOpen | undefined>(() => readRunDetailOpenFromWindow());
+  const openRunDetail = useCallback((runId: string): void => {
+    const next: RunDetailOpen = { opener: "runs", runId };
+    saveRunDetailOpenToWindow(next);
+    setRunDetail(next);
+  }, []);
+  const closeRunDetail = useCallback((): void => {
+    const opener = runDetail?.opener ?? "runs";
+    const runId = runDetail?.runId;
+    clearRunDetailOpenToWindow();
+    setRunDetail(undefined);
+    // Focus returns to the invoking row.
+    if (runId !== undefined) {
+      document.querySelector<HTMLElement>('[data-run-row="' + CSS.escape(runId) + '"]')?.focus();
+    }
+    if (opener !== view && (APP_VIEWS as readonly string[]).includes(opener)) setView(opener as AppView);
+  }, [runDetail, view, setView]);
   // W174 phase 1b: the Overview's recorded-spend lane — the /api/runs relay
   // polled beside the shell's other surfaces; a hub without the relay answers
   // the named absence (the tile says where the record lives).
@@ -2560,6 +2414,16 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
       if (event.key === "/" && !typing && document.querySelector(".settings-dialog") === null) {
         event.preventDefault();
         document.querySelector<HTMLElement>(".composer-input")?.focus();
+      } else if (
+        event.key === "Escape" && runDetail !== undefined && !typing &&
+        // The runs detail panel owns Escape while it is open (it closes and
+        // focus returns to the invoking row) — but any open chrome
+        // (settings page, command palette, model combobox) still wins, and a
+        // focused input keeps its own Escape.
+        document.querySelector(".settings-dialog, .palette, .config-combobox-pop") === null
+      ) {
+        event.preventDefault();
+        closeRunDetail();
       } else if (
         event.key === "Escape" && isRunning && !typing &&
         // Any open chrome (settings page, command palette, model combobox)
@@ -2587,7 +2451,7 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [isRunning, refreshSessions, focusedSessionId, view, setView]);
+  }, [isRunning, refreshSessions, focusedSessionId, view, setView, runDetail, closeRunDetail]);
 
   const activeSession = sessions?.find((session) => session.active);
   const hasUnused = (sessions ?? []).some((session) => !session.active && session.title === "New session");
@@ -2727,6 +2591,7 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
             if (outcome === undefined) refreshSessions();
             return outcome;
           }}
+          budgetIncidents={postureBudgetIncidents(posture)}
         />
       ) : view === "schedules" ? (
         <SchedulesView
@@ -2821,7 +2686,7 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
           }}
         />
       ) : view === "board" ? (
-        <BoardView board={board} reason={boardReason} read={boardRead} workProducts={workProducts} inProgress={inProgress} viewState={issueViewState} onViewState={updateIssueViewState} />
+        <BoardView board={board} reason={boardReason} read={boardRead} workProducts={workProducts} inProgress={inProgress} viewState={issueViewState} onViewState={updateIssueViewState} gitStatus={gitStatus} worktrees={worktrees} />
       ) : view === "usage" ? (
         <UsageView />
       ) : view === "overview" ? (
@@ -2838,7 +2703,29 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
           onNavigate={setView}
         />
       ) : view === "runs" ? (
-        <PhasePlaceholder page="Runs" phase="the run inspector ships with phase 1b" />
+        // W175 phase 2: the Runs page with the detail panel docked in the
+        // shell's right-side contextual region — opened from a row click,
+        // closed by Esc or the back affordance (focus returns to the
+        // invoking row; the opener memory rides sessionStorage).
+        <div className="shell-body runs-body">
+          <RunsView
+            record={runsRecord}
+            selectedRunId={runDetail?.runId}
+            onSelectRun={openRunDetail}
+          />
+          {runDetail !== undefined && (
+            <aside className="runs-detail" aria-label="Run detail">
+              <RunDetailPanel
+                runId={runDetail.runId}
+                record={runsRecord}
+                timeline={timeline}
+                boardRead={boardRead}
+                opener={runDetail.opener}
+                onBack={closeRunDetail}
+              />
+            </aside>
+          )}
+        </div>
       ) : view === "reviews" ? (
         <PhasePlaceholder page="Reviews" phase="the review inbox ships with phase 1b" />
       ) : view === "activity" ? (
