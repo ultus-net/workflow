@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 
-import type { ActivityTimeline } from "../../integrations/activity-timeline.js";
+import type { ActivityTimeline, TimelineRow } from "../../integrations/activity-timeline.js";
+
+// W176: the row shape rides with the row renderer so the page's fixtures
+// type against the same union the projection emits.
+export type { TimelineRow };
 
 /**
  * W152 — the unified activity timeline (the Paperclip borrow wave 3): one
@@ -50,7 +54,10 @@ export function useActivityTimeline(): TimelineState | undefined {
   return state;
 }
 
-const KIND_LABELS: Record<string, string> = {
+// W176: exported so the Activity page's kind filters expose the SAME kind
+// set/labels the panel renders — the page never invents a kind the
+// projection does not emit.
+export const KIND_LABELS: Readonly<Record<string, string>> = {
   transition: "kernel",
   review: "review",
   gate: "gate",
@@ -59,6 +66,28 @@ const KIND_LABELS: Record<string, string> = {
   origin: "schedule",
   budget: "budget",
 };
+
+/** One timeline row's render — shared by the chat panel and the W176
+ * Activity page, so the page cannot drift from the panel's honest render
+ * contract (the explicit unattributed state, the record's own time or "no
+ * recorded time", the record-kind attribution). */
+export function TimelineRowItem({ row }: {
+  readonly row: TimelineRow;
+}) {
+  return (
+    <li className={`activity-row activity-row-${row.kind}`}>
+      <span className={`activity-kind activity-kind-${row.kind}`}>{KIND_LABELS[row.kind] ?? row.kind}</span>
+      <span className="activity-row-body">
+        <span className="activity-row-summary">{row.summary}</span>
+        <span className="activity-row-attribution">
+          {row.actor} · {row.authority}
+          {" · "}
+          {row.at === null ? "no recorded time" : new Date(row.at).toLocaleString()}
+        </span>
+      </span>
+    </li>
+  );
+}
 
 export function ActivityTimelinePanel({ state }: {
   readonly state: TimelineState | undefined;
@@ -81,17 +110,7 @@ export function ActivityTimelinePanel({ state }: {
       ) : (
         <ul className="activity-timeline-rows">
           {timeline.rows.map((row, index) => (
-            <li key={`${row.kind}:${index}`} className={`activity-row activity-row-${row.kind}`}>
-              <span className={`activity-kind activity-kind-${row.kind}`}>{KIND_LABELS[row.kind] ?? row.kind}</span>
-              <span className="activity-row-body">
-                <span className="activity-row-summary">{row.summary}</span>
-                <span className="activity-row-attribution">
-                  {row.actor} · {row.authority}
-                  {" · "}
-                  {row.at === null ? "no recorded time" : new Date(row.at).toLocaleString()}
-                </span>
-              </span>
-            </li>
+            <TimelineRowItem key={`${row.kind}:${index}`} row={row} />
           ))}
         </ul>
       )}

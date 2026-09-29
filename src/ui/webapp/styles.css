@@ -3217,6 +3217,36 @@ body {
 .activity-timeline-retention { margin: 0; font-size: 0.62rem; }
 .activity-local-note { margin: 0.4rem 0 0.2rem; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.06em; }
 
+/* W176 phase 3: the Activity page — the W152 timeline promoted to a full
+   page with kind filters. Square edges, token colors, mono machine values;
+   the page owns its scroll (the chat panel's 22rem cap stays there). */
+.activity-page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.9rem clamp(0.9rem, 2vw, 1.75rem) 1.4rem;
+}
+.activity-page-degraded { justify-content: center; }
+.activity-page-filters { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.activity-page-filter {
+  font: inherit;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.activity-page-filter-active { color: var(--text); border-color: var(--border-strong); }
+.activity-page-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.activity-page-empty { margin: 0; }
+
 /* W154: the artifact strip's discriminator rows and the RSI lineage view. */
 .evidence-row { overflow-wrap: anywhere; }
 .evidence-row-line { margin: 0; }

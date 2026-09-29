@@ -228,11 +228,10 @@ test("collapsed-state persistence survives both storage-denial shapes", () => {
 });
 
 test("the phase pages are named absences — routes live now, content arrives with its phase", () => {
-  // W175 phase 2: the runs page renders real content now (its pins live in
-  // test/webapp-runs.test.ts); the remaining placeholders keep theirs.
+  // Every dashboard page has shipped except Reviews (batch 3): runs landed
+  // with W175 phase 2, Activity with W176, Audit with W177.
   const pages: readonly (readonly [AppView, string])[] = [
     ["reviews", "Reviews"],
-    ["activity", "Activity"],
   ];
   const { restore } = installWindowStorage();
   try {

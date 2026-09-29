@@ -15,6 +15,7 @@ import { describeActivity, formatElapsed, formatRelativeTime, formatTokens, stat
 import { useSessionCommands, useSessionState, useSessionStatus, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog, type RoutingFacts } from "./settings-dialog.js";
 import { AgentsView, budgetRaiseOutcome } from "./agents-view.js";
+import { ActivityPage } from "./activity-page.js";
 import { ActivityTimelinePanel, useActivityTimeline } from "./activity-timeline.js";
 import { PostureStrip, postureBudgetIncidents, usePosture } from "./posture-strip.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
@@ -2737,7 +2738,7 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
       ) : view === "reviews" ? (
         <PhasePlaceholder page="Reviews" phase="the review inbox ships with phase 1b" />
       ) : view === "activity" ? (
-        <PhasePlaceholder page="Activity" phase="the activity timeline ships with phase 1b" />
+        <ActivityPage />
       ) : view === "audit" ? (
         <AuditView record={auditRecord} />
       ) : view === "settings" ? (
