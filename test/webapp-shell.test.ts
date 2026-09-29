@@ -227,40 +227,30 @@ test("collapsed-state persistence survives both storage-denial shapes", () => {
   );
 });
 
-test("the phase pages are named absences — routes live now, content arrives with its phase", () => {
-  // Every dashboard page has shipped except Reviews (batch 3): runs landed
-  // with W175 phase 2, Activity with W176, Audit with W177.
-  const pages: readonly (readonly [AppView, string])[] = [
-    ["reviews", "Reviews"],
+test("the phase pages shipped their content — no placeholder remains anywhere", () => {
+  // Reviews shipped last (W176 phase 3, issue #347): every dashboard page
+  // now renders its content, and the PhasePlaceholder component itself is
+  // retired from app.tsx (the runs/reviews pins assert the retirement too).
+  const pages: readonly (readonly [AppView, string, string])[] = [
+    ["overview", "Overview", "class=\"overview\""],
+    ["runs", "Runs", "runs-body"],
+    ["reviews", "Reviews", "reviews-body"],
+    ["activity", "Activity", "activity-page"],
+    ["audit", "Audit", "audit-boundary"],
   ];
   const { restore } = installWindowStorage();
   try {
-    for (const [view, title] of pages) {
+    for (const [view, title, marker] of pages) {
       const markup = renderToStaticMarkup(createElement(AppShell, {
         view,
         setView: noop,
         focusedSessionId: undefined,
         setFocusedSessionId: noop,
       }));
-      assert.ok(markup.includes("phase-placeholder"), view + " renders the named-absence placeholder");
-      assert.ok(
-        markup.includes("the page arrives with its phase"),
-        view + " states that its content arrives with its phase",
-      );
+      assert.ok(!markup.includes("phase-placeholder"), view + " no longer renders the phase placeholder");
+      assert.ok(markup.includes(marker), view + " renders its page content");
       assert.ok(markup.includes(">" + title + "</h2>"), "the header titles the " + title + " page");
     }
-    // W177: the audit page shipped its content — it is no longer a
-    // placeholder; the shell renders the AuditView (its own named absences:
-    // the boundary element + the unanswered relay), never the phase copy.
-    const audit = renderToStaticMarkup(createElement(AppShell, {
-      view: "audit",
-      setView: noop,
-      focusedSessionId: undefined,
-      setFocusedSessionId: noop,
-    }));
-    assert.ok(!audit.includes("phase-placeholder"), "the audit page no longer renders the phase placeholder");
-    assert.ok(audit.includes("audit-boundary"), "the audit page renders its boundary element");
-    assert.ok(audit.includes(">Audit</h2>"), "the header titles the Audit page");
   } finally {
     restore();
   }

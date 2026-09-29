@@ -47,6 +47,10 @@ import {
   type EvidenceContentPreview,
   type HubEvidenceRow,
 } from "./evidence-preview.js";
+// W176 phase 3 (#347): the tab vocabulary is ONE list — the persisted opener
+// record (run-detail-state.ts) validates against the same tabs the strip
+// renders, so the memory and the panel can never drift apart.
+import { RUN_DETAIL_TABS, type RunDetailTab } from "./run-detail-state.js";
 import type {
   CompletionClaimView,
   ReasoningClaimFindingView,
@@ -62,8 +66,7 @@ import type { TimelineState } from "./activity-timeline.js";
 import type { TimelineRow } from "../../integrations/activity-timeline.js";
 import type { ProviderReadRecord } from "../../integrations/issue-detail.js";
 
-const TABS = ["summary", "timeline", "evidence", "review", "cost"] as const;
-export type RunDetailTab = (typeof TABS)[number];
+const TABS: readonly RunDetailTab[] = RUN_DETAIL_TABS;
 
 const TAB_LABELS: Readonly<Record<RunDetailTab, string>> = {
   summary: "Summary",
@@ -105,6 +108,11 @@ export interface RunDetailPanelProps {
   /** The page that opened the panel (the sessionStorage origin memory) —
    * the back affordance names it verbatim. */
   readonly opener: string;
+  /** W176 phase 3 (#347): the tab the panel opens on — the Reviews page
+   * opens it on the Review tab (the opener memory carries the choice).
+   * Absent → the default Summary tab. The tab strip stays operator-owned
+   * after the initial render. */
+  readonly initialTab?: RunDetailTab | undefined;
   readonly onBack: () => void;
   /** Injected evidence records/previews (the pins drive them); undefined →
    * the panel polls the evidence relay itself. */
@@ -118,11 +126,12 @@ export function RunDetailPanel({
   timeline,
   boardRead,
   opener,
+  initialTab,
   onBack,
   evidenceRows,
   evidencePreviews,
 }: RunDetailPanelProps) {
-  const [tab, setTab] = useState<RunDetailTab>("summary");
+  const [tab, setTab] = useState<RunDetailTab>(initialTab ?? "summary");
   const runs = record?.runs ?? null;
   const runRow: RunRowView | undefined = runs?.rows.find((row) => row.runId === runId);
   const origin: RunOriginView | undefined = runs?.origins?.[runId];
