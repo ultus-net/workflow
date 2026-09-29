@@ -1,6 +1,7 @@
 import type { OperatorSessionItem } from "../operator-session.js";
 import type { WebConfigOption } from "../web-config-options.js";
 import type { ProviderReadRecord } from "../../integrations/issue-detail.js";
+import type { RunOriginView } from "./runs-record.js";
 
 /**
  * W161: the external provider's poll cadence is its OWN lane, deliberately
@@ -59,6 +60,51 @@ export function formatTokens(count: number): string {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
   if (count >= 1_000) return `${(count / 1_000).toFixed(1)}k`;
   return String(count);
+}
+
+/**
+ * W175 phase 2: the ONE status vocabulary for task, run, and freshness
+ * states — used identically in badges, rows, cards, and feeds. Every recorded
+ * state maps to its class token here; a state outside the vocabulary renders
+ * lowercased verbatim (never styled by a guess). This is a MECHANICAL rename
+ * only: the rendered class strings are exactly what the views rendered before
+ * the extraction, so no restyling rides along — the map exists so every
+ * surface normalizes through one function and the pin can hold them together.
+ */
+const STATUS_TOKENS: Readonly<Record<string, string>> = {
+  ready: "ready",
+  in_progress: "in_progress",
+  verifying: "verifying",
+  verified: "verified",
+  failed: "failed",
+  cancelled: "cancelled",
+  blocked: "blocked",
+  fresh: "fresh",
+  stale: "stale",
+};
+
+export function statusToken(state: string): string {
+  const token = state.toLowerCase();
+  return STATUS_TOKENS[token] ?? token;
+}
+
+/**
+ * W175 phase 2: a run row's origin attribution, rendered VERBATIM from the
+ * relay's origins record — never derived from the run id (the W153 rule: the
+ * recorder states the origin at begin time; the view renders the record). No
+ * record, or a record missing its kind's own field, attributes nothing.
+ */
+export function formatRunOrigin(origin: RunOriginView | undefined): string | undefined {
+  if (origin === undefined) return undefined;
+  if (origin.kind === "schedule") {
+    return origin.scheduleId === undefined ? undefined : "fired by schedule " + origin.scheduleId;
+  }
+  if (origin.kind === "provider-task") {
+    return origin.provider === undefined || origin.key === undefined
+      ? undefined
+      : "provider-task " + origin.provider + " " + origin.key;
+  }
+  return undefined;
 }
 
 /**
