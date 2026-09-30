@@ -1,6 +1,6 @@
 <!-- Ledger fragment: authored directly (NOT extracted from TASKS.md) — this is the record of the P9 decision-input brief, not a landed work item. Write-once: append dated supersession notes, never rewrite. Park P9 and issue #288 stay OPEN — the decision is queued for the operator; the brief informs it, it does not make it. -->
 
-### P9 - The messages-lane transform+metering governance DECISION brief (issue #288 - the transform-governance half's decision input; docs-only, no code, no policy change) (2026-09-30)
+### P9 - The messages-lane transform+metering governance DECISION brief (Complete - the brief itself; the decision queued, issue #288 open) (issue #288 - the transform-governance half's decision input; docs-only, no code, no policy change) (2026-09-30)
 
 **Source:** park P9 (docs/PARKED_AND_LIMITATIONS.md:38, operator-approved 2026-09-24;
 part 1 landed 2026-09-24 via W123) and issue #288: with W123's extraction landed, the
@@ -64,7 +64,7 @@ or changes.
    malformed-body posture decision; the pure detector module + host-body audit
    for D.
 
-**Evidence:** docs-only (no src/test changes; lint + typecheck exit 0 unpiped as
+**Evidence:** docs-only (no src/test changes; no executable surface changed; the lint/typecheck claim is not applicable to
 sanity). Every substantive claim carries a dated file:line cite to the park rows
 (docs/PARKED_AND_LIMITATIONS.md:37 P8 unprobed, :38 P9, :41 P12 landed,
 :42 P13), the ledger fragments (W123 2026-09-24 + its 2026-09-27 supersession;

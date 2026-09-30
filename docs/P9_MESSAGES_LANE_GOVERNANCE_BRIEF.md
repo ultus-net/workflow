@@ -76,7 +76,7 @@ tokens — "the trail is polluted, not absent". The mechanics in the source:
 the lane have landed — the anthropic usage shape and the replay policy's
 Messages-schema compatibility record (docs/ledger/W123-...extraction-s.md:15-24) — so
 the trail can now be trusted to MEASURE any governance choice. The binding constraints
-that remain are probe constraints (P8), not record constraints.
+that remain are probe constraints (P8 + the separately-unrun GLM/Kimi anthropic-wire shape probes), not record constraints.
 
 ### 1.3 What stays open on the lane even after W123
 
