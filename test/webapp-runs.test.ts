@@ -489,7 +489,7 @@ test("the runs page mounts in the shell — the placeholder is replaced by the r
       setFocusedSessionId: noop,
     }));
     assert.ok(markup.includes("runs-body"), "the shell mounts the RunsView in its page region, not the phase placeholder");
-    assert.ok(!markup.includes("phase-placeholder"), "the runs placeholder is gone (reviews/activity/audit keep theirs)");
+    assert.ok(!markup.includes("phase-placeholder"), "the runs placeholder is gone — no phase placeholder remains anywhere in the app");
     assert.ok(
       markup.includes("state unavailable — the runs relay has not answered"),
       "with no poll record (an SSR render) the page renders the named absence",

@@ -1,11 +1,13 @@
 /**
  * W175 phase 2: the run detail panel's opener memory — a VIEW preference
  * persisted per browser through sessionStorage (the rail-state.ts
- * two-shape guarded pattern). One record: which run is open and the page
- * that opened it, so a reload restores the panel and the back affordance
- * names the page it returns to ("opened from Runs, back returns to Runs").
- * This is view state, never application state: nothing here imports a
- * payload type, and no payload carries it.
+ * two-shape guarded pattern). One record: which run is open, the page
+ * that opened it, and (W176 phase 3, #347) the tab it opened on — the
+ * Reviews page opens the shared panel on its Review tab and the memory
+ * carries that choice, so a reload restores the panel on the same tab and
+ * the back affordance names the page it returns to ("opened from Reviews,
+ * back returns to Reviews"). This is view state, never application state:
+ * nothing here imports a payload type, and no payload carries it.
  *
  * W176 phase 3 (#347): a SECOND record shape in the SAME guarded module —
  * the board card detail panel's opener memory (`CardDetailOpen`, under
@@ -25,10 +27,19 @@
 
 import { APP_VIEWS } from "./shell.js";
 
-/** The persisted opener record: the run and the page that opened it. */
+/** The run detail panel's tab vocabulary — ONE list shared with the panel
+ * (which imports it for its tab strip), so the persisted opener record and
+ * the rendered tabs can never drift apart. */
+export const RUN_DETAIL_TABS = ["summary", "timeline", "evidence", "review", "cost"] as const;
+
+export type RunDetailTab = (typeof RUN_DETAIL_TABS)[number];
+
+/** The persisted opener record: the run, the page that opened it, and the
+ * tab it opened on (absent → the panel's default, Summary). */
 export interface RunDetailOpen {
   readonly opener: string;
   readonly runId: string;
+  readonly tab?: RunDetailTab;
 }
 
 /** The storage key — namespaced like the webapp's other persisted prefs. */
@@ -43,8 +54,8 @@ export interface RunDetailStorage {
 }
 
 /** Reads the persisted opener. Malformed JSON, a wrong-typed field, an empty
- * run id, or an opener outside the shell's views is dropped — nothing is
- * coerced. */
+ * run id, an opener outside the shell's views, or a tab outside the panel's
+ * vocabulary is dropped — nothing is coerced. */
 export function readRunDetailOpen(storage: RunDetailStorage): RunDetailOpen | undefined {
   const raw = storage.getItem(RUN_DETAIL_STATE_KEY);
   if (raw === null) return undefined;
@@ -55,11 +66,16 @@ export function readRunDetailOpen(storage: RunDetailStorage): RunDetailOpen | un
     return undefined;
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return undefined;
-  const record = parsed as { readonly opener?: unknown; readonly runId?: unknown };
+  const record = parsed as { readonly opener?: unknown; readonly runId?: unknown; readonly tab?: unknown };
   if (typeof record.opener !== "string" || typeof record.runId !== "string") return undefined;
   if (record.runId.length === 0) return undefined;
   if (!(APP_VIEWS as readonly string[]).includes(record.opener)) return undefined;
-  return { opener: record.opener, runId: record.runId };
+  if (record.tab !== undefined && (typeof record.tab !== "string" || !(RUN_DETAIL_TABS as readonly string[]).includes(record.tab))) return undefined;
+  return {
+    opener: record.opener,
+    runId: record.runId,
+    ...(record.tab === undefined ? {} : { tab: record.tab as RunDetailTab }),
+  };
 }
 
 /** Persists the opener verbatim (the browser's own storage). */
