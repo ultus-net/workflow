@@ -673,3 +673,97 @@ test("W123: a chat-completions usage with anthropic-style keys still records zer
     await upstream.close();
   }
 });
+
+// P9 A′ (issue #288, 2026-09-30): the parse-only observability variant of the
+// held pass-through stance. The messages lane parses the request body into a
+// THROWAWAY record to capture the request-side model id into a bounded journal;
+// the forwarded bytes stay byte-identical (no shaping, no markers, no
+// downgrade, no reject). This closes W111's "no model labels in the trail" gap
+// for the lane WITHOUT entering transform governance — the queued P9 decision
+// is unchanged.
+test("P9 A′: the messages lane records the request-side model label and forwards the body byte-unchanged", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ type: "message", model: "glm-5.3", usage: { input_tokens: 1, output_tokens: 1 } }));
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    const body = JSON.stringify({ model: "glm-5.3", max_tokens: 64, messages: [{ role: "user", content: "hi" }] });
+    const response = await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body,
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(proxy.messagesLaneLabels(), { models: ["glm-5.3"], malformedBodies: 0 }, "the request-side model id rides the journal");
+    assert.equal(upstream.seen[0]?.body, body, "the outbound bytes stay byte-identical to the inbound bytes (no wire transform)");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("P9 A′: a malformed messages body is counted, forwarded raw, and never 400s", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    const malformed = "{not json";
+    const response = await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: malformed,
+    });
+    assert.equal(response.status, 200, "the messages lane forwards raw bytes rather than 400ing malformed JSON");
+    assert.deepEqual(proxy.messagesLaneLabels(), { models: [], malformedBodies: 1 }, "the malformed body is counted, never rejected");
+    assert.equal(upstream.seen[0]?.body, malformed, "the malformed bytes forward untouched");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("P9 A′: the model-label journal is bounded and drops the oldest entry", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ type: "message", usage: { input_tokens: 1, output_tokens: 1 } }));
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    for (let index = 0; index < 65; index += 1) {
+      await fetch(`${proxy.url}/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: `model-${index}`, messages: [] }),
+      });
+    }
+    const labels = proxy.messagesLaneLabels();
+    assert.equal(labels.models.length, 64, "the journal is bounded at 64 entries");
+    assert.equal(labels.models[0], "model-1", "the oldest label dropped once the bound was crossed");
+    assert.equal(labels.models[63], "model-64", "the newest label is retained");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("P9 A′: the default posture touches nothing — the chat-completions lane never populates the messages journal", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } }));
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.deepEqual(proxy.messagesLaneLabels(), { models: [], malformedBodies: 0 }, "the chat-completions lane does not populate the messages-lane journal");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});

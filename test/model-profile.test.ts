@@ -170,6 +170,49 @@ test("W109: the cacheMarkers opt-in resolves onto the profile only when supplied
   assert.equal(plain.cacheMarkers, undefined, "absent stays absent — never fabricated");
 });
 
+// ---- P14 (issue #293): the cache-marker opt-in gains per-family granularity.
+// RED-FIRST: the boolean keeps meaning ALL keyed families (byte-unchanged);
+// a map opts in ONLY the families whose entry is true; an omitted family is
+// OFF (fail-closed/dark) — never ON-by-default. The marker application
+// consults the profile's family. ----
+
+const P14_BODY = { system: "You are Workflow.", tools: [{ name: "read_file" }] };
+
+function isMarked(result: Record<string, unknown>): boolean {
+  const system = result.system;
+  if (!Array.isArray(system) || system.length === 0) return false;
+  const last = system.at(-1);
+  return typeof last === "object" && last !== null && (last as { cache_control?: unknown }).cache_control !== undefined;
+}
+
+test("P14: a per-family map opts one family in and an omitted family stays dark", () => {
+  const optedIn = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic", cacheMarkers: { deepseek: true } });
+  assert.equal(isMarked(applyCacheMarkers(optedIn, P14_BODY)), true, "the listed family is marked");
+  const omitted = modelProfile({ family: "glm", model: "glm-5.3", wire: "anthropic", cacheMarkers: { deepseek: true } });
+  assert.equal(applyCacheMarkers(omitted, P14_BODY), P14_BODY, "a family omitted from the map is OFF — never ON-by-default");
+});
+
+test("P14: a per-family map opts one family out and an empty map is all-dark", () => {
+  const optedOut = modelProfile({ family: "glm", model: "glm-5.3", wire: "anthropic", cacheMarkers: { glm: false } });
+  assert.equal(applyCacheMarkers(optedOut, P14_BODY), P14_BODY, "an explicit false is OFF");
+  const empty = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic", cacheMarkers: {} });
+  assert.equal(applyCacheMarkers(empty, P14_BODY), P14_BODY, "an empty map means no family is on");
+});
+
+test("P14: the boolean opt-in still means ALL keyed families (byte-unchanged)", () => {
+  for (const family of ["deepseek", "glm", "kimi"] as const) {
+    const profile = modelProfile({ family, model: "m", wire: "anthropic", cacheMarkers: true });
+    assert.equal(isMarked(applyCacheMarkers(profile, P14_BODY)), true, `${family} is marked by the boolean opt-in`);
+  }
+});
+
+test("P14: the default stays dark and the anthropic-wire gate is unchanged under a map", () => {
+  const undef = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic" });
+  assert.equal(applyCacheMarkers(undef, P14_BODY), P14_BODY, "no option means dark");
+  const openaiWire = modelProfile({ family: "deepseek", model: "deepseek-flash", cacheMarkers: { deepseek: true } });
+  assert.equal(applyCacheMarkers(openaiWire, P14_BODY), P14_BODY, "the openai wire is never marked, even when the map enables the family");
+});
+
 // W109 (frontier round 1 P1): the glm/kimi anthropic-wire shapes are UNPROBED
 // — the openai-wire fields are not valid Messages-schema fields, so the
 // shaping emits only verified shared fields on that wire (fail-closed: no
