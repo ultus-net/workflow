@@ -20,6 +20,15 @@
  */
 
 export type ModelFamily = "deepseek" | "glm" | "kimi";
+/**
+ * P14 (issue #293): the prompt-cache opt-in, per family or all families. The
+ * pre-P14 boolean is unchanged in meaning — `true` enables the marker pass for
+ * EVERY keyed family; a map enables it only for the families whose entry is
+ * `true`, and a family omitted from the map is OFF (fail-closed/dark, never
+ * ON-by-default). `undefined` remains the dark default. The map is read at
+ * marker time against the profile's own `family`.
+ */
+export type CacheMarkerOptIn = boolean | { readonly [family: string]: boolean };
 export type WireProtocol = "openai" | "anthropic";
 export type ReasoningEffort = "low" | "high" | "max";
 export type ModelTaskClass = "coding" | "general" | "batch";
@@ -81,8 +90,10 @@ export interface ModelProfile {
   readonly defaultEffort: ReasoningEffort;
   /** W109 (W098 c2): the pool's prompt-cache opt-in. True enables the
    * cache-control marker pass for the anthropic wire (`applyCacheMarkers`);
-   * absent stays absent — the openai wire auto-caches upstream. */
-  readonly cacheMarkers?: boolean;
+   * absent stays absent — the openai wire auto-caches upstream.
+   * P14 (issue #293): a map narrows the opt-in per family — a family omitted
+   * from the map stays dark. */
+  readonly cacheMarkers?: CacheMarkerOptIn;
 }
 
 export interface ModelProfileInput {
@@ -94,8 +105,9 @@ export interface ModelProfileInput {
   readonly reasoningEffort?: ReasoningEffort;
   /** W109 (W098 c2): the per-pool prompt-cache opt-in ("opt-in per pool via
    * model-profile.ts" — the pools set it at composition; the marker pass
-   * itself is `applyCacheMarkers` below). */
-  readonly cacheMarkers?: boolean;
+   * itself is `applyCacheMarkers` below). P14: the opt-in may be a per-family
+   * map; the boolean keeps meaning all keyed families. */
+  readonly cacheMarkers?: CacheMarkerOptIn;
 }
 
 /**
@@ -214,6 +226,18 @@ function withMarker(block: unknown): unknown {
 }
 
 /**
+ * P14 (issue #293): resolve the opt-in for ONE family. `true` means all keyed
+ * families; a map means only the family whose entry is `true` (an omitted or
+ * `false` entry is OFF). `undefined` (and any other value) is dark. Pure; the
+ * marker pass reads this against the profile's `family`.
+ */
+export function cacheMarkersEnabled(optIn: CacheMarkerOptIn | undefined, family: ModelFamily): boolean {
+  if (optIn === true) return true;
+  if (optIn === false || optIn === undefined) return false;
+  return optIn[family] === true;
+}
+
+/**
  * W109 (W098 c2): injects the anthropic prompt-cache breakpoints on the
  * STABLE composition-time prefixes — the system block and the last tool
  * definition. The hub composes those per session (stable per-session
@@ -221,12 +245,13 @@ function withMarker(block: unknown): unknown {
  * and its boundary policy is deliberately NOT decided here (the frontier
  * verification of the caching design shapes it). Opt-in per pool
  * (`profile.cacheMarkers`) and wire-gated to the anthropic Messages wire
- * (the OpenAI-family wire auto-caches upstream). Returns a new object;
- * never mutates its input; a body without stable prefixes passes through
- * with nothing added.
+ * (the OpenAI-family wire auto-caches upstream). P14: the opt-in may be a
+ * per-family map — the pass consults `profile.family` and leaves a family
+ * omitted from the map dark. Returns a new object; never mutates its input;
+ * a body without stable prefixes passes through with nothing added.
  */
 export function applyCacheMarkers(profile: ModelProfile, body: Record<string, unknown>): Record<string, unknown> {
-  if (profile.cacheMarkers !== true || profile.wire !== "anthropic") return body;
+  if (!cacheMarkersEnabled(profile.cacheMarkers, profile.family) || profile.wire !== "anthropic") return body;
   let result = body;
   const system = body.system;
   if (typeof system === "string" && system.length > 0) {
