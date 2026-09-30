@@ -7,6 +7,7 @@ import {
 } from "./hub-reviewer.js";
 import { createJsonReviewProvenanceStore, type ReviewProvenanceStore } from "./review-provenance-store.js";
 import type { RunReviewer, RunReviewerFactory, RunTestRunner } from "./run-registry.js";
+import type { TaskUsageSummary } from "./task-usage.js";
 
 /**
  * Production wiring for the hub-owned run gates (plan Tasks A2/D1). Both
@@ -50,7 +51,16 @@ export function createRunTestRunner(options: {
 
 export function createReviewerFactory(options: {
   readonly shell: (command: string, cwd: string) => Promise<string>;
-  readonly createRuntime: (input: { readonly workspace: string; readonly taskPrompt?: string }) => Promise<ReviewerRuntimeSession>;
+  readonly createRuntime: (input: {
+    readonly workspace: string;
+    readonly taskPrompt?: string;
+    /**
+     * W111 (issue #283): the registry's per-task journal writer, forwarded
+     * from the factory's second argument so the reviewer runtime can supply
+     * `AcpRuntimeOptions.taskUsage`. A stub that ignores it stays valid.
+     */
+    readonly recordTaskUsage: (input: Omit<TaskUsageSummary, "recordedAt">) => void;
+  }) => Promise<ReviewerRuntimeSession>;
   /** When set, review provenance (W041) is journaled at this hub-state path. */
   readonly provenancePath?: string;
   /**
@@ -63,13 +73,13 @@ export function createReviewerFactory(options: {
 }): RunReviewerFactory {
   const provenanceStore = options.provenanceStore
     ?? (options.provenancePath === undefined ? undefined : createJsonReviewProvenanceStore(options.provenancePath));
-  return (controller) => {
+  return (controller, recordTaskUsage) => {
     const spawnReviewer: ReviewerAgentSessionFactory = {
       async spawn(input) {
         if (input.workspace === undefined || input.workspace.length === 0) {
           throw new Error("hub reviewer requires a workspace");
         }
-        const runtime = await options.createRuntime(input);
+        const runtime = await options.createRuntime({ ...input, recordTaskUsage });
         return {
           review: async (prompt: string) => {
             await runtime.submit(prompt);
