@@ -41,3 +41,18 @@ the batch-3 hosting assessment (`docs/HOSTING_ASSESSMENT_2026-09-30.md`,
 375 lines) and its W093 line citations (`:7`, `:16`, `:161-168`, `:307`,
 `:324`, `:357`, `:371-375`). Docs-only: no executable surface changed —
 `lint` and `typecheck` are **not applicable** to this change.
+
+---
+
+**Supersession note (appended 2026-09-30).** The resolution this record framed
+as the operator's call was applied the same day. **The operator chose Option A**
+(W093 canonical; W096 gained an appended dated supersession note, its fuller
+constraint enumeration preserved in place, nothing deleted). The pending/open
+statements above — "Issue #286 stays OPEN", "none is applied", "the resolution
+remains the operator's call", and "refs #286 without closing it" — are
+**superseded by the applied resolution**; issue #286 is closed by the PR
+carrying the change. The body above stays as written (write-once): the
+consolidated input, the three shapes, and the Option A recommendation remain the
+record of what the operator decided. Applied record:
+`docs/ledger/P7-supersession-applied.md`; reconciliation record §5 of
+`docs/P7_DUPLICATE_RESOLUTION_RECORD.md`.

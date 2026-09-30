@@ -31,3 +31,13 @@ same single deliverable.
       hosting code.
 - [ ] The plane map re-stated for the hosted topology.
 - [ ] Operator decision recorded before implementation.
+
+---
+
+**SUPERSEDED (2026-09-30, operator decision):** W096 is **superseded by W093**
+as the canonical W093/W096 record (the operator chose Option A on 2026-09-30,
+per `docs/P7_DUPLICATE_RESOLUTION_RECORD.md` §5). The shared operator intent
+this item carries is served by the hosting assessment
+(`docs/HOSTING_ASSESSMENT_2026-09-30.md`). W096's **fuller constraint
+enumeration is PRESERVED in place** above — nothing here is deleted, merged,
+or rewritten (the append-only rule); this note is appended, never a replacement.
