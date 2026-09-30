@@ -44,11 +44,14 @@ import { DEFAULT_OPEN_SOURCE_POOL } from "../src/integrations/open-source-pool.j
  * printed, never asserted present or positive — the live verdict belongs in the
  * operator's dated record, not in this file.
  *
- * Red-first is NOT applicable: with no keys and no gate nothing runs, so there
- * is no red to earn. The provider lane reuses the same production marker pass,
- * so it does not change the composed shape; the request it composes and the
- * response fields it reads are pinned ungated so a weakened request cannot hide
- * behind the gate.
+ * Red-first is NOT applicable to the LANE itself: with no keys and no gate
+ * nothing runs, so there is no marker-shape red to earn. That rationale is
+ * narrowed, not waved: the provider lane's NEW helper logic (the base-URL
+ * normalizer and the `provider`-token selection) DID exist to be pinned, even
+ * though no live marker-shape red was available at the time — those helpers are
+ * now covered by the ungated unit pins below. The request the lane composes and
+ * the response fields it reads are likewise pinned ungated, so neither the
+ * helpers nor a weakened request can hide behind the gate.
  */
 
 /** The live gate. Without it, every family arm skips before any network use. */
@@ -147,7 +150,7 @@ function providerProbeRequestBody(model: string): Record<string, unknown> {
  * already ends in `/v1` or `/messages` is not doubled, so one env accepts
  * OpenRouter's `…/api/v1` and an anthropic-native base alike.
  */
-function providerMessagesUrl(base: string): string {
+export function providerMessagesUrl(base: string): string {
   const trimmed = base.trim().replace(/\/+$/, "");
   if (trimmed.endsWith("/messages")) return trimmed;
   if (trimmed.endsWith("/v1")) return `${trimmed}/messages`;
@@ -195,6 +198,74 @@ test("vendor cache probe: the composed provider-lane request carries the same ep
   // The provider lane reuses the production marker pass, so it emits the same
   // shape as the direct arms; this pin freezes that for the deployed lane.
   assertMarkerShape("provider", providerProbeRequestBody("provider-lane-model"), "provider-lane-model");
+});
+
+/**
+ * The provider base-URL normalizer is load-bearing NEW logic: it decides
+ * whether the operator's one env value becomes a valid Messages endpoint, and a
+ * path-doubling regression (`…/api/v1/v1/messages`, `…/messages/messages`) would
+ * only ever surface inside the gated live arm — i.e. never in CI. These pins
+ * are ungated (no network, no gate) so the normalization holds in the ordinary
+ * suite: a bare host, a `/v1` base, a full `/messages` URL, a trailing slash,
+ * and the no-doubling property all resolve to exactly one `/v1/messages` suffix.
+ */
+test("vendor cache probe: the provider base-URL normalizer accepts every deployed shape without doubling the path", () => {
+  assert.equal(
+    providerMessagesUrl("https://openrouter.ai/api"),
+    "https://openrouter.ai/api/v1/messages",
+    "a bare host/base gets the full `/v1/messages` suffix",
+  );
+  assert.equal(
+    providerMessagesUrl("https://openrouter.ai/api/v1"),
+    "https://openrouter.ai/api/v1/messages",
+    "a base already ending in `/v1` gets only `/messages` appended",
+  );
+  assert.equal(
+    providerMessagesUrl("https://openrouter.ai/api/v1/messages"),
+    "https://openrouter.ai/api/v1/messages",
+    "a full `/messages` URL is returned unchanged",
+  );
+  assert.equal(
+    providerMessagesUrl("https://openrouter.ai/api/"),
+    "https://openrouter.ai/api/v1/messages",
+    "a trailing slash is trimmed, not treated as a path segment",
+  );
+  // The no-doubling property across the deployed shapes: every input resolves
+  // to a URL ending in `/messages` and carrying exactly one `/v1/messages`, so
+  // no input can produce `/v1/v1/messages` or `/messages/messages`.
+  const inputs = [
+    "https://openrouter.ai/api",
+    "https://openrouter.ai/api/",
+    "https://openrouter.ai/api/v1",
+    "https://openrouter.ai/api/v1/",
+    "https://openrouter.ai/api/v1/messages",
+    "https://example.services.azure.com/anthropic",
+    "https://example.services.azure.com/anthropic/v1",
+  ];
+  for (const input of inputs) {
+    const url = providerMessagesUrl(input);
+    assert.ok(url.endsWith("/messages"), `${input} → ${url}: every resolved URL ends in /messages`);
+    const v1Messages = url.match(/\/v1\/messages/g) ?? [];
+    assert.equal(v1Messages.length, 1, `${input} → ${url}: exactly one /v1/messages suffix (no path doubling)`);
+    assert.ok(!url.includes("/v1/v1"), `${input} → ${url}: a /v1 base is not doubled`);
+  }
+});
+
+/**
+ * The gate's lane selection is also new logic: the provider lane must be opted
+ * in with the explicit `provider` token, while `all` stays families-only so the
+ * deployed reseller route is never run implicitly by `all`. A regression here
+ * would either silently arm the provider lane under `all` or silently drop it.
+ */
+test("vendor cache probe: only the explicit provider token selects the provider lane, never `all`", () => {
+  assert.equal(providerLaneSelected(undefined), false, "no gate selects nothing");
+  assert.equal(providerLaneSelected(""), false, "empty gate selects nothing");
+  assert.equal(providerLaneSelected("all"), false, "`all` stays families-only");
+  assert.equal(providerLaneSelected("deepseek"), false, "a family token is not the provider lane");
+  assert.equal(providerLaneSelected("provider"), true, "the explicit provider token selects the lane");
+  assert.equal(providerLaneSelected("all provider"), true, "the provider token composes with a space list");
+  assert.equal(providerLaneSelected("provider,glm"), true, "the provider token composes with a comma list");
+  assert.equal(providerLaneSelected("all, deepseek"), false, "a family-only list leaves the lane dark");
 });
 
 /**

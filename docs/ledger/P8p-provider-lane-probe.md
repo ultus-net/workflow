@@ -33,8 +33,15 @@ src/integrations/model-profile.ts:253-273).
    reasoning/sampling field rides the wire. A SECOND ungated structural pin
    freezes the provider lane's composed request (same assertion as the family
    pin, factored into `assertMarkerShape`). Because the shape did not change,
-   there was no red to earn: red-first is not applicable, stated in the file
-   header rather than manufactured.
+   there was no marker-shape red to earn: red-first is not applicable to the
+   lane itself. That rationale is NARROWED, not waved: the provider lane's new
+   helper logic (the base-URL normalizer `providerMessagesUrl` and the
+   `provider`-token selection `providerLaneSelected`) DID exist to be pinned,
+   even though no live marker-shape red was available at the time. Both helpers
+   are now covered by ungated unit pins (bare host, `/v1` base, full `/messages`
+   URL, trailing slash, the no-doubling property, and the `all`-stays-
+   families-only selection), so a path-doubling or selection regression can no
+   longer ship inside the gated arm.
 3. **The direct per-family arms STAY, honestly labeled.** They still measure
    the vendor contracts (`VENDOR_DEFAULTS[…].anthropicEndpoint`), but the file
    header, the P8 row, and the register row now record that they are NOT the
@@ -81,8 +88,13 @@ When a lane runs, paste its printed block, flip the register entry from
 **Evidence:**
 
 - Ungated, `node --import tsx --test test/vendor-anthropic-cache-probe.test.ts`
-  → **6 tests: 2 pass (the ungated structural pins), 0 fail, 4 skipped** (the
-  three family arms + the provider arm), each skip naming its missing env; exit 0.
+  → **8 tests: 4 pass, 0 fail, 4 skipped** (the three family arms + the provider
+  arm), each skip naming its missing env; exit 0. The four passes are the two
+  ungated structural pins (family + provider marker shape) plus the two new
+  ungated helper pins: `providerMessagesUrl` (bare host, `/v1` base, full
+  `/messages` URL, trailing slash, and the no-doubling property) and
+  `providerLaneSelected` (`all` stays families-only; only the explicit
+  `provider` token selects the lane).
 - Under `WORKFLOW_VENDOR_CACHE_PROBE=provider` with no provider env: the three
   family arms skip with the selection reason and the provider arm skips with
   `no provider base URL: set WORKFLOW_PROVIDER_ANTHROPIC_URL (an
