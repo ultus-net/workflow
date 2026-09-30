@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { decodeShellEscapes, prepareRedirectResidue, splitShellSegments, unwrapShellWords } from "./shell.js";
+import { decodeShellEscapes, isShFamilyInterpreter, prepareRedirectResidue, splitShellSegments, unwrapShellWords } from "./shell.js";
 import { checkProtectedPath, checkSecretPath } from "./path-policy.js";
 import { directRefWriteTargetIn, gitDirSpellingsIn, protectedBranchesIn, refSymlinkAliasSpellingsIn, type GitPolicyContext } from "./git-policy.js";
 
@@ -181,7 +181,7 @@ export function shellHasFileMutation(command: string, depth = 0): boolean {
     const segment = isCollaborationInvocation(rawSegment) ? collaborationResidue(rawSegment) : rawSegment;
     const words = unwrapShellWords(segment);
     const executable = basename(words[0] ?? "");
-    if (/^(?:ba|z|da|k)?sh$/i.test(executable)) {
+    if (isShFamilyInterpreter(executable)) {
       const commandFlag = words.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
       if (commandFlag >= 0 && words[commandFlag + 1] && shellHasFileMutation(words[commandFlag + 1]!, depth + 1)) return true;
     }
@@ -279,7 +279,7 @@ export function checkBoundaryPolicy(command: string, workspaceRoot?: string, dep
     const segment = isCollaborationInvocation(rawSegment) ? collaborationResidue(rawSegment) : rawSegment;
     const words = unwrapShellWords(segment);
     const executable = basename(words[0] ?? "");
-    if (/^(?:ba|z|da|k)?sh$/i.test(executable)) {
+    if (isShFamilyInterpreter(executable)) {
       const commandFlag = words.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
       if (commandFlag >= 0 && words[commandFlag + 1]) {
         const nested = checkBoundaryPolicy(words[commandFlag + 1]!, workspaceRoot, depth + 1, liveConfigPaths, refContext, gitDirs, gitDirAliases);
