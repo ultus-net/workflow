@@ -515,6 +515,72 @@ test("recorded run usage rides the hub /snapshot projection for monitors", async
   assert.equal(gates.usage?.["schedule:usage-e2e"]?.costUsd, 0.0042);
 });
 
+test("W111: recorded task usage is a bounded append journal and rides gateObservability", () => {
+  const base = setupRegistry();
+  const registry = createRunRegistry(base.application, base.graph);
+
+  // Two turns on the same task APPEND — the per-task rollup is their sum, so
+  // collapsing latest-per-task would under-report a multi-turn task.
+  registry.recordTaskUsage({ taskId: "W1", requests: 1, promptTokens: 10, completionTokens: 2, totalTokens: 12, costUsd: 0.001, cacheReadTokens: 4, cacheCreateTokens: 0 });
+  registry.recordTaskUsage({ taskId: "W1", requests: 1, promptTokens: 20, completionTokens: 3, totalTokens: 23, costUsd: 0.002, cacheReadTokens: 6, cacheCreateTokens: 1 });
+  const entries = registry.taskUsage();
+  assert.equal(entries.length, 2, "entries append, not collapse latest-per-task");
+  assert.deepEqual(entries.map((entry) => entry.taskId), ["W1", "W1"]);
+  assert.deepEqual(
+    { read: entries[1]?.cacheReadTokens, create: entries[1]?.cacheCreateTokens },
+    { read: 6, create: 1 },
+    "the P12 cache fields ride the recorded entry",
+  );
+  assert.equal(entries.reduce((sum, entry) => sum + entry.totalTokens, 0), 35, "the per-task rollup is the sum of recorded entries");
+  assert.match(entries[0]?.recordedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+
+  // The 64-cap discipline shared with the sibling gate maps: a flood evicts
+  // the oldest entries first.
+  for (let index = 0; index < 70; index += 1) {
+    registry.recordTaskUsage({ taskId: `W-fill-${index}`, requests: 1, promptTokens: 1, completionTokens: 1, totalTokens: 2, costUsd: 0, cacheReadTokens: 0, cacheCreateTokens: 0 });
+  }
+  assert.equal(registry.taskUsage().length, 64, "the journal is bounded at 64 like the other gate maps");
+  assert.equal(registry.taskUsage().some((entry) => entry.taskId === "W1"), false, "oldest entries are evicted first");
+
+  const gates = registry.controller.gateObservability?.();
+  assert.equal(gates?.taskUsage?.length, 64, "the journal rides gateObservability");
+});
+
+test("W111: recorded task usage rides the hub /snapshot projection for monitors", async (t) => {
+  const { graph, application } = setup();
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-task-usage-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // A fake scheduler records a task boundary delta at start — the same seam a
+  // host lane calls at its turn edge.
+  let recorded = false;
+  const hub = await createWorkflowHub(application, {
+    discoveryDir: dir,
+    graph,
+    schedulerFactory: (handles) => ({
+      tick: async () => undefined,
+      trigger: async () => false,
+      start: () => {
+        if (recorded) return;
+        recorded = true;
+        handles.recordTaskUsage({ taskId: "W1", requests: 2, promptTokens: 100, completionTokens: 8, totalTokens: 108, costUsd: 0.003, cacheReadTokens: 50, cacheCreateTokens: 4 });
+      },
+      stop: () => undefined,
+    }),
+  });
+  t.after(() => hub.close());
+  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
+
+  const response = await post(hub.url, token, "/snapshot", { workspace: process.cwd() });
+  assert.equal(response.status, 200);
+  const gates = response.body.gateObservability as { taskUsage?: Array<{ taskId: string; totalTokens: number; cacheReadTokens: number }> } | undefined;
+  assert.ok(gates !== undefined, "gate observability rides /snapshot");
+  assert.equal(gates.taskUsage?.[0]?.taskId, "W1");
+  assert.equal(gates.taskUsage?.[0]?.totalTokens, 108, "the monitor can read the recorded per-task delta from /snapshot");
+  assert.equal(gates.taskUsage?.[0]?.cacheReadTokens, 50, "the P12 cache field survives serialization");
+  const runs = response.body.runs as { taskUsage?: unknown[] } | undefined;
+  assert.equal(Array.isArray(runs?.taskUsage), true, "the runs block carries the journal additively");
+});
+
 // W153: explicit origin attribution. The scheduler states the origin at begin
 // time; the registry records it and /snapshot's gate observability relays it.
 // Runs begun without an origin (the /run/begin, RSI, and reviewer lanes) stay

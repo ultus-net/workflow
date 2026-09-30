@@ -8,6 +8,7 @@ import { countReferencedAxes, MIN_REFERENCED_AXES } from "../review/rubric.js";
 import type { EvidenceContentStore } from "./evidence-content-store.js";
 import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-controller.js";
 import type { HubReviewerResult } from "./hub-reviewer.js";
+import type { TaskUsageSummary } from "./task-usage.js";
 
 /** Launches the hub-owned reviewer for a run (plan Task A2). */
 export type RunReviewer = (input: {
@@ -189,6 +190,14 @@ export function createRunRegistry(
   /** W044 (open clause): per-run usage recorded from the runtime's metering-proxy metrics. */
   recordRunUsage(input: { readonly runId: string; readonly usage: Omit<RunUsageSummary, "recordedAt"> }): void;
   runUsage(): ReadonlyMap<string, RunUsageSummary>;
+  /**
+   * W111: append a recorded per-task boundary delta (the active-task pointer
+   * paired with the turn delta). A bounded journal — the per-task rollup is
+   * the sum of recorded entries, so entries are NOT collapsed latest-per-task
+   * (unlike `runUsage`). Record-only; views never re-derive a delta.
+   */
+  recordTaskUsage(input: Omit<TaskUsageSummary, "recordedAt">): void;
+  taskUsage(): readonly TaskUsageSummary[];
   /** Iteration 21: journal an advisory reasoning-claim finding (observability-only). */
   recordReasoningClaim(input: { readonly runId: string; readonly sentence: string }): void;
   /** Iteration 21: declare that the monitor observed a run (scheduled lane only; coverage denominator). */
@@ -259,6 +268,18 @@ export function createRunRegistry(
       const oldest = runUsage.keys().next().value;
       if (oldest === undefined) break;
       runUsage.delete(oldest);
+    }
+  };
+  // W111: the recorded per-task boundary deltas. A bounded APPEND journal
+  // (not a latest-wins map like runUsage): a task can span many turns, and the
+  // per-task rollup is the SUM of recorded entries, so collapsing to the
+  // latest delta per task would under-report. Eviction is FIFO at 64 — the
+  // same bounded-observability discipline as the sibling gate maps.
+  const taskUsage: TaskUsageSummary[] = [];
+  const rememberTaskUsage = (usage: Omit<TaskUsageSummary, "recordedAt">): void => {
+    taskUsage.push({ ...usage, recordedAt: new Date().toISOString() });
+    while (taskUsage.length > 64) {
+      taskUsage.shift();
     }
   };
   // Iteration 21: reasoning-claims accountability feed (advisory-only), mirroring
@@ -382,6 +403,9 @@ export function createRunRegistry(
         blockingReasons,
         completionClaims,
         runUsage,
+        // W111: the recorded per-task boundary deltas (bounded append journal)
+        // ride the same observability surface for hub-attached monitors.
+        taskUsage,
         reasoningClaims,
         runOrigins,
         workProductLinks,
@@ -709,6 +733,12 @@ export function createRunRegistry(
     },
     runUsage(): ReadonlyMap<string, RunUsageSummary> {
       return runUsage;
+    },
+    recordTaskUsage(input: Omit<TaskUsageSummary, "recordedAt">): void {
+      rememberTaskUsage(input);
+    },
+    taskUsage(): readonly TaskUsageSummary[] {
+      return taskUsage;
     },
     /**
      * Iteration 21: journal an advisory reasoning-claim finding for a run.
