@@ -219,6 +219,10 @@ export async function createWorkflowHub(
         ...(options.providerReadState === undefined ? {} : { providerReadState: options.providerReadState }),
         ...(options.reviewProvenance === undefined ? {} : { reviewProvenance: options.reviewProvenance }),
         ...(options.discoverIssueCrossReferences === undefined ? {} : { discoverIssueCrossReferences: options.discoverIssueCrossReferences }),
+        // P4 topology Option A1 (issue #283): the run registry's surface-
+        // observation journal writer behind the observability-only
+        // /usage/record route. Present only when a registry exists.
+        ...(runs === undefined ? {} : { recordSurfaceUsage: runs.recordSurfaceUsage }),
       },
     );
     options.observeBridgeStarted?.(bridge.url);

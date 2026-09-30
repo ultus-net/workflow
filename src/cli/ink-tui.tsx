@@ -6,6 +6,8 @@ import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { activeTaskCorrelation } from "../application/task-commands.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
+import { surfaceUsageSink } from "../integrations/task-usage.js";
+import { createSurfaceUsagePost } from "../integrations/surface-usage-client.js";
 import { createReviewFollowUpsClient, createReviewFollowUpsSource, UNAVAILABLE_REVIEW_FOLLOW_UPS, type OpenReviewFollowUps } from "../integrations/review-followups.js";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -165,8 +167,17 @@ if (hub !== undefined) {
   application.startInteractiveTask();
 
   // Standalone (no hub): compose the host-neutral ACP runtime, the same
-  // authority path the hub-hosted surfaces use.
-  const runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskCorrelation(application));
+  // authority path the hub-hosted surfaces use. P4 topology Option A1 (issue
+  // #283): this surface-local ACP turn CAN compute a boundary delta, so it is
+  // wired to the cross-process sink (posting fails closed when no hub is
+  // reachable — the standalone case). The HUB-REACHABLE path above is a pure
+  // monitor over the hub's /snapshot and runs no ACP runtime of its own, so it
+  // has NO surface-local boundary to publish (named, not invented).
+  const usageHolder: { runtime?: Awaited<ReturnType<typeof createConfiguredAcpRuntime>> } = {};
+  const runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskCorrelation(application), undefined, undefined, {
+    taskUsage: surfaceUsageSink(() => usageHolder.runtime?.metrics?.(), "surface:ink-tui", createSurfaceUsagePost()),
+  });
+  usageHolder.runtime = runtime;
 
   // Plan Task F2 surface wiring: same operator levels.json as skills-mcp; a
   // malformed map refuses startup (fail-closed) rather than running ungated.

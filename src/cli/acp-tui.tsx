@@ -6,6 +6,8 @@ import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { activeTaskCorrelation, createTaskCommandPort } from "../application/task-commands.js";
+import { surfaceUsageSink } from "../integrations/task-usage.js";
+import { createSurfaceUsagePost } from "../integrations/surface-usage-client.js";
 import { taskId, type WorkflowTask } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowTui, type SessionConfigOption } from "../ui/tui.js";
@@ -55,9 +57,17 @@ application.startInteractiveTask();
 // W047 (G5): boot failures (agent binary missing, containment policy-only,
 // unwritable config, missing upstream key) surface as an actionable
 // blocking-reason-style cause instead of a raw stack trace.
+// P4 topology Option A1 (issue #283): this surface computes its own boundary
+// delta and publishes it cross-process through the observability-only
+// /usage/record route (read from the hub discovery file at post time; no hub →
+// nothing recorded). The task id rides as a labelled `surface:acp-tui`
+// observation, never hub-authoritative attribution (W153).
+const postSurfaceUsage = createSurfaceUsagePost();
 let runtime: Awaited<ReturnType<typeof createConfiguredAcpRuntime>>;
 try {
-  runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskCorrelation(application));
+  runtime = await createConfiguredAcpRuntime(application, workspace, activeTaskCorrelation(application), undefined, undefined, {
+    taskUsage: surfaceUsageSink(() => runtime?.metrics?.(), "surface:acp-tui", postSurfaceUsage),
+  });
 } catch (error) {
   console.error(`failed to start the contained session: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);

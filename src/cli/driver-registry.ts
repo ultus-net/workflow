@@ -2,6 +2,8 @@ import { WorkflowCodingSession } from "../application/coding-session.js";
 import { activeTaskCorrelation } from "../application/task-commands.js";
 import type { WorkflowApplication } from "../application/workflow.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
+import { surfaceUsageSink } from "../integrations/task-usage.js";
+import { createSurfaceUsagePost } from "../integrations/surface-usage-client.js";
 import { createOpenCodeSessionClient } from "../integrations/opencode-client.js";
 import { OpenCodeSessionDriver } from "../integrations/opencode-session.js";
 import type { SessionConfigOption } from "../ui/tui.js";
@@ -71,14 +73,23 @@ export async function composeDriver(
   }
   // Both "acp" and the retained "cline" connector compose the host-neutral ACP
   // runtime; the connector is just the `cline` agent kind (stock `cline --acp`).
+  // P4 topology Option A1 (issue #283): this surface computes its own boundary
+  // delta and publishes it cross-process through the observability-only
+  // /usage/record route (no hub → nothing recorded). The task id rides as a
+  // labelled `surface:driver-registry` observation, never hub-authoritative.
+  const usageHolder: { runtime?: Awaited<ReturnType<typeof createConfiguredAcpRuntime>> } = {};
   const runtime = await createConfiguredAcpRuntime(
     application,
     workspace,
     activeTaskCorrelation(application),
     undefined,
     undefined,
-    name === "cline" ? { agent: "cline" } : {},
+    {
+      ...(name === "cline" ? { agent: "cline" } : {}),
+      taskUsage: surfaceUsageSink(() => usageHolder.runtime?.metrics?.(), "surface:driver-registry", createSurfaceUsagePost()),
+    },
   );
+  usageHolder.runtime = runtime;
   return {
     label: name,
     session: runtime.session,

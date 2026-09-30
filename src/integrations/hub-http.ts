@@ -16,6 +16,7 @@ import { operatorPosture, scheduleLineage, scheduleRecentRuns, type PostureBudge
 import { inProgressBoardTasks, workProductStates } from "./task-provider.js";
 import type { BoardOutcome, BoardTaskOutcome, CrossReferenceOutcome, WorkProductStateOutcome } from "./task-provider.js";
 import type { IssueDetailOutcome, ProviderReadRecord } from "./issue-detail.js";
+import type { SurfaceUsageObservation } from "./task-usage.js";
 
 /**
  * The hub's host-neutral loopback HTTP server and discovery bridge.
@@ -120,6 +121,15 @@ interface HubRequestContext {
    * timeline cross-references, from which the hub records the actual PR
    * reference (exactly-one rule; never a guess). */
   readonly discoverIssueCrossReferences?: (issueNumber: number) => Promise<CrossReferenceOutcome>;
+  /**
+   * P4 topology Option A1 (issue #283): the run registry's SURFACE-observation
+   * journal writer — the observability-only sink behind `POST /usage/record`.
+   * A process-separated interactive surface posts its provenance-stamped
+   * boundary delta here; the hub appends it to the separate surface journal
+   * (never the canonical `taskUsage` rollups). Absent → the route 404s
+   * (capability withheld, like the other optional registries).
+   */
+  readonly recordSurfaceUsage?: (observation: SurfaceUsageObservation) => void;
 }
 
 export interface HubBridgeCapabilities {
@@ -140,6 +150,8 @@ export interface HubBridgeCapabilities {
   readonly discoverIssueCrossReferences?: (issueNumber: number) => Promise<CrossReferenceOutcome>;
   /** W176: the budget incident records accessor (see HubRequestContext). */
   readonly budgetIncidents?: () => readonly PostureBudgetIncident[] | undefined;
+  /** P4 topology Option A1 (issue #283): the surface-observation journal writer (see HubRequestContext). */
+  readonly recordSurfaceUsage?: (observation: SurfaceUsageObservation) => void;
 }
 
 /**
@@ -235,6 +247,22 @@ async function handleRequest(
           ...(typeof body.taskPrompt === "string" ? { taskPrompt: body.taskPrompt } : {}),
         }),
       });
+    }
+    if (request.url === "/usage/record") {
+      // P4 topology Option A1 (issue #283): the provenance-stamped cross-process
+      // record path. A process-separated interactive surface POSTs its boundary
+      // delta here; the hub appends it to the SURFACE-observation journal, NOT
+      // the canonical `taskUsage` rollups. A surface-supplied task id is never
+      // trusted as authoritative attribution (W153) — the `recordedBy` stamp is
+      // mandatory and must carry the `surface:` prefix, so a client cannot claim
+      // a `hub`-class label. Observability-only: no state transition, no
+      // evidence, no authorization. Ordinary-token class (a same-UID surface
+      // class, like /run/begin), never verifier-only.
+      if (context.recordSurfaceUsage === undefined) return send(response, 404, { error: "not found" });
+      const parsed = parseSurfaceUsage(body);
+      if (typeof parsed === "string") return send(response, 400, { error: parsed });
+      context.recordSurfaceUsage(parsed);
+      return send(response, 200, {});
     }
     if (request.url === "/run/begin") {
       if (context.runController === undefined) return send(response, 404, { error: "not found" });
@@ -621,6 +649,9 @@ async function handleRequest(
         // W111: the recorded per-task boundary deltas ride the same
         // observability surface (a bounded append journal; observation only).
         ...(gates.taskUsage === undefined ? {} : { taskUsage: gates.taskUsage }),
+        // P4 topology Option A1: the provenance-stamped surface observations
+        // (a separate journal; each row carries its `recordedBy` stamp).
+        ...(gates.surfaceUsage === undefined ? {} : { surfaceUsage: gates.surfaceUsage }),
       };
       // Full WorkflowSnapshot shape so hub-attached monitors render the same
       // canonical projection as in-process surfaces.
@@ -701,6 +732,7 @@ async function handleRequest(
         completionClaims: Object.fromEntries(gates.completionClaims),
         ...(gates.runUsage === undefined ? {} : { usage: Object.fromEntries(gates.runUsage) }),
         ...(gates.taskUsage === undefined ? {} : { taskUsage: gates.taskUsage }),
+        ...(gates.surfaceUsage === undefined ? {} : { surfaceUsage: gates.surfaceUsage }),
         ...(gates.reasoningClaims === undefined ? {} : { reasoningClaims: Object.fromEntries(gates.reasoningClaims) }),
         ...(gates.reasoningClaimMetrics === undefined ? {} : { reasoningClaimMetrics: gates.reasoningClaimMetrics }),
       };
@@ -877,6 +909,51 @@ function parseProjectRecord(body: unknown): ProjectRecord | string {
     status: body.status,
     ...(budget === undefined ? {} : { budget }),
     workspaces: body.workspaces as readonly string[],
+  };
+}
+
+/**
+ * P4 topology Option A1 (issue #283): the /usage/record schema strip. Composes
+ * the surface observation from VALIDATED fields only. The `recordedBy`
+ * provenance stamp is mandatory and must carry the `surface:` prefix, so a
+ * client can never claim a `hub`-class attribution; the task id it posts is a
+ * labelled surface observation, never authoritative (W153). Returns the
+ * observation or the client-fault message.
+ */
+const SURFACE_USAGE_NUMBER_FIELDS = [
+  "requests",
+  "promptTokens",
+  "completionTokens",
+  "totalTokens",
+  "costUsd",
+  "cacheReadTokens",
+  "cacheCreateTokens",
+] as const;
+
+function parseSurfaceUsage(body: unknown): SurfaceUsageObservation | string {
+  if (!isRecord(body)) return "invalid usage record request";
+  if (typeof body.recordedBy !== "string" || !/^surface:.+/.test(body.recordedBy)) {
+    return "invalid usage record request: recordedBy must be a provenance stamp with the 'surface:' prefix";
+  }
+  if (typeof body.taskId !== "string" || body.taskId.trim().length === 0) {
+    return "invalid usage record request: taskId must be a non-empty string";
+  }
+  for (const field of SURFACE_USAGE_NUMBER_FIELDS) {
+    const value = body[field];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      return `invalid usage record request: ${field} must be a non-negative finite number`;
+    }
+  }
+  return {
+    recordedBy: body.recordedBy,
+    taskId: body.taskId,
+    requests: body.requests as number,
+    promptTokens: body.promptTokens as number,
+    completionTokens: body.completionTokens as number,
+    totalTokens: body.totalTokens as number,
+    costUsd: body.costUsd as number,
+    cacheReadTokens: body.cacheReadTokens as number,
+    cacheCreateTokens: body.cacheCreateTokens as number,
   };
 }
 
