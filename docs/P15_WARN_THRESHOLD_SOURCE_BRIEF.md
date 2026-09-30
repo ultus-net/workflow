@@ -243,3 +243,24 @@ fail-closed with a `[budget]` warn.
   are not applicable to this deliverable** (nothing compiled changed). The
   existing focused suites cited above are the verification of the
   as-found state, not of this brief.
+
+## 5. Decision recorded (2026-09-30)
+
+**The operator chose option (a) — the env axis.** The warn-threshold source
+STAYS the env axis for v1: the `fraction` in `cap * fraction` of
+`budgetDowngradeActive` (`WORKFLOW_BUDGET_DOWNGRADE_FRACTION`, default 0.8).
+**No code change** — the decision is a recorded reaffirmation of the
+as-shipped state (option (a), §1).
+
+**What would trigger revisiting:** a warn/abort coherence drift — the §2
+as-found seam, where the abort guard's W151 override-merged effective budget
+and the downgrade/warn runtime's env-only budget can disagree. Options (b)
+and (c) would each force that seam to be resolved; a drift is the recorded
+trigger to re-open.
+
+The three options in §1 remain unchanged as the re-open reference. Every P15
+part is now dispositioned: (a) landed, (b) landed, (c) decided-(a), (d)
+resolved W122. Decision record:
+`docs/ledger/P15c-decision-recorded.md`; the P15 row carries the dated note.
+This note supersedes the "decision itself (operator)" open item in §4; the
+rest of §4 (the override seam, docs-only verification) stands as found.
