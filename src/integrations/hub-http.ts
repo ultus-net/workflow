@@ -583,6 +583,9 @@ async function handleRequest(
         // W044 (open clause): per-run metering-proxy totals ride to
         // hub-attached monitors (observation only, like the other gates).
         ...(gates.runUsage === undefined ? {} : { usage: Object.fromEntries(gates.runUsage) }),
+        // W111: the recorded per-task boundary deltas ride the same
+        // observability surface (a bounded append journal; observation only).
+        ...(gates.taskUsage === undefined ? {} : { taskUsage: gates.taskUsage }),
       };
       // Full WorkflowSnapshot shape so hub-attached monitors render the same
       // canonical projection as in-process surfaces.
@@ -662,6 +665,7 @@ async function handleRequest(
         blockingReasons: Object.fromEntries(gates.blockingReasons),
         completionClaims: Object.fromEntries(gates.completionClaims),
         ...(gates.runUsage === undefined ? {} : { usage: Object.fromEntries(gates.runUsage) }),
+        ...(gates.taskUsage === undefined ? {} : { taskUsage: gates.taskUsage }),
         ...(gates.reasoningClaims === undefined ? {} : { reasoningClaims: Object.fromEntries(gates.reasoningClaims) }),
         ...(gates.reasoningClaimMetrics === undefined ? {} : { reasoningClaimMetrics: gates.reasoningClaimMetrics }),
       };

@@ -10,6 +10,7 @@ import type { EvidenceContentStore } from "./evidence-content-store.js";
 import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { createRunRegistry, type RunReviewerFactory, type RunTestRunner } from "./run-registry.js";
+import type { TaskUsageSummary } from "./task-usage.js";
 import type { HubScheduler } from "./hub-scheduler.js";
 import type { SelfImprovementRegistry } from "./self-improvement-registry.js";
 import type { ScheduleRegistry } from "./schedule-registry.js";
@@ -49,6 +50,12 @@ export interface WorkflowHubSchedulerHandles {
   noteReasoningClaimMonitor: (input: { readonly runId: string }) => void;
   /** W044 (open clause): record a run turn's metering-proxy totals for the monitor. */
   recordRunUsage: (input: { readonly runId: string; readonly usage: { readonly requests: number; readonly promptTokens: number; readonly completionTokens: number; readonly totalTokens: number; readonly costUsd: number; readonly cacheReadTokens: number; readonly cacheCreateTokens: number } }) => void;
+  /**
+   * W111: record a turn's per-task boundary delta (the active-task pointer
+   * paired with the delta). The seam a host lane calls at its turn edge; no
+   * lane is wired yet (the brief §5 lane decisions stay open).
+   */
+  recordTaskUsage: (input: Omit<TaskUsageSummary, "recordedAt">) => void;
 }
 
 export async function createWorkflowHub(
@@ -167,6 +174,7 @@ export async function createWorkflowHub(
         recordReasoningClaim: runs.recordReasoningClaim,
         noteReasoningClaimMonitor: runs.noteReasoningClaimMonitor,
         recordRunUsage: runs.recordRunUsage,
+        recordTaskUsage: runs.recordTaskUsage,
       })
       : undefined;
     // Checkpoint F: the self-improvement registry may be composed lazily
@@ -182,6 +190,7 @@ export async function createWorkflowHub(
         recordReasoningClaim: runs.recordReasoningClaim,
         noteReasoningClaimMonitor: runs.noteReasoningClaimMonitor,
         recordRunUsage: runs.recordRunUsage,
+        recordTaskUsage: runs.recordTaskUsage,
       })
       : options.selfImprovement;
     // W074: connect the schedule registry's run-now to the live scheduler so

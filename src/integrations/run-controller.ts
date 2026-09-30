@@ -73,6 +73,12 @@ export interface WorkflowRunController {
     };
     /** W044 (open clause): per-run usage from the metering proxy (hub-side aggregation). */
     runUsage?: ReadonlyMap<string, import("./run-registry.js").RunUsageSummary>;
+    /**
+     * W111: the recorded per-task boundary deltas (bounded append journal).
+     * Observability only; the per-task rollup is the sum of recorded entries
+     * and no view re-derives a delta.
+     */
+    taskUsage?: readonly import("./task-usage.js").TaskUsageSummary[];
     /** W153: recorded schedule-origin attribution per run (observability-only). */
     runOrigins?: ReadonlyMap<string, import("./run-registry.js").RunOrigin>;
     /** W165: recorded run→PR work-product links per run (observability-only). */
