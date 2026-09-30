@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-09-26",
+  "updated": "2026-09-30",
   "verdicts": [
     {
       "id": "acp-cline-probe",
@@ -508,6 +508,19 @@
       "posture": "advisory",
       "evidence": "docs/HOST_ADAPTERS.md W082 auto-trigger entry (config-load arm live green: the composed config carries compaction: { auto: true } beside the pinned ask ruleset, and /api/config lists the hub-written document with the compaction block parsed)",
       "note": "The config-load arm is the deterministic trigger delivery (config-owned, no plugin, no prompt-side loop). The monitor's live read arm (documented session-entries tokens read + threshold evaluation against the real server) is also green on this date (opencode-server-monitor.ts, data-lane backstop). The LIVE auto-compact turn arm — a real model turn overflowing context and compacting on the pinned version — stays PENDING (needs a real model key); no enforced claim for the runtime's auto-compaction behavior is earned by this row."
+    },
+    {
+      "id": "vendor-anthropic-cache",
+      "host": "anthropic-compatible vendor endpoints (deepseek/glm/kimi)",
+      "hostVersion": "per-vendor (recorded per run)",
+      "probe": "test/vendor-anthropic-cache-probe.test.ts",
+      "gate": "WORKFLOW_VENDOR_CACHE_PROBE",
+      "date": "2026-09-30",
+      "result": "blocked",
+      "posture": "unqualified",
+      "evidence": "docs/ledger/P8-vendor-cache-probe-harness.md run recipe; docs/PARKED_AND_LIMITATIONS.md P8 row (L8)",
+      "blocker": "needs the operator's per-vendor key in the probe environment (DEEPSEEK_API_KEY, ZAI_API_KEY/GLM_API_KEY, MOONSHOT_API_KEY/KIMI_API_KEY, or ~/.config/workflow/<family>-api-key); the live per-vendor verdicts against the Messages-schema cache_control markers are unrun",
+      "note": "Arms one per family (deepseek/glm/kimi) behind WORKFLOW_VENDOR_CACHE_PROBE=<family|list|all>; skips cleanly with no gate or no key and never calls a vendor in CI. The committed assertions are structural only — the composed request's ephemeral markers are pinned ungated, and a live response must be a well-formed Messages body with numeric usage; whether cache_creation_input_tokens/cache_read_input_tokens appear is OBSERVED and copied into the dated operator record, never asserted here. This row stays blocked/unqualified until a live run records the per-vendor shape; the W109 marker opt-in stays dark for every family until then (probe-gated, never date-gated)."
     }
   ]
 }
