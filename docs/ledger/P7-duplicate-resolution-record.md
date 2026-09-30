@@ -10,7 +10,7 @@ one or supersede one … **Operator's call** — both are operator-intent record
 W096 carries the fuller constraint enumeration, W093 the plane-3 loopback
 facts." Fed by the two write-once fragments
 (`docs/ledger/W093-…-az-function-.md`, `docs/ledger/W096-…-az-function-.md`)
-and the batch-5 hosting assessment
+and the batch-3 hosting assessment
 (`docs/HOSTING_ASSESSMENT_2026-09-30.md`; fragment
 `docs/ledger/HOSTING-ASSESSMENT.md`) — the intent both records carry is exactly
 the deliverable that assessment serves.
@@ -37,7 +37,7 @@ the deliverable that assessment serves.
 the P7 row (`docs/PARKED_AND_LIMITATIONS.md:36`); the sweep record (PR #107,
 commit `9ecf2c79`; the parked-file creation record
 `docs/ledger/W116-the-parked-items-and-limitations-registry-file-complete-the-.md:5-10`);
-the batch-5 hosting assessment (`docs/HOSTING_ASSESSMENT_2026-09-30.md`,
+the batch-3 hosting assessment (`docs/HOSTING_ASSESSMENT_2026-09-30.md`,
 375 lines) and its W093 line citations (`:7`, `:16`, `:161-168`, `:307`,
 `:324`, `:357`, `:371-375`). Docs-only: no executable surface changed —
 `lint` and `typecheck` are **not applicable** to this change.

@@ -13,7 +13,7 @@ fragments (`docs/ledger/W093-serverless-hosting-option-for-the-control-plane-az-
 sweep's record (PR #107, `docs/w098-status-and-residual-26`, commit `9ecf2c79`
 — "fix the status/registry contradictions"; the parked-file creation record
 `docs/ledger/W116-the-parked-items-and-limitations-registry-file-complete-the-.md:5-10`);
-the batch-5 hosting assessment
+the batch-3 hosting assessment
 (`docs/HOSTING_ASSESSMENT_2026-09-30.md`, ledger fragment
 `docs/ledger/HOSTING-ASSESSMENT.md`); the protocol-planes map
 (`docs/PROTOCOL_PLANES_2026-09-22.md`).
@@ -74,11 +74,11 @@ re-opened surfaces in a single place, and is the record that carries the
 sweep's DUPLICATE finding itself. Nothing in either contradicts the other;
 there is no factual conflict to reconcile, only a canonicity question.
 
-## 2. The cross-reference: the batch-5 hosting assessment
+## 2. The cross-reference: the batch-3 hosting assessment
 
 The intent both records carry is exactly the deliverable the batch-5 hosting
 assessment serves: `docs/HOSTING_ASSESSMENT_2026-09-30.md` (issue #140; landed
-in the 2026-09-30 wave's batch 5, its ledger fragment recording the PR as "to
+in the 2026-09-30 wave's batch 3, its ledger fragment recording the PR as "to
 be linked at open" — `docs/ledger/HOSTING-ASSESSMENT.md:7`). Its
 own framing names the W093/W096 items as "the open decision it informs"
 (`docs/HOSTING_ASSESSMENT_2026-09-30.md:11-16`) and cites the W093 fragment
@@ -103,7 +103,7 @@ none is applied by this record.**
   note.** W093 is the canonical W093/W096 entry; W096 gets an appended dated
   note (2026-09-30) saying it is superseded by W093 as canonical, that its
   fuller constraint enumeration remains preserved in place and is not deleted,
-  and that the batch-5 hosting assessment cites W093. Rationale: W093 carries
+  and that the batch-3 hosting assessment cites W093. Rationale: W093 carries
   the plane-3 loopback facts, the expanded citations, and is the record the
   batch-5 assessment cites by line, so this is the least-churn reconciliation
   and it keeps the assessment's citations stable. Cost: the "fuller constraint
@@ -136,7 +136,7 @@ resolution is the operator's call** (the P7 row's verbatim disposition,
 
 **Evidence:** the two fragments read in full (W093 38 lines, W096 33 lines);
 the P7 row (`docs/PARKED_AND_LIMITATIONS.md:36`); the sweep record (PR #107,
-commit `9ecf2c79`; W116 fragment `:5-10`); the batch-5 hosting assessment
+commit `9ecf2c79`; W116 fragment `:5-10`); the batch-3 hosting assessment
 (`docs/HOSTING_ASSESSMENT_2026-09-30.md`, 375 lines; ledger fragment
 `docs/ledger/HOSTING-ASSESSMENT.md`) and its W093 citations. Docs-only: lint
 and typecheck are **not applicable** (no executable surface touched).
