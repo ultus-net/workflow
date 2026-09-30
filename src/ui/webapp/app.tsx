@@ -39,13 +39,17 @@ import { OverviewView } from "./overview-view.js";
 import { RunsView } from "./runs-view.js";
 import { RunDetailPanel } from "./run-detail-panel.js";
 import { useRunsRecord } from "./runs-record.js";
-import { clearRunDetailOpenToWindow, readRunDetailOpenFromWindow, saveRunDetailOpenToWindow, type RunDetailOpen } from "./run-detail-state.js";
+import { clearRunDetailOpenToWindow, readRunDetailOpenFromWindow, saveRunDetailOpenToWindow, type RunDetailOpen, type RunDetailTab } from "./run-detail-state.js";
 import { EvidenceStripRow, useContentPreviews, useHubEvidence, type EvidenceContentRefView } from "./evidence-preview.js";
 export { artifactKind, EvidenceStripRow } from "./evidence-preview.js";
 export type { EvidenceContentPreview, EvidenceContentRefView } from "./evidence-preview.js";
 // W177: the Audit page — the three recorded authorization-adjacent lanes the
 // hub actually keeps, plus the verbatim in-memory permission-decision boundary.
 import { AuditView, useAuditRecord } from "./audit-view.js";
+// W176 phase 3 (#347): the Reviews page — one row per review-gated run,
+// derived from the same /api/runs relay records the Runs page polls; a row
+// click opens the SHARED run detail panel on its Review tab.
+import { ReviewsView } from "./reviews-view.js";
 import type { ScheduleRecentRun } from "../../integrations/operator-posture.js";
 import type { BoardOutcome, WorkProductCardState } from "../../integrations/task-provider.js";
 import type { ProviderReadRecord } from "../../integrations/issue-detail.js";
@@ -2317,20 +2321,6 @@ export function ChatPageHead({ session, refresh, onNew }: {
   );
 }
 
-/** W174 phase 1a: the new dashboard pages ship their ROUTES in this phase and
- * their content with their phase's slice — each renders a named absence (what
- * the page is, when it arrives), never a fabricated empty panel. W177: the
- * audit page's content landed (audit-view.tsx); runs / reviews / activity
- * still wait for their slices. */
-function PhasePlaceholder({ page, phase }: { readonly page: string; readonly phase: string }) {
-  return (
-    <div className="phase-placeholder" role="status">
-      <h3 className="phase-placeholder-title">{page}</h3>
-      <p className="phase-placeholder-copy">the page arrives with its phase ({phase})</p>
-    </div>
-  );
-}
-
 export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId }: {
   readonly view: AppView;
   readonly setView: (view: AppView) => void;
@@ -2418,15 +2408,17 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
     });
   }, []);
   const railCollapsed = railState.collapsed ?? false;
-  // W175 phase 2: the runs page's contextual detail panel. The opened run and
-  // the page that opened it persist per browser through sessionStorage (the
-  // guarded pair in run-detail-state.ts): a reload restores the panel, the
+  // W175 phase 2: the runs page's contextual detail panel. The opened run,
+  // the page that opened it, and (W176 phase 3, #347) the tab it opened on
+  // persist per browser through sessionStorage (the guarded pair in
+  // run-detail-state.ts): a reload restores the panel on the same tab, the
   // back affordance names the opener verbatim, and closing returns focus to
-  // the invoking row and the opener page ("opened from Runs, back returns to
-  // Runs").
+  // the invoking row and the opener page ("opened from Runs, back returns
+  // to Runs"; "opened from Reviews, back returns to Reviews" — the Reviews
+  // page's rows open the panel on its Review tab).
   const [runDetail, setRunDetail] = useState<RunDetailOpen | undefined>(() => readRunDetailOpenFromWindow());
-  const openRunDetail = useCallback((runId: string): void => {
-    const next: RunDetailOpen = { opener: "runs", runId };
+  const openRunDetail = useCallback((runId: string, opener: AppView, tab?: RunDetailTab): void => {
+    const next: RunDetailOpen = { opener, runId, ...(tab === undefined ? {} : { tab }) };
     saveRunDetailOpenToWindow(next);
     setRunDetail(next);
   }, []);
@@ -2765,7 +2757,7 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
           <RunsView
             record={runsRecord}
             selectedRunId={runDetail?.runId}
-            onSelectRun={openRunDetail}
+            onSelectRun={(runId) => openRunDetail(runId, "runs")}
           />
           {runDetail !== undefined && (
             <aside className="runs-detail" aria-label="Run detail">
@@ -2775,13 +2767,42 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
                 timeline={timeline}
                 boardRead={boardRead}
                 opener={runDetail.opener}
+                initialTab={runDetail.tab}
                 onBack={closeRunDetail}
               />
             </aside>
           )}
         </div>
       ) : view === "reviews" ? (
-        <PhasePlaceholder page="Reviews" phase="the review inbox ships with phase 1b" />
+        // W176 phase 3 (#347): the Reviews page — one row per review-gated
+        // run (the relay's reviewOutcomes/blockingReasons records, plus the
+        // registry rows whose state is VERIFYING), derived by reviews-view
+        // from the same /api/runs record the Runs page polls. The shared
+        // detail panel docks in the same right-side region and opens on its
+        // Review tab (the page's contract: every row click opens on Review;
+        // the opener memory carries opener + tab, so the back affordance
+        // returns to Reviews).
+        <div className="shell-body reviews-body">
+          <ReviewsView
+            record={runsRecord}
+            selectedRunId={runDetail?.runId}
+            onSelectRun={(runId) => openRunDetail(runId, "reviews", "review")}
+          />
+          {runDetail !== undefined && (
+            <aside className="runs-detail" aria-label="Run detail">
+              <RunDetailPanel
+                key={runDetail.runId}
+                runId={runDetail.runId}
+                record={runsRecord}
+                timeline={timeline}
+                boardRead={boardRead}
+                opener={runDetail.opener}
+                initialTab={runDetail.tab ?? "review"}
+                onBack={closeRunDetail}
+              />
+            </aside>
+          )}
+        </div>
       ) : view === "activity" ? (
         <ActivityPage />
       ) : view === "audit" ? (
