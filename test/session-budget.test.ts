@@ -138,6 +138,7 @@ test("the composed session records the mechanism and enforces nothing while usag
   const proxy: ModelUsageProxy = {
     url: "http://127.0.0.1:0",
     metrics: () => metrics(900, 0.001),
+    messagesLaneLabels: () => ({ models: [], malformedBodies: 0 }),
     close: async () => undefined,
   };
   process.env.WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS = "1000";
@@ -166,7 +167,7 @@ test("an in-flight turn is cancelled the moment a session event crosses the cap"
     async cancel() { state.cancelled += 1; },
   };
   let usage = metrics(100, 0.001);
-  const proxy: ModelUsageProxy = { url: "http://127.0.0.1:0", metrics: () => usage, close: async () => undefined };
+  const proxy: ModelUsageProxy = { url: "http://127.0.0.1:0", metrics: () => usage, messagesLaneLabels: () => ({ models: [], malformedBodies: 0 }), close: async () => undefined };
   process.env.WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS = "1000";
   try {
     const composed = composeSessionWithBudget(driver, proxy);
@@ -202,6 +203,7 @@ test("W119: the guard's usage aggregates the open-source lane's pool metrics", a
   const proxy: ModelUsageProxy = {
     url: "http://127.0.0.1:0",
     metrics: () => metrics(100, 0.001),
+    messagesLaneLabels: () => ({ models: [], malformedBodies: 0 }),
     close: async () => undefined,
   };
   const openPoolUsage = metrics(2000, 0.01);
@@ -233,6 +235,7 @@ test("W119: absent additional usage the guard's snapshot is the OpenRouter proxy
   const proxy: ModelUsageProxy = {
     url: "http://127.0.0.1:0",
     metrics: () => metrics(900, 0.001),
+    messagesLaneLabels: () => ({ models: [], malformedBodies: 0 }),
     close: async () => undefined,
   };
   process.env.WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS = "1000";
@@ -273,7 +276,7 @@ test("P15 (b): the abort tier sees the cross-family aggregate, not a per-family 
     upstreamOverride: (def) => (def.family === "deepseek" ? deepseek.url : glm.url),
   });
   const { driver, events } = fakeDriver();
-  const openRouter: ModelUsageProxy = { url: "http://127.0.0.1:0", metrics: () => metrics(0, 0), close: async () => undefined };
+  const openRouter: ModelUsageProxy = { url: "http://127.0.0.1:0", metrics: () => metrics(0, 0), messagesLaneLabels: () => ({ models: [], malformedBodies: 0 }), close: async () => undefined };
   process.env.WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS = "1000";
   try {
     // Record 600 tokens on each family: each is under the 1000 cap; the
