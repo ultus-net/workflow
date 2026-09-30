@@ -8,8 +8,8 @@ import { PermissionBroker } from "../ui/permission-broker.js";
 import { createAgentRuntime } from "../ui/web-agents.js";
 import { createWorkflowWebServer } from "../ui/web.js";
 import { loadSettings } from "../integrations/workflow-settings.js";
-import { surfaceStamp, surfaceUsageSink } from "../integrations/task-usage.js";
-import { createSurfaceUsagePost } from "../integrations/surface-usage-client.js";
+import { laneTaskUsageSink } from "../integrations/task-usage.js";
+import { createSurfaceUsageSessionPost } from "../integrations/surface-usage-client.js";
 import type { WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
 import { WebSessionManager } from "../ui/web-sessions.js";
 import { buildWebappBundle } from "../ui/webapp/bundle.js";
@@ -67,30 +67,32 @@ export async function startWorkflowWeb(options: StartWorkflowWebOptions = {}): P
   // One broker for the whole service: permission mode and always/reject
   // patterns survive session switches; parked prompts are denied on switch.
   const permissionBroker = new PermissionBroker();
-  // P4 topology Option A1 (issue #283): the cross-process surface-usage sink.
-  // A completed interactive turn posts its provenance-stamped boundary delta to
-  // the hub's observability-only /usage/record route (read from the hub
-  // discovery file at post time; no hub → nothing recorded). The `usage`
-  // reading is deferred: it reads the runtime once it exists, at the turn
-  // boundary. The web service DOES hold a stable session id (the manager's
-  // registry record id), so the stamp is per-session:
-  // `surface:web-service:<sessionId>` — the task id still rides as a labelled
-  // observation, never hub-authoritative attribution (W153).
-  const postSurfaceUsage = createSurfaceUsagePost(
+  // P4 topology Option A2 (issue #283): the hub-BOUND cross-process sink. A
+  // completed interactive turn asks the hub to mint a single-use session id
+  // bound to this runtime's task, then posts only the counters + that id to the
+  // hub's observability-only /usage/record route (read from the hub discovery
+  // file at post time; no hub → nothing minted, nothing recorded). The hub
+  // resolves session→task from its OWN registration record and writes the
+  // CANONICAL `taskUsage` journal — the record wire carries NO task id, so the
+  // task is hub-derived, never a client attribution (W153). The `usage` reading
+  // is deferred: it reads the runtime once it exists, at the turn boundary.
+  const postSurfaceSessionUsage = createSurfaceUsageSessionPost(
     process.env.WORKFLOW_HUB_DIR === undefined ? {} : { hubDiscoveryDir: process.env.WORKFLOW_HUB_DIR },
   );
   const manager = new WebSessionManager({
     // Load settings per session so an edit made on the settings page is
     // pushed into the next session's agent launch config. W151: a session's
     // persisted raised budget rides the same options into the runtime. The
-    // fourth parameter is the session's stable registry id (P4 A1).
-    factory: async (agent, resumeFrom, budgetOverride, sessionId) => {
+    // manager also hands the session's stable registry id (P4 A1); A2 no longer
+    // carries a surface stamp on the record wire, so the factory omits it (a
+    // factory that ignores it stays valid).
+    factory: async (agent, resumeFrom, budgetOverride) => {
       const usageHolder: { runtime?: WorkflowAcpRuntime } = {};
       const composed = await createAgentRuntime(agent, application, workspace, taskId("W001"), resumeFrom, {
         permissionBroker,
         settings: loadSettings({ workspace }),
         ...(budgetOverride === undefined ? {} : { budgetOverride }),
-        taskUsage: surfaceUsageSink(() => usageHolder.runtime?.metrics?.(), surfaceStamp("web-service", sessionId), postSurfaceUsage),
+        taskUsage: laneTaskUsageSink(() => usageHolder.runtime?.metrics?.(), postSurfaceSessionUsage),
       });
       usageHolder.runtime = composed;
       return composed;
