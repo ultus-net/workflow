@@ -7,7 +7,7 @@
 **What landed:**
 
 - **`OpenModelMeteringPool.perFamilyMetrics(): ReadonlyMap<ModelFamily, ModelUsageMetrics>`** (`src/integrations/open-model-proxy.ts`): one entry per family with a composed vendor proxy, each the family proxy's OWN recorded `metrics()` — the same per-entry records the aggregate sums. RECORDED-ONLY: the split is read from the proxies, never re-derived from a request log or the wire.
-- **The aggregate is unchanged.** `metrics()` keeps the exact pre-change arithmetic, iteration order, and `latestPromptTokens` (last-defined-wins) semantics; both views now read ONE shared recorded snapshot (`recordedByFamily()`), so the per-family entries sum to the aggregate by construction. The W119 abort-tier snapshot (and every other `metrics()` consumer: `acp-runtime.ts` usage/`metrics` accessors, `opencode-server-runtime.ts`, the `--metrics` debug prints) is byte-identical.
+- **The aggregate is unchanged.** `metrics()` keeps the exact pre-change arithmetic, iteration order, and `latestPromptTokens` (last-defined-wins) semantics; both views now read ONE shared recorded snapshot (`recordedByFamily()`), so the per-family entries sum to the aggregate by construction. The W119 abort-tier snapshot (and every other `metrics()` consumer: `acp-runtime.ts` usage/`metrics` accessors, the `--metrics` debug prints (note: the `opencode-server-runtime.ts` proxy reports its OWN `proxy.metrics()`, a separate instance — the pool consumers are the aggregate readers)) is byte-identical.
 - **A family with no resolved key carries no proxy and is absent from the view** (recorded-only: no records, no entry).
 - **`docs/PARKED_AND_LIMITATIONS.md` row P15** got the dated append-only note recording (b) landed, (c) queued.
 
