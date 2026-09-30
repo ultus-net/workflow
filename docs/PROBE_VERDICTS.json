@@ -510,17 +510,28 @@
       "note": "The config-load arm is the deterministic trigger delivery (config-owned, no plugin, no prompt-side loop). The monitor's live read arm (documented session-entries tokens read + threshold evaluation against the real server) is also green on this date (opencode-server-monitor.ts, data-lane backstop). The LIVE auto-compact turn arm — a real model turn overflowing context and compacting on the pinned version — stays PENDING (needs a real model key); no enforced claim for the runtime's auto-compaction behavior is earned by this row."
     },
     {
-      "id": "vendor-anthropic-cache",
-      "host": "anthropic-compatible cache-marker lanes (direct deepseek/glm/kimi arms + the generic Azure/OpenRouter provider lane)",
-      "hostVersion": "per-lane (recorded per run)",
+      "id": "vendor-anthropic-cache-provider",
+      "host": "anthropic-compatible cache-marker provider lane (the deployed Azure AI Foundry / OpenRouter reseller route)",
+      "hostVersion": "anthropic/claude-sonnet-4.5 via OpenRouter (response served by Amazon Bedrock)",
       "probe": "test/vendor-anthropic-cache-probe.test.ts",
       "gate": "WORKFLOW_VENDOR_CACHE_PROBE",
       "date": "2026-09-30",
-      "result": "blocked",
-      "posture": "unqualified",
-      "evidence": "docs/ledger/P8-vendor-cache-probe-harness.md run recipe; docs/ledger/P8p-provider-lane-probe.md provider-lane recipe; docs/P8_LIVE_RUN_RECIPE.md turnkey live-run recipe; docs/PARKED_AND_LIMITATIONS.md P8 row (L8)",
-      "blocker": "the live per-lane verdicts are unrun. The DEPLOYED lane is the generic provider route (gate token 'provider'): it needs WORKFLOW_PROVIDER_ANTHROPIC_URL / WORKFLOW_PROVIDER_API_KEY / WORKFLOW_PROVIDER_MODEL pointing at the operator's Azure AI Foundry or OpenRouter anthropic-compatible endpoint. The direct per-family arms (NOT the deployed lane) need DEEPSEEK_API_KEY, ZAI_API_KEY/GLM_API_KEY, MOONSHOT_API_KEY/KIMI_API_KEY, or ~/.config/workflow/<family>-api-key",
-      "note": "P8 lane re-frame (issue #287, 2026-09-30): the operator does NOT use direct vendor API keys — production traffic crosses a reseller/provider (Azure AI Foundry or OpenRouter) anthropic-compatible lane. The direct per-family arms stay because they measure the vendor contracts themselves, but they are not the deployed route. Arms: one per family plus the generic provider lane, behind WORKFLOW_VENDOR_CACHE_PROBE=<family|list|all|provider> (the 'provider' token is explicit; 'all' stays families-only). Skips cleanly with no gate or missing env and never makes a network call in CI. The committed assertions are structural only — the composed request's ephemeral markers are pinned ungated (one pin per lane: 2 ungated passes), and a live response must be a well-formed Messages body with numeric usage; whether cache_creation_input_tokens/cache_read_input_tokens appear is OBSERVED and copied into the dated operator record, never asserted here. This row stays blocked/unqualified until a live run records the per-lane shape; the W109 marker opt-in stays dark for every family until then (probe-gated, never date-gated)."
+      "result": "negative",
+      "posture": "advisory",
+      "evidence": "docs/HOST_ADAPTERS.md Vendor anthropic cache-marker probes; docs/P8_LIVE_RUN_RECIPE.md turnkey live-run recipe; docs/PARKED_AND_LIMITATIONS.md P8 row (L8)",
+      "note": "Live provider-lane run 2026-09-30 via the operator's cline-api-key OpenRouter credential: WORKFLOW_VENDOR_CACHE_PROBE=provider, endpoint https://openrouter.ai/api/v1, model anthropic/claude-sonnet-4.5 (response provider 'Amazon Bedrock'). The composed body carried the three ephemeral markers (systemMarker / lastToolMarker / boundaryMarker each {type:ephemeral}). The endpoint returned HTTP 2xx with a well-formed Messages body and stop_reason end_turn; observed cacheUsage = cache_creation_input_tokens 0, cache_read_input_tokens 0, input_tokens 581, output_tokens 4. The endpoint accepted the marked body but did not account for the markers, so the result is negative/advisory (accepted, not accounted). Caveat: one marked request can only show cache CREATION; a cache READ needs a second turn with the same prefix. The direct deepseek/glm/kimi family arms are NOT covered by this verdict (see vendor-anthropic-cache-families)."
+    },
+    {
+      "id": "vendor-anthropic-cache-families",
+      "host": "anthropic-compatible cache-marker family route (deepseek/glm/kimi reached via the OpenRouter reseller route; NOT direct-vendor arms)",
+      "hostVersion": "deepseek/deepseek-v4-flash, z-ai/glm-5.3-flash, moonshotai/kimi-k2.6 via OpenRouter (per-run response providers: DeepInfra, Relace, Inceptron)",
+      "probe": "test/vendor-anthropic-cache-probe.test.ts",
+      "gate": "WORKFLOW_VENDOR_CACHE_PROBE",
+      "date": "2026-09-30",
+      "result": "negative",
+      "posture": "advisory",
+      "evidence": "docs/HOST_ADAPTERS.md Vendor anthropic cache-marker probes; docs/P8_LIVE_RUN_RECIPE.md family-via-OpenRouter run; docs/ledger/P8-vendor-cache-probe-harness.md run recipe; docs/ledger/P8p-provider-lane-probe.md provider-lane recipe; docs/PARKED_AND_LIMITATIONS.md P8 row (L8)",
+      "note": "Family-via-OpenRouter run 2026-09-30: the operator reaches deepseek/glm/kimi THROUGH OpenRouter, so these are the deployed-route measurements and they do NOT claim direct-vendor coverage. Endpoint https://openrouter.ai/api/v1/messages; the composed anthropic Messages body carried the three ephemeral markers (system / lastTool / boundary) exactly as the ungated pins assert. deepseek/deepseek-v4-flash -> HTTP 200, stop_reason end_turn, response provider DeepInfra; z-ai/glm-5.3-flash -> HTTP 200, stop_reason max_tokens, provider Relace; moonshotai/kimi-k2.6 -> HTTP 200, stop_reason max_tokens, provider Inceptron. Each observed cache_creation_input_tokens: null and cache_read_input_tokens: 0 — the endpoints accepted the marked body but did not account for the markers, so the result is negative/advisory (accepted, not accounted; recipe §3: 2xx + well-formed body + cache fields absent/zero => negative). Caveat: single-request creation-only — one marked request can only show cache CREATION, a cache READ needs a second turn with the same prefix. A green cache effect was NOT observed, so the W109 cacheMarkers opt-in's value here is marker pass-through, not a measured saving."
     }
   ]
 }
