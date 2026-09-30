@@ -38,6 +38,7 @@ import {
 } from "../integrations/self-improvement-agent.js";
 import { createAuthorityGate } from "../integrations/self-improvement-loop.js";
 import { createWorkflowHub, type WorkflowHubSchedulerHandles } from "../integrations/workflow-hub.js";
+import { PermissionBroker } from "../ui/permission-broker.js";
 import { taskId, type TaskId } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 
@@ -101,6 +102,16 @@ const guard = await createDefaultToolboxGuardProvider({
   workspace,
 });
 
+// P6 (issue #285): the hub process's SAME-PROCESS broker. The hub serves its
+// pending/answer path on the hub HTTP bridge (`/api/permission`), and every
+// containment seat the hub composes (the /bash route and the shells below)
+// passes `broker.askHold()` to `shellExecutorFor`, so a guard `ask` held by a
+// seat that runs in THIS process is answerable — not the 120s park-then-deny.
+// The broker is in-process only; no cross-process plumbing is invented. The
+// plugin (an external agent-host process) composes its own broker via
+// `createWorkflowOpenCodePluginRoot`.
+const permissionBroker = new PermissionBroker();
+
 // Hub-owned run gates (plan Tasks A2/D1): the reviewer is a contained ACP
 // agent authorized read-only against its own session task; diff sourcing and
 // test execution go through the same contained shell as the /bash route.
@@ -122,7 +133,7 @@ const workspaceApplicationFor = (target: string): WorkflowApplication => {
   return bound;
 };
 const containedShell = (writableWorkspace: boolean) => (command: string, cwd: string) =>
-  shellExecutorFor(workspaceApplicationFor(cwd), undefined, writableWorkspace, guard)(command, cwd, undefined);
+  shellExecutorFor(workspaceApplicationFor(cwd), undefined, writableWorkspace, guard, undefined, permissionBroker.askHold())(command, cwd, undefined);
 
 // Review provenance (W041) journals every hub review decision in hub state —
 // never inside a reviewed workspace, where it would mutate the very
@@ -511,6 +522,9 @@ try {
     // W177: the audit lane's provenance reader — the same shared store the
     // reviewer factory journals through.
     reviewProvenance: () => reviewProvenanceStore.records(),
+    // P6 (issue #285): compose the same-process broker so the hub serves
+    // /api/permission and its containment lanes hold answerable asks.
+    permissionBroker,
     schedulerFactory,
     schedules: scheduleRegistry,
     projects: projectRegistry,
