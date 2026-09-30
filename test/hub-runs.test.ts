@@ -79,6 +79,31 @@ test("a scheduled run needs verifier authority to finish successfully", async (t
   assert.equal(snapshot.evidence.some((entry) => entry.subject === "cron-2026-09-12-nightly"), false);
 });
 
+// 2026-09-30 (harvest-4, the W146 residual): an EMPTY/whitespace runId or
+// title is a CLIENT fault, not a server 500. The route validates the shape
+// before the registry is reached, so the refusal is a named 400 and nothing
+// composes. (The duplicate-runId 500 is a separate registry-side residual.)
+test("a run begin with an empty runId or title is a client fault (400), not a server 500", async (t) => {
+  const { graph, application, workspace } = setup();
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-runs-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const hub = await createWorkflowHub(application, { discoveryDir: dir, graph });
+  t.after(() => hub.close());
+  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
+
+  const emptyRunId = await post(hub.url, token, "/run/begin", { runId: "  ", title: "t", workspace });
+  assert.equal(emptyRunId.status, 400, "an empty runId is a client fault (W146 residual closed 2026-09-30)");
+  assert.deepEqual(emptyRunId.body, { error: "invalid run begin request" });
+  const emptyTitle = await post(hub.url, token, "/run/begin", { runId: "r", title: "  ", workspace });
+  assert.equal(emptyTitle.status, 400, "an empty title is the same client fault");
+  assert.equal(
+    application.snapshot().tasks.some((task) => task.id.startsWith("run:")),
+    false,
+    "no run task composes from a refused begin",
+  );
+});
+
 test("a review-gated run cannot finish until an independent review is recorded", async (t) => {
   const { graph, application, workspace } = setup();
   const dir = mkdtempSync(join(tmpdir(), "wf-hub-runs-"));

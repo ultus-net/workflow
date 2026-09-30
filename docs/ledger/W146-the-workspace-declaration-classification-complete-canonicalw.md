@@ -52,3 +52,17 @@ duplicate-runId 500s remain queued (W142 finding (e)); the
 try/catch-rethrow shape is now duplicated at two call sites — extract a
 helper if a third route adopts the classification (the review's P3
 nit).
+
+> **Dated note (2026-09-30, branch `feat/harvest-4`):** two of these residuals
+> moved. (1) `/snapshot`'s resolveApplication client-fault exposure was FIXED in
+> the harvest-3 pass (typed `WorkspaceDeclarationError` → 400; see
+> `docs/ledger/residual-harvest-3.md` item 4). (2) `/run/begin`'s EMPTY/
+> whitespace runId/title 500 was FIXED in the harvest-4 pass — the route
+> validates trimmed non-emptiness before the registry is reached and answers the
+> named 400 `{ error: "invalid run begin request" }`
+> (`src/integrations/hub-http.ts:241-252`; red-first pin in
+> `test/hub-runs.test.ts`, the compiled-hub pin in `test/e2e-hub-bash.test.ts`
+> flipped 500→400). The DUPLICATE-runId 500 remains queued (it fires inside the
+> registry and needs a typed registry error or a membership lookup — W142
+> finding (e)); the duplicated try/catch-rethrow shape remains (extract a helper
+> only if a third route adopts the classification).

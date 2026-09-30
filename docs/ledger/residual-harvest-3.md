@@ -121,3 +121,17 @@ honestly below.)
   `context.resolveApplication` without the `WorkspaceDeclarationError` guard;
   it is a different route and was not inspected in this pass — named as a
   candidate, not claimed.
+
+> **Dated re-assessment note (2026-09-30, branch `feat/harvest-4`):** item 1's
+> daemon-hold/primitive unification stays **not-small-safe**, re-checked against
+> the parallel broker-unified ask-answer path (`feat/ask-answer-surface`,
+> `.wave/ask-answer-surface`): at assessment time that branch ref equals
+> `origin/main` (no committed divergence observable), so the recorded assessment
+> above stands unchanged. The concrete follow-up is unchanged — extract a
+> wire-id-keyed variant of `createOperatorAskHold` (or widen
+> `OperatorAskRequest` to accept a bare id) and have
+> `opencode-server-authority.ts` consume it, keeping the four daemon-hold pins
+> (`test/opencode-server-authority.test.ts`) and the real-guard e2e pin
+> (`test/opencode-server-ask-e2e.test.ts`) green. If the parallel broker
+> unification lands, the daemon hold should consume the UNIFIED primitive rather
+> than a second unification; no code change in this pass.
