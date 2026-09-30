@@ -99,10 +99,10 @@ per-role end-to-end item, **issue #284** (Parked P5). The downstream affinity
 measurement (P11, issue #290) is a separate live-run item, not part of #297's
 implementation acceptance.
 
-**Closure recommendation:** **close** — the §8.1–§8.4 implementation (pure pin,
-one-slug narrowing, default-off opt-in, five pins) landed and the composition
-was independently verified; the settings axis is a named, separately-tracked
-dependency, not an open promise.
+**Closure recommendation:** **close** — the §8 sketch's landed items (the pure
+`affinityPin`, the one-slug narrowing, the default-off opt-in, and the five
+pins) are implemented and the composition was independently verified; the
+settings axis is a named, separately-tracked dependency, not an open promise.
 
 ---
 
