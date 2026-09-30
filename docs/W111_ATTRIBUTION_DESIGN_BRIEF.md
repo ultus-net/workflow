@@ -80,7 +80,7 @@ turn lifecycle — never in a surface.
 
 | Lane | Boundary signal today | Where the hook composes |
 |---|---|---|
-| ACP / interactive TUI | session-state transitions observed by the UI (`src/ui/tui.tsx:179`; the state machine `running → completed`) | the ACP runtime's session lifecycle (`src/integrations/acp-runtime.ts`), as a subscriber alongside the existing reasoning-claim subscriber (`src/cli/hub.ts:366-368`) |
+| ACP / interactive TUI | session-state transitions observed via the `UsageTurnTracker` baseline/delta (`src/ui/usage.ts:43-56`; the state machine `running → completed`) | the ACP runtime's session lifecycle (`src/integrations/acp-runtime.ts`), as a subscriber alongside the hub scheduler lane's existing reasoning-claim subscriber (`src/cli/hub.ts:366-368` — the scheduler lane, not an ACP-runtime precedent) |
 | Hub scheduler run | `runtime.session.submit(prompt)` resolves; the turn's `runtime.metrics?.()` is read at turn end (`src/cli/hub.ts:379,394-411`) | the scheduler's `runTurn` finally block (`src/cli/hub.ts:388-413`) |
 
 Both lanes already own the right moment: at turn end the runtime has not yet
@@ -159,7 +159,7 @@ cache fields stay at their measured zero (the recorded lane asymmetry,
 **Recorded-only / no view derivation.** The task rollup the usage page later
 renders is the sum of recorded `TaskUsageSummary` entries, exactly as the
 per-session rollup sums persisted readouts today (`src/ui/web-sessions.ts:219`;
-`src/ui/web.ts:382-391`). No route, component, or surface recomputes a delta
+`src/ui/web-sessions.ts:219` (the sessions sum; `src/ui/web.ts:382-391` is the route comment)). No route, component, or surface recomputes a delta
 from cumulative counters. A task with no recorded entry renders as an absence,
 never as zero spend.
 
@@ -238,7 +238,7 @@ unbuilt and lane-specific.
   `completed` edges; keep the arithmetic pure and testable, as
   `UsageTurnTracker` is, `src/ui/usage.ts:31-32`).
 - `src/ui/web.ts` / `src/ui/webapp/usage-view.tsx` — render recorded
-  `TaskUsageSummary` entries; no derivation (`src/ui/web.ts:382-391` is the
+  `TaskUsageSummary` entries; no derivation (`src/ui/web-sessions.ts:219` is the
   per-session precedent to extend).
 
 **Pin plan (red-first), following the repo discipline:**
