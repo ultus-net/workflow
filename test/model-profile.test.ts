@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  PER_TURN_BOUNDARY_BREAKPOINTS,
   VENDOR_DEFAULTS,
   applyCacheMarkers,
   isShapeableForFamily,
@@ -153,7 +154,7 @@ test("W109: an already-marked prefix block is preserved, never double-marked", (
   assert.deepEqual(marked.system[0], body.system[0]);
 });
 
-test("W109: the marker pass is opt-in and wire-gated — everything else passes through untouched", () => {
+test("W109: the marker pass is opt-in and wire-gated — the dark default and the openai wire pass through untouched", () => {
   const body = { system: "You are Workflow.", tools: [{ name: "read_file" }] };
   const unmarked = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic" });
   assert.equal(applyCacheMarkers(unmarked, body), body, "no opt-in returns the body untouched — absent stays absent");
@@ -274,7 +275,7 @@ test("P13: the opt-in marks the previous turn's end in addition to the static he
 test("P13: exactly ONE conversation breakpoint is spent (the wire's small budget)", () => {
   const profile = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic", cacheMarkers: true });
   const marked = applyCacheMarkers(profile, P13_BODY) as Record<string, unknown>;
-  assert.equal(countMessageMarkers(marked), 1, "option B spends exactly one breakpoint on the conversation");
+  assert.equal(countMessageMarkers(marked), PER_TURN_BOUNDARY_BREAKPOINTS, "option B spends exactly the documented conversation breakpoint budget");
   const systemHead = Array.isArray(marked.system) && (marked.system.at(-1) as { cache_control?: unknown }).cache_control !== undefined ? 1 : 0;
   const toolHead = Array.isArray(marked.tools) && (marked.tools.at(-1) as { cache_control?: unknown }).cache_control !== undefined ? 1 : 0;
   assert.equal(systemHead + toolHead + countMessageMarkers(marked), 3, "static head (2) + one boundary stays inside the wire's few-breakpoint budget");
@@ -290,10 +291,15 @@ test("P13: a string-content last message is rewritten to a marked text block", (
 
 test("P13: a pre-existing boundary marker is preserved, never double-marked", () => {
   const profile = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic", cacheMarkers: true });
-  const body = { messages: [{ role: "user", content: [{ type: "text", text: "old", cache_control: { type: "ephemeral" } }, { type: "text", text: "new" }] }] };
+  // The pre-existing marker sits ON THE LAST BLOCK — the exact block the pass
+  // would mark — and carries a distinguishing field (`ttl`): deleting the
+  // `block.cache_control !== undefined` guard in `withMarker` rebuilds the
+  // block as `{...block, cache_control: {type: "ephemeral"}}`, dropping `ttl`,
+  // so this pin goes red without the guard.
+  const body = { messages: [{ role: "user", content: [{ type: "text", text: "old" }, { type: "text", text: "new", cache_control: { type: "ephemeral", ttl: "1h" } }] }] };
   const marked = applyCacheMarkers(profile, body) as { messages: Array<{ content: Array<Record<string, unknown>> }> };
-  assert.deepEqual(marked.messages[0]?.content[0], body.messages[0]?.content[0], "the earlier pre-existing marker is untouched");
-  assert.deepEqual(marked.messages[0]?.content[1], { type: "text", text: "new", cache_control: { type: "ephemeral" } }, "the last block gains exactly one marker");
+  assert.deepEqual(marked.messages[0]?.content[1], body.messages[0]?.content[1], "the pre-existing marker on the last block is preserved untouched — never double-marked");
+  assert.deepEqual(marked.messages[0]?.content[0], { type: "text", text: "old" }, "the unmarked earlier block stays unmarked");
 });
 
 test("P13: no messages, an empty messages array, and the dark default add no conversation breakpoint", () => {

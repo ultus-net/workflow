@@ -304,6 +304,15 @@ async function probeLiveMessages(options: {
     payload = undefined;
   }
   const usage = isRecord(payload) && isRecord(payload.usage) ? payload.usage : undefined;
+  // P13 (issue #292): the recorded request witnesses the per-turn boundary
+  // marker too, not only the static head, so the operator's live verdict sees
+  // the deployed placement on the last message's final content block.
+  const messageLane = options.body.messages;
+  const lastMessage = Array.isArray(messageLane) ? messageLane[messageLane.length - 1] : undefined;
+  const lastContent = isRecord(lastMessage) && Array.isArray(lastMessage.content) ? lastMessage.content : undefined;
+  const boundaryMarker = lastContent !== undefined
+    ? (lastContent[lastContent.length - 1] as Record<string, unknown> | undefined)?.cache_control
+    : undefined;
   console.log(JSON.stringify({
     probe: "vendor-anthropic-cache",
     lane: options.lane,
@@ -316,6 +325,7 @@ async function probeLiveMessages(options: {
       lastToolMarker: Array.isArray(options.body.tools)
         ? (options.body.tools[options.body.tools.length - 1] as Record<string, unknown> | undefined)?.cache_control
         : undefined,
+      boundaryMarker,
     },
     status: response.status,
     cacheUsage: {

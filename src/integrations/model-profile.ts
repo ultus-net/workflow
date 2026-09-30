@@ -292,7 +292,10 @@ export function applyCacheMarkers(profile: ModelProfile, body: Record<string, un
  * P13 (issue #292) option B: the number of breakpoints the per-turn policy
  * spends on the conversation. The anthropic wire's breakpoint budget is
  * small, so the policy holds exactly ONE boundary at a time — the latest
- * stable one — rather than marking many prior turn ends.
+ * stable one — rather than marking many prior turn ends. The marker-budget
+ * pin (`test/model-profile.test.ts`, "exactly ONE conversation breakpoint")
+ * asserts the observed conversation count equals this constant, so the
+ * documented budget and the pinned budget cannot drift apart.
  */
 export const PER_TURN_BOUNDARY_BREAKPOINTS = 1;
 
