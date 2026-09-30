@@ -26,6 +26,7 @@ import {
   clearRunDetailOpen,
   clearRunDetailOpenGuarded,
   clearRunDetailOpenToWindow,
+  escapeDetailOwner,
   readRunDetailOpen,
   readRunDetailOpenFromWindow,
   readRunDetailOpenGuarded,
@@ -369,11 +370,16 @@ test("the timeline tab: the rows that name the run, its recorded begin, the verb
   ], ROW_SCHEDULE).length, 1, "the summary join is exact (no prefix collisions)");
   const noTime = renderToStaticMarkup(createElement(RunDetailPanel, detailProps({ runId: ROW_BOARD })));
   assert.equal(count(noTime, "no recorded time"), 2, "a run without a begin record names it in the header AND the begin row");
-  const degraded = renderToStaticMarkup(createElement(RunDetailPanel, detailProps()));
+  const healthy = renderToStaticMarkup(createElement(RunDetailPanel, detailProps()));
   const withoutTimeline = { ...detailProps(), timeline: { timeline: null, reason: "hub unavailable" } };
   const absent = renderToStaticMarkup(createElement(RunDetailPanel, withoutTimeline as Parameters<typeof RunDetailPanel>[0]));
   assert.ok(absent.includes("hub timeline unavailable (hub unavailable)"), "the timeline lane's named absence renders");
-  assert.ok(degraded !== undefined, "the healthy render is non-empty");
+  // The healthy render is pinned by CONTENT, not by a defined-string check (a
+  // renderToStaticMarkup result is never undefined): its timeline lane carries
+  // the run's own rows and names the retention, unlike the absent lane above.
+  assert.ok(healthy.includes("run " + ROW_SCHEDULE + " usage: 1500 tokens, $0.0123"), "the healthy render carries the run's timeline rows");
+  assert.ok(healthy.includes("this feed never claims a permanent record"), "the healthy render carries the retention statement the absent lane omits");
+  assert.ok(!healthy.includes("hub timeline unavailable"), "the healthy render does NOT render the timeline-lane absence");
 });
 
 // ── the shared status vocabulary ──
@@ -504,8 +510,42 @@ test("the runs page mounts in the shell — the placeholder is replaced by the r
 test("the origin filter vocabulary is closed — a token outside it never reaches the filter", () => {
   const tokens: readonly RunOriginFilter[] = ["all", "schedule", "provider-task", "unrecorded"];
   const record = fullRunsRecord();
+  const buckets: Readonly<Record<RunOriginFilter, number>> = { all: 3, schedule: 1, "provider-task": 1, unrecorded: 1 };
   for (const token of tokens) {
     const filtered = filterRunRows(record.runs!.rows, record.runs!.origins, { origin: token, state: "all" });
-    assert.ok(filtered.length >= 0, "the filter accepts every vocabulary token (\"" + token + "\")");
+    assert.equal(filtered.length, buckets[token], "the filter accepts vocabulary token \"" + token + "\" and selects exactly its recorded bucket");
   }
+  // A cast is the only way past the closed type — and even then the runtime
+  // filter fails closed: an out-of-vocabulary token matches no recorded bucket,
+  // never the "all" passthrough. (`>= 0` here would have been always true and
+  // hidden a fall-through-to-all regression; the exact counts above and this
+  // leak pin discriminate.)
+  const outOfVocabulary = "not-a-recorded-bucket" as RunOriginFilter;
+  const leaked = filterRunRows(record.runs!.rows, record.runs!.origins, { origin: outOfVocabulary, state: "all" });
+  assert.equal(leaked.length, 0, "an out-of-vocabulary origin token selects nothing — the runtime filter fails closed, never falls back to all");
+});
+
+// ── the shell's Escape arbitration is gated on the panel the view MOUNTS ──
+
+test("the Escape arm is gated on the view that mounts the panel — a stale restored opener never arms it elsewhere", () => {
+  const run: RunDetailOpen = { opener: "runs", runId: ROW_SCHEDULE };
+  const card = { opener: "board", cardKey: "github:#12" };
+  assert.equal(escapeDetailOwner("runs", run, undefined), "run", "the Runs page owns Escape for the run panel it mounts");
+  assert.equal(escapeDetailOwner("reviews", run, undefined), "run", "the Reviews page mounts the same panel and owns Escape too");
+  assert.equal(escapeDetailOwner("board", undefined, card), "card", "the Board page owns Escape for the card panel");
+  assert.equal(escapeDetailOwner("board", run, card), "card", "on the Board the card panel owns Escape (the run panel is not mounted there)");
+  assert.equal(escapeDetailOwner("activity", run, card), undefined, "a stale run+card opener restored onto Activity arms no Escape");
+  assert.equal(escapeDetailOwner("chat", run, undefined), undefined, "the run panel is not mounted on chat");
+  assert.equal(escapeDetailOwner("runs", undefined, undefined), undefined, "no panel, no Escape arm");
+});
+
+// ── the Runs-page comment names costs as mono machine values ──
+
+test("the runs table's recorded-cost cell is monospace — the Runs-page comment is true", () => {
+  const css = readFileSync(resolve("src/ui/webapp/styles.css"), "utf8");
+  assert.match(
+    css,
+    /\.runs-row-cost\s*\{[^}]*font-family:\s*var\(--font-mono\)/,
+    "the recorded-cost cell is monospace like its sibling machine-value cells (the Runs-page comment names costs)",
+  );
 });
