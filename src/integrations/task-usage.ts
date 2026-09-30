@@ -140,3 +140,58 @@ export class TaskUsageTracker {
     return taskUsageDelta(baseline, current, resolveActiveTaskId(readTaskId));
   }
 }
+
+/**
+ * The host-lane seam: the three operations a turn-boundary hook needs from its
+ * lane. The lane supplies where the cumulative metering reading comes from, how
+ * to read the active-task pointer (at boundary time), and where to publish a
+ * recorded delta. It is deliberately narrow so both lanes (the ACP session's
+ * `start()` turn and the hub scheduler's `runTurn` finally) compose the SAME
+ * boundary arithmetic instead of each re-implementing it.
+ */
+export interface TaskUsageSink {
+  /** The cumulative metering reading at call time; `undefined` when the lane is unmetered. */
+  usage(): ModelUsageMetrics | undefined;
+  /** The active-task pointer read AT boundary time. May throw (no active task) — recorded as the absence. */
+  readTaskId(): string;
+  /** Publish a completed turn's delta (never called for `failed`/`cancelled`). */
+  record(delta: Omit<TaskUsageSummary, "recordedAt">): void;
+}
+
+/**
+ * The lane-side boundary hook: `begin()` at turn start captures the cumulative
+ * baseline, `end(completed)` at turn end publishes the delta through the sink's
+ * `record`. ONLY a completed turn publishes — `end(false)` passes no current
+ * reading, so the tracker clears the baseline and records nothing (the
+ * `failed`/`cancelled` honesty rule, `src/ui/usage.ts:47-55`). `begin`/`end`
+ * are called per turn, so a lane that reuses one hook across turns never leaks
+ * a baseline. Pure control flow over `TaskUsageTracker`; no IO of its own.
+ */
+export class TaskUsageAttributor {
+  readonly #sink: TaskUsageSink;
+  readonly #tracker = new TaskUsageTracker();
+
+  constructor(sink: TaskUsageSink) {
+    this.#sink = sink;
+  }
+
+  /** Turn start: capture the cumulative baseline from the lane's metering reading. */
+  begin(): void {
+    this.#tracker.begin(this.#sink.usage());
+  }
+
+  /**
+   * Turn end. The pointer is read HERE (boundary time) only for a completed
+   * turn; a `failed`/`cancelled` turn (`completed` false) passes no current
+   * reading and publishes nothing. Returns the published delta when one was
+   * recorded (for callers/tests), `undefined` otherwise.
+   */
+  end(completed: boolean): Omit<TaskUsageSummary, "recordedAt"> | undefined {
+    const delta = this.#tracker.complete(
+      completed ? this.#sink.usage() : undefined,
+      () => this.#sink.readTaskId(),
+    );
+    if (delta !== undefined) this.#sink.record(delta);
+    return delta;
+  }
+}

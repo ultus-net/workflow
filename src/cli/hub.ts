@@ -19,6 +19,7 @@ import { createReviewerFactory, createRunTestRunner } from "../integrations/hub-
 import { createJsonReviewProvenanceStore } from "../integrations/review-provenance-store.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { canonicalWorkspace } from "../integrations/run-registry.js";
+import { TaskUsageAttributor } from "../integrations/task-usage.js";
 import {
   createBudgetGuard,
   createHubScheduler,
@@ -366,6 +367,18 @@ const schedulerFactory = (handles: WorkflowHubSchedulerHandles) => {
       const unsubscribeReasoningClaims = runtime.session.subscribe((event) => {
         if (event.type === "reasoning-claim") reasoningClaimFindings.push(event.sentence);
       });
+      // W111 (issue #283, Q1 decided): the per-task attribution boundary hook.
+      // The pointer is the run application's own `run:<id>` task, read AT
+      // boundary time via `activeTaskId()` (never inferred); a throwing read
+      // (the run task is no longer IN_PROGRESS) records the explicit
+      // unattributed absence. Baseline at turn start; only a completed turn
+      // publishes a delta (`failed`/`cancelled` publish nothing).
+      const taskUsage = new TaskUsageAttributor({
+        usage: () => runtime.metrics?.(),
+        readTaskId: () => runApplication.activeTaskId(),
+        record: (delta) => handles.recordTaskUsage(delta),
+      });
+      taskUsage.begin();
       try {
         if (budget !== undefined) {
           budgetGuard = createBudgetGuard({
@@ -409,6 +422,10 @@ const schedulerFactory = (handles: WorkflowHubSchedulerHandles) => {
             },
           });
         }
+        // W111: publish the per-task delta for a completed turn only; the
+        // snapshot is read before dispose. The pointer read happens inside
+        // `end` at this boundary moment.
+        taskUsage.end(runtime.session.snapshot().state === "completed");
         await runtime.dispose();
       }
     },

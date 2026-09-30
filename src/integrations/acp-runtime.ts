@@ -30,6 +30,7 @@ import {
 import type { PermissionBroker } from "../ui/permission-broker.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { METERED_PLACEHOLDER_KEY, type ModelUsageMetrics, type ModelUsageProxy, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
+import type { TaskUsageSummary } from "./task-usage.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
 import { loadOpenModelKeys } from "./open-model-keys.js";
 import { createOpenModelMeteringPool, type OpenModelMeteringPool } from "./open-model-proxy.js";
@@ -129,6 +130,17 @@ export interface AcpRuntimeOptions {
    * inert (the mechanism string still describes the effective caps).
    */
   readonly budgetOverride?: RunBudget | undefined;
+  /**
+   * W111 (issue #283): the per-task attribution sink for this runtime's ACP
+   * driver. When provided, each `start()` turn publishes its boundary delta
+   * through it (completed only). Absent → no driver-side attribution; the hub
+   * scheduler lane wires the same mechanism in `runTurn`'s finally instead, so
+   * it deliberately passes no sink here (no double count).
+   */
+  readonly taskUsage?: {
+    readonly usage: () => ModelUsageMetrics | undefined;
+    readonly record: (delta: Omit<TaskUsageSummary, "recordedAt">) => void;
+  } | undefined;
 }
 
 export async function createConfiguredAcpRuntime(
@@ -394,6 +406,7 @@ async function createOpencodeRuntime(
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
       ...(guard === undefined ? {} : { guard }),
+      ...(options.taskUsage === undefined ? {} : { taskUsage: options.taskUsage }),
       // Plan Task F1/F3: journal skill delivery into the application's
       // precondition. A delivery with no active task cannot bind — skip it
       // rather than fail the read; the precondition only matters once a
@@ -519,6 +532,7 @@ async function createClineRuntime(
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
       ...(guard === undefined ? {} : { guard }),
+      ...(options.taskUsage === undefined ? {} : { taskUsage: options.taskUsage }),
       onSkillRead: (skill) => {
         try {
           application.recordSkillRead(skill);
@@ -713,6 +727,7 @@ async function createGooseRuntime(
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
       ...(guard === undefined ? {} : { guard }),
+      ...(options.taskUsage === undefined ? {} : { taskUsage: options.taskUsage }),
       onSkillRead: (skill) => {
         try {
           application.recordSkillRead(skill);

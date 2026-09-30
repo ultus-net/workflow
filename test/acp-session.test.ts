@@ -5,8 +5,23 @@ import test from "node:test";
 import { WorkflowCodingSession, type CodingSessionEvent } from "../src/application/coding-session.js";
 import { taskId, type PolicyDecision } from "../src/kernel/contracts.js";
 import { AcpSessionDriver, displayRawToolText } from "../src/integrations/acp-session.js";
+import type { ModelUsageMetrics } from "../src/integrations/model-usage-proxy.js";
+import { UNATTRIBUTED_TASK_ID, type TaskUsageSummary } from "../src/integrations/task-usage.js";
 import { PermissionBroker } from "../src/ui/permission-broker.js";
 import type { ProposedToolAction } from "../src/adapters/host.js";
+
+const metrics = (overrides: Partial<ModelUsageMetrics> = {}): ModelUsageMetrics => ({
+  requests: 0,
+  usageEvents: 0,
+  promptTokens: 0,
+  completionTokens: 0,
+  totalTokens: 0,
+  costUsd: 0,
+  latestPromptTokens: undefined,
+  cacheReadTokens: 0,
+  cacheCreateTokens: 0,
+  ...overrides,
+});
 
 function fakeAgent(mode: string): ChildProcessWithoutNullStreams {
   return spawn(process.execPath, ["test/fixtures/fake-acp-agent.mjs", mode], {
@@ -441,6 +456,127 @@ test("ACP session driver projects session_info_update as a typed session-info ti
     await driver.dispose();
     await cleanup(child);
   }
+});
+
+test("W111: a completed ACP turn publishes the per-task delta through the attribution sink", async () => {
+  const published: Omit<TaskUsageSummary, "recordedAt">[] = [];
+  // begin() reads once, end(true) reads once: baseline then turn end.
+  const readings = [
+    metrics({ requests: 1, promptTokens: 40, completionTokens: 5, totalTokens: 45, costUsd: 0.002, cacheReadTokens: 8, cacheCreateTokens: 1 }),
+    metrics({ requests: 3, promptTokens: 140, completionTokens: 15, totalTokens: 155, costUsd: 0.007, cacheReadTokens: 28, cacheCreateTokens: 3 }),
+  ];
+  let index = 0;
+  const child = fakeAgent("done");
+  const driver = new AcpSessionDriver({
+    child,
+    authorize: () => ({ kind: "allow" }),
+    workspace: "/repo",
+    workspaceSessionId: "workflow-session",
+    // The lazy pointer the interactive surfaces pass: read at boundary time.
+    taskId: () => taskId("W42"),
+    taskUsage: { usage: () => readings[index++], record: (delta) => published.push(delta) },
+  });
+  const session = new WorkflowCodingSession(driver);
+  try {
+    await session.submit("say hi");
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+  assert.equal(session.snapshot().state, "completed");
+  assert.equal(published.length, 1, "a completed turn publishes exactly one delta");
+  assert.deepEqual(published[0], {
+    taskId: "W42",
+    requests: 2,
+    promptTokens: 100,
+    completionTokens: 10,
+    totalTokens: 110,
+    costUsd: 0.005,
+    cacheReadTokens: 20,
+    cacheCreateTokens: 2,
+  });
+});
+
+test("W111: a failed ACP turn publishes no delta through the attribution sink", async () => {
+  const published: Omit<TaskUsageSummary, "recordedAt">[] = [];
+  const child = fakeAgent("invalid-update");
+  const driver = new AcpSessionDriver({
+    child,
+    authorize: () => ({ kind: "allow" }),
+    workspace: "/repo",
+    workspaceSessionId: "workflow-session",
+    taskId: () => taskId("W42"),
+    taskUsage: { usage: () => metrics({ totalTokens: 100 }), record: (delta) => published.push(delta) },
+  });
+  const session = new WorkflowCodingSession(driver);
+  try {
+    await session.submit("inspect repo");
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+  assert.equal(session.snapshot().state, "failed");
+  assert.equal(published.length, 0, "a failed turn publishes no delta (a partial bill is not honest)");
+});
+
+test("W111: a cancelled ACP turn publishes no delta; a throwing pointer read records the absence", async () => {
+  const published: Omit<TaskUsageSummary, "recordedAt">[] = [];
+  const child = fakeAgent("done");
+  const driver = new AcpSessionDriver({
+    child,
+    authorize: () => ({ kind: "allow" }),
+    workspace: "/repo",
+    workspaceSessionId: "workflow-session",
+    taskId: () => {
+      throw new TypeError("no active workflow task selected");
+    },
+    taskUsage: { usage: () => metrics({ totalTokens: 100 }), record: (delta) => published.push(delta) },
+  });
+  const session = new WorkflowCodingSession(driver);
+  let observedActivity!: () => void;
+  const activity = new Promise<void>((resolve) => { observedActivity = resolve; });
+  session.subscribe((event) => {
+    if (event.type === "assistant") observedActivity();
+  });
+  try {
+    const submit = session.submit("long work");
+    await activity;
+    await session.cancel();
+    await submit;
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+  assert.deepEqual(session.snapshot(), { state: "cancelled" });
+  assert.equal(published.length, 0, "a cancelled turn publishes no delta");
+});
+
+test("W111: an absent active-task pointer on a completed ACP turn records the unattributed absence", async () => {
+  const published: Omit<TaskUsageSummary, "recordedAt">[] = [];
+  const readings = [metrics(), metrics({ totalTokens: 70 })];
+  let index = 0;
+  const child = fakeAgent("done");
+  const driver = new AcpSessionDriver({
+    child,
+    authorize: () => ({ kind: "allow" }),
+    workspace: "/repo",
+    workspaceSessionId: "workflow-session",
+    taskId: () => {
+      throw new TypeError("no active workflow task selected");
+    },
+    taskUsage: { usage: () => readings[index++], record: (delta) => published.push(delta) },
+  });
+  const session = new WorkflowCodingSession(driver);
+  try {
+    await session.submit("say hi");
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+  }
+  assert.equal(session.snapshot().state, "completed");
+  assert.equal(published.length, 1, "the spend is still recorded, attributed to the absence");
+  assert.equal(published[0]?.taskId, UNATTRIBUTED_TASK_ID, "an absent pointer is never guessed");
+  assert.equal(published[0]?.totalTokens, 70);
 });
 
 test("the hub fs server rejects relative paths fail-closed before authorization", async () => {

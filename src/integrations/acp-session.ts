@@ -23,6 +23,8 @@ import {
 import type { AcpPermissionRequestParams } from "../adapters/acp-permission.js";
 import { createWorkflowAcpPermissionResolver } from "../adapters/acp-workflow-resolver.js";
 import { guardInputFromToolCall, type WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
+import { TaskUsageAttributor, type TaskUsageSummary } from "./task-usage.js";
+import type { ModelUsageMetrics } from "./model-usage-proxy.js";
 
 /**
  * Plan Task B2: config options that would switch the agent into a
@@ -85,6 +87,14 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #onToolOutcome: ((sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void) | undefined;
   #onReadFingerprint: ((fingerprint: import("../application/host.js").ReadFingerprint) => void) | undefined;
   #onTodoUpdate: ((entries: readonly { readonly id?: string; readonly content: string; readonly status: "pending" | "in_progress" | "completed" | "cancelled" }[]) => void) | undefined;
+  /**
+   * W111: the per-task attribution seam. When present, every `start()` turn
+   * baselines the cumulative metering reading and, on a COMPLETED turn, reads
+   * the active-task pointer at boundary time and publishes the delta. A
+   * `failed`/`cancelled` turn publishes nothing (the `UsageTurnTracker`
+   * honesty rule). Absent → the driver records no attribution.
+   */
+  #taskUsage: { usage: () => ModelUsageMetrics | undefined; record: (delta: Omit<TaskUsageSummary, "recordedAt">) => void } | undefined;
   #initialized = false;
   #canLoadSession = false;
   #agentInfo?: { readonly name: string; readonly version?: string } | undefined;
@@ -115,6 +125,18 @@ export class AcpSessionDriver implements CodingSessionDriver {
     onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
     onReadFingerprint?: (fingerprint: import("../application/host.js").ReadFingerprint) => void;
     onTodoUpdate?: (entries: readonly { readonly id?: string; readonly content: string; readonly status: "pending" | "in_progress" | "completed" | "cancelled" }[]) => void;
+    /**
+     * W111: the per-task attribution seam (issue #283). When provided, a
+     * `start()` turn baselines the cumulative metering reading and publishes
+     * the per-task delta on a COMPLETED turn; `failed`/`cancelled` publish
+     * nothing. The active-task pointer is the driver's existing lazy `taskId`
+     * correlation, read AT boundary time (a throwing read records the
+     * unattributed absence). Absent → no attribution (the lane is not wired).
+     */
+    taskUsage?: {
+      usage: () => ModelUsageMetrics | undefined;
+      record: (delta: Omit<TaskUsageSummary, "recordedAt">) => void;
+    };
   }) {
     const authorize = typeof options.authorize === "function"
       ? options.authorize
@@ -130,6 +152,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#onToolOutcome = options.onToolOutcome ?? (typeof options.authorize === "function" ? undefined : (sessionId, outcome, tool, reason) => (options.authorize as WorkflowApplication).recordToolOutcome(sessionId, outcome, tool, reason));
     this.#onReadFingerprint = options.onReadFingerprint ?? (typeof options.authorize === "function" ? undefined : (fingerprint) => (options.authorize as WorkflowApplication).recordReadFingerprint(fingerprint));
     this.#onTodoUpdate = options.onTodoUpdate ?? (typeof options.authorize === "function" ? undefined : (entries) => (options.authorize as WorkflowApplication).mirrorNativeTodos(entries));
+    this.#taskUsage = options.taskUsage;
     this.#client = new AcpSubprocessClient({
       child: options.child,
       resolvePermission: (request) => this.#resolvePermission(request),
@@ -230,6 +253,11 @@ export class AcpSessionDriver implements CodingSessionDriver {
      onSkillRead?: (skill: string) => void;
       onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
       onTodoUpdate?: (entries: readonly { readonly id?: string; readonly content: string; readonly status: "pending" | "in_progress" | "completed" | "cancelled" }[]) => void;
+      /** W111: the per-task attribution seam, passed through to the driver. */
+      taskUsage?: {
+        usage: () => ModelUsageMetrics | undefined;
+        record: (delta: Omit<TaskUsageSummary, "recordedAt">) => void;
+      };
    }): AcpSessionDriver {
     const child = launchContainedAcpAgent(options.containment, options.launch);
     return new AcpSessionDriver({ ...options, child });
@@ -291,6 +319,18 @@ export class AcpSessionDriver implements CodingSessionDriver {
       { type: "text", text: prompt },
       ...(images ?? []).map((image) => ({ type: "image", data: image.data, mimeType: image.mediaType })),
     ];
+    // W111: the turn boundary. Baseline the lane's cumulative metering reading
+    // at turn start; publish the per-task delta only on a completed turn end.
+    // `failed`/`cancelled` publish nothing (the `UsageTurnTracker` rule). The
+    // active-task pointer is read at `end`, never here.
+    const attribution = this.#taskUsage === undefined
+      ? undefined
+      : new TaskUsageAttributor({
+          usage: this.#taskUsage.usage,
+          readTaskId: () => this.#correlatedTaskId(),
+          record: this.#taskUsage.record,
+        });
+    attribution?.begin();
     const result = (await this.#prompt(agentSessionId, content)) as
       { stopReason?: string; failClosedReason?: string; usage?: unknown } | undefined;
     // The prompt response carries this turn's token split (OpenCode:
@@ -311,6 +351,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     const stopReason = result?.stopReason;
     if (stopReason === "end_turn") {
       emit({ type: "completed", result: this.#assistant.join("") });
+      attribution?.end(true);
     } else if (stopReason === "cancelled") {
       // W047 (G5): the wire carries the actionable cause — a fail-closed
       // permission denial (the agent had no reject option for the hub's
@@ -319,8 +360,12 @@ export class AcpSessionDriver implements CodingSessionDriver {
         ? ` (fail-closed: ${result.failClosedReason})`
         : "";
       emit({ type: "failed", reason: `ACP turn cancelled by the agent${failClosed}` });
+      // W111: a cancelled turn publishes no delta (a partial bill is not an
+      // honest per-turn figure) — the baseline is discarded, not recorded.
+      attribution?.end(false);
     } else {
       emit({ type: "failed", reason: `ACP prompt returned unexpected stop reason: ${String(stopReason)}` });
+      attribution?.end(false);
     }
   }
 
