@@ -1057,6 +1057,7 @@ export function StatusBar({ agent, model, usage, branch, isRunning }: {
         <span className="status-bar-item status-bar-keys">
           {isRunning && <><kbd>Esc</kbd> cancel</>}
           <kbd>Ctrl</kbd>+<kbd>P</kbd> commands
+          <kbd>Ctrl</kbd>+<kbd>K</kbd> palette
           <kbd>/</kbd> focus
           <kbd>Ctrl</kbd>+<kbd>,</kbd> settings
         </span>
@@ -1093,12 +1094,12 @@ function WorktreeRail({ worktrees }: { readonly worktrees: readonly GitWorktree[
   );
 }
 
-/** One runnable palette entry: an app command, a session switch target, or an
- * agent-advertised slash command. */
+/** One runnable palette entry: an app command, a shell page, a session
+ * switch target, or an agent-advertised slash command. */
 export interface PaletteCommand {
   readonly id: string;
   readonly title: string;
-  readonly group: "command" | "session" | "slash";
+  readonly group: "command" | "page" | "session" | "slash";
   readonly keybind?: string;
   /** Right-aligned muted fact (e.g. a session's last activity, a slash
    * command's description) when no keybind shows. */
@@ -1108,12 +1109,54 @@ export interface PaletteCommand {
 
 const GROUP_LABEL: Record<PaletteCommand["group"], string> = {
   command: "Commands",
+  page: "Pages",
   session: "Sessions",
   slash: "Slash commands",
 };
 
+/** As-you-type palette filtering, exported for the regression pin: a trimmed,
+ * case-insensitive substring match on the entry's title; an empty (or
+ * whitespace-only) query keeps the full list. */
+export function filterPaletteCommands(commands: readonly PaletteCommand[], query: string): readonly PaletteCommand[] {
+  const needle = query.trim().toLowerCase();
+  if (needle === "") return commands;
+  return commands.filter((command) => command.title.toLowerCase().includes(needle));
+}
+
+/** The palette's open/close chord: Ctrl/Cmd+P (the OpenCode affordance) and
+ * Ctrl/Cmd+K (the editor-standard palette chord). Alt never rides. Exported
+ * for the regression pin — like the OpenCode ctrl+p, the chord works while an
+ * input holds focus. */
+export function isPaletteChord(event: {
+  readonly key: string;
+  readonly ctrlKey: boolean;
+  readonly metaKey: boolean;
+  readonly altKey: boolean;
+}): boolean {
+  return (event.ctrlKey || event.metaKey) && !event.altKey &&
+    (event.key.toLowerCase() === "p" || event.key.toLowerCase() === "k");
+}
+
+/** The shell's pages as palette entries, in rail order: one "Go to <page>"
+ * entry per route whose dispatch rides commandView — the same slug mapping the
+ * composer's slash commands route through — so palette navigation and slash
+ * navigation share one page vocabulary. Exported for the regression pin. */
+export function palettePageEntries(setView: (view: AppView) => void): readonly PaletteCommand[] {
+  return APP_VIEWS.map((page) => ({
+    id: "page-" + page,
+    title: "Go to " + shellViewTitle(page),
+    group: "page" as const,
+    run: () => {
+      const target = commandView("/" + page);
+      if (target !== undefined) setView(target);
+    },
+  }));
+}
+
 /** Command palette, mined from the OpenCode ctrl+p affordance: one filtered
- * list of app commands and session switches. The input keeps focus while
+ * list of app commands, the shell's pages, session switches, and the agent's
+ * slash commands. It opens with Ctrl/Cmd+P or Ctrl/Cmd+K (isPaletteChord).
+ * The input keeps focus while
  * arrows move the selection; Enter runs, Esc closes (from anywhere inside —
  * the handler sits on the dialog, not just the input). Every entry rides an
  * existing action — the palette adds reach, never new behavior. Focus returns
@@ -1134,8 +1177,7 @@ export function CommandPalette({ commands, onClose }: {
       if (previousFocusRef.current instanceof HTMLElement) previousFocusRef.current.focus();
     };
   }, []);
-  const needle = query.trim().toLowerCase();
-  const visible = needle === "" ? commands : commands.filter((command) => command.title.toLowerCase().includes(needle));
+  const visible = filterPaletteCommands(commands, query);
   const clamped = Math.min(index, Math.max(0, visible.length - 1));
 
   const runAt = (position: number): void => {
@@ -2471,8 +2513,10 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
       } else if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key === ",") {
         event.preventDefault();
         setView(view === "settings" ? "chat" : "settings");
-      } else if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "p") {
-        // The OpenCode ctrl+p affordance; the browser's print dialog never wins.
+      } else if (isPaletteChord(event)) {
+        // Ctrl/Cmd+P (the OpenCode affordance) and Ctrl/Cmd+K (the
+        // editor-standard palette chord); the browser's print dialog and
+        // address-bar search never win.
         event.preventDefault();
         setPaletteOpen((open) => !open);
       }
@@ -2495,6 +2539,7 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
     { id: "export-session", title: "Export session as markdown", group: "command", run: () => downloadMarkdown(exportMarkdownOf(items)) },
     ...(activeSession !== undefined ? [{ id: "dismiss-session", title: `Dismiss this session (${activeSession.title})`, group: "command" as const, run: () => dismissSession(activeSession.id, refreshSessions) }] : []),
     ...(hasUnused ? [{ id: "clear-unused", title: "Clear unused sessions", group: "command" as const, run: () => clearUnusedSessions(refreshSessions) }] : []),
+    ...palettePageEntries(setView),
     ...(sessions ?? []).filter((session) => !session.active).map((session) => ({
       id: `switch-${session.id}`,
       title: `Switch to: ${session.title}`,
