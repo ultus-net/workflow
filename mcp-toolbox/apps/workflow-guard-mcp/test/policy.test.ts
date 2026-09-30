@@ -1609,3 +1609,83 @@ test("W121: the promotion-gate ask carries no matched surface", () => {
   assert.equal(ask.decision, "ask");
   assert.equal(ask.matched, undefined, "the ask keys on the promotion shape, not a concrete path/command surface");
 });
+
+// ---- P18 (c): direct `.git/` ref-adjacent write routes through the W101
+// protected-target gate (2026-09-30, issue #296) ----
+// The parked row P18(c) / SECURITY_ASSURANCE #21's still-open part: direct
+// `.git/` writes were covered only by the workspace-boundary lanes, never by
+// branch-name targeting. The classifier reuses the SAME protected set the
+// command-spelling gate uses (always-on {main, master} ∪ the caller's facts)
+// and is target-classified from any seat: a write whose path names
+// `refs/heads/<protected>` denies like `git update-ref refs/heads/<protected>`;
+// a feature-ref target keeps the feature-target allow; a ref-adjacent `.git`
+// path with no resolvable branch fails closed (parse uncertainty).
+// RED-FIRST: every deny below classified allow against the unmodified tree.
+
+test("P18 (c): direct .git ref writes naming a protected branch deny from any seat", () => {
+  const spellings = [
+    "echo x > .git/refs/heads/main",
+    "echo x >> .git/refs/heads/main",
+    "tee .git/refs/heads/main",
+    "cp src/a .git/refs/heads/main",
+    "mv src/a .git/refs/heads/main",
+    "truncate -s 0 .git/refs/heads/main",
+    "rm .git/refs/heads/main",
+    "echo x > ./.git/refs/heads/main",
+    "echo x > sub/.git/refs/heads/main",
+    "echo x > .git/refs/heads/master",
+  ];
+  for (const command of spellings) {
+    for (const currentBranch of ["main", "feat/g5", undefined]) {
+      const decision = checkPolicy({ action: "shell", command, ...(currentBranch ? { currentBranch } : {}) });
+      assert.equal(decision.decision, "deny", `${command} @ ${currentBranch}`);
+      assert.equal(decision.policy, "protected-branch-write", `${command} @ ${currentBranch}`);
+    }
+  }
+});
+
+test("P18 (c): a direct .git write to a feature ref keeps the feature-target allow", () => {
+  for (const command of [
+    "echo x > .git/refs/heads/feat/g5",
+    "cp src/a .git/refs/heads/feat/g5",
+    "mv src/a .git/refs/heads/feat/g5",
+    "rm .git/refs/heads/feat/g5",
+  ]) {
+    assert.equal(checkPolicy({ action: "shell", command, currentBranch: "main" }).decision, "allow", `${command} @ main`);
+    assert.equal(checkPolicy({ action: "shell", command }).decision, "allow", `${command} @ factless`);
+  }
+  // Reads, tag writes, and non-ref `.git` content stay outside the
+  // branch-target gate (the gate targets branch-pointer writes only).
+  assert.equal(checkPolicy({ action: "shell", command: "cat .git/refs/heads/main", currentBranch: "feat/g5" }).decision, "allow", "reads");
+  assert.equal(checkPolicy({ action: "shell", command: "echo x > .git/refs/tags/v1", currentBranch: "main" }).decision, "allow", "tag lane");
+  assert.equal(checkPolicy({ action: "shell", command: "echo x > .git/index", currentBranch: "main" }).decision, "allow", "index");
+  assert.equal(checkPolicy({ action: "shell", command: "echo x > .github/workflows/ci.yml", currentBranch: "main" }).decision, "allow", ".github is not .git");
+});
+
+test("P18 (c): ref-adjacent .git targets with no resolvable branch fail closed", () => {
+  for (const target of [".git/packed-refs", ".git/HEAD", ".git/logs/HEAD", ".git/refs/heads", ".git/refs", ".git"]) {
+    const decision = checkPolicy({ action: "shell", command: `echo x > ${target}` });
+    assert.equal(decision.decision, "deny", target);
+    assert.equal(decision.policy, "protected-branch-write", target);
+  }
+});
+
+test("P18 (c): the direct-.git target gate honors caller protectedBranches facts", () => {
+  const command = "echo x > .git/refs/heads/release";
+  assert.equal(checkPolicy({ action: "shell", command }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command, protectedBranches: ["release"] }).decision, "deny");
+});
+
+test("P18 (c): nested sh -c wrappers stay transparent to the direct-write gate", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c 'echo x > .git/refs/heads/main'" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "bash -c 'cp a .git/refs/heads/main'" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c 'echo x > .git/refs/heads/feat/g5'" }).decision, "allow");
+});
+
+test("P18 (c): the file_write lane classifies direct .git ref paths identically", () => {
+  assert.equal(checkPolicy({ action: "file_write", path: ".git/refs/heads/main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "file_write", path: ".git/refs/heads/main", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "file_write", path: ".git/packed-refs" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "file_write", path: ".git/refs/heads/feat/g5", currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "file_write", path: ".git/index", currentBranch: "feat/g5" }).decision, "allow");
+});

@@ -476,6 +476,64 @@ function checkPointerTarget(words: string[], protectedBranches: Set<string>, con
   return undefined;
 }
 
+// ---- P18 (c): direct `.git/` ref-adjacent write targets (2026-09-30) ----
+// The W101 gate above classifies the COMMAND spellings; the ref-adjacent
+// filesystem routes (SECURITY_ASSURANCE #21's still-open part, parked row
+// P18(c)) reach the SAME protected set through a written PATH. The classifier
+// is lexical and spelling-based — the same input the shell mutation extractor
+// and the file_write lane already surface. A path is this gate's business only
+// when it carries a `.git` path component; a `refs/heads/<branch>` tail
+// resolves to the branch NAME (the same target class as `git update-ref
+// refs/heads/<branch>`), while a ref-adjacent `.git` path with no resolvable
+// branch — `packed-refs`, `HEAD`, `logs`, the `refs/heads` directory, the git
+// dir itself — fails closed on parse uncertainty. Non-ref `.git` content
+// (objects, index, config, hooks, refs/tags) stays outside the branch-target
+// gate. The recorded BOUNDARY: a `.git` symlink hop whose write spelling
+// carries no `.git` component (the link target addressed directly), and a
+// gitfile (`.git` is a file naming its gitdir) — neither is resolvable from
+// the write spelling, so neither is classified here rather than pretended.
+export interface DirectRefWriteTarget {
+  /** The branch name the path writes, when the tail resolves. */
+  target?: string;
+  /** A ref-adjacent `.git` path whose branch target cannot be resolved. */
+  uncertain?: boolean;
+}
+
+export function directRefWriteTargetIn(path: string): DirectRefWriteTarget | undefined {
+  const normalized = path.replaceAll("\\", "/");
+  // Only paths carrying a `.git` path component are ref-adjacent (`x.github/`
+  // and `foo.git/` are not).
+  if (!/(?:^|\/)\.git(?:\/|$)/.test(normalized)) return undefined;
+  // An unresolved expansion or a glob in a `.git` path cannot be classified.
+  if (/[$*?]/.test(normalized)) return { uncertain: true };
+  // Lexically collapse `.`/`..` so a traversal spelling cannot alias a
+  // protected ref past the tail match; an escape above the root is uncertain.
+  const segments: string[] = [];
+  for (const raw of normalized.split("/")) {
+    if (raw === "" || raw === ".") continue;
+    if (raw === "..") {
+      if (segments.length === 0) return { uncertain: true };
+      segments.pop();
+      continue;
+    }
+    segments.push(raw);
+  }
+  const gitIndex = segments.lastIndexOf(".git");
+  if (gitIndex < 0) return undefined;
+  const rest = segments.slice(gitIndex + 1);
+  if (rest.length === 0) return { uncertain: true }; // the git dir itself
+  if (rest[0] === "refs") {
+    if (rest[1] === "heads") {
+      if (rest.length === 2) return { uncertain: true }; // the heads directory
+      return { target: rest.slice(2).join("/") };
+    }
+    if (rest.length === 1) return { uncertain: true }; // the refs directory
+    return undefined; // refs/tags, refs/remotes, ... are not branch pointers
+  }
+  if (rest[0] === "packed-refs" || rest[0] === "HEAD" || rest[0] === "logs") return { uncertain: true };
+  return undefined; // objects/index/config/hooks/... are not branch pointers
+}
+
 export function wrapperCommands(command: string): string[] {
   // The wrapper detection shared by BOTH matchers (hasGitMutation and the
   // deny path — W102 review round 1 P3: one implementation, not a verbatim

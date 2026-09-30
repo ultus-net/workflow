@@ -686,3 +686,48 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   quote-stripped form reads as a force-push shape trips the rule even
   when the raw line looks safe — the pins hoist the push anchor off
   every concatenation line (LESS-0029 records the mechanism).
+
+  ---- P18 (c) (2026-09-30): direct `.git/` ref-adjacent write routes join
+  the W101 protected-target gate ----
+
+  The parked row P18(c) / SECURITY_ASSURANCE #21's still-open part:
+  direct `.git/` writes were covered only by the workspace-boundary lanes,
+  never by branch-name targeting. The classifier `directRefWriteTargetIn`
+  (git-policy.ts) is lexical and spelling-based — it reuses the SAME
+  protected set the command-spelling gate uses (always-on {main, master} ∪
+  the caller's facts) and is target-classified from any seat. A path
+  carrying a `.git` component is ref-adjacent; a `refs/heads/<branch>` tail
+  resolves to the branch name (deny with the target named for a protected
+  branch; the feature-target allow otherwise — the intent-identical class
+  of `git update-ref refs/heads/<branch>`), while a ref-adjacent path with
+  no resolvable branch (`packed-refs`, `HEAD`, `logs`, the `refs` /
+  `refs/heads` directory, the git dir itself) fails closed on parse
+  uncertainty. Lexical `.`/`..` collapse prevents a traversal spelling from
+  aliasing a protected ref past the tail match.
+
+  Wiring (one classifier, two surfaces — no duplicated lane): the shell
+  mutation extractor in boundary-policy (`mutationPaths`) feeds the
+  classifier for shell/git actions — redirects, `tee`, `cp`/`mv`/`ln`,
+  `install`, `rsync`, `cpio`/`scp`, `dd of=`, `truncate`, `sed -i`, `touch`,
+  `rm`, and sh-family `-c` wrappers all classify through the same target
+  sweep. The check runs AFTER the existing guard-tamper / protected-path /
+  workspace-boundary checks, so outer containment keeps primacy. The
+  `file_write` lane's path loop (policy.ts) applies the same classifier
+  path-for-path, including patch targets. boundary-policy imports the
+  classifier from git-policy (the gate file); git-policy does not import the
+  boundary lane (no import cycle).
+
+  Recorded BOUNDARY (honest, not pretended): a `.git` symlink hop whose
+  write spelling carries NO `.git` component (the link target addressed
+  directly), a gitfile working directory (`.git` is a file naming its
+  gitdir), and non-ref `.git` content (objects, index, config, hooks,
+  refs/tags) are outside the branch-target gate; the outer workspace /
+  protected-path lanes remain their containment.
+
+  Evidence: red-first — 102 policy tests: 97 pass / 5 fail against the
+  unmodified tree (the protected-target denies, the ref-adjacent fail-closed
+  cells, the protectedBranches-fact cell, the nested-wrapper cell, and the
+  file_write cell; the feature-target allow held as-found, hence no red by
+  construction — reported, not fabricated); green 102/0 after the src edits;
+  the app's full suite 113/113 (built dist, direct-tsc path); app
+  `tsc --noEmit` exit 0; repo lint + typecheck exit 0.
