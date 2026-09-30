@@ -23,6 +23,7 @@ import {
 import type { AcpPermissionRequestParams } from "../adapters/acp-permission.js";
 import { createWorkflowAcpPermissionResolver } from "../adapters/acp-workflow-resolver.js";
 import { guardInputFromToolCall, type WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
+import type { OperatorAskHold } from "./operator-ask-hold.js";
 import { TaskUsageAttributor, type TaskUsageSummary } from "./task-usage.js";
 import type { ModelUsageMetrics } from "./model-usage-proxy.js";
 
@@ -83,6 +84,14 @@ export class AcpSessionDriver implements CodingSessionDriver {
   #taskId: TaskId | (() => TaskId);
   #resumeFrom: string | undefined;
   #guard: WorkflowGuardProvider | undefined;
+  /**
+   * P6 seats (issue #285): the operator ask hold for the hub-implemented ACP fs
+   * server. A guard `ask` on a delegated write parks here and the write waits
+   * for the operator; absent → the ask fails closed (no operator channel).
+   */
+  #hold: OperatorAskHold | undefined;
+  /** Monotonic synthesized ask id (the ACP fs wire carries no request id). */
+  #fsAskSeq = 0;
   #onSkillRead: ((skill: string) => void) | undefined;
   #onToolOutcome: ((sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void) | undefined;
   #onReadFingerprint: ((fingerprint: import("../application/host.js").ReadFingerprint) => void) | undefined;
@@ -121,6 +130,14 @@ export class AcpSessionDriver implements CodingSessionDriver {
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
+    /**
+     * P6 seats (issue #285): the operator ask hold for the hub-implemented ACP
+     * fs server. When the guard returns `ask` on a delegated write, the seat
+     * parks the ask here and completes the hold BEFORE performing the write
+     * (approve → write; reject/timeout → refuse). Absent → the ask fails
+     * closed, matching today's behavior but with honest ask provenance.
+     */
+    hold?: OperatorAskHold;
     onSkillRead?: (skill: string) => void;
     onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
     onReadFingerprint?: (fingerprint: import("../application/host.js").ReadFingerprint) => void;
@@ -148,6 +165,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#taskId = options.taskId;
     this.#resumeFrom = options.resumeFrom;
     this.#guard = options.guard;
+    this.#hold = options.hold;
     this.#onSkillRead = options.onSkillRead;
     this.#onToolOutcome = options.onToolOutcome ?? (typeof options.authorize === "function" ? undefined : (sessionId, outcome, tool, reason) => (options.authorize as WorkflowApplication).recordToolOutcome(sessionId, outcome, tool, reason));
     this.#onReadFingerprint = options.onReadFingerprint ?? (typeof options.authorize === "function" ? undefined : (fingerprint) => (options.authorize as WorkflowApplication).recordReadFingerprint(fingerprint));
@@ -250,6 +268,8 @@ export class AcpSessionDriver implements CodingSessionDriver {
     resumeFrom?: string;
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
+    /** P6 seats (issue #285): the operator ask hold, passed through to the driver. */
+    hold?: OperatorAskHold;
      onSkillRead?: (skill: string) => void;
       onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
       onTodoUpdate?: (entries: readonly { readonly id?: string; readonly content: string; readonly status: "pending" | "in_progress" | "completed" | "cancelled" }[]) => void;
@@ -691,7 +711,34 @@ export class AcpSessionDriver implements CodingSessionDriver {
             { cause: error },
           );
         }
-        if (guardDecision.decision !== "allow") {
+        if (guardDecision.decision === "ask") {
+          // P6 seats (issue #285): a guard `ask` is a "human decides" verdict,
+          // not a deny. This seat mutates in-process immediately after the guard
+          // check, so the hold must complete BEFORE the write: park on the
+          // operator hold, then perform the write on approval and refuse it
+          // (throw, surfaced as a JSON-RPC error) on reject/timeout (fail
+          // closed). With no hold attached there is no operator channel to
+          // answer, so the ask fails closed (the brief's Q3 posture).
+          if (this.#hold === undefined) {
+            throw new Error(
+              `${toolName} denied by guard policy '${guardDecision.policy}' (ask requires operator approval; no operator hold attached, failing closed): ${guardDecision.reason}`,
+            );
+          }
+          const reply = await this.#hold.park({
+            // The ACP fs wire carries no request id; the seat synthesizes one
+            // and a surface answers from the hold's `pending` projection.
+            requestId: `acp-fs-ask-${++this.#fsAskSeq}`,
+            policy: guardDecision.policy,
+            reason: guardDecision.reason,
+            ...(guardDecision.matched === undefined ? {} : { matched: guardDecision.matched }),
+          });
+          if (reply === "reject") {
+            throw new Error(
+              `${toolName} denied by guard policy '${guardDecision.policy}' (operator reject or hold timeout, failing closed): ${guardDecision.reason}`,
+            );
+          }
+          // Approved: fall through to perform the write below.
+        } else if (guardDecision.decision !== "allow") {
           throw new Error(`${toolName} denied by guard policy '${guardDecision.policy}': ${guardDecision.reason}`);
         }
       }

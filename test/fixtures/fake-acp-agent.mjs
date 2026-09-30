@@ -328,6 +328,20 @@ function handleMessage(message) {
       });
       return;
     }
+    if (mode === "fs-absolute-write") {
+      // Delegate an ABSOLUTE-path write (the path rides the prompt text) to the
+      // client fs server: the hub authorizes + guards it, and a guard `ask`
+      // parks on the operator hold BEFORE the write is performed.
+      fsSessionId = message.params.sessionId;
+      const target = String(message.params.prompt?.[0]?.text ?? "");
+      send({
+        jsonrpc: "2.0",
+        id: fsRequestId,
+        method: "fs/write_text_file",
+        params: { path: target, content: "held" },
+      });
+      return;
+    }
     if (mode === "permission" || mode === "permission-no-reject" || mode === "permission-string-id") {
       const options = mode === "permission-no-reject"
         ? [{ optionId: "allow-1", name: "Allow once", kind: "allow_once" }]

@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { WorkflowCodingSession, type CodingSessionEvent } from "../src/application/coding-session.js";
 import { taskId, type PolicyDecision } from "../src/kernel/contracts.js";
 import { AcpSessionDriver, displayRawToolText } from "../src/integrations/acp-session.js";
+import type { GuardDecision, WorkflowGuardProvider } from "../src/integrations/mcp-toolbox-guard.js";
+import { createOperatorAskHold, type OperatorAskHold } from "../src/integrations/operator-ask-hold.js";
 import type { ModelUsageMetrics } from "../src/integrations/model-usage-proxy.js";
 import { UNATTRIBUTED_TASK_ID, type TaskUsageSummary } from "../src/integrations/task-usage.js";
 import { PermissionBroker } from "../src/ui/permission-broker.js";
@@ -597,5 +602,145 @@ test("the hub fs server rejects relative paths fail-closed before authorization"
   } finally {
     await driver.dispose();
     await cleanup(child);
+  }
+});
+
+// ── P6 fs-server seat: the guard ASK HOLD (issue #285) ─────────────────────
+//
+// The hub-implemented ACP fs server mutates in-process immediately after the
+// guard check, so a guard `ask` must complete the operator hold BEFORE the
+// write — there is no queue to return to. A guard `ask` parks on an injected
+// hold, then performs the write on approval and refuses it (throws, surfaced
+// as a JSON-RPC error) on reject/timeout (fail closed). With no hold attached
+// the ask fails closed (the brief's Q3 posture). `trustedRole` stays unsupplied.
+
+function askGuard(): WorkflowGuardProvider {
+  return {
+    async capabilities() {
+      return [{ name: "guard_check" }];
+    },
+    async invoke() {
+      throw new Error("unused");
+    },
+    async guardCheck(): Promise<GuardDecision> {
+      return { decision: "ask", policy: "promotion-gate", reason: "promotion requires operator approval" };
+    },
+    async guardStatus() {
+      throw new Error("unused");
+    },
+    close: async () => undefined,
+  };
+}
+
+function fsSeatDriver(
+  workspace: string,
+  hold?: OperatorAskHold,
+): { driver: AcpSessionDriver; child: ChildProcessWithoutNullStreams } {
+  const child = fakeAgent("fs-absolute-write");
+  const driver = new AcpSessionDriver({
+    child,
+    authorize: () => ({ kind: "allow" }),
+    workspace,
+    workspaceSessionId: "workflow-session",
+    taskId: taskId("HEADLINE-TASK"),
+    guard: askGuard(),
+    ...(hold === undefined ? {} : { hold }),
+  });
+  return { driver, child };
+}
+
+/** Polls the hold until the seat has parked the ask (timer/microtask driven). */
+async function waitForFsParked(hold: OperatorAskHold): Promise<void> {
+  for (let i = 0; i < 500 && hold.pendingCount === 0; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
+test("P6 fs seat: a guard ask parks before the write and the operator's allow releases it", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "acp-fs-hold-"));
+  const target = join(dir, "held.txt");
+  const hold = createOperatorAskHold({ timeoutMs: 60_000 });
+  const { driver, child } = fsSeatDriver(dir, hold);
+  const session = new WorkflowCodingSession(driver);
+  try {
+    const submit = session.submit(target);
+    await waitForFsParked(hold);
+    assert.equal(hold.pendingCount, 1, "a guard ask must park on the operator hold before the write");
+    assert.equal(hold.pending[0]?.policy, "promotion-gate");
+    await assert.rejects(readFile(target, "utf8"), "the write must not happen while the ask is held");
+    hold.answer(hold.pending[0]!.requestId, "once");
+    await submit;
+    assert.equal(await readFile(target, "utf8"), "held", "the operator's allow releases the write");
+    assert.equal(hold.pendingCount, 0);
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("P6 fs seat: the operator's reject refuses the write fail-closed", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "acp-fs-hold-"));
+  const target = join(dir, "held.txt");
+  const hold = createOperatorAskHold({ timeoutMs: 60_000 });
+  const { driver, child } = fsSeatDriver(dir, hold);
+  const session = new WorkflowCodingSession(driver);
+  const events: CodingSessionEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    const submit = session.submit(target);
+    await waitForFsParked(hold);
+    hold.answer(hold.pending[0]!.requestId, "reject");
+    await submit;
+    const completed = events.find((event): event is Extract<CodingSessionEvent, { type: "completed" }> => event.type === "completed");
+    assert.ok(completed !== undefined);
+    assert.match(completed.result, /operator reject or hold timeout/, "the agent must see the fail-closed rejection");
+    await assert.rejects(readFile(target, "utf8"), "a rejected ask must never write");
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("P6 fs seat: an unanswered hold times out and refuses the write fail-closed", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "acp-fs-hold-"));
+  const target = join(dir, "held.txt");
+  const hold = createOperatorAskHold({ timeoutMs: 5 });
+  const { driver, child } = fsSeatDriver(dir, hold);
+  const session = new WorkflowCodingSession(driver);
+  const events: CodingSessionEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.submit(target);
+    const completed = events.find((event): event is Extract<CodingSessionEvent, { type: "completed" }> => event.type === "completed");
+    assert.ok(completed !== undefined);
+    assert.match(completed.result, /operator reject or hold timeout/, "an unanswered hold must fail closed");
+    await assert.rejects(readFile(target, "utf8"), "a timed-out ask must never write");
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("P6 fs seat: a guard ask fails closed when no operator hold is attached", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "acp-fs-hold-"));
+  const target = join(dir, "held.txt");
+  const { driver, child } = fsSeatDriver(dir);
+  const session = new WorkflowCodingSession(driver);
+  const events: CodingSessionEvent[] = [];
+  session.subscribe((event) => events.push(event));
+  try {
+    await session.submit(target);
+    const completed = events.find((event): event is Extract<CodingSessionEvent, { type: "completed" }> => event.type === "completed");
+    assert.ok(completed !== undefined);
+    assert.match(completed.result, /no operator hold attached/, "the no-operator posture must be an honest fail-closed deny");
+    assert.match(completed.result, /promotion-gate/);
+    await assert.rejects(readFile(target, "utf8"), "a no-operator ask must never write");
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+    await rm(dir, { recursive: true, force: true });
   }
 });
