@@ -42,8 +42,10 @@ const FEED: TimelineState = {
 };
 
 /** React's server escape applied to a literal — lets a pin match the exact
- * exported constant inside SSR markup (apostrophes render as &#x27;). */
-const escaped = (value: string): string => value.split("&").join("&").split("'").join("&#x27;");
+ * exported constant inside SSR markup (ampersands render as &amp;, apostrophes
+ * as &#x27;). Escape both: an identity ampersand leg would silently mis-match
+ * the day the constant gains an `&`. */
+const escaped = (value: string): string => value.split("&").join("&amp;").split("'").join("&#x27;");
 
 const renderPage = (kind: string | null, state: TimelineState | undefined): string =>
   renderToStaticMarkup(createElement(ActivityPageView, { state, kind, onKind: noop }));
