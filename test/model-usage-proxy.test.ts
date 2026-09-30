@@ -664,12 +664,122 @@ test("W123: a chat-completions usage with anthropic-style keys still records zer
       totalTokens: 0,
       costUsd: 0,
       latestPromptTokens: undefined,
-      // P12: the OpenAI lane meters no cache components — its prompt_tokens
-      // already includes cached reads (the recorded lane asymmetry), so these
-      // are measured zeros, not absent data.
+      // W123: the OpenAI lane's cached read rides prompt_tokens_details.cached_tokens;
+      // this payload carries no such detail (and no prompt_tokens), so the cache
+      // components stay measured zeros. OpenAI has no cache-create concept.
       cacheReadTokens: 0,
       cacheCreateTokens: 0,
     }, "the detection keys on the wire type, not the usage shape — the chat-completions lane behaves exactly as before");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+// ── W123 (issue #290): the OpenAI cached-subset split (the queued refinement) ─
+//
+// The OpenAI chat-completions lane reports cached prompt reads as a SUBSET of
+// prompt_tokens under `prompt_tokens_details.cached_tokens` (the deployed
+// OpenRouter lane served a real read the proxy recorded as 0/0, hiding the
+// cache measurement from proxy.metrics()). The split records that subset as
+// cacheReadTokens while promptTokens/totalTokens stay unchanged — re-summing
+// the cached read into the prompt side would double-count it.
+test("W123: the OpenAI chat-completions lane records prompt_tokens_details.cached_tokens as cacheReadTokens (prompt side unchanged)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({
+      choices: [],
+      usage: {
+        prompt_tokens: 20000,
+        completion_tokens: 30,
+        total_tokens: 20030,
+        cost: 0.0042,
+        // The live OpenRouter shape (2026-09-30): a real cache read inside prompt_tokens.
+        prompt_tokens_details: { cached_tokens: 12032 },
+      },
+    }));
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(proxy.metrics(), {
+      requests: 1,
+      usageEvents: 1,
+      promptTokens: 20000, // UNCHANGED: the cached read is already inside prompt_tokens
+      completionTokens: 30,
+      totalTokens: 20030, // UNCHANGED: no re-sum of the cached subset
+      costUsd: 0.0042,
+      latestPromptTokens: 20000,
+      cacheReadTokens: 12032, // the split
+      cacheCreateTokens: 0, // OpenAI has no cache-create concept — measured zero
+    }, "the cached subset meters first-class without moving the prompt/total sums");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W123: an absent or garbage prompt_tokens_details records a measured zero (never NaN)", async () => {
+  let request = 0;
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    request += 1;
+    res.writeHead(200, { "content-type": "application/json" });
+    const usage: Record<string, unknown> = { prompt_tokens: 100, completion_tokens: 5 };
+    if (request === 2) usage.prompt_tokens_details = null; // non-record detail
+    if (request === 3) usage.prompt_tokens_details = { cached_tokens: "12032" }; // non-numeric
+    if (request === 4) usage.prompt_tokens_details = { cached_tokens: Number.POSITIVE_INFINITY }; // non-finite
+    if (request === 5) usage.prompt_tokens_details = { cached_tokens: -1 }; // negative
+    res.end(JSON.stringify({ choices: [], usage }));
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    for (let index = 0; index < 5; index += 1) {
+      const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ model: "test-model", messages: [] }),
+      });
+      assert.equal(response.status, 200);
+    }
+    assert.equal(proxy.metrics().cacheReadTokens, 0, "absent/garbage/negative cached_tokens must record a measured zero");
+    assert.equal(proxy.metrics().cacheCreateTokens, 0);
+    assert.equal(proxy.metrics().promptTokens, 500, "the prompt side is untouched by the cache detail");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W123: a payload carrying both the OpenAI detail and the anthropic-shaped field counts the cached read once", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({
+      choices: [],
+      usage: {
+        prompt_tokens: 100,
+        completion_tokens: 5,
+        total_tokens: 105,
+        prompt_tokens_details: { cached_tokens: 40 }, // the OpenAI shape
+        cache_read_input_tokens: 40, // the anthropic shape, same read
+      },
+    }));
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(proxy.metrics().cacheReadTokens, 40, "the double-count guard: one read, not 80");
+    assert.equal(proxy.metrics().cacheCreateTokens, 0);
+    assert.equal(proxy.metrics().promptTokens, 100);
   } finally {
     await proxy.close();
     await upstream.close();
