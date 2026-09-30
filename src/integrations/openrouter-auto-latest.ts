@@ -64,6 +64,7 @@ const AUTO_ROUTER_MODELS: Readonly<Record<string, string>> = {
 
 const OPENROUTER_HOSTS = new Set(["openrouter.ai", "eu.openrouter.ai", "us.openrouter.ai"]);
 const DISABLED_TOGGLES = new Set(["0", "false", "off", "disabled", "no"]);
+const ENABLED_TOGGLES = new Set(["1", "true", "on", "enabled", "yes"]);
 
 /** Human labels for the default pool (shown in the ACP model picker). */
 const AUTO_LATEST_LABELS: Readonly<Record<string, string>> = {
@@ -114,10 +115,83 @@ export function autoLatestModelCatalog(aliases: readonly string[]): Record<strin
   return Object.fromEntries(aliases.map((alias) => [alias, { name: autoLatestModelLabel(alias) }]));
 }
 
+/**
+ * The affinity pin's logged event (spec §8 item 1: logged at pin and re-pin).
+ * `degraded` is the DEGRADED-RESOLVER event (§8 item 4): the pin is ABSENT and
+ * Auto Router free-routes — either the pinned alias did not resolve or the
+ * resolver failed open to `[]`.
+ */
+export interface AffinityPinEvent {
+  readonly event: "pin" | "re-pin" | "degraded";
+  readonly role: string | undefined;
+  readonly tier: string | undefined;
+  /** The configured alias the pin targets (pin/re-pin; undefined when empty). */
+  readonly alias: string | undefined;
+  /** The concrete slug the pin narrows to (pin/re-pin; undefined when absent). */
+  readonly slug: string | undefined;
+  /** Why the pin is absent (degraded): `pin-alias-unresolvable` | `resolver-fail-open`. */
+  readonly reason: string | undefined;
+}
+
+/**
+ * The affinity opt-in (spec §5: default OFF, per pool/role). The settings
+ * axis — a per-role entry on key-1's role→model map — does NOT exist yet
+ * (`opencode-agent-config.ts` composes one model per launch; the map is future
+ * tense in `docs/MODEL_ROUTING_POLICY_2026-09-23.md`). Until key-1 lands this
+ * rides the existing `autoLatest` config, and `role`/`tier` are declared inputs
+ * that are logged but do not yet select a different slug.
+ */
+export interface AutoLatestAffinityOptions {
+  /** Opt-in, default OFF. Absent/false leaves the pool un-narrowed. */
+  readonly enabled?: boolean;
+  readonly role?: string;
+  readonly tier?: string;
+  /**
+   * Pin/re-pin/degradation sink. `autoLatestConfigFromEnv` supplies a
+   * `console.error` default so events are logged in production; an explicit
+   * option (tests, a custom runtime logger) overrides it.
+   */
+  readonly onEvent?: ((event: AffinityPinEvent) => void) | undefined;
+}
+
 /** Resolved Auto Router pool plus optional cost band. */
 export interface AutoLatestConfig {
   readonly aliases: readonly string[];
   readonly costTier?: string;
+  /** W098 c3 / issue #297: the affinity opt-in (default OFF). */
+  readonly affinity?: AutoLatestAffinityOptions | undefined;
+}
+
+/**
+ * The pure affinity pin (spec §8 item 1). Returns the FIRST configured alias —
+ * CONFIGURED order, never resolved order — so a partial catalog outage cannot
+ * silently re-point the pin at a later alias. `role`/`tier` are the declared
+ * inputs (per-(role, tier, settings), §9) but do not yet select; key-1's
+ * role→model map is the settings axis that would vary `configuredAliases`.
+ */
+export function affinityPin(
+  role: string | undefined,
+  tier: string | undefined,
+  configuredAliases: readonly string[],
+): string | undefined {
+  // The pin follows configured order, not resolved order: the first configured
+  // alias is the target, and whether it resolves decides the pinned slug.
+  void role;
+  void tier;
+  return configuredAliases[0];
+}
+
+/**
+ * The one-slug narrowing (spec §8 item 2). Keeps only the pinned concrete slug
+ * from the resolved pool; a pin absent (`undefined`) yields no candidates, so
+ * the caller free-routes rather than silently pinning a later alias.
+ */
+export function narrowToAffinityPin(
+  resolved: readonly string[],
+  pinnedSlug: string | undefined,
+): string[] {
+  if (pinnedSlug === undefined) return [];
+  return resolved.includes(pinnedSlug) ? [pinnedSlug] : [];
 }
 
 /** True when `model` is an OpenRouter Auto Router slug this module configures. */
@@ -144,9 +218,22 @@ export interface AliasResolverOptions {
   readonly negativeTtlMs?: number;
 }
 
+/** One configured alias and the concrete slug it currently resolves to. */
+export interface ResolvedAlias {
+  readonly alias: string;
+  readonly slug: string;
+}
+
 export interface AliasResolver {
   /** Concrete slugs for the configured aliases; `[]` on failure (fail open). */
   resolve(): Promise<string[]>;
+  /**
+   * The alias→slug pairs in CONFIGURED order (unresolvable aliases dropped),
+   * sharing `resolve`'s cache. This is what the affinity pin consumes: it needs
+   * the pinned alias's own resolution to honour configured order under a
+   * partial outage, not just the positionally-collapsed slug list.
+   */
+  resolvePairs(): Promise<readonly ResolvedAlias[]>;
 }
 
 /**
@@ -162,26 +249,29 @@ export function createAliasResolver(options: AliasResolverOptions): AliasResolve
   const now = options.now ?? Date.now;
   const ttlMs = options.ttlMs ?? 6 * 60 * 60 * 1000;
   const negativeTtlMs = options.negativeTtlMs ?? 60 * 1000;
-  let cached: { readonly at: number; readonly slugs: string[]; readonly ttlMs: number } | undefined;
-  let inflight: Promise<string[]> | undefined;
+  let cached: { readonly at: number; readonly pairs: readonly ResolvedAlias[]; readonly ttlMs: number } | undefined;
+  let inflight: Promise<readonly ResolvedAlias[]> | undefined;
 
-  function resolve(): Promise<string[]> {
-    if (cached !== undefined && now() - cached.at < cached.ttlMs) return Promise.resolve(cached.slugs);
+  function resolvePairs(): Promise<readonly ResolvedAlias[]> {
+    if (cached !== undefined && now() - cached.at < cached.ttlMs) return Promise.resolve(cached.pairs);
     if (inflight !== undefined) return inflight;
     inflight = (async () => {
       try {
         const response = await doFetch(options.modelsUrl, { headers: { accept: "application/json" } });
         if (!response.ok) throw new Error(`model catalog fetch failed: ${response.status}`);
         const targets = aliasTargets(await response.json());
-        const slugs = options.aliases
-          .map((alias) => targets.get(alias))
-          .filter((slug): slug is string => slug !== undefined);
-        cached = { at: now(), slugs, ttlMs };
-        return slugs;
+        const pairs = options.aliases
+          .map((alias): ResolvedAlias | undefined => {
+            const slug = targets.get(alias);
+            return slug === undefined ? undefined : { alias, slug };
+          })
+          .filter((entry): entry is ResolvedAlias => entry !== undefined);
+        cached = { at: now(), pairs, ttlMs };
+        return pairs;
       } catch {
-        const slugs = cached?.slugs ?? [];
-        cached = { at: now(), slugs, ttlMs: negativeTtlMs };
-        return slugs;
+        const pairs = cached?.pairs ?? [];
+        cached = { at: now(), pairs, ttlMs: negativeTtlMs };
+        return pairs;
       } finally {
         inflight = undefined;
       }
@@ -189,7 +279,10 @@ export function createAliasResolver(options: AliasResolverOptions): AliasResolve
     return inflight;
   }
 
-  return { resolve };
+  return {
+    resolve: async () => (await resolvePairs()).map((entry) => entry.slug),
+    resolvePairs,
+  };
 }
 
 /** Extracts `~alias → alias_target.slug` pairs from a `/models` payload. */
@@ -230,7 +323,11 @@ export function applyAutoRouterPlugin(
  * Derives the Auto Router config from the environment. Enabled by default when
  * the upstream is OpenRouter; `WORKFLOW_OPENROUTER_AUTO_LATEST` disables it,
  * `WORKFLOW_OPENROUTER_AUTO_ALIASES` overrides the pool (comma/space separated),
- * and `WORKFLOW_OPENROUTER_AUTO_COST_TIER` sets the cost band.
+ * and `WORKFLOW_OPENROUTER_AUTO_COST_TIER` sets the cost band. The affinity
+ * opt-in (issue #297) is default OFF: `WORKFLOW_OPENROUTER_AUTO_AFFINITY`
+ * enables it per pool, with optional `WORKFLOW_OPENROUTER_AUTO_AFFINITY_ROLE`
+ * / `_TIER` labels logged at pin/re-pin (they do not yet select — key-1's
+ * role→model map is the settings axis).
  */
 export function autoLatestConfigFromEnv(options: {
   readonly upstream: string;
@@ -241,9 +338,30 @@ export function autoLatestConfigFromEnv(options: {
   if (DISABLED_TOGGLES.has(env.WORKFLOW_OPENROUTER_AUTO_LATEST?.trim().toLowerCase() ?? "")) return undefined;
   const aliases = parseAliases(env.WORKFLOW_OPENROUTER_AUTO_ALIASES);
   const costTier = env.WORKFLOW_OPENROUTER_AUTO_COST_TIER?.trim();
+  const affinity = parseAffinity(env);
   return {
     aliases: aliases.length > 0 ? aliases : DEFAULT_AUTO_LATEST_ALIASES,
     ...(costTier !== undefined && costTier !== "" ? { costTier } : {}),
+    ...(affinity === undefined ? {} : { affinity }),
+  };
+}
+
+/** Default-OFF affinity opt-in from the env; only a truthy toggle creates it. */
+function parseAffinity(env: NodeJS.ProcessEnv): AutoLatestAffinityOptions | undefined {
+  if (!ENABLED_TOGGLES.has(env.WORKFLOW_OPENROUTER_AUTO_AFFINITY?.trim().toLowerCase() ?? "")) return undefined;
+  const role = env.WORKFLOW_OPENROUTER_AUTO_AFFINITY_ROLE?.trim();
+  const tier = env.WORKFLOW_OPENROUTER_AUTO_AFFINITY_TIER?.trim();
+  return {
+    enabled: true,
+    // The runtime default sink: pin/re-pin/degradation are logged (spec §8
+    // item 1, §8 item 4) unless a caller supplies its own `onEvent`.
+    onEvent: (event) => {
+      console.error(
+        `[affinity] ${event.event}: ${event.reason ?? event.slug ?? event.alias ?? "n/a"} (role=${event.role ?? "n/a"}, tier=${event.tier ?? "n/a"})`,
+      );
+    },
+    ...(role !== undefined && role !== "" ? { role } : {}),
+    ...(tier !== undefined && tier !== "" ? { tier } : {}),
   };
 }
 

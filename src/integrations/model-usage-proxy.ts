@@ -2,10 +2,14 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 
 import {
+  affinityPin,
   applyAutoRouterPlugin,
   createAliasResolver,
   isAutoRouterModel,
+  narrowToAffinityPin,
+  type AffinityPinEvent,
   type AliasResolver,
+  type AutoLatestAffinityOptions,
 } from "./openrouter-auto-latest.js";
 import { checkEgressCredential, METERED_PLACEHOLDER_KEY } from "./egress-credential.js";
 import { enforceReplayPolicy } from "./model-replay-policy.js";
@@ -185,6 +189,16 @@ export interface AutoLatestProxyOptions {
   readonly ttlMs?: number;
   /** Backoff after a failed catalog fetch; defaults to 1 minute. */
   readonly negativeTtlMs?: number;
+  /**
+   * W098 c3 / issue #297: the affinity opt-in (default OFF). When enabled the
+   * resolved pool is narrowed to ONE slug — the first in CONFIGURED alias
+   * order (`affinityPin`) — before the `allowed_models` injection. A pin whose
+   * alias does not resolve (or a fail-open resolver) is ABSENT: the pool is
+   * left un-narrowed (Auto Router free-routes) and a degradation event is
+   * logged. The narrowing yields to an active budget downgrade, which re-pins
+   * to its target at the turn boundary.
+   */
+  readonly affinity?: AutoLatestAffinityOptions | undefined;
 }
 
 /**
@@ -306,6 +320,20 @@ export async function createModelUsageProxy(options: {
           ...(autoLatest.ttlMs === undefined ? {} : { ttlMs: autoLatest.ttlMs }),
           ...(autoLatest.negativeTtlMs === undefined ? {} : { negativeTtlMs: autoLatest.negativeTtlMs }),
         });
+
+  // W098 c3 / issue #297: the affinity pin. OPT-IN, default OFF; the pin is
+  // per-(role, tier, settings) and restart-stable (the pure `affinityPin`),
+  // and it is logged at pin/re-pin/degradation. `lastPinSlug`/`lastDegraded`
+  // dedupe the log to state transitions (a pin is a session-lifetime fact, not
+  // a per-request event). NEVER mid-stream: the narrowing is a composition-time
+  // body choice, exactly like the role assignment it modifies.
+  const affinity = autoLatest?.affinity;
+  const affinityEnabled = affinity?.enabled === true;
+  let lastPinSlug: string | undefined;
+  let lastDegraded = false;
+  const logAffinity = (event: AffinityPinEvent): void => {
+    affinity?.onEvent?.(event);
+  };
 
   // W118: the budget-downgrade stage reads the proxy's OWN recorded usage at
   // REQUEST time (this `metrics` object mutates as usage events land), so a
@@ -486,11 +514,65 @@ export async function createModelUsageProxy(options: {
       // downgrade; the fail-open resolve still governs the un-narrowed pool
       // exactly as before). Narrow-before-inject: the injected list IS the
       // narrowed list — no post-injection patch.
+      // W098 c3 / issue #297 (precedence context): affinity is a narrowing
+      // WITHIN key 1 that binds BEFORE the other routing keys act and yields to
+      // them — budget (key 2) re-pins it, schedule (key 3) composes an off-peak
+      // pool's own pin, failover (key 4) is the yield-to case and is NOT wired
+      // today. The narrowing therefore REMOVES OpenRouter's own cross-vendor
+      // reroute for the session: a pinned vendor's outage persists to the turn
+      // boundary (with no wired failover, potentially the session) — the
+      // recorded outage-persistence cost (spec §4/§5). The open-source-pool lane
+      // needs NO work (one family per proxy, one composed model per launch): it
+      // is already maximally pinned, and the topology-daemon surface wires no
+      // autoLatest option — this spec's coverage is the OpenRouter-lane proxies.
       let routed = parsed;
       if (aliasResolver !== undefined && isAutoRouterModel(parsed.model)) {
-        const allowedModels = downgrade !== undefined && budgetDowngradeActive(metrics, downgrade.budget, downgrade.fraction)
-          ? [downgrade.targetModel]
-          : await aliasResolver.resolve();
+        const downgradeActive = downgrade !== undefined && budgetDowngradeActive(metrics, downgrade.budget, downgrade.fraction);
+        let allowedModels: readonly string[];
+        if (downgradeActive && downgrade !== undefined) {
+          // Key 2 yields the pin: the active downgrade re-pins to its target at
+          // the turn boundary (a logged re-pin), and the affinity pin never
+          // overrides budget. Narrow-before-inject / resolver-independent, so
+          // a catalog outage cannot un-apply the downgrade.
+          allowedModels = [downgrade.targetModel];
+          if (affinityEnabled && downgrade.targetModel !== lastPinSlug) {
+            logAffinity({ event: "re-pin", role: affinity?.role, tier: affinity?.tier, alias: undefined, slug: downgrade.targetModel, reason: "budget-downgrade" });
+            lastPinSlug = downgrade.targetModel;
+            lastDegraded = false;
+          }
+        } else if (affinityEnabled) {
+          const pairs = await aliasResolver.resolvePairs();
+          const pinAlias = affinityPin(affinity?.role, affinity?.tier, autoLatest?.aliases ?? []);
+          const pinnedSlug = pinAlias === undefined ? undefined : pairs.find((entry) => entry.alias === pinAlias)?.slug;
+          if (pinnedSlug === undefined) {
+            // DEGRADED-RESOLVER: the pin is ABSENT. Do NOT narrow to a later
+            // alias — the pin follows CONFIGURED order, not resolved order — so
+            // Auto Router free-routes over whatever resolved (or nothing on a
+            // fail-open resolver), logged once as a degradation event.
+            if (!lastDegraded) {
+              logAffinity({
+                event: "degraded",
+                role: affinity?.role,
+                tier: affinity?.tier,
+                alias: pinAlias,
+                slug: undefined,
+                reason: pairs.length === 0 ? "resolver-fail-open" : "pin-alias-unresolvable",
+              });
+              lastDegraded = true;
+              lastPinSlug = undefined;
+            }
+            allowedModels = pairs.map((entry) => entry.slug);
+          } else {
+            lastDegraded = false;
+            if (pinnedSlug !== lastPinSlug) {
+              logAffinity({ event: "pin", role: affinity?.role, tier: affinity?.tier, alias: pinAlias, slug: pinnedSlug, reason: undefined });
+              lastPinSlug = pinnedSlug;
+            }
+            allowedModels = narrowToAffinityPin(pairs.map((entry) => entry.slug), pinnedSlug);
+          }
+        } else {
+          allowedModels = await aliasResolver.resolve();
+        }
         if (allowedModels.length > 0) {
           routed = applyAutoRouterPlugin(parsed, parsed.model, allowedModels, autoLatest?.costTier);
         }
