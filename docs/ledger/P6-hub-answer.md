@@ -115,3 +115,15 @@ caused by this change; the same battery excluding it is 147/147. No
 `src/cli/hub.ts` (the hub composition); `src/integrations/opencode-plugin-root.ts`
 (the production root); `test/p6-hub-answer.test.ts` (4 pins); the P6 row's dated
 note (`docs/PARKED_AND_LIMITATIONS.md`). Branch `feat/p6-hub-answer`, issue #285.
+
+**2026-09-30 (dated supersession — the standalone seat is now LIVE):** the
+honest-reachability line above ("`src/cli/contained-shell.ts` … still constructs
+`WorkflowContainedProcess` directly with no broker/answer route … it stays
+LATENT") is superseded. Branch `feat/p6-standalone-answer` composes a
+same-process broker into the standalone shell, serves the shared
+`permissionAnswerRoute` on a permission-only loopback server, and threads
+`broker.askHold()` into its containment seat — so the standalone seat's guard
+`ask` is now answerable in-process, not the 120s park-then-deny. The hub route's
+inline classifier moved to the shared `src/ui/permission-broker-route.ts` (the
+hub route now calls the same function). Full record:
+`docs/ledger/P6-standalone-answer.md`.

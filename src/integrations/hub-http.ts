@@ -2,7 +2,8 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 import type { WorkflowApplication, WorkflowSnapshot } from "../application/workflow.js";
-import { transportPermissionView, type PermissionBroker } from "../ui/permission-broker.js";
+import type { PermissionBroker } from "../ui/permission-broker.js";
+import { permissionAnswerRoute } from "../ui/permission-broker-route.js";
 import { buildReviewRubric } from "../review/rubric.js";
 import type { ReviewProvenanceRecord } from "../review/provenance.js";
 import { DuplicateRunError, WorkspaceDeclarationError } from "./run-registry.js";
@@ -245,36 +246,14 @@ async function handleRequest(
       // runs in THIS process) parks a guard `ask` on `broker.askHold()`, and the
       // operator resolves it here on the broker's ONE pending/answer transport.
       // An id-less body is the poll; an `id` + `decision` body is the answer
-      // (the same two shapes the web `/api/permission` route serves). A hub
-      // composed without a broker serves no answer route — 404, fail closed.
+      // (the same two shapes the web `/api/permission` route serves). The body
+      // classifier is SHARED with the standalone seat's answer route
+      // (`permissionAnswerRoute`, src/ui/permission-broker-route.ts), so the two
+      // process-local surfaces cannot drift. A hub composed without a broker
+      // serves no answer route — 404, fail closed.
       if (context.permissionBroker === undefined) return send(response, 404, { error: "not found" });
-      if (!isRecord(body)) return send(response, 400, { error: "invalid permission request" });
-      const broker = context.permissionBroker;
-      if (body.id !== undefined) {
-        if (
-          typeof body.id !== "string" || body.id.length === 0 ||
-          (body.decision !== "allow_once" && body.decision !== "allow_always" &&
-            body.decision !== "reject_once" && body.decision !== "reject_always")
-        ) {
-          return send(response, 400, { error: "invalid permission decision request" });
-        }
-        const answered = broker.answer(body.id, body.decision);
-        if (typeof answered === "object") {
-          // P10 (residual #26): the same server-side approvability gate the web
-          // route renders — the structured refusal, never a false success.
-          return send(response, 409, { error: answered.refused, reason: answered.reason });
-        }
-        if (!answered) return send(response, 404, { error: "unknown or stale permission request" });
-      }
-      return send(response, 200, {
-        available: true,
-        mode: broker.mode(),
-        pending: transportPermissionView(broker.pendingRequest() ?? null),
-        // P6: the held asks riding the same transport are projected alongside
-        // the permission prompt (an ask has no tool capability/patterns).
-        pendingAsks: broker.pendingAsks(),
-        patterns: broker.patterns(),
-      });
+      const result = permissionAnswerRoute(context.permissionBroker, body);
+      return send(response, result.status, result.body);
     }
     if (request.url === "/evidence-content") {
       // W158: the bounded content behind an evidence record's reference — the

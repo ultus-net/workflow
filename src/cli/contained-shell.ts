@@ -11,12 +11,15 @@ import { WorkflowContainedProcess } from "../containment/workflow-process.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 import { evidenceId, observationId, taskId } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
+import { PermissionBroker } from "../ui/permission-broker.js";
+import { createPermissionAnswerServer } from "../ui/permission-broker-route.js";
 
 // W129: the help contract — resolve help and exit before the shell's tmp
 // workspace or guard composition.
 if (process.argv.slice(2).some((argument) => argument === "--help" || argument === "-h")) {
   console.log("workflow-shell — the interactive contained-shell smoke (one command per prompt)");
   console.log("  stdin: commands until exit/quit; the workspace/network/credential boundaries are stated at boot");
+  console.log("  a guard `ask` parks on this process's broker and is answered at the boot-stated loopback route");
   console.log("  --help  print this help");
   process.exit(0);
 }
@@ -26,11 +29,23 @@ const guard = await createDefaultToolboxGuardProvider().catch((error) => {
   console.error(`Workflow guard unavailable (advisory): ${error instanceof Error ? error.message : error}`);
   return undefined;
 });
+const permissionBroker = new PermissionBroker();
 const input = createInterface({ input: process.stdin, output: process.stdout });
+let permissionAnswers: Awaited<ReturnType<typeof createPermissionAnswerServer>> | undefined;
 
 try {
+  // P6 (issue #285): the standalone seat composes a SAME-PROCESS broker and
+  // serves its ONE pending/answer transport on a dedicated loopback route. A
+  // guard `ask` raised by the containment seat below parks on
+  // `permissionBroker.askHold()` and is answerable here — not the 120s
+  // park-then-deny. This is deliberately NOT the hub bridge: the standalone
+  // smoke exposes ONLY the permission path, never the hub's `/bash` or run
+  // mutation routes. No cross-process plumbing is invented.
+  permissionAnswers = await createPermissionAnswerServer(permissionBroker);
+  const hold = permissionBroker.askHold();
   console.log(`Writable workspace: ${workspace}`);
   console.log("Network: isolated | Credentials: cleared");
+  console.log(`Permission answers: POST ${permissionAnswers.url}/api/permission (Authorization: Bearer ${permissionAnswers.token})`);
   const containment = selectContainment();
   let commandNumber = 0;
   input.setPrompt("Workflow> ");
@@ -87,7 +102,7 @@ try {
 
     let execution: Awaited<ReturnType<WorkflowContainedProcess["execute"]>>;
     try {
-      execution = await new WorkflowContainedProcess(application, containment, guard)
+      execution = await new WorkflowContainedProcess(application, containment, guard, hold)
         .execute(proposal, { executable, args, writablePaths: [workspace] });
     } catch (error) {
       // W132 (the compiled-bin sweep's finding): a failure INSIDE execute —
@@ -138,5 +153,6 @@ try {
 } finally {
   await guard?.close();
   input.close();
+  if (permissionAnswers !== undefined) await permissionAnswers.close();
   await rm(workspace, { recursive: true, force: true });
 }
