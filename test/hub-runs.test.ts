@@ -546,6 +546,18 @@ test("W111: recorded task usage is a bounded append journal and rides gateObserv
   assert.equal(gates?.taskUsage?.length, 64, "the journal rides gateObservability");
 });
 
+test("W111 (Q1 decided): the run application's active-task pointer is the canonical run:<id>", async () => {
+  // Q1 (issue #283): a scheduled run's spend attributes to the run's own
+  // `run:<id>` task — the run application's kernel pointer — read at boundary
+  // time, never inferred from a title or the workspace. This pins the exact
+  // read the scheduler lane's `runTurn` finally performs.
+  const base = setupRegistry();
+  const registry = createRunRegistry(base.application, base.graph);
+  await registry.controller.begin({ runId: "q1-run", title: "Q1 run", workspace: base.workspace });
+  const runApplication = registry.resolve(base.workspace, "q1-run");
+  assert.equal(runApplication.activeTaskId(), "run:q1-run");
+});
+
 test("W111: recorded task usage rides the hub /snapshot projection for monitors", async (t) => {
   const { graph, application } = setup();
   const dir = mkdtempSync(join(tmpdir(), "wf-hub-task-usage-"));
