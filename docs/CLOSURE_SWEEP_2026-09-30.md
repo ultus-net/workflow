@@ -18,7 +18,7 @@ $ gh issue view 291 --json number,state,title
 {"number":291,"state":"OPEN","title":"Parked P12: The cached-token metering blind spot (W109 gap 2, P2): the metrics model knows only…"}
 ```
 
-Reachability of every cited commit from `HEAD` (`feat/stale-issue-closure`,
+Spot-checked reachability of six landing commits from `HEAD` (the remaining citations are carried by the fragments the record cross-checks; the full list is below) (`feat/stale-issue-closure`,
 base `origin/main`):
 
 ```text
@@ -163,7 +163,7 @@ $ git log -1 --format='%H %ci' ca4a6e9
 ca4a6e9dcd33d61b42f55baca4b8222727890db2 2026-09-28 21:18:55 +1300
 ```
 
-The #334 review's four P3s were dispositioned on PR #336 (merged):
+Three of the #334 review's four P3s were code-fixed on PR #336 (merged — fixes a/b/c); P3 (d), the missing ledger row, is satisfied by the W162/W163 fragment pair itself:
 
 ```text
 $ git log --oneline --all --grep='#336'

@@ -32,14 +32,14 @@ operator's close-out artifact. Full per-issue verification, commands, and output
   and #317's durable records and #291's landed note were already complete.
 
 **Evidence:** read-only `gh issue view` confirmed all three states OPEN at sweep
-time; every cited commit verified reachable from HEAD via
+time; the landing commits spot-checked reachable from HEAD via
 `git merge-base --is-ancestor`; landing PRs resolved via
 `git log --oneline --ancestry-path <commit>..HEAD --merges`; landed surfaces
 spot-checked via `git grep` (`provider-task` origin, `delegateBoardTask`,
 `inProgressBoardTasks`/`activeRunIds`, `delegateDefaultWorkspace`,
 `stateReasonAuthority`, `IssueViewState`, `BoardReadCache`/`If-None-Match`,
-`cacheReadTokens`/`cacheCreateTokens`, `RunUsageSummary`). `npm run lint` and
-`npm run typecheck` exit 0 unpiped. No code changed; docs-only. Closure
+`cacheReadTokens`/`cacheCreateTokens`, `RunUsageSummary`). Docs-only; no executable
+surface changed (lint/typecheck not applicable). No code changed; docs-only. Closure
 recommendations: close all three; the remaining items (W162's scope cut, the
 DOM-level reason-propagation pin's browser-e2e human gate, P12's OpenAI-lane
 cached-subset refinement) are registered boundaries/human gates, not open
