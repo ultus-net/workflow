@@ -88,14 +88,19 @@ export interface ModelUsageMetrics {
   /**
    * P12 (W109 gap 2): the cache components, first-class so the cache-hit
    * savings the cache-marker position rests on are observable in the metering
-   * trail. LANE ASYMMETRY (the W123 normalization carries over): the
-   * anthropic messages lane reports the cache components OUTSIDE
-   * input_tokens, so these are part of promptTokens (the prompt side sums
-   * all three); the OpenAI chat-completions lane reports cached reads INSIDE
-   * prompt_tokens and has no cache-create concept, so on that lane both stay
-   * at their measured zero — prompt_tokens itself is already metered. The
-   * cached-subset split for the OpenAI lane (prompt_tokens_details) is a
-   * queued refinement, not silently absent data.
+   * trail. LANE ASYMMETRY: the anthropic messages lane reports the cache
+   * components OUTSIDE input_tokens, so these are part of promptTokens (the
+   * prompt side sums all three); the OpenAI chat-completions lane reports
+   * cached reads INSIDE prompt_tokens (as
+   * `prompt_tokens_details.cached_tokens`) and has no cache-create concept.
+   *
+   * W123 cached-subset split (2026-09-30, issue #290): now IMPLEMENTED for the
+   * OpenAI lane — `prompt_tokens_details.cached_tokens` is recorded here as
+   * `cacheReadTokens` so the deployed-lane cache reads are visible to
+   * `proxy.metrics()`. The cached read stays a SUBSET of prompt_tokens, so
+   * `promptTokens`/`totalTokens` are NOT re-summed (double-count guard). OpenAI
+   * has no cache-create equivalent, so `cacheCreateTokens` stays at its
+   * measured zero on this lane.
    */
   readonly cacheReadTokens: number;
   readonly cacheCreateTokens: number;
@@ -692,6 +697,14 @@ export async function createModelUsageProxy(options: {
     metrics.completionTokens += numberOrZero(usage.completion_tokens);
     metrics.totalTokens += numberOrZero(usage.total_tokens);
     metrics.costUsd += numberOrZero(usage.cost);
+    // W123 cached-subset split (2026-09-30, issue #290): the OpenAI
+    // chat-completions lane reports cached prompt reads as a SUBSET of
+    // prompt_tokens under `prompt_tokens_details.cached_tokens`. Record that
+    // subset as cacheReadTokens first-class so the deployed-lane cache reads
+    // are observable — promptTokens/totalTokens are deliberately NOT changed
+    // (the read is already inside prompt_tokens; summing it again would
+    // double-count). See `openAiCacheReadTokens` for the shape + guard.
+    metrics.cacheReadTokens += openAiCacheReadTokens(usage);
     if (typeof usage.prompt_tokens === "number" && Number.isFinite(usage.prompt_tokens)) {
       metrics.latestPromptTokens = usage.prompt_tokens;
     }
@@ -835,6 +848,27 @@ function forwardedResponseHeaders(response: Response, contentType: string): Reco
 
 function numberOrZero(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * W123 cached-subset split (2026-09-30, issue #290): extract the OpenAI
+ * chat-completions cached prompt read — `prompt_tokens_details.cached_tokens`.
+ * The value is a SUBSET of `prompt_tokens`, so the caller records it as
+ * `cacheReadTokens` and leaves the prompt/total sums alone.
+ *
+ * Guards: absent detail, a non-record detail, or a non-number / non-finite /
+ * negative `cached_tokens` yields a measured zero (never NaN). The
+ * anthropic-shaped `cache_read_input_tokens` (or a bare top-level
+ * `cached_tokens`) is deliberately NOT read here — the type-keyed anthropic
+ * detection (`recordAnthropicUsage`) owns that shape, so a malformed payload
+ * carrying BOTH shapes can only add the read once (the double-count guard).
+ * OpenAI has no cache-create concept, so there is no companion field.
+ */
+function openAiCacheReadTokens(usage: Record<string, unknown>): number {
+  const details = usage.prompt_tokens_details;
+  if (!isRecord(details)) return 0;
+  const cached = details.cached_tokens;
+  return typeof cached === "number" && Number.isFinite(cached) && cached >= 0 ? cached : 0;
 }
 
 /** W123: the recognized numeric fields of the anthropic Messages usage shape
