@@ -52,6 +52,15 @@ import { DEFAULT_OPEN_SOURCE_POOL } from "../src/integrations/open-source-pool.j
  * now covered by the ungated unit pins below. The request the lane composes and
  * the response fields it reads are likewise pinned ungated, so neither the
  * helpers nor a weakened request can hide behind the gate.
+ *
+ * PREFIX SIZE (sub-minimum confound, corrected 2026-09-30): a marked prefix
+ * below Anthropic's ~1024-token cache minimum is not cache-ELIGIBLE, so the
+ * endpoint returns 2xx with `cache_creation_input_tokens: 0` regardless of
+ * whether it understands the marker. The probe's original body was ~581 input
+ * tokens (177 marked-text chars), which produced exactly that 0/0 and was
+ * mis-recorded as "markers inert". `buildSharedPrefix` now grows the marked
+ * system block over the minimum, and an ungated pin freezes it there, so the
+ * live cache fields measure markers, not prefix size.
  */
 
 /** The live gate. Without it, every family arm skips before any network use. */
@@ -83,6 +92,39 @@ const PROVIDER_MODEL_ENV = "WORKFLOW_PROVIDER_MODEL";
 const PROVIDER_LANE_PROFILE_FAMILY: ModelFamily = "deepseek";
 
 const EPHEMERAL = { type: "ephemeral" } as const;
+
+/**
+ * The provider-side cache minimum: Anthropic caches a marked prefix only when
+ * the cumulative prefix up to the breakpoint is at least ~1024 tokens
+ * (Sonnet-class models; Haiku's minimum is 2048). Below the minimum the
+ * endpoint returns 2xx with `cache_creation_input_tokens: 0` — a PREFIX-SIZE
+ * artifact, NOT a marker rejection. This is the sub-minimum-prefix confound
+ * corrected on 2026-09-30: the probe's original composed body was ~581 input
+ * tokens (177 marked-text chars, a 559-char serialized body), so its 0/0 could
+ * not distinguish "markers ignored" from "prefix too small".
+ */
+export const MINIMUM_MARKED_PREFIX_TOKENS = 1024;
+
+/**
+ * The marked shared prefix is GENERATED (never a huge literal) to clear
+ * `MINIMUM_MARKED_PREFIX_TOKENS` with margin. English prose runs ~4 chars per
+ * token, and `PREFIX_SAFETY_FACTOR` doubles the target, so the marked system
+ * block stays over the minimum even on a less favorable tokenizer. The text is
+ * deterministic and repeated, so the ungated marker-shape pins (which assert
+ * the block still carries the ephemeral marker) keep freezing the composition.
+ */
+const PREFIX_CHARS_PER_TOKEN = 4;
+const PREFIX_SAFETY_FACTOR = 2;
+const PREFIX_HEADER = "The Workflow vendor cache-marker probe. Read the user message and reply. ";
+const PREFIX_FILLER =
+  "This shared prefix is deliberately repeated to exceed the provider's minimum cacheable prefix length so a live run can observe provider-side cache accounting. ";
+
+export function buildSharedPrefix(): string {
+  const targetChars = MINIMUM_MARKED_PREFIX_TOKENS * PREFIX_CHARS_PER_TOKEN * PREFIX_SAFETY_FACTOR;
+  let text = PREFIX_HEADER;
+  while (text.length < targetChars) text += PREFIX_FILLER;
+  return text;
+}
 
 /**
  * Parses the gate value into the families to probe. Accepts `all`, one family,
@@ -125,7 +167,9 @@ function markerRequestBody(family: ModelFamily, model: string): Record<string, u
   return applyCacheMarkers(profile, {
     model,
     max_tokens: 16,
-    system: "The Workflow vendor cache-marker probe. Read the user message and reply.",
+    // The marked prefix must clear the provider cache minimum or the live cache
+    // fields measure prefix size, not the markers (see buildSharedPrefix).
+    system: buildSharedPrefix(),
     tools: [{
       name: "probe_noop",
       description: "A no-op probe tool whose definition carries the last-position cache marker.",
@@ -204,6 +248,28 @@ test("vendor cache probe: the composed provider-lane request carries the same ep
   // The provider lane reuses the production marker pass, so it emits the same
   // shape as the direct arms; this pin freezes that for the deployed lane.
   assertMarkerShape("provider", providerProbeRequestBody("provider-lane-model"), "provider-lane-model");
+});
+
+/**
+ * The marked prefix must clear the provider cache minimum or the live verdict
+ * cannot distinguish "markers ignored" from "prefix too small" (the P8
+ * sub-minimum-prefix confound, corrected 2026-09-30). This pin is ungated and
+ * asserts the conservative char floor, so the probe can never silently shrink
+ * back under the minimum.
+ */
+test("vendor cache probe: the marked prefix clears the provider cache minimum (the sub-minimum confound cannot return)", () => {
+  const body = providerProbeRequestBody("provider-lane-model");
+  const system = body.system;
+  assert.ok(Array.isArray(system) && system.length === 1, "the marked prefix is one system block");
+  const firstBlock = system[0];
+  assert.ok(isRecord(firstBlock), "the system block is an object");
+  const text = firstBlock.text;
+  assert.ok(typeof text === "string", "the system block carries the marked prefix text");
+  const floorChars = MINIMUM_MARKED_PREFIX_TOKENS * PREFIX_CHARS_PER_TOKEN;
+  assert.ok(
+    text.length >= floorChars,
+    `the marked prefix is ${text.length} chars; it needs >= ${floorChars} to clear the ~${MINIMUM_MARKED_PREFIX_TOKENS}-token cache minimum`,
+  );
 });
 
 /**
