@@ -18,7 +18,16 @@ export type RunReviewer = (input: {
   readonly taskPrompt?: string;
 }) => Promise<HubReviewerResult>;
 
-export type RunReviewerFactory = (controller: WorkflowRunController) => RunReviewer;
+/**
+ * W111 (issue #283): the factory also receives the registry's per-task journal
+ * writer, so the reviewer lane's ACP runtime can publish its completed-turn
+ * boundary deltas into the same journal the scheduler and RSI lanes write. The
+ * second argument is additive: a factory that ignores it stays valid.
+ */
+export type RunReviewerFactory = (
+  controller: WorkflowRunController,
+  recordTaskUsage: (input: Omit<TaskUsageSummary, "recordedAt">) => void,
+) => RunReviewer;
 
 /**
  * Executes the workspace test command hub-side and reports environment
@@ -574,8 +583,10 @@ export function createRunRegistry(
           // fail-closed or crashed reviewer leaves the task VERIFYING with
           // a surfaced blocking reason — never a silent pass. The factory
           // receives the controller at call time (the same machinery the
-          // verifier-token /run/review endpoint calls).
-          const reviewer = options.reviewer(controller);
+          // verifier-token /run/review endpoint calls) plus the registry's
+          // per-task journal writer (W111, issue #283), so the reviewer lane's
+          // completed-turn deltas land in the one taskUsage journal.
+          const reviewer = options.reviewer(controller, rememberTaskUsage);
           let result: HubReviewerResult;
           try {
             const taskPrompt = runPrompts.get(runId);
