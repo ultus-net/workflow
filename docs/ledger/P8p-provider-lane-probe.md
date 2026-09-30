@@ -109,3 +109,15 @@ When a lane runs, paste its printed block, flip the register entry from
 run is what flips the register. The W109 marker opt-in stays dark for every
 family until a live verdict. P8/issue #287 stays OPEN and P14/issue #293 stays
 blocked on it. No production change.
+
+> **Dated watch-item note (2026-09-30, branch `feat/harvest-3`, issue #287): the
+> provider arm sends a DUAL auth header — a live-run watch item.** The provider
+> lane deliberately sends BOTH `x-api-key` (anthropic-native/Azure) and
+> `Authorization: Bearer` (OpenRouter) on the one request
+> (`test/vendor-anthropic-cache-probe.test.ts:416-422`), so one arm spans the
+> resellers. A gateway MAY reject the extra header with a 4xx before the body
+> reaches the model — a rejection about the AUTH surface, not the
+> `cache_control` payload. Watch for exactly that: on a non-2xx, do NOT record
+> a marker red; replay with ONLY the header the target expects, and only then
+> record the lane's marker accept/reject verdict. The auth header is not what
+> P8 measures. Full disposition: `docs/ledger/residual-harvest-3.md`.

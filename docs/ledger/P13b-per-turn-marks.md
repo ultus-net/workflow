@@ -85,3 +85,17 @@ growth on marked traffic, the P12 fields in
 `src/integrations/model-usage-proxy.ts`). None of that is pinnable offline. The
 static-head-only path remains available (the opt-in can stay off); the sliding
 window (option C) is the recorded budget-safe fallback, not implemented here.
+
+> **Dated supersession note (2026-09-30, branch `feat/harvest-3`): the red
+> transcript above names a test title the P13b review fix RENAMED.** The red
+> capture lists `not ok 12 - W109: the marker pass is opt-in and wire-gated —
+> everything else passes through untouched`. The P13b review round (commit
+> `e741d20e`, "the double-mark pin, the probe's boundary recording, the
+> budget-constant hygiene") renamed that test to `W109: the marker pass is
+> opt-in and wire-gated — the dark default and the openai wire pass through
+> untouched`, because the pin's assertions are specifically the dark default
+> and the openai wire (the phrase "everything else" no longer described them).
+> The transcript is append-only history and stays as captured; only the title
+> moved, not the pin's meaning (`test/model-profile.test.ts:157`). The other
+> red titles (`not ok 9`, `:51` above) still resolve to their current tests.
+> Full disposition: `docs/ledger/residual-harvest-3.md`.

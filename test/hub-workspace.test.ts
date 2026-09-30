@@ -51,13 +51,20 @@ test("hub fails closed on an invalid workspace declaration", async (t) => {
   t.after(() => hub.close());
   const token = hubToken(hub.discoveryPath);
 
+  // W146 residual (the review's P3): /snapshot reaches the SAME
+  // canonicalWorkspace refusal as /bash and /run/begin, so a non-canonical
+  // workspace declaration is a CLIENT fault answered 400 with the named
+  // message — never the catch-all's 500. The prior pin only asserted
+  // `notEqual(200)`, which let the client fault ride the server-fault shape
+  // unobserved.
   const relative = await snapshot(hub.url, token, { workspace: "relative/path" });
-  assert.notEqual(relative.status, 200);
+  assert.equal(relative.status, 400, "a relative workspace declaration is a client fault (400), not a server fault");
+  assert.match(String(relative.body.error), /must be absolute/, "the refusal names the requirement");
 
-  const missing = await snapshot(hub.url, token, {
-    workspace: join(tmpdir(), "wf-no-such-dir-" + Math.random().toString(16).slice(2)),
-  });
-  assert.notEqual(missing.status, 200);
+  const missingPath = join(tmpdir(), "wf-no-such-dir-" + Math.random().toString(16).slice(2));
+  const missing = await snapshot(hub.url, token, { workspace: missingPath });
+  assert.equal(missing.status, 400, "a non-existent workspace declaration is a client fault (400), not a server fault");
+  assert.match(String(missing.body.error), /not an existing directory/, "the refusal names the requirement");
 });
 
 test("canonicalWorkspace canonicalizes aliases to one real path", async (t) => {
