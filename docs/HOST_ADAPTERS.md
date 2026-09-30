@@ -185,3 +185,25 @@ arms were **not run** (no keys) and are recorded separately as
 `vendor-anthropic-cache-families`, still `blocked`/`unqualified`; the provider
 verdict does not cover them, and the W109 `cacheMarkers` opt-in stays dark for
 every family.
+
+**2026-09-30 (vendor anthropic cache-marker probe — families via OpenRouter: `deepseek/deepseek-v4-flash`, `z-ai/glm-5.3-flash`, `moonshotai/kimi-k2.6` — live on `https://openrouter.ai/api/v1/messages`):**
+The operator reaches these families **through OpenRouter**, so this is the
+deployed-route measurement — it does **not** claim direct-vendor coverage.
+`test/vendor-anthropic-cache-probe.test.ts` (`WORKFLOW_VENDOR_CACHE_PROBE=<family>`,
+`WORKFLOW_PROVIDER_ANTHROPIC_URL=https://openrouter.ai/api/v1`) ran live; the
+composed anthropic Messages body carried the three ephemeral markers on the
+system block, the last tool, and the previous turn's boundary block (recorded
+`request.*Marker` = `{"type":"ephemeral"}`). One line per family:
+`deepseek/deepseek-v4-flash` — 2xx, `stop_reason: "end_turn"`, response provider
+**DeepInfra**, `cache_creation_input_tokens: null`, `cache_read_input_tokens: 0`;
+`z-ai/glm-5.3-flash` — 2xx, `stop_reason: "max_tokens"`, provider **Relace**,
+`cache_creation_input_tokens: null`, `cache_read_input_tokens: 0`;
+`moonshotai/kimi-k2.6` — 2xx, `stop_reason: "max_tokens"`, provider **Inceptron**,
+`cache_creation_input_tokens: null`, `cache_read_input_tokens: 0`. Verdict:
+**accepted but no cache accounting** for all three — the endpoints took the
+marked body but did not account for the markers. Register row
+`vendor-anthropic-cache-families` moved `blocked -> negative`; posture advisory
+(observability, not enforcement). Caveat: one marked request can only show cache
+**creation**, so a cache **read** needs a second turn with the same prefix. A
+green cache effect was **not** observed: the W109 `cacheMarkers` opt-in's value
+here is marker pass-through, not a measured saving.
