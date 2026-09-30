@@ -26,10 +26,9 @@ shapes and recommended Option A; the resolution was the operator's call.
   the dated "Resolution applied" section (§5); the alternatives (Option B,
   Option C) remain recorded as not-taken.
 - The P7 row (`docs/PARKED_AND_LIMITATIONS.md:36`) carries the dated resolution
-  note in its status and approval cells; **the item leaves the parked queue as
-  resolved** (the file's rule — an entry leaves when the work lands or the
-  operator retires it; the operator resolved it). The row's history is retained,
-  not deleted.
+  note in its status and approval cells; **the item is resolved in place under
+  the parked-items list** (the P17 precedent — a resolved entry stays listed
+  with its dated disposition). The row's history is retained, not deleted.
 - **Issue #286 is closed by the PR carrying this change** (`Closes #286`).
 
 **Evidence:** the two fragments read in full (W093 38 lines, W096 33 lines);

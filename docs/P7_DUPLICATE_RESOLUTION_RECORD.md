@@ -133,7 +133,8 @@ resolution is the operator's call** (the P7 row's verbatim disposition,
 - It does not delete, merge, rewrite, or re-date either fragment. Both remain
   write-once records; a supersession note, if directed, is appended, never a
   replacement.
-- It records no decision and authorizes no code. Docs-only.
+- It recorded no decision at the time — **the operator's decision is now
+  applied; see §5** — and it authorizes no code. Docs-only.
 
 ## 5. Resolution applied (2026-09-30)
 
@@ -147,11 +148,11 @@ constraint enumeration preserved in place. The shared operator intent
 remain recorded above as not-taken.
 
 **Applied:** the P7 row (`docs/PARKED_AND_LIMITATIONS.md:36`) carries the dated
-resolution note in its status and approval cells, and **the item leaves the
-parked queue as resolved** (the file's rule — an entry leaves when the work
-lands or the operator retires it; the operator resolved it). The row's history
-is retained, not deleted. Ledger fragment: `docs/ledger/P7-supersession-applied.md`.
-Issue #286 is closed by the PR carrying this change.
+resolution note in its status and approval cells, and **the item is resolved in
+place under the parked-items list** (the P17 precedent — a resolved entry stays
+listed with its dated disposition; the row's history is retained, not deleted).
+Ledger fragment: `docs/ledger/P7-supersession-applied.md`. Issue #286 is closed
+by the PR carrying this change.
 
 **Evidence:** the two fragments read in full (W093 38 lines, W096 33 lines);
 the P7 row (`docs/PARKED_AND_LIMITATIONS.md:36`); the sweep record (PR #107,
