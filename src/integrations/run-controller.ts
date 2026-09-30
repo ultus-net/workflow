@@ -4,6 +4,7 @@ import { WorkflowContainedProcess } from "../containment/workflow-process.js";
 import { selectContainment } from "../containment/platform.js";
 import type { TaskId } from "../kernel/contracts.js";
 import { createContainedShellExecutor, type WorkflowContainedShellExecutor } from "./contained-shell-executor.js";
+import type { OperatorAskHold } from "./operator-ask-hold.js";
 import type { RunOrigin, WorkProductLink } from "./run-registry.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 
@@ -114,9 +115,18 @@ export function shellExecutorFor(
   writableWorkspace = true,
   guard?: WorkflowGuardProvider,
   timeoutMs?: number,
+  /**
+   * P6 live seats (issue #285): the operator ask hold the containment process
+   * seat parks a guard `ask` on. A caller that owns an in-process
+   * `PermissionBroker` composes `broker.askHold(<sessionKey>)` here; the held
+   * ask then rides the broker's ONE `/api/permission` transport. Absent (the
+   * hub/standalone callers today — those processes hold no broker), an `ask`
+   * keeps failing closed exactly as before.
+   */
+  hold?: OperatorAskHold,
 ): WorkflowContainedShellExecutor {
   return createContainedShellExecutor(
-    new WorkflowContainedProcess(application, selectContainment(), guard),
+    new WorkflowContainedProcess(application, selectContainment(), guard, hold),
     {
       capabilities: hostCapabilities({ transport: "native", authoritativePreMutation: true }),
       sessionId: "workflow-tui",
