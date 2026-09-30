@@ -26,6 +26,7 @@ import {
   globalOpencodeBinary,
   meteredOpencodeConfig,
   OPENCODE_V2_METERED_ENV_KEY,
+  OPENCODE_V2_VENDOR_BUILTINS,
   resolveOpencodeLaunch,
 } from "./opencode-agent-config.js";
 import type { PermissionBroker } from "../ui/permission-broker.js";
@@ -333,6 +334,18 @@ async function createOpencodeRuntime(
     // `--pure`; v2 emits the v2 `providers` shape, reuses the built-in
     // `openrouter` provider for the metered route, and drops `--pure`.
     const acpMajor = await opencodeMajorVersion(opencode.executable);
+    // v2 open-source vendor activation: like the built-in `openrouter` lane,
+    // each vendor built-in is credential-activated, so the placeholder rides
+    // the vendor's env key (OPENCODE_V2_VENDOR_BUILTINS) — still placeholder-
+    // only, the real vendor key stays proxy-side. v1 keeps the placeholder in
+    // the 0600 config file and composes none of this.
+    const v2VendorEnv: Record<string, string> = {};
+    if (acpMajor !== undefined && acpMajor >= 2 && openPool !== undefined) {
+      for (const family of openPool.byFamily.keys()) {
+        const builtin = OPENCODE_V2_VENDOR_BUILTINS[family];
+        if (builtin !== undefined) v2VendorEnv[builtin.envKey] = METERED_PLACEHOLDER_KEY;
+      }
+    }
     const opencodeConfig = meteredOpencodeConfig({
       proxyUrl: proxy.url,
       model: configModel ?? options.settings?.agents.opencode?.model,
@@ -401,6 +414,7 @@ async function createOpencodeRuntime(
           // config is the surface.
           XDG_CONFIG_HOME: configDir,
           ...(acpMajor !== undefined && acpMajor >= 2 ? { [OPENCODE_V2_METERED_ENV_KEY]: METERED_PLACEHOLDER_KEY } : {}),
+          ...v2VendorEnv,
         },
       },
        authorize: options.permissionBroker === undefined
@@ -469,12 +483,20 @@ function openSourceConfig(openPool: OpenModelMeteringPool): {
   readonly providers: readonly MeteredVendorProvider[];
   readonly defaultModel: string;
 } {
-  const providers = openPool.providers.map((provider) => ({
-    id: provider.providerId,
-    name: `Workflow metered (${provider.family})`,
-    baseURL: provider.baseUrl,
-    models: Object.fromEntries(provider.models.map((id) => [id, { name: findOpenModel(id)?.label ?? id }])),
-  }));
+  const providers = openPool.providers.map((provider) => {
+    // v2 routes the vendor through its BUILT-IN provider (a config-defined
+    // custom provider is not registered on v2, #427); the family->built-in id
+    // lives in opencode-agent-config.ts. A family absent from the map has no v2
+    // built-in and is omitted from the v2 config (recorded, not fabricated).
+    const builtin = OPENCODE_V2_VENDOR_BUILTINS[provider.family];
+    return {
+      id: provider.providerId,
+      name: `Workflow metered (${provider.family})`,
+      baseURL: provider.baseUrl,
+      models: Object.fromEntries(provider.models.map((id) => [id, { name: findOpenModel(id)?.label ?? id }])),
+      ...(builtin === undefined ? {} : { v2ProviderId: builtin.providerId }),
+    };
+  });
   const first = openPool.providers[0];
   const firstModel = first?.models[0];
   let defaultModel = first === undefined || firstModel === undefined ? `${OPENCODE_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}` : `${first.providerId}/${firstModel}`;

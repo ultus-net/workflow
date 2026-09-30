@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
 
+import type { ModelFamily } from "./model-profile.js";
 import { METERED_PLACEHOLDER_KEY } from "./model-usage-proxy.js";
 import { autoLatestModelCatalog } from "./openrouter-auto-latest.js";
 import {
@@ -44,6 +45,37 @@ export const OPENCODE_V2_METERED_ENV_KEY = "OPENROUTER_API_KEY";
 export const OPENCODE_V2_METERED_PROVIDER_ID = "openrouter";
 
 /**
+ * A v2 BUILT-IN provider whose existing package/models a vendor family rides.
+ *
+ * v2 does not register a config-defined custom provider into the ACP model
+ * catalog (#427), so the open-source vendors cannot be exposed as custom
+ * providers on v2. Instead each family is routed through its v2 BUILT-IN
+ * provider by overriding only `settings.baseURL` (the v2 docs' "Endpoint"
+ * route: the provider keeps its existing package, models, and connection) and
+ * activating it with the placeholder credential in `envKey`. The real vendor
+ * key stays proxy-side.
+ *
+ * The ids/env keys were confirmed against the pinned opencode v2.0.10 binary
+ * (bundled models.dev catalog: `deepseek`, `zai`, `moonshotai`) and live-probed
+ * (a session pinned to `<id>/<model>` reaches a local mock with the placeholder
+ * as a bearer token). `zai` is the v2.0.10 spelling of Z.AI/GLM (`ZAI_API_KEY`
+ * is the bundled activation var; models.dev later renamed the catalog entry's
+ * env to `ZHIPU_API_KEY`, which is NOT what the pinned binary reads).
+ */
+export interface OpenSourceV2BuiltinProvider {
+  /** opencode v2 built-in provider id that owns this vendor's catalog. */
+  readonly providerId: string;
+  /** Credential env var that activates the built-in on v2 (placeholder value). */
+  readonly envKey: string;
+}
+
+export const OPENCODE_V2_VENDOR_BUILTINS: Readonly<Record<ModelFamily, OpenSourceV2BuiltinProvider | undefined>> = {
+  deepseek: { providerId: "deepseek", envKey: "DEEPSEEK_API_KEY" },
+  glm: { providerId: "zai", envKey: "ZAI_API_KEY" },
+  kimi: { providerId: "moonshotai", envKey: "MOONSHOT_API_KEY" },
+};
+
+/**
  * A hub-owned open-source vendor provider: the agent points at the loopback
  * metering proxy with the placeholder credential, exactly like the OpenRouter
  * provider, while the real vendor key stays proxy-side.
@@ -53,6 +85,15 @@ export interface MeteredVendorProvider {
   readonly name: string;
   readonly baseURL: string;
   readonly models: Readonly<Record<string, { readonly name: string }>>;
+  /**
+   * The vendor family's v2 BUILT-IN provider id (see
+   * {@link OPENCODE_V2_VENDOR_BUILTINS}). On v2 the vendor is emitted as an
+   * override of this built-in (`settings.baseURL` only) rather than a custom
+   * provider, which v2 would not register. Absent means the vendor has no v2
+   * built-in and cannot be routed on v2 (recorded, not fabricated); v1 ignores
+   * this field entirely (its custom-provider emission is byte-identical).
+   */
+  readonly v2ProviderId?: string;
 }
 
 export interface MeteredOpencodeConfigOptions {
@@ -161,39 +202,52 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
       ]),
     ),
   });
-  // v2: the built-in `openrouter` provider is the ONLY config route the v2 ACP
-  // model catalog registers (probe-observed v2.0.10). Override its baseURL to
-  // the loopback proxy; activation rides the placeholder env var the launch
-  // sets (OPENCODE_V2_METERED_ENV_KEY), so the 0600 config stays credential-
-  // free. The agent then forwards every OpenRouter model call through the
-  // proxy. The vendor providers keep their v2 declaration shape; their ACP
-  // registration stays probe-pending (a config-defined custom provider is not
-  // visible in the v2 ACP picker — the honest W070a residual).
+  // v2: the built-in `openrouter` provider is the ONLY metered route the v2 ACP
+  // model catalog registers for the default lane (probe-observed v2.0.10).
+  // Override its baseURL to the loopback proxy; activation rides the placeholder
+  // env var the launch sets (OPENCODE_V2_METERED_ENV_KEY), so the 0600 config
+  // stays credential-free. Each open-source vendor likewise overrides its v2
+  // BUILT-IN provider's `settings.baseURL` (the v2 "Endpoint" route keeps the
+  // built-in package/models/connection) instead of emitting a custom provider,
+  // which v2 does not register; its activation rides the vendor's placeholder
+  // env key (OPENCODE_V2_VENDOR_BUILTINS). A vendor with no v2 built-in
+  // (`v2ProviderId` absent) is omitted — it cannot be routed on v2, and the
+  // omission is deliberate rather than a fabricated custom provider.
   const v2Providers = (): Record<string, unknown> => ({
     [OPENCODE_V2_METERED_PROVIDER_ID]: {
       settings: { baseURL: `${options.proxyUrl}/api/v1` },
     },
     ...Object.fromEntries(
-      vendorProviders.map((entry) => [
-        entry.id,
-        {
-          name: entry.name,
-          package: "@opencode/ai/providers/openai-compatible",
-          settings: { baseURL: entry.baseURL },
-          models: { ...entry.models },
-        },
-      ]),
+      vendorProviders.flatMap((entry) =>
+        entry.v2ProviderId === undefined
+          ? []
+          : [[entry.v2ProviderId, { settings: { baseURL: entry.baseURL } }] as const],
+      ),
     ),
   });
+  // v2 default-model translation: the composed open-source default is
+  // `<vendorId>/<model>` (vendorId = the v1 custom-provider id). On v2 the same
+  // model rides the vendor's BUILT-IN provider id instead. A vendor with no v2
+  // built-in falls back to the Auto Router (its config entry was omitted above).
+  const v2DefaultModel = (): string => {
+    const composed = options.openSource?.defaultModel;
+    const slash = composed?.indexOf("/") ?? -1;
+    if (composed !== undefined && slash > 0) {
+      const builtin = vendorProviders.find((entry) => entry.id === composed.slice(0, slash))?.v2ProviderId;
+      if (builtin !== undefined) return `${builtin}/${composed.slice(slash + 1)}`;
+    }
+    return `${OPENCODE_V2_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`;
+  };
   // The operator's explicit model always rides the metered OpenRouter-family
   // provider (closed-model override path). With no override, the open-source
-  // pool default applies on v1 when composed; the v2 lane keeps the Auto
-  // Router default on the built-in provider (the only v2 route that resolves).
+  // pool default applies (translated to the v2 built-in provider on v2); the
+  // Auto Router is the fallback when no pool is composed or no vendor has a v2
+  // built-in.
   const selectedModel =
     options.model !== undefined
       ? `${v2 ? OPENCODE_V2_METERED_PROVIDER_ID : OPENCODE_METERED_PROVIDER_ID}/${options.model}`
       : v2
-        ? `${OPENCODE_V2_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`
+        ? v2DefaultModel()
         : options.openSource?.defaultModel ?? `${OPENCODE_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`;
   // Operator-declared MCP servers ride alongside the hub-owned skills mount.
   const mcp: Record<string, unknown> = opencodeMcpServers(options.mcpServers ?? []);
