@@ -10,6 +10,7 @@ import {
   RunDetailPanel,
   evidenceRowsForRun,
   sumTaskUsage,
+  surfaceUsageForRun,
   taskUsageForRun,
   timelineRowsForRun,
 } from "../src/ui/webapp/run-detail-panel.js";
@@ -116,6 +117,13 @@ function fullRunsRecord(): RunsRecordState {
         { taskId: "run:" + ROW_SCHEDULE, requests: 1, promptTokens: 400, completionTokens: 40, totalTokens: 440, costUsd: 0.004, cacheReadTokens: 50, cacheCreateTokens: 5, recordedAt: "2026-09-30T10:02:00Z" },
         { taskId: "run:" + ROW_SCHEDULE, requests: 1, promptTokens: 600, completionTokens: 60, totalTokens: 660, costUsd: 0.006, cacheReadTokens: 80, cacheCreateTokens: 9, recordedAt: "2026-09-30T10:05:00Z" },
         { taskId: "run:" + ROW_BOARD, requests: 1, promptTokens: 20, completionTokens: 2, totalTokens: 22, costUsd: 0.0002, cacheReadTokens: 0, cacheCreateTokens: 0, recordedAt: "2026-09-30T10:06:00Z" },
+      ],
+      // P4 topology A1 (issue #283): the SEPARATE provenance-stamped surface
+      // journal. One entry names this run's canonical task; a second (another
+      // run's) proves the join stays exact. A per-session stamp rides the first.
+      surfaceUsage: [
+        { recordedBy: "surface:web-service:web-abc", taskId: "run:" + ROW_SCHEDULE, requests: 1, promptTokens: 30, completionTokens: 3, totalTokens: 33, costUsd: 0.0003, cacheReadTokens: 0, cacheCreateTokens: 0, recordedAt: "2026-09-30T10:07:00Z" },
+        { recordedBy: "surface:acp-tui", taskId: "run:" + ROW_BOARD, requests: 2, promptTokens: 9, completionTokens: 1, totalTokens: 10, costUsd: 0.0001, cacheReadTokens: 0, cacheCreateTokens: 0, recordedAt: "2026-09-30T10:08:00Z" },
       ],
       reasoningClaims: {
         [ROW_ADHOC]: { runId: ROW_ADHOC, sentence: "claims tests pass with no observed test run", observedAt: "2026-09-30T10:04:00Z" },
@@ -394,6 +402,36 @@ test("W111 (issue #283): the per-task view join renders a reviewer run's delta u
   assert.deepEqual(taskUsageForRun([entry], reviewerRunId).map((row) => row.taskId), ["run:" + reviewerRunId]);
   const phantom: TaskUsageSummaryView = { ...entry, taskId: "hub-reviewer:abc" };
   assert.deepEqual(taskUsageForRun([phantom], reviewerRunId), [], "the phantom session-task delta is not claimed by the reviewer run");
+});
+
+test("P4 (issue #283): the surface journal renders as a SEPARATE provenance-labelled section — never conflated with canonical task attribution", () => {
+  const markup = renderToStaticMarkup(createElement(RunDetailPanel, detailProps({ runId: ROW_SCHEDULE })));
+  // The section is named for what it is: a surface OBSERVATION, not canonical
+  // hub attribution (the W153 client-never-supplies-attribution principle).
+  assert.ok(markup.includes("Surface observations (not canonical attribution)"), "the surface journal gets its own, honestly named section");
+  assert.ok(markup.includes("surface:web-service:web-abc"), "the per-session provenance stamp renders verbatim");
+  assert.ok(markup.includes("run:" + ROW_SCHEDULE), "the surface observation's recorded task id renders");
+  assert.ok(markup.includes("$0.0003"), "the surface observation's numbers render verbatim, never recomputed");
+  assert.ok(markup.includes("2026-09-30T10:07:00Z"), "the surface observation's recording time renders");
+  assert.ok(!markup.includes("2026-09-30T10:08:00Z"), "another run's surface observation is NOT claimed by this run (exact run:<id> join)");
+  // The canonical per-task section still renders its own entries — the two
+  // journals are separate, and the surface section is a distinct class.
+  assert.ok(markup.includes("Per-task attribution"), "the canonical per-task section is still present beside the surface section");
+  assert.ok(markup.includes("run-surface-usage"), "the surface section carries its own class, distinct from the canonical journal's");
+  assert.ok(markup.includes("never merged into the canonical per-task attribution"), "the section states the boundary so a viewer never conflates the two");
+
+  // Selector purity: the join keys on the recorded task id, never a parse of
+  // the run row's other fields.
+  const entries = fullRunsRecord().runs!.surfaceUsage!;
+  assert.deepEqual(surfaceUsageForRun(entries, ROW_SCHEDULE).map((entry) => entry.recordedBy), ["surface:web-service:web-abc"]);
+  assert.deepEqual(surfaceUsageForRun(entries, ROW_BOARD).map((entry) => entry.recordedBy), ["surface:acp-tui"]);
+  assert.deepEqual(surfaceUsageForRun(entries, ROW_ADHOC), [], "a run with no naming surface observation selects nothing — named absence, never a fabricated zero");
+
+  // Empty state and absent family.
+  const empty = renderToStaticMarkup(createElement(RunDetailPanel, detailProps({ runId: ROW_ADHOC })));
+  assert.ok(empty.includes("no surface observation names this run"), "a run with no naming surface observation names the absence");
+  const absent = renderToStaticMarkup(createElement(RunDetailPanel, detailProps({ record: bareRunsRecord() })));
+  assert.ok(absent.includes("surface observations not recorded by this hub"), "a hub that omits the surfaceUsage family names the honest absence");
 });
 
 test("the evidence tab: the run's records under it, the shared W158 row renderer, named absences", () => {

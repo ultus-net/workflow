@@ -10,7 +10,7 @@ import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createRunRegistry } from "../src/integrations/run-registry.js";
 import { createWorkflowHubBridge } from "../src/integrations/hub-http.js";
-import { surfaceUsageSink, type SurfaceUsageSummary } from "../src/integrations/task-usage.js";
+import { surfaceStamp, surfaceUsageSink, type SurfaceUsageSummary } from "../src/integrations/task-usage.js";
 import { createSurfaceUsagePost } from "../src/integrations/surface-usage-client.js";
 import type { ModelUsageMetrics } from "../src/integrations/model-usage-proxy.js";
 
@@ -200,6 +200,30 @@ test("P4 A1: the surface sink stamps recordedBy and publishes only a completed t
   current = metrics({ totalTokens: 160 });
   sink.record({ taskId: "W1", requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 60, costUsd: 0.006, cacheReadTokens: 0, cacheCreateTokens: 0 });
   assert.deepEqual(recorded, [{ recordedBy: "surface:acp-tui", totalTokens: 60 }]);
+});
+
+test("P4 A1 (per-session granularity): the stamp carries a STABLE session id when one exists, and names the surface alone otherwise", async () => {
+  assert.equal(surfaceStamp("acp-tui"), "surface:acp-tui", "no stable session id at a per-process composition point → the surface alone");
+  assert.equal(surfaceStamp("web-service", "web-abc"), "surface:web-service:web-abc", "a stable session id is stamped after the surface, keeping the mandatory prefix");
+  const base = setup();
+  const bridge = await createWorkflowHubBridge(
+    base.application,
+    base.registry.resolve,
+    base.registry.controller,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    { recordSurfaceUsage: base.registry.recordSurfaceUsage },
+  );
+  try {
+    assert.equal((await post({ ...validObservation, recordedBy: "surface:web-service:web-abc" }, bridge)).status, 200);
+    assert.equal(base.registry.surfaceUsage()[0]?.recordedBy, "surface:web-service:web-abc", "the per-session stamp is recorded verbatim");
+    assert.equal(base.registry.taskUsage().length, 0, "a per-session stamp is still a labelled observation, never canonical attribution");
+  } finally {
+    await bridge.close();
+  }
 });
 
 test("P4 A1: the cross-process post fails closed with no hub — nothing recorded, and it never throws", async () => {
