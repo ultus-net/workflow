@@ -1,7 +1,8 @@
 # P7 duplicate-resolution record — W093 / W096 (the serverless-hosting operator intent)
 
 **Date:** 2026-09-30 · **Status:** reconciliation **PROPOSAL only** — **the
-resolution is the operator's call.** Nothing here deletes, merges, or rewrites
+resolution is the operator's call.** · **RESOLVED 2026-09-30: the operator
+chose Option A — see §5 (added 2026-09-30).** Nothing here deletes, merges, or rewrites
 either record; both ledger fragments stay byte-for-byte as landed. · **Item:**
 parked P7 (`docs/PARKED_AND_LIMITATIONS.md:36`, issue #286; surfaced
 2026-09-24 by the contradiction sweep merged as PR #107). · **Sources read in
@@ -133,6 +134,24 @@ resolution is the operator's call** (the P7 row's verbatim disposition,
   write-once records; a supersession note, if directed, is appended, never a
   replacement.
 - It records no decision and authorizes no code. Docs-only.
+
+## 5. Resolution applied (2026-09-30)
+
+**The operator chose Option A on 2026-09-30.** W093
+(`docs/ledger/W093-…-az-function-.md`) is the canonical W093/W096 record; W096
+(`docs/ledger/W096-…-az-function-.md`) carries the dated supersession note
+appended 2026-09-30 — nothing deleted, merged, or rewritten, its fuller
+constraint enumeration preserved in place. The shared operator intent
+(serverless hosting, 2026-09-22) is served by the batch-5 hosting assessment
+(`docs/HOSTING_ASSESSMENT_2026-09-30.md`). The alternatives (Option B, Option C)
+remain recorded above as not-taken.
+
+**Applied:** the P7 row (`docs/PARKED_AND_LIMITATIONS.md:36`) carries the dated
+resolution note in its status and approval cells, and **the item leaves the
+parked queue as resolved** (the file's rule — an entry leaves when the work
+lands or the operator retires it; the operator resolved it). The row's history
+is retained, not deleted. Ledger fragment: `docs/ledger/P7-supersession-applied.md`.
+Issue #286 is closed by the PR carrying this change.
 
 **Evidence:** the two fragments read in full (W093 38 lines, W096 33 lines);
 the P7 row (`docs/PARKED_AND_LIMITATIONS.md:36`); the sweep record (PR #107,
