@@ -133,9 +133,7 @@ no type, so no endpoint can mint one, and no gate can read one.
   a transition needing evidence requires a fresh passing record whose
   `authority` and `subject` match the `EvidenceRequirement`
   (src/kernel/contracts.ts:21–24), admitted only at the current mutation
-  epoch. `reviewer` evidence is valid only while its provenance
-  fingerprint matches (src/review/provenance.ts:99–140) — the precedent
-  this brief reuses for decision provenance.
+  epoch. `reviewer` evidence's kernel admission carries no fingerprint re-check (run-registry.ts:498-503); the review control plane's resume/coverage discipline (src/review/provenance.ts:99–140) is reused here only by analogy for decision provenance — the fingerprint-as-validity gate is a closed follow-up, not a claimed mechanism.
 - **Operator decision** satisfies a **decision requirement** and nothing
   else. An `EvidenceRequirement` is never satisfiable by a decision: the
   operator cannot assert that a test passed. Fail-closed directions:
@@ -205,7 +203,7 @@ runner's environment evidence (src/integrations/run-registry.ts:615/645),
 the MCP normalizer (src/adapters/mcp.ts:31), and the environment adapter
 (src/application/task-commands.ts:137). The operator decision's producer is
 the existing answer/transition path (src/ui/permission-broker.ts:193–223,
-src/ui/web.ts:899), not a new evidence route.
+src/ui/web.ts:953 (POST /api/permission — the existing answer route; web.ts:899 is the unrelated /api/steps/define evidence path)), not a new evidence route.
 
 ### 2.5 Trust-zone mapping (THREAT_MODEL.md:11–18)
 
@@ -351,7 +349,7 @@ docs/PARKED_AND_LIMITATIONS.md:32.)
    a claim, and it verifies the decision's actor names the calling surface
    (the W157 caller-names-itself precedent, contracts.ts:62–64). No new
    web route is added — the decision rides the existing answer/transition
-   path (permission-broker.ts:193–223, web.ts:899).
+   path (permission-broker.ts:193–223, web.ts:953 (POST /api/permission — the existing answer route; web.ts:899 is the unrelated /api/steps/define evidence path)).
 6. The producing-flow pointer is authored by the authority at
    requirement declaration; it is never read from a request body.
 
