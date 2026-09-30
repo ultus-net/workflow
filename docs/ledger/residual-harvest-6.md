@@ -119,3 +119,20 @@ source below.
 > 500 it also names was already closed in harvest-5 (typed `DuplicateRunError`
 > → 409). The W151 `/schedule/delete` route-contract doc line is closed by
 > item 2.
+
+> **Dated correction (2026-09-30, branch `feat/harvest-7`):** item 1's
+> "Behavior is byte-identical" wording is corrected here as marginally
+> overstated. It is accurate for the reachable behavior (the
+> `WorkspaceDeclarationError` → 400 arm at all five sites, and the
+> `DuplicateRunError` → 409 arm at `/run/begin`), but the `DuplicateRunError`
+> arm is NOT exercised at the other four sites: `/snapshot`, `/schedule/list`,
+> and `/bash` call `resolveApplication` only (no `runController.begin`, so the
+> class cannot arise), and `/board/delegate` begins a run under a freshly
+> random id (`board:<provider>:<issue>:<16 hex>`, `hub-http.ts`), so the arm is
+> practically unreachable there (2^-64) and the old catch would have let it
+> reach the 500. The harvest-6 review recorded this exactly (commit
+> `d034f578`, `guard_review_followups` P3): a strict correctness improvement on
+> an unreachable path, not a behavior change at those sites. No code or pin
+> changed; the reachable mappings are the ones harvest-5 pinned
+> (`test/hub-runs.test.ts` 409 duplicate; `test/e2e-hub-bash.test.ts`). See
+> `residual-harvest-7.md` item 1.

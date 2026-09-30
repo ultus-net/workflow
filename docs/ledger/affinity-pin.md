@@ -9,7 +9,8 @@ five pins). The operator chose the pin inputs = **per-(role, tier, settings)**
 (the decided §9 answer).
 
 **What landed (branch `feat/affinity-pin`, base `origin/main@08dcb8bd`; commit
-to be linked):**
+to be linked — the tip is `c6768cd7`, named in the dated note at the foot of
+this fragment):**
 
 - **The pure pin** (`src/integrations/openrouter-auto-latest.ts`):
   `affinityPin(role, tier, configuredAliases) -> slug` returns the FIRST alias
@@ -103,3 +104,11 @@ different alias until that map lands. The opt-in is therefore per **pool**
 cache-hit measurement (P11) stays `unmeasured` until P12's fields are consumed
 downstream; the failover backstop (key 4) stays unwired; the §9 restart /
 alias-drift semantics stand as specced (pin the resolved slug, drift recorded).
+
+> **Dated note (2026-09-30, branch `feat/harvest-7`): the "commit to be linked"
+> placeholder above is `c6768cd7`.** The affinity-pin P3 (`guard_review_followups`,
+> commit `c6768cd7807857e8e3d8169895f8a6ebaeebd342`) recorded that the fragment
+> said "commit to be linked" where the pushed tip is `c6768cd7` — cosmetic, no
+> behavior. The write-once body is left as authored (this fragment's own rule);
+> the reference is corrected here in an appended note rather than rewritten in
+> place. No code or test change.

@@ -135,3 +135,37 @@ honestly below.)
 > (`test/opencode-server-ask-e2e.test.ts`) green. If the parallel broker
 > unification lands, the daemon hold should consume the UNIFIED primitive rather
 > than a second unification; no code change in this pass.
+
+> **Dated re-assessment note (2026-09-30, branch `feat/harvest-7`):** item 1's
+> daemon-hold/primitive unification re-checked against the now-LANDED P6
+> same-process answer route (`docs/ledger/P6-hub-answer.md`, issue #285). The
+> unification stays **not-small-safe**; the P6 landing does not move it:
+> - P6 composes `broker.askHold()` into the containment seat and the ACP driver
+>   flavors (`src/integrations/acp-session.ts`, `src/cli/hub.ts`'s
+>   `shellExecutorFor`/`containedShell` call sites) and mounts `POST
+>   /api/permission` on the hub bridge, but it explicitly leaves the OpenCode
+>   **daemon lane out of process (option B)** — stated in
+>   `P6-hub-answer.md` ("The daemon lane stays out of process"). The daemon's
+>   `holdForOperator` (`src/integrations/opencode-server-authority.ts:352-373`)
+>   is unchanged and broker-free: `grep -rn "askHold" src/` reaches only
+>   `acp-session.ts`, `hub-http.ts`, `opencode-plugin-root.ts`,
+>   `run-controller.ts`, `workflow-hub.ts`, `permission-broker.ts`, and
+>   `cli/hub.ts`, never `opencode-server-authority.ts`.
+> - The two blockers named in item 1 are unmoved: the id domains still differ
+>   (`request.id` SSE wire id + `"once" | "always" | "reject"` reply vs
+>   `request.requestId` + `"allow" | "deny" | OperatorAskReply`), and the
+>   daemon's hold stays interleaved in its async fail-closed broker (gating
+>   `deliver()` + `rememberAllowed()` coverage seeding) whose only end-to-end
+>   proof is the live spawn harness. No red-first discriminator exists for a
+>   behavior-neutral refactor on a security-sensitive authority.
+> - The parallel standalone-seat branch (`feat/p6-standalone-answer`) has NO
+>   committed divergence from `origin/main` at assessment time (`git diff
+>   origin/main...feat/p6-standalone-answer` is empty; its tip is `77702361` =
+>   `origin/main`), so it imposes no new constraint.
+> - Concrete follow-up is unchanged: extract a wire-id-keyed variant of
+>   `createOperatorAskHold` (or widen `OperatorAskRequest` to accept a bare id)
+>   and have `opencode-server-authority.ts` consume it, keeping the four
+>   daemon-hold pins (`test/opencode-server-authority.test.ts`) and the
+>   real-guard e2e pin (`test/opencode-server-ask-e2e.test.ts`) green. If the
+>   daemon lane is later brought in-process, it should consume `broker.askHold()`
+>   rather than a second unification. No code change in this pass.
