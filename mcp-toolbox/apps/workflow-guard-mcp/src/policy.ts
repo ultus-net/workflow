@@ -2,7 +2,7 @@ import { basename } from "node:path";
 import { checkShellPolicy } from "./shell-policy.js";
 import { checkProtectedPath, secretIn } from "./path-policy.js";
 import { decodeShellEscapes, splitShellSegments, unwrapShellWords } from "./shell.js";
-import { checkGitPolicy, hasGitMutation, protectedBranchWriteReason } from "./git-policy.js";
+import { checkGitPolicy, directRefWriteTargetIn, hasGitMutation, protectedBranchesIn, protectedBranchWriteReason } from "./git-policy.js";
 import { checkInterpreterPolicy } from "./interpreter-policy.js";
 import { checkBoundaryPolicy, isGuardConfigurationPath, isPathOutsideWorkspace, shellHasFileMutation } from "./boundary-policy.js";
 import { mcpMutationTarget } from "./mcp-policy.js";
@@ -110,7 +110,7 @@ export function checkPolicy(input: GuardCheckInput): GuardDecision {
 
 function evaluatePolicy(input: GuardCheckInput): GuardDecision {
   if ((input.action === "shell" || input.action === "git") && input.command?.trim()) {
-    const boundary = checkBoundaryPolicy(input.command, input.workspaceRoot, 0, input.liveConfigPaths);
+    const boundary = checkBoundaryPolicy(input.command, input.workspaceRoot, 0, input.liveConfigPaths, { currentBranch: input.currentBranch, protectedBranches: input.protectedBranches });
     if (boundary) return boundary;
   }
   if ((input.action === "shell" || input.action === "git") && input.command?.trim()) {
@@ -169,6 +169,17 @@ function evaluatePolicy(input: GuardCheckInput): GuardDecision {
     }
     if (input.action === "file_write" && input.patchText && input.workspaceRoot && isPathOutsideWorkspace(path, input.workspaceRoot)) {
       return { decision: "deny", policy: "workspace-boundary", reason: `Patch target '${path}' is outside workspace '${input.workspaceRoot}'.`, matched: path };
+    }
+    // P18 (c): the file_write lane reaches the SAME protected-target gate a
+    // direct `.git/` ref path would through a shell write.
+    if (input.action === "file_write") {
+      const refWrite = directRefWriteTargetIn(path);
+      if (refWrite) {
+        if (refWrite.uncertain) return { decision: "deny", policy: "protected-branch-write", reason: `Direct .git ref-adjacent write '${path}' could not be resolved to a concrete branch; failing closed.`, matched: path };
+        if (refWrite.target && protectedBranchesIn({ currentBranch: input.currentBranch, protectedBranches: input.protectedBranches }).has(refWrite.target)) {
+          return { decision: "deny", policy: "protected-branch-write", reason: `Direct .git branch-pointer writes on protected branch '${refWrite.target}' are not allowed.`, matched: path };
+        }
+      }
     }
   }
 
