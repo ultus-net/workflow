@@ -8,6 +8,7 @@ import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import type { GuardCheckInput, GuardDecision } from "../src/integrations/mcp-toolbox-guard.js";
 import type { WorkflowGuardProvider } from "../src/integrations/mcp-toolbox-guard.js";
+import { createOperatorAskHold, type OperatorAskHold } from "../src/integrations/operator-ask-hold.js";
 import type { ContainedProcessRequest, ContainedProcessResult } from "../src/containment/contracts.js";
 
 class FakeGuard {
@@ -72,3 +73,89 @@ function fullAction() {
 function fakeResult(): Promise<ContainedProcessResult> {
   return Promise.resolve({ exitCode: 0, stdout: "", stderr: "", enforcement: "enforced", network: "isolated", credentials: "cleared" });
 }
+
+// ── P6 containment seat: the guard ASK HOLD (issue #285) ────────────────────
+//
+// The containment seat's contract is throw-or-return: a guard `ask` parks the
+// process request on an injected operator hold, then proceeds to containment
+// (`this.containment.execute`) on approval and throws on reject/timeout. The
+// hold is an optional fourth constructor argument. Ordering (brief §2.4): the
+// guard now runs AFTER kernel authorization, the one ordering story shared
+// with the primary seat and the other three seats. `trustedRole` stays
+// unsupplied (§5).
+
+function askGuard(): WorkflowGuardProvider {
+  return new FakeGuard({ decision: "ask", policy: "promotion-gate", reason: "promotion requires operator approval" }) as unknown as WorkflowGuardProvider;
+}
+
+function contained(guard: WorkflowGuardProvider, hold?: OperatorAskHold, app = application()): WorkflowContainedProcess {
+  return new WorkflowContainedProcess(app, { isolation: "enforced" as const, execute: async () => fakeResult() }, guard, hold);
+}
+
+/** Polls the hold until the seat has parked the ask (timer/microtask driven). */
+async function waitForParked(hold: OperatorAskHold): Promise<void> {
+  for (let i = 0; i < 500 && hold.pendingCount === 0; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
+test("P6 containment seat: a guard ask parks on the operator hold and the operator's allow proceeds to containment", async () => {
+  const hold = createOperatorAskHold({ timeoutMs: 60_000 });
+  const pending = contained(askGuard(), hold).execute(fullAction(), request);
+  await waitForParked(hold);
+  assert.equal(hold.pendingCount, 1, "an ask must park on the operator hold");
+  assert.match(hold.pending[0]!.requestId, /^contained-process-ask-/);
+  assert.equal(hold.pending[0]!.policy, "promotion-gate");
+
+  hold.answer(hold.pending[0]!.requestId, "once");
+  const result = await pending;
+  assert.equal(result.exitCode, 0, "operator approval must reach containment");
+  assert.equal(hold.pendingCount, 0);
+});
+
+test("P6 containment seat: the operator's reject refuses the process fail-closed", async () => {
+  const hold = createOperatorAskHold({ timeoutMs: 60_000 });
+  const pending = contained(askGuard(), hold).execute(fullAction(), request);
+  await waitForParked(hold);
+  hold.answer(hold.pending[0]!.requestId, "reject");
+
+  await assert.rejects(pending, /guard ask 'promotion-gate' denied \(operator reject or hold timeout, failing closed\)/);
+});
+
+test("P6 containment seat: an unanswered hold times out and refuses the process fail-closed", async () => {
+  const hold = createOperatorAskHold({ timeoutMs: 5 });
+  await assert.rejects(
+    contained(askGuard(), hold).execute(fullAction(), request),
+    /operator reject or hold timeout/,
+  );
+});
+
+test("P6 containment seat: a guard ask with no operator hold fails closed exactly as before", async () => {
+  // Regression fence (the brief's Q3): no hold means no operator channel, so an
+  // ask is denied with the byte-identical existing guard-deny message (the real
+  // promotion-gate ask is pinned to this shape by test/e2e-hub-bash.test.ts).
+  await assert.rejects(
+    contained(askGuard()).execute(fullAction(), request),
+    /guard denied process execution: promotion-gate: promotion requires operator approval/,
+  );
+});
+
+test("P6 containment seat: kernel authorization runs before the guard (one ordering story)", async () => {
+  // Brief §2.4: the seat used to guard-check BEFORE `application.authorize`.
+  // It now authorizes first, matching the primary seat and the other three
+  // seats. A blocked task must surface the Workflow denial, and the guard must
+  // never be consulted (guard.inputs stays empty).
+  const guard = new FakeGuard({ decision: "deny", policy: "shell.destructive.pattern", reason: "blocked" });
+  const blocked = new WorkflowApplication(
+    new TaskGraph([{ id: taskId("W1"), title: "task", state: "READY", dependencies: [], requiredEvidence: [] }]),
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+    [],
+    new Set(["read", "process"]),
+    process.cwd(),
+  );
+  await assert.rejects(
+    () => new WorkflowContainedProcess(blocked, { isolation: "enforced" as const, execute: async () => fakeResult() }, guard as unknown as WorkflowGuardProvider).execute(fullAction(), request),
+    /Workflow denied process execution: TASK_NOT_IN_PROGRESS/,
+  );
+  assert.equal(guard.inputs.length, 0, "the guard must not run before kernel authorization");
+});
