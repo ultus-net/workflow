@@ -238,15 +238,21 @@ async function handleRequest(
     }
     if (request.url === "/run/begin") {
       if (context.runController === undefined) return send(response, 404, { error: "not found" });
-      if (!isRecord(body) || typeof body.runId !== "string" || typeof body.title !== "string") {
+      if (
+        !isRecord(body) || typeof body.runId !== "string" || typeof body.title !== "string" ||
+        body.runId.trim().length === 0 || body.title.trim().length === 0
+      ) {
         return send(response, 400, { error: "invalid run begin request" });
       }
       // W146: the registry's workspace-declaration refusal is a CLIENT
       // fault — WorkspaceDeclarationError from canonicalWorkspace (reached
       // through resolveApplication) answers 400 with its message. The
       // refusal still precedes any composition: nothing composes, no run
-      // task is created. Empty runId and duplicate runId keep the
-      // catch-all's 500 (still queued under the W142 wave's finding (e)).
+      // task is created. 2026-09-30 (harvest-4): an EMPTY/whitespace runId or
+      // title is validated here (400) before the registry is reached; the
+      // duplicate-runId refusal still lands in the catch-all's 500 (it fires
+      // inside the registry and needs a typed registry error or a membership
+      // lookup — W142 finding (e), partially closed).
       // W165: workProductLink is deliberately never accepted from clients —
       // the run→PR linkage is recorded only by hub-side lanes (the board
       // delegate flow's own provider read), never from a client's claim.

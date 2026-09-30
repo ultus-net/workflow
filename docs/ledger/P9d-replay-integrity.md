@@ -115,3 +115,20 @@ production gate, `:289-292`). No shaping, no markers, no budget downgrade
 No `usage.include` injection on the messages lane. The A′ parse-only journal
 stays. No live probes here (the detector is pinned offline; the host-body audit
 and host-adapter probes are operator-gated). Issue #288 stays open.
+
+> **Dated note (2026-09-30, branch `feat/harvest-4`): the orphaned-`tool_result`
+> false-reject watch item assessed — no relaxation, safe by construction, pinned.**
+> The `unattributed-tool-result` signal
+> (`src/integrations/messages-replay-integrity.ts:141-150`) fires only when no
+> PRECEDING `tool_use` carries the result's id. A schema-valid host Messages body
+> cannot carry a bare result (the schema pairs a user `tool_result` with the
+> assistant turn's `tool_use`), and W070b's sanctioned synthetic insertion — the
+> traffic this lane exists to carry — is a MATCHED pair
+> (`src/integrations/model-replay-policy.ts:70-75`; the host-inserted synthetic
+> tail is likewise matched, `test/model-profile.test.ts:320-328`). A relaxation
+> is therefore not earned; a discriminating pin now fixes the boundary (dropping
+> the call from the sanctioned shape yields exactly one `unattributed-tool-result`,
+> restoring it allows the same body) and the module docblock states the
+> safe-by-construction claim. The accepted sanctioned-pair allow pin is NOT
+> weakened. The LIVE host-body audit remains the production gate before the dark
+> tier turns on.

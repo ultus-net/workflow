@@ -103,6 +103,25 @@ test("P9 D: a tool_result with no preceding tool_use is refused (unattributed-to
   assert.equal(violations[0]?.index, 2, "the violation points at the user turn that carries the orphaned result");
 });
 
+test("P9 D: a bare tool_result with no tool_use anywhere is refused — the call is the discriminator (safe by construction)", () => {
+  // Safe-by-construction assessment (2026-09-30, harvest-4): a real host's
+  // Messages body cannot carry a tool_result without its tool_use — the schema
+  // pairs a user tool_result with the assistant turn's tool_use, and W070b's
+  // sanctioned synthetic insertion (the traffic this lane exists to carry,
+  // src/integrations/model-replay-policy.ts:70-75) is a MATCHED pair, pinned
+  // above. The unattributed-tool-result refusal therefore fires only on a body
+  // the vendor's own schema would reject; no valid host body is false-rejected.
+  // This pin fixes the boundary: dropping the call from the sanctioned shape
+  // turns it into exactly one unattributed-tool-result, never an allow.
+  const droppedCall = [SANCTIONED_SYNTHETIC_INSERTION[0], SANCTIONED_SYNTHETIC_INSERTION[2]];
+  const violations = detectMessagesSchemaReplayViolations(droppedCall);
+  assert.deepEqual(violations.map((violation) => violation.code), ["unattributed-tool-result"]);
+  assert.equal(violations[0]?.index, 1, "the violation points at the user turn that carries the orphaned result");
+  assert.equal(enforceMessagesReplayIntegrity({ model: "deepseek-flash", messages: droppedCall }).action, "reject");
+  // The call is the discriminator: restoring it allows the exact same body.
+  assert.deepEqual(detectMessagesSchemaReplayViolations(SANCTIONED_SYNTHETIC_INSERTION), []);
+});
+
 test("P9 D: a thinking block with a stripped signature is refused (missing-thinking-signature)", () => {
   const unsigned = [
     { role: "user", content: "hi" },
