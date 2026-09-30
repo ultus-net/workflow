@@ -45,19 +45,41 @@ test("v2 honors an explicit model override on the metered OpenRouter provider", 
   assert.equal(config.model, `${OPENCODE_V2_METERED_PROVIDER_ID}/anthropic/claude-sonnet-4`);
 });
 
-test("v2 declares open-source vendor providers in the v2 package/settings shape", () => {
+test("v2 routes an open-source vendor through its BUILT-IN provider, not a custom provider", () => {
   const config = meteredOpencodeConfig({
     proxyUrl,
     opencodeMajor: 2,
     openSource: {
-      providers: [{ id: "deepseek", name: "Workflow metered (deepseek)", baseURL: "http://127.0.0.1:62000/api/v1", models: { "deepseek-chat": { name: "DeepSeek Chat" } } }],
-      defaultModel: "deepseek/deepseek-chat",
+      providers: [{
+        id: "workflow-deepseek",
+        name: "Workflow metered (deepseek)",
+        baseURL: "http://127.0.0.1:62000",
+        models: { "deepseek-flash": { name: "DeepSeek V4.1-Flash" } },
+        v2ProviderId: "deepseek",
+      }],
+      defaultModel: "workflow-deepseek/deepseek-flash",
     },
   });
   const providers = config.providers as Record<string, Record<string, unknown>>;
   const vendor = providers.deepseek!;
-  assert.equal(vendor.package, "@opencode/ai/providers/openai-compatible");
-  assert.equal((vendor.settings as Record<string, unknown>).baseURL, "http://127.0.0.1:62000/api/v1");
+  // The v2 "Endpoint" override keeps the built-in package/models/connection.
+  assert.equal((vendor.settings as Record<string, unknown>).baseURL, "http://127.0.0.1:62000");
+  assert.equal(vendor.package, undefined, "a built-in override must not declare a custom package");
+  assert.equal(config.model, "deepseek/deepseek-flash", "the composed vendor default is translated to the built-in id");
+});
+
+test("a vendor with no v2 built-in is omitted and the default falls back to the Auto Router", () => {
+  const config = meteredOpencodeConfig({
+    proxyUrl,
+    opencodeMajor: 2,
+    openSource: {
+      providers: [{ id: "workflow-acme", name: "Workflow metered (acme)", baseURL: "http://127.0.0.1:62001", models: { "acme-1": { name: "Acme 1" } } }],
+      defaultModel: "workflow-acme/acme-1",
+    },
+  });
+  const providers = config.providers as Record<string, Record<string, unknown>>;
+  assert.equal(providers["workflow-acme"], undefined, "an unregistered custom provider must not be emitted on v2");
+  assert.equal(config.model, `${OPENCODE_V2_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`);
 });
 
 test("the v2 metered env key is the documented OpenRouter credential variable", () => {
