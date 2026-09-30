@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
-import type { WorkflowApplication } from "../application/workflow.js";
+import type { WorkflowApplication, WorkflowSnapshot } from "../application/workflow.js";
 import { buildReviewRubric } from "../review/rubric.js";
 import type { ReviewProvenanceRecord } from "../review/provenance.js";
 import { WorkspaceDeclarationError } from "./run-registry.js";
@@ -565,7 +565,20 @@ async function handleRequest(
     if (request.url === "/snapshot") {
       if (!isRecord(body)) return send(response, 400, { error: "invalid snapshot request" });
       const workspace = typeof body.workspace === "string" ? body.workspace : undefined;
-      const snapshot = context.resolveApplication(workspace, undefined, { activateInteractiveTask: false }).snapshot();
+      // W146 residual (the review's P3): /snapshot reaches the SAME
+      // canonicalWorkspace refusal as /bash and /run/begin, so a non-canonical
+      // workspace declaration is a CLIENT fault answered 400 with its message
+      // — never the catch-all's 500. The refusal precedes composition (the
+      // resolver canonicalizes before any application is built).
+      let snapshot: WorkflowSnapshot;
+      try {
+        snapshot = context.resolveApplication(workspace, undefined, { activateInteractiveTask: false }).snapshot();
+      } catch (error) {
+        if (error instanceof WorkspaceDeclarationError) {
+          return send(response, 400, { error: error.message });
+        }
+        throw error;
+      }
       const hiddenTaskIds = new Set(context.runController?.hiddenSnapshotTaskIds() ?? []);
       // Plan Task A3: run-gate observability rides alongside the canonical
       // projection so hub-attached monitors can surface verdicts, blocking
