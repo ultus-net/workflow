@@ -141,3 +141,33 @@ already getting.
 it never widens to pools it did not measure. P11 / issue #290 stays OPEN and the
 row stays `unmeasured`; no savings claim is earned. P13 (the W109 per-turn
 boundary policy) is a separate governor. No production change.
+
+### Dated addendum (2026-09-30, branch `docs/p11-rerun`, issue #290): RE-RUN on the corrected OpenAI-lane proxy instrument (verdict UNCHANGED — non-effect for the observed pool)
+
+**Why a re-run:** the first run (above) could not read cached reads through the
+proxy's first-class cache fields — on the OpenAI-shaped lane they read `0/0`,
+because the cached-subset split
+(`prompt_tokens_details.cached_tokens`) was then the W123 *named queued
+refinement*. That refinement has since LANDED as the W123 OpenAI-lane
+cached-token split (#434), which is on main `d3f2027d`; the proxy now surfaces
+cached reads on the OpenAI lane, so the instrument that read `0/0` is now the
+corrected read-out. Re-running on the corrected instrument answers whether the
+earlier non-effect was an artifact of the un-split lane.
+
+**The re-run (live, 2026-09-30, on main `d3f2027d` which includes #434):**
+`WORKFLOW_AFFINITY_MEASUREMENT=1 node --import tsx --test
+test/affinity-measurement-probe.test.ts` -> `# tests 3 / # pass 3 / # fail 0`
+(1 ungated structural pin + both live arms).
+
+**Result: UNCHANGED.** The "with" (pinned) arm injected
+`allowed_models: ["anthropic/claude-opus-5.5"]`, was served by Azure, and the
+RAW provider usage showed `prompt_tokens_details.cached_tokens: 0` (and
+`cache_write_tokens: 0`) on the read turn — no cache read. The pinned arm's
+turn-2 read is therefore not greater than the baseline's; the earlier
+`negative` / non-effect reproduces on the corrected instrument. The earlier
+result was not an artifact of the un-split OpenAI lane.
+
+**Verdict: `negative` / honest NON-EFFECT, unchanged.** Per recipe §5 the pool
+stays `unmeasured` and the P11 row's verification status is NOT advanced. No
+savings claim is earned; P11 / issue #290 stays OPEN; no production change; the
+boundaries and caveats above remain in force.
