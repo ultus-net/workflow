@@ -8,7 +8,8 @@ import { createOperatorAskHold } from "../src/integrations/operator-ask-hold.js"
  * (`src/integrations/opencode-server-authority.ts`): an ask parks, the operator
  * answer resolves it (tighten-never-loosen: reject wins, anything else maps to
  * the policy-allowed outcome), an unanswered hold fails closed on timeout, and
- * a stale early reply must not answer a later ask.
+ * an early reply — once consumed by the park that raced it — does not answer a
+ * later ask with the same id.
  */
 
 const request = { requestId: "req-1", policy: "promotion-gate", reason: "promotion requires operator approval" } as const;
@@ -61,14 +62,18 @@ test("cancelAll resolves every pending hold to reject", async () => {
   assert.deepEqual(await Promise.all([first, second]), ["reject", "reject"]);
 });
 
-test("a stale early reply must not answer a later ask", async () => {
-  const hold = createOperatorAskHold({ timeoutMs: 5 });
-  // Seed an early reply for req-stale, then time the ask out so the stale
-  // entry is cleared. A second ask with the SAME id must wait for its own
-  // answer, not the consumed stale one.
-  hold.answer("req-stale", "once");
-  assert.equal(await hold.park({ ...request, requestId: "req-stale" }), "once");
+test("the park that consumes an early reply clears it, so a later same-id ask is not answered by the stale reply", async () => {
+  const hold = createOperatorAskHold({ timeoutMs: 60_000 });
+  // An operator reply that raced ahead of its ask is remembered; the park that
+  // follows CONSUMES it and clears it from the early-reply map (the real
+  // guarantee — see `park`'s early-reply branch). A later ask with the SAME id
+  // must therefore be parked afresh and wait for its OWN answer; the consumed
+  // reply must never resolve it.
+  assert.equal(hold.answer("req-stale", "once"), false, "no pending entry yet: the reply is remembered");
+  assert.equal(await hold.park({ ...request, requestId: "req-stale" }), "once", "the racing park consumes the early reply");
 
   const later = hold.park({ ...request, requestId: "req-stale" });
-  assert.equal(await later, "reject", "the timeout resolves the later ask; the stale reply is gone");
+  assert.equal(hold.pendingCount, 1, "the later ask parks for its own answer; the consumed early reply is gone");
+  hold.answer("req-stale", "reject");
+  assert.equal(await later, "reject", "the later ask resolves from its own answer, never the consumed early reply");
 });
