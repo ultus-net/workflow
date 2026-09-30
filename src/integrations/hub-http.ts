@@ -18,7 +18,7 @@ import { operatorPosture, scheduleLineage, scheduleRecentRuns, type PostureBudge
 import { inProgressBoardTasks, workProductStates } from "./task-provider.js";
 import type { BoardOutcome, BoardTaskOutcome, CrossReferenceOutcome, WorkProductStateOutcome } from "./task-provider.js";
 import type { IssueDetailOutcome, ProviderReadRecord } from "./issue-detail.js";
-import type { SurfaceUsageObservation } from "./task-usage.js";
+import type { SurfaceUsageCounters, SurfaceUsageObservation } from "./task-usage.js";
 
 /**
  * The hub's host-neutral loopback HTTP server and discovery bridge.
@@ -133,6 +133,21 @@ interface HubRequestContext {
    */
   readonly recordSurfaceUsage?: (observation: SurfaceUsageObservation) => void;
   /**
+   * P4 topology Option A2 (issue #283): the hub's session MINT — the run
+   * registry mints a single-use session id bound to the declared task from its
+   * OWN record. Absent → the mint route 404s (capability withheld). Ordinary
+   * token class; observability-only (no state transition, no evidence).
+   */
+  readonly registerSurfaceSession?: (input: { readonly taskId: string }) => string;
+  /**
+   * P4 topology Option A2 (issue #283): the hub's session RESOLVE+WRITE — it
+   * resolves the session id to its registered task, consumes the nonce
+   * (single-use), and writes the CANONICAL `taskUsage` journal. Absent → the
+   * record route's A2 branch 404s. Unknown/expired/used ids return false and
+   * are rejected (never canonical).
+   */
+  readonly consumeSurfaceSession?: (input: { readonly sessionId: string; readonly usage: SurfaceUsageCounters }) => boolean;
+  /**
    * P6 (issue #285): the hub's SAME-PROCESS broker. When composed, the hub
    * serves the broker's pending/answer path on `/api/permission`, so a guard
    * `ask` held by the containment seat (which runs IN this process) is
@@ -164,6 +179,10 @@ export interface HubBridgeCapabilities {
   readonly budgetIncidents?: () => readonly PostureBudgetIncident[] | undefined;
   /** P4 topology Option A1 (issue #283): the surface-observation journal writer (see HubRequestContext). */
   readonly recordSurfaceUsage?: (observation: SurfaceUsageObservation) => void;
+  /** P4 topology Option A2 (issue #283): the session mint (see HubRequestContext) — a FIELD, never a positional. */
+  readonly registerSurfaceSession?: (input: { readonly taskId: string }) => string;
+  /** P4 topology Option A2 (issue #283): the session resolve+canonical-write (see HubRequestContext). */
+  readonly consumeSurfaceSession?: (input: { readonly sessionId: string; readonly usage: SurfaceUsageCounters }) => boolean;
   /** P6 (issue #285): the same-process broker (see HubRequestContext) — a FIELD
    * on the capabilities object, never a positional. */
   readonly permissionBroker?: PermissionBroker;
@@ -278,7 +297,37 @@ async function handleRequest(
         }),
       });
     }
+    if (request.url === "/usage/session") {
+      // P4 topology Option A2 (issue #283): the hub MINTS a single-use session
+      // id bound to the declared task from its OWN registration record. The
+      // surface never chooses the id. Observability-only (no state transition,
+      // no evidence, no authorization); ordinary-token class like /run/begin.
+      if (context.registerSurfaceSession === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body) || typeof body.taskId !== "string" || body.taskId.trim().length === 0) {
+        return send(response, 400, { error: "invalid usage session request: taskId must be a non-empty string" });
+      }
+      return send(response, 200, { sessionId: context.registerSurfaceSession({ taskId: body.taskId }) });
+    }
     if (request.url === "/usage/record") {
+      // P4 topology Option A2 (issue #283): the hub-BOUND record path. When the
+      // body carries a hub-minted `sessionId`, the hub resolves the task from
+      // its OWN registration record, consumes the nonce (single-use), and
+      // writes the CANONICAL `taskUsage` journal. The A2 wire has NO task id: a
+      // body that also carries `taskId` is rejected (no client attribution). An
+      // unknown/expired/used/spoofed id is rejected (400) and never reaches
+      // canonical attribution.
+      if (isRecord(body) && typeof body.sessionId === "string" && body.sessionId.length > 0) {
+        if (context.consumeSurfaceSession === undefined) return send(response, 404, { error: "not found" });
+        if (body.taskId !== undefined) {
+          return send(response, 400, { error: "invalid usage record request: the session-bound wire carries no taskId" });
+        }
+        const counters = parseSurfaceUsageCounters(body);
+        if (typeof counters === "string") return send(response, 400, { error: counters });
+        if (!context.consumeSurfaceSession({ sessionId: body.sessionId, usage: counters })) {
+          return send(response, 400, { error: "invalid usage record request: unknown, expired, or already-used session id" });
+        }
+        return send(response, 200, {});
+      }
       // P4 topology Option A1 (issue #283): the provenance-stamped cross-process
       // record path. A process-separated interactive surface POSTs its boundary
       // delta here; the hub appends it to the SURFACE-observation journal, NOT
@@ -287,7 +336,8 @@ async function handleRequest(
       // mandatory and must carry the `surface:` prefix, so a client cannot claim
       // a `hub`-class label. Observability-only: no state transition, no
       // evidence, no authorization. Ordinary-token class (a same-UID surface
-      // class, like /run/begin), never verifier-only.
+      // class, like /run/begin), never verifier-only. This is the labelled
+      // fallback for a surface with no hub-minted session id.
       if (context.recordSurfaceUsage === undefined) return send(response, 404, { error: "not found" });
       const parsed = parseSurfaceUsage(body);
       if (typeof parsed === "string") return send(response, 400, { error: parsed });
@@ -950,14 +1000,13 @@ const SURFACE_USAGE_NUMBER_FIELDS = [
   "cacheCreateTokens",
 ] as const;
 
-function parseSurfaceUsage(body: unknown): SurfaceUsageObservation | string {
+/**
+ * P4 A2 (issue #283): the counters-only validation half, shared by the A1
+ * observation parser and the session-bound record path. Returns the validated
+ * counters or the client-fault message.
+ */
+function parseSurfaceUsageCounters(body: unknown): SurfaceUsageCounters | string {
   if (!isRecord(body)) return "invalid usage record request";
-  if (typeof body.recordedBy !== "string" || !/^surface:.+/.test(body.recordedBy)) {
-    return "invalid usage record request: recordedBy must be a provenance stamp with the 'surface:' prefix";
-  }
-  if (typeof body.taskId !== "string" || body.taskId.trim().length === 0) {
-    return "invalid usage record request: taskId must be a non-empty string";
-  }
   for (const field of SURFACE_USAGE_NUMBER_FIELDS) {
     const value = body[field];
     if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
@@ -965,8 +1014,6 @@ function parseSurfaceUsage(body: unknown): SurfaceUsageObservation | string {
     }
   }
   return {
-    recordedBy: body.recordedBy,
-    taskId: body.taskId,
     requests: body.requests as number,
     promptTokens: body.promptTokens as number,
     completionTokens: body.completionTokens as number,
@@ -975,6 +1022,19 @@ function parseSurfaceUsage(body: unknown): SurfaceUsageObservation | string {
     cacheReadTokens: body.cacheReadTokens as number,
     cacheCreateTokens: body.cacheCreateTokens as number,
   };
+}
+
+function parseSurfaceUsage(body: unknown): SurfaceUsageObservation | string {
+  if (!isRecord(body)) return "invalid usage record request";
+  if (typeof body.recordedBy !== "string" || !/^surface:.+/.test(body.recordedBy)) {
+    return "invalid usage record request: recordedBy must be a provenance stamp with the 'surface:' prefix";
+  }
+  if (typeof body.taskId !== "string" || body.taskId.trim().length === 0) {
+    return "invalid usage record request: taskId must be a non-empty string";
+  }
+  const counters = parseSurfaceUsageCounters(body);
+  if (typeof counters === "string") return counters;
+  return { recordedBy: body.recordedBy, taskId: body.taskId, ...counters };
 }
 
 function send(response: ServerResponse, status: number, body: unknown): void {

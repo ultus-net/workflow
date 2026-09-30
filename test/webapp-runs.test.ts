@@ -653,3 +653,22 @@ test("the runs table's recorded-cost cell is monospace — the Runs-page comment
     "the recorded-cost cell is monospace like its sibling machine-value cells (the Runs-page comment names costs)",
   );
 });
+
+// ── the Cost tab's two attribution journals render as styled lists ──
+
+test("the Cost tab's task + surface usage journals carry a shared list style — the surface section is not the unstyled odd one out", () => {
+  const css = readFileSync(resolve("src/ui/webapp/styles.css"), "utf8");
+  // P4-surface-view review P3: the surface journal's own class previously had
+  // no rule (nor did its canonical sibling) — the two are now styled together
+  // as list resets with mono machine values, so neither is the odd one out.
+  assert.match(
+    css,
+    /\.run-task-usage,\s*\.run-surface-usage\s*\{[^}]*list-style:\s*none/,
+    "the two usage journals share one list-reset rule",
+  );
+  assert.match(
+    css,
+    /\.run-task-usage-row,\s*\.run-surface-usage-row\s*\{[^}]*font-family:\s*var\(--font-mono\)/,
+    "the journals' rows render their machine values monospace, consistent with their sibling machine-value lists",
+  );
+});

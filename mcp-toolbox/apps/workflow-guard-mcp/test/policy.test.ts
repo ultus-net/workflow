@@ -1276,6 +1276,14 @@ test("P18 (b, review round): xsh joins the interactive-monitor lens too — the 
   assert.equal(checkPolicy({ action: "shell", command: "xsh -c top" }).decision, "ask");
   assert.equal(checkPolicy({ action: "shell", command: "sh -c top" }).decision, "ask");
   assert.equal(checkPolicy({ action: "shell", command: "zsh -c top" }).decision, "ask");
+  // P18 (a) class closure (2026-09-30): the interactive lens consumes the
+  // SAME single-sourced predicate as the git and boundary lanes, so the
+  // whole sh-family (not just xsh) asks — RED-FIRST for ash/mksh/csh/etc.
+  // (captured live: allow on the pre-closure tree).
+  for (const interpreter of ["ash", "mksh", "pdksh", "csh", "tcsh", "yash", "posh", "osh", "rsh", "xonsh", "fish"]) {
+    assert.equal(checkPolicy({ action: "shell", command: `${interpreter} -c top` }).decision, "ask", `${interpreter} -c top`);
+  }
+  assert.equal(checkPolicy({ action: "shell", command: "busybox ash -c top" }).decision, "ask", "busybox ash -c top");
 });
 
 test("P18 (b): busybox sh and xsh join the W102 wrapper transparency (exotic interpreter names)", () => {
@@ -1308,6 +1316,45 @@ test("P18 (b): busybox sh and xsh join the W102 wrapper transparency (exotic int
   assert.equal(checkPolicy({ action: "shell", command: "busybox echo sh -c 'git commit -m x'", currentBranch: "main" }).decision, "allow");
 });
 
+test("P18 (a) class closure: the sh-family vocabulary is principled (any name ending in sh), not enumerated", () => {
+  // RED-FIRST (captured live against the pre-closure tree, 2026-09-30): the
+  // four copied sh-family regexes matched a CLOSED enumeration
+  // (`/^(?:ba|z|da|k|x)?sh$/`) — two sites had the P18(b) `xsh` addition, two
+  // did not, and every other shell name bypassed all four:
+  // `ash -c 'git commit -m x'` on main classified allow, the same for
+  // mksh/pdksh/oksh/lksh/csh/tcsh/yash/posh/osh/rsh/fish/xonsh. The P18(b)
+  // wave closed busybox + xsh only; the CLASS is closed here by principle —
+  // every POSIX-ish shell name ends in `sh` — single-sourced as
+  // `isShFamilyInterpreter` so the git, shell, and boundary sites cannot
+  // drift again (the pre-closure drift: boundary had neither xsh nor the
+  // class). TRANSPARENCY per seat is unchanged: the with-facts protected
+  // seat denies (the inner command denies unwrapped), the factless seat
+  // inherits the inner factless allow (the W090 fail-open class), and the
+  // target-gated shape's base-set deny fires factlessly.
+  const family = ["ash", "mksh", "pdksh", "oksh", "lksh", "csh", "tcsh", "yash", "posh", "osh", "rsh", "fish", "xonsh"];
+  for (const currentBranch of ["main", undefined]) {
+    const context = currentBranch ? { currentBranch } : {};
+    for (const interpreter of family) {
+      assert.equal(checkPolicy({ action: "shell", command: `${interpreter} -c 'git commit -m x'`, ...(currentBranch ? { currentBranch } : {}) }).decision, currentBranch ? "deny" : "allow", `commit ${interpreter} ${String(currentBranch)}`);
+      assert.equal(checkPolicy({ action: "shell", command: `${interpreter} -c 'git branch -f main abc'`, ...(currentBranch ? { currentBranch } : {}) }).decision, "deny", `branch -f ${interpreter} ${String(currentBranch)}`);
+    }
+  }
+  // busybox composites of the family classify too (the applet unwrap feeds
+  // the same predicate): `busybox ash -c '…'`.
+  assert.equal(checkPolicy({ action: "shell", command: "busybox ash -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "busybox csh -c 'git push origin main'", currentBranch: "feat/g5" }).decision, "deny");
+  // Wrapped benign commands stay transparent (passthrough, not a blanket).
+  assert.equal(checkPolicy({ action: "shell", command: "ash -c 'echo hi'", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "xonsh -c 'git switch feat/g5'", currentBranch: "main" }).decision, "allow");
+  // The suffix rule's deliberate fail-closed over-match, PINNED rather than
+  // hidden: a NON-shell executable whose name ends in `sh` and takes
+  // `-c <git-denied>` denies (it cannot be told from a shell without
+  // executing it), while its benign payload stays allow. Observable only
+  // when the inner command would itself deny unwrapped.
+  assert.equal(checkPolicy({ action: "shell", command: "publish -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "publish -c 'echo hi'", currentBranch: "main" }).decision, "allow");
+});
+
 test("P18 (c): the -c= EQUALS-expansion spelling classifies like sh/bash (the parser-consistent allow, explicit)", () => {
   // `Xsh -c='git commit -m x'`: getopt makes the remainder of the word the
   // -c option-argument, so the parser extracts `=git commit -m x` — and
@@ -1332,6 +1379,27 @@ test("P18 (c): the -c= EQUALS-expansion spelling classifies like sh/bash (the pa
   // the deliberate parser position, not a general wrapper gap).
   assert.equal(checkPolicy({ action: "shell", command: "zsh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
   assert.equal(checkPolicy({ action: "shell", command: "zsh -c'git commit -m x'", currentBranch: "main" }).decision, "deny");
+});
+
+test("P18 (over-block watch): non-shell names ending in sh are not sh-family wrappers", () => {
+  // The watch this pin answers: a bare suffix predicate (`/sh$/i`) would treat
+  // ANY name ending in "sh" — publish, flush, push, bush, hush — as a shell
+  // interpreter and classify a would-deny inner command as a wrapped deny,
+  // over-blocking ordinary commands. The landed predicate is anchored to the
+  // family (`/^(?:ba|z|da|k|x)?sh$/i`) in all three lanes (shell, git, boundary),
+  // so these non-shell heads stay allow. The pin discriminates against a future
+  // widening to a bare `/sh$/` suffix match: under that widening the first
+  // assertion flips to deny, which is exactly the reopened over-block. (The
+  // mirror concern — a widening that matches a real shell the family omits — is
+  // a bypass, not an over-block, and is not what this pin guards.)
+  for (const name of ["publish", "flush", "push", "bush", "hush"]) {
+    assert.equal(checkPolicy({ action: "shell", command: `${name} -c 'git commit -m x'`, currentBranch: "main" }).decision, "allow", `${name} commit`);
+    assert.equal(checkPolicy({ action: "shell", command: `${name} -c 'top'` }).decision, "allow", `${name} top`);
+  }
+  // Contrast arm: the genuine family still classifies (the pin is a boundary,
+  // not a blanket allow).
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "xsh -c top" }).decision, "ask");
 });
 
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {
@@ -1680,6 +1748,13 @@ test("P18 (c): nested sh -c wrappers stay transparent to the direct-write gate",
   assert.equal(checkPolicy({ action: "shell", command: "sh -c 'echo x > .git/refs/heads/main'" }).decision, "deny");
   assert.equal(checkPolicy({ action: "shell", command: "bash -c 'cp a .git/refs/heads/main'" }).decision, "deny");
   assert.equal(checkPolicy({ action: "shell", command: "sh -c 'echo x > .git/refs/heads/feat/g5'" }).decision, "allow");
+  // P18 (a) class closure: the boundary lane consumes the SAME single-sourced
+  // sh-family predicate, so exotic interpreters recurse here too (RED-FIRST
+  // captured live: `ash -c 'echo x > .git/refs/heads/main'` classified allow
+  // pre-closure; the feature-ref target keeps the allow).
+  assert.equal(checkPolicy({ action: "shell", command: "ash -c 'echo x > .git/refs/heads/main'" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "csh -c 'cp a .git/refs/heads/main'" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "xonsh -c 'echo x > .git/refs/heads/feat/g5'" }).decision, "allow");
 });
 
 test("P18 (c): the file_write lane classifies direct .git ref paths identically", () => {

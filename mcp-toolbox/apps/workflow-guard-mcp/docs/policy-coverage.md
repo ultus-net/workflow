@@ -917,3 +917,27 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   tsconfig.json`, then `node --import tsx --test test/*.test.ts`); app `tsc
   --noEmit` exit 0; repo lint + typecheck exit 0 unpiped. The W099/W101/
   P18(c)/P18(d) cells are byte-unchanged (the test diff is append-only).
+
+  ---- P18 (a) class closure (2026-09-30, branch `feat/p18-wrapper`): the
+  exotic-interpreter edge is closed by PRINCIPLE, not enumeration. The
+  P18(b) wave closed busybox + `xsh` by widening the regex to
+  `(?:ba|z|da|k|x)?sh` at two of the four copy sites; `boundary-policy.ts`
+  still carried the pre-`xsh` form, and every shell outside the enumeration
+  (ash, mksh, pdksh, oksh, lksh, csh, tcsh, yash, posh, osh, rsh, fish,
+  xonsh) bypassed ALL FOUR sites — `ash -c 'git commit -m x'` on main
+  classified allow (captured verbatim against the unmodified tree). The fix
+  is single-sourcing: `shell.ts` `isShFamilyInterpreter(name)` = `/sh$/i`,
+  consumed by the git `wrapperCommands` lens, the shell `interactiveReason`
+  lens, and both `boundary-policy.ts` recursion sites — every POSIX-ish
+  shell name ends in `sh`, so the class closes and the lanes cannot drift
+  again. Over-block tradeoff pinned rather than hidden (fail-closed): a
+  non-shell name ending in `sh` that takes `-c <git-denied>` denies; it can
+  only add a deny. Edge (b)'s `-c=` allow is unaffected by the predicate
+  (`=git` does not end in `sh`) and stays the recorded zsh runtime caveat;
+  edge (c) is unchanged (landed in the base). Red captured verbatim; green
+  125/0 policy (124/0 at base, +1 class-closure test) and 136/136 app suite;
+  `npm run toolbox:verify` exit 0 after a real frozen-lockfile install (a
+  symlinked node_modules false-failed two unrelated code-intelligence-mcp
+  dependency tests); repo lint + typecheck exit 0 unpiped. Observed parallel
+  site (out of scope): `skills-mcp/src/screening.ts` carries its own
+  `(?:ba|z|da|k)?sh` piped-to-shell detector on a different policy surface.

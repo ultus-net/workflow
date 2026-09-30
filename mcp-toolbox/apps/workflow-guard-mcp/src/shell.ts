@@ -107,6 +107,22 @@ export function executableIn(segment: string): string {
   return basename(unwrapShellWords(segment)[0] ?? "");
 }
 
+// P18 (a) class closure (2026-09-30): the sh-family interpreter vocabulary,
+// SINGLE-SOURCED across the git wrapper lens, the shell interactive lens, and
+// the boundary lane. Every POSIX-ish shell's name ends in `sh` — sh, bash,
+// zsh, dash, ksh, ash (busybox's sh), mksh, pdksh, oksh, lksh, csh, tcsh,
+// yash, posh, osh, rsh, xsh, xonsh, fish — so a basename ending in `sh` is
+// classified as a shell rather than enumerating a family that never ends (the
+// pre-P18 four-site copy had already drifted: two sites gained `xsh`, two did
+// not, and ash/mksh/csh/tcsh/yash/posh/osh/rsh/xonsh/fish bypassed all four).
+// Over-block tradeoff, deliberate and fail-closed: a NON-shell executable
+// whose name ends in `sh` (e.g. `publish`, `flush`) that takes `-c <cmd>` is
+// treated as a shell wrapper — observable only when the inner command would
+// itself deny unwrapped, and never a weakening of an existing block.
+export function isShFamilyInterpreter(name: string): boolean {
+  return /sh$/i.test(name);
+}
+
 export function unwrapShellWords(command: string): string[] {
   return unwrapWords(shellWords(decodeShellEscapes(command.trim())));
 }

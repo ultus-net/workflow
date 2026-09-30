@@ -119,6 +119,14 @@ export interface PendingPermissionRequest {
   readonly mutating: boolean | undefined;
   readonly requiredCapabilities: readonly string[];
   readonly readFingerprints: readonly string[];
+  /** The G4 matched surface (W121, queryable-not-prose per LESS-0046): the
+   * concrete surface the guard rule matched (path/command/toolName), carried
+   * onto the ONE answer surface when the parked request is a held guard-`ask`.
+   * Absent for a permission prompt (no rule matched a surface) and for an
+   * unmatched ask — never fabricated. This is the ask-path projection of the
+   * W121 `GuardDecision.matched` field; it is the surface the operator sees on
+   * the answer card, first-class, not only embedded in `input`/`tool`. */
+  readonly matched?: string;
 }
 
 /** W115: the 1s permission poll is a transport, not a bulk channel. An
@@ -521,6 +529,10 @@ function askView(id: string, request: OperatorAskRequest): PendingPermissionRequ
     mutating: false,
     requiredCapabilities: [],
     readFingerprints: [],
+    // G4 (W121): the rule-matched surface rides first-class onto the answer
+    // surface. An ask whose rule matched no surface (e.g. the promotion gate)
+    // omits it — absent-never-fabricated.
+    ...(request.matched === undefined ? {} : { matched: request.matched }),
   };
 }
 

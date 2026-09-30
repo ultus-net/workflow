@@ -80,3 +80,18 @@ to a file:line or ledger cite read in this worktree.
   deliberately not committed.
 - **Issue #283 stays OPEN** — the design input landed; the operator's choice and
   the implementation remain.
+
+> **Dated correction (2026-09-30, branch `feat/harvest-8`): the recorded
+> line-cite P3s are acknowledged; constructs all resolved, numbers have since
+> drifted.** The five-axis review of `feat/p4-a2c-brief` recorded three
+> non-material P3s: a few file:line cites were off by 1-3 lines. Verified
+> against this worktree, all three resolve to the correct construct:
+> - `surfaceUsageSink` — cited here as `src/integrations/task-usage.ts:215-221`
+>   (and in the brief); the function now spans `:233-239` (the ~15-line drift is
+>   from the later `feat/p4-surface-view` `surfaceStamp` addition above it).
+> - `METERED_PLACEHOLDER_KEY` — cited `:19-20`; it is defined at
+>   `src/integrations/egress-credential.ts:20` (the cite's range includes it).
+> - the W111 docs-only cite `:44-45` — the `Evidence: docs-only` line is at
+>   `docs/ledger/W111-attribution-design-brief.md:46`.
+> The write-once body above is left as authored (append-only convention); these
+> lines are the correction. No code or pin changed.

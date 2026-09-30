@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { decodeShellEscapes, dynamicShellSyntaxIn, executableIn, shellWords, splitShellSegments, unwrapShellWords, unwrapWords } from "./shell.js";
+import { decodeShellEscapes, dynamicShellSyntaxIn, executableIn, isShFamilyInterpreter, shellWords, splitShellSegments, unwrapShellWords, unwrapWords } from "./shell.js";
 import { protectedBranchesIn, pushedProtectedBranchIn, type GitPolicyContext } from "./git-policy.js";
 
 const W_DELETE = ["del", "ete"].join("");
@@ -163,7 +163,7 @@ function interactiveReason(command: string, depth = 0): string | undefined {
       const ownArgs = effective.slice(1);
       if (!ownArgs.some((word) => /^(?:--batch|-[A-Za-z]*b[A-Za-z]*)$/.test(word))) return "interactive process monitor can hang an agent session";
     }
-    if (/^(?:ba|z|da|k|x)?sh$/i.test(effectiveExecutable)) {
+    if (isShFamilyInterpreter(effectiveExecutable)) {
       const commandFlag = effective.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
       if (commandFlag >= 0 && effective[commandFlag + 1] && interactiveReason(effective[commandFlag + 1]!, depth + 1)) return "nested shell command can open an interactive terminal program";
     }

@@ -206,6 +206,36 @@ export interface SurfaceUsageSummary extends SurfaceUsageObservation {
 }
 
 /**
+ * P4 topology Option A2 (issue #283): the counters-only payload a
+ * session-bound surface posts. It is exactly the numeric half of a
+ * `TaskUsageSummary` — no `taskId` (the hub resolves it), no `recordedBy`
+ * (canonical records carry no surface label), and no `recordedAt` (the hub
+ * stamps it). This is the wire shape with client attribution REMOVED.
+ */
+export interface SurfaceUsageCounters {
+  readonly requests: number;
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly totalTokens: number;
+  readonly costUsd: number;
+  readonly cacheReadTokens: number;
+  readonly cacheCreateTokens: number;
+}
+
+/**
+ * P4 topology Option A2 (issue #283): the hub's session→task registration
+ * record. The hub mints the `sessionId` (an opaque, unforgeable, single-use
+ * nonce) and stores the resolved `taskId`; the surface never sends a task id on
+ * the record wire. `mintedAt` bounds the record's life (an expired nonce is
+ * refused exactly like an unknown one).
+ */
+export interface SurfaceUsageSessionRecord {
+  readonly sessionId: string;
+  readonly taskId: string;
+  readonly mintedAt: number;
+}
+
+/**
  * Compose the surface provenance stamp. The mandatory `surface:` prefix is
  * load-bearing: the hub's `/usage/record` route rejects a body whose
  * `recordedBy` lacks it, so a surface can never claim a `hub`-class

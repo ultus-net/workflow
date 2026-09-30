@@ -236,6 +236,10 @@ export async function createWorkflowHub(
         // observation journal writer behind the observability-only
         // /usage/record route. Present only when a registry exists.
         ...(runs === undefined ? {} : { recordSurfaceUsage: runs.recordSurfaceUsage }),
+        // P4 topology Option A2 (issue #283): the hub's session mint + resolve
+        // behind /usage/session and /usage/record's session-bound branch.
+        ...(runs === undefined ? {} : { registerSurfaceSession: runs.registerSurfaceSession }),
+        ...(runs === undefined ? {} : { consumeSurfaceSession: runs.consumeSurfaceSession }),
         ...(options.permissionBroker === undefined ? {} : { permissionBroker: options.permissionBroker }),
       },
     );
