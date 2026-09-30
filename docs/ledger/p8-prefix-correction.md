@@ -107,3 +107,29 @@ measurement remains operator-run and issue #290 stays OPEN.
 - The green covers the deployed provider lane (`anthropic/claude-sonnet-4.5` via
   OpenRouter/Bedrock); it does not by itself cover the deepseek/glm/kimi models,
   whose direct arms remain unrun.
+
+## Addendum (2026-09-30): the family-via-OpenRouter direct verdicts
+
+New evidence closes the family lanes the retraction left open, on the OpenRouter
+route only. `POST https://openrouter.ai/api/v1/messages` with a ~4.8k-token
+system block carrying `cache_control:{type:"ephemeral"}`, two sequential turns
+sharing the same prefix (operator's OpenRouter key, orchestrator-run):
+
+| Family | Response provider | turn 1 creation / read | turn 2 creation / read | Verdict |
+|---|---|---|---|---|
+| `deepseek/deepseek-v4-flash` | DeepInfra | null / 0 | null / 4608 | green |
+| `z-ai/glm-5.3-flash` | Relace | null / 0 | null / 0 | negative |
+| `moonshotai/kimi-k2.6` | Inceptron | null / 0 | null / 4784 | green |
+
+Field shape: these non-anthropic endpoints report `cache_creation_input_tokens`
+as `null` (no creation field) but DO surface `cache_read_input_tokens`, so the
+single-request probe's null creation field is expected and the observable is a
+nonzero cache READ on turn 2. This is the OpenRouter route, NOT direct-vendor
+(native) coverage — the direct per-family arms remain unrun.
+
+Record change: the former single umbrella row `vendor-anthropic-cache-families`
+(blocked/unqualified) is split into three per-family rows —
+`vendor-anthropic-cache-deepseek` green, `vendor-anthropic-cache-glm` negative,
+`vendor-anthropic-cache-kimi` green — following the recipe's split-on-first-
+per-lane-verdict rule for a mixed outcome. Dated append; the earlier entries
+above are retained. The W109 `cacheMarkers` opt-in stays dark for every family.

@@ -239,3 +239,29 @@ prefix, so its `negative` was an artifact, and the family arms must be re-run
 with the enlarged prefix (no family keys were available for this correction).
 The W109 `cacheMarkers` opt-in still stays dark for every family until those
 per-family verdicts land. Full record: `docs/ledger/p8-prefix-correction.md`.
+
+**2026-09-30 (vendor anthropic cache-marker probe — families via OpenRouter DIRECT two-turn run, part 2: per-family verdicts — `deepseek/deepseek-v4-flash`, `z-ai/glm-5.3-flash`, `moonshotai/kimi-k2.6`):**
+An orchestrator-run direct evidence pass supersedes the retracted family
+`negative` for the OpenRouter route. `POST https://openrouter.ai/api/v1/messages`
+with a ~4.8k-token system block carrying `cache_control:{type:"ephemeral"}`, two
+sequential turns sharing the same prefix (operator's OpenRouter key). Field
+shape: these non-anthropic endpoints report `cache_creation_input_tokens` as
+`null` (no creation field) but DO surface `cache_read_input_tokens`, so
+accounting is observable as a nonzero cache READ on turn 2. Verdicts, one line
+per family:
+`deepseek/deepseek-v4-flash` (served by **DeepInfra**) — turn 1 `null` /
+`cache_read_input_tokens: 0`, turn 2 `null` / `cache_read_input_tokens: 4608` →
+**green** (accepted AND accounted);
+`z-ai/glm-5.3-flash` (served by **Relace**) — turn 1 `null` / `0`, turn 2 `null`
+/ `0` → **negative** (accepted, no cache accounting observed);
+`moonshotai/kimi-k2.6` (served by **Inceptron**) — turn 1 `null` / `0`, turn 2
+`null` / `cache_read_input_tokens: 4784` → **green** (accepted AND accounted).
+This is the **OpenRouter route**, NOT direct-vendor (native) coverage. The mixed
+per-family outcome is recorded as three register rows
+(`vendor-anthropic-cache-deepseek` green, `vendor-anthropic-cache-glm` negative,
+`vendor-anthropic-cache-kimi` green) replacing the former single
+`vendor-anthropic-cache-families` umbrella row; posture advisory (observability,
+not enforcement). The earlier single-request probe could not show this — its
+`cache_creation_input_tokens` is `null` on these endpoints, and one turn can only
+show creation. The W109 `cacheMarkers` opt-in stays dark for every family. Full
+record: `docs/ledger/p8-prefix-correction.md`.

@@ -522,17 +522,40 @@
       "note": "CORRECTED 2026-09-30 (sub-minimum-prefix confound). The original entry recorded negative: a live provider-lane run (WORKFLOW_VENDOR_CACHE_PROBE=provider, endpoint https://openrouter.ai/api/v1, model anthropic/claude-sonnet-4.5, response provider 'Amazon Bedrock') returned cache_creation_input_tokens 0, cache_read_input_tokens 0, input_tokens 581, output_tokens 4 with all three ephemeral markers present. That composed body was ~581 tokens (559 chars serialized; 177 marked-text chars), BELOW Anthropic's ~1024-token cache minimum, so the 0/0 was a prefix-size artifact, not a marker rejection. The probe now composes an ~8341-char (~2000-token) marked prefix (buildSharedPrefix; the ungated floor pin freezes it) and the SAME deployed lane re-ran 2026-09-30: HTTP 200, well-formed Messages body, stop_reason end_turn, markers system/lastTool/boundary each {type:ephemeral}; observed cache_creation_input_tokens 2035, cache_read_input_tokens 0, input_tokens 3, output_tokens 4. Independent orchestrator-run evidence on the same route with a ~4.8k-token marked prefix: turn 1 creation 4802 / read 0, turn 2 (same prefix) creation 0 / read 4802. A single-request probe can only show cache CREATION; the two-turn direct evidence supplies the READ. Verdict: green/advisory (accepted AND provider-side cache accounted)."
     },
     {
-      "id": "vendor-anthropic-cache-families",
-      "host": "anthropic-compatible cache-marker family route (deepseek/glm/kimi reached via the OpenRouter reseller route; NOT direct-vendor arms)",
-      "hostVersion": "deepseek/deepseek-v4-flash, z-ai/glm-5.3-flash, moonshotai/kimi-k2.6 via OpenRouter (per-run response providers: DeepInfra, Relace, Inceptron)",
+      "id": "vendor-anthropic-cache-deepseek",
+      "host": "anthropic-compatible cache-marker family route via OpenRouter (NOT direct-vendor arms)",
+      "hostVersion": "deepseek/deepseek-v4-flash via OpenRouter (response served by DeepInfra)",
       "probe": "test/vendor-anthropic-cache-probe.test.ts",
       "gate": "WORKFLOW_VENDOR_CACHE_PROBE",
       "date": "2026-09-30",
-      "result": "blocked",
-      "posture": "unqualified",
-      "evidence": "docs/HOST_ADAPTERS.md Vendor anthropic cache-marker probes; docs/P8_LIVE_RUN_RECIPE.md family-via-OpenRouter run; docs/ledger/P8-vendor-cache-probe-harness.md run recipe; docs/ledger/P8p-provider-lane-probe.md provider-lane recipe; docs/PARKED_AND_LIMITATIONS.md P8 row (L8); docs/ledger/p8-prefix-correction.md",
-      "blocker": "the recorded negative was a sub-minimum-prefix artifact: the family probe body was ~581 input tokens, below Anthropic's ~1024-token cache minimum, so its 0/0 cache fields were unobservable accounting, not a marker rejection. The direct per-family arms must be re-run with the enlarged marked prefix (buildSharedPrefix) before any verdict; the deployed provider route's cache accounting is proven separately (vendor-anthropic-cache-provider, green) but does not by itself cover the deepseek/glm/kimi models.",
-      "note": "CORRECTED 2026-09-30 (sub-minimum-prefix confound). The original entry recorded negative for the family-via-OpenRouter run (endpoint https://openrouter.ai/api/v1/messages; deepseek/deepseek-v4-flash -> 200 provider DeepInfra, z-ai/glm-5.3-flash -> 200 provider Relace, moonshotai/kimi-k2.6 -> 200 provider Inceptron; each cache_creation_input_tokens null / cache_read_input_tokens 0). Those bodies reused the provider probe's ~581-token sub-minimum prefix, so the 0/0 was a prefix-size artifact: the result is retracted to blocked/unqualified pending a re-run with the enlarged prefix. The direct per-family arms are NOT direct-vendor arms and remain unprobed (no family keys were available here)."
+      "result": "green",
+      "posture": "advisory",
+      "evidence": "docs/HOST_ADAPTERS.md Vendor anthropic cache-marker probes; docs/P8_LIVE_RUN_RECIPE.md; docs/PARKED_AND_LIMITATIONS.md P8 row (L8); docs/ledger/p8-prefix-correction.md",
+      "note": "DIRECT EVIDENCE 2026-09-30 (orchestrator-run, direct POST https://openrouter.ai/api/v1/messages carrying a ~4.8k-token system block with cache_control:{type:\"ephemeral\"}, two sequential turns with the same prefix; operator's OpenRouter key). deepseek/deepseek-v4-flash (served by DeepInfra): turn 1 cache_creation_input_tokens null / cache_read_input_tokens 0; turn 2 null / read 4608. Field shape: these non-anthropic endpoints report cache_creation_input_tokens as null (no creation field) but DO surface cache_read_input_tokens, so accounting is observable as a nonzero cache READ on turn 2. This is the OpenRouter route, NOT direct-vendor (native) coverage. Verdict green/advisory: accepted AND provider-side cache accounted. Supersedes the retracted sub-minimum-prefix negative, whose 0/0 came from the single-request probe (creation field null there)."
+    },
+    {
+      "id": "vendor-anthropic-cache-glm",
+      "host": "anthropic-compatible cache-marker family route via OpenRouter (NOT direct-vendor arms)",
+      "hostVersion": "z-ai/glm-5.3-flash via OpenRouter (response served by Relace)",
+      "probe": "test/vendor-anthropic-cache-probe.test.ts",
+      "gate": "WORKFLOW_VENDOR_CACHE_PROBE",
+      "date": "2026-09-30",
+      "result": "negative",
+      "posture": "advisory",
+      "evidence": "docs/HOST_ADAPTERS.md Vendor anthropic cache-marker probes; docs/P8_LIVE_RUN_RECIPE.md; docs/PARKED_AND_LIMITATIONS.md P8 row (L8); docs/ledger/p8-prefix-correction.md",
+      "note": "DIRECT EVIDENCE 2026-09-30 (orchestrator-run, direct POST https://openrouter.ai/api/v1/messages carrying a ~4.8k-token system block with cache_control:{type:\"ephemeral\"}, two sequential turns with the same prefix; operator's OpenRouter key). z-ai/glm-5.3-flash (served by Relace): turn 1 cache_creation_input_tokens null / cache_read_input_tokens 0; turn 2 null / read 0. Verdict negative/advisory: the endpoint accepted the marked body but showed NO cache accounting (creation null, read never nonzero). Field shape: these non-anthropic endpoints report cache_creation_input_tokens as null (no creation field) but DO surface cache_read_input_tokens, so the observable is a nonzero cache READ on turn 2; glm surfaced read 0 on both turns. This is the OpenRouter route, NOT direct-vendor (native) coverage. Supersedes the retracted sub-minimum-prefix negative for this family with an above-minimum marked prefix."
+    },
+    {
+      "id": "vendor-anthropic-cache-kimi",
+      "host": "anthropic-compatible cache-marker family route via OpenRouter (NOT direct-vendor arms)",
+      "hostVersion": "moonshotai/kimi-k2.6 via OpenRouter (response served by Inceptron)",
+      "probe": "test/vendor-anthropic-cache-probe.test.ts",
+      "gate": "WORKFLOW_VENDOR_CACHE_PROBE",
+      "date": "2026-09-30",
+      "result": "green",
+      "posture": "advisory",
+      "evidence": "docs/HOST_ADAPTERS.md Vendor anthropic cache-marker probes; docs/P8_LIVE_RUN_RECIPE.md; docs/PARKED_AND_LIMITATIONS.md P8 row (L8); docs/ledger/p8-prefix-correction.md",
+      "note": "DIRECT EVIDENCE 2026-09-30 (orchestrator-run, direct POST https://openrouter.ai/api/v1/messages carrying a ~4.8k-token system block with cache_control:{type:\"ephemeral\"}, two sequential turns with the same prefix; operator's OpenRouter key). moonshotai/kimi-k2.6 (served by Inceptron): turn 1 cache_creation_input_tokens null / cache_read_input_tokens 0; turn 2 null / read 4784. Field shape: these non-anthropic endpoints report cache_creation_input_tokens as null (no creation field) but DO surface cache_read_input_tokens, so accounting is observable as a nonzero cache READ on turn 2. This is the OpenRouter route, NOT direct-vendor (native) coverage. Verdict green/advisory: accepted AND provider-side cache accounted. Supersedes the retracted sub-minimum-prefix negative, whose 0/0 came from the single-request probe (creation field null there)."
     }
   ]
 }
