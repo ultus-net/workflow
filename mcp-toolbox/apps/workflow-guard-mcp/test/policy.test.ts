@@ -1689,3 +1689,146 @@ test("P18 (c): the file_write lane classifies direct .git ref paths identically"
   assert.equal(checkPolicy({ action: "file_write", path: ".git/refs/heads/feat/g5", currentBranch: "feat/g5" }).decision, "allow");
   assert.equal(checkPolicy({ action: "file_write", path: ".git/index", currentBranch: "feat/g5" }).decision, "allow");
 });
+
+// ---- P18 (d): the env-spelled gitdir (bare repo / `GIT_DIR`) route to the
+// direct-write gate (2026-09-30, issue #296) ----
+// INSPECTABLE extension of the P18(c) classifier: a bare repo or a
+// `GIT_DIR`-spelled directory carries no `.git` component, so the lexical
+// `.git` match cannot see it. When the command names the gitdir through its
+// environment (`GIT_DIR=…`, `GIT_COMMON_DIR=…`, `GIT_WORK_TREE=…`), a write
+// under that directory is ref-adjacent and classified by the same tail logic;
+// the `.git` component match is case-insensitive so the `.GIT/` variant (the
+// same directory on a case-insensitive filesystem) is caught. RED-FIRST: every
+// deny below classified allow against the unmodified tree.
+
+test("P18 (d): an env-spelled gitdir makes ref-adjacent writes target-classifiable", () => {
+  const cases = [
+    "GIT_DIR=/tmp/bare echo x > /tmp/bare/refs/heads/main",
+    "GIT_DIR=/tmp/bare echo x > /tmp/bare/refs/heads/master",
+    "GIT_COMMON_DIR=/tmp/common echo x > /tmp/common/refs/heads/main",
+    "GIT_WORK_TREE=/tmp/wt echo x > /tmp/wt/refs/heads/main",
+    "export GIT_DIR=/tmp/bare; echo x > /tmp/bare/refs/heads/main",
+    "GIT_DIR=bare echo x > bare/refs/heads/main",
+  ];
+  for (const command of cases) {
+    for (const currentBranch of ["main", "feat/g5", undefined]) {
+      const decision = checkPolicy({ action: "shell", command, ...(currentBranch ? { currentBranch } : {}) });
+      assert.equal(decision.decision, "deny", `${command} @ ${currentBranch}`);
+      assert.equal(decision.policy, "protected-branch-write", `${command} @ ${currentBranch}`);
+    }
+  }
+});
+
+test("P18 (d): an env-spelled gitdir feature-ref write keeps the feature-target allow", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "GIT_DIR=/tmp/bare echo x > /tmp/bare/refs/heads/feat/g5", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "GIT_DIR=/tmp/bare echo x > /tmp/bare/refs/heads/feat/g5" }).decision, "allow");
+  // A path NOT under the named gitdir is unaffected.
+  assert.equal(checkPolicy({ action: "shell", command: "GIT_DIR=/tmp/bare echo x > /tmp/other/refs/heads/main", currentBranch: "main" }).decision, "allow");
+  // Non-ref gitdir content stays outside the branch-target gate.
+  assert.equal(checkPolicy({ action: "shell", command: "GIT_DIR=/tmp/bare echo x > /tmp/bare/index", currentBranch: "main" }).decision, "allow");
+});
+
+test("P18 (d): ref-adjacent env-gitdir targets with no resolvable branch fail closed", () => {
+  for (const command of [
+    "GIT_DIR=/tmp/bare echo x > /tmp/bare/packed-refs",
+    "GIT_DIR=/tmp/bare echo x > /tmp/bare",
+    "GIT_DIR=/tmp/bare echo x > /tmp/bare/refs/heads",
+  ]) {
+    const decision = checkPolicy({ action: "shell", command });
+    assert.equal(decision.decision, "deny", command);
+    assert.equal(decision.policy, "protected-branch-write", command);
+  }
+});
+
+test("P18 (d): a traversal spelling cannot alias a protected ref past the gitdir prefix", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "GIT_DIR=/tmp/bare echo x > /tmp/bare/refs/heads/feat/../../heads/main" }).decision, "deny");
+});
+
+test("P18 (d): the .git component match is case-insensitive (the .GIT/ variant)", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "echo x > .GIT/refs/heads/main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "echo x > .Git/refs/heads/main", currentBranch: "feat/g5" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "echo x > .GIT/refs/heads/feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "file_write", path: ".GIT/refs/heads/main" }).decision, "deny");
+});
+
+test("P18 (d): the env-gitdir route honors caller protectedBranches facts", () => {
+  const command = "GIT_DIR=/tmp/bare echo x > /tmp/bare/refs/heads/release";
+  assert.equal(checkPolicy({ action: "shell", command }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command, protectedBranches: ["release"] }).decision, "deny");
+});
+
+// ---- P18 (d) review round: wrapper prefixes and the sh -c recursion
+// (2026-09-30) ----
+// The five-axis review's P2: `gitDirSpellingsIn` read the gitdir assignment
+// only at segment head or after `env`/`export`, so a wrapper prefix
+// (`sudo GIT_DIR=/x echo …`) hid it — an unrecorded false ALLOW on the
+// protected-ref gate, since the literal `.git` spelling denies under the same
+// wrapper. The fix reuses the shell lane's own wrapper vocabulary
+// (`unwrapWords`) instead of a second list. Likewise the outer command's
+// gitdir is threaded into the `sh -c` recursion: the outer env applies to the
+// nested shell, so `GIT_DIR=/x sh -c '… > /x/…'` must classify like the
+// un-nested form. RED-FIRST: every deny below classified allow against the
+// unmodified tree (the unresolved-path pin is the pre-existing fail-closed
+// claim this round finally executes; the feature-target allows hold
+// regardless).
+
+test("P18 (d) review round: wrapper prefixes are transparent to the env-gitdir gate", () => {
+  const protectedWrite = "/tmp/bare/refs/heads/main";
+  for (const command of [
+    `sudo GIT_DIR=/tmp/bare echo x > ${protectedWrite}`,
+    `doas GIT_DIR=/tmp/bare echo x > ${protectedWrite}`,
+    `command GIT_DIR=/tmp/bare echo x > ${protectedWrite}`,
+    `nohup GIT_DIR=/tmp/bare echo x > ${protectedWrite}`,
+    `nice GIT_DIR=/tmp/bare echo x > ${protectedWrite}`,
+    `timeout 5 GIT_DIR=/tmp/bare echo x > ${protectedWrite}`,
+    `stdbuf -o0 GIT_DIR=/tmp/bare echo x > ${protectedWrite}`,
+    `time GIT_DIR=/tmp/bare echo x > ${protectedWrite}`,
+  ]) {
+    const decision = checkPolicy({ action: "shell", command });
+    assert.equal(decision.decision, "deny", command);
+    assert.equal(decision.policy, "protected-branch-write", command);
+  }
+});
+
+test("P18 (d) review round: the env-spelled gitdir threads across the sh -c recursion", () => {
+  for (const command of [
+    "GIT_DIR=/tmp/bare sh -c 'echo x > /tmp/bare/refs/heads/main'",
+    "GIT_DIR=/tmp/bare bash -c 'cp a /tmp/bare/refs/heads/main'",
+    "GIT_COMMON_DIR=/tmp/common sh -c 'echo x > /tmp/common/refs/heads/master'",
+  ]) {
+    const decision = checkPolicy({ action: "shell", command });
+    assert.equal(decision.decision, "deny", command);
+    assert.equal(decision.policy, "protected-branch-write", command);
+  }
+});
+
+test("P18 (d) review round: a wrapper prefix and the sh -c recursion compose", () => {
+  const decision = checkPolicy({ action: "shell", command: "sudo GIT_DIR=/tmp/bare sh -c 'echo x > /tmp/bare/refs/heads/main'" });
+  assert.equal(decision.decision, "deny");
+  assert.equal(decision.policy, "protected-branch-write");
+});
+
+test("P18 (d) review round: an unresolved path under a literal gitdir fails closed", () => {
+  // A globbed tail reaches the classifier's `uncertain` branch under the
+  // literal gitdir spelling: fail closed on protected-branch-write.
+  const glob = checkPolicy({ action: "shell", command: "GIT_DIR=/tmp/bare echo x > /tmp/bare/refs/heads/*" });
+  assert.equal(glob.decision, "deny");
+  assert.equal(glob.policy, "protected-branch-write");
+  // A `$VAR` target never reaches the classifier: the boundary lane's own
+  // unresolved-path rule (guard-tamper) denies it first. Fail-closed either
+  // way; the pin records which surface fires so the claim is not overstated.
+  const variable = checkPolicy({ action: "shell", command: "GIT_DIR=/tmp/bare echo x > /tmp/bare/refs/heads/" + "$" + "BR" });
+  assert.equal(variable.decision, "deny");
+  assert.equal(variable.policy, "guard-tamper");
+});
+
+test("P18 (d) review round: wrapper and recursion forms keep the feature-target allow", () => {
+  for (const command of [
+    "command GIT_DIR=/tmp/bare echo x > /tmp/bare/refs/heads/feat/g5",
+    "GIT_DIR=/tmp/bare sh -c 'echo x > /tmp/bare/refs/heads/feat/g5'",
+    "command GIT_DIR=/tmp/bare echo x > /tmp/other/refs/heads/main",
+    "timeout 5 GIT_DIR=/tmp/bare echo x > /tmp/bare/index",
+  ]) {
+    assert.equal(checkPolicy({ action: "shell", command }).decision, "allow", command);
+  }
+});
