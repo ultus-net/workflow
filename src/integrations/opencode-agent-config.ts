@@ -25,6 +25,25 @@ export const OPENCODE_METERED_PROVIDER_ID = "workflow-metered";
 export const DEFAULT_OPENCODE_MODEL = "openrouter/auto";
 
 /**
+ * opencode v2 built-in-provider credential env var for the metered lane.
+ *
+ * v2 changed the provider schema AND the activation rule. A config-defined
+ * provider is parsed (`/api/config` lists it) but is NOT registered into the
+ * model catalog unless it is credential-activated: `/api/provider` and the ACP
+ * model picker list credential-activated providers only (verified live on
+ * v2.0.10; the migration spec §10 recorded the same `/api/provider` finding).
+ * A custom provider id never registers in the ACP picker on v2.0.10 even with
+ * `canonical`, `env`, `settings.apiKey`, or an auth-store entry — while
+ * overriding the BUILT-IN `openrouter` provider's `settings.baseURL` and
+ * activating it with this env var does. The v2 metered lane therefore routes
+ * through the built-in `openrouter` provider with the placeholder in this env
+ * var; the real upstream key stays exclusively proxy-side.
+ */
+export const OPENCODE_V2_METERED_ENV_KEY = "OPENROUTER_API_KEY";
+/** v2 provider id the metered lane reuses (its catalog + runtime package). */
+export const OPENCODE_V2_METERED_PROVIDER_ID = "openrouter";
+
+/**
  * A hub-owned open-source vendor provider: the agent points at the loopback
  * metering proxy with the placeholder credential, exactly like the OpenRouter
  * provider, while the real vendor key stays proxy-side.
@@ -86,12 +105,27 @@ export interface MeteredOpencodeConfigOptions {
    * server. Absent composes nothing.
    */
   readonly skillConnectors?: readonly { readonly name: string; readonly serverPath: string }[] | undefined;
+  /**
+   * The resolved opencode major version. v1 (<2) keeps the historical
+   * `provider`/`npm`/`options` shape byte-for-byte; v2+ emits the v2
+   * `providers` shape (`package`/`settings`) and reuses the built-in
+   * `openrouter` provider for the metered route, because a config-defined
+   * custom provider is not registered into the v2 ACP model catalog (see
+   * {@link OPENCODE_V2_METERED_ENV_KEY}). Absent/undefined means v1 (the
+   * pre-existing behavior), so callers that do not probe the version are
+   * unchanged.
+   */
+  readonly opencodeMajor?: number | undefined;
 }
 
 export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Record<string, unknown> {
+  const v2 = (options.opencodeMajor ?? 1) >= 2;
   // Expose the Auto Router plus the alias pool as selectable models so the ACP
   // model picker can switch to a specific family's latest without pinning a
-  // version. The Auto Router stays the default selection.
+  // version. The Auto Router stays the default selection. (v1 only: the v2
+  // lane reuses the built-in `openrouter` catalog, which already lists its
+  // models, and `~...-latest` aliases are resolved proxy-side for the Auto
+  // Router, never forwarded as a model id.)
   const models: Record<string, { name: string }> = {
     [DEFAULT_OPENCODE_MODEL]: { name: "Auto Router" },
     ...autoLatestModelCatalog(options.autoLatest?.aliases ?? []),
@@ -99,7 +133,7 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
   const legacyModel = options.model ?? DEFAULT_OPENCODE_MODEL;
   if (!(legacyModel in models)) models[legacyModel] = { name: legacyModel };
   const vendorProviders = options.openSource?.providers ?? [];
-  const provider = (): Record<string, unknown> => ({
+  const v1Provider = (): Record<string, unknown> => ({
     [OPENCODE_METERED_PROVIDER_ID]: {
       npm: "@ai-sdk/openai-compatible",
       name: "Workflow metered proxy",
@@ -127,13 +161,40 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
       ]),
     ),
   });
-  // The operator's explicit model always rides the legacy OpenRouter-family
+  // v2: the built-in `openrouter` provider is the ONLY config route the v2 ACP
+  // model catalog registers (probe-observed v2.0.10). Override its baseURL to
+  // the loopback proxy; activation rides the placeholder env var the launch
+  // sets (OPENCODE_V2_METERED_ENV_KEY), so the 0600 config stays credential-
+  // free. The agent then forwards every OpenRouter model call through the
+  // proxy. The vendor providers keep their v2 declaration shape; their ACP
+  // registration stays probe-pending (a config-defined custom provider is not
+  // visible in the v2 ACP picker — the honest W070a residual).
+  const v2Providers = (): Record<string, unknown> => ({
+    [OPENCODE_V2_METERED_PROVIDER_ID]: {
+      settings: { baseURL: `${options.proxyUrl}/api/v1` },
+    },
+    ...Object.fromEntries(
+      vendorProviders.map((entry) => [
+        entry.id,
+        {
+          name: entry.name,
+          package: "@opencode/ai/providers/openai-compatible",
+          settings: { baseURL: entry.baseURL },
+          models: { ...entry.models },
+        },
+      ]),
+    ),
+  });
+  // The operator's explicit model always rides the metered OpenRouter-family
   // provider (closed-model override path). With no override, the open-source
-  // pool default applies when composed, else the Auto Router.
+  // pool default applies on v1 when composed; the v2 lane keeps the Auto
+  // Router default on the built-in provider (the only v2 route that resolves).
   const selectedModel =
     options.model !== undefined
-      ? `${OPENCODE_METERED_PROVIDER_ID}/${options.model}`
-      : options.openSource?.defaultModel ?? `${OPENCODE_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`;
+      ? `${v2 ? OPENCODE_V2_METERED_PROVIDER_ID : OPENCODE_METERED_PROVIDER_ID}/${options.model}`
+      : v2
+        ? `${OPENCODE_V2_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`
+        : options.openSource?.defaultModel ?? `${OPENCODE_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`;
   // Operator-declared MCP servers ride alongside the hub-owned skills mount.
   const mcp: Record<string, unknown> = opencodeMcpServers(options.mcpServers ?? []);
   if (options.skills !== undefined) {
@@ -155,7 +216,7 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
   }
   return {
     $schema: "https://opencode.ai/config.json",
-    provider: provider(),
+    ...(v2 ? { providers: v2Providers() } : { provider: v1Provider() }),
     model: selectedModel,
     // The hub is the permission authority: ask-configured tools project
     // session/request_permission to the hub, which resolves each request

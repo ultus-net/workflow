@@ -7,12 +7,15 @@ import test from "node:test";
 import { launchContainedAcpAgent } from "../src/adapters/acp-contained-agent.js";
 import { AcpSubprocessClient, type AcpPermissionDecision } from "../src/adapters/acp-subprocess.js";
 import { LinuxBubblewrapContainment } from "../src/containment/linux-bwrap.js";
-import { createModelUsageProxy } from "../src/integrations/model-usage-proxy.js";
+import { autoLatestConfigFromEnv } from "../src/integrations/openrouter-auto-latest.js";
+import { METERED_PLACEHOLDER_KEY, createModelUsageProxy } from "../src/integrations/model-usage-proxy.js";
 import {
   globalOpencodeBinary,
   meteredOpencodeConfig,
+  OPENCODE_V2_METERED_ENV_KEY,
   resolveOpencodeLaunch,
 } from "../src/integrations/opencode-agent-config.js";
+import { opencodeMajorVersion } from "../src/integrations/acp-runtime.js";
 import { loadClineApiKey } from "./cline-probe-helpers.js";
 import { opencodeProbeArgs } from "./opencode-probe-helpers.js";
 
@@ -21,10 +24,21 @@ import { opencodeProbeArgs } from "./opencode-probe-helpers.js";
 // injects the real upstream key and records usage per session. The agent
 // resolves its provider from the hub-written XDG_CONFIG_HOME config (the
 // surface the MCP-mount probe proved honored), so every model call crosses
-// the proxy even though the contained env has no real credential. The launch
-// is version-aware (v1 keeps `--pure`; v2 dropped the flag, since v2 rejects
-// unknown flags and prints help to stdout) so the operator's global plugins
-// stay out of the measurement on the versions that support it.
+// the proxy even though the contained env has no real credential.
+//
+// VERSION-AWARE (verified live v2.0.10):
+// - v1 keeps the `provider`/`npm`/`options` config shape with the placeholder
+//   in the 0600 config file, and `--pure`;
+// - v2 dropped `--pure` (unknown flags print help to stdout), changed the
+//   provider schema to `providers`/`package`/`settings`, and — critically —
+//   does not register a config-defined custom provider into the ACP model
+//   catalog. The v2 lane therefore reuses the built-in `openrouter` provider
+//   (baseURL overridden to the proxy) activated by the placeholder env var,
+//   and pins the metered model explicitly on the session (v2 ignores the
+//   config `model` for the session default — migration spec §10).
+// - The proxy composes `autoLatest` (as production does): bare
+//   `openrouter/auto` + tools returns a 404 on the operator's account data
+//   policy; the resolved `allowed_models` injection routes it correctly.
 const runMeteredProbe = process.env.WORKFLOW_ACP_OPENCODE_METERED === "1";
 
 test(
@@ -38,18 +52,28 @@ test(
     await writeFile(target, "before\n", "utf8");
     await mkdir(path.join(configDir, "opencode"), { recursive: true });
 
+    const upstream = process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai";
     const upstreamKey = await loadClineApiKey("OpenCode metered probe");
-    const proxy = await createModelUsageProxy({ upstream: process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai", apiKey: upstreamKey });
-    await writeFile(
-      path.join(configDir, "opencode", "opencode.json"),
-      JSON.stringify(meteredOpencodeConfig({ proxyUrl: proxy.url, model: process.env.WORKFLOW_OPENCODE_MODEL })),
-      "utf8",
-    );
+    const autoLatest = autoLatestConfigFromEnv({ upstream });
+    const proxy = await createModelUsageProxy({
+      upstream,
+      apiKey: upstreamKey,
+      ...(autoLatest === undefined ? {} : { autoLatest }),
+    });
 
     const opencode = resolveOpencodeLaunch({
       envBinOverride: process.env.WORKFLOW_OPENCODE_BIN,
       opencodeOnPath: globalOpencodeBinary(),
     });
+    const major = await opencodeMajorVersion(opencode.executable);
+    const v2 = major !== undefined && major >= 2;
+    const config = meteredOpencodeConfig({
+      proxyUrl: proxy.url,
+      model: process.env.WORKFLOW_OPENCODE_MODEL,
+      opencodeMajor: major,
+    });
+    await writeFile(path.join(configDir, "opencode", "opencode.json"), JSON.stringify(config), "utf8");
+
     const args = await opencodeProbeArgs(opencode.executable);
     const child = launchContainedAcpAgent(new LinuxBubblewrapContainment(), {
       executable: opencode.executable,
@@ -57,10 +81,12 @@ test(
       workspace,
       home: scratchHome,
       environment: {
-        // The placeholder credential rides the 0600 config file written
-        // above; the real upstream key stays exclusively in the hub-side
-        // proxy and never enters the boundary.
+        // The placeholder credential rides the 0600 config file on v1; on v2
+        // the built-in `openrouter` provider activates from this env var, so
+        // the placeholder rides here. Either way the real upstream key stays
+        // exclusively in the hub-side proxy and never enters the boundary.
         XDG_CONFIG_HOME: configDir,
+        ...(v2 ? { [OPENCODE_V2_METERED_ENV_KEY]: METERED_PLACEHOLDER_KEY } : {}),
       },
     });
     // A startup crash inside the boundary is otherwise silent: capture the
@@ -78,6 +104,12 @@ test(
     try {
       initialized = await client.initialize();
       const session = await client.newSession({ cwd: workspace });
+      // v2 ignores the config `model` for the session default and would run a
+      // built-in `opencode/*` model that bypasses the proxy. Pin the hub-chosen
+      // metered model so the turn rides the metered route.
+      if (v2) {
+        await client.setConfigOption({ sessionId: session.sessionId, configId: "model", value: String(config.model) });
+      }
       const result = await Promise.race([
         client.prompt({
           sessionId: session.sessionId,
@@ -94,6 +126,7 @@ test(
         agent: initialized.agentInfo,
         metering: "hub-proxy",
         agentCredential: "placeholder-only",
+        model: config.model,
         prompt: result,
         metrics: proxy.metrics(),
         workspaceContent: content,
