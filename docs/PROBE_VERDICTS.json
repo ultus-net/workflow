@@ -511,16 +511,16 @@
     },
     {
       "id": "vendor-anthropic-cache",
-      "host": "anthropic-compatible vendor endpoints (deepseek/glm/kimi)",
-      "hostVersion": "per-vendor (recorded per run)",
+      "host": "anthropic-compatible cache-marker lanes (direct deepseek/glm/kimi arms + the generic Azure/OpenRouter provider lane)",
+      "hostVersion": "per-lane (recorded per run)",
       "probe": "test/vendor-anthropic-cache-probe.test.ts",
       "gate": "WORKFLOW_VENDOR_CACHE_PROBE",
       "date": "2026-09-30",
       "result": "blocked",
       "posture": "unqualified",
-      "evidence": "docs/ledger/P8-vendor-cache-probe-harness.md run recipe; docs/PARKED_AND_LIMITATIONS.md P8 row (L8)",
-      "blocker": "needs the operator's per-vendor key in the probe environment (DEEPSEEK_API_KEY, ZAI_API_KEY/GLM_API_KEY, MOONSHOT_API_KEY/KIMI_API_KEY, or ~/.config/workflow/<family>-api-key); the live per-vendor verdicts against the Messages-schema cache_control markers are unrun",
-      "note": "Arms one per family (deepseek/glm/kimi) behind WORKFLOW_VENDOR_CACHE_PROBE=<family|list|all>; skips cleanly with no gate or no key and never calls a vendor in CI. The committed assertions are structural only — the composed request's ephemeral markers are pinned ungated, and a live response must be a well-formed Messages body with numeric usage; whether cache_creation_input_tokens/cache_read_input_tokens appear is OBSERVED and copied into the dated operator record, never asserted here. This row stays blocked/unqualified until a live run records the per-vendor shape; the W109 marker opt-in stays dark for every family until then (probe-gated, never date-gated)."
+      "evidence": "docs/ledger/P8-vendor-cache-probe-harness.md run recipe; docs/ledger/P8p-provider-lane-probe.md provider-lane recipe; docs/PARKED_AND_LIMITATIONS.md P8 row (L8)",
+      "blocker": "the live per-lane verdicts are unrun. The DEPLOYED lane is the generic provider route (gate token 'provider'): it needs WORKFLOW_PROVIDER_ANTHROPIC_URL / WORKFLOW_PROVIDER_API_KEY / WORKFLOW_PROVIDER_MODEL pointing at the operator's Azure AI Foundry or OpenRouter anthropic-compatible endpoint. The direct per-family arms (NOT the deployed lane) need DEEPSEEK_API_KEY, ZAI_API_KEY/GLM_API_KEY, MOONSHOT_API_KEY/KIMI_API_KEY, or ~/.config/workflow/<family>-api-key",
+      "note": "P8 lane re-frame (issue #287, 2026-09-30): the operator does NOT use direct vendor API keys — production traffic crosses a reseller/provider (Azure AI Foundry or OpenRouter) anthropic-compatible lane. The direct per-family arms stay because they measure the vendor contracts themselves, but they are not the deployed route. Arms: one per family plus the generic provider lane, behind WORKFLOW_VENDOR_CACHE_PROBE=<family|list|all|provider> (the 'provider' token is explicit; 'all' stays families-only). Skips cleanly with no gate or missing env and never makes a network call in CI. The committed assertions are structural only — the composed request's ephemeral markers are pinned ungated (one pin per lane: 2 ungated passes), and a live response must be a well-formed Messages body with numeric usage; whether cache_creation_input_tokens/cache_read_input_tokens appear is OBSERVED and copied into the dated operator record, never asserted here. This row stays blocked/unqualified until a live run records the per-lane shape; the W109 marker opt-in stays dark for every family until then (probe-gated, never date-gated)."
     }
   ]
 }

@@ -87,3 +87,20 @@ shown in the session's gate transcript; repo `npm run lint` + `npm run
 typecheck` exit 0. Docs-only elsewhere: no production change, the W109 opt-in
 stays dark. P8/issue #287 and P14/issue #293 stay OPEN — the live verdicts
 remain operator-gated and unrun.
+
+> **Dated supersession note (2026-09-30, branch `feat/p8-lane-probe`, issue
+> #287): the lane is RE-FRAMED and a generic provider lane was added.** The
+> operator does NOT send production traffic with direct vendor API keys — it
+> crosses a reseller/provider (Azure AI Foundry or OpenRouter)
+> anthropic-compatible lane. The per-family arms above stay (they measure the
+> vendor contracts themselves) but are NOT the deployed lane, and this fragment
+> now says so. `test/vendor-anthropic-cache-probe.test.ts` gained the
+> `provider` gate token plus `WORKFLOW_PROVIDER_ANTHROPIC_URL` /
+> `WORKFLOW_PROVIDER_API_KEY` / `WORKFLOW_PROVIDER_MODEL`, sending the same
+> marker-shaped anthropic body through the operator's reseller base URL; a
+> second ungated structural pin freezes the provider lane's composed shape
+> (unchanged from the direct arms — the lane reuses the production marker pass,
+> so there was no shape change to earn a red-first on). Ungated, the file now
+> reports 6 tests: 2 ungated structural passes + 4 named skips. Full record:
+> `docs/ledger/P8p-provider-lane-probe.md`. The live per-lane verdicts remain
+> UNRUN; P8/issue #287 stays OPEN.
