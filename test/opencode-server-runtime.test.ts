@@ -6,7 +6,13 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import type { ProcessContainment } from "../src/containment/contracts.js";
-import { globalOpencodeBinary } from "../src/integrations/opencode-agent-config.js";
+import {
+  DEFAULT_OPENCODE_MODEL,
+  globalOpencodeBinary,
+  OPENCODE_METERED_PROVIDER_ID,
+  OPENCODE_V2_METERED_PROVIDER_ID,
+} from "../src/integrations/opencode-agent-config.js";
+import { opencodeMajorVersion } from "../src/integrations/acp-runtime.js";
 import type { ModelUsageProxy } from "../src/integrations/model-usage-proxy.js";
 import {
   createOpencodeServerRuntime,
@@ -86,10 +92,23 @@ test("W071 runtime: launches through an injected boundary and writes the pinned 
     permission?: Record<string, string>;
     model?: string;
     provider?: Record<string, unknown>;
+    providers?: Record<string, unknown>;
   };
   assert.deepEqual(config.permission, { edit: "ask", bash: "ask", task: "ask", skill: "deny" });
-  assert.equal(config.model, "workflow-metered/openrouter/auto");
-  assert.notEqual(config.provider?.["workflow-metered"], undefined);
+  // Version-aware (mirrors the ACP lane, PR #427): v1 keeps the historical
+  // provider/npm/options shape; v2 emits providers/package|settings reusing the
+  // built-in `openrouter` provider, because a config-defined custom provider is
+  // not registered into the v2 model catalog.
+  const major = binary === undefined ? undefined : await opencodeMajorVersion(binary);
+  const v2 = major !== undefined && major >= 2;
+  if (v2) {
+    assert.equal(config.model, `${OPENCODE_V2_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`);
+    assert.equal(config.provider, undefined);
+    assert.notEqual(config.providers?.[OPENCODE_V2_METERED_PROVIDER_ID], undefined);
+  } else {
+    assert.equal(config.model, `${OPENCODE_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`);
+    assert.notEqual(config.provider?.[OPENCODE_METERED_PROVIDER_ID], undefined);
+  }
 
   // Health contract is version-tolerant (2026-09-20): v1.x answers
   // `/global/health` with JSON `{ healthy: true }`; v2.x serves the SPA on

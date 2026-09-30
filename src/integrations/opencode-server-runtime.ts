@@ -8,10 +8,10 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { launchContainedAcpAgent } from "../adapters/acp-contained-agent.js";
 import type { ProcessContainment } from "../containment/contracts.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
-import { resolveSkillsMount } from "./acp-runtime.js";
+import { opencodeMajorVersion, resolveSkillsMount } from "./acp-runtime.js";
 import { connectorReadablePaths, provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts } from "./toolbox-catalog.js";
-import { createModelUsageProxy, type AutoLatestProxyOptions, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
-import { globalOpencodeBinary, meteredOpencodeConfig, resolveOpencodeLaunch } from "./opencode-agent-config.js";
+import { createModelUsageProxy, METERED_PLACEHOLDER_KEY, type AutoLatestProxyOptions, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
+import { globalOpencodeBinary, meteredOpencodeConfig, OPENCODE_V2_METERED_ENV_KEY, resolveOpencodeLaunch } from "./opencode-agent-config.js";
 import { probeOpencodeHealth } from "./opencode-health.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
 import { budgetDowngradeFromEnv, sessionBudgetFromEnv, type BudgetDowngradeRuntime } from "./session-budget.js";
@@ -118,6 +118,32 @@ export function opencodeServerArgs(port: number): readonly string[] {
   return ["serve", "--hostname", "127.0.0.1", "--port", String(port)];
 }
 
+/**
+ * The contained `opencode serve` launch environment.
+ *
+ * v1 keeps the placeholder credential inside the 0600 config file (the metered
+ * custom provider's `options.apiKey`); v2's built-in `openrouter` provider is
+ * credential-activated, so the placeholder rides this env var instead — still
+ * placeholder-only, the real upstream key stays exclusively in the hub-side
+ * proxy. The bwrap backend launches with a cleared environment, so neither an
+ * ambient key nor any other host env leaks into the boundary.
+ */
+export function opencodeServerLaunchEnvironment(input: {
+  readonly configDir: string;
+  readonly password: string;
+  readonly opencodeMajor?: number | undefined;
+}): Record<string, string> {
+  return {
+    XDG_CONFIG_HOME: input.configDir,
+    OPENCODE_SERVER_PASSWORD: input.password,
+    OPENCODE_SERVER_USERNAME: DEFAULT_USERNAME,
+    OPENCODE_TELEMETRY: "off",
+    ...(input.opencodeMajor !== undefined && input.opencodeMajor >= 2
+      ? { [OPENCODE_V2_METERED_ENV_KEY]: METERED_PLACEHOLDER_KEY }
+      : {}),
+  };
+}
+
 /** Extracts the bound URL from `opencode serve` stdout (`listening on http://...`). */
 export function parseListeningUrl(stdout: string): string | undefined {
   const match = /listening on (https?:\/\/\S+)/.exec(stdout);
@@ -187,11 +213,28 @@ export async function createOpencodeServerRuntime(
         console.error(`workflow-toolbox skill delivery failed for the topology (continuing without it): ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+    // Resolve the binary and its major version BEFORE writing the config, so
+    // the written provider shape matches the binary that will read it. v1 keeps
+    // the historical `provider`/`npm`/`options` shape byte-for-byte; v2 emits
+    // the `providers`/`package`/`settings` shape reusing the built-in
+    // `openrouter` provider (see opencode-agent-config.ts). On the server/HTTP
+    // lane the config `model` IS honored for `POST /api/session` on v2.0.10
+    // (live-verified; unlike the ACP session default), so the v2-shaped config
+    // `model` is the metered pin for this lane — no separate session pin is
+    // needed. Verified against `opencode serve --help` on v2.0.10: the
+    // `--hostname`/`--port` flags in `opencodeServerArgs` remain valid.
+    const resolveBinary = options.resolveBinary ?? (() => resolveOpencodeLaunch({
+      envBinOverride: process.env.WORKFLOW_OPENCODE_BIN,
+      opencodeOnPath: globalOpencodeBinary(),
+    }));
+    const opencode = resolveBinary();
+    const opencodeMajor = await opencodeMajorVersion(opencode.executable);
     writeFileSync(
       join(configDir, "opencode", "opencode.json"),
       JSON.stringify(meteredOpencodeConfig({
         proxyUrl: proxy.url,
         model: options.model ?? process.env.WORKFLOW_OPENCODE_MODEL,
+        opencodeMajor,
         // W082: the daemon carries the same config-side auto-compaction
         // trigger the ACP lane composes (settings `agents.opencode.autoCompact`).
         ...(options.autoCompact === true ? { autoCompact: true } : {}),
@@ -202,11 +245,6 @@ export async function createOpencodeServerRuntime(
       { encoding: "utf8", mode: 0o600 },
     );
 
-    const resolveBinary = options.resolveBinary ?? (() => resolveOpencodeLaunch({
-      envBinOverride: process.env.WORKFLOW_OPENCODE_BIN,
-      opencodeOnPath: globalOpencodeBinary(),
-    }));
-    const opencode = resolveBinary();
     const port = options.port ?? (await freeLoopbackPort());
     const password = randomBytes(24).toString("hex");
 
@@ -230,12 +268,7 @@ export async function createOpencodeServerRuntime(
               ...connectorReadablePaths(skillConnectors.map((mount) => mount.serverPath)),
             ],
           }),
-      environment: {
-        XDG_CONFIG_HOME: configDir,
-        OPENCODE_SERVER_PASSWORD: password,
-        OPENCODE_SERVER_USERNAME: DEFAULT_USERNAME,
-        OPENCODE_TELEMETRY: "off",
-      },
+      environment: opencodeServerLaunchEnvironment({ configDir, password, opencodeMajor }),
     });
 
     const { url, version } = await waitForServer({
