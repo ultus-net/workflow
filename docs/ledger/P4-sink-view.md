@@ -160,3 +160,32 @@ composition chooses the same route.
 >   evict another's un-summed entries. The projection contract is untouched in
 >   this pass; issue #283's hub-authoritative attribution boundary still
 >   stands.
+
+> **Dated re-assessment note (2026-09-30, branch `feat/harvest-8`): the
+> canonical partition is still NOT small-safe; the exact falsifier is the
+> total-bound pin.** This pass attempted to land the refined follow-up and
+> confirmed why it does not fit a small-safe change:
+> - The shared total bound is pinned explicitly:
+>   `test/hub-runs.test.ts:592` asserts `registry.taskUsage().length === 64`
+>   ("the journal is bounded at 64 like the other gate maps"). To stop one
+>   lane's burst evicting another lane's still-un-summed entries, each
+>   contributor needs a NON-EVICTING share, which makes the flat journal's
+>   total bound `64 × #lanes` (or a new per-lane cap). Either way the
+>   flat-projection total changes, so that pin and the "bounded at 64 like the
+>   sibling gate maps" discipline (eight sibling maps) would have to be
+>   restated — a contract-adjacent change, not a small-safe one.
+> - The canonical writer still carries no lane key: `recordTaskUsage(input)`
+>   (`src/integrations/run-registry.ts`) takes only the delta, so a partition
+>   needs a writer-signature change across the three call sites
+>   (`src/cli/hub.ts`: the RSI `laneTaskUsageSink` at :175, the scheduler
+>   `runTurn` finally at :319, and the reviewer factory through
+>   `RunReviewerFactory`'s `recordTaskUsage`).
+> - The surface journal's per-`recordedBy` partition would NOT need a signature
+>   change (`SurfaceUsageObservation.recordedBy` already exists), but a fix to
+>   only one of the two journals is partial and leaves the canonical lane
+>   unpartitioned — the harvest-7 note already rejected landing that partial
+>   fix, and this pass keeps that disposition for consistency.
+> **Decision:** implement-when-small-safe is NOT met; recorded as the named
+> residual, follow-up unchanged from the harvest-7 refinement. The flat
+> projection contract is untouched in this pass. (Worked by
+> `docs/ledger/residual-harvest-8.md` item 2.)

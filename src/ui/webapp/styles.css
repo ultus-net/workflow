@@ -3651,6 +3651,12 @@ div.board-issue-detail {
 .run-timeline-kind { font-family: var(--font-mono); font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent); }
 .run-timeline-summary { color: var(--text); overflow-wrap: anywhere; }
 .run-timeline-attribution { color: var(--text-muted); font-size: 0.68rem; font-family: var(--font-mono); }
+/* The Cost tab's two attribution journals — the canonical per-task journal and
+   the separate surface observations (P4 topology A1): one shared list reset
+   with mono machine values, so the surface section is not the unstyled odd one
+   out (the P4-surface-view review P3). */
+.run-task-usage, .run-surface-usage { list-style: none; margin: 0.3rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.run-task-usage-row, .run-surface-usage-row { font-family: var(--font-mono); font-size: 0.72rem; }
 .run-review-line { margin: 0; font-size: 0.74rem; display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: baseline; }
 .run-review-verdict { font-family: var(--font-mono); color: var(--text); }
 .run-review-summary { margin: 0.3rem 0 0; border-left: 2px solid var(--border-strong); padding-left: 0.5rem; color: var(--text-muted); font-size: 0.72rem; }
