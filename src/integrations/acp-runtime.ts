@@ -28,6 +28,7 @@ import {
   OPENCODE_V2_METERED_ENV_KEY,
   OPENCODE_V2_VENDOR_BUILTINS,
   resolveOpencodeLaunch,
+  v2BuiltinModelRef,
 } from "./opencode-agent-config.js";
 import type { PermissionBroker } from "../ui/permission-broker.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
@@ -430,8 +431,12 @@ async function createOpencodeRuntime(
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
       // v2: pin the hub-chosen metered model (the config `model` is ignored
       // for the session default on v2; without the pin the session defaults to
-      // a built-in `opencode/*` model and bypasses the proxy).
-      ...(acpMajor !== undefined && acpMajor >= 2 ? { selectModel: String(opencodeConfig.model) } : {}),
+      // a built-in `opencode/*` model and bypasses the proxy). The pin must be
+      // a ref the v2 ACP picker accepts: a vendor built-in pool model is
+      // translated to its catalog id (or the metered Auto Router when the
+      // catalog has no faithful id — GLM on v2.0.10); every other ref passes
+      // through unchanged.
+      ...(acpMajor !== undefined && acpMajor >= 2 ? { selectModel: v2BuiltinModelRef(String(opencodeConfig.model)) } : {}),
       ...(guard === undefined ? {} : { guard }),
       ...(options.taskUsage === undefined ? {} : { taskUsage: options.taskUsage }),
       // Plan Task F1/F3: journal skill delivery into the application's

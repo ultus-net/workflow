@@ -7,7 +7,9 @@ import {
   OPENCODE_METERED_PROVIDER_ID,
   OPENCODE_V2_METERED_PROVIDER_ID,
   OPENCODE_V2_VENDOR_BUILTINS,
+  OPENCODE_V2_VENDOR_MODELS,
   meteredOpencodeConfig,
+  v2BuiltinModelRef,
 } from "../src/integrations/opencode-agent-config.js";
 
 /**
@@ -46,8 +48,26 @@ const kimi = {
 
 test("the v2 vendor built-ins map each open-source family to its catalog id and activation env key", () => {
   assert.deepEqual(OPENCODE_V2_VENDOR_BUILTINS.deepseek, { providerId: "deepseek", envKey: "DEEPSEEK_API_KEY" });
-  assert.deepEqual(OPENCODE_V2_VENDOR_BUILTINS.glm, { providerId: "zai", envKey: "ZAI_API_KEY" });
+  assert.deepEqual(OPENCODE_V2_VENDOR_BUILTINS.glm, { providerId: "zai", envKey: "ZHIPU_API_KEY" });
   assert.deepEqual(OPENCODE_V2_VENDOR_BUILTINS.kimi, { providerId: "moonshotai", envKey: "MOONSHOT_API_KEY" });
+});
+
+test("v2 vendor pool model ids translate to the built-in catalog ids the ACP picker accepts", () => {
+  // deepseek: `deepseek-flash` is absent from the v2.0.10 catalog; the vendor
+  // accepts the legacy `deepseek-v4-flash` for the same model.
+  assert.equal(v2BuiltinModelRef("deepseek/deepseek-flash"), "deepseek/deepseek-v4-flash");
+  // moonshotai: identity.
+  assert.equal(v2BuiltinModelRef("moonshotai/kimi-k3"), "moonshotai/kimi-k3");
+  // glm: no faithful v2.0.10 catalog id -> metered Auto Router (never glm-5.2).
+  assert.equal(v2BuiltinModelRef("zai/glm-5.3"), `${OPENCODE_V2_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`);
+  assert.equal(v2BuiltinModelRef("zai/glm-5.3-flash"), `${OPENCODE_V2_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`);
+  // non-vendor refs pass through unchanged (metered OpenRouter lane + overrides).
+  assert.equal(v2BuiltinModelRef("openrouter/auto"), "openrouter/auto");
+  assert.equal(v2BuiltinModelRef("openrouter/anthropic/claude-sonnet-4"), "openrouter/anthropic/claude-sonnet-4");
+  assert.equal(v2BuiltinModelRef("not-a-ref"), "not-a-ref");
+  assert.deepEqual(OPENCODE_V2_VENDOR_MODELS.deepseek, { "deepseek-flash": "deepseek-v4-flash" });
+  assert.deepEqual(OPENCODE_V2_VENDOR_MODELS.moonshotai, { "kimi-k3": "kimi-k3" });
+  assert.equal(OPENCODE_V2_VENDOR_MODELS.zai, undefined);
 });
 
 test("v2 emits each vendor as a built-in baseURL override and translates the default model", () => {
