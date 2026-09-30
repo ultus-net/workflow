@@ -7,6 +7,7 @@ import type {
   BlockedRecord,
   Evidence,
   EvidenceRequirement,
+  OperatorDecisionRecord,
   PolicyDecision,
   StepId,
   TaskId,
@@ -275,7 +276,20 @@ export class WorkflowApplication {
     return { kind: "allow" };
   }
 
-  transition(taskId: TaskId, requested: TaskState, attribution?: TransitionAttribution, blocked?: BlockedRecord): TransitionResult {
+  /**
+   * W166 P3: this is the ONLY application seam that admits an operator
+   * decision into a proposal. It never accepts a claim (there is no such
+   * shape), and the kernel validates the decision fail-closed (authority,
+   * actor-names-itself, epoch freshness) before any gate is opened. The
+   * decision rides the existing transition/answer path — no new route.
+   */
+  transition(
+    taskId: TaskId,
+    requested: TaskState,
+    attribution?: TransitionAttribution,
+    blocked?: BlockedRecord,
+    decisions?: readonly OperatorDecisionRecord[],
+  ): TransitionResult {
     if (requested === "VERIFYING" && this.#pedagogyGate !== undefined) {
       const pendingInspection = verifyingGate(this.#pedagogyGate, taskId);
       if (pendingInspection !== undefined) {
@@ -290,7 +304,7 @@ export class WorkflowApplication {
         };
       }
     }
-    const result = this.#graph.transition(taskId, requested, attribution, blocked);
+    const result = this.#graph.transition(taskId, requested, attribution, blocked, decisions);
     if (result.kind === "accepted") this.#history.push(result.transition);
     return result;
   }

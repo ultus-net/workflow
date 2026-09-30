@@ -1,7 +1,10 @@
 import type {
   BlockedRecord,
+  DecisionRequirement,
   Evidence,
   EvidenceRequirement,
+  MissingRequirement,
+  OperatorDecisionRecord,
   StepId,
   StepState,
   TaskId,
@@ -380,6 +383,57 @@ export class TaskGraph {
     return "the passing evidence is stale (a mutation landed after it)";
   }
 
+  /** W166 P3: fail-closed validation of an offered operator decision — the
+   * W112 grant-validation discipline (unknown/stale/malformed/actor-mismatch
+   * refuse without consuming state). Returns a rejection or undefined. */
+  #validateDecision(
+    decision: OperatorDecisionRecord,
+    attribution: TransitionAttribution | undefined,
+  ): { readonly code: string; readonly reason: string } | undefined {
+    if ("producingFlow" in decision) {
+      return {
+        code: "DECISION_MALFORMED",
+        reason: "the producing-flow pointer is authority-recorded and never accepted from a client",
+      };
+    }
+    if (
+      decision.authority !== "operator" ||
+      typeof decision.subject !== "string" || decision.subject.trim().length === 0 ||
+      typeof decision.decidedAt !== "string" || decision.decidedAt.trim().length === 0 ||
+      !Number.isSafeInteger(decision.mutationEpoch) || decision.mutationEpoch < 0 ||
+      !ACTOR_VOCABULARY.includes(decision.actor)
+    ) {
+      return {
+        code: "DECISION_MALFORMED",
+        reason: "an operator decision needs authority 'operator', a non-empty subject and decidedAt, a non-negative integer mutationEpoch, and an actor from the W157 vocabulary",
+      };
+    }
+    if (decision.mutationEpoch !== this.#mutationEpoch) {
+      return {
+        code: "DECISION_STALE",
+        reason: `the operator decision was made at mutation epoch ${decision.mutationEpoch}; a mutation has landed since (current epoch ${this.#mutationEpoch})`,
+      };
+    }
+    if (attribution === undefined || decision.actor !== attribution.actor) {
+      return {
+        code: "DECISION_ACTOR_MISMATCH",
+        reason: `an operator decision must name the calling surface as its actor (the W157 caller-names-itself join); the caller is ${attribution === undefined ? "unattributed" : `'${attribution.actor}'`}, the decision names '${decision.actor}'`,
+      };
+    }
+    return undefined;
+  }
+
+  /** W166 P3: a decision requirement is satisfied only by an operator decision
+   * naming the same authority and subject. Evidence can never satisfy one. */
+  #hasDecision(requirement: DecisionRequirement, decisions: readonly OperatorDecisionRecord[]): boolean {
+    return decisions.some((decision) => decision.authority === requirement.authority && decision.subject === requirement.subject);
+  }
+
+  #decisionWhy(requirement: DecisionRequirement, decisions: readonly OperatorDecisionRecord[]): string {
+    if (decisions.length === 0) return "no operator decision observed";
+    return `no operator decision names '${requirement.subject}'`;
+  }
+
   recordMutation(subjects: readonly string[], observedAt?: string): readonly TransitionRecord[] {
     this.#mutationEpoch += 1;
     const transitions: TransitionRecord[] = [];
@@ -410,7 +464,7 @@ export class TaskGraph {
     return transitions;
   }
 
-  transition(id: TaskId, requested: TaskState, attribution?: TransitionAttribution, blocked?: BlockedRecord): TransitionResult {
+  transition(id: TaskId, requested: TaskState, attribution?: TransitionAttribution, blocked?: BlockedRecord, decisions?: readonly OperatorDecisionRecord[]): TransitionResult {
     const task = this.get(id);
     if (!LEGAL_TRANSITIONS[task.state].includes(requested)) {
       return {
@@ -450,24 +504,67 @@ export class TaskGraph {
       };
     }
 
-    if (requested === "VERIFIED" && !task.requiredEvidence.every((requirement) => this.#hasEvidence(requirement))) {
+    // W166 P3: the decision axis. An offered operator decision is validated
+    // fail-closed (the W112 grant-validation discipline: malformed, stale, or
+    // actor-mismatched records refuse without consuming state) whenever the
+    // task declares a decision gate. A decision offered to a task with no
+    // decision gate is inert caller data: it can satisfy no requirement and
+    // can never open an evidence gate (the axes are disjoint by construction).
+    const decisionRequirements = task.requiredDecisions ?? [];
+    const offeredDecisions = decisions ?? [];
+    if (offeredDecisions.length > 0 && decisionRequirements.length > 0) {
+      for (const decision of offeredDecisions) {
+        const refusal = this.#validateDecision(decision, attribution);
+        if (refusal !== undefined) {
+          return { kind: "rejected", code: refusal.code, reason: refusal.reason, taskId: task.id, from: task.state, requested };
+        }
+      }
+    }
+
+    if (requested === "VERIFIED") {
       // W110 (amux C3 — refusal legibility): the rejection names the
       // UNSATISFIED requirements with a per-requirement why, in the prose
       // and as a structured field — the operator sees the exact artifact
-      // needed without deriving it client-side.
-      const missing = task.requiredEvidence
+      // needed without deriving it client-side. W166 P3 joins the decision
+      // axis additively: evidence entries keep their exact W110 shape;
+      // decision entries carry `source: "decision"` and the authority-recorded
+      // producing-flow pointer.
+      const missingEvidence: MissingRequirement[] = task.requiredEvidence
         .filter((requirement) => !this.#hasEvidence(requirement))
-        .map((requirement) => ({ authority: requirement.authority, subject: requirement.subject, why: this.#requirementWhy(requirement) }));
-      const detail = missing.map((entry) => `${entry.authority}:${entry.subject} — ${entry.why}`).join("; ");
-      return {
-        kind: "rejected",
-        code: "EVIDENCE_REQUIRED",
-        reason: `task ${task.id} does not have fresh passing evidence for every requirement (missing: ${detail})`,
-        missing,
-        taskId: task.id,
-        from: task.state,
-        requested,
-      };
+        .map((requirement) => ({
+          authority: requirement.authority,
+          subject: requirement.subject,
+          why: this.#requirementWhy(requirement),
+          ...(requirement.producingFlow === undefined ? {} : { producingFlow: requirement.producingFlow }),
+        }));
+      const missingDecisions: MissingRequirement[] = decisionRequirements
+        .filter((requirement) => !this.#hasDecision(requirement, offeredDecisions))
+        .map((requirement) => ({
+          source: "decision" as const,
+          authority: requirement.authority,
+          subject: requirement.subject,
+          why: this.#decisionWhy(requirement, offeredDecisions),
+          ...(requirement.producingFlow === undefined ? {} : { producingFlow: requirement.producingFlow }),
+        }));
+      const missing = [...missingEvidence, ...missingDecisions];
+      if (missing.length > 0) {
+        const code = missingEvidence.length > 0 ? "EVIDENCE_REQUIRED" : "DECISION_REQUIRED";
+        const detail = missing.map((entry) => `${entry.authority}:${entry.subject} — ${entry.why}`).join("; ");
+        const reason = missingEvidence.length === 0
+          ? `task ${task.id} does not have every decision requirement satisfied (missing: ${detail})`
+          : missingDecisions.length === 0
+            ? `task ${task.id} does not have fresh passing evidence for every requirement (missing: ${detail})`
+            : `task ${task.id} does not have every requirement satisfied (missing: ${detail})`;
+        return {
+          kind: "rejected",
+          code,
+          reason,
+          missing,
+          taskId: task.id,
+          from: task.state,
+          requested,
+        };
+      }
     }
 
     let nextTask: WorkflowTask = { ...task, state: requested };
