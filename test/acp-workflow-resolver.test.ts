@@ -4,6 +4,7 @@ import test from "node:test";
 import { AcpHostAdapter, taskId, type PolicyDecision, type ProposedToolAction } from "../src/index.js";
 import { createWorkflowAcpPermissionResolver } from "../src/adapters/acp-workflow-resolver.js";
 import type { GuardCheckInput, WorkflowGuardProvider } from "../src/integrations/mcp-toolbox-guard.js";
+import { createOperatorAskHold, type OperatorAskHold } from "../src/integrations/operator-ask-hold.js";
 import type { AcpPermissionRequestParams } from "../src/adapters/acp-permission.js";
 
 const request: AcpPermissionRequestParams = {
@@ -208,7 +209,12 @@ function stubGuard(
   };
 }
 
-function guardResolver(guard: WorkflowGuardProvider, toolName: string, capability: "process" | "mutation" | "read") {
+function guardResolver(
+  guard: WorkflowGuardProvider,
+  toolName: string,
+  capability: "process" | "mutation" | "read",
+  hold?: OperatorAskHold,
+) {
   return createWorkflowAcpPermissionResolver({
     adapter: new AcpHostAdapter({ authoritativePermissions: true }),
     correlation: {
@@ -220,7 +226,15 @@ function guardResolver(guard: WorkflowGuardProvider, toolName: string, capabilit
     },
     authorize: (): PolicyDecision => ({ kind: "allow" }),
     guard,
+    ...(hold === undefined ? {} : { hold }),
   });
+}
+
+/** Polls the hold until the resolver has parked the ask (microtask/timer driven). */
+async function waitForParked(hold: OperatorAskHold): Promise<void> {
+  for (let i = 0; i < 500 && hold.pendingCount === 0; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
 }
 
 test("ACP resolver consults the guard after kernel authorization and denies on guard policy", async () => {
@@ -361,4 +375,76 @@ test("lazy-discovery call_tool indirection journals the delivered skill", async 
     toolCall: { ...callToolRequest.toolCall, rawInput: { tool: "read_file", arguments: { path: "a.ts" } } },
   });
   assert.deepEqual(delivered, ["test-driven-development"]);
+});
+
+// ── P6 first seat: the ACP resolver's ASK HOLD (issue #285) ────────────────
+//
+// The ACP wire decision is binary (`AcpPermissionDecision` is allow | deny), so
+// a guard `ask` is a latency on that binary outcome: the resolver parks the ask
+// on an injected operator hold, then answers allow on an operator approval and
+// deny on reject/timeout. Without a hold attached the ask fails closed.
+
+const heldShellRequest: AcpPermissionRequestParams = {
+  ...request,
+  toolCall: {
+    toolCallId: "tool-ask",
+    title: "Run commands",
+    kind: "execute",
+    rawInput: { command: "workflow install fleet" },
+    locations: [],
+  },
+};
+
+function askGuard() {
+  return stubGuard({ decision: "ask", policy: "promotion-gate", reason: "promotion requires operator approval" });
+}
+
+test("ACP resolver parks a guard ask on the operator hold and the operator's allow resolves allow", async () => {
+  const { guard } = askGuard();
+  const hold = createOperatorAskHold({ timeoutMs: 60_000 });
+  const resolver = guardResolver(guard, "run_commands", "process", hold);
+
+  const pending = resolver(heldShellRequest);
+  await waitForParked(hold);
+  assert.equal(hold.pendingCount, 1, "an ask must park on the operator hold");
+  assert.deepEqual(hold.pending, [{ requestId: "tool-ask", policy: "promotion-gate", reason: "promotion requires operator approval" }]);
+
+  hold.answer("tool-ask", "once");
+  assert.deepEqual(await pending, { kind: "allow" });
+  assert.equal(hold.pendingCount, 0);
+});
+
+test("ACP resolver resolves an operator reject on a held ask as a denial", async () => {
+  const { guard } = askGuard();
+  const hold = createOperatorAskHold({ timeoutMs: 60_000 });
+  const resolver = guardResolver(guard, "run_commands", "process", hold);
+
+  const pending = resolver(heldShellRequest);
+  await waitForParked(hold);
+  hold.answer("tool-ask", "reject");
+
+  const decision = await pending;
+  assert.equal(decision.kind, "deny");
+  assert.match((decision as { reason: string }).reason, /promotion-gate/);
+  assert.match((decision as { reason: string }).reason, /operator reject or hold timeout/);
+});
+
+test("ACP resolver fails a held ask closed when the operator hold times out", async () => {
+  const { guard } = askGuard();
+  const hold = createOperatorAskHold({ timeoutMs: 5 });
+  const resolver = guardResolver(guard, "run_commands", "process", hold);
+
+  const decision = await resolver(heldShellRequest);
+  assert.equal(decision.kind, "deny");
+  assert.match((decision as { reason: string }).reason, /operator reject or hold timeout/);
+});
+
+test("ACP resolver fails a guard ask closed when no operator hold is attached", async () => {
+  const { guard } = askGuard();
+  const resolver = guardResolver(guard, "run_commands", "process");
+
+  const decision = await resolver(heldShellRequest);
+  assert.equal(decision.kind, "deny");
+  assert.match((decision as { reason: string }).reason, /no operator hold attached/);
+  assert.match((decision as { reason: string }).reason, /promotion-gate/);
 });
