@@ -187,9 +187,11 @@ export function laneTaskUsageSink(
  */
 export interface SurfaceUsageObservation extends Omit<TaskUsageSummary, "recordedAt"> {
   /**
-   * The surface provenance stamp, e.g. `surface:web-service`. The hub requires
-   * a non-empty `surface:` prefix (a client cannot claim a `hub`-class label);
-   * the attribution stays a labelled observation, never canonical.
+   * The surface provenance stamp, e.g. `surface:web-service` or, where the
+   * composition point holds a stable session id, `surface:web-service:<id>`.
+   * The hub requires a non-empty `surface:` prefix (a client cannot claim a
+   * `hub`-class label); the attribution stays a labelled observation, never
+   * canonical. Compose it with `surfaceStamp`.
    */
   readonly recordedBy: string;
 }
@@ -201,6 +203,22 @@ export interface SurfaceUsageObservation extends Omit<TaskUsageSummary, "recorde
  */
 export interface SurfaceUsageSummary extends SurfaceUsageObservation {
   readonly recordedAt: string;
+}
+
+/**
+ * Compose the surface provenance stamp. The mandatory `surface:` prefix is
+ * load-bearing: the hub's `/usage/record` route rejects a body whose
+ * `recordedBy` lacks it, so a surface can never claim a `hub`-class
+ * attribution. Where the composition point holds a STABLE session id — the web
+ * service's per-session runtime factory is handed its registry id — the stamp
+ * carries it as `surface:<surface>:<sessionId>`, so observations are
+ * distinguishable per session. Where no stable session id exists at
+ * composition time (a per-process TUI, whose ONE runtime spans the process, or
+ * a driver-registry composition keyed by agent kind rather than session), the
+ * stamp names the surface alone; naming a session would fabricate identity.
+ */
+export function surfaceStamp(surface: string, sessionId?: string): string {
+  return sessionId === undefined ? "surface:" + surface : "surface:" + surface + ":" + sessionId;
 }
 
 /**

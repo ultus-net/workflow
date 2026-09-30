@@ -91,6 +91,30 @@ export interface TaskUsageSummaryView {
   readonly recordedAt: string;
 }
 
+/**
+ * P4 topology A1 (issue #283): one provenance-stamped SURFACE observation as
+ * the relay's runs block carries it (the run-registry `SurfaceUsageSummary`
+ * shape, field for field). `recordedBy` is the surface's provenance stamp
+ * (`surface:<surface>` or, where a stable session id exists,
+ * `surface:<surface>:<sessionId>`); `taskId` is the value the SURFACE posted —
+ * a labelled observation, NEVER hub-authoritative attribution (the W153
+ * client-never-supplies-attribution principle). It rides a journal SEPARATE
+ * from the canonical `taskUsage`, so the view renders it distinctly and never
+ * merges it into the canonical rollups.
+ */
+export interface SurfaceUsageSummaryView {
+  readonly recordedBy: string;
+  readonly taskId: string;
+  readonly requests: number;
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly totalTokens: number;
+  readonly costUsd: number;
+  readonly cacheReadTokens: number;
+  readonly cacheCreateTokens: number;
+  readonly recordedAt: string;
+}
+
 /** The relay's advisory reasoning-claim finding (observability-only). */
 export interface ReasoningClaimFindingView {
   readonly runId: string;
@@ -125,6 +149,8 @@ export interface RunsRecordState {
         readonly usage?: Readonly<Record<string, RunUsageSummaryView>>;
         /** W111: the recorded per-task boundary deltas (bounded append journal). */
         readonly taskUsage?: readonly TaskUsageSummaryView[];
+        /** P4 A1 (#283): the provenance-stamped surface observations — a SEPARATE journal, never merged with `taskUsage`. */
+        readonly surfaceUsage?: readonly SurfaceUsageSummaryView[];
         readonly reasoningClaims?: Readonly<Record<string, ReasoningClaimFindingView>>;
         readonly reasoningClaimMetrics?: ReasoningClaimMetricsView;
       }

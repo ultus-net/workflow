@@ -60,6 +60,7 @@ import type {
   RunRowView,
   RunUsageSummaryView,
   RunsRecordState,
+  SurfaceUsageSummaryView,
   TaskUsageSummaryView,
   WorkProductLinkView,
 } from "./runs-record.js";
@@ -108,6 +109,21 @@ export function evidenceRowsForRun(rows: readonly HubEvidenceRow[], runId: strin
  * absence), never a fabricated zero.
  */
 export function taskUsageForRun(entries: readonly TaskUsageSummaryView[], runId: string): readonly TaskUsageSummaryView[] {
+  const recordedTaskId = "run:" + runId;
+  return entries.filter((entry) => entry.taskId === recordedTaskId);
+}
+
+/**
+ * P4 topology A1 (issue #283): the provenance-stamped SURFACE observations
+ * that NAME one run's canonical task. The join is the same exact recorded-task
+ * id the canonical selector uses, but the section renders SEPARATELY and
+ * labelled: the posted task id is the SURFACE's observation, never
+ * hub-authoritative attribution, so it is never merged into the canonical
+ * rollups. A surface observation that names no canonical `run:<id>` task is
+ * not claimed by any run panel — it stays in the hub's surface journal, its
+ * honest home, rather than being attributed to a run that did not record it.
+ */
+export function surfaceUsageForRun(entries: readonly SurfaceUsageSummaryView[], runId: string): readonly SurfaceUsageSummaryView[] {
   const recordedTaskId = "run:" + runId;
   return entries.filter((entry) => entry.taskId === recordedTaskId);
 }
@@ -168,6 +184,50 @@ function TaskAttributionSection({ journal, runId }: { readonly journal: readonly
   );
 }
 
+/**
+ * P4 topology A1 (issue #283): the SEPARATE surface-observation journal, rendered
+ * as its own section so a viewer never conflates a surface OBSERVATION with the
+ * canonical per-task attribution above. Each entry renders VERBATIM: its
+ * provenance stamp (`surface:<surface>[:<sessionId>]`), the task id the SURFACE
+ * posted (a labelled observation, never authoritative), and the posted numbers.
+ * A hub that omitted the family and a run no surface observation names each
+ * render their own NAMED absence, never a fabricated entry. The boundary line
+ * states that the journal is hub-wide and its other entries stay unattributed
+ * here. Projection-only: the view derives no stamp and no delta.
+ */
+function SurfaceObservationsSection({ journal, runId }: { readonly journal: readonly SurfaceUsageSummaryView[] | undefined; readonly runId: string }) {
+  if (journal === undefined) {
+    return <p className="runs-absent">surface observations not recorded by this hub</p>;
+  }
+  const entries = surfaceUsageForRun(journal, runId);
+  if (entries.length === 0) {
+    return (
+      <>
+        <p className="runs-absent">no surface observation names this run</p>
+        <p className="runs-muted">the surface journal is hub-wide; an observation naming no canonical run task stays recorded here, never attributed to a run that did not record it</p>
+      </>
+    );
+  }
+  return (
+    <>
+      <ul className="run-surface-usage">
+        {entries.map((entry, index) => (
+          <li key={entry.recordedBy + ":" + entry.taskId + ":" + entry.recordedAt + ":" + String(index)} className="run-surface-usage-row">
+            <code>{entry.recordedBy}</code>{" · "}
+            observed task <code>{entry.taskId}</code>{" · "}
+            requests {entry.requests}{" · "}
+            total {formatTokens(entry.totalTokens)}{" · "}
+            {"$" + entry.costUsd.toFixed(4)}{" · "}
+            cache r/w {entry.cacheReadTokens}/{entry.cacheCreateTokens}{" · "}
+            <time dateTime={entry.recordedAt} title={entry.recordedAt}>{formatRelativeTime(entry.recordedAt)}</time>
+          </li>
+        ))}
+      </ul>
+      <p className="runs-muted">these are the SURFACE's own observations, relayed through the observability-only /usage/record route and never merged into the canonical per-task attribution above</p>
+    </>
+  );
+}
+
 export interface RunDetailPanelProps {
   readonly runId: string;
   readonly record: RunsRecordState | undefined;
@@ -208,6 +268,7 @@ export function RunDetailPanel({
   const workProduct: WorkProductLinkView | undefined = runs?.workProducts?.[runId];
   const usage: RunUsageSummaryView | undefined = runs?.usage?.[runId];
   const taskUsageJournal: readonly TaskUsageSummaryView[] | undefined = runs?.taskUsage;
+  const surfaceUsageJournal: readonly SurfaceUsageSummaryView[] | undefined = runs?.surfaceUsage;
   const claim: CompletionClaimView | undefined = runs?.completionClaims[runId];
   const outcome: ReviewOutcomeView | undefined = runs?.reviewOutcomes[runId];
   const blocking: string | undefined = runs?.blockingReasons[runId];
@@ -418,6 +479,8 @@ export function RunDetailPanel({
             )}
           <h4 className="run-detail-sub">Per-task attribution</h4>
           <TaskAttributionSection journal={taskUsageJournal} runId={runId} />
+          <h4 className="run-detail-sub">Surface observations (not canonical attribution)</h4>
+          <SurfaceObservationsSection journal={surfaceUsageJournal} runId={runId} />
         </section>
       </div>
     </section>

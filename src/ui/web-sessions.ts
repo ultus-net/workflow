@@ -156,8 +156,12 @@ const MAX_LIVE_RUNTIMES = 6;
 export class WebSessionManager {
   /** W151: the third parameter carries the session's persisted budget override,
    * so every spawn of that session (focus, agent switch, raise-resume) runs
-   * with the same effective caps. */
-  readonly #factory: (agent: WebAgentId, resumeFrom?: string, budgetOverride?: SessionBudget | undefined) => Promise<WorkflowAcpRuntime>;
+   * with the same effective caps. The fourth carries the session's STABLE
+   * registry id (P4 topology A1, issue #283): the composition point that builds
+   * the runtime's surface-usage sink stamps `surface:<surface>:<sessionId>` so
+   * a cross-process observation is attributable per session. A factory that
+   * ignores it stays valid (fewer parameters remain assignable). */
+  readonly #factory: (agent: WebAgentId, resumeFrom?: string, budgetOverride?: SessionBudget | undefined, sessionId?: string) => Promise<WorkflowAcpRuntime>;
   readonly #registryPath: string;
   readonly #permissionBroker: PermissionBroker | undefined;
   #sessions: SessionRecord[];
@@ -186,7 +190,7 @@ export class WebSessionManager {
   readonly #warnFraction: number | undefined;
 
   constructor(options: {
-    readonly factory: (agent: WebAgentId, resumeFrom?: string, budgetOverride?: SessionBudget | undefined) => Promise<WorkflowAcpRuntime>;
+    readonly factory: (agent: WebAgentId, resumeFrom?: string, budgetOverride?: SessionBudget | undefined, sessionId?: string) => Promise<WorkflowAcpRuntime>;
     readonly registryPath?: string;
     readonly permissionBroker?: PermissionBroker;
     readonly spawnCooldownBaseMs?: number;
@@ -537,7 +541,7 @@ export class WebSessionManager {
   }
 
   async #attemptSpawn(record: SessionRecord, resumeFrom: string | undefined): Promise<ActiveSession> {
-    const runtime = await this.#factory(record.agent ?? DEFAULT_WEB_AGENT, resumeFrom, record.budgetOverride);
+    const runtime = await this.#factory(record.agent ?? DEFAULT_WEB_AGENT, resumeFrom, record.budgetOverride, record.id);
     const channel = new SessionChannel(
       runtime.session,
       runtime.driver,

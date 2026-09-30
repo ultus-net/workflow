@@ -8,7 +8,7 @@ import { PermissionBroker } from "../ui/permission-broker.js";
 import { createAgentRuntime } from "../ui/web-agents.js";
 import { createWorkflowWebServer } from "../ui/web.js";
 import { loadSettings } from "../integrations/workflow-settings.js";
-import { surfaceUsageSink } from "../integrations/task-usage.js";
+import { surfaceStamp, surfaceUsageSink } from "../integrations/task-usage.js";
 import { createSurfaceUsagePost } from "../integrations/surface-usage-client.js";
 import type { WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
 import { WebSessionManager } from "../ui/web-sessions.js";
@@ -72,22 +72,25 @@ export async function startWorkflowWeb(options: StartWorkflowWebOptions = {}): P
   // the hub's observability-only /usage/record route (read from the hub
   // discovery file at post time; no hub → nothing recorded). The `usage`
   // reading is deferred: it reads the runtime once it exists, at the turn
-  // boundary. The task id rides as a labelled `surface:web-service` observation,
-  // never hub-authoritative attribution (W153).
+  // boundary. The web service DOES hold a stable session id (the manager's
+  // registry record id), so the stamp is per-session:
+  // `surface:web-service:<sessionId>` — the task id still rides as a labelled
+  // observation, never hub-authoritative attribution (W153).
   const postSurfaceUsage = createSurfaceUsagePost(
     process.env.WORKFLOW_HUB_DIR === undefined ? {} : { hubDiscoveryDir: process.env.WORKFLOW_HUB_DIR },
   );
   const manager = new WebSessionManager({
     // Load settings per session so an edit made on the settings page is
     // pushed into the next session's agent launch config. W151: a session's
-    // persisted raised budget rides the same options into the runtime.
-    factory: async (agent, resumeFrom, budgetOverride) => {
+    // persisted raised budget rides the same options into the runtime. The
+    // fourth parameter is the session's stable registry id (P4 A1).
+    factory: async (agent, resumeFrom, budgetOverride, sessionId) => {
       const usageHolder: { runtime?: WorkflowAcpRuntime } = {};
       const composed = await createAgentRuntime(agent, application, workspace, taskId("W001"), resumeFrom, {
         permissionBroker,
         settings: loadSettings({ workspace }),
         ...(budgetOverride === undefined ? {} : { budgetOverride }),
-        taskUsage: surfaceUsageSink(() => usageHolder.runtime?.metrics?.(), "surface:web-service", postSurfaceUsage),
+        taskUsage: surfaceUsageSink(() => usageHolder.runtime?.metrics?.(), surfaceStamp("web-service", sessionId), postSurfaceUsage),
       });
       usageHolder.runtime = composed;
       return composed;

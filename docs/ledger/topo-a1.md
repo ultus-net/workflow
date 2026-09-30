@@ -104,3 +104,21 @@ registry and no cross-process record path.
 - **Issue #283 stays OPEN** — the record path now exists and is wired, but the
   hub-authoritative attribution choice and the server-topology per-session
   split remain.
+
+> **Dated note (2026-09-30, branch `feat/p4-surface-view`): the surface journal
+> now renders, and the stamp gains per-session granularity where a stable id
+> exists.** This supersedes two residual bullets above, not the record:
+> (a) **"The webapp does not yet render the surface journal" is CLOSED** — the
+> run detail panel's Cost tab renders the separate surface journal as a
+> distinct, honestly labelled section ("Surface observations (not canonical
+> attribution)"), each entry verbatim with its `recordedBy` stamp, joined on the
+> same exact `run:<id>` recorded task id as the canonical per-task view and
+> never merged into it. (b) **The `surface:<surface>` deviation is now
+> per-session where the composition point holds a stable id** —
+> `src/integrations/task-usage.ts` gains `surfaceStamp(surface, sessionId?)` and
+> the web service (which owns a registry session id) stamps
+> `surface:web-service:<sessionId>`; the per-process TUIs hold no session
+> identity at composition time and keep naming the surface alone (recorded, not
+> fabricated). The hub-authoritative binding (A2/C, §5 Q4) stays OPEN: the
+> per-session stamp is provenance legibility, not a hub-verified session→task
+> bind. Full record: `docs/ledger/P4-surface-view.md`.

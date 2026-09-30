@@ -91,6 +91,30 @@ test("session manager creates, lists, and activates sessions with resume ids", a
   assert.equal(spawned[1]?.disposed, true, "every live runtime is disposed with the manager");
 });
 
+test("the manager passes the session's stable registry id to the factory (per-session surface provenance)", async (context) => {
+  // P4 topology A1 (issue #283) per-session granularity: the factory is the
+  // composition point that builds the session's ACP runtime + surface-usage
+  // sink; it receives the record id so the published observation can be
+  // stamped `surface:<surface>:<sessionId>` — a STABLE id, unlike a per-process
+  // TUI whose one runtime spans the whole process.
+  const dir = registryDir();
+  context.after(() => rmSync(dir, { recursive: true, force: true }));
+  const seen: (string | undefined)[] = [];
+  const manager = new WebSessionManager({
+    registryPath: join(dir, "registry.json"),
+    factory: async (_agent, _resumeFrom, _budgetOverride, sessionId) => {
+      seen.push(sessionId);
+      return fakeRuntime("agent-1").runtime;
+    },
+  });
+  const channel = await manager.channel();
+  assert.equal(seen.length, 1, "the factory spawned once");
+  assert.equal(seen[0], manager.activeMeta()?.id, "the factory receives the session's own registry id (a stable provenance key)");
+  await channel.submit("hello", []);
+  await settle(channel);
+  await manager.dispose();
+});
+
 test("session manager lists registry order first when updatedAt timestamps tie", async (context) => {
   const dir = registryDir();
   context.after(() => rmSync(dir, { recursive: true, force: true }));
