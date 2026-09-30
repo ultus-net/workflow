@@ -508,6 +508,89 @@ test("P9 C: the anthropic-wire pool marks the messages lane's static head only w
   }
 });
 
+// P9 option D (issue #288, 2026-09-30): the messages-lane replay integrity
+// reject tier through the REAL pool composition. The pool opts in explicitly
+// (`messagesReplayIntegrity: true`); the DEFAULT pool never gets the tier, so
+// the messages lane stays byte-unchanged by construction. Under the opt-in the
+// unsafe anthropic Messages body is refused with the named 400 before upstream,
+// while the W070b sanctioned matched tool_use/tool_result insertion is allowed.
+test("P9 D: the pool's replay-integrity opt-in refuses an unsafe messages replay; the default pool stays byte-unchanged", async (context) => {
+  const upstream = await fakeUpstream({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.0001 });
+  context.after(() => upstream.close());
+  const deepseekDef: OpenModelDefinition = {
+    ...DEFAULT_OPEN_SOURCE_POOL[0]!,
+    endpoint: "https://api.deepseek.com/anthropic",
+    wire: "anthropic",
+  };
+  const unsafeBody = JSON.stringify({
+    model: "deepseek-flash",
+    max_tokens: 64,
+    messages: [
+      { role: "user", content: "run the tool" },
+      { role: "assistant", content: [{ type: "tool_use", id: "call_x", name: "read", input: {} }] },
+    ],
+  });
+  const sanctionedBody = JSON.stringify({
+    model: "deepseek-flash",
+    max_tokens: 64,
+    messages: [
+      { role: "user", content: "run the tool" },
+      {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "call the tool", signature: "sig-1" },
+          { type: "tool_use", id: "call_seed", name: "read", input: {} },
+        ],
+      },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "call_seed", content: "seeded" }] },
+    ],
+  });
+
+  const guardedPool = await createOpenModelMeteringPool({
+    pool: [deepseekDef],
+    keys: { deepseek: "DEEPSEEK_KEY" },
+    upstreamOverride: () => upstream.url,
+    messagesReplayIntegrity: true,
+  });
+  try {
+    const deepseek = guardedPool.byFamily.get("deepseek")!;
+    const refused = await fetch(`${deepseek.baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: unsafeBody,
+    });
+    assert.equal(refused.status, 400, "the opted-in pool refuses the unsafe replay");
+    const refusal = await refused.json() as { policy?: string };
+    assert.equal(refusal.policy, "messages-replay-integrity");
+
+    const allowed = await fetch(`${deepseek.baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: sanctionedBody,
+    });
+    assert.equal(allowed.status, 200, "the sanctioned synthetic insertion passes the opted-in tier");
+  } finally {
+    await guardedPool.close();
+  }
+
+  const darkPool = await createOpenModelMeteringPool({
+    pool: [deepseekDef],
+    keys: { deepseek: "DEEPSEEK_KEY" },
+    upstreamOverride: () => upstream.url,
+  });
+  try {
+    const deepseek = darkPool.byFamily.get("deepseek")!;
+    const response = await fetch(`${deepseek.baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: unsafeBody,
+    });
+    assert.equal(response.status, 200, "the default pool leaves the lane dark (no reject)");
+  } finally {
+    await darkPool.close();
+  }
+});
+
 // W118 (the W095 budget-downgrade consumer, part 1): the transform stage
 // composes into the GOVERNED lane — the open-source lane's transformBody
 // is the only production consumer of the policy seam, so the end-to-end

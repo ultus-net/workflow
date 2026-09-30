@@ -924,3 +924,122 @@ test("P9 A′: no production consumer reads messagesLaneLabels yet (queued-surfa
     "messagesLaneLabels has a production consumer now — surface it in the P9a ledger and remove this boundary pin",
   );
 });
+
+// P9 option D (issue #288, 2026-09-30): the messages-lane replay integrity
+// reject tier. DARK by default — with no `messagesReplayIntegrity` opt-in the
+// lane keeps the A′ pass-through posture (byte-unchanged, no reject). When the
+// opt-in is explicitly true, an anthropic Messages body the replay policy
+// cannot safely replay is refused BEFORE it reaches upstream with a structured,
+// named 400. The W070b sanctioned synthetic-tool-call insertion (a matched
+// tool_use/tool_result pair) stays allowed.
+const DANGLING_TOOL_USE_BODY = JSON.stringify({
+  model: "deepseek-flash",
+  max_tokens: 64,
+  messages: [
+    { role: "user", content: "run the tool" },
+    { role: "assistant", content: [{ type: "tool_use", id: "call_x", name: "read", input: {} }] },
+  ],
+});
+
+const SANCTIONED_SYNTHETIC_BODY = JSON.stringify({
+  model: "deepseek-flash",
+  max_tokens: 64,
+  messages: [
+    { role: "user", content: "run the tool" },
+    {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "call the tool", signature: "sig-1" },
+        { type: "tool_use", id: "call_seed", name: "read", input: {} },
+      ],
+    },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "call_seed", content: "seeded" }] },
+  ],
+});
+
+test("P9 D: without the opt-in the messages lane stays byte-unchanged even on an unsafe replay shape", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ type: "message", usage: { input_tokens: 1, output_tokens: 1 } }));
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    const response = await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: DANGLING_TOOL_USE_BODY,
+    });
+    assert.equal(response.status, 200, "the reject tier is dark by default");
+    assert.equal(upstream.seen[0]?.body, DANGLING_TOOL_USE_BODY, "without the opt-in the lane forwards byte-unchanged");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("P9 D: under the opt-in an unsafe replay shape is refused with the named reason before upstream", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ type: "message", usage: { input_tokens: 1, output_tokens: 1 } }));
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY", messagesReplayIntegrity: true });
+  try {
+    const response = await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: DANGLING_TOOL_USE_BODY,
+    });
+    assert.equal(response.status, 400, "the unsafe replay is refused fail-closed");
+    assert.equal(upstream.seen.length, 0, "the refused body never reaches upstream");
+    const refusal = await response.json() as { error?: string; policy?: string; violations?: Array<{ code?: string }> };
+    assert.match(refusal.error ?? "", /messages-schema replay integrity/, "the refusal carries the named reason");
+    assert.equal(refusal.policy, "messages-replay-integrity", "the refusal is structured under its own policy name");
+    assert.deepEqual(refusal.violations?.map((violation) => violation.code), ["unanswered-tool-use"]);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("P9 D: under the opt-in the W070b sanctioned synthetic insertion is allowed and forwarded byte-unchanged", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ type: "message", usage: { input_tokens: 1, output_tokens: 1 } }));
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY", messagesReplayIntegrity: true });
+  try {
+    const response = await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: SANCTIONED_SYNTHETIC_BODY,
+    });
+    assert.equal(response.status, 200, "the sanctioned synthetic tool-call path is never false-rejected");
+    assert.equal(upstream.seen[0]?.body, SANCTIONED_SYNTHETIC_BODY, "an allowed body forwards byte-unchanged");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("P9 D: under the opt-in an unparseable messages body fails closed with the named reason", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY", messagesReplayIntegrity: true });
+  try {
+    const response = await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: "{not json",
+    });
+    assert.equal(response.status, 400, "an unverifiable body is refused under the integrity opt-in");
+    assert.equal(upstream.seen.length, 0);
+    const refusal = await response.json() as { policy?: string; violations?: Array<{ code?: string }> };
+    assert.equal(refusal.policy, "messages-replay-integrity");
+    assert.deepEqual(refusal.violations?.map((violation) => violation.code), ["unparseable-body"]);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
