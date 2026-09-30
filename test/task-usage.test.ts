@@ -6,6 +6,7 @@ import {
   TaskUsageAttributor,
   TaskUsageTracker,
   UNATTRIBUTED_TASK_ID,
+  laneTaskUsageSink,
   resolveActiveTaskId,
   taskUsageDelta,
 } from "../src/integrations/task-usage.js";
@@ -181,4 +182,48 @@ test("W111: the lane hook reads the pointer only at boundary time and records th
   assert.equal(delta?.taskId, UNATTRIBUTED_TASK_ID, "an absent pointer is recorded as the explicit marker");
   assert.equal(absent.length, 1, "the spend is still recorded, attributed to the absence");
   assert.equal(absent[0]?.totalTokens, 70);
+});
+
+test("W111 (issue #283): a lane-supplied driver sink publishes a completed turn and reads usage lazily", () => {
+  // The composition a production root (the hub's RSI lane) supplies to
+  // `AcpRuntimeOptions.taskUsage`: the reading is DEFERRED (the runtime does not
+  // exist at composition time) and only a completed turn publishes. This pins
+  // the composition shape, not just the pure arithmetic: a completed turn
+  // actually reaches the journal writer.
+  const recorded: Omit<import("../src/integrations/task-usage.js").TaskUsageSummary, "recordedAt">[] = [];
+  let readings = 0;
+  let runtime: { metrics?: () => ModelUsageMetrics } | undefined;
+  const sink = laneTaskUsageSink(
+    () => {
+      readings += 1;
+      return runtime?.metrics?.();
+    },
+    (delta) => recorded.push(delta),
+  );
+
+  // No runtime yet → the sink reads nothing and no delta is invented.
+  assert.equal(sink.usage(), undefined, "the deferred reading is honest before the runtime exists");
+
+  runtime = { metrics: () => metrics({ requests: 2, promptTokens: 100, completionTokens: 20, totalTokens: 120, costUsd: 0.01, cacheReadTokens: 40, cacheCreateTokens: 5 }) };
+  const attributor = new TaskUsageAttributor({ usage: sink.usage, readTaskId: () => "run:rs-1", record: sink.record });
+  attributor.begin();
+  runtime = { metrics: () => metrics({ requests: 4, promptTokens: 300, completionTokens: 40, totalTokens: 340, costUsd: 0.03, cacheReadTokens: 90, cacheCreateTokens: 8 }) };
+  const delta = attributor.end(true);
+  assert.deepEqual(delta, {
+    taskId: "run:rs-1",
+    requests: 2,
+    promptTokens: 200,
+    completionTokens: 20,
+    totalTokens: 220,
+    costUsd: 0.03 - 0.01,
+    cacheReadTokens: 50,
+    cacheCreateTokens: 3,
+  });
+  assert.equal(recorded.length, 1, "a completed lane turn publishes exactly one recorded delta through the supplied sink");
+
+  // A failed turn publishes nothing through the same sink.
+  attributor.begin();
+  assert.equal(attributor.end(false), undefined);
+  assert.equal(recorded.length, 1, "a failed lane turn publishes no delta");
+  assert.ok(readings >= 3, "the reading is taken lazily at each boundary");
 });

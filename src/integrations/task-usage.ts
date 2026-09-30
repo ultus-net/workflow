@@ -159,6 +159,21 @@ export interface TaskUsageSink {
 }
 
 /**
+ * Compose the driver-side sink a host lane supplies to
+ * `AcpRuntimeOptions.taskUsage` (`src/integrations/acp-runtime.ts`): read the
+ * lane's cumulative metering reading and publish a recorded delta to the lane's
+ * journal writer. The `usage` closure is DEFERRED — a composition root builds
+ * the sink before the runtime exists, so the reading is taken lazily at the
+ * turn boundary. Pure composition; no IO of its own.
+ */
+export function laneTaskUsageSink(
+  usage: () => ModelUsageMetrics | undefined,
+  record: (delta: Omit<TaskUsageSummary, "recordedAt">) => void,
+): { readonly usage: () => ModelUsageMetrics | undefined; readonly record: (delta: Omit<TaskUsageSummary, "recordedAt">) => void } {
+  return { usage, record };
+}
+
+/**
  * The lane-side boundary hook: `begin()` at turn start captures the cumulative
  * baseline, `end(completed)` at turn end publishes the delta through the sink's
  * `record`. ONLY a completed turn publishes — `end(false)` passes no current

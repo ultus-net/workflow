@@ -19,7 +19,7 @@ import { createReviewerFactory, createRunTestRunner } from "../integrations/hub-
 import { createJsonReviewProvenanceStore } from "../integrations/review-provenance-store.js";
 import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
 import { canonicalWorkspace } from "../integrations/run-registry.js";
-import { TaskUsageAttributor } from "../integrations/task-usage.js";
+import { TaskUsageAttributor, laneTaskUsageSink } from "../integrations/task-usage.js";
 import {
   createBudgetGuard,
   createHubScheduler,
@@ -280,7 +280,16 @@ const rsiAgentTurn = (handles: WorkflowHubSchedulerHandles): AgentTurnRunner => 
   const turnTaskId: TaskId = input.runId === undefined
     ? proposalTurn!.taskId
     : taskId(`run:${input.runId}`);
-  const runtime = await createConfiguredAcpRuntime(turnApplication, input.workspace, turnTaskId, undefined, guard);
+  // W111 (issue #283): this hub composition root holds the run registry, so the
+  // RSI lane's ACP runtime supplies the driver-side attribution sink — each
+  // COMPLETED turn publishes its per-task boundary delta into the same journal
+  // the scheduler lane writes (`handles.recordTaskUsage`). The schedule lane
+  // deliberately passes no driver sink (it wires its own finally, no double
+  // count); this lane has no such finally, so the driver seam is the honest
+  // composition. `usage` is deferred: the runtime exists by turn boundary.
+  const runtime = await createConfiguredAcpRuntime(turnApplication, input.workspace, turnTaskId, undefined, guard, {
+    taskUsage: laneTaskUsageSink(() => runtime.metrics?.(), (delta) => handles.recordTaskUsage(delta)),
+  });
   console.log(`rsi ${input.kind} turn budget mechanism: ${runtime.budgetMechanism}`);
   try {
     await runtime.session.submit(input.prompt);

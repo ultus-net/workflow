@@ -71,6 +71,26 @@ export interface CompletionClaimView {
   readonly observedAt: string;
 }
 
+/**
+ * W111 (issue #283): one recorded per-task boundary delta as the relay's runs
+ * block carries it (the run-registry `TaskUsageSummary` shape, field for
+ * field). `taskId` is the kernel id read at boundary time (the run's canonical
+ * `run:<id>` for a run lane), or the explicit "unattributed" marker — never a
+ * value the view derives. The journal is APPEND: a task can span many turns, so
+ * a per-task rollup is the SUM of these recorded entries.
+ */
+export interface TaskUsageSummaryView {
+  readonly taskId: string;
+  readonly requests: number;
+  readonly promptTokens: number;
+  readonly completionTokens: number;
+  readonly totalTokens: number;
+  readonly costUsd: number;
+  readonly cacheReadTokens: number;
+  readonly cacheCreateTokens: number;
+  readonly recordedAt: string;
+}
+
 /** The relay's advisory reasoning-claim finding (observability-only). */
 export interface ReasoningClaimFindingView {
   readonly runId: string;
@@ -103,6 +123,8 @@ export interface RunsRecordState {
         readonly blockingReasons: Readonly<Record<string, string>>;
         readonly completionClaims: Readonly<Record<string, CompletionClaimView>>;
         readonly usage?: Readonly<Record<string, RunUsageSummaryView>>;
+        /** W111: the recorded per-task boundary deltas (bounded append journal). */
+        readonly taskUsage?: readonly TaskUsageSummaryView[];
         readonly reasoningClaims?: Readonly<Record<string, ReasoningClaimFindingView>>;
         readonly reasoningClaimMetrics?: ReasoningClaimMetricsView;
       }
