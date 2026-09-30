@@ -10,10 +10,11 @@ import type { ProcessContainment } from "../containment/contracts.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import { resolveSkillsMount } from "./acp-runtime.js";
 import { connectorReadablePaths, provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts } from "./toolbox-catalog.js";
-import { createModelUsageProxy, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
+import { createModelUsageProxy, type AutoLatestProxyOptions, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
 import { globalOpencodeBinary, meteredOpencodeConfig, resolveOpencodeLaunch } from "./opencode-agent-config.js";
 import { probeOpencodeHealth } from "./opencode-health.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
+import { budgetDowngradeFromEnv, sessionBudgetFromEnv, type BudgetDowngradeRuntime } from "./session-budget.js";
 import { loadUpstreamApiKey } from "./upstream-key.js";
 
 /**
@@ -29,6 +30,24 @@ import { loadUpstreamApiKey } from "./upstream-key.js";
  * server that never becomes healthy all refuse rather than start an unguarded
  * or unmetered server.
  */
+
+/**
+ * The proxy composition seam for the server runtime: the upstream/key plus the
+ * hub-owned policy options. Named once so the runtime call site and the
+ * injectable factory (tests) cannot drift apart.
+ *
+ * W118/P15(a): `budgetDowngrade` carries the env-parsed downgrade axes + the
+ * budget the warn tier evaluates against; `autoLatest` is the Auto Router seam
+ * that lets an active downgrade NARROW the injected `allowed_models` instead of
+ * rewriting the model off the router. Both are absent when unconfigured, which
+ * leaves the proxy's pass-through posture exactly as before.
+ */
+export interface OpencodeServerProxyInput {
+  readonly upstream: string;
+  readonly apiKey: string;
+  readonly autoLatest?: AutoLatestProxyOptions | undefined;
+  readonly budgetDowngrade?: BudgetDowngradeRuntime | undefined;
+}
 
 export interface OpencodeServerRuntimeOptions {
   /** Absolute workspace the server operates on. */
@@ -62,7 +81,7 @@ export interface OpencodeServerRuntimeOptions {
   /** Injectable binary resolver (tests). */
   readonly resolveBinary?: (() => { readonly executable: string }) | undefined;
   /** Injectable proxy factory (tests). */
-  readonly createProxy?: ((input: { upstream: string; apiKey: string }) => Promise<ModelUsageProxy>) | undefined;
+  readonly createProxy?: ((input: OpencodeServerProxyInput) => Promise<ModelUsageProxy>) | undefined;
   /** Injectable fetch for the health poll (tests). */
   readonly fetchImpl?: typeof fetch | undefined;
   /** Health-poll timeout in ms (default 30s). */
@@ -118,13 +137,37 @@ export async function createOpencodeServerRuntime(
 
   const upstream = options.upstream ?? process.env.WORKFLOW_ACP_UPSTREAM ?? DEFAULT_UPSTREAM;
   const apiKey = options.apiKey ?? loadUpstreamApiKey();
-  const createProxy = options.createProxy ?? ((input: { upstream: string; apiKey: string }) => createModelUsageProxy(input));
-  const proxy = await createProxy({ upstream, apiKey });
+  // W118 (the W095 budget-downgrade consumer) + P15(a) wiring breadth: the
+  // server-runtime proxy composes the SAME axes the ACP lane composes
+  // (`createOpencodeRuntime`): the downgrade additionally requires budget caps
+  // to exist (no caps = nothing to warn about); absent either leaves the proxy
+  // without a downgrade (the pass-through default). The malformed-axis posture
+  // fails CLOSED to undefined (the W122 parse), never to an unenforced or
+  // partially-applied downgrade.
+  const budgetDowngradeConfig = budgetDowngradeFromEnv();
+  const sessionBudget = sessionBudgetFromEnv();
+  const budgetDowngrade = budgetDowngradeConfig !== undefined && sessionBudget !== undefined
+    ? { ...budgetDowngradeConfig, budget: sessionBudget }
+    : undefined;
+  // P15 part (a): the autoLatest seam is parsed ONCE and now feeds BOTH the
+  // config-side alias catalog (the model picker, below) and the proxy-side
+  // injection/narrowing seam. With the seam composed, an active downgrade on an
+  // auto-router request narrows the injected `allowed_models` to the target
+  // (narrow-before-inject, resolver-independent) instead of switching the
+  // session off the router; a concrete-model request keeps the W118 rewrite.
+  const autoLatest = autoLatestConfigFromEnv({ upstream });
+  const defaultCreateProxy = (input: OpencodeServerProxyInput): Promise<ModelUsageProxy> => createModelUsageProxy(input);
+  const createProxy = options.createProxy ?? defaultCreateProxy;
+  const proxy = await createProxy({
+    upstream,
+    apiKey,
+    ...(autoLatest === undefined ? {} : { autoLatest }),
+    ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }),
+  });
   const container = options.containment ?? new LinuxBubblewrapContainment();
 
   let child: ChildProcessWithoutNullStreams | undefined;
   try {
-    const autoLatest = autoLatestConfigFromEnv({ upstream });
     const skillsMount = resolveSkillsMount();
     // W080 mount half: provision the workflow-toolbox skill into the hub-owned
     // delivery store and compose the declared-connector mounts (the daemon has
