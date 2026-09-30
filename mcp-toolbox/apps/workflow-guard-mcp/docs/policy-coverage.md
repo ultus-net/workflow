@@ -824,3 +824,48 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   suite 124/124 via direct-tsc; app `tsc --noEmit` exit 0; repo lint +
   typecheck exit 0 unpiped. The W099/W101/P18(c)/P18(d) cells are
   byte-unchanged (the test diff is append-only).
+
+  ---- P18 (e) (2026-09-30, issue #296): the inspectable git command-option
+  gitdir spelling joins the direct-write gate ----
+
+  The P18(d) entry recorded that a bare repo / explicit gitdir is reachable
+  "only when also env-spelled". Git names the gitdir a THIRD, inspectable way:
+  as its own top-level command option — `git --git-dir=<path>`, the separate
+  `git --git-dir <path>`, and their `--work-tree` twins. `gitDirSpellingsIn`
+  (git-policy.ts) now also scans a `git` invocation's surviving command words
+  (after the wrapper/assignment prefix is unwrapped, so `sudo git
+  --git-dir=…` is covered) for those spellings and returns the values beside
+  the env spellings. A write under the named gitdir then classifies through
+  the SAME shared tail logic (`refTailTarget`): `refs/heads/<branch>` resolves
+  to the branch name (a protected branch denies with the target named, a
+  feature ref keeps the allow), a ref-adjacent tail with no resolvable branch
+  fails closed, and non-ref content (`index`, `objects`, `config`, `refs/tags`)
+  stays outside the branch-target gate. `--work-tree` rides the same
+  conservative lean the env route recorded (`GIT_WORK_TREE=`). The
+  ref-adjacent COMMAND form (`git --git-dir=/tmp/bare update-ref
+  refs/heads/main …`) was already covered by the W101 target gate (the leading
+  option is skipped by `normalizedGitSegments`); the pins now record it.
+
+  The file_write-lane aliases (assessed): the `file_write` lane carries a path
+  and optional patch text, NOTHING from which an in-command gitdir alias could
+  be derived. It keeps the `.git`-component route it can inspect (P18(c)); a
+  bare-gitdir path with no `.git` component stays outside the gate on that
+  surface. No behavior change there, and it is pinned as an executed allow.
+
+  Recorded BOUNDARIES (honest): the symlink-hop / gitfile / unresolved-or-
+  globbed-spelling / non-ref-content boundaries of P18(d) stand; the
+  `file_write` lane's lack of command text is the new one. A `git` invocation
+  where `--git-dir` is argument data (not a real top-level option) is read
+  lexically as a gitdir spelling — a deny-leaning false-positive class,
+  consistent with the conservative lean; it can add a deny, never loosen one.
+
+  Evidence: red-first 117 policy tests / 115 pass / 2 fail against the
+  unmodified tree — the command-option protected-write deny block (captured
+  verbatim: `git --git-dir=/tmp/bare status > /tmp/bare/refs/heads/main @
+  main` — `'allow' !== 'deny'`) and the unresolved-target fail-closed block
+  (globbed tail — `'allow' !== 'deny'`); the feature-target allow and the
+  file_write boundary held as-found (reported, not fabricated). Green 117/0
+  after the src edit; the app's full suite 128/128 via direct-tsc (`tsc -p
+  tsconfig.json`, then `node --import tsx --test test/*.test.ts`); app `tsc
+  --noEmit` exit 0; repo lint + typecheck exit 0 unpiped. The W099/W101/
+  P18(c)/P18(d) cells are byte-unchanged (the test diff is append-only).

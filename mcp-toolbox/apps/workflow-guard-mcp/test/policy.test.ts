@@ -1832,3 +1832,65 @@ test("P18 (d) review round: wrapper and recursion forms keep the feature-target 
     assert.equal(checkPolicy({ action: "shell", command }).decision, "allow", command);
   }
 });
+
+// ---- P18 (e): the git command-option gitdir spelling (`--git-dir=`,
+// `--git-dir <path>`, `--work-tree`) (2026-09-30, issue #296) ----
+// P18(d) named the gitdir through the command ENVIRONMENT (`GIT_DIR=…`); git
+// also names it as its own top-level option — `git --git-dir=<path>` /
+// `git --git-dir <path>` and the `--work-tree` twins. The same lexical tail
+// classification applies: a `refs/heads/<branch>` write under the named
+// gitdir denies for a protected branch, a feature ref keeps the allow, and an
+// unclassifiable tail fails closed. `--work-tree` rides the same conservative
+// lean as `GIT_WORK_TREE=` (the prior round's recorded treatment). RED-FIRST:
+// every deny below classified allow against the unmodified tree.
+
+test("P18 (e): the --git-dir command-option makes ref-adjacent writes target-classifiable", () => {
+  const cases = [
+    "git --git-dir=/tmp/bare status > /tmp/bare/refs/heads/main",
+    "git --git-dir /tmp/bare status > /tmp/bare/refs/heads/main",
+    "git --git-dir=/tmp/bare status; echo x > /tmp/bare/refs/heads/main",
+    "git --git-dir=/tmp/bare status; echo x > /tmp/bare/refs/heads/master",
+    "git --work-tree=/tmp/wt status > /tmp/wt/refs/heads/main",
+    "git --work-tree /tmp/wt status > /tmp/wt/refs/heads/main",
+    "sudo git --git-dir=/tmp/bare status; echo x > /tmp/bare/refs/heads/main",
+    "git --git-dir=/tmp/bare update-ref refs/heads/main abc",
+  ];
+  for (const command of cases) {
+    for (const currentBranch of ["main", "feat/g5", undefined]) {
+      const decision = checkPolicy({ action: "shell", command, ...(currentBranch ? { currentBranch } : {}) });
+      assert.equal(decision.decision, "deny", `${command} @ ${currentBranch}`);
+      assert.equal(decision.policy, "protected-branch-write", `${command} @ ${currentBranch}`);
+    }
+  }
+});
+
+test("P18 (e): the --git-dir command-option feature-ref write keeps the allow", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "git --git-dir=/tmp/bare status > /tmp/bare/refs/heads/feat/g5", currentBranch: "main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "git --git-dir /tmp/bare status; echo x > /tmp/bare/refs/heads/feat/g5" }).decision, "allow");
+  // A path NOT under the named gitdir is unaffected.
+  assert.equal(checkPolicy({ action: "shell", command: "git --git-dir=/tmp/bare status; echo x > /tmp/other/refs/heads/main", currentBranch: "main" }).decision, "allow");
+  // Non-ref gitdir content stays outside the branch-target gate.
+  assert.equal(checkPolicy({ action: "shell", command: "git --git-dir=/tmp/bare status; echo x > /tmp/bare/index", currentBranch: "main" }).decision, "allow");
+});
+
+test("P18 (e): a --git-dir target that cannot be resolved fails closed", () => {
+  // A globbed tail reaches the classifier's `uncertain` branch under the
+  // literal gitdir spelling: fail closed on protected-branch-write.
+  const glob = checkPolicy({ action: "shell", command: "git --git-dir=/tmp/bare status; echo x > /tmp/bare/refs/heads/*" });
+  assert.equal(glob.decision, "deny");
+  assert.equal(glob.policy, "protected-branch-write");
+  // Lexical `.`/`..` collapse is preserved on the option route too.
+  const traversal = checkPolicy({ action: "shell", command: "git --git-dir=/tmp/bare status; echo x > /tmp/bare/refs/heads/feat/../../heads/main" });
+  assert.equal(traversal.decision, "deny");
+  assert.equal(traversal.policy, "protected-branch-write");
+});
+
+test("P18 (e): the file_write lane has no command text, so a bare-gitdir path stays outside the gate", () => {
+  // The option (and env) spellings name the gitdir through a COMMAND; the
+  // file_write lane carries only a path, so a bare-gitdir path (no `.git`
+  // component) is not ref-adjacent there — the recorded boundary, executed.
+  assert.equal(checkPolicy({ action: "file_write", path: "/tmp/bare/refs/heads/main", currentBranch: "feat/g5" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "file_write", path: "/tmp/bare/refs/heads/main" }).decision, "allow");
+  // The `.git`-component route it CAN inspect still denies.
+  assert.equal(checkPolicy({ action: "file_write", path: ".git/refs/heads/main", currentBranch: "feat/g5" }).decision, "deny");
+});

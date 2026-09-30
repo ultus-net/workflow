@@ -519,16 +519,31 @@ export interface DirectRefWriteTarget {
 
 const GIT_DIR_ASSIGNMENT_RE = /^(?:GIT_DIR|GIT_COMMON_DIR|GIT_WORK_TREE)=(.*)$/;
 
-// The gitdir spellings a shell command names through its environment. Scanned
-// in command position only — the wrapper/assignment prefix the shell lane's
-// `unwrapWords` consumes (`sudo`/`doas`/`command`/`nohup`/`nice`/`timeout`/
-// `stdbuf`/`time`/`env` with their option words and bare args, plus ordinary
-// and `export`-builtin assignments) — so argument data (`echo GIT_DIR=/x`) is
-// not mistaken for a live assignment, but `sudo GIT_DIR=/x echo …` names the
-// same gitdir as the unprefixed form. `export GIT_DIR=…; echo …` is covered
-// because the export is the segment head of its own segment and the scan is
-// whole-command. Reusing `unwrapWordsWithPrefix` keeps ONE wrapper vocabulary
-// (the shell lane's) rather than a second list that could drift.
+// The gitdir spellings a shell command names explicitly. Two inspectable
+// routes:
+//
+// (1) The command ENVIRONMENT (`GIT_DIR=…`, `GIT_COMMON_DIR=…`,
+//     `GIT_WORK_TREE=…`). Scanned in command position only — the
+//     wrapper/assignment prefix the shell lane's `unwrapWords` consumes
+//     (`sudo`/`doas`/`command`/`nohup`/`nice`/`timeout`/`stdbuf`/`time`/`env`
+//     with their option words and bare args, plus ordinary and
+//     `export`-builtin assignments) — so argument data (`echo GIT_DIR=/x`) is
+//     not mistaken for a live assignment, but `sudo GIT_DIR=/x echo …` names
+//     the same gitdir as the unprefixed form. `export GIT_DIR=…; echo …` is
+//     covered because the export is the segment head of its own segment and
+//     the scan is whole-command. Reusing `unwrapWordsWithPrefix` keeps ONE
+//     wrapper vocabulary (the shell lane's) rather than a second list that
+//     could drift.
+//
+// (2) P18 (e): git's OWN command-option spelling (`--git-dir=<path>` /
+//     `--git-dir <path>` and the `--work-tree` twins) on a `git` invocation —
+//     the same explicit-gitdir route named as an option instead of in the
+//     environment. The surviving command word must be `git` (the
+//     wrapper/assignment prefix is already unwrapped, so `sudo git
+//     --git-dir=…` is covered); the option value is collected lexically and an
+//     unresolved/globbed value is dropped downstream by the classifier's own
+//     filter, exactly like an env assignment. `--work-tree` rides the same
+//     conservative lean the env route recorded.
 export function gitDirSpellingsIn(command: string): string[] {
   const spellings: string[] = [];
   for (const rawSegment of splitShellSegments(command)) {
@@ -536,9 +551,21 @@ export function gitDirSpellingsIn(command: string): string[] {
     // `export` is a shell builtin, not a wrapper: drop it so the assignment it
     // carries is read at command position, as before.
     if (basename(words[0] ?? "") === "export") words = words.slice(1);
-    for (const word of unwrapWordsWithPrefix(words).prefix) {
+    const { prefix, command: unwrapped } = unwrapWordsWithPrefix(words);
+    for (const word of prefix) {
       const assignment = GIT_DIR_ASSIGNMENT_RE.exec(word);
       if (assignment?.[1]) spellings.push(assignment[1]);
+    }
+    if (basename(unwrapped[0] ?? "") === "git") {
+      for (let i = 1; i < unwrapped.length; i++) {
+        const option = unwrapped[i]!;
+        const equals = /^--(?:git-dir|work-tree)=(.*)$/.exec(option);
+        if (equals?.[1]) { spellings.push(equals[1]); continue; }
+        if (option === "--git-dir" || option === "--work-tree") {
+          const value = unwrapped[i + 1];
+          if (value && !value.startsWith("-")) { spellings.push(value); i += 1; }
+        }
+      }
     }
   }
   return spellings;
