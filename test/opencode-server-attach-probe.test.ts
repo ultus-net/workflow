@@ -9,7 +9,8 @@ import type { ProcessContainment } from "../src/containment/contracts.js";
 import { hostCapabilities } from "../src/adapters/host.js";
 import { WorkflowApplication } from "../src/application/workflow.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
-import { globalOpencodeBinary } from "../src/integrations/opencode-agent-config.js";
+import { globalOpencodeBinary, OPENCODE_METERED_PROVIDER_ID, OPENCODE_V2_METERED_PROVIDER_ID } from "../src/integrations/opencode-agent-config.js";
+import { opencodeMajorVersion } from "../src/integrations/acp-runtime.js";
 import { createOpencodeServerAuthority } from "../src/integrations/opencode-server-authority.js";
 import {
   createOpencodeServerGateway,
@@ -82,13 +83,22 @@ test("W071 live (v2 spellings): runtime + gateway authority split against real o
 
   const upstreamHeaders = { authorization: basic(runtime.username, runtime.password) };
 
-  // The hub-written config file is the pinned ask ruleset…
+  // The hub-written config file is the pinned ask ruleset, and (version-aware,
+  // mirrors the ACP lane PR #427) either the v1 provider/npm/options shape or
+  // the v2 providers/package|settings shape reusing the built-in `openrouter`
+  // provider. On this lane the config `model` is the metered pin: the v2 HTTP
+  // session honors it (live-verified), so no separate session pin is needed.
+  const major = binary === undefined ? undefined : await opencodeMajorVersion(binary);
+  const v2 = major !== undefined && major >= 2;
+  const meteredProviderId = v2 ? OPENCODE_V2_METERED_PROVIDER_ID : OPENCODE_METERED_PROVIDER_ID;
   const configFile = JSON.parse(readFileSync(join(runtime.stateDir, "config", "opencode", "opencode.json"), "utf8")) as {
     permission?: Record<string, string>;
     provider?: Record<string, unknown>;
+    providers?: Record<string, unknown>;
   };
   assert.deepEqual(configFile.permission, { edit: "ask", bash: "ask", task: "ask", skill: "deny" });
-  assert.notEqual(configFile.provider?.["workflow-metered"], undefined);
+  const providers = v2 ? configFile.providers : configFile.provider;
+  assert.notEqual(providers?.[meteredProviderId], undefined);
   // …and the real server loads it: the config document list includes the
   // hub-written config with the provider parsed. (v2.0.10 observation, per
   // docs/OPENCODE_V2_MIGRATION_SPEC.md §9: /api/provider lists
@@ -97,11 +107,11 @@ test("W071 live (v2 spellings): runtime + gateway authority split against real o
   // visibility issue; the loaded-config assertion is the honest contract.)
   const configDocs = await fetch(`${runtime.url}/api/config`, { headers: upstreamHeaders });
   assert.equal(configDocs.status, 200, `upstream /api/config returned ${configDocs.status}`);
-  const documents = (await configDocs.json() as readonly { type?: string; path?: string; info?: { providers?: Record<string, unknown> } }[]);
+  const documents = (await configDocs.json() as readonly { type?: string; path?: string; info?: { provider?: Record<string, unknown>; providers?: Record<string, unknown> } }[]);
   const hubDocument = documents.find((entry) => entry.path !== undefined && entry.path.includes(join(runtime.stateDir, "config")));
   assert.ok(hubDocument !== undefined, "the hub-written config must be among the loaded documents");
-  assert.notEqual(hubDocument.info?.providers?.["workflow-metered"], undefined, "the metered provider must be parsed into the loaded config");
-  assert.ok(JSON.stringify(hubDocument.info ?? {}).includes("workflow-metered"), "the metered provider id must be in the loaded config document");
+  const hubProviders = v2 ? hubDocument.info?.providers : hubDocument.info?.provider;
+  assert.notEqual(hubProviders?.[meteredProviderId], undefined, "the metered provider must be parsed into the loaded config");
 
   // Broker mode: replies are intercepted by the production gateway.
   const intercepted: OpencodePermissionReply[] = [];
