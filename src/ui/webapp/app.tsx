@@ -39,7 +39,7 @@ import { OverviewView } from "./overview-view.js";
 import { RunsView } from "./runs-view.js";
 import { RunDetailPanel } from "./run-detail-panel.js";
 import { useRunsRecord } from "./runs-record.js";
-import { clearRunDetailOpenToWindow, readRunDetailOpenFromWindow, saveRunDetailOpenToWindow, clearCardDetailOpenToWindow, readCardDetailOpenFromWindow, saveCardDetailOpenToWindow, type CardDetailOpen, type RunDetailOpen, type RunDetailTab } from "./run-detail-state.js";
+import { clearRunDetailOpenToWindow, readRunDetailOpenFromWindow, saveRunDetailOpenToWindow, clearCardDetailOpenToWindow, readCardDetailOpenFromWindow, saveCardDetailOpenToWindow, escapeDetailOwner, type CardDetailOpen, type RunDetailOpen, type RunDetailTab } from "./run-detail-state.js";
 import { EvidenceStripRow, useContentPreviews, useHubEvidence, type EvidenceContentRefView } from "./evidence-preview.js";
 export { artifactKind, EvidenceStripRow } from "./evidence-preview.js";
 export type { EvidenceContentPreview, EvidenceContentRefView } from "./evidence-preview.js";
@@ -2477,11 +2477,16 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
       const active = document.activeElement;
       const typing = active instanceof HTMLElement &&
         (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable);
+      // A contextual detail panel owns Escape only while the CURRENT view
+      // mounts it. A stale opener restored from sessionStorage onto another
+      // page must not arm this branch (it would close an invisible record and
+      // jump back to the opener's page) — the W176 review's cross-view P3.
+      const detailOwner = escapeDetailOwner(view, runDetail, cardDetail);
       if (event.key === "/" && !typing && document.querySelector(".settings-dialog") === null) {
         event.preventDefault();
         document.querySelector<HTMLElement>(".composer-input")?.focus();
       } else if (
-        event.key === "Escape" && (runDetail !== undefined || cardDetail !== undefined) && !typing &&
+        event.key === "Escape" && detailOwner !== undefined && !typing &&
         // A contextual detail panel owns Escape while one is open (it closes
         // and focus returns to the invoking element) — but any open chrome
         // (settings page, command palette, model combobox) still wins, and a
@@ -2489,11 +2494,10 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
         document.querySelector(".settings-dialog, .palette, .config-combobox-pop") === null
       ) {
         event.preventDefault();
-        // The panel open on THIS view owns Escape: the Board's card detail
-        // when the shell shows the Board, the run detail otherwise.
-        if (cardDetail !== undefined && view === "board") closeCardDetail();
-        else if (runDetail !== undefined) closeRunDetail();
-        else closeCardDetail();
+        // The panel this view mounts owns Escape: the Board's card detail on
+        // the Board, the shared run detail on Runs/Reviews.
+        if (detailOwner === "card") closeCardDetail();
+        else closeRunDetail();
       } else if (
         event.key === "Escape" && isRunning && !typing &&
         // Any open chrome (settings page, command palette, model combobox)

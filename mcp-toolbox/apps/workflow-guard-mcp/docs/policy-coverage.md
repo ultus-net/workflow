@@ -824,3 +824,51 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   suite 124/124 via direct-tsc; app `tsc --noEmit` exit 0; repo lint +
   typecheck exit 0 unpiped. The W099/W101/P18(c)/P18(d) cells are
   byte-unchanged (the test diff is append-only).
+
+  ---- P18 boundary refine (2026-09-30, issue #296): the newly-inspectable
+  in-command symlink hop; the recorded over-denies stated ----
+
+  Re-assessment of the P18(c)/P18(d) recorded edges, with one genuinely
+  inspectable spelling LANDED and the rest stated (no pretending).
+
+  LANDED (one classifier, unchanged wiring): an `ln -s <target> <link>` that
+  the command ITSELF spells is lexically resolvable. When <target> is
+  ref-adjacent (a `.git`-component ref path, or a directory named by the
+  command's gitdir spellings), a write STRICTLY UNDER <link> reaches the same
+  refs, so <link> joins the alias prefix set and the shared tail logic
+  classifies it. `refSymlinkAliasSpellingsIn` (git-policy.ts) is a bounded
+  fixpoint over the command's segments, so a chained alias
+  (`ln -s <gitdir> a; ln -s a b`) resolves too. The link path itself is NOT the
+  gitdir (an exact match stays allowed — creating the alias is not a ref write),
+  and a symlink whose target is a pre-existing filesystem fact (never spelled in
+  the command) stays RECORDED. The shell lane passes the command's aliases
+  beside its gitdirs (`{ gitDirs, gitDirAliases }`); a nested `sh -c` inherits
+  both (union, deduped). `boundary-policy` imports `refSymlinkAliasSpellingsIn`
+  from the gate file (no import cycle).
+
+  RECORDED OVER-DENIES (intentional, fail-closed):
+  - `.GIT` case-insensitive component: the lexical classifier cannot tell a
+    case-insensitive filesystem from a case-sensitive one, so a benign directory
+    literally named `.GIT` on a case-sensitive filesystem is over-denied on its
+    ref-adjacent paths (`.GIT/refs/heads/main`, `x/.GIT/refs/heads/main` deny).
+    Deliberate; a real gitdir's `.Git`/`.GIT` variants must NOT be loosened.
+  - `GIT_WORK_TREE` names the WORK TREE, not the gitdir, and is kept as a gitdir
+    spelling because a worktree path can sit adjacent to (or contain) a gitdir
+    and the classifier is lexical — a `refs/heads/<protected>` tail under it
+    over-denies. Recorded as a conservative over-approximation, not a semantic
+    claim that the worktree is the gitdir.
+
+  RECORDED, un-inspectable: a gitfile's content path (`.git` is a FILE naming
+  its gitdir) — the classifier is lexical and never reads file bytes, so the
+  named gitdir is reachable only when also env-spelled. A `.git` symlink hop
+  whose target is a pre-existing filesystem fact (never spelled in the command)
+  also stays outside. A newly-NOTED inspectable spelling (`git --git-dir=…
+  naming a gitdir in the same command) is outside this iteration's
+  recorded-edge scope and left for a follow-up.
+
+  Evidence: red-first 119 policy tests / 118 pass / 1 fail against the
+  unmodified tree (the in-command symlink-alias deny block; the feature-target
+  allow, the non-ref/pre-existing-alias allows, and the already-landed P18(d)
+  over-deny pins held as-found — reported, not fabricated); green 119/0 after
+  the src edits. W099/W101/P18(c)/P18(d) cells byte-unchanged (append-only test
+  diff). App `tsc --noEmit` exit 0.

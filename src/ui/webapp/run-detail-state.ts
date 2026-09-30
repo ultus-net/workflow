@@ -25,7 +25,7 @@
  * the source patchable under the guard shell classifier.)
  */
 
-import { APP_VIEWS } from "./shell.js";
+import { APP_VIEWS, type AppView } from "./shell.js";
 
 /** The run detail panel's tab vocabulary — ONE list shared with the panel
  * (which imports it for its tab strip), so the persisted opener record and
@@ -246,4 +246,29 @@ export function clearCardDetailOpenToWindow(): void {
   } catch {
     // No window, access denied, or quota: persistence is best-effort.
   }
+}
+
+// ── the shell's Escape arbitration over the two contextual panels ──
+
+/** The pages that MOUNT the shared run detail panel (RunsView and ReviewsView
+ * both render it in the shell's dock region). */
+const RUN_DETAIL_HOST_VIEWS: readonly AppView[] = ["runs", "reviews"];
+
+/** Which contextual detail panel the shell's Escape should close on `view` —
+ * only a panel the CURRENT view actually mounts. The run detail is mounted on
+ * Runs/Reviews, the card detail on Board; a stale opener restored from
+ * sessionStorage onto any other page returns undefined, so the shell's Escape
+ * branch never closes an invisible record and jumps back to the opener's page
+ * (the W176 review's stale-opener cross-view P3). The run panel's opener can be
+ * either host, so the gate is "the view mounts the panel", not "view === the
+ * opener" — a panel opened on Runs and viewed on Reviews is still visible and
+ * still owns Escape. */
+export function escapeDetailOwner(
+  view: AppView,
+  runDetail: RunDetailOpen | undefined,
+  cardDetail: CardDetailOpen | undefined,
+): "run" | "card" | undefined {
+  if (view === "board" && cardDetail !== undefined) return "card";
+  if (RUN_DETAIL_HOST_VIEWS.includes(view) && runDetail !== undefined) return "run";
+  return undefined;
 }

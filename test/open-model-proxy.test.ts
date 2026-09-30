@@ -314,6 +314,43 @@ test("W109: the anthropic-wire pool marks stable prefixes when opted in and pass
   }
 });
 
+// P14 (issue #293): the composer's cacheMarkers option gains the per-family
+// map. One map shared across the keyed families: only the families listed
+// `true` are marked; a family omitted from the map stays dark. The boolean
+// option remains all-keyed (pinned above at model-profile + here by the
+// existing W109 pool test).
+test("P14: the pool's per-family cacheMarkers map marks only the opted-in family", async (context) => {
+  const upstream = await fakeUpstream({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.0001 });
+  context.after(() => upstream.close());
+  const pool = await createOpenModelMeteringPool({
+    pool: [
+      { ...DEFAULT_OPEN_SOURCE_POOL[0]!, endpoint: "https://api.deepseek.com/anthropic", wire: "anthropic" },
+      { ...DEFAULT_OPEN_SOURCE_POOL[1]!, endpoint: "https://api.z.ai/api/anthropic", wire: "anthropic" },
+    ],
+    keys: { deepseek: "DEEPSEEK_KEY", glm: "GLM_KEY" },
+    upstreamOverride: () => upstream.url,
+    cacheMarkers: { deepseek: true },
+  });
+  try {
+    const ask = async (baseUrl: string, model: string): Promise<void> => {
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+        body: JSON.stringify({ model, system: "You are Workflow.", messages: [{ role: "user", content: "hi" }] }),
+      });
+      assert.equal(response.status, 200);
+    };
+    await ask(pool.byFamily.get("deepseek")!.baseUrl, "deepseek-flash");
+    await ask(pool.byFamily.get("glm")!.baseUrl, "glm-5.3");
+    const deepseekBody = JSON.parse(upstream.seen[0]?.body ?? "{}") as { system: unknown };
+    const glmBody = JSON.parse(upstream.seen[1]?.body ?? "{}") as { system: unknown };
+    assert.equal(Array.isArray(deepseekBody.system), true, "the opted-in deepseek family is marked");
+    assert.equal(glmBody.system, "You are Workflow.", "the glm family omitted from the map stays dark");
+  } finally {
+    await pool.close();
+  }
+});
+
 // W118 (the W095 budget-downgrade consumer, part 1): the transform stage
 // composes into the GOVERNED lane — the open-source lane's transformBody
 // is the only production consumer of the policy seam, so the end-to-end
