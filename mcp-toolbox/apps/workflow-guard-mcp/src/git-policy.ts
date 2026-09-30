@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { decodeShellEscapes, shellWords, splitShellSegments, unwrapShellWords, unwrapWords, unwrapWordsWithPrefix } from "./shell.js";
+import { decodeShellEscapes, isShFamilyInterpreter, shellWords, splitShellSegments, unwrapShellWords, unwrapWords, unwrapWordsWithPrefix } from "./shell.js";
 
 // Ported from upstream opencode-workflow-guard (#134/#135, W084): `git tag`
 // publish flows are release operations, not branch mutations — only tag
@@ -766,22 +766,27 @@ export function wrapperCommands(command: string): string[] {
   // by unwrapShellWords, so prefixed wrappers ARE detected (the W101-era
   // "env limitation" note was factually wrong — corrected by review round 1
   // P2). busybox sh / exotic interpreter names REMAINED the honest edge
-  // (SUPERSEDED 2026-09-30, P18: the busybox applet composites and xsh
-  // join the detection below.)
+  // (SUPERSEDED 2026-09-30, P18: the busybox applet composites join the
+  // detection below, and the P18(a) class closure replaces the enumerated
+  // sh-family regex with the single-sourced `isShFamilyInterpreter`
+  // predicate — any basename ending in `sh`).
   return splitShellSegments(command).flatMap((segment) => {
     let words = unwrapShellWords(segment);
-    // P18 (b): exotic interpreter names joined the sh-family detection.
-    // busybox composes the family through its applet form (`busybox sh -c
-    // '...'`, repeated busybox levels, and a wrapper applet in between —
-    // `busybox env sh -c`), so the applet args unwrap WORD-WISE (the same
-    // helper the shell lane uses — no string round trip, a quoted -c
-    // argument stays one word and its inner compound survives), each
-    // busybox level consuming one word (progress guaranteed). xsh — one of
-    // busybox sh's alternate names — joins the family regex below.
+    // P18 (b) + P18 (a) class closure (2026-09-30): busybox composes the sh
+    // family through its applet form (`busybox sh -c '...'`, repeated
+    // busybox levels, and a wrapper applet in between — `busybox env sh -c`),
+    // so the applet args unwrap WORD-WISE (the same helper the shell lane
+    // uses — no string round trip, a quoted -c argument stays one word and
+    // its inner compound survives), each busybox level consuming one word
+    // (progress guaranteed). The family predicate itself is single-sourced
+    // in `shell.ts` (`isShFamilyInterpreter`): the pre-closure copy had
+    // already drifted across the four sites, and enumeration of an
+    // open-ended interpreter family (xsh, ash, mksh, csh, …) can never be
+    // complete — the principled `sh`-suffix rule closes the class.
     while (/^busybox$/i.test(basename(words[0] ?? "")) && words.length > 1) {
       words = unwrapWords(words.slice(1));
     }
-    if (!/^(?:ba|z|da|k|x)?sh$/i.test(basename(words[0] ?? ""))) return [];
+    if (!isShFamilyInterpreter(basename(words[0] ?? ""))) return [];
     for (let i = 1; i < words.length; i++) {
       const word = words[i]!;
       if (word === "--") return [];
