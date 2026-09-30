@@ -15,6 +15,7 @@ import type { HubScheduler } from "./hub-scheduler.js";
 import type { SelfImprovementRegistry } from "./self-improvement-registry.js";
 import type { ScheduleRegistry } from "./schedule-registry.js";
 import type { ProjectRegistry } from "./project-registry.js";
+import type { PermissionBroker } from "../ui/permission-broker.js";
 
 /**
  * The Workflow hub daemon: a long-running loopback authority that any Cline
@@ -148,6 +149,15 @@ export async function createWorkflowHub(
      * keeps the honest unreadable states.
      */
     discoverIssueCrossReferences?: (issueNumber: number) => Promise<import("./task-provider.js").CrossReferenceOutcome>;
+    /**
+     * P6 (issue #285): the hub process's same-process `PermissionBroker`. When
+     * provided, the hub mounts the broker's pending/answer path on
+     * `/api/permission` and the hub's container lanes (the /bash route and the
+     * composed shells) pass `broker.askHold()` to `shellExecutorFor`, so a
+     * guard `ask` a containment seat holds is answerable. In-process only —
+     * never cross-process plumbing.
+     */
+    permissionBroker?: PermissionBroker;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -219,6 +229,11 @@ export async function createWorkflowHub(
         ...(options.providerReadState === undefined ? {} : { providerReadState: options.providerReadState }),
         ...(options.reviewProvenance === undefined ? {} : { reviewProvenance: options.reviewProvenance }),
         ...(options.discoverIssueCrossReferences === undefined ? {} : { discoverIssueCrossReferences: options.discoverIssueCrossReferences }),
+        // P4 topology Option A1 (issue #283): the run registry's surface-
+        // observation journal writer behind the observability-only
+        // /usage/record route. Present only when a registry exists.
+        ...(runs === undefined ? {} : { recordSurfaceUsage: runs.recordSurfaceUsage }),
+        ...(options.permissionBroker === undefined ? {} : { permissionBroker: options.permissionBroker }),
       },
     );
     options.observeBridgeStarted?.(bridge.url);

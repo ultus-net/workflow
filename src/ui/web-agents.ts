@@ -8,6 +8,7 @@ import {
   createConfiguredOpencodeAcpRuntime,
   openrouterAuthKeyFromAuth,
   opencodeAuthPath,
+  type AcpRuntimeOptions,
   type WorkflowAcpRuntime,
 } from "../integrations/acp-runtime.js";
 import type { RunBudget } from "../integrations/hub-scheduler.js";
@@ -128,6 +129,13 @@ export async function createAgentRuntime(
     readonly settings?: WorkflowSettings | undefined;
     /** W151: the session's persisted operator-raised budget caps (per-axis override over env). */
     readonly budgetOverride?: RunBudget | undefined;
+    /**
+     * P4 topology Option A1 (issue #283): the cross-process surface-usage sink
+     * the web service composes for this runtime. When provided, a completed
+     * interactive turn posts its provenance-stamped boundary delta to the hub's
+     * observability-only `/usage/record` route; absent → no attribution.
+     */
+    readonly taskUsage?: AcpRuntimeOptions["taskUsage"];
   },
 ): Promise<WorkflowAcpRuntime> {
   if (agent === "opencode") {

@@ -174,6 +174,53 @@ export function laneTaskUsageSink(
 }
 
 /**
+ * W111 / P4 topology Option A1 (issue #283): a cross-process surface
+ * observation. A process-separated interactive surface computes its own
+ * boundary delta (the same `TaskUsageAttributor` arithmetic) and posts it to
+ * the hub's observability-only `/usage/record` route. Because the surface is
+ * the recorder, the task id it carries is NOT hub-authoritative attribution —
+ * it is a surface OBSERVATION, labelled with the `recordedBy` provenance stamp
+ * and kept in its own journal, never merged into the canonical `taskUsage`
+ * rollups (the W153 client-never-supplies-attribution principle,
+ * `docs/P4_TOPOLOGY_SPLIT_BRIEF.md` §2.1 A1). The hub validates the stamp's
+ * `surface:` prefix so a client cannot claim another authority class.
+ */
+export interface SurfaceUsageObservation extends Omit<TaskUsageSummary, "recordedAt"> {
+  /**
+   * The surface provenance stamp, e.g. `surface:web-service`. The hub requires
+   * a non-empty `surface:` prefix (a client cannot claim a `hub`-class label);
+   * the attribution stays a labelled observation, never canonical.
+   */
+  readonly recordedBy: string;
+}
+
+/**
+ * The recorded form of a surface observation: the posted delta plus the
+ * registry-appended `recordedAt` (the hub stamps it at journal time, exactly
+ * like the canonical `TaskUsageSummary`). Plain record: `/snapshot` is JSON.
+ */
+export interface SurfaceUsageSummary extends SurfaceUsageObservation {
+  readonly recordedAt: string;
+}
+
+/**
+ * Compose the cross-process sink a process-separated surface supplies to
+ * `AcpRuntimeOptions.taskUsage`: the SAME deferred reading and completed-only
+ * rule as `laneTaskUsageSink`, but every recorded delta is STAMPED with the
+ * surface's `recordedBy` provenance and handed to `post`, which relays it to
+ * the hub's observability-only route. The stamp is added here, at the surface,
+ * so the hub never has to trust an unstamped body. Pure composition; the
+ * transport (`post`) fails closed on its own.
+ */
+export function surfaceUsageSink(
+  usage: () => ModelUsageMetrics | undefined,
+  recordedBy: string,
+  post: (observation: SurfaceUsageObservation) => void,
+): { readonly usage: () => ModelUsageMetrics | undefined; readonly record: (delta: Omit<TaskUsageSummary, "recordedAt">) => void } {
+  return laneTaskUsageSink(usage, (delta) => post({ ...delta, recordedBy }));
+}
+
+/**
  * The lane-side boundary hook: `begin()` at turn start captures the cumulative
  * baseline, `end(completed)` at turn end publishes the delta through the sink's
  * `record`. ONLY a completed turn publishes — `end(false)` passes no current

@@ -80,6 +80,13 @@ export interface WorkflowRunController {
      * and no view re-derives a delta.
      */
     taskUsage?: readonly import("./task-usage.js").TaskUsageSummary[];
+    /**
+     * P4 topology Option A1 (issue #283): the provenance-stamped surface
+     * observations posted by process-separated interactive surfaces. A separate
+     * journal from `taskUsage`; the view renders each with its `recordedBy`
+     * stamp and never treats a surface task id as hub-authoritative.
+     */
+    surfaceUsage?: readonly import("./task-usage.js").SurfaceUsageSummary[];
     /** W153: recorded schedule-origin attribution per run (observability-only). */
     runOrigins?: ReadonlyMap<string, import("./run-registry.js").RunOrigin>;
     /** W165: recorded run→PR work-product links per run (observability-only). */

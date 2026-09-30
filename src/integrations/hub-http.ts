@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 import type { WorkflowApplication, WorkflowSnapshot } from "../application/workflow.js";
+import { transportPermissionView, type PermissionBroker } from "../ui/permission-broker.js";
 import { buildReviewRubric } from "../review/rubric.js";
 import type { ReviewProvenanceRecord } from "../review/provenance.js";
 import { DuplicateRunError, WorkspaceDeclarationError } from "./run-registry.js";
@@ -16,6 +17,7 @@ import { operatorPosture, scheduleLineage, scheduleRecentRuns, type PostureBudge
 import { inProgressBoardTasks, workProductStates } from "./task-provider.js";
 import type { BoardOutcome, BoardTaskOutcome, CrossReferenceOutcome, WorkProductStateOutcome } from "./task-provider.js";
 import type { IssueDetailOutcome, ProviderReadRecord } from "./issue-detail.js";
+import type { SurfaceUsageObservation } from "./task-usage.js";
 
 /**
  * The hub's host-neutral loopback HTTP server and discovery bridge.
@@ -120,6 +122,25 @@ interface HubRequestContext {
    * timeline cross-references, from which the hub records the actual PR
    * reference (exactly-one rule; never a guess). */
   readonly discoverIssueCrossReferences?: (issueNumber: number) => Promise<CrossReferenceOutcome>;
+  /**
+   * P4 topology Option A1 (issue #283): the run registry's SURFACE-observation
+   * journal writer — the observability-only sink behind `POST /usage/record`.
+   * A process-separated interactive surface posts its provenance-stamped
+   * boundary delta here; the hub appends it to the separate surface journal
+   * (never the canonical `taskUsage` rollups). Absent → the route 404s
+   * (capability withheld, like the other optional registries).
+   */
+  readonly recordSurfaceUsage?: (observation: SurfaceUsageObservation) => void;
+  /**
+   * P6 (issue #285): the hub's SAME-PROCESS broker. When composed, the hub
+   * serves the broker's pending/answer path on `/api/permission`, so a guard
+   * `ask` held by the containment seat (which runs IN this process) is
+   * answerable — not the 120s park-then-deny. Absent → the route 404s
+   * (capability withheld, fail closed, exactly like the other optional
+   * registries). The broker is an in-process object, never cross-process
+   * plumbing.
+   */
+  readonly permissionBroker?: PermissionBroker;
 }
 
 export interface HubBridgeCapabilities {
@@ -140,6 +161,11 @@ export interface HubBridgeCapabilities {
   readonly discoverIssueCrossReferences?: (issueNumber: number) => Promise<CrossReferenceOutcome>;
   /** W176: the budget incident records accessor (see HubRequestContext). */
   readonly budgetIncidents?: () => readonly PostureBudgetIncident[] | undefined;
+  /** P4 topology Option A1 (issue #283): the surface-observation journal writer (see HubRequestContext). */
+  readonly recordSurfaceUsage?: (observation: SurfaceUsageObservation) => void;
+  /** P6 (issue #285): the same-process broker (see HubRequestContext) — a FIELD
+   * on the capabilities object, never a positional. */
+  readonly permissionBroker?: PermissionBroker;
 }
 
 /**
@@ -213,6 +239,43 @@ async function handleRequest(
     if (!authorized(request, requiredToken)) return send(response, 401, { error: "unauthorized" });
     if (request.url === "/health") return send(response, 200, { status: "ok" });
     const body = await readJson(request);
+    if (request.url === "/api/permission") {
+      // P6 (issue #285): the hub's same-process broker answer route. The hub
+      // composes a `PermissionBroker` into its lane; the containment seat (which
+      // runs in THIS process) parks a guard `ask` on `broker.askHold()`, and the
+      // operator resolves it here on the broker's ONE pending/answer transport.
+      // An id-less body is the poll; an `id` + `decision` body is the answer
+      // (the same two shapes the web `/api/permission` route serves). A hub
+      // composed without a broker serves no answer route — 404, fail closed.
+      if (context.permissionBroker === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body)) return send(response, 400, { error: "invalid permission request" });
+      const broker = context.permissionBroker;
+      if (body.id !== undefined) {
+        if (
+          typeof body.id !== "string" || body.id.length === 0 ||
+          (body.decision !== "allow_once" && body.decision !== "allow_always" &&
+            body.decision !== "reject_once" && body.decision !== "reject_always")
+        ) {
+          return send(response, 400, { error: "invalid permission decision request" });
+        }
+        const answered = broker.answer(body.id, body.decision);
+        if (typeof answered === "object") {
+          // P10 (residual #26): the same server-side approvability gate the web
+          // route renders — the structured refusal, never a false success.
+          return send(response, 409, { error: answered.refused, reason: answered.reason });
+        }
+        if (!answered) return send(response, 404, { error: "unknown or stale permission request" });
+      }
+      return send(response, 200, {
+        available: true,
+        mode: broker.mode(),
+        pending: transportPermissionView(broker.pendingRequest() ?? null),
+        // P6: the held asks riding the same transport are projected alongside
+        // the permission prompt (an ask has no tool capability/patterns).
+        pendingAsks: broker.pendingAsks(),
+        patterns: broker.patterns(),
+      });
+    }
     if (request.url === "/evidence-content") {
       // W158: the bounded content behind an evidence record's reference — the
       // operator token serves it (the same read class as /snapshot); an
@@ -235,6 +298,22 @@ async function handleRequest(
           ...(typeof body.taskPrompt === "string" ? { taskPrompt: body.taskPrompt } : {}),
         }),
       });
+    }
+    if (request.url === "/usage/record") {
+      // P4 topology Option A1 (issue #283): the provenance-stamped cross-process
+      // record path. A process-separated interactive surface POSTs its boundary
+      // delta here; the hub appends it to the SURFACE-observation journal, NOT
+      // the canonical `taskUsage` rollups. A surface-supplied task id is never
+      // trusted as authoritative attribution (W153) — the `recordedBy` stamp is
+      // mandatory and must carry the `surface:` prefix, so a client cannot claim
+      // a `hub`-class label. Observability-only: no state transition, no
+      // evidence, no authorization. Ordinary-token class (a same-UID surface
+      // class, like /run/begin), never verifier-only.
+      if (context.recordSurfaceUsage === undefined) return send(response, 404, { error: "not found" });
+      const parsed = parseSurfaceUsage(body);
+      if (typeof parsed === "string") return send(response, 400, { error: parsed });
+      context.recordSurfaceUsage(parsed);
+      return send(response, 200, {});
     }
     if (request.url === "/run/begin") {
       if (context.runController === undefined) return send(response, 404, { error: "not found" });
@@ -610,6 +689,9 @@ async function handleRequest(
         // W111: the recorded per-task boundary deltas ride the same
         // observability surface (a bounded append journal; observation only).
         ...(gates.taskUsage === undefined ? {} : { taskUsage: gates.taskUsage }),
+        // P4 topology Option A1: the provenance-stamped surface observations
+        // (a separate journal; each row carries its `recordedBy` stamp).
+        ...(gates.surfaceUsage === undefined ? {} : { surfaceUsage: gates.surfaceUsage }),
       };
       // Full WorkflowSnapshot shape so hub-attached monitors render the same
       // canonical projection as in-process surfaces.
@@ -690,6 +772,7 @@ async function handleRequest(
         completionClaims: Object.fromEntries(gates.completionClaims),
         ...(gates.runUsage === undefined ? {} : { usage: Object.fromEntries(gates.runUsage) }),
         ...(gates.taskUsage === undefined ? {} : { taskUsage: gates.taskUsage }),
+        ...(gates.surfaceUsage === undefined ? {} : { surfaceUsage: gates.surfaceUsage }),
         ...(gates.reasoningClaims === undefined ? {} : { reasoningClaims: Object.fromEntries(gates.reasoningClaims) }),
         ...(gates.reasoningClaimMetrics === undefined ? {} : { reasoningClaimMetrics: gates.reasoningClaimMetrics }),
       };
@@ -761,7 +844,10 @@ async function handleRequest(
       // W144: the hub's ad-hoc shell lane is bounded (the W142 wave's finding
       // (c): no timeout anywhere in the chain). The agent tool lane keeps its
       // current unbounded posture — a separate queued decision.
-      const shellExecutor = shellExecutorFor(application, undefined, true, context.guard, bashTimeoutMs(process.env));
+      // P6 (issue #285): the /bash containment seat composes the same-process
+      // broker-backed hold when the hub has one, so a guard `ask` is answerable
+      // on /api/permission instead of parking unanswerable.
+      const shellExecutor = shellExecutorFor(application, undefined, true, context.guard, bashTimeoutMs(process.env), context.permissionBroker?.askHold());
       // W145: a nonzero command exit is the COMMAND's result, not a server
       // fault — the executor's exit error carries the code, so the wire does
       // too: 422 {error, exitCode} (the W142 wave's finding (a)). Server
@@ -864,6 +950,51 @@ function parseProjectRecord(body: unknown): ProjectRecord | string {
     status: body.status,
     ...(budget === undefined ? {} : { budget }),
     workspaces: body.workspaces as readonly string[],
+  };
+}
+
+/**
+ * P4 topology Option A1 (issue #283): the /usage/record schema strip. Composes
+ * the surface observation from VALIDATED fields only. The `recordedBy`
+ * provenance stamp is mandatory and must carry the `surface:` prefix, so a
+ * client can never claim a `hub`-class attribution; the task id it posts is a
+ * labelled surface observation, never authoritative (W153). Returns the
+ * observation or the client-fault message.
+ */
+const SURFACE_USAGE_NUMBER_FIELDS = [
+  "requests",
+  "promptTokens",
+  "completionTokens",
+  "totalTokens",
+  "costUsd",
+  "cacheReadTokens",
+  "cacheCreateTokens",
+] as const;
+
+function parseSurfaceUsage(body: unknown): SurfaceUsageObservation | string {
+  if (!isRecord(body)) return "invalid usage record request";
+  if (typeof body.recordedBy !== "string" || !/^surface:.+/.test(body.recordedBy)) {
+    return "invalid usage record request: recordedBy must be a provenance stamp with the 'surface:' prefix";
+  }
+  if (typeof body.taskId !== "string" || body.taskId.trim().length === 0) {
+    return "invalid usage record request: taskId must be a non-empty string";
+  }
+  for (const field of SURFACE_USAGE_NUMBER_FIELDS) {
+    const value = body[field];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      return `invalid usage record request: ${field} must be a non-negative finite number`;
+    }
+  }
+  return {
+    recordedBy: body.recordedBy,
+    taskId: body.taskId,
+    requests: body.requests as number,
+    promptTokens: body.promptTokens as number,
+    completionTokens: body.completionTokens as number,
+    totalTokens: body.totalTokens as number,
+    costUsd: body.costUsd as number,
+    cacheReadTokens: body.cacheReadTokens as number,
+    cacheCreateTokens: body.cacheCreateTokens as number,
   };
 }
 

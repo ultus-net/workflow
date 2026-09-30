@@ -1,21 +1,21 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 
 import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { createOpenRouterAnalytics, usageTimeRange, type OpenRouterAnalytics } from "../integrations/openrouter-analytics.js";
 import { compactSession, fetchLiveMcp, fetchSessionStats } from "../integrations/opencode-live-state.js";
+import { readHubCredentials } from "../integrations/hub-discovery.js";
 import { nextCronMatch, type ScheduleDefinition } from "../integrations/hub-scheduler.js";
 import type { ProjectRecord, ProjectStatus } from "../integrations/project-registry.js";
 import { defaultSettings, mergeSettings, normalizeSettings, readSettingsFile, settingsPaths, writeSettingsFile } from "../integrations/workflow-settings.js";
 import { resolveToolboxCatalog } from "../integrations/toolbox-catalog.js";
 import { stepId, taskId, type TaskState } from "../kernel/contracts.js";
-import type { PendingPermissionRequest } from "./permission-broker.js";
+import { transportPermissionView } from "./permission-broker.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
 import { WebSessionManager, parseSessionBudgetRaise, type SessionSwitchResult } from "./web-sessions.js";
 import { isWebAgentId, listWebAgents } from "./web-agents.js";
@@ -74,26 +74,11 @@ export function createWorkflowWebServer(
   });
 
   /** The hub's operator credential, re-read per request so a hub restart is
-   * picked up without restarting this service. */
-  const hubCredentials = (): { url: string; token: string } | undefined => {
-    const dir = options?.hubDiscoveryDir ?? process.env.WORKFLOW_HUB_DIR ?? resolve(homedir(), ".workflow");
-    const path = join(dir, "hub", "discovery.json");
-    if (!existsSync(path)) return undefined;
-    try {
-      const value: unknown = JSON.parse(readFileSync(path, "utf8"));
-      if (
-        typeof value !== "object" || value === null ||
-        typeof (value as Record<string, unknown>).endpoint !== "string" ||
-        typeof (value as Record<string, unknown>).token !== "string"
-      ) {
-        return undefined;
-      }
-      const record = value as { endpoint: string; token: string };
-      return { url: record.endpoint, token: record.token };
-    } catch {
-      return undefined;
-    }
-  };
+   * picked up without restarting this service. The shared discovery read
+   * (`hub-discovery.ts`) is the same one the cross-process surface-usage
+   * client uses. */
+  const hubCredentials = (): { url: string; token: string } | undefined =>
+    readHubCredentials(options?.hubDiscoveryDir);
 
   /** Proxy one POST to the hub's operator routes; 503 when the hub is not
    * reachable (the browser sees "hub unavailable", never a token). */
@@ -1309,20 +1294,6 @@ export function createWorkflowWebServer(
     }
     return json(response, 404, { error: "not found" });
   });
-}
-
-/** W115: the 1s permission poll is a transport, not a bulk channel. An
- * oversized parked payload can never be approved (the card's 64 KiB
- * inspection cap renders it NOT-APPROVABLE-WITH-REASON), so shipping it to
- * the browser every poll is pure amplification. The transport view strips
- * `input` for flagged payloads and keeps the flag — the card stays
- * NOT-APPROVABLE-WITH-REASON without the payload, and the broker's parked
- * in-memory request is untouched for the answer path. */
-function transportPermissionView(pending: PendingPermissionRequest | null) {
-  if (pending === undefined || pending === null || pending.inputOverCap !== true) return pending;
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- the rest sibling IS the W115 strip: the payload is discarded by design
-  const { input: _stripped, ...view } = pending;
-  return { ...view, inputOverCap: true };
 }
 
 export interface GitWorktree {

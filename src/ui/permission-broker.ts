@@ -121,6 +121,22 @@ export interface PendingPermissionRequest {
   readonly readFingerprints: readonly string[];
 }
 
+/** W115: the 1s permission poll is a transport, not a bulk channel. An
+ * oversized parked payload can never be approved (the card's 64 KiB
+ * inspection cap renders it NOT-APPROVABLE-WITH-REASON), so shipping it to
+ * the operator every poll is pure amplification. The transport view strips
+ * `input` for flagged payloads and keeps the flag — the card stays
+ * NOT-APPROVABLE-WITH-REASON without the payload, and the broker's parked
+ * in-memory request is untouched for the answer path. Shared by the web
+ * `/api/permission` route and the hub's same-process route (P6, issue #285) so
+ * there is ONE classification. */
+export function transportPermissionView(pending: PendingPermissionRequest | null) {
+  if (pending === undefined || pending === null || pending.inputOverCap !== true) return pending;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- the rest sibling IS the W115 strip: the payload is discarded by design
+  const { input: _stripped, ...view } = pending;
+  return { ...view, inputOverCap: true };
+}
+
 /** A parked permission prompt: the authorization overlay's original park. */
 interface ParkedPermissionRequest {
   readonly kind: "permission";

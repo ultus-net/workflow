@@ -8,6 +8,9 @@ import { PermissionBroker } from "../ui/permission-broker.js";
 import { createAgentRuntime } from "../ui/web-agents.js";
 import { createWorkflowWebServer } from "../ui/web.js";
 import { loadSettings } from "../integrations/workflow-settings.js";
+import { surfaceUsageSink } from "../integrations/task-usage.js";
+import { createSurfaceUsagePost } from "../integrations/surface-usage-client.js";
+import type { WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
 import { WebSessionManager } from "../ui/web-sessions.js";
 import { buildWebappBundle } from "../ui/webapp/bundle.js";
 
@@ -64,16 +67,31 @@ export async function startWorkflowWeb(options: StartWorkflowWebOptions = {}): P
   // One broker for the whole service: permission mode and always/reject
   // patterns survive session switches; parked prompts are denied on switch.
   const permissionBroker = new PermissionBroker();
+  // P4 topology Option A1 (issue #283): the cross-process surface-usage sink.
+  // A completed interactive turn posts its provenance-stamped boundary delta to
+  // the hub's observability-only /usage/record route (read from the hub
+  // discovery file at post time; no hub → nothing recorded). The `usage`
+  // reading is deferred: it reads the runtime once it exists, at the turn
+  // boundary. The task id rides as a labelled `surface:web-service` observation,
+  // never hub-authoritative attribution (W153).
+  const postSurfaceUsage = createSurfaceUsagePost(
+    process.env.WORKFLOW_HUB_DIR === undefined ? {} : { hubDiscoveryDir: process.env.WORKFLOW_HUB_DIR },
+  );
   const manager = new WebSessionManager({
     // Load settings per session so an edit made on the settings page is
     // pushed into the next session's agent launch config. W151: a session's
     // persisted raised budget rides the same options into the runtime.
-    factory: (agent, resumeFrom, budgetOverride) =>
-      createAgentRuntime(agent, application, workspace, taskId("W001"), resumeFrom, {
+    factory: async (agent, resumeFrom, budgetOverride) => {
+      const usageHolder: { runtime?: WorkflowAcpRuntime } = {};
+      const composed = await createAgentRuntime(agent, application, workspace, taskId("W001"), resumeFrom, {
         permissionBroker,
         settings: loadSettings({ workspace }),
         ...(budgetOverride === undefined ? {} : { budgetOverride }),
-      }),
+        taskUsage: surfaceUsageSink(() => usageHolder.runtime?.metrics?.(), "surface:web-service", postSurfaceUsage),
+      });
+      usageHolder.runtime = composed;
+      return composed;
+    },
     permissionBroker,
   });
   const webapp = await buildWebappBundle();

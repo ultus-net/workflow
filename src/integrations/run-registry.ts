@@ -8,7 +8,7 @@ import { countReferencedAxes, MIN_REFERENCED_AXES } from "../review/rubric.js";
 import type { EvidenceContentStore } from "./evidence-content-store.js";
 import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-controller.js";
 import type { HubReviewerResult } from "./hub-reviewer.js";
-import type { TaskUsageSummary } from "./task-usage.js";
+import type { SurfaceUsageObservation, SurfaceUsageSummary, TaskUsageSummary } from "./task-usage.js";
 
 /** Launches the hub-owned reviewer for a run (plan Task A2). */
 export type RunReviewer = (input: {
@@ -217,6 +217,14 @@ export function createRunRegistry(
    */
   recordTaskUsage(input: Omit<TaskUsageSummary, "recordedAt">): void;
   taskUsage(): readonly TaskUsageSummary[];
+  /**
+   * P4 topology Option A1 (issue #283): append a provenance-stamped SURFACE
+   * observation posted by a process-separated interactive surface. Kept in a
+   * separate journal from `taskUsage` — the surface-supplied task id is a
+   * labelled observation, never canonical hub attribution (W153).
+   */
+  recordSurfaceUsage(input: SurfaceUsageObservation): void;
+  surfaceUsage(): readonly SurfaceUsageSummary[];
   /** Iteration 21: journal an advisory reasoning-claim finding (observability-only). */
   recordReasoningClaim(input: { readonly runId: string; readonly sentence: string }): void;
   /** Iteration 21: declare that the monitor observed a run (scheduled lane only; coverage denominator). */
@@ -299,6 +307,20 @@ export function createRunRegistry(
     taskUsage.push({ ...usage, recordedAt: new Date().toISOString() });
     while (taskUsage.length > 64) {
       taskUsage.shift();
+    }
+  };
+  // P4 topology Option A1 (issue #283): the SURFACE-OBSERVATION journal — the
+  // provenance-stamped deltas posted by process-separated interactive surfaces
+  // through the observability-only /usage/record route. Kept SEPARATE from the
+  // canonical `taskUsage` journal on purpose: a surface-supplied task id is not
+  // hub-authoritative attribution (the W153 principle), so it is rendered with
+  // its `recordedBy` stamp and never merged into the hub-derived rollups. Same
+  // bounded-append discipline (FIFO at 64) as the sibling journal.
+  const surfaceUsage: SurfaceUsageSummary[] = [];
+  const rememberSurfaceUsage = (observation: SurfaceUsageObservation): void => {
+    surfaceUsage.push({ ...observation, recordedAt: new Date().toISOString() });
+    while (surfaceUsage.length > 64) {
+      surfaceUsage.shift();
     }
   };
   // Iteration 21: reasoning-claims accountability feed (advisory-only), mirroring
@@ -425,6 +447,9 @@ export function createRunRegistry(
         // W111: the recorded per-task boundary deltas (bounded append journal)
         // ride the same observability surface for hub-attached monitors.
         taskUsage,
+        // P4 topology Option A1: the provenance-stamped surface observations
+        // (separate journal; never merged with the canonical taskUsage rollups).
+        surfaceUsage,
         reasoningClaims,
         runOrigins,
         workProductLinks,
@@ -760,6 +785,12 @@ export function createRunRegistry(
     },
     taskUsage(): readonly TaskUsageSummary[] {
       return taskUsage;
+    },
+    recordSurfaceUsage(input: SurfaceUsageObservation): void {
+      rememberSurfaceUsage(input);
+    },
+    surfaceUsage(): readonly SurfaceUsageSummary[] {
+      return surfaceUsage;
     },
     /**
      * Iteration 21: journal an advisory reasoning-claim finding for a run.
