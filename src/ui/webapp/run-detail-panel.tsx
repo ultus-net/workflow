@@ -60,6 +60,7 @@ import type {
   RunRowView,
   RunUsageSummaryView,
   RunsRecordState,
+  TaskUsageSummaryView,
   WorkProductLinkView,
 } from "./runs-record.js";
 import type { TimelineState } from "./activity-timeline.js";
@@ -96,6 +97,75 @@ export function timelineRowsForRun(rows: readonly TimelineRow[], runId: string):
  */
 export function evidenceRowsForRun(rows: readonly HubEvidenceRow[], runId: string): readonly HubEvidenceRow[] {
   return rows.filter((row) => row.subject === runId);
+}
+
+/**
+ * W111: the recorded per-task boundary deltas for ONE run's task. Q1 (issue
+ * #283) decided the run application's task is the canonical `run:<id>` — the
+ * exact id its lanes record at boundary time — so the join is on that recorded
+ * task id. The view derives no delta and no task id: it selects the records the
+ * hub wrote. A run whose task recorded nothing selects nothing (the named
+ * absence), never a fabricated zero.
+ */
+export function taskUsageForRun(entries: readonly TaskUsageSummaryView[], runId: string): readonly TaskUsageSummaryView[] {
+  const recordedTaskId = "run:" + runId;
+  return entries.filter((entry) => entry.taskId === recordedTaskId);
+}
+
+/**
+ * W111: the recorded rollup for a task's entries — the SUM of the recorded
+ * boundary deltas (the documented per-task rollup). This is an aggregation of
+ * records, never a view-side delta computed from cumulative counters; an empty
+ * list sums to zero entries and is rendered as the named absence upstream.
+ */
+export function sumTaskUsage(entries: readonly TaskUsageSummaryView[]): { readonly requests: number; readonly totalTokens: number; readonly costUsd: number } {
+  let requests = 0;
+  let totalTokens = 0;
+  let costUsd = 0;
+  for (const entry of entries) {
+    requests += entry.requests;
+    totalTokens += entry.totalTokens;
+    costUsd += entry.costUsd;
+  }
+  return { requests, totalTokens, costUsd };
+}
+
+/**
+ * W111: the recorded per-task attribution for ONE run's task. Renders each
+ * recorded entry VERBATIM, the recorded rollup (the sum of the entries), and a
+ * boundary statement; a hub that omitted the family and a run whose task
+ * recorded nothing each render their own NAMED absence, never a fabricated
+ * zero. Projection-only: the entries are the relay's records, read as-is.
+ */
+function TaskAttributionSection({ journal, runId }: { readonly journal: readonly TaskUsageSummaryView[] | undefined; readonly runId: string }) {
+  if (journal === undefined) {
+    return <p className="runs-absent">task attribution not recorded by this hub</p>;
+  }
+  const entries = taskUsageForRun(journal, runId);
+  if (entries.length === 0) {
+    return <p className="runs-absent">no task attribution recorded for this run</p>;
+  }
+  const totals = sumTaskUsage(entries);
+  return (
+    <>
+      <ul className="run-task-usage">
+        {entries.map((entry, index) => (
+          <li key={entry.taskId + ":" + entry.recordedAt + ":" + String(index)} className="run-task-usage-row">
+            <code>{entry.taskId}</code>{" · "}
+            requests {entry.requests}{" · "}
+            total {formatTokens(entry.totalTokens)}{" · "}
+            {"$" + entry.costUsd.toFixed(4)}{" · "}
+            cache r/w {entry.cacheReadTokens}/{entry.cacheCreateTokens}{" · "}
+            <time dateTime={entry.recordedAt} title={entry.recordedAt}>{formatRelativeTime(entry.recordedAt)}</time>
+          </li>
+        ))}
+      </ul>
+      <p className="runs-muted">
+        recorded rollup (sum of recorded entries): {formatTokens(totals.totalTokens)} tokens · {"$" + totals.costUsd.toFixed(4)} · {totals.requests} requests · {entries.length} recorded turn{entries.length === 1 ? "" : "s"}
+      </p>
+      <p className="runs-muted">the rollup is the sum of recorded boundary deltas — the view derives no delta from cumulative counters</p>
+    </>
+  );
 }
 
 export interface RunDetailPanelProps {
@@ -137,6 +207,7 @@ export function RunDetailPanel({
   const origin: RunOriginView | undefined = runs?.origins?.[runId];
   const workProduct: WorkProductLinkView | undefined = runs?.workProducts?.[runId];
   const usage: RunUsageSummaryView | undefined = runs?.usage?.[runId];
+  const taskUsageJournal: readonly TaskUsageSummaryView[] | undefined = runs?.taskUsage;
   const claim: CompletionClaimView | undefined = runs?.completionClaims[runId];
   const outcome: ReviewOutcomeView | undefined = runs?.reviewOutcomes[runId];
   const blocking: string | undefined = runs?.blockingReasons[runId];
@@ -345,6 +416,8 @@ export function RunDetailPanel({
                 <div className="run-usage-row"><dt>recorded at</dt><dd><time dateTime={usage.recordedAt} title={usage.recordedAt}>{usage.recordedAt}</time></dd></div>
               </dl>
             )}
+          <h4 className="run-detail-sub">Per-task attribution</h4>
+          <TaskAttributionSection journal={taskUsageJournal} runId={runId} />
         </section>
       </div>
     </section>

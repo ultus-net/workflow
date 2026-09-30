@@ -9,6 +9,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import {
   RunDetailPanel,
   evidenceRowsForRun,
+  sumTaskUsage,
+  taskUsageForRun,
   timelineRowsForRun,
 } from "../src/ui/webapp/run-detail-panel.js";
 import {
@@ -107,6 +109,14 @@ function fullRunsRecord(): RunsRecordState {
           recordedAt: "2026-09-30T10:05:00Z",
         },
       },
+      // W111: the recorded per-task boundary deltas (the run lane's canonical
+      // `run:<id>` task). Two entries on the same task so the rollup is a SUM
+      // of records, never a latest-wins collapse.
+      taskUsage: [
+        { taskId: "run:" + ROW_SCHEDULE, requests: 1, promptTokens: 400, completionTokens: 40, totalTokens: 440, costUsd: 0.004, cacheReadTokens: 50, cacheCreateTokens: 5, recordedAt: "2026-09-30T10:02:00Z" },
+        { taskId: "run:" + ROW_SCHEDULE, requests: 1, promptTokens: 600, completionTokens: 60, totalTokens: 660, costUsd: 0.006, cacheReadTokens: 80, cacheCreateTokens: 9, recordedAt: "2026-09-30T10:05:00Z" },
+        { taskId: "run:" + ROW_BOARD, requests: 1, promptTokens: 20, completionTokens: 2, totalTokens: 22, costUsd: 0.0002, cacheReadTokens: 0, cacheCreateTokens: 0, recordedAt: "2026-09-30T10:06:00Z" },
+      ],
       reasoningClaims: {
         [ROW_ADHOC]: { runId: ROW_ADHOC, sentence: "claims tests pass with no observed test run", observedAt: "2026-09-30T10:04:00Z" },
       },
@@ -328,6 +338,40 @@ test("absent record families render their named absence — never a fabricated p
   assert.equal(count(markup, ">recorded cost</dt>"), 0, "no cost is fabricated for a run with no usage record (the usage dl does not render)");
   assert.ok(count(markup, "cache read:") === 0, "no cache asymmetry line renders without a usage record");
   assert.ok(!markup.includes("board-liveness"), "no liveness pill renders without a recorded provider read (the W167 rule)");
+});
+
+test("W111 (issue #283): the per-task view renders the RECORDED deltas verbatim, the rollup a sum of records, and names absent/empty", () => {
+  // The recorded /snapshot gateObservability.taskUsage journal rides the runs
+  // relay. The view selects the run's canonical task (`run:<id>`, Q1) and
+  // renders the records as-is — it derives no delta from cumulative counters.
+  const markup = renderToStaticMarkup(createElement(RunDetailPanel, detailProps({ runId: ROW_SCHEDULE })));
+  assert.ok(markup.includes("Per-task attribution"), "the per-task section renders on the run surface");
+  assert.ok(markup.includes("run:" + ROW_SCHEDULE), "the run's canonical recorded task id renders verbatim");
+  assert.ok(markup.includes("$0.0040") && markup.includes("$0.0060"), "each recorded delta's cost renders verbatim, never a computed delta");
+  assert.ok(markup.includes("2026-09-30T10:02:00Z") && markup.includes("2026-09-30T10:05:00Z"), "each recorded entry's recordedAt renders (full stamp on hover)");
+  assert.ok(markup.includes("cache r/w 50/5") && markup.includes("cache r/w 80/9"), "the P12 cache fields ride each recorded entry verbatim");
+  // The rollup is the SUM of the two recorded entries (440 + 660 = 1100 → 1.1k;
+  // $0.004 + $0.006 = $0.0100), labelled as a sum of records — not a live meter.
+  assert.ok(markup.includes("recorded rollup (sum of recorded entries): 1.1k tokens · $0.0100 · 2 requests · 2 recorded turns"), "the recorded rollup is the sum of records, labelled as such");
+  assert.ok(!markup.includes("2026-09-30T10:06:00Z"), "another run's recorded task entry is NOT claimed by this run (the task join is exact)");
+
+  // Selector purity: the join keys on the canonical recorded task id, never a
+  // parse of the run row's other fields.
+  const entries = fullRunsRecord().runs!.taskUsage!;
+  assert.deepEqual(taskUsageForRun(entries, ROW_SCHEDULE).map((entry) => entry.recordedAt), ["2026-09-30T10:02:00Z", "2026-09-30T10:05:00Z"]);
+  assert.deepEqual(sumTaskUsage(taskUsageForRun(entries, ROW_SCHEDULE)), { requests: 2, totalTokens: 1100, costUsd: 0.01 });
+  assert.deepEqual(taskUsageForRun(entries, ROW_ADHOC), [], "a run whose task recorded nothing selects nothing — the named absence, never a fabricated zero");
+
+  // Empty state: entries present for other tasks, none for this run.
+  const empty = renderToStaticMarkup(createElement(RunDetailPanel, detailProps({ runId: ROW_ADHOC })));
+  assert.ok(empty.includes("no task attribution recorded for this run"), "a run with no recorded task entry names the absence");
+  // Absent family: a hub that omits the journal entirely.
+  const absent = renderToStaticMarkup(createElement(RunDetailPanel, detailProps({ record: bareRunsRecord() })));
+  assert.ok(absent.includes("task attribution not recorded by this hub"), "a hub that omits the taskUsage family names the honest absence");
+
+  // No view-side derivation: the panel never imports the delta arithmetic.
+  const source = readFileSync(resolve("src/ui/webapp/run-detail-panel.tsx"), "utf8");
+  assert.ok(!source.includes("taskUsageDelta"), "the view never derives a delta — it selects and sums recorded entries only");
 });
 
 test("the evidence tab: the run's records under it, the shared W158 row renderer, named absences", () => {
