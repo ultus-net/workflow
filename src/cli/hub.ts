@@ -17,7 +17,7 @@ import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-g
 import { hubPromptGuidanceFromEnv } from "../integrations/prompt-guidance.js";
 import { createReviewerFactory, createRunTestRunner } from "../integrations/hub-run-gates.js";
 import { createJsonReviewProvenanceStore } from "../integrations/review-provenance-store.js";
-import { createConfiguredAcpRuntime } from "../integrations/acp-runtime.js";
+import { createConfiguredAcpRuntime, type WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
 import { canonicalWorkspace } from "../integrations/run-registry.js";
 import { TaskUsageAttributor, laneTaskUsageSink } from "../integrations/task-usage.js";
 import {
@@ -136,7 +136,7 @@ const reviewProvenanceStore = createJsonReviewProvenanceStore(reviewProvenancePa
 const reviewerFactory = createReviewerFactory({
   shell: containedShell(false),
   provenanceStore: reviewProvenanceStore,
-  createRuntime: async ({ workspace: reviewerWorkspace }) => {
+  createRuntime: async ({ workspace: reviewerWorkspace, recordTaskUsage }) => {
     const reviewerApplication = new WorkflowApplication(
       graph,
       hostCapabilities({ transport: "native", authoritativePreMutation: true }),
@@ -145,7 +145,17 @@ const reviewerFactory = createReviewerFactory({
       reviewerWorkspace,
     );
     const reviewerTask = beginKernelSessionTask(reviewerApplication, { idPrefix: "hub-reviewer", title: "Hub reviewer session" });
-    const runtime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerTask.taskId, undefined, guard).catch((error: unknown) => {
+    // W111 (issue #283): the hub composition root holds the run registry, so
+    // the reviewer lane's ACP runtime supplies the driver-side attribution sink
+    // — each COMPLETED reviewer turn publishes its per-task boundary delta into
+    // the same journal the scheduler and RSI lanes write. The sink's pointer is
+    // the runtime's existing lazy correlation (the reviewer session task,
+    // `hub-reviewer:<id>`, IN_PROGRESS for the review's whole lifetime), read at
+    // boundary time, never inferred. `usage` is deferred: the runtime exists by
+    // turn boundary.
+    const runtime: WorkflowAcpRuntime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerTask.taskId, undefined, guard, {
+      taskUsage: laneTaskUsageSink(() => runtime.metrics?.(), (delta) => recordTaskUsage(delta)),
+    }).catch((error: unknown) => {
       // #134: a runtime that never came up still opened its kernel task —
       // close it failed so the shared graph never carries an IN_PROGRESS
       // hub-reviewer task.

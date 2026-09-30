@@ -180,3 +180,43 @@ test("#134: the adapter forwards endTask on the failure path too (a throwing rev
   await assert.rejects(registry.controller.finish({ runId: "author-7", outcome: "verified" }), /did not complete/);
   assert.deepEqual(outcomes, ["failed"], "the adapter forwarded endTask — the kernel task failed on the review's error path");
 });
+
+// W111 (issue #283): the reviewer lane is the remaining registry-holding
+// composition root that composes an ACP runtime. The factory now forwards the
+// registry's per-task journal writer into the reviewer runtime, so a COMPLETED
+// reviewer turn publishes its boundary delta into the one taskUsage journal the
+// scheduler and RSI lanes write. Before the seam, the writer never reaches the
+// runtime and a completed review records nothing.
+test("W111 (issue #283): the reviewer factory forwards the registry's per-task journal writer into the reviewer runtime", async (t) => {
+  const base = setup();
+  t.after(() => rmSync(base.workspace, { recursive: true, force: true }));
+  const factory = createReviewerFactory({
+    shell: async (command) => (command.startsWith("git status") ? "M  src/thing.ts\0" : "diff --git a/x b/x"),
+    createRuntime: async ({ recordTaskUsage }) => ({
+      async submit() {
+        // Emulate the ACP runtime's completed-turn boundary: the sink the
+        // factory forwarded reaches the registry's journal writer.
+        recordTaskUsage({
+          taskId: "hub-reviewer:test",
+          requests: 1,
+          promptTokens: 5,
+          completionTokens: 2,
+          totalTokens: 7,
+          costUsd: 0.001,
+          cacheReadTokens: 0,
+          cacheCreateTokens: 0,
+        });
+      },
+      snapshot: () => ({ state: "completed", result: `[APPROVE]\n${AXES_SUMMARY}\n[COVERAGE] src/thing.ts` }),
+      async dispose() {},
+    }),
+  });
+  const registry = createRunRegistry(base.application, base.graph, { reviewer: factory });
+  await registry.controller.begin({ runId: "author-8", title: "Author run", workspace: base.workspace, requiresReview: true });
+  await registry.controller.finish({ runId: "author-8", outcome: "verified" });
+
+  const recorded = registry.taskUsage();
+  assert.equal(recorded.length, 1, "a completed reviewer turn publishes exactly one per-task delta through the forwarded journal writer");
+  assert.equal(recorded[0]?.taskId, "hub-reviewer:test");
+  assert.equal(recorded[0]?.totalTokens, 7);
+});
