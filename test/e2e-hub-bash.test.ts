@@ -384,14 +384,16 @@ test("the compiled hub's /bash and /run/begin lanes: auth directions, the contai
   assert.equal(beginShapeless.status, 400);
   assert.deepEqual(beginShapeless.body, { error: "invalid run begin request" });
 
-  // (e) the registry's REMAINING client-shaped refusals land in the 500
-  // catch-all (recorded, not fixed): empty runId and a duplicate runId.
-  // W146 (2026-09-25) flipped the third member of this family — the
-  // CANNOT-CANONICALIZE workspace (run-registry.ts) — to a 400: it is now
-  // the typed WorkspaceDeclarationError, a client fault, pinned below.
+  // (e) the client-shaped refusals classify as 400s. W146 (2026-09-25)
+  // flipped the CANNOT-CANONICALIZE workspace (run-registry.ts) — now the
+  // typed WorkspaceDeclarationError, pinned below. The 2026-09-30 harvest-4
+  // closed the EMPTY runId/title member at the route (validated before the
+  // registry is reached); only the duplicate-runId 500 remains recorded (it
+  // fires inside the registry and needs a typed registry error or a
+  // membership lookup).
   const beginEmptyRunId = await postRoute(endpoint, "/run/begin", token, { runId: "  ", title: "t", workspace });
-  assert.equal(beginEmptyRunId.status, 500);
-  assert.deepEqual(beginEmptyRunId.body, { error: "run begin requires a non-empty runId and title" });
+  assert.equal(beginEmptyRunId.status, 400, "an empty runId is a client fault (W146 residual closed 2026-09-30)");
+  assert.deepEqual(beginEmptyRunId.body, { error: "invalid run begin request" });
   const beginNonCanonical = await postRoute(
     endpoint,
     "/run/begin",
@@ -440,7 +442,9 @@ test("the compiled hub's /bash and /run/begin lanes: auth directions, the contai
     `the run record is the only visible task — observed: ${JSON.stringify(afterBegin.tasks)}`,
   );
 
-  // The duplicate refusal (run-registry.ts:284) — again a 500 (finding (e)).
+  // The duplicate refusal (run-registry.ts:284) — still a 500: it fires
+  // inside the registry, past the route's shape validation, and needs a
+  // typed registry error or a membership lookup (recorded, not fixed).
   const beginDuplicate = await postRoute(endpoint, "/run/begin", token, { runId, title: "t", workspace });
   assert.equal(beginDuplicate.status, 500);
   assert.deepEqual(beginDuplicate.body, { error: `duplicate run: ${runId}` });

@@ -22,3 +22,17 @@
 **Red/green honesty (no fabricated red):** this is a COVERAGE pin, not a behavior fix — the daemon ask path was already wired (W094) and the authority hold already landed (W092), so there is nothing to make red in `src/`. The initial two-test red capture was entirely a harness bug in the *new test* (read `decisions()` before delivery; a 10 ms wait shorter than the real MCP guard round-trip). Reported, not dressed up as a product finding.
 
 **Evidence:** red capture verbatim (first run, unmodified `src`): `test 1` failed at line 93 `expected: 'allow'` (the test read the journal before the operator answered), `test 2` `the ask must be held before the timeout: 0 !== 1` (10 ms poll race); `# pass 0 # fail 2`. Fixed the harness (poll for the hold; assert the journal after `await running`) — no `src` change. Green: `test/opencode-server-ask-e2e.test.ts` 2/2; the focused battery `test/opencode-server-ask-e2e.test.ts test/opencode-server-authority.test.ts test/opencode-server-launcher.test.ts` 44/44. `npm run lint` exit 0; `npm run typecheck` exit 0 (both unpiped). Branch `feat/p6-ask-channel`. Issue #285 stays OPEN for the live/design-gated remainder (the ask channel on the four seats, the plane-3′ surface, `trustedRole` supply, the live daemon spawn, the npm-pack debt); the PR references it.
+
+**2026-09-30 (dated supersession — the plane-3′ surface, broker-unified):** the
+P6 "ask channel on the other four seats" and "plane-3′ pending-ask surface" rows
+above are now partially landed via the operator's chosen BROKER-UNIFIED answer
+path (option A, `docs/P6_SEATS_ASK_DESIGN_BRIEF.md` §4). `PermissionBroker` now
+carries a guard `ask` as an ask-kind park on the SAME `/api/permission`
+poll/answer transport as a permission prompt (`parkAsk`/`answerAsk`/`askHold`),
+and the ACP runtime lane composes the broker-backed hold into the ACP permission
+resolver and the hub fs seat. The four-seat collapse is therefore retired for
+those two seats on that lane; the in-process OpenCode plugin still has no
+production composition site, the containment process seat still collapses `ask`
+to deny (guard-after-authorize ordering is its own item), and the out-of-process
+daemon hold (option B) is untouched. Record: `docs/ledger/ask-answer-surface.md`.
+Issue #285 remains OPEN for those remaining seats/lane and `trustedRole`.

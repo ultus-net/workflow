@@ -18,6 +18,14 @@
  * always allowed. A tier that flagged every tool_use/tool_result turn would
  * contradict the policy that sends those turns here.
  *
+ * SAFE BY CONSTRUCTION (2026-09-30, harvest-4). The `unattributed-tool-result`
+ * signal fires only when no PRECEDING `tool_use` carries the result's id. A host
+ * body that satisfies the vendor's Messages schema cannot trigger it: the schema
+ * pairs a user `tool_result` with the assistant turn's `tool_use`, and W070b's
+ * sanctioned synthetic insertion (the traffic this lane exists to carry) is a
+ * MATCHED pair. The signal is therefore not a false-reject surface; the live
+ * host-body audit remains the production gate before the tier turns on.
+ *
  * Pure policy plus deterministic detection: no IO, no model id, no vendor
  * contract — the vendor's Messages schema is structural. It never claims to
  * prevent anything beyond refusing a body that cannot be safely replayed at the

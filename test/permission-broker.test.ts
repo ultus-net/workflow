@@ -213,3 +213,74 @@ test("parked request carries a capped input preview", async () => {
   assert.ok(request.inputPreview !== undefined && request.inputPreview.length < 4 * 1024);
   broker.answer(request.id, "reject_once");
 });
+
+// ── P6 (issue #285): the unified answer path — a guard `ask` on the broker ──
+//
+// A held ask parks on the SAME transport as a permission prompt:
+// `pendingRequest()`/the `/api/permission` poll surfaces it and the same
+// `answer()` resolves it (any allow → `once`, reject → `reject`), with the
+// hold's timeout fail-closed. Seats consume it through `askHold()`.
+
+const ask = { requestId: "tool-ask", policy: "promotion-gate", reason: "promotion requires operator approval" } as const;
+
+test("P6: a held ask parks on the broker's pending transport and an allow resolves it", async () => {
+  const broker = new PermissionBroker();
+  const hold = broker.askHold("session-a");
+  const parked = hold.park(ask);
+  await new Promise((resolve) => setImmediate(resolve));
+  const pending = broker.pendingRequest("session-a");
+  assert.ok(pending !== undefined, "the held ask must be visible on the one poll transport");
+  assert.equal(pending.tool, "promotion-gate");
+  assert.equal(hold.pendingCount, 1);
+  assert.equal(broker.answer(pending.id, "allow_once", "session-a"), true, "the /api/permission answer resolves the ask");
+  assert.equal(await parked, "once");
+  assert.equal(broker.pendingRequest("session-a"), undefined, "answering clears the parked ask");
+});
+
+test("P6: an operator reject resolves the held ask to reject and records no tool pattern", async () => {
+  const broker = new PermissionBroker();
+  const hold = broker.askHold("session-a");
+  const parked = hold.park(ask);
+  await new Promise((resolve) => setImmediate(resolve));
+  const pending = broker.pendingRequest("session-a")!;
+  assert.equal(broker.answer(pending.id, "reject_always", "session-a"), true);
+  assert.equal(await parked, "reject");
+  assert.deepEqual(broker.patterns().alwaysReject, [], "an ask is a policy decision, not a tool pattern: reject_always records nothing");
+});
+
+test("P6: the ask answer is as session-scoped as the poll", async () => {
+  const broker = new PermissionBroker();
+  const hold = broker.askHold("session-a");
+  const parked = hold.park(ask);
+  await new Promise((resolve) => setImmediate(resolve));
+  const pending = broker.pendingRequest("session-a")!;
+  assert.equal(broker.answer(pending.id, "allow_once", "session-b"), false, "a foreign key must not consume the ask");
+  assert.equal(broker.pendingRequest("session-a")?.id, pending.id, "the ask survives the foreign-key attempt");
+  assert.equal(broker.answer(pending.id, "allow_once", "session-a"), true, "the owning key resolves it");
+  assert.equal(await parked, "once");
+});
+
+test("P6: an unanswered held ask fails closed to reject on the hold window", async () => {
+  const broker = new PermissionBroker();
+  const parked = broker.parkAsk(ask, "session-a", 5);
+  assert.equal(await parked, "reject", "an unanswered ask must never allow");
+  assert.equal(broker.pendingRequest("session-a"), undefined);
+});
+
+test("P6: cancelling rejects the held ask (a cancelled turn must not leave it dangling)", async () => {
+  const broker = new PermissionBroker();
+  const hold = broker.askHold("session-a");
+  const parked = hold.park(ask);
+  await new Promise((resolve) => setImmediate(resolve));
+  broker.cancelPending("turn cancelled", "session-a");
+  assert.equal(await parked, "reject");
+  assert.equal(hold.pendingCount, 0);
+});
+
+test("P6: an early operator reply is consumed by the park that follows", async () => {
+  const broker = new PermissionBroker();
+  const hold = broker.askHold("session-a");
+  assert.equal(hold.answer("tool-ask", "once"), false, "no pending ask yet: the reply is remembered");
+  assert.equal(await hold.park(ask), "once", "the park consumes the racing reply");
+  assert.equal(hold.pendingCount, 0);
+});

@@ -96,3 +96,30 @@ root that composes an ACP runtime with no driver-side sink yet.
 - **Issue #283 stays OPEN** — the view-derives-nothing criterion is now met for
   the run surface and the driver-side sink composes at the registry-holding
   root; the out-of-process interactive sink and §5 Q4 remain.
+
+**2026-09-30 (dated supersession — the shared in-process composition seam):**
+the unified ask-answer surface (`docs/ledger/ask-answer-surface.md`, issues
+#285/#283) lands a second consumer of the SAME in-process composition root named
+above — `AcpRuntimeOptions` now threads the shared `PermissionBroker` into all
+three ACP driver flavors, and the driver derives a broker-backed ask hold from
+it. This does **not** touch the W111 attribution sink or the per-task view: the
+interactive roots still publish no `TaskUsageSummary`, and §5 Q4
+(server-topology per-session plumbing) stays OPEN. It is recorded here only
+because it exercises the identical root, evidencing that a broker-backed
+per-session seam is now available there if the attribution lane's owning
+composition chooses the same route.
+
+> **Dated note (2026-09-30, branch `feat/harvest-4`): the shared 64-slot
+> journal's cross-lane eviction pressure, named.** The per-task attribution
+> journal is ONE append journal (`recordTaskUsage`/`taskUsage()`,
+> `src/integrations/run-registry.ts:273-283`), FIFO-evicted at 64 entries and
+> SHARED across every lane that supplies a driver sink (the RSI lane wired here,
+> the scheduler lane, and any future lane). Because the W111 record's rule is
+> that entries are NEVER collapsed latest-per-task (the per-task rollup is the
+> SUM of recorded entries, so a lost entry under-reports), a burst of turns on
+> one lane can evict another lane's still-un-summed entries before a reader
+> renders them — the eviction is cross-lane, not merely intra-lane. This is
+> recorded as a named boundary, not fixed here: a fix needs either per-lane/
+> per-run partitioning of the journal or a larger bound, and both change the
+> `/snapshot`→`/api/runs` projection contract. The review's P3 (commit
+> `4d1b5970`) is thereby dispositioned as a named residual.

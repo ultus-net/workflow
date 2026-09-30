@@ -24,6 +24,7 @@ import type { AcpPermissionRequestParams } from "../adapters/acp-permission.js";
 import { createWorkflowAcpPermissionResolver } from "../adapters/acp-workflow-resolver.js";
 import { guardInputFromToolCall, type WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import type { OperatorAskHold } from "./operator-ask-hold.js";
+import type { PermissionBroker } from "../ui/permission-broker.js";
 import { TaskUsageAttributor, type TaskUsageSummary } from "./task-usage.js";
 import type { ModelUsageMetrics } from "./model-usage-proxy.js";
 
@@ -138,6 +139,15 @@ export class AcpSessionDriver implements CodingSessionDriver {
      * closed, matching today's behavior but with honest ask provenance.
      */
     hold?: OperatorAskHold;
+    /**
+     * P6 (issue #285): the shared permission broker. When supplied (and no
+     * explicit `hold` is), the driver backs the operator ask hold with the
+     * broker's ONE answer transport — a held ask from either seat appears on
+     * `/api/permission` and is answered by the same route that answers a
+     * permission prompt. Scoped to this driver's `workspaceSessionId`, the key
+     * the web channel polls and answers with.
+     */
+    permissionBroker?: PermissionBroker;
     onSkillRead?: (skill: string) => void;
     onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
     onReadFingerprint?: (fingerprint: import("../application/host.js").ReadFingerprint) => void;
@@ -165,7 +175,10 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#taskId = options.taskId;
     this.#resumeFrom = options.resumeFrom;
     this.#guard = options.guard;
-    this.#hold = options.hold;
+    // P6 (issue #285): an explicitly supplied hold wins (tests/embedding); a
+    // broker-backed hold carries a seat's held ask on the broker's one answer
+    // transport when a broker is composed.
+    this.#hold = options.hold ?? options.permissionBroker?.askHold(options.workspaceSessionId);
     this.#onSkillRead = options.onSkillRead;
     this.#onToolOutcome = options.onToolOutcome ?? (typeof options.authorize === "function" ? undefined : (sessionId, outcome, tool, reason) => (options.authorize as WorkflowApplication).recordToolOutcome(sessionId, outcome, tool, reason));
     this.#onReadFingerprint = options.onReadFingerprint ?? (typeof options.authorize === "function" ? undefined : (fingerprint) => (options.authorize as WorkflowApplication).recordReadFingerprint(fingerprint));
@@ -270,6 +283,8 @@ export class AcpSessionDriver implements CodingSessionDriver {
     guard?: WorkflowGuardProvider;
     /** P6 seats (issue #285): the operator ask hold, passed through to the driver. */
     hold?: OperatorAskHold;
+    /** P6 (issue #285): the shared broker, passed through so the driver backs its ask hold on the broker's one answer transport. */
+    permissionBroker?: PermissionBroker;
      onSkillRead?: (skill: string) => void;
       onToolOutcome?: (sessionId: string, outcome: "succeeded" | "failed", tool: string, reason?: string) => void;
       onTodoUpdate?: (entries: readonly { readonly id?: string; readonly content: string; readonly status: "pending" | "in_progress" | "completed" | "cancelled" }[]) => void;
@@ -648,6 +663,10 @@ export class AcpSessionDriver implements CodingSessionDriver {
       // Plan Task G2: the guard dispatcher gates ACP sessions identically to
       // the /before-tool route when a provider is composed into the runtime.
       ...(this.#guard === undefined ? {} : { guard: this.#guard }),
+      // P6 (issue #285): the ACP permission-request seat parks a guard `ask`
+      // on the same operator hold the fs seat uses (broker-backed when the
+      // driver was composed with a broker).
+      ...(this.#hold === undefined ? {} : { hold: this.#hold }),
       workspaceRoot: this.#workspace,
       // Plan Task F1/F3: journal skill delivery on allowed read_skill calls.
       ...(this.#onSkillRead === undefined ? {} : { onSkillRead: this.#onSkillRead }),
