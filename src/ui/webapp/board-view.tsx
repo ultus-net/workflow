@@ -4,7 +4,7 @@ import type { IssueDetailOutcome, ProviderReadRecord } from "../../integrations/
 import { BOARD_POLL_MS, BOARD_LINK_LIVENESS_LABELS, boardLinkLiveness } from "./presenters.js";
 import { withColumnDensity, withColumnPageSize, type IssueViewState } from "./issue-view-state.js";
 import type { GitStatus, GitWorktree } from "./app.js";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * The Board page (W161): the hub's external task board projected live. The
@@ -40,7 +40,7 @@ import { useState } from "react";
  * review, so in_progress outranks the work-product state; once the run
  * finishes the payload drops the key and the W165 model decides.
  */
-export function BoardView({ board, reason, read, workProducts, inProgress, viewState, onViewState, projectWorkspaces, gitStatus, worktrees }: {
+export function BoardView({ board, reason, read, workProducts, inProgress, viewState, onViewState, projectWorkspaces, gitStatus, worktrees, onOpenDetail }: {
   readonly board: BoardOutcome | null | undefined;
   readonly reason?: string | undefined;
   readonly read?: ProviderReadRecord | null | undefined;
@@ -56,6 +56,16 @@ export function BoardView({ board, reason, read, workProducts, inProgress, viewS
    */
   readonly gitStatus?: GitStatus | undefined;
   readonly worktrees?: readonly GitWorktree[] | undefined;
+  /**
+   * W176 phase 3 (#347): the shell's card-detail opener — a card's detail
+   * affordance routes through it so the W167 issue-detail surface renders
+   * in the shell's contextual panel (the right-side region the run detail
+   * uses) instead of the card's inline subregion. The opener memory rides
+   * the guarded sessionStorage record (run-detail-state.ts, second record
+   * shape); the shell's close returns focus to the invoking card and the
+   * view to the opener page.
+   */
+  readonly onOpenDetail?: ((cardKey: string) => void) | undefined;
 }) {
   if (board === undefined) {
     return (
@@ -142,21 +152,21 @@ export function BoardView({ board, reason, read, workProducts, inProgress, viewS
         <WorkspaceStrip gitStatus={gitStatus} worktrees={worktrees} />
       </header>
       <div className="board-columns">
-        <BoardColumn title="open" tasks={open} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} />
+        <BoardColumn title="open" tasks={open} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} onOpenDetail={onOpenDetail} />
         {inProgress !== undefined && (
-          <BoardColumn title="in_progress" tasks={inProgressTasks} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} />
+          <BoardColumn title="in_progress" tasks={inProgressTasks} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} onOpenDetail={onOpenDetail} />
         )}
         {workProducts !== undefined && (
-          <BoardColumn title="in_review" tasks={inReview} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} />
+          <BoardColumn title="in_review" tasks={inReview} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} onOpenDetail={onOpenDetail} />
         )}
         {done.length > 0 && (
-          <BoardColumn title="done" tasks={done} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} />
+          <BoardColumn title="done" tasks={done} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} onOpenDetail={onOpenDetail} />
         )}
         {cancelled.length > 0 && (
-          <BoardColumn title="cancelled" tasks={cancelled} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} />
+          <BoardColumn title="cancelled" tasks={cancelled} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} onOpenDetail={onOpenDetail} />
         )}
         {(columns.stateReasonAuthority ? closed.length > 0 : true) && (
-          <BoardColumn title="closed" tasks={closed} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} />
+          <BoardColumn title="closed" tasks={closed} workProducts={workProducts} read={read} viewState={viewState} onViewState={onViewState} projectWorkspaces={projectWorkspaces} onOpenDetail={onOpenDetail} />
         )}
       </div>
     </section>
@@ -230,7 +240,7 @@ const BOARD_COLUMN_PAGE_SIZES = [25, 50, 100] as const;
  * container (data-density plus the compact class), and the per-column prefs
  * controls render only when the page supplies a handler — the preferences
  * live UI-local, never in the board payload. */
-function BoardColumn({ title, tasks, workProducts, read, viewState, onViewState, projectWorkspaces }: {
+function BoardColumn({ title, tasks, workProducts, read, viewState, onViewState, projectWorkspaces, onOpenDetail }: {
   readonly title: "open" | "in_progress" | "in_review" | "done" | "cancelled" | "closed";
   readonly tasks: readonly ExternalTask[];
   readonly workProducts?: Readonly<Record<string, WorkProductCardState>> | undefined;
@@ -238,6 +248,8 @@ function BoardColumn({ title, tasks, workProducts, read, viewState, onViewState,
   readonly viewState?: IssueViewState | undefined;
   readonly onViewState?: ((next: IssueViewState) => void) | undefined;
   readonly projectWorkspaces?: readonly string[] | undefined;
+  /** W176 phase 3 (#347): the shell's card-detail opener, threaded to the cards. */
+  readonly onOpenDetail?: ((cardKey: string) => void) | undefined;
 }) {
   const prefs = viewState?.[title];
   const cap = prefs?.pageSize ?? BOARD_COLUMN_RENDER_CAP;
@@ -277,7 +289,7 @@ function BoardColumn({ title, tasks, workProducts, read, viewState, onViewState,
         {tasks.length === 0 ? (
           <li><p className="muted sessions-empty-note">no {title} issues</p></li>
         ) : rendered.map((task) => (
-          <BoardCard key={task.key} task={task} workProduct={workProducts?.[task.key]} read={read} projectWorkspaces={projectWorkspaces} />
+          <BoardCard key={task.key} task={task} workProduct={workProducts?.[task.key]} read={read} projectWorkspaces={projectWorkspaces} onOpenDetail={onOpenDetail} />
         ))}
       </ul>
     </div>
@@ -292,17 +304,22 @@ function BoardColumn({ title, tasks, workProducts, read, viewState, onViewState,
  * read, and the provider link renders dashed whenever the read is not fresh
  * (the pill's tooltip carries the record's verbatim reason, never laundered
  * into the label). W165: the card renders its registry-sourced work-product
- * state verbatim. */
-function BoardCard({ task, workProduct, read, projectWorkspaces }: {
+ * state verbatim. W176 phase 3 (#347): the card carries its key as
+ * `data-board-card` — the shell's focus-return identity (closing the
+ * contextual panel returns focus to the invoking card) — and its detail
+ * affordance OPENS the shell's contextual panel (the W167 surface renders
+ * there) instead of an inline subregion. */
+function BoardCard({ task, workProduct, read, projectWorkspaces, onOpenDetail }: {
   readonly task: ExternalTask;
   readonly workProduct: WorkProductCardState | undefined;
   readonly read: ProviderReadRecord | null | undefined;
   readonly projectWorkspaces?: readonly string[] | undefined;
+  readonly onOpenDetail?: ((cardKey: string) => void) | undefined;
 }) {
   const liveness = boardLinkLiveness(read, Date.now());
   const notFresh = liveness !== undefined && liveness !== "fresh";
   return (
-    <li className="board-card">
+    <li className="board-card" data-board-card={task.key} tabIndex={-1}>
       <a href={task.url} target="_blank" rel="noreferrer noopener" className={notFresh ? "board-link-not-fresh" : undefined}>
         <code>{task.key}</code> {task.title}
       </a>
@@ -322,7 +339,7 @@ function BoardCard({ task, workProduct, read, projectWorkspaces }: {
       </div>
       <WorkProductStateView workProduct={workProduct} />
       <BoardDelegateButton task={task} projectWorkspaces={projectWorkspaces} />
-      <BoardIssueDetailButton task={task} />
+      <BoardIssueDetailButton task={task} onOpenDetail={onOpenDetail} />
     </li>
   );
 }
@@ -571,39 +588,107 @@ export function BoardIssueDetailView({ answer }: { readonly answer: IssueDetailA
   );
 }
 
-/** The open card's detail affordance (W167): GETs the web relay's read-only
- * /api/board/task (the issue number in the query string — a read, never a
- * mutation) and renders the outcome in the card's own subregion. The card's
- * answer state is UI-local; a refusal renders verbatim. */
-export function BoardIssueDetailButton({ task }: { readonly task: ExternalTask }) {
-  const [answer, setAnswer] = useState<IssueDetailAnswer | undefined>(undefined);
-  const [pending, setPending] = useState(false);
+/** The open card's detail affordance (W167, re-homed W176 phase 3 #347): the
+ * click now OPENS the shell's contextual panel — the W167 surface renders
+ * there (BoardCardDetailPanel reads the same read-only /api/board/task
+ * relay: the issue number in the query string, a read never a mutation) —
+ * instead of the card's own inline subregion. Inert without the shell's
+ * wiring: an opener with nowhere to open renders disabled, never a silent
+ * click. */
+export function BoardIssueDetailButton({ task, onOpenDetail }: {
+  readonly task: ExternalTask;
+  readonly onOpenDetail?: ((cardKey: string) => void) | undefined;
+}) {
   const parsed = /^#(\d+)$/.exec(task.key);
   if (parsed === null || parsed[1] === undefined) return null;
-  const load = async (): Promise<void> => {
-    setPending(true);
-    try {
-      const response = await fetch(`/api/board/task?key=${encodeURIComponent(task.key)}`);
-      if (!response.ok) {
-        const parsedError = await response.json().catch(() => undefined) as { error?: string } | undefined;
-        setAnswer({ kind: "refusal", code: `HTTP ${response.status}`, detail: parsedError?.error ?? "the hub does not offer issue detail" });
-        return;
-      }
-      const payload = await response.json() as { detail?: unknown };
-      setAnswer(isIssueDetailOutcome(payload.detail)
-        ? { kind: "detail", outcome: payload.detail }
-        : { kind: "refusal", code: "unexpected", detail: "the hub's answer was not an issue detail" });
-    } catch (error) {
-      setAnswer({ kind: "refusal", code: "unreachable", detail: error instanceof Error ? error.message : String(error) });
-    } finally {
-      setPending(false);
-    }
-  };
   return (
     <div className="board-issue-detail-area">
-      <button type="button" className="board-issue-detail" disabled={pending} onClick={() => void load()}>detail</button>
-      {answer !== undefined && <BoardIssueDetailView answer={answer} />}
+      <button
+        type="button"
+        className="board-issue-detail"
+        disabled={onOpenDetail === undefined}
+        onClick={() => onOpenDetail?.(task.key)}
+      >detail</button>
     </div>
+  );
+}
+
+/** W176 phase 3 (#347): the card detail panel's relay read — the SAME
+ * read-only GET the W167 affordance made, read once per opened key; every
+ * failure shape normalizes into the IssueDetailAnswer the W167 surface
+ * renders (a refusal renders verbatim — the rendered-deny rule). */
+function useIssueDetailAnswer(cardKey: string | undefined): { readonly answer: IssueDetailAnswer | undefined } {
+  const [answer, setAnswer] = useState<IssueDetailAnswer | undefined>(undefined);
+  useEffect(() => {
+    if (cardKey === undefined) return undefined;
+    let live = true;
+    setAnswer(undefined);
+    void (async (): Promise<void> => {
+      try {
+        const response = await fetch(`/api/board/task?key=${encodeURIComponent(cardKey)}`);
+        if (!response.ok) {
+          const parsedError = await response.json().catch(() => undefined) as { error?: string } | undefined;
+          if (live) setAnswer({ kind: "refusal", code: `HTTP ${response.status}`, detail: parsedError?.error ?? "the hub does not offer issue detail" });
+          return;
+        }
+        const payload = await response.json() as { detail?: unknown };
+        if (live) setAnswer(isIssueDetailOutcome(payload.detail)
+          ? { kind: "detail", outcome: payload.detail }
+          : { kind: "refusal", code: "unexpected", detail: "the hub's answer was not an issue detail" });
+      } catch (error) {
+        if (live) setAnswer({ kind: "refusal", code: "unreachable", detail: error instanceof Error ? error.message : String(error) });
+      }
+    })();
+    return () => { live = false; };
+  }, [cardKey]);
+  return { answer };
+}
+
+/** W176 phase 3 (#347): the board card detail panel — the shell's right-side
+ * contextual region (the same region composition the W175 run detail panel
+ * uses) for ONE board card. The W167 issue-detail surface renders inside
+ * AS-IS (its internals are pinned by construction in
+ * test/issue-detail.test.ts); the panel adds only the region chrome: the
+ * card key + the recorded title in the header and the back affordance
+ * naming the opener page (the sessionStorage origin memory). The `answer`
+ * prop is the pins' injection seat; without it the panel reads the relay
+ * itself, once per opened key. */
+export function BoardCardDetailPanel({ cardKey, opener, onBack, answer: injectedAnswer }: {
+  readonly cardKey: string;
+  /** The page that opened the panel (the sessionStorage origin memory) —
+   * the back affordance names it verbatim. */
+  readonly opener: string;
+  readonly onBack: () => void;
+  /** Injected answer (the pins drive it); undefined → the panel reads the
+   * /api/board/task relay itself. */
+  readonly answer?: IssueDetailAnswer | undefined;
+}) {
+  const polled = useIssueDetailAnswer(injectedAnswer === undefined ? cardKey : undefined);
+  const answer = injectedAnswer !== undefined ? injectedAnswer : polled.answer;
+  const title = answer !== undefined && answer.kind === "detail" && answer.outcome.state === "ok" ? answer.outcome.detail.title : undefined;
+  return (
+    <section className="run-detail" aria-label={"board card detail: " + cardKey}>
+      <header className="run-detail-header">
+        <div className="run-detail-titleline">
+          <code className="run-detail-id">{cardKey}</code>
+          {title !== undefined && <span className="card-detail-title">{title}</span>}
+        </div>
+        <button
+          type="button"
+          className="run-detail-back"
+          onClick={onBack}
+          title={"close the detail (Esc); back to " + opener}
+          aria-label={"close the board card detail; back to " + opener}
+        >
+          back to {opener}
+        </button>
+      </header>
+      <div className="run-detail-body">
+        {answer === undefined
+          ? <p className="runs-absent" role="status">issue detail: loading…</p>
+          : <BoardIssueDetailView answer={answer} />}
+      </div>
+    </section>
   );
 }
 

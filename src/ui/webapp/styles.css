@@ -3474,6 +3474,7 @@ div.board-issue-detail {
    edges (radius stays 0), mono machine values (run ids, states, costs,
    times); absences render in the muted-italic register the other pages use. */
 .runs-body { flex: 1; display: flex; min-height: 0; }
+.board-body { flex: 1; display: flex; min-height: 0; }
 
 .runs-view {
   flex: 1;
@@ -3578,8 +3579,10 @@ div.board-issue-detail {
 .runs-verdict-pending { color: var(--warn); }
 .reviews-row-blocking { font-size: 0.72rem; color: var(--fail); overflow-wrap: anywhere; }
 
-/* The detail panel: the shell's right-side contextual region. */
-.runs-detail {
+/* The detail panel: the shell's right-side contextual region. W176 phase 3
+   (#347): the Board's card detail panel docks in the SAME region — the
+   selector covers both hosts. */
+.runs-detail, .board-card-detail {
   width: 27rem;
   flex: none;
   display: flex;
@@ -3592,6 +3595,7 @@ div.board-issue-detail {
   background: var(--bg);
   padding: var(--space-4);
 }
+.card-detail-title { font-size: 0.78rem; color: var(--text); overflow-wrap: anywhere; }
 .run-detail { display: flex; flex-direction: column; gap: var(--space-3); }
 .run-detail-header { display: flex; flex-direction: column; gap: 0.4rem; border-bottom: 1px solid var(--border); padding-bottom: var(--space-3); }
 .run-detail-titleline { display: flex; align-items: baseline; gap: 0.5rem; min-width: 0; }
