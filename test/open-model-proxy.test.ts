@@ -351,6 +351,72 @@ test("P14: the pool's per-family cacheMarkers map marks only the opted-in family
   }
 });
 
+// P13 (issue #292): under the opt-in the governed pipeline marks the
+// previous turn's end on the anthropic wire, in addition to the static head;
+// without the opt-in the messages lane passes through byte-unchanged (so the
+// DEFAULT stays byte-identical end to end).
+test("P13: the opted-in anthropic-wire pool marks the previous turn's boundary on the wire", async (context) => {
+  const upstream = await fakeUpstream({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.0001 });
+  context.after(() => upstream.close());
+  const anthropicDef: OpenModelDefinition = {
+    ...DEFAULT_OPEN_SOURCE_POOL[0]!,
+    endpoint: "https://api.deepseek.com/anthropic",
+    wire: "anthropic",
+  };
+  const markedPool = await createOpenModelMeteringPool({
+    pool: [anthropicDef],
+    keys: { deepseek: "DEEPSEEK_KEY" },
+    upstreamOverride: () => upstream.url,
+    cacheMarkers: true,
+  });
+  try {
+    const deepseek = markedPool.byFamily.get("deepseek")!;
+    await fetch(`${deepseek.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({
+        model: "deepseek-flash",
+        system: "You are Workflow.",
+        tools: [{ name: "read_file" }],
+        messages: [{ role: "user", content: "turn one" }, { role: "assistant", content: "reply" }],
+      }),
+    });
+    const seen = JSON.parse(upstream.seen[0]?.body ?? "{}") as {
+      system: Array<{ cache_control?: { type: string } }>;
+      tools: Array<{ cache_control?: { type: string } }>;
+      messages: Array<{ content: Array<{ text?: string; cache_control?: { type: string } }> }>;
+    };
+    assert.equal(seen.system[0]?.cache_control?.type, "ephemeral", "the static system head is marked");
+    assert.equal(seen.tools.at(-1)?.cache_control?.type, "ephemeral", "the static last tool is marked");
+    const lastBlocks = seen.messages.at(-1)?.content;
+    assert.equal(Array.isArray(lastBlocks), true, "the string-content last turn is rewritten to a block array");
+    assert.equal(lastBlocks?.at(-1)?.cache_control?.type, "ephemeral", "the previous turn's end carries the boundary breakpoint on the wire");
+    // Exactly one conversation breakpoint reaches the wire (the budget discipline).
+    const messageMarkers = seen.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])).filter((b) => b.cache_control !== undefined).length;
+    assert.equal(messageMarkers, 1, "one conversation breakpoint only");
+  } finally {
+    await markedPool.close();
+  }
+
+  const plainPool = await createOpenModelMeteringPool({
+    pool: [anthropicDef],
+    keys: { deepseek: "DEEPSEEK_KEY" },
+    upstreamOverride: () => upstream.url,
+  });
+  try {
+    const deepseek = plainPool.byFamily.get("deepseek")!;
+    await fetch(`${deepseek.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "deepseek-flash", messages: [{ role: "assistant", content: "reply" }] }),
+    });
+    const plain = JSON.parse(upstream.seen[1]?.body ?? "{}") as { messages: Array<{ content: unknown }> };
+    assert.equal(plain.messages[0]?.content, "reply", "no opt-in: the per-turn lane passes through byte-unchanged");
+  } finally {
+    await plainPool.close();
+  }
+});
+
 // W118 (the W095 budget-downgrade consumer, part 1): the transform stage
 // composes into the GOVERNED lane — the open-source lane's transformBody
 // is the only production consumer of the policy seam, so the end-to-end
