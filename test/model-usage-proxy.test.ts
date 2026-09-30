@@ -767,3 +767,100 @@ test("P9 A′: the default posture touches nothing — the chat-completions lane
     await upstream.close();
   }
 });
+
+// P9 option C (issue #288, 2026-09-30): the messages-lane transform seam. The
+// proxy applies `messagesTransformBody` to a parseable POST /v1/messages body
+// ONLY; absent, the lane keeps the A′ pass-through posture (outbound bytes
+// byte-identical to the inbound bytes). The production consumer is the
+// open-model pool's markers-only stage (`test/open-model-proxy.test.ts`); this
+// pins the seam and its lane scoping so a marker stage cannot silently widen
+// to another lane.
+test("P9 C: the messages lane applies the supplied transform; absent, the lane stays byte-unchanged", async (context) => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ type: "message", usage: { input_tokens: 1, output_tokens: 1 } }));
+  });
+  context.after(() => upstream.close());
+  const calls: string[] = [];
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    messagesTransformBody: (body) => {
+      calls.push("messages");
+      return { ...body, metadata: { marked: true } };
+    },
+  });
+  try {
+    const original = JSON.stringify({ model: "glm-5.3", system: "s", messages: [{ role: "user", content: "hi" }] });
+    const response = await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: original,
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(calls, ["messages"], "the messages transform fires on POST /v1/messages");
+    assert.deepEqual(JSON.parse(upstream.seen[0]?.body ?? "{}"), {
+      model: "glm-5.3",
+      system: "s",
+      messages: [{ role: "user", content: "hi" }],
+      metadata: { marked: true },
+    }, "the messages transform's result is the forwarded body");
+  } finally {
+    await proxy.close();
+  }
+
+  const plain = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    const original = JSON.stringify({ model: "glm-5.3", messages: [{ role: "user", content: "hi" }] });
+    await fetch(`${plain.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: original,
+    });
+    assert.equal(upstream.seen[1]?.body, original, "no transform supplied: the messages lane forwards byte-unchanged");
+  } finally {
+    await plain.close();
+  }
+});
+
+// P9 option C: the two byte-unchanged guarantees that let a per-family opt-in
+// stay DARK for an unlisted family — a stage that returns its input by
+// reference must not re-serialize (JSON.stringify could reorder keys or change
+// whitespace), and a body that is not a parseable object must pass through raw
+// without invoking the stage.
+test("P9 C: an identity-returning transform and a malformed body both leave the forwarded bytes byte-identical", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+  });
+  const calls: string[] = [];
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    messagesTransformBody: (body) => {
+      calls.push("messages");
+      return body; // the dark-family stage: opt-in OFF resolves to the input by reference
+    },
+  });
+  try {
+    const original = JSON.stringify({ model: "glm-5.3", max_tokens: 64, messages: [{ role: "user", content: "hi" }] });
+    await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: original,
+    });
+    assert.equal(upstream.seen[0]?.body, original, "an identity-returning stage never re-serializes the body");
+
+    const malformed = "{not json";
+    await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: malformed,
+    });
+    assert.equal(calls.length, 1, "the transform is never invoked on an unparseable body");
+    assert.equal(upstream.seen[1]?.body, malformed, "a malformed body forwards raw");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
