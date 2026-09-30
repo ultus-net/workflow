@@ -148,6 +148,27 @@ export async function createOpenModelMeteringPool(options: CreateOpenModelMeteri
             return profile === undefined ? body : applyCacheMarkers(profile, body);
           },
         ]),
+        ...(options.cacheMarkers === undefined
+          ? {}
+          : {
+              // P9 option C (issue #288, 2026-09-30): markers-only on the
+              // anthropic messages lane. Reuses `applyCacheMarkers` verbatim
+              // (the same per-family opt-in + wire gate) on the lane's STATIC
+              // HEAD — no shaping, no downgrade, no usage.include, no replay
+              // gate. Supplied ONLY when an opt-in exists, so the default lane
+              // forwards byte-unchanged by construction; a family omitted from
+              // the map returns the body by reference, also byte-unchanged. The
+              // P8 provider-lane probes remain the activation gate — this does
+              // not turn any family ON.
+              messagesTransformBody: composeBodyTransforms([
+                (body: Record<string, unknown>) => {
+                  const model = body.model;
+                  if (typeof model !== "string") return body;
+                  const profile = profiles.get(model);
+                  return profile === undefined ? body : applyCacheMarkers(profile, body);
+                },
+              ]),
+            }),
         ...(options.onUsage === undefined
           ? {}
           : { onUsage: (usage: Record<string, unknown>) => options.onUsage?.(family, usage) }),

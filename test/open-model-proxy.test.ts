@@ -417,6 +417,97 @@ test("P13: the opted-in anthropic-wire pool marks the previous turn's boundary o
   }
 });
 
+// ---- P9 option C (issue #288, 2026-09-30): markers-only on the anthropic
+// messages lane. The W109 marker pass (`applyCacheMarkers`) now runs on the
+// lane's STATIC HEAD (system block + last tool definition) WHEN the per-family
+// opt-in enables that family; no opt-in, or a family omitted from the map,
+// forwards byte-unchanged. This is markers ONLY: no shaping, no downgrade, no
+// usage.include, no replay gate. The P8 provider-lane probes remain the
+// activation gate — the opt-in stays dark by default and nothing here turns it
+// on. The per-turn message lane is deliberately unmarked (the P13 boundary
+// policy owns it). ----
+
+test("P9 C: the anthropic-wire pool marks the messages lane's static head only when the opt-in enables the family", async (context) => {
+  const upstream = await fakeUpstream({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.0001 });
+  context.after(() => upstream.close());
+  const deepseekDef: OpenModelDefinition = {
+    ...DEFAULT_OPEN_SOURCE_POOL[0]!,
+    endpoint: "https://api.deepseek.com/anthropic",
+    wire: "anthropic",
+  };
+  const glmDef: OpenModelDefinition = {
+    ...DEFAULT_OPEN_SOURCE_POOL[1]!,
+    endpoint: "https://api.z.ai/api/anthropic",
+    wire: "anthropic",
+  };
+  const messagesBody = (model: string): string => JSON.stringify({
+    model,
+    max_tokens: 64,
+    system: "You are Workflow.",
+    tools: [{ name: "read_file", input_schema: { type: "object" } }],
+    messages: [{ role: "user", content: "hi" }],
+  });
+
+  const markedPool = await createOpenModelMeteringPool({
+    pool: [deepseekDef, glmDef],
+    keys: { deepseek: "DEEPSEEK_KEY", glm: "GLM_KEY" },
+    upstreamOverride: () => upstream.url,
+    cacheMarkers: { deepseek: true },
+  });
+  try {
+    const deepseek = markedPool.byFamily.get("deepseek")!;
+    const deepseekBody = messagesBody("deepseek-flash");
+    const marked = await fetch(`${deepseek.baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: deepseekBody,
+    });
+    assert.equal(marked.status, 200);
+    const seenMarked = JSON.parse(upstream.seen[0]?.body ?? "{}") as {
+      system: Array<{ text: string; cache_control?: { type: string } }>;
+      tools: Array<{ cache_control?: { type: string } }>;
+      messages: Array<{ cache_control?: unknown }>;
+      reasoning?: unknown;
+    };
+    assert.equal(seenMarked.system[0]?.cache_control?.type, "ephemeral", "the messages-lane system block carries the marker under the opt-in");
+    assert.equal(seenMarked.system[0]?.text, "You are Workflow.");
+    assert.equal(seenMarked.tools.at(-1)?.cache_control?.type, "ephemeral", "the last tool definition carries the breakpoint");
+    assert.equal(seenMarked.messages[0]?.cache_control, undefined, "the per-turn message lane stays unmarked (the P13 boundary policy owns it)");
+    assert.equal("reasoning" in seenMarked, false, "markers-only: the messages lane is never shaped");
+
+    const glm = markedPool.byFamily.get("glm")!;
+    const glmBody = messagesBody("glm-5.3");
+    const dark = await fetch(`${glm.baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: glmBody,
+    });
+    assert.equal(dark.status, 200);
+    assert.equal(upstream.seen[1]?.body, glmBody, "a family omitted from the map forwards byte-unchanged (never ON-by-default)");
+  } finally {
+    await markedPool.close();
+  }
+
+  const darkPool = await createOpenModelMeteringPool({
+    pool: [deepseekDef],
+    keys: { deepseek: "DEEPSEEK_KEY" },
+    upstreamOverride: () => upstream.url,
+  });
+  try {
+    const deepseek = darkPool.byFamily.get("deepseek")!;
+    const deepseekBody = messagesBody("deepseek-flash");
+    const response = await fetch(`${deepseek.baseUrl}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: deepseekBody,
+    });
+    assert.equal(response.status, 200);
+    assert.equal(upstream.seen[2]?.body, deepseekBody, "no opt-in: the messages lane forwards byte-unchanged (no markers, no transform)");
+  } finally {
+    await darkPool.close();
+  }
+});
+
 // W118 (the W095 budget-downgrade consumer, part 1): the transform stage
 // composes into the GOVERNED lane — the open-source lane's transformBody
 // is the only production consumer of the policy seam, so the end-to-end
