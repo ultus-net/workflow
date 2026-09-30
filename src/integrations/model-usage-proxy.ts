@@ -351,8 +351,12 @@ export async function createModelUsageProxy(options: {
     // markers, no downgrade, no replay gate. Parse failure increments the
     // malformed-body counter instead of 400ing (the chat-completions lane's
     // 400 posture is NOT adopted here), keeping the lane pass-through even on a
-    // body the vendor must judge.
-    if (isMessages && inbound.length > 0) {
+    // body the vendor must judge. A ZERO-LENGTH body is not parseable JSON, so
+    // it is counted too (the P9a review's zero-length blind spot): the capture
+    // is NOT guarded by `inbound.length > 0`, unlike the completions branch,
+    // because the counter's contract is "bodies that were not a parseable JSON
+    // object". The empty bytes still forward raw.
+    if (isMessages) {
       let parsedMessages: unknown;
       try {
         parsedMessages = JSON.parse(inbound.toString("utf8"));

@@ -1979,3 +1979,37 @@ test("P18 (e): the file_write lane has no command text, so a bare-gitdir path st
   // The `.git`-component route it CAN inspect still denies.
   assert.equal(checkPolicy({ action: "file_write", path: ".git/refs/heads/main", currentBranch: "feat/g5" }).decision, "deny");
 });
+
+// ---- P18 (e) review P3 (item 2): the ARGUMENT-DATA false-positive class ----
+// The option-spelling scan is LEXICAL: any surviving `--git-dir=<path>` /
+// `--work-tree=<path>` word after a `git` command counts, even when it is
+// quoted argument data rather than a real top-level option (git only accepts
+// `--git-dir` BEFORE the subcommand, so `git status "--git-dir=…"` reaches the
+// subcommand as a pathspec/error, not as a gitdir). The guard reads it anyway
+// and can therefore fail closed — a deny-leaning false positive. The P18(e)
+// ledger stated the class but left it unpinned; this cell pins it. The cell is
+// INCONSISTENCY-FREE: the read-only git command alone allows, the same
+// ref-adjacent write with no spelling allows, and only their combination
+// denies — so the deny is attributable to the lexical read alone, not to the
+// git command or the write. A future refinement that skips quoted words must
+// update this cell AND the P18(e) ledger's recorded boundary.
+test("P18 (e): a quoted --git-dir argument (not a real top-level option) is still read lexically and leans deny", () => {
+  // Read-only git command carrying the marker as argument data: allowed.
+  assert.equal(
+    checkPolicy({ action: "shell", command: 'git status "--git-dir=/tmp/bare"', currentBranch: "main" }).decision,
+    "allow",
+  );
+  // The same ref-adjacent write with NO gitdir spelling: allowed (not ref-adjacent).
+  assert.equal(
+    checkPolicy({ action: "shell", command: "git status --porcelain; echo x > /tmp/bare/refs/heads/main", currentBranch: "main" }).decision,
+    "allow",
+  );
+  // The combination: the lexical gitdir read makes the write ref-adjacent -> deny.
+  const equality = checkPolicy({ action: "shell", command: 'git status "--git-dir=/tmp/bare" ; echo x > /tmp/bare/refs/heads/main', currentBranch: "main" });
+  assert.equal(equality.decision, "deny");
+  assert.equal(equality.policy, "protected-branch-write");
+  // The `--work-tree` twin rides the same lexical read.
+  const workTree = checkPolicy({ action: "shell", command: 'git status "--work-tree=/tmp/wt" ; echo x > /tmp/wt/refs/heads/main', currentBranch: "main" });
+  assert.equal(workTree.decision, "deny");
+  assert.equal(workTree.policy, "protected-branch-write");
+});

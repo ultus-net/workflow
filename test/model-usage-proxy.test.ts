@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import http from "node:http";
+import { readFileSync, readdirSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { composeBodyTransforms, createModelUsageProxy, METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
@@ -766,4 +768,62 @@ test("P9 A′: the default posture touches nothing — the chat-completions lane
     await proxy.close();
     await upstream.close();
   }
+});
+
+test("P9 A′: a zero-length messages body is counted as malformed, not silently skipped", async () => {
+  // P9a-review P3 (a): the messages capture was guarded by `inbound.length > 0`,
+  // so an empty POST body was neither parsed nor counted — `malformedBodies`
+  // undercounted relative to its documented contract ("bodies that were not a
+  // parseable JSON object"). An empty body is not parseable JSON, so it must
+  // count; the lane still forwards the empty bytes raw (no 400, pass-through
+  // untouched). RED-FIRST: this pin read malformedBodies 0 before the fix.
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "text/plain" });
+    res.end("ok");
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    const response = await fetch(`${proxy.url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: "",
+    });
+    assert.equal(response.status, 200, "the empty body forwards raw rather than 400ing");
+    assert.deepEqual(proxy.messagesLaneLabels(), { models: [], malformedBodies: 1 }, "an empty body is not parseable JSON and must count as malformed");
+    assert.equal(upstream.seen[0]?.body, "", "the empty bytes forward untouched");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+// P9 A′ review P3 (item 4): the journal is captured but NOT yet surfaced into
+// the trail/UI — docs/ledger/P9a-parse-only-labels.md records "no consumer reads
+// messagesLaneLabels() yet". This anti-drift pin asserts the boundary cannot
+// silently drift: the moment a production consumer under src/ wires the
+// accessor, this goes red and the ledger's queued-surfacing note must be
+// updated (the LESS-0004 source-artifact-pin precedent). The proxy's own
+// definition is the only permitted reference; tests are not production.
+test("P9 A′: no production consumer reads messagesLaneLabels yet (queued-surfacing anti-drift pin)", () => {
+  const srcRoot = join(process.cwd(), "src");
+  const offenders: string[] = [];
+  const stack = [srcRoot];
+  while (stack.length > 0) {
+    const dir = stack.pop()!;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(path);
+        continue;
+      }
+      if (!entry.name.endsWith(".ts")) continue;
+      if (path === join(srcRoot, "integrations", "model-usage-proxy.ts")) continue;
+      if (readFileSync(path, "utf8").includes("messagesLaneLabels")) offenders.push(path);
+    }
+  }
+  assert.deepEqual(
+    offenders,
+    [],
+    "messagesLaneLabels has a production consumer now — surface it in the P9a ledger and remove this boundary pin",
+  );
 });

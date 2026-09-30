@@ -19,3 +19,15 @@
 - The W099/W101/P18(c)/P18(d) cells are byte-unchanged — the test diff is append-only (+62 lines (append-only), 0 deletions), so no supersession note is needed.
 
 **Boundaries (remain, recorded honestly):** a `.git` symlink hop whose write spelling carries no `.git` component; a gitfile working directory (`.git` is a file naming its gitdir); an unresolved/globbed gitdir spelling (env or option — the value is dropped downstream, so only a `.git` component still classifies, while an unresolved PATH under a literal gitdir fails closed); the `file_write` lane's lack of command text (above); and non-ref `.git` content (objects, index, config, hooks, refs/tags — a different policy surface). A git invocation where `--git-dir` is not a real top-level option (e.g. quoted argument data) is read lexically as a gitdir spelling — a deny-leaning false-positive class, consistent with the conservative lean; it can add a deny, never loosen one. These stay recorded, not pretended.
+
+> **Dated note (2026-09-30, branch `feat/residual-harvest-2`): the
+> argument-data class is now PINNED, not just recorded.** The last boundary
+> above ("a git invocation where `--git-dir` is not a real top-level option
+> (e.g. quoted argument data) is read lexically") had no executed cell. It now
+> has one in `policy.test.ts`: `git status "--git-dir=/tmp/bare"` alone allows,
+> the same ref-adjacent write with no spelling allows, and only their
+> combination denies `protected-branch-write` — an inconsistency-free cell
+> (plus the `--work-tree` twin). The behavior is unchanged; a future "skip
+> quoted words" refinement must update that cell and this boundary. Full record:
+> `docs/ledger/residual-harvest-2.md`.
+
