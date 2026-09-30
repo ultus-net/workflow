@@ -9,7 +9,7 @@ import { TaskGraph } from "../src/kernel/task-graph.js";
 import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createRunRegistry } from "../src/integrations/run-registry.js";
-import { createReviewerFactory, createRunTestRunner } from "../src/integrations/hub-run-gates.js";
+import { createReviewerFactory, createRunTestRunner, reviewerRunTaskId } from "../src/integrations/hub-run-gates.js";
 
 /**
  * Production wiring for the hub-owned run gates (plan Tasks A2/D1): the
@@ -195,7 +195,9 @@ test("W111 (issue #283): the reviewer factory forwards the registry's per-task j
     createRuntime: async ({ recordTaskUsage }) => ({
       async submit() {
         // Emulate the ACP runtime's completed-turn boundary: the sink the
-        // factory forwarded reaches the registry's journal writer.
+        // factory forwarded reaches the registry's journal writer. The task id
+        // here is arbitrary (the stub's own) — the writer is a faithful
+        // pass-through; the binding to the run task is pinned by the next test.
         recordTaskUsage({
           taskId: "hub-reviewer:test",
           requests: 1,
@@ -219,4 +221,52 @@ test("W111 (issue #283): the reviewer factory forwards the registry's per-task j
   assert.equal(recorded.length, 1, "a completed reviewer turn publishes exactly one per-task delta through the forwarded journal writer");
   assert.equal(recorded[0]?.taskId, "hub-reviewer:test");
   assert.equal(recorded[0]?.totalTokens, 7);
+});
+
+// W111 (issue #283): the residual this fragment closes was the reviewer delta's
+// ATTRIBUTION — recorded, but under the phantom reviewer SESSION task
+// (`hub-reviewer:<id>`), which the per-task view (joining `run:<id>`) never
+// rendered. The factory now forwards the reviewer RUN id and the production
+// composition binds the runtime's correlation to `reviewerRunTaskId(id)` =
+// `run:<reviewerRunId>`. This pin composes the FULL production path
+// (createReviewerFactory's spawn literal → HubReviewerRunner) and asserts the
+// run-bound id, not the session id.
+test("W111 (issue #283): the reviewer factory forwards the reviewer RUN id, and the reviewer delta publishes under run:<reviewerRunId>", async (t) => {
+  const base = setup();
+  t.after(() => rmSync(base.workspace, { recursive: true, force: true }));
+  let capturedReviewerRunId: string | undefined;
+  const factory = createReviewerFactory({
+    shell: async (command) => (command.startsWith("git status") ? "M  src/thing.ts\0" : "diff --git a/x b/x"),
+    createRuntime: async ({ recordTaskUsage, reviewerRunId }) => {
+      capturedReviewerRunId = reviewerRunId;
+      // The production composition passes reviewerRunTaskId(reviewerRunId) as
+      // the ACP driver's task correlation; the driver reads it at the
+      // completed-turn boundary. Emulate that exact id.
+      return {
+        async submit() {
+          recordTaskUsage({
+            taskId: reviewerRunTaskId(reviewerRunId),
+            requests: 1,
+            promptTokens: 5,
+            completionTokens: 2,
+            totalTokens: 7,
+            costUsd: 0.001,
+            cacheReadTokens: 0,
+            cacheCreateTokens: 0,
+          });
+        },
+        snapshot: () => ({ state: "completed", result: `[APPROVE]\n${AXES_SUMMARY}\n[COVERAGE] src/thing.ts` }),
+        async dispose() {},
+      };
+    },
+  });
+  const registry = createRunRegistry(base.application, base.graph, { reviewer: factory });
+  await registry.controller.begin({ runId: "author-9", title: "Author run", workspace: base.workspace, requiresReview: true });
+  await registry.controller.finish({ runId: "author-9", outcome: "verified" });
+
+  assert.ok(capturedReviewerRunId !== undefined, "the factory forwarded the reviewer run id into createRuntime");
+  assert.equal(reviewerRunTaskId(capturedReviewerRunId), "run:" + capturedReviewerRunId, "the run task id is the canonical run:<id> the view joins");
+  const recorded = registry.taskUsage();
+  assert.equal(recorded.length, 1, "a completed reviewer turn publishes exactly one per-task delta");
+  assert.equal(recorded[0]?.taskId, "run:" + capturedReviewerRunId, "the delta publishes under run:<reviewerRunId>, never the phantom hub-reviewer:<id> session task");
 });
