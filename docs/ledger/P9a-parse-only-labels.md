@@ -45,7 +45,7 @@ A′ touches.
     byte-identically by the W119 abort-tier snapshot; folding a categorical
     label set into that contract would perturb consumers rather than be
     additive. This matches the brief's allowance of "a bounded journal in the
-    recorded pattern" and closes W111's no-model-labels gap
+    recorded pattern"; it CAPTURES the labels at the proxy — surfacing them into the trail/UI is QUEUED (no consumer reads messagesLaneLabels() yet, so this does NOT yet close W111.s no-model-labels gap
     (docs/ledger/W111-web-ui-c4-the-backend-measured-cost-headline-the-per-session.md:17)
     for this lane.
 - `test/model-usage-proxy.test.ts` — four red-first pins: (1) the messages lane
