@@ -51,6 +51,18 @@ export interface CreateOpenModelMeteringPoolOptions {
    * downgrade.
    */
   readonly budgetDowngrade?: BudgetDowngradeRuntime;
+  /**
+   * P9 option D (issue #288, 2026-09-30): when explicitly `true`, every family
+   * proxy enforces the anthropic Messages-schema replay integrity check on the
+   * `POST /v1/messages` lane (an unpaired tool_use/tool_result or a stripped
+   * thinking signature is refused with a structured, named 400; an unparseable
+   * body fails closed). The W070b sanctioned synthetic-tool-call insertion
+   * stays allowed. DEFAULT `undefined` is DARK: no proxy gets the tier, so the
+   * lane stays byte-unchanged by construction. Its production gate is the
+   * host-body audit (the brief's option D) — this wires the opt-in, it does not
+   * turn anything ON.
+   */
+  readonly messagesReplayIntegrity?: boolean;
   readonly onUsage?: (family: ModelFamily, usage: Record<string, unknown>) => void;
 }
 
@@ -173,6 +185,9 @@ export async function createOpenModelMeteringPool(options: CreateOpenModelMeteri
           ? {}
           : { onUsage: (usage: Record<string, unknown>) => options.onUsage?.(family, usage) }),
         ...(options.budgetDowngrade === undefined ? {} : { budgetDowngrade: options.budgetDowngrade }),
+        // P9 option D: supplied ONLY on an explicit true opt-in, so the default
+        // pool never gets the tier (the lane stays dark/byte-unchanged).
+        ...(options.messagesReplayIntegrity === true ? { messagesReplayIntegrity: true } : {}),
       });
       started.push(proxy);
       const provider: OpenModelProvider = {

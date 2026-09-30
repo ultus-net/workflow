@@ -9,6 +9,7 @@ import {
 } from "./openrouter-auto-latest.js";
 import { checkEgressCredential, METERED_PLACEHOLDER_KEY } from "./egress-credential.js";
 import { enforceReplayPolicy } from "./model-replay-policy.js";
+import { enforceMessagesReplayIntegrity, unparseableMessagesBodyRejection } from "./messages-replay-integrity.js";
 import { budgetDowngradeActive, type BudgetDowngradeRuntime } from "./session-budget.js";
 
 export { METERED_PLACEHOLDER_KEY };
@@ -232,6 +233,21 @@ export async function createModelUsageProxy(options: {
    */
   readonly messagesTransformBody?: BodyTransform | undefined;
   /**
+   * P9 option D (issue #288, 2026-09-30): when explicitly `true`, enforce the
+   * anthropic Messages-schema replay integrity check on the
+   * `POST /v1/messages` lane. A parsed body the check cannot safely replay
+   * (an unpaired tool_use/tool_result, a stripped thinking signature) is
+   * refused with a structured, named 400 BEFORE anything is forwarded; an
+   * unparseable body fails closed too (it cannot be proven replay-safe). The
+   * W070b sanctioned synthetic-tool-call insertion (a matched
+   * tool_use/tool_result pair) stays allowed. DEFAULT `undefined` (and `false`)
+   * is DARK: the lane keeps the A′ pass-through posture byte-unchanged. This is
+   * a correctness control, not a transform — it never rewrites a forwarded
+   * body. Its production gate is the host-body audit (the brief's option D);
+   * the dark default is the recorded posture until that audit lands.
+   */
+  readonly messagesReplayIntegrity?: boolean | undefined;
+  /**
    * W118 (the W095 budget-downgrade consumer): when set, requests whose
    * session usage has crossed the WARN fraction of the budget (any cap
    * dimension at >= fraction * cap, the same comparison budgetViolation
@@ -328,6 +344,9 @@ export async function createModelUsageProxy(options: {
   // (the pool supplies it only when a cache-marker opt-in exists); a body it
   // returns by reference is left byte-identical.
   const messagesTransform = options.messagesTransformBody;
+  // P9 option D: the messages-lane replay integrity reject tier. DARK by
+  // default (`undefined`/`false`); the caller must opt in explicitly.
+  const messagesReplayIntegrity = options.messagesReplayIntegrity === true;
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((error) => {
@@ -388,7 +407,27 @@ export async function createModelUsageProxy(options: {
       }
       if (!isRecord(parsedMessages)) {
         malformedMessagesBodies += 1;
+        // P9 option D: under the integrity opt-in an unparseable body cannot be
+        // proven replay-safe, so it fails closed instead of forwarding raw.
+        if (messagesReplayIntegrity) {
+          const refusal = unparseableMessagesBodyRejection();
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: refusal.reason, policy: refusal.policy, violations: refusal.violations }));
+          return;
+        }
       } else {
+        // P9 option D: the messages-lane replay integrity reject tier (dark by
+        // default). A parsed body the check cannot safely replay is refused
+        // before any transform or forward — the W070b sanctioned synthetic
+        // insertion (a matched tool_use/tool_result pair) is allowed.
+        if (messagesReplayIntegrity) {
+          const decision = enforceMessagesReplayIntegrity(parsedMessages);
+          if (decision.action === "reject") {
+            res.writeHead(400, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: decision.reason, policy: decision.policy, violations: decision.violations }));
+            return;
+          }
+        }
         if (typeof parsedMessages.model === "string" && parsedMessages.model.length > 0) {
           messagesLaneModels.push(parsedMessages.model);
           if (messagesLaneModels.length > MESSAGES_LANE_LABEL_LIMIT) messagesLaneModels.shift();
