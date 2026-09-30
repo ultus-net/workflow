@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { hostCapabilities, type ToolCapability } from "../src/adapters/host.js";
@@ -14,6 +13,7 @@ import {
   type OpencodeServerAuthority,
 } from "../src/integrations/opencode-server-authority.js";
 import type { RemoteEngine, RemoteEngineEvent, RemoteEnginePermissionRequest } from "../src/integrations/remote-acp/engine.js";
+import { ensureToolboxGuardBuilt } from "./fixtures/compiled-dist.js";
 
 /**
  * W094 queued item: the daemon-level end-to-end ask pin.
@@ -27,13 +27,11 @@ import type { RemoteEngine, RemoteEngineEvent, RemoteEnginePermissionRequest } f
  * with the production authority broker, then driving a `permission.asked` for
  * the W091 promotion command. The real HTTP/SSE engine spawn stays live
  * (operator-gated); this exercises guard -> authority -> hold end to end.
+ *
+ * The build uses the shared W120/W133 STALE-AWARE self-healing helper (review
+ * P3 item 3): the prior local existence-only copy could run a stale enforcement
+ * seat after a src change without a rebuild.
  */
-
-function ensureGuardBuilt(): void {
-  const guardServerPath = resolve(process.cwd(), "mcp-toolbox", "apps", "workflow-guard-mcp", "dist", "server.js");
-  if (existsSync(guardServerPath)) return;
-  execFileSync("pnpm", ["--dir", "mcp-toolbox", "--filter", "workflow-guard-mcp", "run", "build"], { stdio: "inherit" });
-}
 
 interface FakeEngine {
   readonly engine: Pick<RemoteEngine, "events" | "replyPermission">;
@@ -79,7 +77,7 @@ async function waitForHold(authority: OpencodeServerAuthority, timeoutMs = 10_00
 }
 
 test("W094 e2e: the daemon's real guard ask reaches the authority's operator hold", async (t) => {
-  ensureGuardBuilt();
+  ensureToolboxGuardBuilt();
   const workspace = mkdtempSync(join(tmpdir(), "wf-w094-e2e-"));
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
   // The production composition main() uses, unchanged.
@@ -107,7 +105,7 @@ test("W094 e2e: the daemon's real guard ask reaches the authority's operator hol
 });
 
 test("W094 e2e: the daemon's real guard ask times out to reject (fail closed)", async (t) => {
-  ensureGuardBuilt();
+  ensureToolboxGuardBuilt();
   const workspace = mkdtempSync(join(tmpdir(), "wf-w094-e2e-timeout-"));
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
   const guard = await createOpencodeServerGuard(workspace);
