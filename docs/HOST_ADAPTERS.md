@@ -152,3 +152,36 @@ Probe rules (fail closed):
   above.
 
 Run `npm test`, `npm run typecheck`, and `npm run build` after adding an adapter. `npm run test:cline-runtime` is the bounded Cline smoke flow: it loads the built Workflow fixture through the real `@cline/core` plugin loader supplied by an installed Cline CLI, then exercises the loaded `beforeTool` hook without starting a model session. It intentionally fails when that host runtime is unavailable rather than silently downgrading runtime evidence. This host check does not replace conformance tests.
+
+## Vendor anthropic cache-marker probes
+
+P8 (issue #287) asks whether anthropic-compatible endpoints accept the
+Messages-schema `cache_control` markers that `applyCacheMarkers`
+(`src/integrations/model-profile.ts`) emits on the system block, the last tool
+definition, and (since P13, issue #292) the previous turn's boundary block. The
+**deployed** lane is a reseller/provider route (Azure AI Foundry or OpenRouter),
+not direct vendor API keys; the direct per-family arms measure the vendor
+contracts themselves. One dated entry per lane, in the probe-verdict prose
+style used above. Gate: `WORKFLOW_VENDOR_CACHE_PROBE`; the live-run runbook is
+`docs/P8_LIVE_RUN_RECIPE.md`.
+
+**2026-09-30 (vendor anthropic cache-marker probe — provider: OpenRouter `anthropic/claude-sonnet-4.5` — live on `https://openrouter.ai/api/v1`):**
+`test/vendor-anthropic-cache-probe.test.ts` (`WORKFLOW_VENDOR_CACHE_PROBE=provider`,
+`WORKFLOW_PROVIDER_ANTHROPIC_URL=https://openrouter.ai/api/v1`,
+`WORKFLOW_PROVIDER_MODEL=anthropic/claude-sonnet-4.5`) ran live against
+OpenRouter — the deployed reseller route — via the operator's cline-api-key
+OpenRouter credential. The composed body carried the ephemeral markers on the
+system block, the last tool, and the previous turn's boundary block (recorded
+`request.*Marker` = `{"type":"ephemeral"}`). The endpoint, served by **Amazon
+Bedrock**, returned 2xx with a well-formed Messages body and `stop_reason:
+"end_turn"`; observed `cacheUsage` = `cache_creation_input_tokens: 0`,
+`cache_read_input_tokens: 0`, `input_tokens: 581`, `output_tokens: 4`. Verdict:
+**accepted but no cache accounting** — the endpoint took the marked body but did
+not account for the markers. Register row `vendor-anthropic-cache-provider` moved
+`blocked -> negative`; posture advisory (observability, not enforcement).
+Caveat: one marked request can only show cache **creation**, so a cache **read**
+needs a second turn with the same prefix. The direct **deepseek/glm/kimi** family
+arms were **not run** (no keys) and are recorded separately as
+`vendor-anthropic-cache-families`, still `blocked`/`unqualified`; the provider
+verdict does not cover them, and the W109 `cacheMarkers` opt-in stays dark for
+every family.
