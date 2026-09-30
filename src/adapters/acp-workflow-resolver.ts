@@ -5,6 +5,7 @@ import { correlateAcpPermissionRequest } from "./acp-permission.js";
 import type { AcpPermissionDecision } from "./acp-subprocess.js";
 import type { ProposedToolAction, ToolCapability } from "./host.js";
 import { guardInputFromToolCall, type WorkflowGuardProvider } from "../integrations/mcp-toolbox-guard.js";
+import type { OperatorAskHold } from "../integrations/operator-ask-hold.js";
 
 export interface WorkflowAcpPermissionResolverOptions {
   readonly adapter: Pick<AcpHostAdapter, "proposalFromBeforeTool">;
@@ -12,6 +13,14 @@ export interface WorkflowAcpPermissionResolverOptions {
   authorize(action: ProposedToolAction): Promise<PolicyDecision> | PolicyDecision;
   /** When provided, the guard dispatcher gates every mapped tool call after kernel authorization (plan Task G2). */
   readonly guard?: WorkflowGuardProvider;
+  /**
+   * P6 seats (issue #285): the operator ask hold. When the guard returns `ask`,
+   * the resolver parks the ask on this hold and returns the binary ACP outcome
+   * the hold resolves to — allow on operator approval, deny on reject/timeout.
+   * When absent there is no operator channel to answer, so an `ask` fails
+   * closed to deny (the brief's no-operator posture, Q3).
+   */
+  readonly hold?: OperatorAskHold;
   /** Workspace root forwarded to the guard for policy scoping. */
   readonly workspaceRoot?: string;
   /**
@@ -69,7 +78,32 @@ export function createWorkflowAcpPermissionResolver(
         } catch (error) {
           return { kind: "deny", reason: `guard unavailable (fail closed): ${error instanceof Error ? error.message : String(error)}` };
         }
-        if (guardDecision.decision !== "allow") {
+        if (guardDecision.decision === "ask") {
+          // P6 seats (issue #285): a guard `ask` is a "human decides" verdict,
+          // not a deny. The ACP wire decision is binary, so the hold is a
+          // latency on that outcome: park on the operator hold, then allow on
+          // approval and deny on reject/timeout (fail closed). With no hold
+          // attached there is no operator channel to answer — deny fail closed.
+          if (options.hold === undefined) {
+            return {
+              kind: "deny",
+              reason: `guard ask '${guardDecision.policy}' requires operator approval (no operator hold attached, failing closed): ${guardDecision.reason}`,
+            };
+          }
+          const reply = await options.hold.park({
+            requestId: request.toolCall.toolCallId,
+            policy: guardDecision.policy,
+            reason: guardDecision.reason,
+            ...(guardDecision.matched === undefined ? {} : { matched: guardDecision.matched }),
+          });
+          if (reply === "reject") {
+            return {
+              kind: "deny",
+              reason: `guard ask '${guardDecision.policy}' denied (operator reject or hold timeout, failing closed): ${guardDecision.reason}`,
+            };
+          }
+          // Approved: fall through to the normal allow path (skill journaling etc.).
+        } else if (guardDecision.decision !== "allow") {
           return { kind: "deny", reason: `guard policy '${guardDecision.policy}': ${guardDecision.reason}` };
         }
       }
