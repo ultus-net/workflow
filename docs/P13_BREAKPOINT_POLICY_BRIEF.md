@@ -46,7 +46,7 @@ Park P13 (docs/PARKED_AND_LIMITATIONS.md:42, dated 2026-09-24): "the anthropic
 wire allows few breakpoints and caches only at marked prefix ends; the minimal
 slice marks the static head only, so the growing conversation — the dominant
 token mass — is never cache-read until the per-turn boundary policy is
-decided." W109's queued gap 4 states it identically and calls the deferral
+decided." W109.s queued gap 4 states the substance (its word is "a small number"; "few" is the park row.s phrasing) and calls the deferral
 **load-bearing** (docs/ledger/W109-...comple.md:73-78).
 
 ### 1.2 What the minimal slice does (static-head marking)
