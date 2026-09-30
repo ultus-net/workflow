@@ -785,3 +785,42 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   suite 119/119 via direct-tsc (`tsc -p tsconfig.json`); app `tsc --noEmit`
   exit 0; repo lint + typecheck exit 0 unpiped. The W099/W101/P18(c) cells
   are byte-unchanged (the test diff is append-only: +67 lines, 0 deletions).
+
+  Review round (2026-09-30): the wrapper and recursion closures. The
+  five-axis review found two false ALLOWs on the protected-ref gate.
+  (1) The command-position scan recognized only `env`/`export` prefixes, so a
+  wrapper prefix (`sudo GIT_DIR=/x echo … > /x/refs/heads/main`, and the
+  `doas`/`command`/`nohup`/`nice`/`timeout`/`stdbuf`/`time` forms) hid the
+  gitdir and allowed where the literal `.git` spelling denies.
+  `gitDirSpellingsIn` now scans the wrapper/assignment prefix through the
+  shell lane's own `unwrapWordsWithPrefix` (one wrapper vocabulary, not a
+  second list that could drift); `export` stays an explicit builtin drop.
+  (2) The outer command's gitdir was not threaded into the `sh -c`
+  recursion, so `GIT_DIR=/x sh -c '… > /x/refs/heads/main'` allowed even
+  though the P18(c) cell pins wrapper transparency for the `.git` route;
+  `checkBoundaryPolicy` now carries an `inheritedGitDirs` union into the
+  recursive call (the outer env applies to the nested shell). The previously
+  UNPINNED claim "an unresolved PATH under a literal gitdir spelling fails
+  closed" is now executed: a globbed tail reaches the classifier's
+  `uncertain` branch (`protected-branch-write`), while a `$VAR` tail is
+  denied earlier by the boundary lane's own unresolved-path rule
+  (`guard-tamper`) — the failed-closed outcome is recorded under its actual
+  policy so the claim is not overstated.
+
+  UN-INSPECTABLE, unchanged and honest: a wrapper option VALUE that literally
+  spells `GIT_DIR=…` would be read as an assignment by the prefix scan (the
+  modeled wrapper option values are users/groups/signals/durations/buffer
+  sizes — none is a valid `GIT_DIR` assignment — but the read is lexical, not
+  semantic); a gitfile working directory and a `.git` symlink hop stay
+  outside the lexical classifier as recorded above. An `env -S` split whose
+  assignment sits inside the quoted split string is now READ (the split is
+  spliced into the prefix) rather than missed.
+
+  Evidence (review round): red-first 113 policy tests / 110 pass / 3 fail
+  against the pre-fix tree — the wrapper-prefix deny block, the recursion
+  deny block, and the wrapper+recursion composition block; the
+  unresolved-path pin and the feature-target allow held as-found (the claim
+  was unpinned, not broken). Green 113/0 after the src edits; the app's full
+  suite 124/124 via direct-tsc; app `tsc --noEmit` exit 0; repo lint +
+  typecheck exit 0 unpiped. The W099/W101/P18(c)/P18(d) cells are
+  byte-unchanged (the test diff is append-only).

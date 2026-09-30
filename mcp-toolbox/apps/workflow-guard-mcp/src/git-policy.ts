@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { decodeShellEscapes, shellWords, splitShellSegments, unwrapShellWords, unwrapWords } from "./shell.js";
+import { decodeShellEscapes, shellWords, splitShellSegments, unwrapShellWords, unwrapWords, unwrapWordsWithPrefix } from "./shell.js";
 
 // Ported from upstream opencode-workflow-guard (#134/#135, W084): `git tag`
 // publish flows are release operations, not branch mutations — only tag
@@ -520,30 +520,25 @@ export interface DirectRefWriteTarget {
 const GIT_DIR_ASSIGNMENT_RE = /^(?:GIT_DIR|GIT_COMMON_DIR|GIT_WORK_TREE)=(.*)$/;
 
 // The gitdir spellings a shell command names through its environment. Scanned
-// in command position only — the segment head, or after `env`/`export` (and
-// `env`'s options) — so argument data (`echo GIT_DIR=/x`) is not mistaken for
-// a live assignment. `export GIT_DIR=…; echo …` is covered because the env
-// prefix is the segment head of its own segment and the scan is whole-command.
+// in command position only — the wrapper/assignment prefix the shell lane's
+// `unwrapWords` consumes (`sudo`/`doas`/`command`/`nohup`/`nice`/`timeout`/
+// `stdbuf`/`time`/`env` with their option words and bare args, plus ordinary
+// and `export`-builtin assignments) — so argument data (`echo GIT_DIR=/x`) is
+// not mistaken for a live assignment, but `sudo GIT_DIR=/x echo …` names the
+// same gitdir as the unprefixed form. `export GIT_DIR=…; echo …` is covered
+// because the export is the segment head of its own segment and the scan is
+// whole-command. Reusing `unwrapWordsWithPrefix` keeps ONE wrapper vocabulary
+// (the shell lane's) rather than a second list that could drift.
 export function gitDirSpellingsIn(command: string): string[] {
   const spellings: string[] = [];
   for (const rawSegment of splitShellSegments(command)) {
-    const words = shellWords(decodeShellEscapes(rawSegment));
-    const head = basename(words[0] ?? "");
-    let i = head === "env" || head === "export" ? 1 : 0;
-    if (head === "env") {
-      while (words[i]?.startsWith("-")) i += 1;
-    }
-    for (; i < words.length; i += 1) {
-      const word = words[i]!;
+    let words = shellWords(decodeShellEscapes(rawSegment));
+    // `export` is a shell builtin, not a wrapper: drop it so the assignment it
+    // carries is read at command position, as before.
+    if (basename(words[0] ?? "") === "export") words = words.slice(1);
+    for (const word of unwrapWordsWithPrefix(words).prefix) {
       const assignment = GIT_DIR_ASSIGNMENT_RE.exec(word);
-      if (assignment) {
-        if (assignment[1]) spellings.push(assignment[1]);
-        continue;
-      }
-      // Any other leading shell assignment keeps the scan inside the env
-      // prefix; the first real command word ends it.
-      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
-      break;
+      if (assignment?.[1]) spellings.push(assignment[1]);
     }
   }
   return spellings;

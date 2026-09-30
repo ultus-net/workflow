@@ -117,6 +117,18 @@ export function unwrapShellWords(command: string): string[] {
 // cannot pose as command syntax. The env -S branch splices the array, so
 // callers pass their own.
 export function unwrapWords(words: string[]): string[] {
+  return unwrapWordsWithPrefix(words).command;
+}
+
+// P18 (d) review round: the wrapper/assignment PREFIX unwrapWords consumes is
+// itself command position — `sudo GIT_DIR=/x echo …` names the same gitdir as
+// the unprefixed form — so a scanner that must READ the consumed words (the
+// gitdir spellings) needs the prefix, not only the surviving command. Exposing
+// it here keeps the wrapper vocabulary single-sourced: unwrapWords is this
+// function minus the prefix. `prefix` is the consumed leading slice (wrappers,
+// their options, and assignments); `command` is the first real command word
+// onward.
+export function unwrapWordsWithPrefix(words: string[]): { prefix: string[]; command: string[] } {
   let i = 0;
   while (i < words.length) {
     const word = words[i]!;
@@ -200,5 +212,5 @@ export function unwrapWords(words: string[]): string[] {
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) { i += 1; continue; }
     break;
   }
-  return words.slice(i).filter(Boolean);
+  return { prefix: words.slice(0, i), command: words.slice(i).filter(Boolean) };
 }

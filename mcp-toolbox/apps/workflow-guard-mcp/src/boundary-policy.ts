@@ -254,7 +254,7 @@ export function isGuardConfigurationPath(path: string, workspaceRoot?: string, l
   return real !== undefined && real !== lexical && guarded(real.replaceAll("\\", "/"));
 }
 
-export function checkBoundaryPolicy(command: string, workspaceRoot?: string, depth = 0, liveConfigPaths?: readonly string[], refContext?: GitPolicyContext): { policy: string; decision: "deny"; reason: string; matched?: string } | undefined {
+export function checkBoundaryPolicy(command: string, workspaceRoot?: string, depth = 0, liveConfigPaths?: readonly string[], refContext?: GitPolicyContext, inheritedGitDirs: readonly string[] = []): { policy: string; decision: "deny"; reason: string; matched?: string } | undefined {
   if (depth >= 16) return { decision: "deny", policy: "workspace-boundary", reason: "Nested shell depth exceeds deterministic inspection limit.", matched: command };
   const normalized = decodeShellEscapes(command).replace(/'([^']*)'/g, "$1").replace(/"([^"]*)"/g, "$1").replace(new RegExp(`${TOOL}\\.jso[?]|${TOOL}\\.[?*]`, "gi"), `${TOOL}.json`);
   const toolCommand = new RegExp(`(?:^|\\s)${TOOL}\\s+(?:-[^|;&]*\\s+)*(?:auth|config|permission)\\b`, "i");
@@ -262,8 +262,11 @@ export function checkBoundaryPolicy(command: string, workspaceRoot?: string, dep
   if (toolCommand.test(normalized) || autoCommand.test(normalized)) return { decision: "deny", policy: "guard-tamper", reason: "Changing host auth, permissions, or guard configuration from the agent is not allowed.", matched: command };
   // P18 (d): the env-spelled gitdir(s) the command names (`GIT_DIR=…`,
   // `GIT_COMMON_DIR=…`, `GIT_WORK_TREE=…`) — a write under one is
-  // ref-adjacent even without a `.git` component.
-  const gitDirs = gitDirSpellingsIn(command);
+  // ref-adjacent even without a `.git` component. A nested `sh -c` inherits
+  // the OUTER command's gitdirs: the outer env applies to the nested shell, so
+  // `GIT_DIR=/x sh -c '… > /x/…'` classifies like the un-nested form (union,
+  // deduped).
+  const gitDirs = [...new Set([...inheritedGitDirs, ...gitDirSpellingsIn(command)])];
   for (const rawSegment of splitShellSegments(command)) {
     // Ported from upstream opencode-workflow-guard (#144, W084): quoted
     // arguments of gh/glab/az PR/issue commands are command data, not shell
@@ -274,7 +277,7 @@ export function checkBoundaryPolicy(command: string, workspaceRoot?: string, dep
     if (/^(?:ba|z|da|k)?sh$/i.test(executable)) {
       const commandFlag = words.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
       if (commandFlag >= 0 && words[commandFlag + 1]) {
-        const nested = checkBoundaryPolicy(words[commandFlag + 1]!, workspaceRoot, depth + 1, liveConfigPaths, refContext);
+        const nested = checkBoundaryPolicy(words[commandFlag + 1]!, workspaceRoot, depth + 1, liveConfigPaths, refContext, gitDirs);
         if (nested) return nested;
       }
     }
