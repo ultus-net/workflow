@@ -8,7 +8,7 @@
 
 | Item | Verdict | Evidence |
 |---|---|---|
-| G4 matched-surface field | **LANDED** (W121) | `src/integrations/mcp-toolbox-guard.ts:47-51` (`GuardDecision.matched?`, "W121 (G4…)"); the vendored `GuardDecision` carries `matched` (`mcp-toolbox/apps/workflow-guard-mcp/src/policy.ts:33`); pinned in `mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts`. Not re-implemented. |
+| G4 matched-surface field | **LANDED** (W121) | `src/integrations/mcp-toolbox-guard.ts:47-51` (`GuardDecision.matched?`, "W121 (G4…)"); the vendored `GuardDecision` carries `matched` (`mcp-toolbox/apps/workflow-guard-mcp/src/policy.ts:46`); pinned in `mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts`. Not re-implemented. |
 | dist-freshness pin | **LANDED** (W120) | W121 ledger: "the W120 freshness gate enforced the dist rebuild"; P6 row itself records `guardDistIsStale` + the fail-closed throw + the self-healing rebuild as `landed+verified` (2026-09-24). Not re-implemented. |
 | G5 branch-exit pins | **LANDED** (W099) | Assessment §11: "G5 is CLOSED by W099". Explicitly NOT in P6 per the row's own parenthetical. |
 | daemon-level end-to-end ask pin | **OPEN** at dispatch, **LANDED NOW** as an offline coverage pin | W094 ledger criterion: "the daemon-level end-to-end pin (spawn + permission.asked → hold) is queued with the dist-freshness pin". The daemon ask path itself is wired (`src/cli/opencode-server.ts:145-162`), and the W092 hold is pinned with a FAKE guard (`test/opencode-server-authority.test.ts:539-596`), but nothing crossed the REAL daemon guard with the authority. New `test/opencode-server-ask-e2e.test.ts`. |
