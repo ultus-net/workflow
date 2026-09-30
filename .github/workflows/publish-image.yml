@@ -7,7 +7,11 @@
 # per pinned version — v2.0.10 is a dev-channel build not publicly
 # fetchable; see infra/c0/image/Dockerfile and images/control-plane/Dockerfile).
 # The digest the instance later verifies (spec Q2 / verify-pin.sh) is
-# recorded at the SAME tag, from the SAME run that pushed the image.
+# recorded at the SAME tag, from the SAME run that pushed the image. The
+# record is EXACTLY ONE `sha256:<64hex>` line: build-push-action's `digest`
+# output already carries the `sha256:` prefix, and the record step asserts
+# that exact format before writing (the pre-2026-09-30 code double-prefixed
+# it as `sha256:sha256:<64hex>` via `printf 'sha256:%s'`).
 #
 # Shell-safety note (the review's P2): git refnames may legally contain
 # shell metacharacters, so every run: step consumes the tag through an env
@@ -83,7 +87,16 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
           IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
         run: |
-          printf 'sha256:%s\n' "$IMAGE_DIGEST" > image-digest.txt
+          # build-push-action's `digest` output is ALREADY `sha256:<64hex>`;
+          # the original `printf 'sha256:%s'` produced the malformed
+          # `sha256:sha256:<64hex>`. Assert the exact contract format before
+          # recording so a malformed value fails closed (an error, never a
+          # written expectation the instance would later mismatch on).
+          if ! printf '%s\n' "$IMAGE_DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+            echo "::error::build-push-action returned a non-contract digest (want sha256:<64-hex>): ${IMAGE_DIGEST}" >&2
+            exit 1
+          fi
+          printf '%s\n' "$IMAGE_DIGEST" > image-digest.txt
           gh release view "$RELEASE_TAG" --repo "${GITHUB_REPOSITORY}" --json body --jq .body > body.md 2>/dev/null || : > body.md
           printf '\ncontrol-plane image digest:\n' >> body.md
           cat image-digest.txt >> body.md
