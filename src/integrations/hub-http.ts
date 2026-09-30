@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import type { WorkflowApplication, WorkflowSnapshot } from "../application/workflow.js";
 import { buildReviewRubric } from "../review/rubric.js";
 import type { ReviewProvenanceRecord } from "../review/provenance.js";
-import { WorkspaceDeclarationError } from "./run-registry.js";
+import { DuplicateRunError, WorkspaceDeclarationError } from "./run-registry.js";
 import { shellExecutorFor, type WorkflowApplicationResolver, type WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import type { SelfImprovementRegistry, SelfImprovementSpec } from "./self-improvement-registry.js";
@@ -249,10 +249,10 @@ async function handleRequest(
       // through resolveApplication) answers 400 with its message. The
       // refusal still precedes any composition: nothing composes, no run
       // task is created. 2026-09-30 (harvest-4): an EMPTY/whitespace runId or
-      // title is validated here (400) before the registry is reached; the
-      // duplicate-runId refusal still lands in the catch-all's 500 (it fires
-      // inside the registry and needs a typed registry error or a membership
-      // lookup — W142 finding (e), partially closed).
+      // title is validated here (400) before the registry is reached. 2026-09-30
+      // (harvest-5): a duplicate runId (an already-active run) now surfaces the
+      // registry's typed DuplicateRunError → 409, a client conflict, not the
+      // catch-all's 500 (the W142 finding (e) remainder closed).
       // W165: workProductLink is deliberately never accepted from clients —
       // the run→PR linkage is recorded only by hub-side lanes (the board
       // delegate flow's own provider read), never from a client's claim.
@@ -267,6 +267,9 @@ async function handleRequest(
       } catch (error) {
         if (error instanceof WorkspaceDeclarationError) {
           return send(response, 400, { error: error.message });
+        }
+        if (error instanceof DuplicateRunError) {
+          return send(response, 409, { error: error.message });
         }
         throw error;
       }
@@ -350,7 +353,20 @@ async function handleRequest(
       // recent-runs rows answer "did my schedules fire while I was away?".
       const schedules = context.schedules.list();
       const workspace = typeof body.workspace === "string" ? body.workspace : undefined;
-      const lineageSnapshot = context.resolveApplication(workspace, undefined, { activateInteractiveTask: false }).snapshot();
+      // 2026-09-30 (harvest-5): the lineage snapshot reaches the SAME
+      // canonicalWorkspace refusal as /snapshot and /run/begin, so a
+      // non-canonical workspace declaration is a CLIENT fault answered 400 with
+      // its message — never the catch-all's 500 (the residual-harvest-3 named
+      // candidate, now guarded consistently).
+      let lineageSnapshot: WorkflowSnapshot;
+      try {
+        lineageSnapshot = context.resolveApplication(workspace, undefined, { activateInteractiveTask: false }).snapshot();
+      } catch (error) {
+        if (error instanceof WorkspaceDeclarationError) {
+          return send(response, 400, { error: error.message });
+        }
+        throw error;
+      }
       const runTasks = lineageSnapshot.tasks
         .filter((task) => task.id.startsWith("run:"))
         .map((task) => ({ runId: task.id.slice("run:".length), title: task.title, state: task.state }));

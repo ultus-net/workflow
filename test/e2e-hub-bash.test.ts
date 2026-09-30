@@ -104,6 +104,10 @@ import { distArtifact, ensureFresh, ensureToolboxGuardBuilt, repoRoot } from "./
 //       third member — the non-canonical workspace (canonicalWorkspace) — to
 //       a 400 via the typed WorkspaceDeclarationError; the empty-runId and
 //       duplicate-runId 500s remain recorded, not fixed.
+//       2026-09-30 supersession: the empty/whitespace runId|title member closed
+//       at the route (400, harvest-4); the duplicate-runId member closed via the
+//       typed DuplicateRunError → 409 (harvest-5). The finding above is kept
+//       verbatim; both members are now client faults, not 500s.
 //   (f) the cleanup/removal path for a begun run is /run/finish with outcome
 //       "failed": it does NOT delete the task — the record transitions to
 //       FAILED with one failed environment evidence left on the graph
@@ -442,11 +446,12 @@ test("the compiled hub's /bash and /run/begin lanes: auth directions, the contai
     `the run record is the only visible task — observed: ${JSON.stringify(afterBegin.tasks)}`,
   );
 
-  // The duplicate refusal (run-registry.ts:284) — still a 500: it fires
-  // inside the registry, past the route's shape validation, and needs a
-  // typed registry error or a membership lookup (recorded, not fixed).
+  // The duplicate refusal (run-registry.ts:453) — a CLIENT conflict, not a
+  // server fault: the registry throws the typed DuplicateRunError and the
+  // route answers 409 (2026-09-30 harvest-5; was a 500, the residual-harvest-4
+  // remainder).
   const beginDuplicate = await postRoute(endpoint, "/run/begin", token, { runId, title: "t", workspace });
-  assert.equal(beginDuplicate.status, 500);
+  assert.equal(beginDuplicate.status, 409);
   assert.deepEqual(beginDuplicate.body, { error: `duplicate run: ${runId}` });
 
   // The removal path, OBSERVED: /run/finish with outcome "failed" is
