@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import { test } from "node:test";
 
 import type { CodingSessionDriver, CodingSessionEvent } from "../src/application/coding-session.js";
 import { WorkflowCodingSession } from "../src/application/coding-session.js";
-import type { ModelUsageMetrics, ModelUsageProxy } from "../src/integrations/model-usage-proxy.js";
+import { createOpenModelMeteringPool } from "../src/integrations/open-model-proxy.js";
+import { DEFAULT_OPEN_SOURCE_POOL } from "../src/integrations/open-source-pool.js";
+import { METERED_PLACEHOLDER_KEY, type ModelUsageMetrics, type ModelUsageProxy } from "../src/integrations/model-usage-proxy.js";
 import {
   budgetDowngradeActive,
   budgetDowngradeFromEnv,
@@ -240,6 +244,64 @@ test("W119: absent additional usage the guard's snapshot is the OpenRouter proxy
     assert.equal(composed.budgetViolation?.(), undefined, "no additional usage wired: the snapshot is the OpenRouter proxy's alone (under the cap)");
   } finally {
     delete process.env.WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS;
+  }
+});
+
+// P15 (b): the additive per-family view does not move what the abort tier
+// reads. The pool's metrics() stays the cross-family aggregate and the guard
+// snapshot consumes exactly that (`() => pool.metrics()`); two families each
+// UNDER the cap must still fire the abort when their SUM crosses it — a
+// per-family view can never leak into the snapshot.
+test("P15 (b): the abort tier sees the cross-family aggregate, not a per-family view", async () => {
+  const makeUpstream = async (usage: Record<string, number>): Promise<{ url: string; close: () => Promise<void> }> => {
+    const server = http.createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ choices: [], usage }));
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address() as AddressInfo;
+    return { url: `http://127.0.0.1:${address.port}`, close: () => new Promise((resolve, reject) => server.close((error) => (error === undefined ? resolve() : reject(error)))) };
+  };
+  const deepseek = await makeUpstream({ prompt_tokens: 600, completion_tokens: 0, total_tokens: 600, cost: 0.001 });
+  const glm = await makeUpstream({ prompt_tokens: 600, completion_tokens: 0, total_tokens: 600, cost: 0.001 });
+  const pool = await createOpenModelMeteringPool({
+    pool: DEFAULT_OPEN_SOURCE_POOL,
+    keys: { deepseek: "DEEPSEEK_KEY", glm: "GLM_KEY" },
+    upstreamOverride: (def) => (def.family === "deepseek" ? deepseek.url : glm.url),
+  });
+  const { driver, events } = fakeDriver();
+  const openRouter: ModelUsageProxy = { url: "http://127.0.0.1:0", metrics: () => metrics(0, 0), close: async () => undefined };
+  process.env.WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS = "1000";
+  try {
+    // Record 600 tokens on each family: each is under the 1000 cap; the
+    // aggregate is 1200, over it.
+    for (const family of ["deepseek", "glm"] as const) {
+      const provider = pool.byFamily.get(family)!;
+      await fetch(`${provider.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+        body: JSON.stringify({ model: provider.models[0], messages: [] }),
+      });
+    }
+    assert.equal(pool.perFamilyMetrics().get("deepseek")!.totalTokens, 600, "each family is under the cap on its own");
+    assert.equal(pool.perFamilyMetrics().get("glm")!.totalTokens, 600);
+    const composed = composeSessionWithBudget(driver, openRouter, () => pool.metrics());
+    const submit = composed.session.submit("turn");
+    events[0]!({ type: "status", status: "working" });
+    await submit;
+    assert.match(
+      composed.budgetViolation?.() ?? "",
+      /total tokens 1200 > cap 1000/,
+      "the abort tier sums the families through the aggregate (the per-family split is observability, not enforcement)",
+    );
+  } finally {
+    delete process.env.WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS;
+    await pool.close();
+    await deepseek.close();
+    await glm.close();
   }
 });
 

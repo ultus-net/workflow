@@ -102,6 +102,122 @@ test("the pool composes one metering proxy per keyed vendor with the real key pr
   }
 });
 
+// ── P15 (b): per-family usage granularity ──────────────────────────────────
+
+// The residual this closes: the pool's metrics() is the cross-family
+// aggregate, wired into the W119 abort tier. That aggregate stays
+// byte-identical for its consumers; the additive perFamilyMetrics() view
+// makes each family's recorded usage/savings observable. The split is
+// RECORDED-ONLY — each entry is the family proxy's OWN metrics() (the same
+// per-entry records the aggregate sums), never a view-side re-derivation of
+// tokens or costs from a request log.
+test("P15 (b): perFamilyMetrics attributes each family's recorded usage while the aggregate is unchanged", async () => {
+  const upstreams = {
+    deepseek: await fakeUpstream({ prompt_tokens: 100, completion_tokens: 20, total_tokens: 120, cost: 0.001 }),
+    glm: await fakeUpstream({ prompt_tokens: 200, completion_tokens: 40, total_tokens: 240, cost: 0.002 }),
+  } as const;
+  const pool = await createOpenModelMeteringPool({
+    keys: { deepseek: "DEEPSEEK_KEY", glm: "GLM_KEY" },
+    upstreamOverride: (def) => upstreams[def.family as keyof typeof upstreams].url,
+  });
+  try {
+    for (const family of ["deepseek", "glm"] as const) {
+      const provider = pool.byFamily.get(family)!;
+      await fetch(`${provider.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+        body: JSON.stringify({ model: provider.models[0], messages: [] }),
+      });
+    }
+
+    // The pre-P15 aggregate, pinned byte-for-byte across every field.
+    const aggregate = {
+      requests: 2,
+      usageEvents: 2,
+      promptTokens: 300,
+      completionTokens: 60,
+      totalTokens: 360,
+      costUsd: 0.003,
+      latestPromptTokens: 200,
+      cacheReadTokens: 0,
+      cacheCreateTokens: 0,
+    };
+    assert.deepEqual(pool.metrics(), aggregate, "the cross-family aggregate is unchanged (the abort tier's snapshot)");
+
+    const perFamily = pool.perFamilyMetrics();
+    assert.deepEqual([...perFamily.keys()].sort(), ["deepseek", "glm"], "one recorded view per composed family");
+
+    const deepseekMetrics = perFamily.get("deepseek");
+    const glmMetrics = perFamily.get("glm");
+    assert.deepEqual(deepseekMetrics, {
+      requests: 1,
+      usageEvents: 1,
+      promptTokens: 100,
+      completionTokens: 20,
+      totalTokens: 120,
+      costUsd: 0.001,
+      latestPromptTokens: 100,
+      cacheReadTokens: 0,
+      cacheCreateTokens: 0,
+    }, "deepseek's tokens/cost are attributed to deepseek alone");
+    assert.deepEqual(glmMetrics, {
+      requests: 1,
+      usageEvents: 1,
+      promptTokens: 200,
+      completionTokens: 40,
+      totalTokens: 240,
+      costUsd: 0.002,
+      latestPromptTokens: 200,
+      cacheReadTokens: 0,
+      cacheCreateTokens: 0,
+    }, "glm's tokens/cost are attributed to glm alone");
+
+    // The view is the per-entry records, not a re-derivation: each entry
+    // equals the family proxy's own metrics().
+    assert.deepEqual(deepseekMetrics, pool.byFamily.get("deepseek")!.proxy.metrics(), "the view reads the recorded per-entry metrics");
+    assert.deepEqual(glmMetrics, pool.byFamily.get("glm")!.proxy.metrics());
+
+    // Additivity: the split is the same sum the aggregate reports (no field
+    // removed, none double-counted), and the aggregate did not move when the
+    // view was read.
+    const summed = {
+      requests: deepseekMetrics!.requests + glmMetrics!.requests,
+      usageEvents: deepseekMetrics!.usageEvents + glmMetrics!.usageEvents,
+      promptTokens: deepseekMetrics!.promptTokens + glmMetrics!.promptTokens,
+      completionTokens: deepseekMetrics!.completionTokens + glmMetrics!.completionTokens,
+      totalTokens: deepseekMetrics!.totalTokens + glmMetrics!.totalTokens,
+      costUsd: deepseekMetrics!.costUsd + glmMetrics!.costUsd,
+    };
+    assert.deepEqual({ ...aggregate, ...summed }, aggregate, "the per-family views sum to the aggregate");
+    assert.deepEqual(pool.metrics(), aggregate, "reading the per-family view leaves the aggregate byte-identical");
+    assert.deepEqual(
+      Object.keys(deepseekMetrics!).sort(),
+      ["cacheCreateTokens", "cacheReadTokens", "completionTokens", "costUsd", "latestPromptTokens", "promptTokens", "requests", "totalTokens", "usageEvents"],
+      "the per-family shape is the full ModelUsageMetrics (no field removed)",
+    );
+  } finally {
+    await pool.close();
+    await Promise.all(Object.values(upstreams).map((upstream) => upstream.close()));
+  }
+});
+
+test("P15 (b): a family with no composed proxy is absent from perFamilyMetrics (recorded-only)", async () => {
+  const glm = await fakeUpstream({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15, cost: 0.0001 });
+  const pool = await createOpenModelMeteringPool({
+    keys: { glm: "GLM_KEY" },
+    upstreamOverride: (def) => (def.family === "glm" ? glm.url : undefined),
+  });
+  try {
+    const perFamily = pool.perFamilyMetrics();
+    assert.deepEqual([...perFamily.keys()], ["glm"], "only families with a composed proxy carry a recorded view");
+    assert.equal(perFamily.has("deepseek"), false, "no proxy = no recorded usage to report");
+    assert.equal(perFamily.has("kimi"), false);
+  } finally {
+    await pool.close();
+    await glm.close();
+  }
+});
+
 test("a vendor without a key starts no proxy (its models fall back to OpenRouter)", async () => {
   const glm = await fakeUpstream({ prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, cost: 0 });
   const pool = await createOpenModelMeteringPool({

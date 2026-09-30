@@ -57,6 +57,15 @@ export interface OpenModelMeteringPool {
   readonly byFamily: ReadonlyMap<ModelFamily, OpenModelProvider>;
   /** Aggregated usage across every vendor proxy in the pool. */
   metrics(): ModelUsageMetrics;
+  /**
+   * P15 (b): the per-family view of the pool's RECORDED usage — one entry
+   * per family with a composed proxy, each the family proxy's OWN metrics()
+   * (the same per-entry records the aggregate sums), never a view-side
+   * re-derivation of tokens or costs. Additive: `metrics()` stays the
+   * cross-family aggregate its consumers (the W119 abort-tier snapshot)
+   * already read, byte-identical.
+   */
+  perFamilyMetrics(): ReadonlyMap<ModelFamily, ModelUsageMetrics>;
   close(): Promise<void>;
 }
 
@@ -158,6 +167,12 @@ export async function createOpenModelMeteringPool(options: CreateOpenModelMeteri
   }
 
   const byFamilyProviders = new Map(providers.map((provider) => [provider.family, provider]));
+  // P15 (b): ONE snapshot source for both views — the aggregate sums these
+  // same per-entry recorded metrics (unchanged arithmetic and order), and
+  // perFamilyMetrics exposes each family's entry as-is. Recorded-only: the
+  // split is read from the proxies, never re-derived from a request log.
+  const recordedByFamily = (): ReadonlyMap<ModelFamily, ModelUsageMetrics> =>
+    new Map(providers.map((provider) => [provider.family, provider.proxy.metrics()]));
   return {
     providers,
     byFamily: byFamilyProviders,
@@ -171,8 +186,7 @@ export async function createOpenModelMeteringPool(options: CreateOpenModelMeteri
       let cacheReadTokens = 0;
       let cacheCreateTokens = 0;
       let latest: number | undefined;
-      for (const provider of providers) {
-        const metrics = provider.proxy.metrics();
+      for (const metrics of recordedByFamily().values()) {
         requests += metrics.requests;
         usageEvents += metrics.usageEvents;
         promptTokens += metrics.promptTokens;
@@ -184,6 +198,9 @@ export async function createOpenModelMeteringPool(options: CreateOpenModelMeteri
         if (metrics.latestPromptTokens !== undefined) latest = metrics.latestPromptTokens;
       }
       return { requests, usageEvents, promptTokens, completionTokens, totalTokens, costUsd, latestPromptTokens: latest, cacheReadTokens, cacheCreateTokens };
+    },
+    perFamilyMetrics(): ReadonlyMap<ModelFamily, ModelUsageMetrics> {
+      return recordedByFamily();
     },
     async close(): Promise<void> {
       await Promise.allSettled(providers.map((provider) => provider.proxy.close()));
