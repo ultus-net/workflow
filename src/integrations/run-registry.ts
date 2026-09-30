@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
@@ -8,7 +9,7 @@ import { countReferencedAxes, MIN_REFERENCED_AXES } from "../review/rubric.js";
 import type { EvidenceContentStore } from "./evidence-content-store.js";
 import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-controller.js";
 import type { HubReviewerResult } from "./hub-reviewer.js";
-import type { SurfaceUsageObservation, SurfaceUsageSummary, TaskUsageSummary } from "./task-usage.js";
+import type { SurfaceUsageCounters, SurfaceUsageObservation, SurfaceUsageSummary, TaskUsageSummary } from "./task-usage.js";
 
 /** Launches the hub-owned reviewer for a run (plan Task A2). */
 export type RunReviewer = (input: {
@@ -225,6 +226,22 @@ export function createRunRegistry(
    */
   recordSurfaceUsage(input: SurfaceUsageObservation): void;
   surfaceUsage(): readonly SurfaceUsageSummary[];
+  /**
+   * P4 topology Option A2 (issue #283): MINT a single-use session id bound to
+   * the declared task. The hub owns the id (an opaque nonce) and the
+   * session→task record; the surface never chooses the id and never sends a
+   * task id on the record wire. The bind is the hub's own registration record,
+   * so a later record resolves attribution from the hub, not the client.
+   */
+  registerSurfaceSession(input: { readonly taskId: string }): string;
+  /**
+   * P4 topology Option A2 (issue #283): RESOLVE a hub-minted session id to its
+   * registered task, CONSUME it (single-use), and write the CANONICAL
+   * `taskUsage` journal. Returns false for an unknown, expired, spoofed, or
+   * already-used id — the record is never written (fail closed). The write is
+   * hub-derived: the caller supplies counters only, never attribution.
+   */
+  consumeSurfaceSession(input: { readonly sessionId: string; readonly usage: SurfaceUsageCounters }): boolean;
   /** Iteration 21: journal an advisory reasoning-claim finding (observability-only). */
   recordReasoningClaim(input: { readonly runId: string; readonly sentence: string }): void;
   /** Iteration 21: declare that the monitor observed a run (scheduled lane only; coverage denominator). */
@@ -322,6 +339,33 @@ export function createRunRegistry(
     while (surfaceUsage.length > 64) {
       surfaceUsage.shift();
     }
+  };
+  // P4 topology Option A2 (issue #283): the hub-owned single-use session
+  // registry — the ONLY source of the session→task bind on the A2 record path.
+  // The hub mints the nonce (never the client); an entry is consumed on first
+  // resolve. Bounded FIFO 64 like the sibling observability maps, plus a short
+  // TTL so a never-consumed mint cannot linger as a live credential.
+  const SURFACE_SESSION_TTL_MS = 5 * 60_000;
+  const surfaceSessions = new Map<string, { readonly taskId: string; readonly mintedAt: number }>();
+  const rememberSurfaceSession = (taskId: string): string => {
+    const sessionId = randomBytes(16).toString("hex");
+    surfaceSessions.set(sessionId, { taskId, mintedAt: Date.now() });
+    while (surfaceSessions.size > 64) {
+      const oldest = surfaceSessions.keys().next().value;
+      if (oldest === undefined) break;
+      surfaceSessions.delete(oldest);
+    }
+    return sessionId;
+  };
+  const consumeSurfaceSession = (sessionId: string, usage: SurfaceUsageCounters): boolean => {
+    const record = surfaceSessions.get(sessionId);
+    // Unknown or already-consumed → fail closed, never a guessed task.
+    if (record === undefined) return false;
+    // Single-use: consume BEFORE the write so a concurrent replay cannot double.
+    surfaceSessions.delete(sessionId);
+    if (Date.now() - record.mintedAt > SURFACE_SESSION_TTL_MS) return false;
+    rememberTaskUsage({ taskId: record.taskId, ...usage });
+    return true;
   };
   // Iteration 21: reasoning-claims accountability feed (advisory-only), mirroring
   // the completion-claims journal's shape and bounds. A finding is the monitor's
@@ -791,6 +835,12 @@ export function createRunRegistry(
     },
     surfaceUsage(): readonly SurfaceUsageSummary[] {
       return surfaceUsage;
+    },
+    registerSurfaceSession(input: { readonly taskId: string }): string {
+      return rememberSurfaceSession(input.taskId);
+    },
+    consumeSurfaceSession(input: { readonly sessionId: string; readonly usage: SurfaceUsageCounters }): boolean {
+      return consumeSurfaceSession(input.sessionId, input.usage);
     },
     /**
      * Iteration 21: journal an advisory reasoning-claim finding for a run.

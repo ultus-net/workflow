@@ -11,7 +11,7 @@ import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createRunRegistry } from "../src/integrations/run-registry.js";
 import { createWorkflowHubBridge } from "../src/integrations/hub-http.js";
 import { surfaceStamp, surfaceUsageSink, type SurfaceUsageSummary } from "../src/integrations/task-usage.js";
-import { createSurfaceUsagePost } from "../src/integrations/surface-usage-client.js";
+import { createSurfaceUsagePost, createSurfaceUsageSessionPost } from "../src/integrations/surface-usage-client.js";
 import type { ModelUsageMetrics } from "../src/integrations/model-usage-proxy.js";
 
 /**
@@ -67,6 +67,32 @@ const validObservation = {
   cacheReadTokens: 40,
   cacheCreateTokens: 5,
 };
+
+/** P4 A2: the counters-only record wire shape (no taskId, no recordedBy). */
+const counters = {
+  requests: 2,
+  promptTokens: 100,
+  completionTokens: 20,
+  totalTokens: 120,
+  costUsd: 0.01,
+  cacheReadTokens: 40,
+  cacheCreateTokens: 5,
+};
+
+/** P4 A2: the hub mints a single-use session id bound to the declared task. */
+function mint(taskId: string, bridge: { url: string; token: string }) {
+  return fetch(`${bridge.url}/usage/session`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${bridge.token}`, "content-type": "application/json" },
+    body: JSON.stringify({ taskId }),
+  });
+}
+
+async function mintId(taskId: string, bridge: { url: string; token: string }): Promise<string> {
+  const response = await mint(taskId, bridge);
+  assert.equal(response.status, 200, "the hub mints a session id");
+  return ((await response.json()) as { sessionId: string }).sessionId;
+}
 
 test("P4 A1: a posted delta is recorded as a provenance-stamped surface observation (red-first: the route/report did not exist)", async () => {
   const base = setup();
@@ -261,6 +287,156 @@ test("P4 A1: the cross-process post relays the stamped observation to the discov
     assert.equal(calls[0]?.url, "http://127.0.0.1:9/usage/record");
     assert.equal(calls[0]?.authorization, "Bearer t0ken");
     assert.match(calls[0]?.body ?? "", /surface:driver-registry/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/**
+ * P4 topology Option A2 (issue #283): the hub-bound session path. The hub mints
+ * a single-use session id bound to a task from its OWN registration record; the
+ * surface posts only counters + that id, and the hub resolves session→task and
+ * writes the CANONICAL `taskUsage` journal. A1's labelled-observation path
+ * stays as the fallback for a body with no session id.
+ */
+
+async function bridgeWithSessions(base: ReturnType<typeof setup>) {
+  return createWorkflowHubBridge(
+    base.application,
+    base.registry.resolve,
+    base.registry.controller,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    {
+      recordSurfaceUsage: base.registry.recordSurfaceUsage,
+      registerSurfaceSession: base.registry.registerSurfaceSession,
+      consumeSurfaceSession: base.registry.consumeSurfaceSession,
+    },
+  );
+}
+
+test("P4 A2: a hub-minted single-use session id resolves to the registered task and writes canonical taskUsage (red-first: the mint route did not exist)", async () => {
+  const base = setup();
+  const bridge = await bridgeWithSessions(base);
+  try {
+    const sessionId = await mintId("W1", bridge);
+    assert.match(sessionId, /^[0-9a-f]{32}$/, "the id is a hub-minted opaque nonce, never client-chosen");
+    assert.equal((await post({ sessionId, ...counters }, bridge)).status, 200);
+    const canonical = base.registry.taskUsage();
+    assert.equal(canonical.length, 1, "exactly one CANONICAL task record is written");
+    assert.equal(canonical[0]?.taskId, "W1", "the hub resolves the registered task from its own record");
+    assert.equal(canonical[0]?.totalTokens, 120);
+    assert.equal(base.registry.surfaceUsage().length, 0, "A2 writes the canonical journal, NOT the separate surface journal");
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("P4 A2: an unknown/spoofed session id is rejected fail-closed and never reaches canonical attribution", async () => {
+  const base = setup();
+  const bridge = await bridgeWithSessions(base);
+  try {
+    // Never minted by this hub (a spoofed nonce).
+    const answer = await post({ sessionId: "deadbeefdeadbeefdeadbeefdeadbeef", ...counters }, bridge);
+    assert.equal(answer.status, 400);
+    assert.equal(base.registry.taskUsage().length, 0, "a spoofed id never reaches canonical attribution");
+    assert.equal(base.registry.surfaceUsage().length, 0, "and never a labelled observation either");
+    // A nonce-shaped-but-empty id is equally rejected.
+    assert.equal((await post({ sessionId: "", ...counters }, bridge)).status, 400);
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("P4 A2: single-use is enforced — a consumed session id is rejected on replay", async () => {
+  const base = setup();
+  const bridge = await bridgeWithSessions(base);
+  try {
+    const sessionId = await mintId("W1", bridge);
+    assert.equal((await post({ sessionId, ...counters }, bridge)).status, 200);
+    // Replay of the SAME minted id is refused: single-use nonce discipline.
+    assert.equal((await post({ sessionId, ...counters }, bridge)).status, 400);
+    assert.equal(base.registry.taskUsage().length, 1, "the replay never double-writes canonical attribution");
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("P4 A2: the A2 record wire carries no client attribution — a taskId beside a session id is rejected", async () => {
+  const base = setup();
+  const bridge = await bridgeWithSessions(base);
+  try {
+    const sessionId = await mintId("W1", bridge);
+    const answer = await post({ sessionId, taskId: "spoofed:canonical", ...counters }, bridge);
+    assert.equal(answer.status, 400, "the A2 schema has no taskId; the client cannot present attribution");
+    assert.equal(base.registry.taskUsage().length, 0);
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("P4 A2: distinct sessions bind distinct tasks and never interleave or fold", async () => {
+  const base = setup();
+  const bridge = await bridgeWithSessions(base);
+  try {
+    const first = await mintId("W1", bridge);
+    const second = await mintId("W2", bridge);
+    assert.notEqual(first, second, "each mint is a distinct nonce");
+    assert.equal((await post({ sessionId: first, ...counters }, bridge)).status, 200);
+    assert.equal((await post({ sessionId: second, ...counters, totalTokens: 7, requests: 1, promptTokens: 7, completionTokens: 0, costUsd: 0, cacheReadTokens: 0, cacheCreateTokens: 0 }, bridge)).status, 200);
+    const canonical = base.registry.taskUsage();
+    assert.equal(canonical.length, 2);
+    assert.deepEqual(canonical.map((entry) => entry.taskId).sort(), ["W1", "W2"]);
+    assert.equal(canonical.find((entry) => entry.taskId === "W1")?.totalTokens, 120);
+    assert.equal(canonical.find((entry) => entry.taskId === "W2")?.totalTokens, 7);
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("P4 A2: the session client mints a hub id then relays only counters + session id (taskId never on the record wire)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-surface-session-"));
+  const calls: Array<{ url: string; body: string | undefined }> = [];
+  try {
+    mkdirSync(join(dir, "hub"), { recursive: true });
+    writeFileSync(join(dir, "hub", "discovery.json"), JSON.stringify({ endpoint: "http://127.0.0.1:9", token: "t0ken" }));
+    const post = createSurfaceUsageSessionPost({
+      hubDiscoveryDir: dir,
+      fetchImpl: (async (url: string, init?: RequestInit) => {
+        calls.push({ url, body: typeof init?.body === "string" ? init.body : undefined });
+        if (url.endsWith("/usage/session")) return new Response(JSON.stringify({ sessionId: "abc123" }), { status: 200 });
+        return new Response("{}", { status: 200 });
+      }) as unknown as typeof fetch,
+    });
+    post({ taskId: "W1", requests: 1, promptTokens: 2, completionTokens: 3, totalTokens: 5, costUsd: 0.1, cacheReadTokens: 0, cacheCreateTokens: 0 });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(calls.length, 2, "the client mints, then records");
+    assert.equal(calls[0]?.url, "http://127.0.0.1:9/usage/session");
+    assert.match(calls[0]?.body ?? "", /"taskId":"W1"/);
+    assert.equal(calls[1]?.url, "http://127.0.0.1:9/usage/record");
+    const recordBody = JSON.parse(calls[1]?.body ?? "{}") as Record<string, unknown>;
+    assert.equal(recordBody.sessionId, "abc123");
+    assert.equal(recordBody.totalTokens, 5);
+    assert.equal(recordBody.taskId, undefined, "the taskId field is REMOVED from the record wire");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("P4 A2: the session client fails closed with no hub — nothing minted, nothing recorded, never throws", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-surface-session-"));
+  try {
+    let called = 0;
+    const post = createSurfaceUsageSessionPost({
+      hubDiscoveryDir: dir,
+      fetchImpl: (async () => { called += 1; return new Response("{}"); }) as typeof fetch,
+    });
+    post({ taskId: "W1", requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0, cacheReadTokens: 0, cacheCreateTokens: 0 });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(called, 0, "no hub discovery file → no mint is attempted (never a fabricated record)");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
