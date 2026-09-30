@@ -140,6 +140,16 @@ export type WorkProductLink = {
 export class WorkspaceDeclarationError extends TypeError {}
 
 /**
+ * 2026-09-30 (harvest-5): the typed classification for a duplicate run begin —
+ * the requested run id is already ACTIVE in the registry (finished runs are
+ * removed, so only a live conflict can throw this). Subclasses TypeError so
+ * every existing `instanceof TypeError` posture keeps working; wire surfaces
+ * classify it as 409 (the request conflicts with current registry state — the
+ * caller's fault, not the server's).
+ */
+export class DuplicateRunError extends TypeError {}
+
+/**
  * The single canonicalization discipline for surface-declared workspaces
  * (`docs/HUB_PROTOCOL.md` §3): declarations must be absolute existing
  * directories, and one canonical (realpath) path means one application —
@@ -450,7 +460,7 @@ export function createRunRegistry(
       if (runId.trim().length === 0 || title.trim().length === 0) {
         throw new TypeError("run begin requires a non-empty runId and title");
       }
-      if (runs.has(runId)) throw new TypeError(`duplicate run: ${runId}`);
+      if (runs.has(runId)) throw new DuplicateRunError(`duplicate run: ${runId}`);
       // W153: the scheduler's recorded origin attribution (if it declared one).
       if (origin !== undefined) rememberRunOrigin(runId, origin);
       // W165: the delegate lane's recorded work-product link (if it declared

@@ -288,3 +288,36 @@ test("schedule routes 404 when no schedule registry is configured", async (t) =>
   const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8")) as { token: string };
   assert.equal((await post(hub.url, token, "/schedule/list", {})).status, 404);
 });
+
+// 2026-09-30 (harvest-5): /schedule/list resolves the application for its
+// lineage snapshot with the client's workspace declaration, reaching the SAME
+// canonicalWorkspace refusal as /snapshot and /run/begin. A non-canonical
+// declaration is a CLIENT fault answered 400 with its message, never the
+// catch-all's 500 (residual-harvest-3's named candidate).
+test("schedule/list classifies a non-canonical workspace declaration as a client fault (400)", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-schedule-ws-bad-"));
+  const ws = mkdtempSync(join(tmpdir(), "wf-hub-schedule-ws-ok-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(ws, { recursive: true, force: true }));
+  const graph = new TaskGraph(tasks.map((task) => ({ ...task })));
+  const application = new WorkflowApplication(
+    graph,
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+    [],
+    new Set(["read", "mutation", "process"]),
+    ws,
+  );
+  const registry = createScheduleRegistry({ path: join(dir, "scheduler.json") });
+  const hub = await createWorkflowHub(application, { discoveryDir: dir, graph, schedules: registry });
+  t.after(() => hub.close());
+  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8")) as { token: string };
+
+  const relative = await post(hub.url, token, "/schedule/list", { workspace: "relative/path" });
+  assert.equal(relative.status, 400, "a relative workspace declaration is a client fault (400), not a server fault");
+  assert.deepEqual(relative.body, { error: "declared workspace must be absolute: relative/path" });
+
+  const missingPath = join(tmpdir(), `wf-hub-schedule-missing-${Math.random().toString(16).slice(2)}`);
+  const missing = await post(hub.url, token, "/schedule/list", { workspace: missingPath });
+  assert.equal(missing.status, 400, "a non-existent workspace declaration is the same client fault");
+  assert.deepEqual(missing.body, { error: `declared workspace is not an existing directory: ${missingPath}` });
+});

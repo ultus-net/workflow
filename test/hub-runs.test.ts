@@ -104,6 +104,31 @@ test("a run begin with an empty runId or title is a client fault (400), not a se
   );
 });
 
+// 2026-09-30 (harvest-5): a duplicate runId (an already-active run) is a
+// CLIENT conflict, not a server fault. The registry throws the typed
+// DuplicateRunError and the route answers 409 (residual-harvest-4's named
+// remainder).
+test("a duplicate run begin is a client conflict (409), not a server 500", async (t) => {
+  const { graph, application, workspace } = setup();
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-runs-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const hub = await createWorkflowHub(application, { discoveryDir: dir, graph });
+  t.after(() => hub.close());
+  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
+
+  const first = await post(hub.url, token, "/run/begin", { runId: "dup-run", title: "First", workspace });
+  assert.equal(first.status, 200);
+  const duplicate = await post(hub.url, token, "/run/begin", { runId: "dup-run", title: "Again", workspace });
+  assert.equal(duplicate.status, 409, "a duplicate runId is a client conflict (409), not a server fault");
+  assert.deepEqual(duplicate.body, { error: "duplicate run: dup-run" });
+  assert.equal(
+    application.snapshot().tasks.filter((task) => task.id === "run:dup-run").length,
+    1,
+    "the duplicate refused before composing a second task",
+  );
+});
+
 test("a review-gated run cannot finish until an independent review is recorded", async (t) => {
   const { graph, application, workspace } = setup();
   const dir = mkdtempSync(join(tmpdir(), "wf-hub-runs-"));
