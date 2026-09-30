@@ -25,6 +25,7 @@ import {
 import {
   globalOpencodeBinary,
   meteredOpencodeConfig,
+  OPENCODE_V2_METERED_ENV_KEY,
   resolveOpencodeLaunch,
 } from "./opencode-agent-config.js";
 import type { PermissionBroker } from "../ui/permission-broker.js";
@@ -324,30 +325,33 @@ async function createOpencodeRuntime(
       envModel !== undefined && envModel !== "" && envModelProvider !== undefined && envModelProvider.models.includes(envModel)
         ? undefined
         : process.env.WORKFLOW_OPENCODE_MODEL;
-    writeFileSync(
-      join(configDir, "opencode", "opencode.json"),
-      JSON.stringify(meteredOpencodeConfig({
-        proxyUrl: proxy.url,
-        model: configModel ?? options.settings?.agents.opencode?.model,
-        // W082: the operator's autoCompact preference composes the
-        // `compaction: { auto: true }` block into the hub-written config —
-        // the config-side auto-compaction trigger (default off).
-        ...(options.settings?.agents.opencode?.autoCompact === true ? { autoCompact: true } : {}),
-        ...(autoLatest === undefined ? {} : { autoLatest: { aliases: autoLatest.aliases } }),
-        ...(openSelection === undefined ? {} : { openSource: openSelection }),
-        ...(skillsMount === undefined ? {} : { skills: skillsMount }),
-        ...(skillConnectors.length === 0 ? {} : { skillConnectors }),
-        ...(options.settings === undefined ? {} : { mcpServers: enabledMcpServers(options.settings) }),
-      })),
-      { encoding: "utf8", mode: 0o600 },
-    );
     const opencode = resolveOpencodeLaunch({
       envBinOverride: process.env.WORKFLOW_OPENCODE_BIN,
       opencodeOnPath: globalOpencodeBinary(),
     });
-    // Version-aware spawn args: v1 keeps `--pure`; v2 dropped the flag and
-    // prints its help page to stdout for unknown flags (NDJSON pollution).
+    // Version-aware composition: v1 keeps the historical provider shape and
+    // `--pure`; v2 emits the v2 `providers` shape, reuses the built-in
+    // `openrouter` provider for the metered route, and drops `--pure`.
     const acpMajor = await opencodeMajorVersion(opencode.executable);
+    const opencodeConfig = meteredOpencodeConfig({
+      proxyUrl: proxy.url,
+      model: configModel ?? options.settings?.agents.opencode?.model,
+      opencodeMajor: acpMajor,
+      // W082: the operator's autoCompact preference composes the
+      // `compaction: { auto: true }` block into the hub-written config —
+      // the config-side auto-compaction trigger (default off).
+      ...(options.settings?.agents.opencode?.autoCompact === true ? { autoCompact: true } : {}),
+      ...(autoLatest === undefined ? {} : { autoLatest: { aliases: autoLatest.aliases } }),
+      ...(openSelection === undefined ? {} : { openSource: openSelection }),
+      ...(skillsMount === undefined ? {} : { skills: skillsMount }),
+      ...(skillConnectors.length === 0 ? {} : { skillConnectors }),
+      ...(options.settings === undefined ? {} : { mcpServers: enabledMcpServers(options.settings) }),
+    });
+    writeFileSync(
+      join(configDir, "opencode", "opencode.json"),
+      JSON.stringify(opencodeConfig),
+      { encoding: "utf8", mode: 0o600 },
+    );
     const resume = resumeFrom ?? process.env.WORKFLOW_ACP_RESUME;
     const driver = AcpSessionDriver.contained({
       containment: new LinuxBubblewrapContainment(),
@@ -386,13 +390,17 @@ async function createOpencodeRuntime(
               ],
             }),
         environment: {
-          // The placeholder credential rides the 0600 per-runtime config file
-          // (same posture as the Cline providers.json); the real upstream key
-          // stays exclusively in the hub-side proxy. On v1 `--pure` also kept
-          // the operator's global plugins out of the contained agent; on v2
-          // the flag is gone (help page on stdout) and the isolation rides on
-          // HOME/XDG_CONFIG_HOME alone — the hub-owned config is the surface.
+          // v1: the placeholder credential rides the 0600 per-runtime config
+          // file (same posture as the Cline providers.json). v2: the built-in
+          // `openrouter` provider is activated only by a credential env var, so
+          // the placeholder rides here instead — still placeholder-only, the
+          // real upstream key stays exclusively in the hub-side proxy. On v1
+          // `--pure` also kept the operator's global plugins out of the
+          // contained agent; on v2 the flag is gone (help page on stdout) and
+          // the isolation rides on HOME/XDG_CONFIG_HOME alone — the hub-owned
+          // config is the surface.
           XDG_CONFIG_HOME: configDir,
+          ...(acpMajor !== undefined && acpMajor >= 2 ? { [OPENCODE_V2_METERED_ENV_KEY]: METERED_PLACEHOLDER_KEY } : {}),
         },
       },
        authorize: options.permissionBroker === undefined
@@ -406,6 +414,10 @@ async function createOpencodeRuntime(
       workspaceSessionId: `acp-${randomBytes(4).toString("hex")}`,
       taskId,
       ...(resume !== undefined ? { resumeFrom: resume } : {}),
+      // v2: pin the hub-chosen metered model (the config `model` is ignored
+      // for the session default on v2; without the pin the session defaults to
+      // a built-in `opencode/*` model and bypasses the proxy).
+      ...(acpMajor !== undefined && acpMajor >= 2 ? { selectModel: String(opencodeConfig.model) } : {}),
       ...(guard === undefined ? {} : { guard }),
       ...(options.taskUsage === undefined ? {} : { taskUsage: options.taskUsage }),
       // Plan Task F1/F3: journal skill delivery into the application's

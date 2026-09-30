@@ -84,6 +84,14 @@ export class AcpSessionDriver implements CodingSessionDriver {
   // proposal time, mirroring the Cline adapter's correlation).
   #taskId: TaskId | (() => TaskId);
   #resumeFrom: string | undefined;
+  /**
+   * opencode v2 model pin. v2 ignores the config `model` for the session
+   * default (`/api/model/default` behavior, migration spec §10) and defaults
+   * to a built-in `opencode/*` model, which bypasses the hub proxy. When set,
+   * the driver selects this model on the freshly created ACP session via
+   * `session/set_config_option` so every turn rides the metered route.
+   */
+  #selectModel: string | undefined;
   #guard: WorkflowGuardProvider | undefined;
   /**
    * P6 seats (issue #285): the operator ask hold for the hub-implemented ACP fs
@@ -129,6 +137,12 @@ export class AcpSessionDriver implements CodingSessionDriver {
     workspaceSessionId: string;
     taskId: TaskId | (() => TaskId);
     resumeFrom?: string;
+    /**
+     * opencode v2 model pin (see {@link AcpSessionDriver.#selectModel}). Set
+     * only on v2 launches; absent on v1, where the config `model` selects the
+     * session default.
+     */
+    selectModel?: string;
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
     /**
@@ -174,6 +188,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#workflowSessionId = options.workspaceSessionId;
     this.#taskId = options.taskId;
     this.#resumeFrom = options.resumeFrom;
+    this.#selectModel = options.selectModel;
     this.#guard = options.guard;
     // P6 (issue #285): an explicitly supplied hold wins (tests/embedding); a
     // broker-backed hold carries a seat's held ask on the broker's one answer
@@ -279,6 +294,8 @@ export class AcpSessionDriver implements CodingSessionDriver {
     workspaceSessionId: string;
     taskId: TaskId | (() => TaskId);
     resumeFrom?: string;
+    /** opencode v2 model pin, passed through to the driver. */
+    selectModel?: string;
     adapter?: AcpHostAdapter;
     guard?: WorkflowGuardProvider;
     /** P6 seats (issue #285): the operator ask hold, passed through to the driver. */
@@ -327,6 +344,18 @@ export class AcpSessionDriver implements CodingSessionDriver {
         const session = await this.#client.newSession({ cwd: this.#workspace });
         this.#agentSessionId = session.sessionId;
         this.#sessionConfig = session.config;
+        // opencode v2: `/api/model/default` ignores the config `model` and the
+        // session otherwise defaults to a built-in `opencode/*` model that
+        // bypasses the hub proxy (migration spec §10). Pin the hub-chosen
+        // (metered) model explicitly so every turn rides the metered route.
+        if (this.#selectModel !== undefined) {
+          const pinned = await this.#client.setConfigOption({
+            sessionId: session.sessionId,
+            configId: "model",
+            value: this.#selectModel,
+          });
+          this.#sessionConfig = { ...this.#sessionConfig, configOptions: pinned.configOptions };
+        }
       }
       // Project the agent session id so the operator can resume it later.
       this.#emit({ type: "status", status: `agent session id: ${this.#agentSessionId}` });
