@@ -8,6 +8,15 @@ measurement (spec §5, §6; park row P11). This recipe exists; the affinity pin
 (P19) does not, and the live per-pool verdicts do not. **No savings claim is
 earned by this document**, and the park row stays `unmeasured`.
 
+> **Dated note (2026-09-30, branch `feat/p11-measurement`, issue #290): P19
+> LANDED (env opt-in `WORKFLOW_OPENROUTER_AUTO_AFFINITY`, PR #409) and the
+> matched pair has now RUN live — one pool, one observation. Verdict
+> `negative` / honest non-effect: the free-route already served one model per
+> session and read the shared prefix on turn 2, while the pin to the first
+> configured alias read none. The §3 method, §5 template, and §6 watch items
+> stand; the pool stays `unmeasured`. Full record:
+> `docs/ledger/P11-affinity-measurement.md`.**
+
 **What this is:** the turnkey operator runbook for P11 / issue #290. It
 collects, in one place, the prerequisites, the provider-side observability to
 capture, the with/without-affinity comparison method, the honest caveat, the
