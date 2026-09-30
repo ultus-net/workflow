@@ -12,6 +12,7 @@ export * from "./application/workflow.js";
 export * from "./application/coding-session.js";
 export * from "./application/task-commands.js";
 export * from "./integrations/opencode-plugin.js";
+export * from "./integrations/opencode-plugin-root.js";
 export * from "./integrations/opencode-session.js";
 export * from "./integrations/remote-acp/engine.js";
 export * from "./integrations/remote-acp/projection.js";

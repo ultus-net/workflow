@@ -15,7 +15,7 @@ import type { ProjectRecord, ProjectStatus } from "../integrations/project-regis
 import { defaultSettings, mergeSettings, normalizeSettings, readSettingsFile, settingsPaths, writeSettingsFile } from "../integrations/workflow-settings.js";
 import { resolveToolboxCatalog } from "../integrations/toolbox-catalog.js";
 import { stepId, taskId, type TaskState } from "../kernel/contracts.js";
-import type { PendingPermissionRequest } from "./permission-broker.js";
+import { transportPermissionView } from "./permission-broker.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
 import { WebSessionManager, parseSessionBudgetRaise, type SessionSwitchResult } from "./web-sessions.js";
 import { isWebAgentId, listWebAgents } from "./web-agents.js";
@@ -1294,20 +1294,6 @@ export function createWorkflowWebServer(
     }
     return json(response, 404, { error: "not found" });
   });
-}
-
-/** W115: the 1s permission poll is a transport, not a bulk channel. An
- * oversized parked payload can never be approved (the card's 64 KiB
- * inspection cap renders it NOT-APPROVABLE-WITH-REASON), so shipping it to
- * the browser every poll is pure amplification. The transport view strips
- * `input` for flagged payloads and keeps the flag — the card stays
- * NOT-APPROVABLE-WITH-REASON without the payload, and the broker's parked
- * in-memory request is untouched for the answer path. */
-function transportPermissionView(pending: PendingPermissionRequest | null) {
-  if (pending === undefined || pending === null || pending.inputOverCap !== true) return pending;
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- the rest sibling IS the W115 strip: the payload is discarded by design
-  const { input: _stripped, ...view } = pending;
-  return { ...view, inputOverCap: true };
 }
 
 export interface GitWorktree {

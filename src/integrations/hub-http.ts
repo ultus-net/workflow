@@ -2,6 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 
 import type { WorkflowApplication, WorkflowSnapshot } from "../application/workflow.js";
+import { transportPermissionView, type PermissionBroker } from "../ui/permission-broker.js";
 import { buildReviewRubric } from "../review/rubric.js";
 import type { ReviewProvenanceRecord } from "../review/provenance.js";
 import { DuplicateRunError, WorkspaceDeclarationError } from "./run-registry.js";
@@ -130,6 +131,16 @@ interface HubRequestContext {
    * (capability withheld, like the other optional registries).
    */
   readonly recordSurfaceUsage?: (observation: SurfaceUsageObservation) => void;
+  /**
+   * P6 (issue #285): the hub's SAME-PROCESS broker. When composed, the hub
+   * serves the broker's pending/answer path on `/api/permission`, so a guard
+   * `ask` held by the containment seat (which runs IN this process) is
+   * answerable — not the 120s park-then-deny. Absent → the route 404s
+   * (capability withheld, fail closed, exactly like the other optional
+   * registries). The broker is an in-process object, never cross-process
+   * plumbing.
+   */
+  readonly permissionBroker?: PermissionBroker;
 }
 
 export interface HubBridgeCapabilities {
@@ -152,6 +163,9 @@ export interface HubBridgeCapabilities {
   readonly budgetIncidents?: () => readonly PostureBudgetIncident[] | undefined;
   /** P4 topology Option A1 (issue #283): the surface-observation journal writer (see HubRequestContext). */
   readonly recordSurfaceUsage?: (observation: SurfaceUsageObservation) => void;
+  /** P6 (issue #285): the same-process broker (see HubRequestContext) — a FIELD
+   * on the capabilities object, never a positional. */
+  readonly permissionBroker?: PermissionBroker;
 }
 
 /**
@@ -225,6 +239,43 @@ async function handleRequest(
     if (!authorized(request, requiredToken)) return send(response, 401, { error: "unauthorized" });
     if (request.url === "/health") return send(response, 200, { status: "ok" });
     const body = await readJson(request);
+    if (request.url === "/api/permission") {
+      // P6 (issue #285): the hub's same-process broker answer route. The hub
+      // composes a `PermissionBroker` into its lane; the containment seat (which
+      // runs in THIS process) parks a guard `ask` on `broker.askHold()`, and the
+      // operator resolves it here on the broker's ONE pending/answer transport.
+      // An id-less body is the poll; an `id` + `decision` body is the answer
+      // (the same two shapes the web `/api/permission` route serves). A hub
+      // composed without a broker serves no answer route — 404, fail closed.
+      if (context.permissionBroker === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body)) return send(response, 400, { error: "invalid permission request" });
+      const broker = context.permissionBroker;
+      if (body.id !== undefined) {
+        if (
+          typeof body.id !== "string" || body.id.length === 0 ||
+          (body.decision !== "allow_once" && body.decision !== "allow_always" &&
+            body.decision !== "reject_once" && body.decision !== "reject_always")
+        ) {
+          return send(response, 400, { error: "invalid permission decision request" });
+        }
+        const answered = broker.answer(body.id, body.decision);
+        if (typeof answered === "object") {
+          // P10 (residual #26): the same server-side approvability gate the web
+          // route renders — the structured refusal, never a false success.
+          return send(response, 409, { error: answered.refused, reason: answered.reason });
+        }
+        if (!answered) return send(response, 404, { error: "unknown or stale permission request" });
+      }
+      return send(response, 200, {
+        available: true,
+        mode: broker.mode(),
+        pending: transportPermissionView(broker.pendingRequest() ?? null),
+        // P6: the held asks riding the same transport are projected alongside
+        // the permission prompt (an ask has no tool capability/patterns).
+        pendingAsks: broker.pendingAsks(),
+        patterns: broker.patterns(),
+      });
+    }
     if (request.url === "/evidence-content") {
       // W158: the bounded content behind an evidence record's reference — the
       // operator token serves it (the same read class as /snapshot); an
@@ -806,7 +857,10 @@ async function handleRequest(
       // W144: the hub's ad-hoc shell lane is bounded (the W142 wave's finding
       // (c): no timeout anywhere in the chain). The agent tool lane keeps its
       // current unbounded posture — a separate queued decision.
-      const shellExecutor = shellExecutorFor(application, undefined, true, context.guard, bashTimeoutMs(process.env));
+      // P6 (issue #285): the /bash containment seat composes the same-process
+      // broker-backed hold when the hub has one, so a guard `ask` is answerable
+      // on /api/permission instead of parking unanswerable.
+      const shellExecutor = shellExecutorFor(application, undefined, true, context.guard, bashTimeoutMs(process.env), context.permissionBroker?.askHold());
       // W145: a nonzero command exit is the COMMAND's result, not a server
       // fault — the executor's exit error carries the code, so the wire does
       // too: 422 {error, exitCode} (the W142 wave's finding (a)). Server
