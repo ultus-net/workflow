@@ -1381,6 +1381,27 @@ test("P18 (c): the -c= EQUALS-expansion spelling classifies like sh/bash (the pa
   assert.equal(checkPolicy({ action: "shell", command: "zsh -c'git commit -m x'", currentBranch: "main" }).decision, "deny");
 });
 
+test("P18 (over-block watch): non-shell names ending in sh are not sh-family wrappers", () => {
+  // The watch this pin answers: a bare suffix predicate (`/sh$/i`) would treat
+  // ANY name ending in "sh" — publish, flush, push, bush, hush — as a shell
+  // interpreter and classify a would-deny inner command as a wrapped deny,
+  // over-blocking ordinary commands. The landed predicate is anchored to the
+  // family (`/^(?:ba|z|da|k|x)?sh$/i`) in all three lanes (shell, git, boundary),
+  // so these non-shell heads stay allow. The pin discriminates against a future
+  // widening to a bare `/sh$/` suffix match: under that widening the first
+  // assertion flips to deny, which is exactly the reopened over-block. (The
+  // mirror concern — a widening that matches a real shell the family omits — is
+  // a bypass, not an over-block, and is not what this pin guards.)
+  for (const name of ["publish", "flush", "push", "bush", "hush"]) {
+    assert.equal(checkPolicy({ action: "shell", command: `${name} -c 'git commit -m x'`, currentBranch: "main" }).decision, "allow", `${name} commit`);
+    assert.equal(checkPolicy({ action: "shell", command: `${name} -c 'top'` }).decision, "allow", `${name} top`);
+  }
+  // Contrast arm: the genuine family still classifies (the pin is a boundary,
+  // not a blanket allow).
+  assert.equal(checkPolicy({ action: "shell", command: "sh -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "xsh -c top" }).decision, "ask");
+});
+
 test("W101: the twin matcher sees the widened family (§2.3 drift discipline)", async (t) => {
   const { hasGitMutation } = await import("../src/git-policy.js");
   assert.equal(hasGitMutation("git branch -f main abc123def"), true);
