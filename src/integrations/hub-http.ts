@@ -265,12 +265,7 @@ async function handleRequest(
           ...(typeof body.taskPrompt === "string" ? { taskPrompt: body.taskPrompt } : {}),
         });
       } catch (error) {
-        if (error instanceof WorkspaceDeclarationError) {
-          return send(response, 400, { error: error.message });
-        }
-        if (error instanceof DuplicateRunError) {
-          return send(response, 409, { error: error.message });
-        }
+        if (sendClientFault(response, error)) return;
         throw error;
       }
       return send(response, 200, {});
@@ -362,9 +357,7 @@ async function handleRequest(
       try {
         lineageSnapshot = context.resolveApplication(workspace, undefined, { activateInteractiveTask: false }).snapshot();
       } catch (error) {
-        if (error instanceof WorkspaceDeclarationError) {
-          return send(response, 400, { error: error.message });
-        }
+        if (sendClientFault(response, error)) return;
         throw error;
       }
       const runTasks = lineageSnapshot.tasks
@@ -547,9 +540,7 @@ async function handleRequest(
           workProductLink: { provider: task.provider, key: task.key, url: task.url },
         });
       } catch (error) {
-        if (error instanceof WorkspaceDeclarationError) {
-          return send(response, 400, { error: error.message });
-        }
+        if (sendClientFault(response, error)) return;
         throw error;
       }
       return send(response, 200, { delegation: { state: "ok", runId, task: { key: task.key, title: task.title, url: task.url } } });
@@ -596,9 +587,7 @@ async function handleRequest(
       try {
         snapshot = context.resolveApplication(workspace, undefined, { activateInteractiveTask: false }).snapshot();
       } catch (error) {
-        if (error instanceof WorkspaceDeclarationError) {
-          return send(response, 400, { error: error.message });
-        }
+        if (sendClientFault(response, error)) return;
         throw error;
       }
       const hiddenTaskIds = new Set(context.runController?.hiddenSnapshotTaskIds() ?? []);
@@ -766,9 +755,7 @@ async function handleRequest(
           { activateInteractiveTask: !hasSurfaceTask },
         );
       } catch (error) {
-        if (error instanceof WorkspaceDeclarationError) {
-          return send(response, 400, { error: error.message });
-        }
+        if (sendClientFault(response, error)) return;
         throw error;
       }
       // W144: the hub's ad-hoc shell lane is bounded (the W142 wave's finding
@@ -884,6 +871,31 @@ function send(response: ServerResponse, status: number, body: unknown): void {
   if (response.headersSent) return;
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
+}
+
+/**
+ * W146 residual (c) (2026-09-30, harvest-6): the single client-fault
+ * classification for a workspace-resolving call, extracted once a THIRD route
+ * adopted the shape — the harvest-4 "extract a helper only if a third route
+ * adopts it" condition, now met (reality has five `WorkspaceDeclarationError`
+ * sites, not three: residual-harvest-5 undercounted). `canonicalWorkspace` —
+ * reached through `resolveApplication` and `runController.begin` — throws the
+ * typed `WorkspaceDeclarationError` for a non-canonical client declaration
+ * (400); an already-ACTIVE run begin throws the typed `DuplicateRunError`
+ * (409). Both are CLIENT faults answered with their own message; the helper
+ * writes the response and returns true so the caller returns. Any OTHER error
+ * returns false — the caller rethrows to the catch-all's 500.
+ */
+function sendClientFault(response: ServerResponse, error: unknown): boolean {
+  if (error instanceof WorkspaceDeclarationError) {
+    send(response, 400, { error: error.message });
+    return true;
+  }
+  if (error instanceof DuplicateRunError) {
+    send(response, 409, { error: error.message });
+    return true;
+  }
+  return false;
 }
 
 /** W144: the /bash lane's bounded-execute cap. Default 120s; the

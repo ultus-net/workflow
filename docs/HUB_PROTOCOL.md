@@ -148,19 +148,29 @@ run routes; ACP surfaces resolve tool permissions in-process through
 `WorkflowApplication.authorize` via the ACP adapter, not through a hub route.
 Prior statements in this contract about those routes are historical.
 
-### Workflow-internal endpoint (not part of the SDK contract)
+### Workflow-internal endpoints (not part of the SDK contract)
 
-The hub also serves one Workflow-internal endpoint used by its own UI
-machinery. SDK clients integrating per §5 must not depend on it; it is listed
-here so the running surface is fully observable:
+The hub also serves Workflow-internal endpoints used by its own UI machinery.
+SDK clients integrating per §5 must not depend on them; they are listed here so
+the running surface is fully observable:
 
 - `POST /snapshot` — returns the projected task snapshot of the resolved
   application for a surface-declared `workspace`. Finished scheduled-run tasks
   and the hub's hidden interactive seed task are excluded from the projection.
   Used by the Workflow monitoring surfaces.
+- `POST /schedule/list|save|delete|run-now` — the hub-manager schedule routes
+  over the W074 registry. Their response shapes differ by intent:
+  `/schedule/list` enriches each entry with the W153 `lineage` block and adds
+  `recentRuns`, while `/schedule/save` and `/schedule/delete` echo the raw
+  persisted table as `{ "schedules": [<definition>] }` — no lineage or
+  recent-runs enrichment. `/schedule/run-now` requires the verifier capability
+  (it fires a real contained run); the other three are ordinary-token. The
+  asymmetry is pinned as observed in `test/e2e-hub-routes.test.ts` (the W151
+  review P3 owed this line).
 
-It is an ordinary-token endpoint and is versioned informally alongside the
-Workflow hub implementation, not as part of the v1 contract.
+These are ordinary-token endpoints (except `/schedule/run-now`) and are
+versioned informally alongside the Workflow hub implementation, not as part of
+the v1 contract.
 
 ### `POST /bash` — contained shell execution
 

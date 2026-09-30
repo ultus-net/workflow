@@ -66,3 +66,14 @@ nit).
 > registry and needs a typed registry error or a membership lookup — W142
 > finding (e)); the duplicated try/catch-rethrow shape remains (extract a helper
 > only if a third route adopts the classification).
+
+> **Dated note (2026-09-30, branch `feat/harvest-6`):** both remaining
+> residuals above are now closed. (1) The duplicate-runId 500 was closed in
+> harvest-5 (typed `DuplicateRunError` → 409; `residual-harvest-5.md` item 2).
+> (2) The duplicated try/catch-rethrow shape was extracted in harvest-6 as the
+> shared `sendClientFault` helper (`src/integrations/hub-http.ts`), consumed at
+> all FIVE `WorkspaceDeclarationError` sites (`/run/begin` + the 409
+> `DuplicateRunError`, `/snapshot`, `/schedule/list`, `/board/delegate`,
+> `/bash`) — the fragment's "if a third route adopts" condition is met, and
+> harvest-5's "THREE call sites" count is corrected to five
+> (`residual-harvest-6.md` item 1).
