@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  PER_TURN_BOUNDARY_BREAKPOINTS,
   VENDOR_DEFAULTS,
   applyCacheMarkers,
   isShapeableForFamily,
@@ -108,7 +109,7 @@ test("W109: applyCacheMarkers marks the stable composition-time prefixes on the 
   const marked = applyCacheMarkers(profile, body) as {
     system: Array<{ type: string; text: string; cache_control?: { type: string } }>;
     tools: Array<{ name: string; cache_control?: { type: string } }>;
-    messages: Array<{ role: string; content: string }>;
+    messages: Array<{ role: string; content: Array<{ text?: string; cache_control?: { type: string } }> }>;
   };
   assert.equal(marked.system.length, 1);
   assert.equal(marked.system[0]?.cache_control?.type, "ephemeral");
@@ -116,7 +117,10 @@ test("W109: applyCacheMarkers marks the stable composition-time prefixes on the 
   assert.equal(marked.tools.length, 2);
   assert.equal(marked.tools[0]?.cache_control, undefined, "only the last tool carries the breakpoint");
   assert.equal(marked.tools[1]?.cache_control?.type, "ephemeral");
-  assert.deepEqual(marked.messages, body.messages, "messages are the per-turn lane — untouched by the marker pass");
+  // P13 (issue #292): under the opt-in the pass ALSO marks the previous
+  // turn's end (the last message), so the assertion moved from
+  // "messages untouched" to the boundary mark.
+  assert.equal(marked.messages[0]?.content.at(-1)?.cache_control?.type, "ephemeral", "P13: the previous turn's end carries the boundary breakpoint");
   assert.equal(body.system, "You are Workflow.", "the original body is never mutated");
 });
 
@@ -150,7 +154,7 @@ test("W109: an already-marked prefix block is preserved, never double-marked", (
   assert.deepEqual(marked.system[0], body.system[0]);
 });
 
-test("W109: the marker pass is opt-in and wire-gated — everything else passes through untouched", () => {
+test("W109: the marker pass is opt-in and wire-gated — the dark default and the openai wire pass through untouched", () => {
   const body = { system: "You are Workflow.", tools: [{ name: "read_file" }] };
   const unmarked = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic" });
   assert.equal(applyCacheMarkers(unmarked, body), body, "no opt-in returns the body untouched — absent stays absent");
@@ -159,8 +163,8 @@ test("W109: the marker pass is opt-in and wire-gated — everything else passes 
   const opted = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic", cacheMarkers: true });
   const bare = { messages: [{ role: "user", content: "hi" }] };
   const result = applyCacheMarkers(opted, bare);
-  assert.equal(result.messages, bare.messages);
-  assert.equal("system" in result, false, "a body without stable prefixes gains nothing");
+  assert.notEqual(result.messages, bare.messages, "P13: the per-turn boundary is marked even without static prefixes");
+  assert.equal("system" in result, false, "a body without stable prefixes gains no system block");
 });
 
 test("W109: the cacheMarkers opt-in resolves onto the profile only when supplied", () => {
@@ -211,6 +215,117 @@ test("P14: the default stays dark and the anthropic-wire gate is unchanged under
   assert.equal(applyCacheMarkers(undef, P14_BODY), P14_BODY, "no option means dark");
   const openaiWire = modelProfile({ family: "deepseek", model: "deepseek-flash", cacheMarkers: { deepseek: true } });
   assert.equal(applyCacheMarkers(openaiWire, P14_BODY), P14_BODY, "the openai wire is never marked, even when the map enables the family");
+});
+
+// ---- P13 (issue #292) option B: per-turn boundary marks. Under the SAME
+// dark opt-in as the markers-only path, the pass ALSO places one
+// `cache_control` breakpoint on the END of the previous turn's last message,
+// so the growing conversation prefix becomes cacheable at one-turn reuse
+// distance. DEFAULT stays byte-unchanged (no opt-in -> no markers at all).
+// The anthropic wire allows a small number of breakpoints per request; option
+// B spends exactly ONE on the conversation and holds only the latest stable
+// boundary (the prior turn's end, re-derived each turn) — never many prior
+// turn ends. ----
+
+const P13_BODY = {
+  system: "You are Workflow.",
+  tools: [{ name: "read_file" }, { name: "edit_file" }],
+  messages: [
+    { role: "user", content: "first turn" },
+    { role: "assistant", content: [{ type: "text", text: "reply" }] },
+    { role: "user", content: [{ type: "text", text: "second turn" }, { type: "text", text: "with detail" }] },
+  ],
+};
+
+function contentBlocks(message: unknown): Array<Record<string, unknown>> {
+  const content = (message as { content?: unknown }).content;
+  return Array.isArray(content) ? (content as Array<Record<string, unknown>>) : [];
+}
+
+function countMessageMarkers(result: Record<string, unknown>): number {
+  const messages = result.messages;
+  if (!Array.isArray(messages)) return 0;
+  let count = 0;
+  for (const message of messages) {
+    for (const block of contentBlocks(message)) {
+      if (block.cache_control !== undefined) count += 1;
+    }
+  }
+  return count;
+}
+
+test("P13: the opt-in marks the previous turn's end in addition to the static head", () => {
+  const profile = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic", cacheMarkers: true });
+  const marked = applyCacheMarkers(profile, P13_BODY) as {
+    system: Array<{ cache_control?: { type: string } }>;
+    tools: Array<{ cache_control?: { type: string } }>;
+    messages: Array<{ role: string; content: Array<{ text?: string; cache_control?: { type: string } }> }>;
+  };
+  assert.equal(marked.system.at(-1)?.cache_control?.type, "ephemeral", "the static system head keeps its marker");
+  assert.equal(marked.tools.at(-1)?.cache_control?.type, "ephemeral", "the static last tool keeps its marker");
+  assert.equal(marked.messages.length, 3);
+  assert.equal(contentBlocks(marked.messages[0])[0]?.cache_control, undefined, "prior turns carry no breakpoint");
+  assert.equal(contentBlocks(marked.messages[1])[0]?.cache_control, undefined, "prior turns carry no breakpoint");
+  const lastBlocks = marked.messages[2]!.content;
+  assert.equal(lastBlocks[0]?.cache_control, undefined, "only the last content block is marked");
+  assert.equal(lastBlocks.at(-1)?.cache_control?.type, "ephemeral", "the previous turn's end carries the boundary breakpoint");
+  assert.equal(lastBlocks.at(-1)?.text, "with detail");
+});
+
+test("P13: exactly ONE conversation breakpoint is spent (the wire's small budget)", () => {
+  const profile = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic", cacheMarkers: true });
+  const marked = applyCacheMarkers(profile, P13_BODY) as Record<string, unknown>;
+  assert.equal(countMessageMarkers(marked), PER_TURN_BOUNDARY_BREAKPOINTS, "option B spends exactly the documented conversation breakpoint budget");
+  const systemHead = Array.isArray(marked.system) && (marked.system.at(-1) as { cache_control?: unknown }).cache_control !== undefined ? 1 : 0;
+  const toolHead = Array.isArray(marked.tools) && (marked.tools.at(-1) as { cache_control?: unknown }).cache_control !== undefined ? 1 : 0;
+  assert.equal(systemHead + toolHead + countMessageMarkers(marked), 3, "static head (2) + one boundary stays inside the wire's few-breakpoint budget");
+});
+
+test("P13: a string-content last message is rewritten to a marked text block", () => {
+  const profile = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic", cacheMarkers: true });
+  const body = { messages: [{ role: "user", content: "hello" }] };
+  const marked = applyCacheMarkers(profile, body) as { messages: Array<{ content: Array<{ type: string; text: string; cache_control?: { type: string } }> }> };
+  assert.deepEqual(marked.messages[0]?.content, [{ type: "text", text: "hello", cache_control: { type: "ephemeral" } }]);
+  assert.equal(body.messages[0]?.content, "hello", "the original body is never mutated");
+});
+
+test("P13: a pre-existing boundary marker is preserved, never double-marked", () => {
+  const profile = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic", cacheMarkers: true });
+  // The pre-existing marker sits ON THE LAST BLOCK — the exact block the pass
+  // would mark — and carries a distinguishing field (`ttl`): deleting the
+  // `block.cache_control !== undefined` guard in `withMarker` rebuilds the
+  // block as `{...block, cache_control: {type: "ephemeral"}}`, dropping `ttl`,
+  // so this pin goes red without the guard.
+  const body = { messages: [{ role: "user", content: [{ type: "text", text: "old" }, { type: "text", text: "new", cache_control: { type: "ephemeral", ttl: "1h" } }] }] };
+  const marked = applyCacheMarkers(profile, body) as { messages: Array<{ content: Array<Record<string, unknown>> }> };
+  assert.deepEqual(marked.messages[0]?.content[1], body.messages[0]?.content[1], "the pre-existing marker on the last block is preserved untouched — never double-marked");
+  assert.deepEqual(marked.messages[0]?.content[0], { type: "text", text: "old" }, "the unmarked earlier block stays unmarked");
+});
+
+test("P13: no messages, an empty messages array, and the dark default add no conversation breakpoint", () => {
+  const opted = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic", cacheMarkers: true });
+  const noMessages = {};
+  assert.equal(applyCacheMarkers(opted, noMessages), noMessages, "no messages array adds nothing");
+  const empty = { messages: [] as unknown[] };
+  assert.equal(applyCacheMarkers(opted, empty), empty, "an empty messages array adds nothing");
+  const dark = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic" });
+  assert.equal(applyCacheMarkers(dark, P13_BODY), P13_BODY, "DEFAULT byte-unchanged: no opt-in returns the body untouched");
+  const openaiWire = modelProfile({ family: "deepseek", model: "deepseek-flash", cacheMarkers: true });
+  assert.equal(applyCacheMarkers(openaiWire, P13_BODY), P13_BODY, "the openai wire is never marked, even when opted in");
+});
+
+test("P13: a synthetic (host-inserted) final turn still receives the boundary on its last block", () => {
+  const profile = modelProfile({ family: "deepseek", model: "deepseek-flash", wire: "anthropic", cacheMarkers: true });
+  const synthetic = {
+    messages: [
+      { role: "user", content: "do it" },
+      { role: "assistant", content: [{ type: "text", text: "calling" }, { type: "tool_use", id: "t1", name: "read_file", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+    ],
+  };
+  const marked = applyCacheMarkers(profile, synthetic) as { messages: Array<{ content: Array<Record<string, unknown>> }> };
+  assert.equal(marked.messages.at(-1)?.content.at(-1)?.cache_control !== undefined, true, "the boundary tolerates a synthetic inserted tail");
+  assert.equal(countMessageMarkers(marked as unknown as Record<string, unknown>), 1, "still exactly one conversation breakpoint");
 });
 
 // W109 (frontier round 1 P1): the glm/kimi anthropic-wire shapes are UNPROBED

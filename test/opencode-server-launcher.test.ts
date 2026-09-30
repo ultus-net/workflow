@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 
 import { createOpencodeServerGuard } from "../src/cli/opencode-server.js";
+import { ensureToolboxGuardBuilt } from "./fixtures/compiled-dist.js";
 
 import {
   ensureDiscovery,
@@ -175,15 +175,12 @@ test("W071 daemon: env mode parsers accept defaults and reject malformed values 
 // The daemon composes the vendored guard fail-closed (hub precedent: a guard
 // that cannot start refuses the surface). Through the REAL vendored server,
 // the composed guard carries the W091 promotion rule and the W090 enrichment.
-
-function ensureGuardBuilt(): void {
-  const guardServerPath = resolve(process.cwd(), "mcp-toolbox", "apps", "workflow-guard-mcp", "dist", "server.js");
-  if (existsSync(guardServerPath)) return;
-  execFileSync("pnpm", ["--dir", "mcp-toolbox", "--filter", "workflow-guard-mcp", "run", "build"], { stdio: "inherit" });
-}
+// The build is the shared W120/W133 STALE-AWARE self-healing helper (review P3
+// item 3): the prior local existence-only copy could run a stale enforcement
+// seat after a src change without a rebuild.
 
 test("W094: the daemon's guard composition carries the production promotion ask", async (t) => {
-  ensureGuardBuilt();
+  ensureToolboxGuardBuilt();
   const workspace = mkdtempSync(join(tmpdir(), "wf-w094-guard-"));
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
   const guard = await createOpencodeServerGuard(workspace);

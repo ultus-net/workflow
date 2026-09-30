@@ -241,14 +241,26 @@ export function cacheMarkersEnabled(optIn: CacheMarkerOptIn | undefined, family:
  * W109 (W098 c2): injects the anthropic prompt-cache breakpoints on the
  * STABLE composition-time prefixes — the system block and the last tool
  * definition. The hub composes those per session (stable per-session
- * prefixes in W098's position); the per-turn message lane is append-only
- * and its boundary policy is deliberately NOT decided here (the frontier
- * verification of the caching design shapes it). Opt-in per pool
- * (`profile.cacheMarkers`) and wire-gated to the anthropic Messages wire
- * (the OpenAI-family wire auto-caches upstream). P14: the opt-in may be a
- * per-family map — the pass consults `profile.family` and leaves a family
- * omitted from the map dark. Returns a new object; never mutates its input;
- * a body without stable prefixes passes through with nothing added.
+ * prefixes in W098's position). Opt-in per pool (`profile.cacheMarkers`) and
+ * wire-gated to the anthropic Messages wire (the OpenAI-family wire
+ * auto-caches upstream). P14: the opt-in may be a per-family map — the pass
+ * consults `profile.family` and leaves a family omitted from the map dark.
+ *
+ * P13 (issue #292), option B: under the SAME opt-in the pass ALSO places one
+ * breakpoint on the END of the previous turn's last message (the per-turn
+ * "boundary mark", `applyPerTurnBoundaryMark` below), so the growing
+ * conversation — the dominant token mass — becomes cache-READ: the next turn
+ * submits that same prefix plus new content and the cache matches at the prior
+ * boundary. The anthropic wire allows a small number of breakpoints per
+ * request; option B deliberately spends exactly ONE on the conversation
+ * (`PER_TURN_BOUNDARY_BREAKPOINTS`), holding only the latest stable boundary
+ * re-derived each turn — never many prior turn ends (that would exceed the
+ * budget and a stale boundary would miss the append-only growth). Static head
+ * (system + last tool) plus one boundary is at most three marked ends.
+ *
+ * Returns a new object; never mutates its input; a body without stable
+ * prefixes still gains the per-turn boundary; DEFAULT (no opt-in) passes
+ * through byte-unchanged with nothing added.
  */
 export function applyCacheMarkers(profile: ModelProfile, body: Record<string, unknown>): Record<string, unknown> {
   if (!cacheMarkersEnabled(profile.cacheMarkers, profile.family) || profile.wire !== "anthropic") return body;
@@ -269,7 +281,58 @@ export function applyCacheMarkers(profile: ModelProfile, body: Record<string, un
     marked[last] = withMarker(marked[last]);
     result = { ...result, tools: marked };
   }
+  const messages = body.messages;
+  if (Array.isArray(messages) && messages.length > 0) {
+    result = { ...result, messages: applyPerTurnBoundaryMark(messages) };
+  }
   return result;
+}
+
+/**
+ * P13 (issue #292) option B: the number of breakpoints the per-turn policy
+ * spends on the conversation. The anthropic wire's breakpoint budget is
+ * small, so the policy holds exactly ONE boundary at a time — the latest
+ * stable one — rather than marking many prior turn ends. The marker-budget
+ * pin (`test/model-profile.test.ts`, "exactly ONE conversation breakpoint")
+ * asserts the observed conversation count equals this constant, so the
+ * documented budget and the pinned budget cannot drift apart.
+ */
+export const PER_TURN_BOUNDARY_BREAKPOINTS = 1;
+
+/**
+ * P13 (issue #292) option B: places ONE `cache_control` breakpoint on the END
+ * of the last message in the per-turn `messages` array — the previous turn's
+ * boundary, which the next request submits unchanged. Pure and never
+ * mutating: the array and the last message are copied, a pre-existing marker
+ * is preserved (never double-marked), and a string content is rewritten to a
+ * one-block text array (the same schema-shape change the system rewrite
+ * makes). An empty array, a non-record message, or content with no markable
+ * block passes through with nothing added. The boundary is positional (the
+ * last message regardless of role), so a W070b-synthetic inserted tail is
+ * tolerated. Budget: exactly `PER_TURN_BOUNDARY_BREAKPOINTS` on the
+ * conversation.
+ */
+export function applyPerTurnBoundaryMark(messages: readonly unknown[]): readonly unknown[] {
+  if (messages.length === 0) return messages;
+  const result = messages.map((message) => message);
+  const last = result.length - 1;
+  result[last] = withMessageBoundaryMarker(result[last]);
+  return result;
+}
+
+function withMessageBoundaryMarker(message: unknown): unknown {
+  if (!isRecord(message)) return message;
+  const content = message.content;
+  if (typeof content === "string" && content.length > 0) {
+    return { ...message, content: [{ type: "text", text: content, cache_control: { ...EPHEMERAL_MARKER } }] };
+  }
+  if (Array.isArray(content) && content.length > 0) {
+    const blocks = content.map((block) => block);
+    const last = blocks.length - 1;
+    blocks[last] = withMarker(blocks[last]);
+    return { ...message, content: blocks };
+  }
+  return message;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

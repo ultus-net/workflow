@@ -220,6 +220,18 @@ export async function createModelUsageProxy(options: {
    */
   readonly transformBody?: ((body: Record<string, unknown>) => Record<string, unknown>) | undefined;
   /**
+   * P9 option C (issue #288, 2026-09-30): optional pure transform applied to a
+   * parsed anthropic Messages body (`POST /v1/messages`) before forwarding. The
+   * open-source pool wires it to the W109 marker pass (`applyCacheMarkers`) so
+   * the lane's STATIC HEAD (system block + last tool definition) carries
+   * `cache_control` markers — markers ONLY, gated by the profile's per-family
+   * opt-in, never shaping or downgrade. Absent leaves the lane byte-unchanged
+   * (the A′ pass-through posture); a transform that returns its input BY
+   * REFERENCE is also byte-unchanged (the body is not re-serialized, so key
+   * order and whitespace survive). A non-object return is ignored.
+   */
+  readonly messagesTransformBody?: BodyTransform | undefined;
+  /**
    * W118 (the W095 budget-downgrade consumer): when set, requests whose
    * session usage has crossed the WARN fraction of the budget (any cap
    * dimension at >= fraction * cap, the same comparison budgetViolation
@@ -311,6 +323,11 @@ export async function createModelUsageProxy(options: {
       : downgradeStage === undefined
         ? options.transformBody
         : composeBodyTransforms([downgradeStage, options.transformBody]);
+  // P9 option C: the messages-lane transform, applied to the parsed
+  // `POST /v1/messages` body (never to chat completions). The caller gates it
+  // (the pool supplies it only when a cache-marker opt-in exists); a body it
+  // returns by reference is left byte-identical.
+  const messagesTransform = options.messagesTransformBody;
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((error) => {
@@ -343,16 +360,26 @@ export async function createModelUsageProxy(options: {
     const inbound = await readAll(req);
     const isCompletions = req.method === "POST" && typeof req.url === "string" && /\/chat\/completions$/.test(req.url);
     const isMessages = req.method === "POST" && typeof req.url === "string" && /\/v1\/messages$/.test(req.url);
+    let outboundBody = inbound;
     // P9 A′ (issue #288): the messages lane's parse-only observability capture.
     // The body is parsed into a THROWAWAY record to read the request-side model
-    // id into the bounded journal and to count malformed bodies — `outboundBody`
-    // is NOT reassigned, so the forwarded bytes stay byte-identical to the
-    // inbound bytes. This is deliberately NOT a transform: no shaping, no cache
-    // markers, no downgrade, no replay gate. Parse failure increments the
+    // id into the bounded journal and to count malformed bodies. On its own
+    // `outboundBody` would stay untouched (byte-identical forwarded bytes), but
+    // P9 option C layers the caller-supplied `messagesTransformBody` on top:
+    // the parsed record is handed to the markers-only stage, and the body is
+    // re-serialized ONLY when that stage returns a DIFFERENT object — a stage
+    // that returns its input by reference (the dark family / opt-in-off case)
+    // leaves the bytes byte-identical. This is never shaping, downgrade, a
+    // replay gate, or a `usage.include` injection. Parse failure increments the
     // malformed-body counter instead of 400ing (the chat-completions lane's
     // 400 posture is NOT adopted here), keeping the lane pass-through even on a
-    // body the vendor must judge.
-    if (isMessages && inbound.length > 0) {
+    // body the vendor must judge — and the transform is never invoked on an
+    // unparseable body. A ZERO-LENGTH body is not parseable JSON, so it is
+    // counted too (the P9a review's zero-length blind spot): the capture is
+    // NOT guarded by `inbound.length > 0`, unlike the completions branch,
+    // because the counter's contract is "bodies that were not a parseable JSON
+    // object". The empty bytes still forward raw and never invoke the seam.
+    if (isMessages) {
       let parsedMessages: unknown;
       try {
         parsedMessages = JSON.parse(inbound.toString("utf8"));
@@ -361,12 +388,19 @@ export async function createModelUsageProxy(options: {
       }
       if (!isRecord(parsedMessages)) {
         malformedMessagesBodies += 1;
-      } else if (typeof parsedMessages.model === "string" && parsedMessages.model.length > 0) {
-        messagesLaneModels.push(parsedMessages.model);
-        if (messagesLaneModels.length > MESSAGES_LANE_LABEL_LIMIT) messagesLaneModels.shift();
+      } else {
+        if (typeof parsedMessages.model === "string" && parsedMessages.model.length > 0) {
+          messagesLaneModels.push(parsedMessages.model);
+          if (messagesLaneModels.length > MESSAGES_LANE_LABEL_LIMIT) messagesLaneModels.shift();
+        }
+        if (messagesTransform !== undefined) {
+          const transformed = messagesTransform(parsedMessages);
+          if (transformed !== parsedMessages && isRecord(transformed)) {
+            outboundBody = Buffer.from(JSON.stringify(transformed), "utf8");
+          }
+        }
       }
     }
-    let outboundBody = inbound;
     if (isCompletions && inbound.length > 0) {
       let parsed: unknown;
       try {

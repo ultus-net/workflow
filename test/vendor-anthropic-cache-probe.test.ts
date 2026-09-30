@@ -162,9 +162,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * The frozen marker shape, asserted for every lane. The messages lane is
- * deliberately NOT marked (the P13 boundary policy owns that decision); the
- * probe proves the static head only.
+ * The frozen marker shape, asserted for every lane. The static head (system +
+ * last tool) AND the P13 option-B per-turn boundary on the last message's
+ * final content block are asserted, because the probe body is composed by the
+ * PRODUCTION marker pass — the probe proves the deployed shape including the
+ * conversation boundary.
  */
 function assertMarkerShape(label: string, body: Record<string, unknown>, expectedModel: string): void {
   assert.equal(body.model, expectedModel, `${label}: the model id must ride the body`);
@@ -179,9 +181,13 @@ function assertMarkerShape(label: string, body: Record<string, unknown>, expecte
   const lastTool = tools[tools.length - 1];
   assert.ok(isRecord(lastTool), `${label}: the last tool must be an object`);
   assert.deepEqual(lastTool.cache_control, EPHEMERAL, `${label}: the last tool definition carries the ephemeral marker`);
-  assert.ok(Array.isArray((body.messages as unknown[])), `${label}: the messages lane is present`);
-  const message = (body.messages as unknown[])[0];
-  assert.ok(isRecord(message) && message.cache_control === undefined, `${label}: no marker is placed on the messages lane`);
+  const messages = body.messages;
+  assert.ok(Array.isArray(messages) && messages.length > 0, `${label}: the messages lane is present`);
+  const lastMessage = messages[messages.length - 1];
+  assert.ok(isRecord(lastMessage), `${label}: the last message must be an object`);
+  const content = lastMessage.content;
+  assert.ok(Array.isArray(content) && content.length > 0, `${label}: the last message carries content blocks`);
+  assert.deepEqual((content[content.length - 1] as { cache_control?: unknown }).cache_control, EPHEMERAL, `${label}: the previous turn's end carries the P13 boundary marker`);
 }
 
 // ---- the ungated structural pins: the requests the live arms would send ----
@@ -298,6 +304,15 @@ async function probeLiveMessages(options: {
     payload = undefined;
   }
   const usage = isRecord(payload) && isRecord(payload.usage) ? payload.usage : undefined;
+  // P13 (issue #292): the recorded request witnesses the per-turn boundary
+  // marker too, not only the static head, so the operator's live verdict sees
+  // the deployed placement on the last message's final content block.
+  const messageLane = options.body.messages;
+  const lastMessage = Array.isArray(messageLane) ? messageLane[messageLane.length - 1] : undefined;
+  const lastContent = isRecord(lastMessage) && Array.isArray(lastMessage.content) ? lastMessage.content : undefined;
+  const boundaryMarker = lastContent !== undefined
+    ? (lastContent[lastContent.length - 1] as Record<string, unknown> | undefined)?.cache_control
+    : undefined;
   console.log(JSON.stringify({
     probe: "vendor-anthropic-cache",
     lane: options.lane,
@@ -310,6 +325,7 @@ async function probeLiveMessages(options: {
       lastToolMarker: Array.isArray(options.body.tools)
         ? (options.body.tools[options.body.tools.length - 1] as Record<string, unknown> | undefined)?.cache_control
         : undefined,
+      boundaryMarker,
     },
     status: response.status,
     cacheUsage: {
