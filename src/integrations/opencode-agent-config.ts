@@ -55,12 +55,13 @@ export const OPENCODE_V2_METERED_PROVIDER_ID = "openrouter";
  * activating it with the placeholder credential in `envKey`. The real vendor
  * key stays proxy-side.
  *
- * The ids/env keys were confirmed against the pinned opencode v2.0.10 binary
- * (bundled models.dev catalog: `deepseek`, `zai`, `moonshotai`) and live-probed
- * (a session pinned to `<id>/<model>` reaches a local mock with the placeholder
- * as a bearer token). `zai` is the v2.0.10 spelling of Z.AI/GLM (`ZAI_API_KEY`
- * is the bundled activation var; models.dev later renamed the catalog entry's
- * env to `ZHIPU_API_KEY`, which is NOT what the pinned binary reads).
+ * The provider ids were confirmed against the pinned opencode v2.0.10
+ * (bundled/fetched models.dev catalog: `deepseek`, `zai`, `moonshotai`) and
+ * live-probed on BOTH lanes (a session pinned to `<id>/<model>` reaches a local
+ * mock with the placeholder as a bearer token). `zai` is the v2.0.10 spelling
+ * of Z.AI/GLM; its activation env var is `ZHIPU_API_KEY` (live-verified — see
+ * the per-entry note below). The catalog model ids a vendor built-in advertises
+ * are NOT the pool ids; see {@link OPENCODE_V2_VENDOR_MODELS}.
  */
 export interface OpenSourceV2BuiltinProvider {
   /** opencode v2 built-in provider id that owns this vendor's catalog. */
@@ -71,9 +72,68 @@ export interface OpenSourceV2BuiltinProvider {
 
 export const OPENCODE_V2_VENDOR_BUILTINS: Readonly<Record<ModelFamily, OpenSourceV2BuiltinProvider | undefined>> = {
   deepseek: { providerId: "deepseek", envKey: "DEEPSEEK_API_KEY" },
-  glm: { providerId: "zai", envKey: "ZAI_API_KEY" },
+  // `zai` activation key: models.dev moved the catalog entry's env to
+  // `ZHIPU_API_KEY`. Live-verified on v2.0.10 (2026-09-30, the ACP-lane
+  // residual probe): setting `ZAI_API_KEY` does NOT register `zai` in the ACP
+  // model picker, while `ZHIPU_API_KEY` does. The earlier `strings`-based
+  // inference of `ZAI_API_KEY` was wrong — opencode reads the fetched catalog's
+  // env, not the bundled string.
+  glm: { providerId: "zai", envKey: "ZHIPU_API_KEY" },
   kimi: { providerId: "moonshotai", envKey: "MOONSHOT_API_KEY" },
 };
+
+/**
+ * The v2.0.10 BUILT-IN catalog model id that carries a pool model id.
+ *
+ * opencode v2's ACP model picker validates `session/set_config_option` against
+ * the provider's catalog, and the built-in catalogs do NOT carry every pool
+ * model id (live-verified v2.0.10, 2026-09-30). The mapping is therefore
+ * explicit and version-pinned (re-check on every opencode bump, per AGENTS.md):
+ *
+ * - `deepseek`: the pool's `deepseek-flash` is absent from the v2.0.10 catalog,
+ *   which lists `deepseek-v4-flash` — the vendor-accepted legacy id for the
+ *   same DeepSeek-V4.1-Flash model (W070a spec §2). Mapping it keeps the turn
+ *   on the identical vendor model rather than a different one.
+ * - `moonshotai`: `kimi-k3` is present (identity).
+ * - `zai`: neither `glm-5.3` nor `glm-5.3-flash` is in the v2.0.10 catalog (it
+ *   tops out at `glm-5.2`), so GLM has no faithfully routable v2 built-in
+ *   model id. It is deliberately ABSENT here: {@link v2BuiltinModelRef} then
+ *   falls back to the metered Auto Router rather than silently downgrading to
+ *   `glm-5.2`. GLM's zai catalog models stay selectable and proxied.
+ */
+export const OPENCODE_V2_VENDOR_MODELS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  deepseek: { "deepseek-flash": "deepseek-v4-flash" },
+  moonshotai: { "kimi-k3": "kimi-k3" },
+};
+
+/** True when `providerId` is one of the v2 vendor BUILT-IN provider ids. */
+function isV2VendorBuiltin(providerId: string): boolean {
+  return Object.values(OPENCODE_V2_VENDOR_BUILTINS).some((entry) => entry?.providerId === providerId);
+}
+
+/**
+ * Translates a config `model` ref (`<providerId>/<modelId>`) into a ref the
+ * v2.0.10 ACP picker accepts, so the `session/set_config_option` model pin
+ * (#427) does not fail the session with `model not found`.
+ *
+ * - A known vendor built-in ref is mapped through
+ *   {@link OPENCODE_V2_VENDOR_MODELS} (e.g. `deepseek/deepseek-flash` →
+ *   `deepseek/deepseek-v4-flash`).
+ * - A vendor built-in ref with no faithful catalog id (GLM) falls back to the
+ *   metered Auto Router — metered, never a different vendor model.
+ * - Any other ref (the metered OpenRouter lane, an explicit operator override,
+ *   or a non-vendor ref) passes through unchanged.
+ */
+export function v2BuiltinModelRef(ref: string): string {
+  const slash = ref.indexOf("/");
+  if (slash <= 0) return ref;
+  const providerId = ref.slice(0, slash);
+  const modelId = ref.slice(slash + 1);
+  const mapped = OPENCODE_V2_VENDOR_MODELS[providerId]?.[modelId];
+  if (mapped !== undefined) return `${providerId}/${mapped}`;
+  if (isV2VendorBuiltin(providerId)) return `${OPENCODE_V2_METERED_PROVIDER_ID}/${DEFAULT_OPENCODE_MODEL}`;
+  return ref;
+}
 
 /**
  * A hub-owned open-source vendor provider: the agent points at the loopback

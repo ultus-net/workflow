@@ -127,3 +127,32 @@ without its gate (3 skipped).
   version bump must re-check this table (probe-gated, per AGENTS.md).
 - **v2 `permission` spelling unprobed** (pre-existing probe debt; the composed
   object is the v1 spelling).
+
+---
+
+**Dated supersession note — 2026-09-30 (PR `fix/opencode-v2-acp-vendors`, issue
+#284; full record `docs/ledger/opencode-v2-acp-vendors.md`):** the ACP lane was
+separately live-run and two claims above are SUPERSEDED, not deleted.
+
+- The residual "**The ACP picker registration for vendor built-ins is inferred,
+  not separately probed**" is now RESOLVED. Live on v2.0.10, the ACP `model`
+  picker validates `session/set_config_option`, and the pool ids mostly are not
+  in the built-in catalogs: pinning `deepseek/deepseek-flash` failed the session
+  with `-32602 model not found`. The connector now pins a catalog-valid ref
+  (`deepseek/deepseek-v4-flash`, `moonshotai/kimi-k3`); GLM has no faithful
+  v2.0.10 catalog id and falls back to the metered Auto Router. A dedicated
+  gated probe `test/opencode-v2-vendors-acp-probe.test.ts`
+  (`WORKFLOW_OPENCODE_V2_VENDORS_ACP=1`) is green 3/3.
+- The "**Version-pinned env key**" bullet is CORRECTED: `zai`'s activation var
+  on v2.0.10 is `ZHIPU_API_KEY`, not `ZAI_API_KEY`. `ZAI_API_KEY` does not
+  register `zai` in the ACP picker (live: picker prefixes `["opencode"]`);
+  `ZHIPU_API_KEY` does. The earlier inference came from `strings` over the
+  binary, which reflects a bundled catalog; the runtime reads the fetched
+  catalog's env. `OPENCODE_V2_VENDOR_BUILTINS.glm.envKey` is now
+  `ZHIPU_API_KEY`.
+- The `deepseek-flash` / `glm-5.3` rows in the table above are the *pool/vendor*
+  ids; they are NOT the v2.0.10 built-in catalog ids (the table's premise "each
+  built-in's catalog already carries the pool's exact model ids" is false for
+  deepseek and glm). The server-lane probe passed only because the HTTP lane
+  does not validate the model against the catalog.
+
