@@ -15,7 +15,7 @@ import { createCredentialBroker } from "../integrations/credentials.js";
 import { resolveSecretStore } from "../integrations/secret-store.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 import { hubPromptGuidanceFromEnv } from "../integrations/prompt-guidance.js";
-import { createReviewerFactory, createRunTestRunner } from "../integrations/hub-run-gates.js";
+import { createReviewerFactory, createRunTestRunner, reviewerRunTaskId } from "../integrations/hub-run-gates.js";
 import { createJsonReviewProvenanceStore } from "../integrations/review-provenance-store.js";
 import { createConfiguredAcpRuntime, type WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
 import { canonicalWorkspace } from "../integrations/run-registry.js";
@@ -136,7 +136,7 @@ const reviewProvenanceStore = createJsonReviewProvenanceStore(reviewProvenancePa
 const reviewerFactory = createReviewerFactory({
   shell: containedShell(false),
   provenanceStore: reviewProvenanceStore,
-  createRuntime: async ({ workspace: reviewerWorkspace, recordTaskUsage }) => {
+  createRuntime: async ({ workspace: reviewerWorkspace, recordTaskUsage, reviewerRunId }) => {
     const reviewerApplication = new WorkflowApplication(
       graph,
       hostCapabilities({ transport: "native", authoritativePreMutation: true }),
@@ -145,15 +145,22 @@ const reviewerFactory = createReviewerFactory({
       reviewerWorkspace,
     );
     const reviewerTask = beginKernelSessionTask(reviewerApplication, { idPrefix: "hub-reviewer", title: "Hub reviewer session" });
+    // W111 (issue #283): the runtime's active-task correlation is the reviewer
+    // RUN's canonical task (`run:<reviewerRunId>`), not the reviewer session
+    // task (`hub-reviewer:<id>`). The delta a completed reviewer turn publishes
+    // then joins the reviewer run in the per-task view (`taskUsageForRun` keys
+    // on `run:<id>`); the session task stays the #134 lifecycle bookkeeping
+    // task only. Both are IN_PROGRESS in the shared graph when the boundary is
+    // read.
+    const reviewerRunCorrelationTaskId = reviewerRunTaskId(reviewerRunId);
     // W111 (issue #283): the hub composition root holds the run registry, so
     // the reviewer lane's ACP runtime supplies the driver-side attribution sink
     // — each COMPLETED reviewer turn publishes its per-task boundary delta into
     // the same journal the scheduler and RSI lanes write. The sink's pointer is
-    // the runtime's existing lazy correlation (the reviewer session task,
-    // `hub-reviewer:<id>`, IN_PROGRESS for the review's whole lifetime), read at
-    // boundary time, never inferred. `usage` is deferred: the runtime exists by
-    // turn boundary.
-    const runtime: WorkflowAcpRuntime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerTask.taskId, undefined, guard, {
+    // the runtime's existing lazy correlation (the reviewer run task, IN_PROGRESS
+    // for the review's whole lifetime), read at boundary time, never inferred.
+    // `usage` is deferred: the runtime exists by turn boundary.
+    const runtime: WorkflowAcpRuntime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerRunCorrelationTaskId, undefined, guard, {
       taskUsage: laneTaskUsageSink(() => runtime.metrics?.(), (delta) => recordTaskUsage(delta)),
     }).catch((error: unknown) => {
       // #134: a runtime that never came up still opened its kernel task —

@@ -67,7 +67,18 @@ export interface ReviewerAgentSession {
 }
 
 export interface ReviewerAgentSessionFactory {
-  spawn(options: { readonly workspace: string; readonly taskPrompt?: string }): Promise<ReviewerAgentSession>;
+  spawn(options: {
+    readonly workspace: string;
+    readonly taskPrompt?: string;
+    /**
+     * W111 (issue #283): the reviewer run the session is reviewing FOR. The
+     * runtime binds its active-task correlation to this run's canonical
+     * `run:<reviewerRunId>` kernel task, so a COMPLETED reviewer turn's
+     * per-task delta joins the reviewer run in the per-task view instead of
+     * the phantom `hub-reviewer:<id>` session task.
+     */
+    readonly reviewerRunId: string;
+  }): Promise<ReviewerAgentSession>;
 }
 
 export interface ParsedReviewVerdict {
@@ -223,6 +234,7 @@ export class HubReviewerRunner {
       });
       session = await this.#spawnReviewer.spawn({
         workspace: input.workspace,
+        reviewerRunId,
         ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }),
       });
       let finalMessage: string;
@@ -364,7 +376,7 @@ export class HubReviewerRunner {
         resumedCount += 1;
         continue;
       }
-      const outcome = await this.#reviewOneUnit(input, diffText, renderReviewUnitText(unit));
+      const outcome = await this.#reviewOneUnit(input, reviewerRunId, diffText, renderReviewUnitText(unit));
       const failure = this.#unitFailure(unit.id, outcome, unit.paths);
       if (failure !== undefined) {
         return this.#recordFailClosed(input, reviewerRunId, fingerprint, this.#outcomeSummary(outcome), failure, {
@@ -391,7 +403,7 @@ export class HubReviewerRunner {
       if (prior !== undefined) {
         resumedCount += 1;
       } else {
-        const outcome = await this.#reviewOneUnit(input, diffText, renderIntegrationUnitText(partition));
+        const outcome = await this.#reviewOneUnit(input, reviewerRunId, diffText, renderIntegrationUnitText(partition));
         const failure = this.#unitFailure("integration", outcome, unitIds);
         if (failure !== undefined) {
           return this.#recordFailClosed(input, reviewerRunId, fingerprint, this.#outcomeSummary(outcome), failure, {
@@ -461,6 +473,7 @@ export class HubReviewerRunner {
   /** Runs one isolated reviewer session over one unit's scope; verdict reasons never throw. */
   async #reviewOneUnit(
     input: { readonly workspace: string; readonly taskPrompt?: string },
+    reviewerRunId: string,
     diffText: string,
     scopeText: string,
   ): Promise<UnitReviewOutcome> {
@@ -471,6 +484,7 @@ export class HubReviewerRunner {
     });
     const session = await this.#spawnReviewer.spawn({
       workspace: input.workspace,
+      reviewerRunId,
       ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }),
     });
     let finalMessage: string;

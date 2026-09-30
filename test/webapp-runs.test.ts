@@ -20,7 +20,7 @@ import {
   type RunFilters,
   type RunOriginFilter,
 } from "../src/ui/webapp/runs-view.js";
-import type { RunsRecordState } from "../src/ui/webapp/runs-record.js";
+import type { RunsRecordState, TaskUsageSummaryView } from "../src/ui/webapp/runs-record.js";
 import { formatRunOrigin, statusToken } from "../src/ui/webapp/presenters.js";
 import type { HubEvidenceRow } from "../src/ui/webapp/evidence-preview.js";
 import {
@@ -372,6 +372,28 @@ test("W111 (issue #283): the per-task view renders the RECORDED deltas verbatim,
   // No view-side derivation: the panel never imports the delta arithmetic.
   const source = readFileSync(resolve("src/ui/webapp/run-detail-panel.tsx"), "utf8");
   assert.ok(!source.includes("taskUsageDelta"), "the view never derives a delta — it selects and sums recorded entries only");
+});
+
+test("W111 (issue #283): the per-task view join renders a reviewer run's delta under run:<reviewerRunId>", () => {
+  // The reviewer lane records its completed-turn delta under the reviewer RUN's
+  // canonical task (`run:<reviewerRunId>`) after the binding; the view stays a
+  // pure exact-id join, so it renders that entry under the reviewer run and
+  // claims nothing for the phantom session task (`hub-reviewer:<id>`).
+  const reviewerRunId = "schedule:hub-reviewer-rev-1";
+  const entry: TaskUsageSummaryView = {
+    taskId: "run:" + reviewerRunId,
+    requests: 1,
+    promptTokens: 5,
+    completionTokens: 2,
+    totalTokens: 7,
+    costUsd: 0.001,
+    cacheReadTokens: 0,
+    cacheCreateTokens: 0,
+    recordedAt: "2026-09-30T10:10:00Z",
+  };
+  assert.deepEqual(taskUsageForRun([entry], reviewerRunId).map((row) => row.taskId), ["run:" + reviewerRunId]);
+  const phantom: TaskUsageSummaryView = { ...entry, taskId: "hub-reviewer:abc" };
+  assert.deepEqual(taskUsageForRun([phantom], reviewerRunId), [], "the phantom session-task delta is not claimed by the reviewer run");
 });
 
 test("the evidence tab: the run's records under it, the shared W158 row renderer, named absences", () => {

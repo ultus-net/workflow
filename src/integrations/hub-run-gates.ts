@@ -8,6 +8,19 @@ import {
 import { createJsonReviewProvenanceStore, type ReviewProvenanceStore } from "./review-provenance-store.js";
 import type { RunReviewer, RunReviewerFactory, RunTestRunner } from "./run-registry.js";
 import type { TaskUsageSummary } from "./task-usage.js";
+import { taskId, type TaskId } from "../kernel/contracts.js";
+
+/**
+ * W111 (issue #283): the reviewer runtime's active-task correlation — the
+ * reviewer RUN's canonical kernel task (`run:<reviewerRunId>`), the exact id
+ * the per-task view joins (`taskUsageForRun`). The reviewer session task
+ * (`hub-reviewer:<id>`) stays #134 lifecycle bookkeeping only, so a completed
+ * reviewer turn's delta renders under the reviewer run instead of the phantom
+ * session task.
+ */
+export function reviewerRunTaskId(reviewerRunId: string): TaskId {
+  return taskId(`run:${reviewerRunId}`);
+}
 
 /**
  * Production wiring for the hub-owned run gates (plan Tasks A2/D1). Both
@@ -54,6 +67,13 @@ export function createReviewerFactory(options: {
   readonly createRuntime: (input: {
     readonly workspace: string;
     readonly taskPrompt?: string;
+    /**
+     * W111 (issue #283): the reviewer run the runtime is reviewing for — the
+     * composition root binds the runtime's active-task correlation to this
+     * run's canonical `run:<reviewerRunId>` kernel task so the completed-turn
+     * delta joins the reviewer run in the per-task view.
+     */
+    readonly reviewerRunId: string;
     /**
      * W111 (issue #283): the registry's per-task journal writer, forwarded
      * from the factory's second argument so the reviewer runtime can supply
