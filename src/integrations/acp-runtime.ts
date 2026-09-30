@@ -399,6 +399,7 @@ async function createOpencodeRuntime(
          ? application
          : (action: ProposedToolAction) =>
            options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
+        ...(options.permissionBroker === undefined ? {} : { permissionBroker: options.permissionBroker }),
         onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
         onTodoUpdate: (entries) => application.mirrorNativeTodos(entries),
         workspace,
@@ -525,6 +526,7 @@ async function createClineRuntime(
          ? application
          : (action: ProposedToolAction) =>
            options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
+        ...(options.permissionBroker === undefined ? {} : { permissionBroker: options.permissionBroker }),
         onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
         onTodoUpdate: (entries) => application.mirrorNativeTodos(entries),
         workspace,
@@ -720,6 +722,7 @@ async function createGooseRuntime(
          ? application
          : (action: ProposedToolAction) =>
            options.permissionBroker!.intercept(action, (candidate) => application.authorize(candidate)),
+        ...(options.permissionBroker === undefined ? {} : { permissionBroker: options.permissionBroker }),
         onToolOutcome: (sessionId, outcome, tool, reason) => application.recordToolOutcome(sessionId, outcome, tool, reason),
         onTodoUpdate: (entries) => application.mirrorNativeTodos(entries),
         workspace,

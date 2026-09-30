@@ -2,9 +2,15 @@ import { randomBytes } from "node:crypto";
 
 import type { PolicyDecision } from "../kernel/contracts.js";
 import type { ProposedToolAction, ReadFingerprint, ToolCapability } from "../application/host.js";
+import type { OperatorAskHold, OperatorAskReply, OperatorAskRequest } from "../integrations/operator-ask-hold.js";
 
 export type PermissionMode = "auto" | "ask";
 export type PermissionDecisionChoice = "allow_once" | "allow_always" | "reject_once" | "reject_always";
+
+/** Default hold window for a guard-`ask` parked on the broker. Matches
+ * `createOperatorAskHold`'s default so the two hold dialects share one number
+ * (the daemon's 120s; brief §3). */
+export const DEFAULT_ASK_HOLD_TIMEOUT_MS = 120_000;
 
 /** W112: the lifecycle record behind one allow_always grant (previously the
  * grant was an immortal, tool-name-wide, in-memory Set entry — nearest
@@ -115,12 +121,30 @@ export interface PendingPermissionRequest {
   readonly readFingerprints: readonly string[];
 }
 
-interface ParkedRequest {
+/** A parked permission prompt: the authorization overlay's original park. */
+interface ParkedPermissionRequest {
+  readonly kind: "permission";
   readonly request: PendingPermissionRequest;
   /** The ACP session id the request arrived under; scopes cancel/filter. */
   readonly sessionKey: string | undefined;
   readonly resolve: (decision: PolicyDecision) => void;
 }
+
+/** A parked guard `ask` (P6, issue #285): a seat's "human decides" verdict
+ * carried on the SAME transport as a permission prompt. The operator answer
+ * (or the timeout) resolves it to once/reject; there is no second route and no
+ * second poll. */
+interface ParkedAskRequest {
+  readonly kind: "ask";
+  readonly request: PendingPermissionRequest;
+  /** The ask as the seat supplied it (the hold's projection shape). */
+  readonly ask: OperatorAskRequest;
+  readonly sessionKey: string | undefined;
+  readonly resolve: (reply: OperatorAskReply) => void;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
+type ParkedRequest = ParkedPermissionRequest | ParkedAskRequest;
 
 /**
  * Operator-controlled overlay on the hub's authorization. Auto mode (the
@@ -142,6 +166,10 @@ export class PermissionBroker {
   readonly #alwaysAllow = new Map<string, AllowAlwaysGrant>();
   readonly #alwaysReject = new Set<string>();
   #parked = new Map<string, ParkedRequest>();
+  /** P6 (issue #285): an operator reply that raced ahead of its parked ask is
+   * remembered (keyed by the seat's requestId) and consumed by the park that
+   * follows — mirroring the daemon hold's early-reply discipline. */
+  readonly #earlyAsks = new Map<string, OperatorAskReply>();
   readonly #now: () => number;
   readonly #grantTtlMs: number;
 
@@ -197,6 +225,16 @@ export class PermissionBroker {
     const parked = this.#parked.get(id);
     if (parked === undefined) return false;
     if (sessionKey !== undefined && parked.sessionKey !== sessionKey) return false;
+    if (parked.kind === "ask") {
+      // P6 (issue #285): a guard `ask` carried on the same transport. The
+      // operator's choice maps tighten-never-loosen — a rejection rejects,
+      // anything else is the policy-allowed outcome (`once`). No always-*
+      // grant is recorded for an ask: it is not a tool pattern.
+      this.#parked.delete(id);
+      clearTimeout(parked.timer);
+      parked.resolve(choice === "allow_once" || choice === "allow_always" ? "once" : "reject");
+      return true;
+    }
     // The approvability gate: the SAME classification the card renders as
     // NOT-APPROVABLE-WITH-REASON, recorded once at parking (`inputOverCap`) —
     // one field read here, no new cap, no new display logic. An approval of
@@ -245,17 +283,27 @@ export class PermissionBroker {
     if (sessionKey === undefined) {
       const all = [...this.#parked.values()];
       this.#parked.clear();
-      for (const parked of all) {
-        parked.resolve({ kind: "deny", code: "PROMPT_CANCELLED", reason });
-      }
+      this.#earlyAsks.clear();
+      for (const parked of all) this.#settleCancel(parked, reason);
       return;
     }
     for (const [id, parked] of this.#parked) {
       if (parked.sessionKey === sessionKey) {
         this.#parked.delete(id);
-        parked.resolve({ kind: "deny", code: "PROMPT_CANCELLED", reason });
+        this.#settleCancel(parked, reason);
       }
     }
+  }
+
+  /** Resolves one cancelled park: a permission prompt denies; a held ask
+   * (P6, issue #285) rejects — both fail closed. */
+  #settleCancel(parked: ParkedRequest, reason: string): void {
+    if (parked.kind === "ask") {
+      clearTimeout(parked.timer);
+      parked.resolve("reject");
+      return;
+    }
+    parked.resolve({ kind: "deny", code: "PROMPT_CANCELLED", reason });
   }
 
   /** Clears all stored decisions without touching parked requests. */
@@ -321,9 +369,93 @@ export class PermissionBroker {
           requiredCapabilities: [...(action.requiredCapabilities ?? [])],
           readFingerprints: [...(action.readFingerprints ?? []).map((fingerprint: ReadFingerprint) => fingerprint.path)],
         };
-        this.#parked.set(request.id, { request, sessionKey: action.sessionId, resolve });
+        this.#parked.set(request.id, { kind: "permission", request, sessionKey: action.sessionId, resolve });
       });
     })();
+  }
+
+  /**
+   * P6 (issue #285) — the unified answer path. A guard `ask` from any in-process
+   * seat parks here instead of on a bespoke hold: it becomes a pending request
+   * on the SAME transport as a permission prompt (surfaced by `pendingRequest`/
+   * `/api/permission`, resolved by the same `answer`), so there is one operator
+   * surface. Semantics mirror the landed hold: reject/timeout resolves `reject`
+   * (fail closed), any allow resolves `once`; an early reply is remembered.
+   */
+  parkAsk(request: OperatorAskRequest, sessionKey?: string, timeoutMs: number = DEFAULT_ASK_HOLD_TIMEOUT_MS): Promise<OperatorAskReply> {
+    const early = this.#earlyAsks.get(request.requestId);
+    if (early !== undefined) {
+      this.#earlyAsks.delete(request.requestId);
+      return Promise.resolve(early);
+    }
+    return new Promise<OperatorAskReply>((resolve) => {
+      const id = `ask-${randomBytes(6).toString("hex")}`;
+      const timer = setTimeout(() => {
+        this.#parked.delete(id);
+        this.#earlyAsks.delete(request.requestId); // A stale early reply must not answer a later ask.
+        resolve("reject"); // Fail closed: an unanswered hold never allows.
+      }, timeoutMs);
+      this.#parked.set(id, {
+        kind: "ask",
+        request: askView(id, request),
+        ask: request,
+        sessionKey,
+        resolve,
+        timer,
+      });
+    });
+  }
+
+  /** Records an operator answer for a parked ask by the seat's requestId (the
+   * programmatic twin of the `/api/permission` answer). Tighten-never-loosen:
+   * deny/reject rejects, anything else proceeds as `once`. Returns false when
+   * the reply raced ahead of the ask (remembered as an early reply). */
+  answerAsk(requestId: string, reply: "allow" | "deny" | OperatorAskReply, sessionKey?: string): boolean {
+    const normalized: OperatorAskReply = reply === "deny" || reply === "reject" ? "reject" : "once";
+    for (const [id, parked] of this.#parked) {
+      if (parked.kind !== "ask") continue;
+      if (parked.ask.requestId !== requestId) continue;
+      if (sessionKey !== undefined && parked.sessionKey !== sessionKey) continue;
+      this.#parked.delete(id);
+      clearTimeout(parked.timer);
+      parked.resolve(normalized);
+      return true;
+    }
+    this.#earlyAsks.set(requestId, normalized);
+    return false;
+  }
+
+  /**
+   * The `OperatorAskHold` the seats already accept, backed by this broker: the
+   * seat's park/answer calls land on the broker's one pending/answer transport,
+   * scoped to `sessionKey` so the web channel's poll and answer own it. No
+   * second timer dialect and no second route.
+   */
+  askHold(sessionKey?: string): OperatorAskHold {
+    return brokerAskHold(this, sessionKey);
+  }
+
+  /** The held asks visible for one session key (all when undefined) — the
+   * projection a broker-backed hold exposes. */
+  pendingAsks(sessionKey?: string): OperatorAskRequest[] {
+    return this.#asksFor(sessionKey).map((parked) => parked.ask);
+  }
+
+  /** Resolves every held ask for a session (all when undefined) to reject,
+   * fail closed — a stop must not leave an ask dangling. */
+  cancelAsks(sessionKey?: string): void {
+    for (const parked of this.#asksFor(sessionKey)) {
+      this.#parked.delete(parked.request.id);
+      clearTimeout(parked.timer);
+      parked.resolve("reject");
+    }
+  }
+
+  #asksFor(sessionKey: string | undefined): ParkedAskRequest[] {
+    return [...this.#parked.values()].filter(
+      (parked): parked is ParkedAskRequest =>
+        parked.kind === "ask" && (sessionKey === undefined || parked.sessionKey === sessionKey),
+    );
   }
 
   /** The grant for this action when it is live: well-formed (by construction
@@ -350,6 +482,47 @@ export class PermissionBroker {
     const [entry] = this.#parked.values();
     return entry;
   }
+}
+
+/** P6 (issue #285): the transport view of a held ask — the same
+ * `PendingPermissionRequest` shape the card already renders, synthesized from
+ * the guard ask. No capability/subjects/mutation: an ask is a policy decision,
+ * not a tool proposal. */
+function askView(id: string, request: OperatorAskRequest): PendingPermissionRequest {
+  return {
+    id,
+    tool: request.matched ?? request.policy,
+    capability: undefined,
+    subjects: [],
+    inputPreview: `${request.policy}: ${request.reason}`,
+    input: {
+      policy: request.policy,
+      reason: request.reason,
+      ...(request.matched === undefined ? {} : { matched: request.matched }),
+    },
+    inputOverCap: false,
+    taskId: undefined,
+    mutating: false,
+    requiredCapabilities: [],
+    readFingerprints: [],
+  };
+}
+
+/** The broker-backed `OperatorAskHold`: a seat's park/answer calls land on the
+ * broker's one pending/answer transport, scoped to `sessionKey`. Module-level
+ * so the hold object's getters can read the broker without aliasing `this`. */
+function brokerAskHold(broker: PermissionBroker, sessionKey: string | undefined): OperatorAskHold {
+  return {
+    park: (request) => broker.parkAsk(request, sessionKey),
+    answer: (requestId, reply) => broker.answerAsk(requestId, reply, sessionKey),
+    get pendingCount() {
+      return broker.pendingAsks(sessionKey).length;
+    },
+    get pending() {
+      return broker.pendingAsks(sessionKey);
+    },
+    cancelAll: () => broker.cancelAsks(sessionKey),
+  };
 }
 
 /** W115: one parking-time pass over the payload — the compact preview text

@@ -5,6 +5,7 @@ import { AcpHostAdapter, taskId, type PolicyDecision, type ProposedToolAction } 
 import { createWorkflowAcpPermissionResolver } from "../src/adapters/acp-workflow-resolver.js";
 import type { GuardCheckInput, WorkflowGuardProvider } from "../src/integrations/mcp-toolbox-guard.js";
 import { createOperatorAskHold, type OperatorAskHold } from "../src/integrations/operator-ask-hold.js";
+import { PermissionBroker } from "../src/ui/permission-broker.js";
 import type { AcpPermissionRequestParams } from "../src/adapters/acp-permission.js";
 
 const request: AcpPermissionRequestParams = {
@@ -447,4 +448,24 @@ test("ACP resolver fails a guard ask closed when no operator hold is attached", 
   assert.equal(decision.kind, "deny");
   assert.match((decision as { reason: string }).reason, /no operator hold attached/);
   assert.match((decision as { reason: string }).reason, /promotion-gate/);
+});
+
+// P6 (issue #285) unified answer path: the seat's held ask is carried on the
+// broker's ONE answer transport (the same `/api/permission` poll/answer the
+// permission prompts use), not a second surface.
+test("P6 unified path: a resolver-held ask is answerable through the broker transport", async () => {
+  const { guard } = askGuard();
+  const broker = new PermissionBroker();
+  const hold = broker.askHold("workflow-session-1");
+  const resolver = guardResolver(guard, "run_commands", "process", hold);
+
+  const pending = resolver(heldShellRequest);
+  for (let i = 0; i < 500 && broker.pendingRequest("workflow-session-1") === undefined; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+  const surfaced = broker.pendingRequest("workflow-session-1");
+  assert.ok(surfaced !== undefined, "the resolver-held ask must surface on the broker's one poll transport");
+  assert.equal(surfaced.tool, "promotion-gate");
+  assert.equal(broker.answer(surfaced.id, "allow_once", "workflow-session-1"), true, "the broker answer resolves the seat's ask");
+  assert.deepEqual(await pending, { kind: "allow" });
 });

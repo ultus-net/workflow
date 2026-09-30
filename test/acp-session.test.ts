@@ -744,3 +744,37 @@ test("P6 fs seat: a guard ask fails closed when no operator hold is attached", a
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("P6 fs seat: a broker-composed driver rides the broker's one answer transport", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "acp-fs-broker-"));
+  const target = join(dir, "held.txt");
+  const broker = new PermissionBroker();
+  const child = fakeAgent("fs-absolute-write");
+  const driver = new AcpSessionDriver({
+    child,
+    authorize: () => ({ kind: "allow" }),
+    workspace: dir,
+    workspaceSessionId: "workflow-session",
+    taskId: taskId("HEADLINE-TASK"),
+    guard: askGuard(),
+    permissionBroker: broker,
+  });
+  const session = new WorkflowCodingSession(driver);
+  try {
+    const submit = session.submit(target);
+    for (let i = 0; i < 500 && broker.pendingRequest("workflow-session") === undefined; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    const pending = broker.pendingRequest("workflow-session");
+    assert.ok(pending !== undefined, "the fs seat's ask must ride the broker's one transport");
+    assert.equal(pending.tool, "promotion-gate");
+    assert.equal(broker.answer(pending.id, "allow_once", "workflow-session"), true, "the broker answer releases the write");
+    await submit;
+    assert.equal(await readFile(target, "utf8"), "held", "the operator's allow releases the write");
+    assert.equal(broker.pendingRequest("workflow-session"), undefined);
+  } finally {
+    await driver.dispose();
+    await cleanup(child);
+    await rm(dir, { recursive: true, force: true });
+  }
+});

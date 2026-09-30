@@ -96,3 +96,15 @@ root that composes an ACP runtime with no driver-side sink yet.
 - **Issue #283 stays OPEN** — the view-derives-nothing criterion is now met for
   the run surface and the driver-side sink composes at the registry-holding
   root; the out-of-process interactive sink and §5 Q4 remain.
+
+**2026-09-30 (dated supersession — the shared in-process composition seam):**
+the unified ask-answer surface (`docs/ledger/ask-answer-surface.md`, issues
+#285/#283) lands a second consumer of the SAME in-process composition root named
+above — `AcpRuntimeOptions` now threads the shared `PermissionBroker` into all
+three ACP driver flavors, and the driver derives a broker-backed ask hold from
+it. This does **not** touch the W111 attribution sink or the per-task view: the
+interactive roots still publish no `TaskUsageSummary`, and §5 Q4
+(server-topology per-session plumbing) stays OPEN. It is recorded here only
+because it exercises the identical root, evidencing that a broker-backed
+per-session seam is now available there if the attribution lane's owning
+composition chooses the same route.
