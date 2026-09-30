@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { decodeShellEscapes, prepareRedirectResidue, splitShellSegments, unwrapShellWords } from "./shell.js";
 import { checkProtectedPath, checkSecretPath } from "./path-policy.js";
-import { directRefWriteTargetIn, protectedBranchesIn, type GitPolicyContext } from "./git-policy.js";
+import { directRefWriteTargetIn, gitDirSpellingsIn, protectedBranchesIn, type GitPolicyContext } from "./git-policy.js";
 
 const TOOL = ["open", "code"].join("");
 const TOOL_JSON_RE = new RegExp(`(?:^|/)${TOOL}\\.jsonc?$`, "i");
@@ -260,6 +260,10 @@ export function checkBoundaryPolicy(command: string, workspaceRoot?: string, dep
   const toolCommand = new RegExp(`(?:^|\\s)${TOOL}\\s+(?:-[^|;&]*\\s+)*(?:auth|config|permission)\\b`, "i");
   const autoCommand = new RegExp(`(?:^|\\s)${TOOL}\\s+(?:run\\s+)?--auto\\b`, "i");
   if (toolCommand.test(normalized) || autoCommand.test(normalized)) return { decision: "deny", policy: "guard-tamper", reason: "Changing host auth, permissions, or guard configuration from the agent is not allowed.", matched: command };
+  // P18 (d): the env-spelled gitdir(s) the command names (`GIT_DIR=…`,
+  // `GIT_COMMON_DIR=…`, `GIT_WORK_TREE=…`) — a write under one is
+  // ref-adjacent even without a `.git` component.
+  const gitDirs = gitDirSpellingsIn(command);
   for (const rawSegment of splitShellSegments(command)) {
     // Ported from upstream opencode-workflow-guard (#144, W084): quoted
     // arguments of gh/glab/az PR/issue commands are command data, not shell
@@ -286,7 +290,7 @@ export function checkBoundaryPolicy(command: string, workspaceRoot?: string, dep
       // protected-target gate's classifier and protected set — the same
       // target class the command-spelling lane denies. Feature-ref targets
       // fall through to the (unchanged) workspace containment.
-      const refWrite = directRefWriteTargetIn(path);
+      const refWrite = directRefWriteTargetIn(path, { gitDirs });
       if (refWrite) {
         if (refWrite.uncertain) return { decision: "deny", policy: "protected-branch-write", reason: `Direct .git ref-adjacent write '${path}' could not be resolved to a concrete branch; failing closed.`, matched: command };
         if (refWrite.target && protectedBranchesIn(refContext ?? {}).has(refWrite.target)) return { decision: "deny", policy: "protected-branch-write", reason: `Direct .git branch-pointer writes on protected branch '${refWrite.target}' are not allowed.`, matched: command };

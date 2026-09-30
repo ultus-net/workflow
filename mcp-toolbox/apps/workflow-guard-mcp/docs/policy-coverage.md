@@ -731,3 +731,57 @@ This separation is intentional: adding more MCP tools does not turn an advisory 
   construction — reported, not fabricated); green 102/0 after the src edits;
   the app's full suite 113/113 (built dist, direct-tsc path); app
   `tsc --noEmit` exit 0; repo lint + typecheck exit 0.
+
+  ---- P18 (d) (2026-09-30, issue #296): the inspectable env-spelled gitdir
+  route joins the direct-write gate; the remaining edges recorded ----
+
+  The P18(c) entry recorded three routes outside the gate; this iteration
+  classifies the one INSPECTABLE from the command text and records the rest
+  unchanged. The classifier `directRefWriteTargetIn` now takes
+  `{ gitDirs }`: `gitDirSpellingsIn(command)` extracts the gitdir spellings a
+  command names through its environment in command position — `GIT_DIR=…`,
+  `GIT_COMMON_DIR=…`, `GIT_WORK_TREE=…` (also after `env`/`export`, so
+  `export GIT_DIR=…; …` is covered) — and a written path under one of those
+  directories is ref-adjacent even though a bare repo or a `GIT_DIR`-spelled
+  directory carries NO `.git` component. The tail logic is shared
+  (`refTailTarget`): `refs/heads/<branch>` resolves to the branch name (a
+  protected branch denies with the target named, a feature ref keeps the
+  allow), a ref-adjacent tail with no resolvable branch (`packed-refs`,
+  `HEAD`, `logs`, the `refs`/`refs/heads` directory, the gitdir itself) fails
+  closed, and non-ref content (`index`, `objects`, `config`, `refs/tags`)
+  stays outside the branch-target gate. Lexical `.`/`..` collapse is preserved
+  with the leading `/` kept, so an absolute path and a relative spelling of
+  the same components cannot collide; a traversal past the prefix is caught
+  before the tail match. The `.git` component match is now CASE-INSENSITIVE,
+  so the case-variant `.GIT/` path (the same directory on a case-insensitive
+  filesystem) classifies identically; the branch tail stays case-sensitive
+  (git branch names are). One classifier, two surfaces unchanged: the shell
+  mutation extractor (`boundary-policy.ts`) passes the command's gitdir
+  spellings to every target; the `file_write` lane (`policy.ts`) has no
+  command, so it keeps the `.git`-component route only.
+
+  Recorded BOUNDARIES (honest — unchanged or narrowed):
+  - a `.git` symlink hop whose write spelling carries no `.git` component
+    stays outside the lexical classifier: resolving the symlink is a
+    filesystem fact the pure classifier does not read. A `.git` component that
+    IS spelled classifies as before; the env route above is the inspectable
+    substitute when the gitdir is named explicitly.
+  - a gitfile working directory (`.git` is a file naming its gitdir) is still
+    not resolvable from the write spelling: `.git` itself fails closed, and
+    the gitdir it names is only reachable when also env-spelled.
+  - an UNRESOLVED or globbed gitdir spelling (`GIT_DIR=$X`, `GIT_DIR=*`)
+    cannot be matched to a path — the spelling is dropped, so only a `.git`
+    component still classifies. An unresolved PATH under a literal gitdir
+    spelling fails closed (`uncertain`).
+  - non-ref `.git` content (objects, index, config, hooks, refs/tags) stays
+    outside the branch-target gate (a different policy surface — `.git/config`
+    would need an alias/hooks rule, not branch-name targeting).
+
+  Evidence: red-first 108 policy tests / 103 pass / 5 fail against the
+  unmodified tree — the env-spelled-target deny block, the ref-adjacent
+  fail-closed block, the traversal block, the case-variant `.GIT/` block, and
+  the protectedBranches-fact block; the feature-target allow held as-found
+  (reported, not fabricated). Green 108/0 after the src edits; the app's full
+  suite 119/119 via direct-tsc (`tsc -p tsconfig.json`); app `tsc --noEmit`
+  exit 0; repo lint + typecheck exit 0 unpiped. The W099/W101/P18(c) cells
+  are byte-unchanged (the test diff is append-only: +67 lines, 0 deletions).

@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { splitShellSegments, unwrapShellWords, unwrapWords } from "./shell.js";
+import { decodeShellEscapes, shellWords, splitShellSegments, unwrapShellWords, unwrapWords } from "./shell.js";
 
 // Ported from upstream opencode-workflow-guard (#134/#135, W084): `git tag`
 // publish flows are release operations, not branch mutations — only tag
@@ -492,6 +492,24 @@ function checkPointerTarget(words: string[], protectedBranches: Set<string>, con
 // carries no `.git` component (the link target addressed directly), and a
 // gitfile (`.git` is a file naming its gitdir) — neither is resolvable from
 // the write spelling, so neither is classified here rather than pretended.
+//
+// P18 (d) (2026-09-30, issue #296): the INSPECTABLE env-spelled gitdir route.
+// A bare repo or a `GIT_DIR`-spelled directory carries no `.git` component, so
+// the lexical `.git` match below cannot see it — but when the command names
+// the gitdir through its environment (`GIT_DIR=…`, `GIT_COMMON_DIR=…`, or
+// `GIT_WORK_TREE=…`), a write under that directory IS ref-adjacent and is
+// classified by the same tail logic. The caller supplies the spellings; an
+// unresolved/globbed spelling cannot be matched (recorded boundary, never
+// pretended). The `.git` component match is case-insensitive so the `.GIT/`
+// variant (the same directory on a case-insensitive filesystem) is caught;
+// the branch tail stays case-sensitive (branch names are case-sensitive).
+export interface DirectRefWriteOptions {
+  /** Lexical gitdir spellings named by the command environment
+   * (`GIT_DIR=…`, `GIT_COMMON_DIR=…`, `GIT_WORK_TREE=…`). A written path under
+   * one of these is ref-adjacent even without a `.git` component. */
+  gitDirs?: readonly string[];
+}
+
 export interface DirectRefWriteTarget {
   /** The branch name the path writes, when the tail resolves. */
   target?: string;
@@ -499,28 +517,61 @@ export interface DirectRefWriteTarget {
   uncertain?: boolean;
 }
 
-export function directRefWriteTargetIn(path: string): DirectRefWriteTarget | undefined {
-  const normalized = path.replaceAll("\\", "/");
-  // Only paths carrying a `.git` path component are ref-adjacent (`x.github/`
-  // and `foo.git/` are not).
-  if (!/(?:^|\/)\.git(?:\/|$)/.test(normalized)) return undefined;
-  // An unresolved expansion or a glob in a `.git` path cannot be classified.
-  if (/[$*?]/.test(normalized)) return { uncertain: true };
-  // Lexically collapse `.`/`..` so a traversal spelling cannot alias a
-  // protected ref past the tail match; an escape above the root is uncertain.
+const GIT_DIR_ASSIGNMENT_RE = /^(?:GIT_DIR|GIT_COMMON_DIR|GIT_WORK_TREE)=(.*)$/;
+
+// The gitdir spellings a shell command names through its environment. Scanned
+// in command position only — the segment head, or after `env`/`export` (and
+// `env`'s options) — so argument data (`echo GIT_DIR=/x`) is not mistaken for
+// a live assignment. `export GIT_DIR=…; echo …` is covered because the env
+// prefix is the segment head of its own segment and the scan is whole-command.
+export function gitDirSpellingsIn(command: string): string[] {
+  const spellings: string[] = [];
+  for (const rawSegment of splitShellSegments(command)) {
+    const words = shellWords(decodeShellEscapes(rawSegment));
+    const head = basename(words[0] ?? "");
+    let i = head === "env" || head === "export" ? 1 : 0;
+    if (head === "env") {
+      while (words[i]?.startsWith("-")) i += 1;
+    }
+    for (; i < words.length; i += 1) {
+      const word = words[i]!;
+      const assignment = GIT_DIR_ASSIGNMENT_RE.exec(word);
+      if (assignment) {
+        if (assignment[1]) spellings.push(assignment[1]);
+        continue;
+      }
+      // Any other leading shell assignment keeps the scan inside the env
+      // prefix; the first real command word ends it.
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) continue;
+      break;
+    }
+  }
+  return spellings;
+}
+
+// Lexically collapse `.`/`..` (both the `.git` and the gitdir routes) so a
+// traversal spelling cannot alias past the tail/prefix match; an escape above
+// the root is uncertain. The leading `/` is preserved so an absolute path and
+// a relative spelling of the same components do not collide.
+function collapseLexicalPath(value: string): string | undefined {
+  const absolute = value.startsWith("/");
   const segments: string[] = [];
-  for (const raw of normalized.split("/")) {
+  for (const raw of value.split("/")) {
     if (raw === "" || raw === ".") continue;
     if (raw === "..") {
-      if (segments.length === 0) return { uncertain: true };
+      if (segments.length === 0) return undefined;
       segments.pop();
       continue;
     }
     segments.push(raw);
   }
-  const gitIndex = segments.lastIndexOf(".git");
-  if (gitIndex < 0) return undefined;
-  const rest = segments.slice(gitIndex + 1);
+  return (absolute ? "/" : "") + segments.join("/");
+}
+
+// The shared tail classification: a `refs/heads/<branch>` tail resolves to the
+// branch name; a ref-adjacent tail with no resolvable branch fails closed;
+// refs/tags and non-ref content are not branch pointers.
+function refTailTarget(rest: string[]): DirectRefWriteTarget | undefined {
   if (rest.length === 0) return { uncertain: true }; // the git dir itself
   if (rest[0] === "refs") {
     if (rest[1] === "heads") {
@@ -532,6 +583,49 @@ export function directRefWriteTargetIn(path: string): DirectRefWriteTarget | und
   }
   if (rest[0] === "packed-refs" || rest[0] === "HEAD" || rest[0] === "logs") return { uncertain: true };
   return undefined; // objects/index/config/hooks/... are not branch pointers
+}
+
+export function directRefWriteTargetIn(path: string, options: DirectRefWriteOptions = {}): DirectRefWriteTarget | undefined {
+  const normalized = path.replaceAll("\\", "/");
+  // Only a `.git` path component (case-insensitively — the `.GIT/` variant on
+  // a case-insensitive filesystem) or a caller-supplied env-spelled gitdir
+  // makes a path ref-adjacent (`x.github/` and `foo.git/` are not).
+  const hasGitComponent = /(?:^|\/)\.git(?:\/|$)/i.test(normalized);
+  const gitDirs = (options.gitDirs ?? [])
+    .map((gitDir) => gitDir.replaceAll("\\", "/"))
+    .filter((gitDir) => gitDir.length > 0 && !/[$*?]/.test(gitDir));
+  if (!hasGitComponent && gitDirs.length === 0) return undefined;
+
+  if (hasGitComponent) {
+    // An unresolved expansion or a glob in a `.git` path cannot be classified.
+    if (/[$*?]/.test(normalized)) return { uncertain: true };
+    const collapsed = collapseLexicalPath(normalized);
+    if (collapsed === undefined) return { uncertain: true };
+    const segments = collapsed.split("/").filter((segment) => segment !== "");
+    const gitIndex = segments.map((segment) => segment.toLowerCase()).lastIndexOf(".git");
+    if (gitIndex < 0) return undefined;
+    return refTailTarget(segments.slice(gitIndex + 1));
+  }
+
+  // Environment-spelled gitdir route: a path under a named gitdir is
+  // ref-adjacent. An unresolved/globbed path fails closed only when its
+  // literal spelling is component-compatible with a known gitdir.
+  const unresolved = /[$*?]/.test(normalized);
+  for (const gitDir of gitDirs) {
+    const collapsedGitDir = collapseLexicalPath(gitDir);
+    if (collapsedGitDir === undefined || collapsedGitDir === "") continue;
+    if (unresolved) {
+      if (normalized === gitDir || normalized.startsWith(`${gitDir}/`)) return { uncertain: true };
+      continue;
+    }
+    const collapsed = collapseLexicalPath(normalized);
+    if (collapsed === undefined) return { uncertain: true };
+    if (collapsed === collapsedGitDir || collapsed.startsWith(`${collapsedGitDir}/`)) {
+      const rest = collapsed === collapsedGitDir ? [] : collapsed.slice(collapsedGitDir.length + 1).split("/");
+      return refTailTarget(rest);
+    }
+  }
+  return undefined;
 }
 
 export function wrapperCommands(command: string): string[] {
