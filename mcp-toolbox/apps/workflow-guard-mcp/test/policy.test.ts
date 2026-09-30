@@ -1620,7 +1620,7 @@ test("W121: the promotion-gate ask carries no matched surface", () => {
 // `refs/heads/<protected>` denies like `git update-ref refs/heads/<protected>`;
 // a feature-ref target keeps the feature-target allow; a ref-adjacent `.git`
 // path with no resolvable branch fails closed (parse uncertainty).
-// RED-FIRST: every deny below classified allow against the unmodified tree.
+// RED-FIRST: the two cells below classified allow against the unmodified tree (the update-ref cell already denied via W101).
 
 test("P18 (c): direct .git ref writes naming a protected branch deny from any seat", () => {
   const spellings = [
@@ -1842,7 +1842,7 @@ test("P18 (d) review round: wrapper and recursion forms keep the feature-target 
 // gitdir denies for a protected branch, a feature ref keeps the allow, and an
 // unclassifiable tail fails closed. `--work-tree` rides the same conservative
 // lean as `GIT_WORK_TREE=` (the prior round's recorded treatment). RED-FIRST:
-// every deny below classified allow against the unmodified tree.
+// the two cells below classified allow against the unmodified tree (the update-ref cell already denied via W101).
 
 test("P18 (e): the --git-dir command-option makes ref-adjacent writes target-classifiable", () => {
   const cases = [
