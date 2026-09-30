@@ -23,26 +23,61 @@ import { DEFAULT_OPEN_SOURCE_POOL } from "../src/integrations/open-source-pool.j
  * with its own named reason and NO network call is made. CI never reaches a
  * vendor. The operator runs it; the observed shape is RECORDED in its output
  * and the dated per-version verdict is written up (see
- * docs/ledger/P8-vendor-cache-probe-harness.md for the run recipe and the
- * recording location).
+ * docs/ledger/P8-vendor-cache-probe-harness.md and
+ * docs/ledger/P8p-provider-lane-probe.md for the run recipes and the recording
+ * location).
+ *
+ * P8 LANE RE-FRAME (issue #287): the operator does NOT send production traffic
+ * with direct vendor API keys — it crosses a reseller/provider (Azure AI
+ * Foundry or OpenRouter) anthropic-compatible lane. The per-family arms stay
+ * because they measure the vendor contracts themselves, but they are NOT the
+ * deployed lane and this file says so. The GENERIC provider lane below is the
+ * operator-runnable path to the deployed route: `provider` in the gate plus
+ * WORKFLOW_PROVIDER_ANTHROPIC_URL / WORKFLOW_PROVIDER_API_KEY /
+ * WORKFLOW_PROVIDER_MODEL points the same marker-shaped anthropic body at
+ * whatever base URL the reseller exposes.
  *
  * The committed assertions are STRUCTURAL ONLY: the composed request carries
- * the ephemeral markers (an ungated pin below), and a live response is a
- * well-formed Messages body with a numeric `usage`. The cache fields
+ * the ephemeral markers (ungated pins below, one per lane), and a live response
+ * is a well-formed Messages body with a numeric `usage`. The cache fields
  * (`cache_creation_input_tokens` / `cache_read_input_tokens`) are OBSERVED and
  * printed, never asserted present or positive — the live verdict belongs in the
  * operator's dated record, not in this file.
  *
  * Red-first is NOT applicable: with no keys and no gate nothing runs, so there
- * is no red to earn. The discriminating artifact is the gated path's structure —
- * the request it composes and the response fields it reads — which is pinned
- * ungated so a weakened request cannot hide behind the gate.
+ * is no red to earn. The provider lane reuses the same production marker pass,
+ * so it does not change the composed shape; the request it composes and the
+ * response fields it reads are pinned ungated so a weakened request cannot hide
+ * behind the gate.
  */
 
 /** The live gate. Without it, every family arm skips before any network use. */
 const VENDOR_CACHE_PROBE_GATE = "WORKFLOW_VENDOR_CACHE_PROBE";
 
 const FAMILIES: readonly ModelFamily[] = ["deepseek", "glm", "kimi"];
+
+/**
+ * P8 lane re-frame (issue #287): the GENERIC reseller/provider lane. Production
+ * traffic does not use direct vendor keys; it crosses a reseller (Azure AI
+ * Foundry or OpenRouter) anthropic-compatible endpoint. The `provider` gate
+ * token selects this lane, and the endpoint/key/model come from env so the
+ * operator points it at whatever their provider exposes. The direct per-family
+ * arms above are retained (they measure the vendor contracts), but they are NOT
+ * the deployed lane.
+ */
+const PROVIDER_LANE_TOKEN = "provider";
+const PROVIDER_URL_ENV = "WORKFLOW_PROVIDER_ANTHROPIC_URL";
+const PROVIDER_KEY_ENV = "WORKFLOW_PROVIDER_API_KEY";
+const PROVIDER_MODEL_ENV = "WORKFLOW_PROVIDER_MODEL";
+
+/**
+ * The provider lane is FAMILY-AGNOSTIC: under the boolean opt-in `true` the
+ * marker pass admits every family before it consults the profile's family
+ * (`cacheMarkersEnabled`), so the composed marker shape does not depend on it.
+ * This nominal family only satisfies `modelProfile`'s contract; `shapeRequestBody`
+ * is never applied, so no vendor reasoning/sampling field rides the wire.
+ */
+const PROVIDER_LANE_PROFILE_FAMILY: ModelFamily = "deepseek";
 
 const EPHEMERAL = { type: "ephemeral" } as const;
 
@@ -59,6 +94,17 @@ export function selectedFamilies(raw: string | undefined): readonly ModelFamily[
   return FAMILIES.filter((family) => tokens.includes(family));
 }
 
+/**
+ * True when the gate names the GENERIC provider lane. `all` stays families-only
+ * (the direct arms); the deployed reseller route is opted in with the explicit
+ * `provider` token so it is never run implicitly by `all`.
+ */
+export function providerLaneSelected(raw: string | undefined): boolean {
+  const value = raw?.trim() ?? "";
+  if (value === "") return false;
+  return value.split(/[\s,]+/).filter((token) => token.length > 0).includes(PROVIDER_LANE_TOKEN);
+}
+
 /** The vendor model id whose anthropic wire this family's probe exercises. */
 function vendorModel(family: ModelFamily): string {
   const def = DEFAULT_OPEN_SOURCE_POOL.find((entry) => entry.family === family);
@@ -70,9 +116,8 @@ function messagesUrl(family: ModelFamily): string {
   return `${VENDOR_DEFAULTS[family].anthropicEndpoint.replace(/\/+$/, "")}/v1/messages`;
 }
 
-/** The minimal anthropic-wire body the probe sends, with the production markers. */
-function probeRequestBody(family: ModelFamily): Record<string, unknown> {
-  const model = vendorModel(family);
+/** The minimal anthropic-wire body the probe sends, through the PRODUCTION marker pass. */
+function markerRequestBody(family: ModelFamily, model: string): Record<string, unknown> {
   const profile = modelProfile({ family, model, wire: "anthropic", cacheMarkers: true });
   return applyCacheMarkers(profile, {
     model,
@@ -87,38 +132,132 @@ function probeRequestBody(family: ModelFamily): Record<string, unknown> {
   });
 }
 
+/** The direct per-family arm's body: the vendor's own model id on its family profile. */
+function probeRequestBody(family: ModelFamily): Record<string, unknown> {
+  return markerRequestBody(family, vendorModel(family));
+}
+
+/** The generic provider lane's body: the operator's model id on a family-agnostic profile. */
+function providerProbeRequestBody(model: string): Record<string, unknown> {
+  return markerRequestBody(PROVIDER_LANE_PROFILE_FAMILY, model);
+}
+
+/**
+ * `https://host/anthropic` → `https://host/anthropic/v1/messages`; a base that
+ * already ends in `/v1` or `/messages` is not doubled, so one env accepts
+ * OpenRouter's `…/api/v1` and an anthropic-native base alike.
+ */
+function providerMessagesUrl(base: string): string {
+  const trimmed = base.trim().replace(/\/+$/, "");
+  if (trimmed.endsWith("/messages")) return trimmed;
+  if (trimmed.endsWith("/v1")) return `${trimmed}/messages`;
+  return `${trimmed}/v1/messages`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-// ---- the ungated structural pin: the request the live arm would send ----
-// This is the discriminator that survives the gate: the marker shape and its
+/**
+ * The frozen marker shape, asserted for every lane. The messages lane is
+ * deliberately NOT marked (the P13 boundary policy owns that decision); the
+ * probe proves the static head only.
+ */
+function assertMarkerShape(label: string, body: Record<string, unknown>, expectedModel: string): void {
+  assert.equal(body.model, expectedModel, `${label}: the model id must ride the body`);
+  const system = body.system;
+  assert.ok(Array.isArray(system) && system.length === 1, `${label}: a string system prompt becomes one marked block`);
+  const systemBlock = system[0];
+  assert.ok(isRecord(systemBlock), `${label}: the system block must be an object`);
+  assert.deepEqual(systemBlock.cache_control, EPHEMERAL, `${label}: the system block carries the ephemeral marker`);
+  assert.equal(systemBlock.type, "text", `${label}: the system block stays a text block`);
+  const tools = body.tools;
+  assert.ok(Array.isArray(tools) && tools.length > 0, `${label}: the tool list is present`);
+  const lastTool = tools[tools.length - 1];
+  assert.ok(isRecord(lastTool), `${label}: the last tool must be an object`);
+  assert.deepEqual(lastTool.cache_control, EPHEMERAL, `${label}: the last tool definition carries the ephemeral marker`);
+  assert.ok(Array.isArray((body.messages as unknown[])), `${label}: the messages lane is present`);
+  const message = (body.messages as unknown[])[0];
+  assert.ok(isRecord(message) && message.cache_control === undefined, `${label}: no marker is placed on the messages lane`);
+}
+
+// ---- the ungated structural pins: the requests the live arms would send ----
+// These are the discriminators that survive the gate: the marker shape and its
 // placement are frozen here, so a change to the request (a dropped marker, a
 // marker on the wrong block) goes red in the ordinary suite with no keys.
 test("vendor cache probe: the composed anthropic request carries the ephemeral markers on the stable prefixes", () => {
   for (const family of FAMILIES) {
-    const body = probeRequestBody(family);
-    assert.equal(body.model, vendorModel(family), `${family}: the vendor model id must ride the body`);
-    const system = body.system;
-    assert.ok(Array.isArray(system) && system.length === 1, `${family}: a string system prompt becomes one marked block`);
-    const systemBlock = system[0];
-    assert.ok(isRecord(systemBlock), `${family}: the system block must be an object`);
-    assert.deepEqual(systemBlock.cache_control, EPHEMERAL, `${family}: the system block carries the ephemeral marker`);
-    assert.equal(systemBlock.type, "text", `${family}: the system block stays a text block`);
-    const tools = body.tools;
-    assert.ok(Array.isArray(tools) && tools.length > 0, `${family}: the tool list is present`);
-    const lastTool = tools[tools.length - 1];
-    assert.ok(isRecord(lastTool), `${family}: the last tool must be an object`);
-    assert.deepEqual(lastTool.cache_control, EPHEMERAL, `${family}: the last tool definition carries the ephemeral marker`);
-    assert.ok(Array.isArray((body.messages as unknown[])), `${family}: the messages lane is present`);
-    // The messages lane is deliberately NOT marked (the P13 boundary policy owns
-    // that decision); the probe proves the static head only.
-    const message = (body.messages as unknown[])[0];
-    assert.ok(isRecord(message) && message.cache_control === undefined, `${family}: no marker is placed on the messages lane`);
+    assertMarkerShape(family, probeRequestBody(family), vendorModel(family));
   }
 });
 
-// ---- the gated live arms: one per family, each with its own skip reason ----
+test("vendor cache probe: the composed provider-lane request carries the same ephemeral markers", () => {
+  // The provider lane reuses the production marker pass, so it emits the same
+  // shape as the direct arms; this pin freezes that for the deployed lane.
+  assertMarkerShape("provider", providerProbeRequestBody("provider-lane-model"), "provider-lane-model");
+});
+
+/**
+ * The shared live arm: POST the composed body, RECORD the observed shape
+ * verbatim (what the operator copies into the dated verdict — see the ledger
+ * fragment's recipe), then assert ONLY the structural contract. A non-2xx is a
+ * real live finding (the endpoint rejected the marker/request) and fails the
+ * arm; the cache fields are OBSERVED, never required, so a committed green can
+ * never manufacture a caching claim.
+ */
+async function probeLiveMessages(options: {
+  readonly label: string;
+  readonly lane: "family" | "provider";
+  readonly family: ModelFamily | null;
+  readonly url: string;
+  readonly body: Record<string, unknown>;
+  readonly headers: Record<string, string>;
+}): Promise<void> {
+  const response = await fetch(options.url, {
+    method: "POST",
+    headers: options.headers,
+    body: JSON.stringify(options.body),
+    signal: AbortSignal.timeout(45_000),
+  });
+  const text = await response.text();
+  let payload: unknown;
+  try {
+    payload = JSON.parse(text) as unknown;
+  } catch {
+    payload = undefined;
+  }
+  const usage = isRecord(payload) && isRecord(payload.usage) ? payload.usage : undefined;
+  console.log(JSON.stringify({
+    probe: "vendor-anthropic-cache",
+    lane: options.lane,
+    family: options.family,
+    model: options.body.model,
+    endpoint: options.url,
+    gate: VENDOR_CACHE_PROBE_GATE,
+    request: {
+      systemMarker: isRecord((options.body.system as unknown[])[0]) ? (options.body.system as unknown[])[0] : null,
+      lastToolMarker: Array.isArray(options.body.tools)
+        ? (options.body.tools[options.body.tools.length - 1] as Record<string, unknown> | undefined)?.cache_control
+        : undefined,
+    },
+    status: response.status,
+    cacheUsage: {
+      cache_creation_input_tokens: usage?.cache_creation_input_tokens,
+      cache_read_input_tokens: usage?.cache_read_input_tokens,
+      input_tokens: usage?.input_tokens,
+      output_tokens: usage?.output_tokens,
+    },
+    responseBody: payload ?? text.slice(0, 600),
+  }, null, 2));
+
+  assert.ok(response.ok, `${options.label} ${options.url} returned HTTP ${response.status}: ${text.slice(0, 400)}`);
+  assert.ok(isRecord(payload), `${options.label}: the response must be a JSON Messages body`);
+  assert.ok(usage !== undefined, `${options.label}: the response must carry a usage object`);
+  assert.equal(typeof usage.input_tokens, "number", `${options.label}: usage.input_tokens must be numeric`);
+  assert.equal(typeof usage.output_tokens, "number", `${options.label}: usage.output_tokens must be numeric`);
+}
+
+// ---- the gated live arms: one per family plus the generic provider lane, each with its own skip reason ----
 const gateValue = process.env[VENDOR_CACHE_PROBE_GATE];
 const selected = selectedFamilies(gateValue);
 const { keys } = loadOpenModelKeys();
@@ -128,7 +267,7 @@ for (const family of FAMILIES) {
   const skip = gateValue === undefined || gateValue.trim() === ""
     ? `${VENDOR_CACHE_PROBE_GATE} is unset`
     : selected.length === 0
-      ? `${VENDOR_CACHE_PROBE_GATE}='${gateValue}' selects no family (use deepseek, glm, kimi, a comma list, or all)`
+      ? `${VENDOR_CACHE_PROBE_GATE}='${gateValue}' selects no family (use deepseek, glm, kimi, a comma list, all, or provider for the reseller lane)`
       : !selected.includes(family)
         ? `family '${family}' is not selected by ${VENDOR_CACHE_PROBE_GATE}='${gateValue}'`
         : key === undefined
@@ -139,58 +278,63 @@ for (const family of FAMILIES) {
     `vendor anthropic cache probe: ${family} accepts the Messages-schema cache_control markers`,
     { skip, timeout: 60_000 },
     async () => {
-      const url = messagesUrl(family);
-      const body = probeRequestBody(family);
-      const response = await fetch(url, {
-        method: "POST",
+      await probeLiveMessages({
+        label: family,
+        lane: "family",
+        family,
+        url: messagesUrl(family),
+        body: probeRequestBody(family),
         headers: {
           "content-type": "application/json",
           "anthropic-version": "2023-06-01",
           "x-api-key": key as string,
         },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(45_000),
       });
-      const text = await response.text();
-      let payload: unknown;
-      try {
-        payload = JSON.parse(text) as unknown;
-      } catch {
-        payload = undefined;
-      }
-      const usage = isRecord(payload) && isRecord(payload.usage) ? payload.usage : undefined;
-      // RECORD the observed shape verbatim — this is what the operator copies
-      // into the dated per-vendor verdict (see the ledger fragment's recipe).
-      console.log(JSON.stringify({
-        probe: "vendor-anthropic-cache",
-        family,
-        model: body.model,
-        endpoint: url,
-        gate: VENDOR_CACHE_PROBE_GATE,
-        request: {
-          systemMarker: isRecord((body.system as unknown[])[0]) ? (body.system as unknown[])[0] : null,
-          lastToolMarker: Array.isArray(body.tools) ? (body.tools[body.tools.length - 1] as Record<string, unknown> | undefined)?.cache_control : undefined,
-        },
-        status: response.status,
-        cacheUsage: {
-          cache_creation_input_tokens: usage?.cache_creation_input_tokens,
-          cache_read_input_tokens: usage?.cache_read_input_tokens,
-          input_tokens: usage?.input_tokens,
-          output_tokens: usage?.output_tokens,
-        },
-        responseBody: payload ?? text.slice(0, 600),
-      }, null, 2));
+    },
+  );
+}
 
-      // Structural asserts only. A non-2xx is a real live finding (the endpoint
-      // rejected the marker/request) and fails this arm — but the committed
-      // test never asserts that a vendor accepts caching.
-      assert.ok(response.ok, `${family} ${url} returned HTTP ${response.status}: ${text.slice(0, 400)}`);
-      assert.ok(isRecord(payload), `${family}: the response must be a JSON Messages body`);
-      assert.ok(usage !== undefined, `${family}: the response must carry a usage object`);
-      assert.equal(typeof usage.input_tokens, "number", `${family}: usage.input_tokens must be numeric`);
-      assert.equal(typeof usage.output_tokens, "number", `${family}: usage.output_tokens must be numeric`);
-      // The cache fields are OBSERVED (printed above), never required: absence is
-      // the finding the operator records, not a failure this test manufactures.
+// ---- the generic provider lane: the deployed reseller route (issue #287) ----
+{
+  const providerSelected = providerLaneSelected(gateValue);
+  const providerUrl = process.env[PROVIDER_URL_ENV]?.trim();
+  const providerKey = process.env[PROVIDER_KEY_ENV]?.trim();
+  const providerModel = process.env[PROVIDER_MODEL_ENV]?.trim();
+  const skip = gateValue === undefined || gateValue.trim() === ""
+    ? `${VENDOR_CACHE_PROBE_GATE} is unset`
+    : !providerSelected
+      ? `provider lane is not selected by ${VENDOR_CACHE_PROBE_GATE}='${gateValue}' (add the 'provider' token)`
+      : providerUrl === undefined || providerUrl === ""
+        ? `no provider base URL: set ${PROVIDER_URL_ENV} (an anthropic-compatible reseller endpoint)`
+        : providerKey === undefined || providerKey === ""
+          ? `no provider key: set ${PROVIDER_KEY_ENV}`
+          : providerModel === undefined || providerModel === ""
+            ? `no provider model: set ${PROVIDER_MODEL_ENV}`
+            : false;
+
+  test(
+    "vendor anthropic cache probe: the provider lane accepts the Messages-schema cache_control markers",
+    { skip, timeout: 60_000 },
+    async () => {
+      await probeLiveMessages({
+        label: "provider",
+        lane: "provider",
+        family: null,
+        url: providerMessagesUrl(providerUrl as string),
+        body: providerProbeRequestBody(providerModel as string),
+        headers: {
+          "content-type": "application/json",
+          "anthropic-version": "2023-06-01",
+          // The reseller lanes split on auth shape: anthropic-native endpoints
+          // (and Azure's anthropic-compatible surface) read `x-api-key`, while
+          // OpenRouter's Anthropic Messages input authenticates with a Bearer
+          // token. Both common forms ride so one env points at either; an
+          // endpoint that rejects the extra header is a live finding to record,
+          // not something this probe guesses around.
+          "x-api-key": providerKey as string,
+          authorization: `Bearer ${providerKey as string}`,
+        },
+      });
     },
   );
 }
