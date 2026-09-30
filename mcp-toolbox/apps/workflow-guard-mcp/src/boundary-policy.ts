@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { decodeShellEscapes, prepareRedirectResidue, splitShellSegments, unwrapShellWords } from "./shell.js";
 import { checkProtectedPath, checkSecretPath } from "./path-policy.js";
-import { directRefWriteTargetIn, gitDirSpellingsIn, protectedBranchesIn, type GitPolicyContext } from "./git-policy.js";
+import { directRefWriteTargetIn, gitDirSpellingsIn, protectedBranchesIn, refSymlinkAliasSpellingsIn, type GitPolicyContext } from "./git-policy.js";
 
 const TOOL = ["open", "code"].join("");
 const TOOL_JSON_RE = new RegExp(`(?:^|/)${TOOL}\\.jsonc?$`, "i");
@@ -254,7 +254,7 @@ export function isGuardConfigurationPath(path: string, workspaceRoot?: string, l
   return real !== undefined && real !== lexical && guarded(real.replaceAll("\\", "/"));
 }
 
-export function checkBoundaryPolicy(command: string, workspaceRoot?: string, depth = 0, liveConfigPaths?: readonly string[], refContext?: GitPolicyContext, inheritedGitDirs: readonly string[] = []): { policy: string; decision: "deny"; reason: string; matched?: string } | undefined {
+export function checkBoundaryPolicy(command: string, workspaceRoot?: string, depth = 0, liveConfigPaths?: readonly string[], refContext?: GitPolicyContext, inheritedGitDirs: readonly string[] = [], inheritedGitDirAliases: readonly string[] = []): { policy: string; decision: "deny"; reason: string; matched?: string } | undefined {
   if (depth >= 16) return { decision: "deny", policy: "workspace-boundary", reason: "Nested shell depth exceeds deterministic inspection limit.", matched: command };
   const normalized = decodeShellEscapes(command).replace(/'([^']*)'/g, "$1").replace(/"([^"]*)"/g, "$1").replace(new RegExp(`${TOOL}\\.jso[?]|${TOOL}\\.[?*]`, "gi"), `${TOOL}.json`);
   const toolCommand = new RegExp(`(?:^|\\s)${TOOL}\\s+(?:-[^|;&]*\\s+)*(?:auth|config|permission)\\b`, "i");
@@ -267,6 +267,11 @@ export function checkBoundaryPolicy(command: string, workspaceRoot?: string, dep
   // `GIT_DIR=/x sh -c '… > /x/…'` classifies like the un-nested form (union,
   // deduped).
   const gitDirs = [...new Set([...inheritedGitDirs, ...gitDirSpellingsIn(command)])];
+  // P18 boundary refine: symlink aliases the command CREATES whose target is
+  // ref-adjacent (an in-command `ln -s <ref-adjacent> <link>`) — writes
+  // strictly under <link> are ref-adjacent. A nested `sh -c` inherits the
+  // outer aliases (union, deduped) like the gitdirs.
+  const gitDirAliases = [...new Set([...inheritedGitDirAliases, ...refSymlinkAliasSpellingsIn(command, gitDirs)])];
   for (const rawSegment of splitShellSegments(command)) {
     // Ported from upstream opencode-workflow-guard (#144, W084): quoted
     // arguments of gh/glab/az PR/issue commands are command data, not shell
@@ -277,7 +282,7 @@ export function checkBoundaryPolicy(command: string, workspaceRoot?: string, dep
     if (/^(?:ba|z|da|k)?sh$/i.test(executable)) {
       const commandFlag = words.findIndex((word, index) => index > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word));
       if (commandFlag >= 0 && words[commandFlag + 1]) {
-        const nested = checkBoundaryPolicy(words[commandFlag + 1]!, workspaceRoot, depth + 1, liveConfigPaths, refContext, gitDirs);
+        const nested = checkBoundaryPolicy(words[commandFlag + 1]!, workspaceRoot, depth + 1, liveConfigPaths, refContext, gitDirs, gitDirAliases);
         if (nested) return nested;
       }
     }
@@ -293,7 +298,7 @@ export function checkBoundaryPolicy(command: string, workspaceRoot?: string, dep
       // protected-target gate's classifier and protected set — the same
       // target class the command-spelling lane denies. Feature-ref targets
       // fall through to the (unchanged) workspace containment.
-      const refWrite = directRefWriteTargetIn(path, { gitDirs });
+      const refWrite = directRefWriteTargetIn(path, { gitDirs, gitDirAliases });
       if (refWrite) {
         if (refWrite.uncertain) return { decision: "deny", policy: "protected-branch-write", reason: `Direct .git ref-adjacent write '${path}' could not be resolved to a concrete branch; failing closed.`, matched: command };
         if (refWrite.target && protectedBranchesIn(refContext ?? {}).has(refWrite.target)) return { decision: "deny", policy: "protected-branch-write", reason: `Direct .git branch-pointer writes on protected branch '${refWrite.target}' are not allowed.`, matched: command };

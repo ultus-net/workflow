@@ -1833,6 +1833,91 @@ test("P18 (d) review round: wrapper and recursion forms keep the feature-target 
   }
 });
 
+// ---- P18 boundary refine (2026-09-30, issue #296): the NEWLY-INSPECTABLE
+// symlink-hop spelling, plus the recorded over-denies (dated notes in
+// docs/ledger/P18c-ref-adjacent-routes.md + P18d-gitdir-edges.md) ----
+// RE-ASSESSED RECORDED EDGES. (1) The `.git` SYMLINK HOP is newly inspectable
+// exactly when the COMMAND ITSELF spells the hop's target: an `ln -s <target>
+// <link>` whose <target> is ref-adjacent makes writes strictly UNDER <link>
+// ref-adjacent, classified by the shared tail logic. A symlink whose target is
+// a pre-existing filesystem fact (never spelled in the command) stays
+// un-inspectable and RECORDED. (2) A gitfile's content path (`.git` is a file
+// naming its gitdir) stays RECORDED — the classifier is lexical and never reads
+// file bytes; only the env-spelled route reaches the named gitdir.
+// RED-FIRST: the alias deny cells below classified allow against the unmodified
+// tree (the feature allow, the non-ref allows, and the already-landed P18(d)
+// over-deny pins held as-found).
+
+test("P18 boundary refine: an in-command symlink alias to a ref-adjacent target is classified (the newly-inspectable symlink hop)", () => {
+  const cases = [
+    "ln -s /abs/.git /tmp/alias; echo x > /tmp/alias/refs/heads/main",
+    "ln -s .git alias; echo x > alias/refs/heads/main",
+    "ln -sf /abs/.git /tmp/alias; echo x > /tmp/alias/refs/heads/main",
+    "ln --symbolic /abs/.git /tmp/alias; echo x > /tmp/alias/refs/heads/main",
+    "GIT_DIR=/tmp/bare ln -s /tmp/bare /tmp/alias; echo x > /tmp/alias/refs/heads/main",
+    "ln -s /abs/.git /tmp/alias; echo x > /tmp/alias/refs/heads/master",
+    // A chained alias (`alias -> alias -> gitdir`) is resolved to a fixpoint.
+    "ln -s /abs/.git /tmp/a; ln -s /tmp/a /tmp/b; echo x > /tmp/b/refs/heads/main",
+  ];
+  for (const command of cases) {
+    const decision = checkPolicy({ action: "shell", command });
+    assert.equal(decision.decision, "deny", command);
+    assert.equal(decision.policy, "protected-branch-write", command);
+  }
+});
+
+test("P18 boundary refine: a symlink alias to a feature ref keeps the feature-target allow", () => {
+  assert.equal(checkPolicy({ action: "shell", command: "ln -s /abs/.git /tmp/alias; echo x > /tmp/alias/refs/heads/feat/g5" }).decision, "allow");
+  // Creating the alias is not itself a ref write (the alias path itself is not
+  // the gitdir; only writes strictly UNDER it are classified).
+  assert.equal(checkPolicy({ action: "shell", command: "ln -s /abs/.git /tmp/alias" }).decision, "allow");
+});
+
+test("P18 boundary refine: symlinks to non-ref or unrelated targets, and pre-existing aliases, stay outside the gate", () => {
+  for (const command of [
+    // A benign directory alias is not ref-adjacent.
+    "ln -s /some/dir /tmp/alias; echo x > /tmp/alias/foo",
+    // `.git/objects` content is not a branch pointer.
+    "ln -s /abs/.git/objects/x /tmp/alias; echo x > /tmp/alias/foo",
+    // Without -s this is a hard link, not a directory-traversing alias.
+    "ln /abs/.git /tmp/alias; echo x > /tmp/alias/refs/heads/main",
+    // A symlink whose target is a pre-existing filesystem fact (never spelled
+    // in the command) stays the recorded boundary.
+    "echo x > /tmp/alias/refs/heads/main",
+  ]) {
+    assert.equal(checkPolicy({ action: "shell", command }).decision, "allow", command);
+  }
+});
+
+test("P18 boundary refine: the recorded gitfile edge stays as-found (the content path is not read)", () => {
+  // `.git` as a FILE naming its gitdir is not resolvable from the write
+  // spelling: the lexicon never reads the gitfile's bytes, so the named gitdir
+  // is reachable only when also env-spelled (recorded, not pretended).
+  assert.equal(checkPolicy({ action: "shell", command: "echo x > /tmp/real/refs/heads/main" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "GIT_DIR=/tmp/real echo x > /tmp/real/refs/heads/main" }).decision, "deny");
+});
+
+test("P18 boundary refine: the case-variant .GIT over-deny is intentional and pinned", () => {
+  // On a case-SENSITIVE filesystem a directory literally named `.GIT` is not a
+  // gitdir, so denying its ref-adjacent paths is an intentional over-deny: the
+  // lexical classifier cannot tell the filesystems apart, and the guard fails
+  // closed. A real gitdir's case variant must NOT be loosened.
+  assert.equal(checkPolicy({ action: "shell", command: "echo x > x/.GIT/refs/heads/main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "echo x > .GIT/refs/heads/main" }).decision, "deny");
+  // Non-ref content under `.GIT` is still not a branch pointer (allow).
+  assert.equal(checkPolicy({ action: "shell", command: "echo x > x/.GIT/notes.txt" }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "echo x > .GIT/notes.txt" }).decision, "allow");
+});
+
+test("P18 boundary refine: GIT_WORK_TREE is treated as a gitdir spelling conservatively (recorded over-approximation)", () => {
+  // GIT_WORK_TREE names the WORK TREE, not the gitdir. It is kept as a gitdir
+  // spelling deliberately: a worktree path can sit adjacent to (or contain) a
+  // gitdir, the classifier is lexical, and the guard fails closed.
+  assert.equal(checkPolicy({ action: "shell", command: "GIT_WORK_TREE=/tmp/wt echo x > /tmp/wt/refs/heads/main" }).decision, "deny");
+  // Non-ref content under the worktree spelling is untouched.
+  assert.equal(checkPolicy({ action: "shell", command: "GIT_WORK_TREE=/tmp/wt echo x > /tmp/wt/notes.txt" }).decision, "allow");
+});
+
 // ---- P18 (e): the git command-option gitdir spelling (`--git-dir=`,
 // `--git-dir <path>`, `--work-tree`) (2026-09-30, issue #296) ----
 // P18(d) named the gitdir through the command ENVIRONMENT (`GIT_DIR=…`); git

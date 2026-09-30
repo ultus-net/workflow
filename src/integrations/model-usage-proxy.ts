@@ -14,6 +14,14 @@ import { budgetDowngradeActive, type BudgetDowngradeRuntime } from "./session-bu
 export { METERED_PLACEHOLDER_KEY };
 
 /**
+ * P9 A′: the messages-lane model-label journal bound. The journal is
+ * observation only; past the bound the OLDEST label drops so a long-lived
+ * proxy never grows unbounded (the repo's bounded-journal posture). 64 matches
+ * the run registry's bounded gate journals (`src/integrations/activity-timeline.ts:34`).
+ */
+const MESSAGES_LANE_LABEL_LIMIT = 64;
+
+/**
  * W109 (W095 c2): a body transform for the metering proxy's policy-routing
  * seam. Pure: takes the current body, returns the next body (or a non-record
  * to be skipped). Consumers: the W070a profile shaping, the W098 c2 cache
@@ -88,10 +96,36 @@ export interface ModelUsageMetrics {
   readonly cacheCreateTokens: number;
 }
 
+/**
+ * P9 A′ (2026-09-30, issue #288): the parse-only observability journal for the
+ * anthropic Messages lane (`POST /v1/messages`). The lane's outbound body is
+ * parsed into a THROWAWAY record purely to read the request-side model id —
+ * `outboundBody` is never reassigned, so the forwarded bytes stay
+ * byte-identical to the inbound bytes (the pass-through posture is untouched:
+ * no shaping, no cache markers, no budget downgrade, no replay reject). This
+ * closes W111's "no model labels in the trail" gap for this lane without
+ * entering transform governance — the queued P9 decision is unchanged.
+ *
+ * Deliberately NOT folded into `ModelUsageMetrics`: those counters are summed
+ * across proxies by the pool/runtime aggregates and read byte-identically by
+ * the W119 abort-tier snapshot, so adding a categorical label set there would
+ * perturb consumers rather than be additive. The label set is a bounded
+ * journal, the same observation-only posture as the hub's bounded gate
+ * journals (`src/integrations/hub-http.ts:587`).
+ */
+export interface MessagesLaneLabels {
+  /** Request-side model ids observed on `POST /v1/messages`, in arrival order, bounded (oldest dropped). */
+  readonly models: readonly string[];
+  /** Messages-lane bodies that were not a parseable JSON object (forwarded raw; counted, never rejected). */
+  readonly malformedBodies: number;
+}
+
 export interface ModelUsageProxy {
   /** Loopback base URL agents use as their provider baseUrl (no path suffix). */
   readonly url: string;
   readonly metrics: () => ModelUsageMetrics;
+  /** P9 A′: the parse-only request-side model-label journal for the messages lane (observability only). */
+  readonly messagesLaneLabels: () => MessagesLaneLabels;
   readonly close: () => Promise<void>;
 }
 
@@ -160,7 +194,10 @@ export interface AutoLatestProxyOptions {
  * ask the provider for usage accounting so usage is present even in SSE
  * streams; the anthropic Messages lane (POST /v1/messages) forwards without
  * that body seam and its usage is extracted from the anthropic shape (W123:
- * park P9 part 1). The proxy binds loopback only.
+ * park P9 part 1). P9 A′ (issue #288) adds a parse-only, bounded request-side
+ * model-label journal to that lane without shaping the forwarded body — the
+ * lane stays untransformed (the transform-governance decision stays queued).
+ * The proxy binds loopback only.
  */
 export async function createModelUsageProxy(options: {
   readonly upstream: string;
@@ -224,6 +261,11 @@ export async function createModelUsageProxy(options: {
     throw new TypeError("model usage proxy upstream must be https (or loopback for tests)");
   }
   const metrics: MutableMetrics = { requests: 0, usageEvents: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0, latestPromptTokens: undefined, cacheReadTokens: 0, cacheCreateTokens: 0 };
+  // P9 A′: the messages-lane parse-only journal — request-side model ids in
+  // arrival order (bounded) plus a malformed-body count. Observation only:
+  // nothing here shapes or rejects the forwarded body.
+  const messagesLaneModels: string[] = [];
+  let malformedMessagesBodies = 0;
   const autoLatest = options.autoLatest;
   const aliasResolver: AliasResolver | undefined =
     autoLatest === undefined
@@ -300,6 +342,30 @@ export async function createModelUsageProxy(options: {
     }
     const inbound = await readAll(req);
     const isCompletions = req.method === "POST" && typeof req.url === "string" && /\/chat\/completions$/.test(req.url);
+    const isMessages = req.method === "POST" && typeof req.url === "string" && /\/v1\/messages$/.test(req.url);
+    // P9 A′ (issue #288): the messages lane's parse-only observability capture.
+    // The body is parsed into a THROWAWAY record to read the request-side model
+    // id into the bounded journal and to count malformed bodies — `outboundBody`
+    // is NOT reassigned, so the forwarded bytes stay byte-identical to the
+    // inbound bytes. This is deliberately NOT a transform: no shaping, no cache
+    // markers, no downgrade, no replay gate. Parse failure increments the
+    // malformed-body counter instead of 400ing (the chat-completions lane's
+    // 400 posture is NOT adopted here), keeping the lane pass-through even on a
+    // body the vendor must judge.
+    if (isMessages && inbound.length > 0) {
+      let parsedMessages: unknown;
+      try {
+        parsedMessages = JSON.parse(inbound.toString("utf8"));
+      } catch {
+        parsedMessages = undefined;
+      }
+      if (!isRecord(parsedMessages)) {
+        malformedMessagesBodies += 1;
+      } else if (typeof parsedMessages.model === "string" && parsedMessages.model.length > 0) {
+        messagesLaneModels.push(parsedMessages.model);
+        if (messagesLaneModels.length > MESSAGES_LANE_LABEL_LIMIT) messagesLaneModels.shift();
+      }
+    }
     let outboundBody = inbound;
     if (isCompletions && inbound.length > 0) {
       let parsed: unknown;
@@ -541,6 +607,8 @@ export async function createModelUsageProxy(options: {
   return {
     url: `http://127.0.0.1:${started.port}`,
     metrics: () => ({ ...metrics }),
+    // P9 A′: a snapshot copy so consumers cannot mutate the live journal.
+    messagesLaneLabels: () => ({ models: [...messagesLaneModels], malformedBodies: malformedMessagesBodies }),
     close: () =>
       new Promise((resolveClose, rejectClose) => {
         server.close((error) => (error ? rejectClose(error) : resolveClose()));

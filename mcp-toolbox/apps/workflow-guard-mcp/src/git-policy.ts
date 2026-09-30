@@ -508,6 +508,11 @@ export interface DirectRefWriteOptions {
    * (`GIT_DIR=…`, `GIT_COMMON_DIR=…`, `GIT_WORK_TREE=…`). A written path under
    * one of these is ref-adjacent even without a `.git` component. */
   gitDirs?: readonly string[];
+  /** Symlink alias prefixes the command CREATES (`ln -s <ref-adjacent>
+   * <link>`). A write STRICTLY UNDER one is ref-adjacent through the same tail
+   * logic; the alias path itself is the link, not the gitdir, so it is not
+   * classified. */
+  gitDirAliases?: readonly string[];
 }
 
 export interface DirectRefWriteTarget {
@@ -571,6 +576,82 @@ export function gitDirSpellingsIn(command: string): string[] {
   return spellings;
 }
 
+// P18 boundary refine (2026-09-30, issue #296): the `.git` SYMLINK HOP is
+// newly inspectable exactly when the command itself spells the hop's target.
+// `ln -s <target> <link>` creates a path that lexically aliases <target>; when
+// <target> is ref-adjacent (a `.git`-component ref path, or a directory named
+// by the command's gitdir spellings), a write under <link> reaches the same
+// refs, so <link> joins the alias prefix set and the shared tail logic
+// classifies it. The scan is a bounded fixpoint over the command's segments, so
+// a chained alias (`ln -s <gitdir> a; ln -s a b`) resolves too. A symlink whose
+// target is a pre-existing filesystem fact (never spelled in the command) stays
+// un-inspectable and RECORDED. Like the gitdir route, an unresolved/globbed
+// alias spelling is dropped, and the alias is only meaningful when the target
+// is ref-adjacent.
+const SYMLINK_FLAG_RE = /^-[a-zA-Z]*s[a-zA-Z]*$/;
+
+export function refSymlinkAliasSpellingsIn(command: string, gitDirs: readonly string[]): string[] {
+  const segments = splitShellSegments(command);
+  const known = [...gitDirs];
+  const aliases: string[] = [];
+  let changed = true;
+  for (let round = 0; changed && round < 16; round += 1) {
+    changed = false;
+    for (const segment of segments) {
+      for (const alias of symlinkAliasesInSegment(segment, known)) {
+        if (aliases.includes(alias)) continue;
+        aliases.push(alias);
+        known.push(alias);
+        changed = true;
+      }
+    }
+  }
+  return aliases;
+}
+
+function symlinkAliasesInSegment(segment: string, gitDirs: readonly string[]): string[] {
+  const words = unwrapWordsWithPrefix(shellWords(decodeShellEscapes(segment))).command;
+  if (basename(words[0] ?? "") !== "ln") return [];
+  let symbolic = false;
+  let targetDirectory: string | undefined;
+  const operands: string[] = [];
+  let stopOptions = false;
+  for (let i = 1; i < words.length; i += 1) {
+    const word = words[i]!;
+    if (!stopOptions && word === "--") { stopOptions = true; continue; }
+    if (!stopOptions && (word === "-t" || word === "--target-directory")) { targetDirectory = words[i + 1]; i += 1; continue; }
+    if (!stopOptions && /^-t.+/.test(word)) { targetDirectory = word.slice(2); continue; }
+    if (!stopOptions && word.startsWith("--target-directory=")) { targetDirectory = word.slice("--target-directory=".length); continue; }
+    if (!stopOptions && word.startsWith("-") && word !== "-") {
+      if (word === "--symbolic" || SYMLINK_FLAG_RE.test(word)) symbolic = true;
+      continue;
+    }
+    operands.push(word);
+  }
+  if (!symbolic || operands.length === 0) return [];
+  const refAdjacent = (spelling: string): boolean =>
+    directRefWriteTargetIn(spelling.replaceAll("\\", "/"), { gitDirs }) !== undefined;
+  const aliases: string[] = [];
+  if (targetDirectory !== undefined) {
+    const dir = targetDirectory.replace(/\/+$/, "");
+    for (const target of operands) {
+      const name = basename(target.replaceAll("\\", "/"));
+      if (name.length === 0 || !refAdjacent(target)) continue;
+      aliases.push(dir.length === 0 ? name : `${dir}/${name}`);
+    }
+    return aliases;
+  }
+  if (operands.length < 2) return [];
+  const link = operands[operands.length - 1]!;
+  const targets = operands.slice(0, -1);
+  for (const target of targets) {
+    if (!refAdjacent(target)) continue;
+    if (targets.length === 1) { aliases.push(link); continue; }
+    aliases.push(`${link.replace(/\/+$/, "")}/${basename(target.replaceAll("\\", "/"))}`);
+  }
+  return aliases;
+}
+
 // Lexically collapse `.`/`..` (both the `.git` and the gitdir routes) so a
 // traversal spelling cannot alias past the tail/prefix match; an escape above
 // the root is uncertain. The leading `/` is preserved so an absolute path and
@@ -610,13 +691,17 @@ function refTailTarget(rest: string[]): DirectRefWriteTarget | undefined {
 export function directRefWriteTargetIn(path: string, options: DirectRefWriteOptions = {}): DirectRefWriteTarget | undefined {
   const normalized = path.replaceAll("\\", "/");
   // Only a `.git` path component (case-insensitively — the `.GIT/` variant on
-  // a case-insensitive filesystem) or a caller-supplied env-spelled gitdir
-  // makes a path ref-adjacent (`x.github/` and `foo.git/` are not).
+  // a case-insensitive filesystem), a caller-supplied env-spelled gitdir, or a
+  // command-created symlink alias makes a path ref-adjacent (`x.github/` and
+  // `foo.git/` are not).
   const hasGitComponent = /(?:^|\/)\.git(?:\/|$)/i.test(normalized);
   const gitDirs = (options.gitDirs ?? [])
     .map((gitDir) => gitDir.replaceAll("\\", "/"))
     .filter((gitDir) => gitDir.length > 0 && !/[$*?]/.test(gitDir));
-  if (!hasGitComponent && gitDirs.length === 0) return undefined;
+  const gitDirAliases = (options.gitDirAliases ?? [])
+    .map((alias) => alias.replaceAll("\\", "/"))
+    .filter((alias) => alias.length > 0 && !/[$*?]/.test(alias));
+  if (!hasGitComponent && gitDirs.length === 0 && gitDirAliases.length === 0) return undefined;
 
   if (hasGitComponent) {
     // An unresolved expansion or a glob in a `.git` path cannot be classified.
@@ -645,6 +730,24 @@ export function directRefWriteTargetIn(path: string, options: DirectRefWriteOpti
     if (collapsed === collapsedGitDir || collapsed.startsWith(`${collapsedGitDir}/`)) {
       const rest = collapsed === collapsedGitDir ? [] : collapsed.slice(collapsedGitDir.length + 1).split("/");
       return refTailTarget(rest);
+    }
+  }
+
+  // Symlink-alias route (P18 boundary refine): a write STRICTLY UNDER a
+  // command-created alias is ref-adjacent; the alias path itself is the link,
+  // not the gitdir, so an exact match is not classified.
+  for (const alias of gitDirAliases) {
+    const collapsedAlias = collapseLexicalPath(alias);
+    if (collapsedAlias === undefined || collapsedAlias === "") continue;
+    const prefix = `${collapsedAlias}/`;
+    if (unresolved) {
+      if (normalized.startsWith(prefix)) return { uncertain: true };
+      continue;
+    }
+    const collapsed = collapseLexicalPath(normalized);
+    if (collapsed === undefined) return { uncertain: true };
+    if (collapsed.startsWith(prefix)) {
+      return refTailTarget(collapsed.slice(prefix.length).split("/"));
     }
   }
   return undefined;

@@ -11,7 +11,7 @@
  */
 
 import { composeBodyTransforms, createModelUsageProxy, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
-import { applyCacheMarkers, modelProfile, shapeRequestBody, type ModelFamily, type ModelTaskClass } from "./model-profile.js";
+import { applyCacheMarkers, modelProfile, shapeRequestBody, type CacheMarkerOptIn, type ModelFamily, type ModelTaskClass } from "./model-profile.js";
 import { DEFAULT_OPEN_SOURCE_POOL, type OpenModelDefinition } from "./open-source-pool.js";
 import type { BudgetDowngradeRuntime } from "./session-budget.js";
 
@@ -38,9 +38,11 @@ export interface CreateOpenModelMeteringPoolOptions {
   /**
    * W109 (W098 c2): the per-pool prompt-cache opt-in. True enables the
    * cache-control marker pass (`applyCacheMarkers`) for this pool's
-   * anthropic-wire profiles; absent stays absent.
+   * anthropic-wire profiles; absent stays absent. P14 (issue #293): a map
+   * narrows the opt-in per family — only the families listed `true` are
+   * marked, an omitted family stays dark.
    */
-  readonly cacheMarkers?: boolean;
+  readonly cacheMarkers?: CacheMarkerOptIn;
   /**
    * W118 (the W095 budget-downgrade consumer): the downgrade axes passed
    * through to every family proxy. The activation reads each family
