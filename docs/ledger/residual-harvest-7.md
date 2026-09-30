@@ -122,3 +122,17 @@ capture** — every change is a documentation correction or a source comment.
 `affinity-pin.md` were left as authored; both corrections ride appended dated
 notes (the fragments' stated convention). No operator direction was needed
 beyond the dispatch; no push/PR.
+
+> **Dated supersession (2026-09-30, branch `feat/harvest-8`):** item 4's
+> parenthetical — "The parallel standalone-seat branch
+> (`feat/p6-standalone-answer`) has no committed divergence from `origin/main`
+> at assessment time (empty diff; its tip is `77702361` = `origin/main`)" — is
+> now **superseded**. That branch landed: merge commit `1605c995` (PR #412)
+> folded it into `main`, so `feat/p6-standalone-answer` is no longer an empty
+> diff. The standalone contained-shell seat now composes a same-process
+> `PermissionBroker` and serves the shared `permissionAnswerRoute` on a
+> permission-only loopback server (full record: `docs/ledger/P6-standalone-answer.md`).
+> The item-4 residual itself (the daemon-hold/`createOperatorAskHold`
+> unification) is **unchanged** — that branch's landing did not touch the
+> OpenCode daemon lane, which still leaves the hold out of process; only the
+> "no divergence" observation is corrected here.

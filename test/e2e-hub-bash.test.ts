@@ -359,15 +359,35 @@ test("the compiled hub's /bash and /run/begin lanes: auth directions, the contai
     `observed: ${JSON.stringify(crossWorkspace.body)}`,
   );
 
-  // The guard lane refuses any non-allow decision BEFORE execution
-  // (workflow-process.ts:14-19): the promotion gate's ask class denies the
-  // shell over the compiled seat. Harmless if it ever executed — the workflow
-  // binary is not on the seat's PATH.
-  const guardAsk = await postRoute(endpoint, "/bash", token, { cwd: workspace, command: "workflow install" });
+  // The guard lane's ask class over the compiled seat (P6, issue #285): the
+  // /bash containment seat now composes the hub's SAME-PROCESS broker hold
+  // (`context.permissionBroker?.askHold()`, hub-http.ts), so the promotion
+  // gate's `ask` PARKS on the broker instead of denying immediately. It is
+  // answerable at POST /api/permission (the operator token); a reject denies
+  // fail-closed with the operator-reject provenance (workflow-process.ts's
+  // hold branch). Pre-P6 this pin asserted the immediate 500 `guard denied
+  // process execution: promotion-gate: ...`; the hold landed, so the pin now
+  // exercises the hold end-to-end (the unanswered timeout path resolves to
+  // the SAME wire message — observed at 125s in the red capture). Harmless if
+  // it ever executed — the workflow binary is not on the seat's PATH.
+  const guardAskRequest = postRoute(endpoint, "/bash", token, { cwd: workspace, command: "workflow install" });
+  let heldAsk: { id: string } | undefined;
+  const holdDeadline = Date.now() + 15_000;
+  while (heldAsk === undefined && Date.now() < holdDeadline) {
+    const poll = await postRoute(endpoint, "/api/permission", token, {});
+    const pending = poll.body.pending as { id: string } | null;
+    const asks = (poll.body.pendingAsks as readonly { requestId: string }[] | undefined) ?? [];
+    if (pending !== null && asks.some((ask) => ask.requestId.startsWith("contained-process-ask-"))) heldAsk = { id: pending.id };
+    else await sleep(50);
+  }
+  assert.ok(heldAsk !== undefined, "the promotion-gate ask parks on the hub's same-process broker");
+  const answered = await postRoute(endpoint, "/api/permission", token, { id: heldAsk!.id, decision: "reject_once" });
+  assert.equal(answered.status, 200, `the held ask is answerable on the hub route — observed: ${JSON.stringify(answered.body)}`);
+  const guardAsk = await guardAskRequest;
   assert.equal(guardAsk.status, 500);
   assert.deepEqual(
     guardAsk.body,
-    { error: "guard denied process execution: promotion-gate: Installing into the live control plane requires operator approval (T1 promotion): run it from the operator's shell." },
+    { error: "guard ask 'promotion-gate' denied (operator reject or hold timeout, failing closed): Installing into the live control plane requires operator approval (T1 promotion): run it from the operator's shell." },
     `observed: ${JSON.stringify(guardAsk.body)}`,
   );
 
