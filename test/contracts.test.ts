@@ -103,3 +103,35 @@ test("task and evidence contracts bind verification data to explicit subjects", 
   assert.equal(task.requiredEvidence[0]?.subject, evidence.subject);
   assert.equal(evidence.result, "passed");
 });
+
+// ── W166 P3: the claim-shaped input is UNREPRESENTABLE as a gate input ──────
+// The evidence axis excludes "operator" (a DecisionAuthority) and "claim" (no
+// class at all) by construction — the W114 hazard made a type error. If a
+// future change widens EvidenceAuthority to admit either, these
+// expect-error directives become unused and `npm run typecheck` fails.
+test("P3: claim-shaped and operator inputs are unrepresentable on the evidence axis", () => {
+  const claimEvidence = (): Evidence => ({
+    id: evidenceId("ev-claim"),
+    observationId: observationId("obs-claim"),
+    // @ts-expect-error "claim" has no authority class (not representable as a gate input)
+    authority: "claim",
+    subject: "s",
+    result: "passed",
+    freshness: "fresh",
+    mutationEpoch: 0,
+    observedAt: "2026-09-30T00:00:00.000Z",
+  });
+  const operatorEvidence = (): Evidence => ({
+    id: evidenceId("ev-operator"),
+    observationId: observationId("obs-operator"),
+    // @ts-expect-error "operator" is a DecisionAuthority, never an EvidenceAuthority
+    authority: "operator",
+    subject: "s",
+    result: "passed",
+    freshness: "fresh",
+    mutationEpoch: 0,
+    observedAt: "2026-09-30T00:00:00.000Z",
+  });
+  assert.equal(typeof claimEvidence, "function");
+  assert.equal(typeof operatorEvidence, "function");
+});
