@@ -349,3 +349,24 @@ row (append-only, per the file rules at docs/PARKED_AND_LIMITATIONS.md:15–24);
 A also retires the row with W101's PR linked; B or C also produce a TASKS.md
 item, the append-only supersessions listed in §5, and a fresh-eyes review
 recorded before the change is treated as approved.
+
+## 7. Resolution recorded (2026-09-30)
+
+**The operator accepted the landed position on 2026-09-30.** Option A
+(allowlist pure exits, §2) STANDS and the residual P16 scope is CLOSED as
+documented: no further code change is authorized by this resolution.
+
+- The recorded position (landed as W101, 2026-09-23) STANDS. Nothing in
+  §1–§4 above is superseded; the brief's recommendation (§4, take no further
+  code change) is the resolution.
+- The pure-exit spelling asymmetry the W099 pins freeze (policy doc rows 3
+  vs 4: `git switch <branch>` allowed vs `git checkout <branch>` denied on a
+  protected seat) stays **PINNED AS-FOUND** — a deliberate, recorded
+  position, not drift. Cell 3 vs cell 6 (§3.1) are unchanged.
+- The separately-queued `localBranches` seat fact (Option C, §3.4) is **NOT
+  built**; it remains the doc-implied refinement the policy doc §5 records
+  as queued separately. If the asymmetry is ever re-opened, **Option B and
+  Option C remain the recorded re-open reference** with their rejection
+  reasons (§3.3) and trade-offs (§4) as written.
+- This resolution closes the P16 row's residual scope (issue #295);
+  the shared record is `docs/ledger/P16-resolution-recorded.md`.
