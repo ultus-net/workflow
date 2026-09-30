@@ -123,3 +123,40 @@ composition chooses the same route.
 > per-run partitioning of the journal or a larger bound, and both change the
 > `/snapshot`→`/api/runs` projection contract. The review's P3 (commit
 > `4d1b5970`) is thereby dispositioned as a named residual.
+
+> **Dated re-assessment note (2026-09-30, branch `feat/harvest-7`): the
+> eviction pressure now spans TWO bounded-64 journals; the residual stands and
+> the follow-up is refined.** Option A1 (`docs/ledger/topo-a1.md`, issue #283)
+> added a SEPARATE surface-observation journal beside the canonical one:
+> `surfaceUsage()`/`recordSurfaceUsage` (`src/integrations/run-registry.ts`,
+> its own FIFO-64 append array) distinct from `taskUsage()`. The separation
+> closes one axis — a burst of posted surface observations can no longer evict
+> canonical `taskUsage` entries — but does NOT close the recorded residual:
+> - Each journal still FIFO-evicts at 64 across its own writers. The canonical
+>   `taskUsage` journal is shared by the scheduler, RSI, and (queued) reviewer
+>   lanes; the surface journal is shared by all four process-separated surfaces
+>   (`surface:web-service`, `surface:acp-tui`, `surface:driver-registry`,
+>   `surface:ink-tui`) plus any future poster. A burst on one contributor can
+>   still evict another contributor's still-un-summed entry before a reader
+>   renders it.
+> - **Per-lane partitioning: still not small-safe for the canonical journal.**
+>   `recordTaskUsage(input)` carries no lane key, so a partition needs a
+>   writer-signature change across at least three call sites (`src/cli/hub.ts`'s
+>   scheduler `runTurn` finally, the RSI `laneTaskUsageSink`, the reviewer
+>   factory) plus a preserved flat projection. (The SURFACE journal is easier:
+>   `SurfaceUsageObservation` already carries `recordedBy`, so a surface-name
+>   partition would not need a signature change — but a fix to only one of the
+>   two journals is partial and leaves the canonical lane unpartitioned, so it
+>   is not landed here.)
+> - **A larger bound: a mitigation, not a fix.** Raising either constant only
+>   delays eviction and would falsify the shared "bounded at 64 like the sibling
+>   gate maps" discipline pinned at `test/hub-runs.test.ts` and held by the
+>   eight sibling gate maps.
+> - **Concrete follow-up (refined for two journals):** a registry-level
+>   per-lane/per-surface partition of BOTH journals that keeps the flat
+>   `/snapshot`→`/api/runs` projection unchanged — the canonical journal keyed
+>   by a writer-declared lane, the surface journal keyed by its existing
+>   `recordedBy` stamp — with a pin that a burst on one lane/surface cannot
+>   evict another's un-summed entries. The projection contract is untouched in
+>   this pass; issue #283's hub-authoritative attribution boundary still
+>   stands.

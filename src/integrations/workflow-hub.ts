@@ -92,8 +92,11 @@ export async function createWorkflowHub(
     selfImprovementFactory?: (handles: WorkflowHubSchedulerHandles) => SelfImprovementRegistry;
     /**
      * W074 scheduled-task manager: when provided, the hub exposes
-     * operator-token `/schedule/list|save|delete|run-now` routes backed by this
-     * registry. Absent means the routes 404.
+     * operator-token `/schedule/list|save|delete` routes and the VERIFIER-ONLY
+     * `/schedule/run-now` route (firing a scheduled run now is a consequential
+     * autonomous action; the verifier credential gates it — hub-http.ts and
+     * `docs/HUB_PROTOCOL.md` §3), backed by this registry. Absent means the
+     * routes 404.
      */
     schedules?: ScheduleRegistry;
     /**
