@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -7,17 +7,16 @@ import test from "node:test";
 
 import { AcpSubprocessClient } from "../src/adapters/acp-subprocess.js";
 import { clineLaunchEntry, loadClineApiKey } from "./cline-probe-helpers.js";
+import { spawnOpencodeAcp } from "./opencode-probe-helpers.js";
 
 const runReal = process.env.WORKFLOW_ACP_REAL === "1";
 
-async function probe(command: string, args: string[], promptTimeoutMs = 20_000, extraEnv: Record<string, string> = {}) {
+/** The arm supplies its own child: opencode via the version-aware helper
+ * (cwd through spawn options), cline via its `--acp ... --cwd` CLI shape. */
+async function probe(launch: (cwd: string) => ChildProcessWithoutNullStreams | Promise<ChildProcessWithoutNullStreams>, promptTimeoutMs = 20_000) {
   const cwd = await mkdtemp(path.join(tmpdir(), "workflow-acp-probe-"));
   await writeFile(path.join(cwd, "README.md"), "# ACP probe fixture\n");
-  const child = spawn(command, [...args, "--cwd", cwd], {
-    cwd,
-    stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, ...extraEnv },
-  });
+  const child = await launch(cwd);
   const client = new AcpSubprocessClient({ child });
   const updates: unknown[] = [];
   client.onSessionUpdate((update) => updates.push(update));
@@ -41,7 +40,7 @@ async function probe(command: string, args: string[], promptTimeoutMs = 20_000, 
 }
 
 test("real opencode acp initializes and completes a read-only prompt probe", { skip: !runReal, timeout: 30_000 }, async () => {
-  const evidence = await probe("opencode", ["acp"]);
+  const evidence = await probe((cwd) => spawnOpencodeAcp(cwd));
   assert.equal(evidence.initialized.agentInfo?.name, "OpenCode");
   assert.equal(evidence.initialized.protocolVersion, 1);
   assert.ok(evidence.session.sessionId);
@@ -55,18 +54,28 @@ test("real cline --acp initializes and completes a read-only prompt probe", { sk
   // and cannot run headless API-key sessions.
   const clineApiKey = await loadClineApiKey("real cline probe");
   const cline = clineLaunchEntry();
+  // Cline's `--acp` accepts `--cwd`, so the cline arm keeps its CLI shape
+  // (unlike opencode, whose helper sets cwd through spawn options).
   const evidence = await probe(
-    cline.executable,
-    [
-      ...(cline.script !== undefined ? [cline.script] : []),
-      "--acp",
-      "--provider",
-      "openrouter",
-      "--auto-approve",
-      "false",
-    ],
+    (cwd) => spawn(
+      cline.executable,
+      [
+        ...(cline.script !== undefined ? [cline.script] : []),
+        "--acp",
+        "--provider",
+        "openrouter",
+        "--auto-approve",
+        "false",
+        "--cwd",
+        cwd,
+      ],
+      {
+        cwd,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, CLINE_API_KEY: clineApiKey, CLINE_PROVIDER: "openrouter" },
+      },
+    ),
     20_000,
-    { CLINE_API_KEY: clineApiKey, CLINE_PROVIDER: "openrouter" },
   );
   assert.equal(evidence.initialized.agentInfo?.name, "cline");
   assert.equal(evidence.initialized.protocolVersion, 1);

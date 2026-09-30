@@ -14,14 +14,17 @@ import {
   resolveOpencodeLaunch,
 } from "../src/integrations/opencode-agent-config.js";
 import { loadClineApiKey } from "./cline-probe-helpers.js";
+import { opencodeProbeArgs } from "./opencode-probe-helpers.js";
 
 // G1 token/cost metering proof for the lead agent: the contained OpenCode
 // environment carries only a placeholder credential while the hub-held proxy
 // injects the real upstream key and records usage per session. The agent
 // resolves its provider from the hub-written XDG_CONFIG_HOME config (the
 // surface the MCP-mount probe proved honored), so every model call crosses
-// the proxy even though the contained env has no real credential. Launched
-// with --pure so the operator's global plugins stay out of the measurement.
+// the proxy even though the contained env has no real credential. The launch
+// is version-aware (v1 keeps `--pure`; v2 dropped the flag, since v2 rejects
+// unknown flags and prints help to stdout) so the operator's global plugins
+// stay out of the measurement on the versions that support it.
 const runMeteredProbe = process.env.WORKFLOW_ACP_OPENCODE_METERED === "1";
 
 test(
@@ -47,9 +50,10 @@ test(
       envBinOverride: process.env.WORKFLOW_OPENCODE_BIN,
       opencodeOnPath: globalOpencodeBinary(),
     });
+    const args = await opencodeProbeArgs(opencode.executable);
     const child = launchContainedAcpAgent(new LinuxBubblewrapContainment(), {
       executable: opencode.executable,
-      args: ["acp", "--pure"],
+      args: [...args],
       workspace,
       home: scratchHome,
       environment: {

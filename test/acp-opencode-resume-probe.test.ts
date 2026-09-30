@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { spawn } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { AcpSubprocessClient, type AcpPermissionDecision, type AcpSessionUpdate } from "../src/adapters/acp-subprocess.js";
+import { spawnOpencodeAcp } from "./opencode-probe-helpers.js";
 
 // G4-equivalent resume fidelity for OpenCode: does the advertised loadSession
 // actually restore a persisted session faithfully after the agent process
@@ -30,11 +30,7 @@ test(
     const workspace = await mkdtemp(path.join(tmpdir(), "wf-opencode-resume-ws-"));
     const keyword = `resume-${randomUUID().slice(0, 8)}`;
 
-    const launch = () => spawn("opencode", ["acp", "--pure", "--cwd", workspace], {
-      cwd: workspace,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env },
-    });
+    const launch = () => spawnOpencodeAcp(workspace);
     const promptWithTimeout = (client: AcpSubprocessClient, sessionId: string, text: string, ms: number) =>
       Promise.race([
         client.prompt({ sessionId, prompt: [{ type: "text", text }] }),
@@ -42,7 +38,7 @@ test(
       ]);
 
     let sessionId: string;
-    const phaseOneChild = launch();
+    const phaseOneChild = await launch();
     const phaseOne = new AcpSubprocessClient({
       child: phaseOneChild,
       resolvePermission: (): AcpPermissionDecision => ({ kind: "allow" }),
@@ -61,7 +57,7 @@ test(
     const replayed: AcpSessionUpdate[] = [];
     const continuationUpdates: AcpSessionUpdate[] = [];
     let loading = true;
-    const phaseTwoChild = launch();
+    const phaseTwoChild = await launch();
     const phaseTwo = new AcpSubprocessClient({
       child: phaseTwoChild,
       resolvePermission: (): AcpPermissionDecision => ({ kind: "allow" }),

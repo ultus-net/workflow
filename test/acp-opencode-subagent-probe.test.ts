@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,6 +7,7 @@ import test from "node:test";
 import { KNOWN_SPAWN_TOOLS } from "../src/adapters/acp.js";
 import { AcpSubprocessClient, type AcpSessionUpdate } from "../src/adapters/acp-subprocess.js";
 import type { AcpPermissionRequestParams } from "../src/adapters/acp-permission.js";
+import { spawnOpencodeAcp } from "./opencode-probe-helpers.js";
 
 /**
  * OpenCode subagent conformance probe (mirror of the Cline B3 probe).
@@ -21,10 +21,11 @@ import type { AcpPermissionRequestParams } from "../src/adapters/acp-permission.
  * call, the fail-closed invariants below trip exactly like the Cline ones.
  *
  * Gated: run deliberately with WORKFLOW_ACP_OPENCODE_SUBAGENT=1 (opencode
- * on PATH with working ambient auth). The launch passes `--pure` so the
- * stock surface is measured without the operator's global plugins (a
- * pre-isolation run had the local workflow-guard plugin block the
- * subagent's write — an environment artifact, not agent behavior). The
+ * on PATH with working ambient auth). The launch is version-aware (v1 keeps
+ * `--pure`; v2 dropped the flag) so the stock surface is measured without
+ * the operator's global plugins (a pre-isolation run had the local
+ * workflow-guard plugin block the subagent's write — an environment
+ * artifact, not agent behavior). The
  * probe fails closed when a workspace mutation arrives with no permission
  * request that can account for it, or when a spawn-family tool call runs
  * without its own session/request_permission reaching the client
@@ -58,11 +59,7 @@ test(
         }),
         "utf8",
       );
-      const child = spawn("opencode", ["acp", "--pure", "--cwd", cwd], {
-        cwd,
-        stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env },
-      });
+      const child = await spawnOpencodeAcp(cwd);
       const updates: AcpSessionUpdate[] = [];
       const permissionRequests: AcpPermissionRequestParams[] = [];
       const client = new AcpSubprocessClient({
