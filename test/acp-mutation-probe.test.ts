@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { AcpSubprocessClient, type AcpSessionUpdate } from "../src/adapters/acp-subprocess.js";
+import { spawnOpencodeAcp } from "./opencode-probe-helpers.js";
 
 const runMutationProbe = process.env.WORKFLOW_ACP_MUTATION === "1";
 
@@ -24,11 +24,7 @@ test(
     const cwd = await mkdtemp(path.join(tmpdir(), "workflow-acp-mutation-"));
     const target = path.join(cwd, "mutation-target.txt");
     await writeFile(target, "before\n", "utf8");
-    const child = spawn("opencode", ["acp", "--cwd", cwd], {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env },
-    });
+    const child = await spawnOpencodeAcp(cwd);
     const client = new AcpSubprocessClient({ child });
     const updates: AcpSessionUpdate[] = [];
     client.onSessionUpdate((update) => updates.push(update));

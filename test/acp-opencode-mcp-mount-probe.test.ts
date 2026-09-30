@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,6 +6,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { AcpSubprocessClient, type AcpSessionUpdate } from "../src/adapters/acp-subprocess.js";
+import { spawnOpencodeAcp } from "./opencode-probe-helpers.js";
 
 /**
  * OpenCode MCP-mount probe (mirror of the Cline F1/G3-Step2 mount probe).
@@ -23,8 +23,8 @@ import { AcpSubprocessClient, type AcpSessionUpdate } from "../src/adapters/acp-
  *
  * Gated: run deliberately with WORKFLOW_ACP_OPENCODE_MCP_MOUNT=1 (opencode
  * on PATH with working ambient auth; skills-mcp must be built). The launch
- * passes `--pure` so the stock surface is measured without the operator's
- * global plugins.
+ * is version-aware (v1 keeps `--pure`; v2 dropped the flag) so the stock
+ * surface is measured without the operator's global plugins.
  *
  * Interpretation: each test always records evidence — the recorded
  * finalMessage is what distinguishes the outcomes: a verbatim list_skills
@@ -66,14 +66,10 @@ async function probeMount(label: string, options: { readonly projectConfig: bool
       "utf8",
     );
 
-    const child = spawn("opencode", ["acp", "--pure", "--cwd", workspace], {
-      cwd: workspace,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        ...(options.configDirConfig ? { XDG_CONFIG_HOME: path.join(scratchHome, ".config") } : {}),
-      },
-    });
+    const child = await spawnOpencodeAcp(
+      workspace,
+      options.configDirConfig ? { XDG_CONFIG_HOME: path.join(scratchHome, ".config") } : {},
+    );
     const toolCalls: string[] = [];
     const updates: AcpSessionUpdate[] = [];
     const client = new AcpSubprocessClient({
