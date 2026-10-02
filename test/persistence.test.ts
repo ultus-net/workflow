@@ -403,3 +403,164 @@ test("concurrent writers cannot both commit the same version", async (context) =
   assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
   assert.equal(results.filter((result) => result.status === "rejected").length, 1);
 });
+
+test("W072 I-6: accepted transitions and mutations append execution-log entries", () => {
+  const application = new WorkflowApplication(
+    new TaskGraph([{ id: taskId("A"), title: "Log", state: "BLOCKED", dependencies: [], requiredEvidence: [] }]),
+    host,
+  );
+  application.transition(taskId("A"), "IN_PROGRESS", { actor: "agent", authority: "test", observedAt: "2026-10-02T00:00:00Z" });
+  application.recordMutation(["src/a.ts"]);
+
+  const log = application.executionLog();
+  const transitions = log.filter((entry) => entry.kind === "transition");
+  // IN_PROGRESS is one accepted transition; recordMutation appends its own
+  // transition entries (the kernel's invalidation demotions) when it demotes.
+  assert.ok(transitions.length >= 1);
+  const first = transitions[0];
+  assert.equal(first?.taskId, taskId("A"));
+  assert.equal(first?.from, "READY");
+  assert.equal(first?.to, "IN_PROGRESS");
+  assert.equal(first?.actor, "agent");
+  assert.deepEqual(log.map((entry) => entry.seq), log.map((_, index) => index));
+});
+
+test("W072 I-6: evidence appends only when a task is resolvable", () => {
+  const application = new WorkflowApplication(
+    new TaskGraph([{ id: taskId("A"), title: "Ev", state: "BLOCKED", dependencies: [], requiredEvidence: [] }]),
+    host,
+  );
+  const evidence = {
+    id: evidenceId("e1"),
+    observationId: observationId("o1"),
+    authority: "environment" as const,
+    subject: "build",
+    result: "passed" as const,
+    freshness: "fresh" as const,
+    mutationEpoch: 0,
+    observedAt: "2026-10-02T00:00:00Z",
+  };
+  // No active task and no explicit correlation: honestly omitted, not invented.
+  application.recordEvidence(evidence);
+  assert.equal(application.executionLog().filter((entry) => entry.kind === "evidence").length, 0);
+  // Explicit correlation records it.
+  application.recordEvidence(evidence, taskId("A"));
+  const evidenceEntries = application.executionLog().filter((entry) => entry.kind === "evidence");
+  assert.equal(evidenceEntries.length, 1);
+  assert.equal(evidenceEntries[0]?.taskId, taskId("A"));
+  assert.equal(evidenceEntries[0]?.summary, "environment:build:passed");
+});
+
+test("W072 I-6: the execution log round-trips and continues its sequence after restart", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new JsonWorkflowStore(join(directory, "state.json"));
+  const application = new WorkflowApplication(
+    new TaskGraph([{ id: taskId("A"), title: "Round", state: "BLOCKED", dependencies: [], requiredEvidence: [] }]),
+    host,
+  );
+  await store.create(application);
+  application.transition(taskId("A"), "IN_PROGRESS", { actor: "agent", authority: "test", observedAt: "2026-10-02T00:00:00Z" });
+  const before = application.executionLog();
+  assert.ok(before.length > 0);
+  await store.save(application, 0);
+
+  const restored = await store.load(host);
+  const after = restored.application.executionLog();
+  // The IN_PROGRESS task is demoted to FAILED on restore; that synthetic
+  // recovery transition is appended to the log as well as to the history, so
+  // the two stay coherent across the restart.
+  assert.equal(after.length, before.length + 1);
+  assert.deepEqual(after.slice(0, before.length), before);
+  const recovery = after[after.length - 1];
+  assert.equal(recovery?.kind, "transition");
+  assert.equal(recovery?.taskId, taskId("A"));
+  assert.equal(recovery?.from, "IN_PROGRESS");
+  assert.equal(recovery?.to, "FAILED");
+  assert.equal(recovery?.actor, "system");
+  // A new append after restore continues the monotonic sequence.
+  restored.application.transition(taskId("A"), "READY", { actor: "operator", authority: "test", observedAt: "2026-10-02T00:01:00Z" });
+  const extended = restored.application.executionLog();
+  assert.equal(extended.length, after.length + 1);
+  assert.equal(extended[extended.length - 1]?.seq, after.length);
+  assert.deepEqual(
+    extended.map((entry) => entry.seq),
+    extended.map((_, index) => index),
+  );
+});
+
+test("W072 I-6: an absent execution log loads (backward compat)", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.json");
+  const store = new JsonWorkflowStore(path);
+  await writeFile(path, JSON.stringify({ version: 0, state: {
+    mutationEpoch: 0,
+    tasks: [{ id: "A", title: "Old", state: "READY", dependencies: [], requiredEvidence: [] }],
+    evidence: [],
+    history: [],
+  } }));
+  const restored = await store.load(host);
+  assert.deepEqual(restored.application.executionLog(), []);
+});
+
+test("W072 I-6: a malformed persisted execution-log entry is rejected, not dropped", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.json");
+  const store = new JsonWorkflowStore(path);
+  const base = {
+    mutationEpoch: 0,
+    tasks: [{ id: "A", title: "Bad", state: "READY", dependencies: [], requiredEvidence: [] }],
+    evidence: [],
+    history: [],
+  };
+  await writeFile(path, JSON.stringify({ version: 0, state: { ...base, executionLog: [{ seq: 5, at: "2026-10-02T00:00:00Z", taskId: "A", kind: "transition", from: "READY", to: "IN_PROGRESS" }] } }));
+  await assert.rejects(() => store.load(host), /invalid persisted workflow/);
+
+  await writeFile(path, JSON.stringify({ version: 0, state: { ...base, executionLog: [{ seq: 0, at: "not-a-date", taskId: "A", kind: "transition", from: "READY", to: "IN_PROGRESS" }] } }));
+  await assert.rejects(() => store.load(host), /invalid persisted workflow/);
+
+  await writeFile(path, JSON.stringify({ version: 0, state: { ...base, executionLog: [{ seq: 0, at: "2026-10-02T00:00:00Z", taskId: "A", kind: "nonsense" }] } }));
+  await assert.rejects(() => store.load(host), /invalid persisted workflow/);
+});
+
+test("W072 I-9: a persisted step postcondition is validated on load", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.json");
+  const store = new JsonWorkflowStore(path);
+  const step = (postcondition: unknown) => ({
+    id: "s1",
+    taskId: "A",
+    content: "Edit the file",
+    state: "PENDING",
+    requiredEvidence: [{ authority: "environment", subject: "diff" }],
+    requiredPostcondition: postcondition,
+  });
+  const base = {
+    mutationEpoch: 0,
+    tasks: [{ id: "A", title: "Post", state: "READY", dependencies: [], requiredEvidence: [] }],
+    evidence: [],
+    history: [],
+  };
+  // A malformed claim must be rejected at load rather than throwing inside
+  // completeStep (or silently disabling the I-9 gate).
+  await writeFile(path, JSON.stringify({ version: 0, state: { ...base, steps: [step("garbage")] } }));
+  await assert.rejects(() => store.load(host), /invalid persisted workflow/);
+  await writeFile(path, JSON.stringify({ version: 0, state: { ...base, steps: [step({ subjects: "not-an-array" })] } }));
+  await assert.rejects(() => store.load(host), /invalid persisted workflow/);
+  await writeFile(path, JSON.stringify({ version: 0, state: { ...base, steps: [step({ subjects: [{ path: "a.ts" }] })] } }));
+  await assert.rejects(() => store.load(host), /invalid persisted workflow/);
+
+  // A well-formed claim round-trips.
+  await writeFile(path, JSON.stringify({ version: 0, state: {
+    ...base,
+    steps: [step({ subjects: [{ path: "a.ts", expectedFingerprint: "sha256:abc" }] })],
+  } }));
+  const restored = await store.load(host);
+  assert.deepEqual(
+    restored.application.taskSteps(taskId("A"))[0]?.requiredPostcondition,
+    { subjects: [{ path: "a.ts", expectedFingerprint: "sha256:abc" }] },
+  );
+});

@@ -64,7 +64,7 @@ export interface HubSnapshotSource {
 }
 
 export function emptyHubSnapshot(): WorkflowSnapshot {
-  return { enforcementLevel: "advisory", transport: "other", mutationEpoch: 0, tasks: [], evidence: [], history: [] };
+  return { enforcementLevel: "advisory", transport: "other", mutationEpoch: 0, tasks: [], evidence: [], history: [], executionLog: [] };
 }
 
 export function createHubSnapshotSource(hub: ResolvedHub, workspace: string): HubSnapshotSource {

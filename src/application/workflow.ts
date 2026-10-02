@@ -19,6 +19,7 @@ import type {
   WorkflowTask,
 } from "../kernel/contracts.js";
 import { TaskGraph, isRunComplete, type StepTransitionResult } from "../kernel/task-graph.js";
+import { ExecutionLog, type ExecutionLogEntry } from "../kernel/execution-log.js";
 import type { ChangeObservation } from "../kernel/state-diff.js";
 import { mutationGate, verifyingGate, type CheckpointLedger } from "../pedagogy/checkpoints.js";
 import { PolicyFailureTracker } from "./policy-failure-tracker.js";
@@ -39,11 +40,13 @@ export interface WorkflowSnapshot {
   readonly tasks: readonly WorkflowTaskProjection[];
   readonly evidence: readonly Evidence[];
   readonly history: readonly TransitionRecord[];
+  readonly executionLog: readonly ExecutionLogEntry[];
 }
 
 export class WorkflowApplication {
   readonly #history: TransitionRecord[] = [];
   readonly #graph: TaskGraph;
+  readonly #executionLog = new ExecutionLog();
   #activeTaskId?: TaskId;
   #codingSessionCorrelation?: string;
   #pedagogyGate: CheckpointLedger | undefined;
@@ -66,6 +69,7 @@ export class WorkflowApplication {
     allowedCapabilities: ReadonlySet<ToolCapability> = new Set<ToolCapability>(["read", "mutation"]),
     readonly workspaceRoot?: string,
     codingSessionCorrelation?: string,
+    executionLog?: readonly ExecutionLogEntry[],
   ) {
     if (workspaceRoot !== undefined && !isAbsolute(workspaceRoot)) {
       throw new TypeError("workspace root must be an absolute path");
@@ -74,6 +78,10 @@ export class WorkflowApplication {
     this.#capabilities = new Set(allowedCapabilities);
     this.#history.push(...history);
     if (codingSessionCorrelation !== undefined) this.#codingSessionCorrelation = codingSessionCorrelation;
+    // W072 I-6: seed the append-only log from persisted entries. `append` only
+    // accepts a supplied `seq` that is exactly the next value, so a restored
+    // log continues monotonically and an out-of-continuity entry fails closed.
+    for (const entry of executionLog ?? []) this.#executionLog.append(entry);
   }
 
   get allowedCapabilities(): ReadonlySet<ToolCapability> {
@@ -307,7 +315,18 @@ export class WorkflowApplication {
       }
     }
     const result = this.#graph.transition(taskId, requested, attribution, blocked, decisions);
-    if (result.kind === "accepted") this.#history.push(result.transition);
+    if (result.kind === "accepted") {
+      this.#history.push(result.transition);
+      const actor = result.transition.attribution?.actor;
+      this.#executionLog.append({
+        kind: "transition",
+        at: new Date().toISOString(),
+        taskId: result.transition.taskId,
+        from: result.transition.from,
+        to: result.transition.to,
+        ...(actor === undefined ? {} : { actor }),
+      });
+    }
     return result;
   }
 
@@ -432,15 +451,47 @@ export class WorkflowApplication {
     return task.id;
   }
 
-  recordEvidence(evidence: Evidence): void {
+  recordEvidence(evidence: Evidence, taskId?: TaskId): void {
     this.#graph.recordEvidence(evidence);
+    // W072 I-6: the Evidence contract carries no task correlation
+    // (src/kernel/contracts.ts:66-91), so an entry is appended only when a
+    // task is explicitly supplied or an active task resolves. With neither,
+    // the admission is honestly omitted from the log rather than tagged with
+    // an invented taskId. The log is additive — the graph remains canonical.
+    const resolved = taskId ?? this.#activeTaskId;
+    if (resolved === undefined) return;
+    this.#executionLog.append({
+      kind: "evidence",
+      at: new Date().toISOString(),
+      taskId: resolved,
+      summary: `${evidence.authority}:${evidence.subject}:${evidence.result}`,
+      ...(evidence.content === undefined ? {} : { ref: evidence.content.ref }),
+    });
   }
 
   recordMutation(subjects: readonly string[]): void {
     // W157: the application layer owns the clock (the kernel reads none);
     // the graph stamps the invalidation demotions system/evidence-invalidation
     // with this observation time.
-    this.#history.push(...this.#graph.recordMutation(subjects, new Date().toISOString()));
+    const observedAt = new Date().toISOString();
+    const transitions = this.#graph.recordMutation(subjects, observedAt);
+    this.#history.push(...transitions);
+    for (const transition of transitions) {
+      const actor = transition.attribution?.actor;
+      this.#executionLog.append({
+        kind: "transition",
+        at: observedAt,
+        taskId: transition.taskId,
+        from: transition.from,
+        to: transition.to,
+        ...(actor === undefined ? {} : { actor }),
+      });
+    }
+  }
+
+  /** W072 I-6: the append-only execution log, read-only (a fresh copy each call). */
+  executionLog(): readonly ExecutionLogEntry[] {
+    return this.#executionLog.entries();
   }
 
   snapshot(): WorkflowSnapshot {
@@ -456,6 +507,7 @@ export class WorkflowApplication {
       })),
       evidence: this.#graph.evidence(),
       history: [...this.#history],
+      executionLog: this.#executionLog.entries(),
     };
   }
 
@@ -474,6 +526,7 @@ export class WorkflowApplication {
     return {
       ...this.#graph.persistedState(),
       history: [...this.#history],
+      executionLog: this.#executionLog.entries(),
       allowedCapabilities: [...this.allowedCapabilities],
       workspaceRoot: this.workspaceRoot,
       codingSessionCorrelation: this.#codingSessionCorrelation,

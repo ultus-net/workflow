@@ -25,6 +25,21 @@ export class JsonWorkflowStore {
     const recoveryHistory = persisted.state.tasks
       .filter((task) => task.state === "IN_PROGRESS")
       .map((task) => ({ taskId: task.id, from: "IN_PROGRESS" as const, to: "FAILED" as const }));
+    // W072 I-6: the synthetic recovery demotion is written to the history AND to
+    // the append-only log, so the two stay coherent across a restart. The
+    // recovery entries continue the persisted log's `seq` (ExecutionLog.append
+    // accepts a supplied seq only when it is exactly the next value).
+    const observedAt = new Date().toISOString();
+    const persistedLog = persisted.state.executionLog ?? [];
+    const recoveryLog = recoveryHistory.map((transition, index) => ({
+      kind: "transition" as const,
+      seq: persistedLog.length + index,
+      at: observedAt,
+      taskId: transition.taskId,
+      from: transition.from,
+      to: transition.to,
+      actor: "system" as const,
+    }));
     return {
       application: new WorkflowApplication(
         graph,
@@ -33,6 +48,7 @@ export class JsonWorkflowStore {
         new Set(persisted.state.allowedCapabilities ?? ["read", "mutation"]),
         persisted.state.workspaceRoot,
         persisted.state.codingSessionCorrelation,
+        [...persistedLog, ...recoveryLog],
       ),
       version: persisted.version,
     };
@@ -116,7 +132,8 @@ function isPersistedWorkflow(value: unknown): value is PersistedWorkflow {
     (state.allowedCapabilities === undefined || (Array.isArray(state.allowedCapabilities) && state.allowedCapabilities.every(isToolCapability))) &&
     (state.workspaceRoot === undefined || (typeof state.workspaceRoot === "string" && state.workspaceRoot.startsWith("/"))) &&
     (state.codingSessionCorrelation === undefined || isNonEmptyString(state.codingSessionCorrelation)) &&
-    (state.steps === undefined || (Array.isArray(state.steps) && state.steps.every(isWorkflowStep)))
+    (state.steps === undefined || (Array.isArray(state.steps) && state.steps.every(isWorkflowStep))) &&
+    (state.executionLog === undefined || isExecutionLog(state.executionLog))
   )) return false;
   const taskIds = new Set((state.tasks as Record<string, unknown>[]).map((task) => task.id));
   return taskIds.size === state.tasks.length &&
@@ -156,6 +173,7 @@ function isWorkflowStep(value: unknown): boolean {
   const step = value as Record<string, unknown>;
   return isNonEmptyString(step.id) && isNonEmptyString(step.taskId) && isNonEmptyString(step.content) &&
     STEP_STATES.has(step.state as string) &&
+    (step.requiredPostcondition === undefined || isChangeClaim(step.requiredPostcondition)) &&
     Array.isArray(step.requiredEvidence) && step.requiredEvidence.every((requirement) => {
       if (typeof requirement !== "object" || requirement === null) return false;
       const record = requirement as Record<string, unknown>;
@@ -163,7 +181,24 @@ function isWorkflowStep(value: unknown): boolean {
     });
 }
 
-function isEvidence(value: unknown): boolean {  if (typeof value !== "object" || value === null) return false;
+/**
+ * W072 I-9: validates a persisted state-diff postcondition against the
+ * `ChangeClaim` contract. A malformed claim must be rejected at load — the
+ * kernel's `evaluateStateDiff` assumes a well-formed `subjects` array and would
+ * otherwise throw (or silently disable the gate) during `completeStep`.
+ */
+function isChangeClaim(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const claim = value as Record<string, unknown>;
+  return Array.isArray(claim.subjects) && claim.subjects.every((subject) => {
+    if (typeof subject !== "object" || subject === null) return false;
+    const record = subject as Record<string, unknown>;
+    return isNonEmptyString(record.path) && isNonEmptyString(record.expectedFingerprint);
+  });
+}
+
+function isEvidence(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
   const evidence = value as Record<string, unknown>;
   return isNonEmptyString(evidence.id) && isNonEmptyString(evidence.observationId) &&
     EVIDENCE_AUTHORITIES.has(evidence.authority as string) && isNonEmptyString(evidence.subject) &&
@@ -171,6 +206,14 @@ function isEvidence(value: unknown): boolean {  if (typeof value !== "object" ||
     (evidence.freshness === "fresh" || evidence.freshness === "stale") &&
     Number.isSafeInteger(evidence.mutationEpoch) && (evidence.mutationEpoch as number) >= 0 &&
     typeof evidence.observedAt === "string" && !Number.isNaN(Date.parse(evidence.observedAt));
+}
+
+function isLegalHistoryTransition(from: string, to: string): boolean {
+  return (from === "READY" && to === "IN_PROGRESS") ||
+    (from === "IN_PROGRESS" && (to === "VERIFYING" || to === "FAILED")) ||
+    (from === "VERIFYING" && (to === "VERIFIED" || to === "FAILED")) ||
+    (from === "VERIFIED" && to === "VERIFYING") ||
+    (from === "FAILED" && (to === "READY" || to === "BLOCKED"));
 }
 
 const TRANSITION_ACTORS = new Set<string>(ACTOR_VOCABULARY);
@@ -193,12 +236,34 @@ function isTransitionRecord(value: unknown): boolean {
     typeof attribution.observedAt === "string" && !Number.isNaN(Date.parse(attribution.observedAt));
 }
 
-function isLegalHistoryTransition(from: string, to: string): boolean {
-  return (from === "READY" && to === "IN_PROGRESS") ||
-    (from === "IN_PROGRESS" && (to === "VERIFYING" || to === "FAILED")) ||
-    (from === "VERIFYING" && (to === "VERIFIED" || to === "FAILED")) ||
-    (from === "VERIFIED" && to === "VERIFYING") ||
-    (from === "FAILED" && (to === "READY" || to === "BLOCKED"));
+/**
+ * W072 I-6: validates a persisted execution-log entry. Absence of the whole
+ * field is legal (older snapshots keep loading); an entry that IS present must
+ * be well-formed, so a malformed entry is rejected rather than silently
+ * dropped. The `seq` is checked for non-negative integer and the entry's
+ * per-kind payload is checked against the kernel's own `ExecutionLogEntry`
+ * union shape.
+ */
+function isExecutionLog(value: unknown): boolean {
+  if (!Array.isArray(value)) return false;
+  const entries = value as Record<string, unknown>[];
+  return entries.every((entry, index) => {
+    if (typeof entry !== "object" || entry === null) return false;
+    if (!Number.isSafeInteger(entry.seq) || entry.seq !== index) return false;
+    if (!isNonEmptyString(entry.taskId)) return false;
+    if (entry.stepId !== undefined && !isNonEmptyString(entry.stepId)) return false;
+    if (entry.sessionId !== undefined && !isNonEmptyString(entry.sessionId)) return false;
+    if (entry.actor !== undefined && !TRANSITION_ACTORS.has(entry.actor as string)) return false;
+    if (!(typeof entry.at === "string" && !Number.isNaN(Date.parse(entry.at)))) return false;
+    if (entry.kind === "transition" || entry.kind === "step") {
+      const states = entry.kind === "transition" ? TASK_STATES : STEP_STATES;
+      return states.has(entry.from as string) && states.has(entry.to as string);
+    }
+    if (entry.kind === "evidence") {
+      return isNonEmptyString(entry.summary) && (entry.ref === undefined || isNonEmptyString(entry.ref));
+    }
+    return false;
+  });
 }
 
 function isCoherentHistory(tasks: Record<string, unknown>[], history: Record<string, unknown>[]): boolean {
