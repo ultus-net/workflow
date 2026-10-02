@@ -175,11 +175,14 @@ discipline, not identity proof) is untouched — gate 2 scopes *where* a
 credential may be used, it does not prove *who* presented the placeholder. See
 `docs/EGRESS_CAPABILITY_AUDIT.md` §3a for the full statement.
 
-**Activation status (honest, updated W184).** As of W184 every launcher
-(opencode/cline/goose + the W129 server lane) resolves the binding from the
-operator credential definitions' `allowedEndpoints` for the proxy origin
-(`src/integrations/egress-binding.ts`) and threads it into the proxy; the
-standalone server CLI does the same. The injected key still comes from
+**Activation status (honest, updated W184).** As of W184 the single-origin
+proxy lanes (opencode/cline/goose + the W129 server lane) resolve the binding
+from the operator credential definitions' `allowedEndpoints` for the proxy
+origin (`src/integrations/egress-binding.ts`) and thread it into the proxy; the
+standalone server CLI does the same. The W070a open-source-pool family proxies
+are deliberately excluded (vendor-specific upstreams; the binding would not
+match and could only 403 all family traffic), carrying the policy tier and
+sinks only. The injected key still comes from
 `src/integrations/upstream-key.ts`, not from `CredentialDefinition` custody, so
 the binding scopes *where* that key may go; it is not an identity proof and it
 is narrowed to the proxy origin (a foreign-host binding is dropped rather than

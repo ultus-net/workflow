@@ -180,7 +180,7 @@ const onEgressDenied = (event: EgressDenialEvent): void => {
 const hubEgressOptions = (): {
   readonly onEgressDenied: (event: EgressDenialEvent) => void;
   readonly payloadPolicy: ProxyPayloadPolicy | undefined;
-  readonly credentialEndpoints?: readonly CredentialEndpoint[] | undefined;
+  readonly credentialEndpoints?: readonly CredentialEndpoint[];
 } => ({
   onEgressDenied,
   payloadPolicy: hubEgressPayloadPolicy(),

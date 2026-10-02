@@ -171,11 +171,15 @@ pure composition over `decideEgress` is additionally covered by the W178
 decision tests in `test/egress-policy.test.ts`.
 
 **Production activation status (honest).** The gate-2 mechanism and its pure
-decision are landed and tested. W184 wires a production binding source: every
-launcher (opencode/cline/goose + the W129 server lane) resolves the upstream
-origin's binding from the operator credential definitions'
-`allowedEndpoints` (`src/integrations/egress-binding.ts`) and threads it into
-`createModelUsageProxy`; the standalone server CLI does the same. The binding is
+decision are landed and tested. W184 wires a production binding source: the
+single-origin proxy lanes (opencode/cline/goose + the W129 server lane) resolve
+the upstream origin's binding from the operator credential definitions'
+`allowedEndpoints` (`src/integrations/egress-binding.ts`) and thread it into
+`createModelUsageProxy`; the standalone server CLI does the same. The W070a
+open-source-pool family proxies are deliberately excluded — their upstreams are
+vendor-specific, so the `WORKFLOW_ACP_UPSTREAM`-derived binding would not match
+and could only 403 all family traffic; they carry the policy tier and sinks
+only. The binding is
 narrowed to the proxy origin — an endpoint naming a different host/port is
 dropped, because the single-origin proxy could only blanket-refuse, never scope,
 such a request. With no definition binding the origin the gate stays **inactive
