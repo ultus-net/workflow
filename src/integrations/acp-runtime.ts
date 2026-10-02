@@ -32,7 +32,7 @@ import {
 } from "./opencode-agent-config.js";
 import type { PermissionBroker } from "../ui/permission-broker.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
-import { METERED_PLACEHOLDER_KEY, type EgressDenialEvent, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy, type ProxyPayloadPolicy, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
+import { METERED_PLACEHOLDER_KEY, type EgressDenialEvent, type ModelUsageMetrics, type ModelUsageProxy, type ProxyPayloadPolicy, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
 import type { CredentialEndpoint } from "./credentials.js";
 import { createEgressRuntimeFeed } from "./egress-audit-client.js";
 import { egressPostureFromEnv, egressRuntimeContext } from "./runtime-context.js";
@@ -171,11 +171,6 @@ export interface AcpRuntimeOptions {
    * this runtime composes. Empty/absent (the default) leaves gate 2 inactive.
    */
   readonly credentialEndpoints?: readonly CredentialEndpoint[] | undefined;
-  /**
-   * W184: the W181 egress observation sink (opencode lane only; the cline/goose
-   * lanes compose their own). Absent observes nothing.
-   */
-  readonly onEgressObservation?: ((observation: EgressObservation) => void) | undefined;
 }
 
 export async function createConfiguredAcpRuntime(

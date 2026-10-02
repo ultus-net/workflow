@@ -188,12 +188,12 @@ async function spawnHub(context: TestContext, home: string, schedulesPath?: stri
   assert.ok(existsSync(discoveryPath), `the hub's own banner names its discovery file, and it exists: ${discoveryPath}`);
   const discovery = JSON.parse(readFileSync(discoveryPath, "utf8")) as { token: string };
   const token = discovery.token;
-  assert.match(token, /^[0-9a-f]{64}$/);
+  assert.match(token, /^[0-9a-f]{16}\.[0-9a-f]{64}$/, "W183: <generation>.<secret>");
   const verifierPath = join(dirname(discoveryPath), "verifier.json");
   assert.ok(existsSync(verifierPath), `the verifier discovery is published beside discovery.json: ${verifierPath}`);
   const verifier = JSON.parse(readFileSync(verifierPath, "utf8")) as { token: string };
   const verifierToken = verifier.token;
-  assert.match(verifierToken, /^[0-9a-f]{64}$/);
+  assert.match(verifierToken, /^[0-9a-f]{16}\.[0-9a-f]{64}$/, "W183: <generation>.<secret>");
   assert.notEqual(verifierToken, token, "the verifier token is a distinct credential");
 
   return {

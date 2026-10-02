@@ -35,7 +35,7 @@ test("workflow-hub daemon writes a discovery file and serves authorization", asy
   assert.ok(existsSync(discoveryPath));
   const discovery = JSON.parse(readFileSync(discoveryPath, "utf8"));
   assert.equal(discovery.hubId?.length, 16);
-  assert.equal(discovery.token?.length, 64);
+  assert.match(discovery.token, /^[0-9a-f]{16}\.[0-9a-f]{64}$/, "W183: <generation>.<secret>");
   assert.match(discovery.endpoint, /^http:\/\/127\.0\.0\.1:\d+$/);
 
   const request = await fetch(`${discovery.endpoint}/snapshot`, {

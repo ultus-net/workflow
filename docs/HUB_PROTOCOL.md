@@ -37,6 +37,7 @@ Written atomically (temp file + rename) with mode `0600`:
 | `hubId` | string | 16 hex chars; unique per hub instance. |
 | `endpoint` | string | Loopback HTTP base URL (`http://127.0.0.1:<port>`). |
 | `token` | string | `<generation>.<secret>` — 16 hex generation + `.` + 64 hex secret (W183 generation-bound tokens: a token replayed from a previous hub start carries a different generation and is rejected). Ordinary surface/hub-client bearer capability. Verifier-only endpoints use a separate capability. |
+| `generation` | string | 16 hex chars; the W183 hub-start generation bound into every token. `verifier.json` also carries it and the verifier token is generation-prefixed the same way. |
 
 Client requirements:
 
