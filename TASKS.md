@@ -1157,6 +1157,38 @@ change is rejected on the real completion path" obligation is not met until
 that wiring lands. Do not read this slice as a wired gate or as closing either
 DRIFT.
 
+**Addendum (2026-10-02, I-5 reviewer-ledger wiring slice):** the reviewer now
+actually receives the rendered step ledger. `HubReviewerRunner.reviewRun`
+accepts an optional `ledgerText` and threads it through every
+`buildReviewRubric({...})` call — the single-session path and the partitioned
+per-unit path (`#reviewPartitioned` → `#reviewOneUnit`), so each unit prompt
+carries the ledger under audit. The production derivation lives in
+`src/integrations/run-registry.ts`: at the reviewer invocation (where the run's
+`application` is in scope) the registry renders
+`renderReviewLedgerText(application.taskSteps(runTaskId))` and passes it via
+the `RunReviewer` input; `createReviewerFactory` (`hub-run-gates.ts`) forwards
+it to `reviewRun`. It is passed **only when the run task has steps**, so a
+step-less run's reviewer prompt stays byte-identical to before this slice
+(the renderer's empty-ledger string is honest but would otherwise perturb a
+prompt with nothing to audit). Pinned by `test/hub-reviewer.test.ts` (3 tests:
+ledger section + COMPLETED→P0/P1→[REQUEST_CHANGES] instruction rendered;
+section absent without `ledgerText`; the section present in all three
+partitioned unit prompts) and `test/hub-run-gates.test.ts` (2 tests: the
+registry derives the run task's ledger and the prompt shows the verbatim
+`[COMPLETED]` state; a step-less run's prompt carries no ledger section).
+
+**What this closes / what stays open (explicit):** the deterministic part is
+now wired end to end — the rubric instruction and the kernel ledger material
+reach the model. The reviewer's decision to record a P0/P1 and emit
+`[REQUEST_CHANGES]` for a completed step with no corresponding diff remains a
+**model judgment**; nothing in this slice parses findings, and `parseReviewVerdict`
+/ the coverage and axis gates are unchanged. I-5 is therefore **advanced, not
+closed**: no deterministic check ties a ledger mismatch to the verdict, and no
+review test forces `REQUEST_CHANGES` from a ledger/diff mismatch. The
+`docs/COMPLIANCE_REGISTER.md` I-5 row keeps its OPEN obligation; the progress
+log records the advance. Governed by the existing rubric text (added in the
+prior slice), not by new verdict logic.
+
 
 ## Phase 15: Bounded recursive self-improvement (2026-09-19)
 

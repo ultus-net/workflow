@@ -192,6 +192,13 @@ export class HubReviewerRunner {
     readonly runId: string;
     readonly workspace: string;
     readonly taskPrompt?: string;
+    /**
+     * W072 I-5: the kernel step ledger under audit, rendered by the caller
+     * (`renderReviewLedgerText`). When present, the rubric instructs the
+     * reviewer to check every COMPLETED step against the diff; the runner
+     * never fetches or infers the ledger itself.
+     */
+    readonly ledgerText?: string;
   }): Promise<HubReviewerResult> {
     const diffText = await this.#diffSource(input.workspace);
     const statusOutput = this.#statusSource === undefined ? undefined : await this.#statusSource(input.workspace);
@@ -231,6 +238,7 @@ export class HubReviewerRunner {
         diffText,
         ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }),
         ...(manifest === undefined ? {} : { manifestText: renderReviewManifestText(manifest) }),
+        ...(input.ledgerText === undefined ? {} : { ledgerText: input.ledgerText }),
       });
       session = await this.#spawnReviewer.spawn({
         workspace: input.workspace,
@@ -343,7 +351,7 @@ export class HubReviewerRunner {
   }
 
   async #reviewPartitioned(
-    input: { readonly runId: string; readonly workspace: string; readonly taskPrompt?: string },
+    input: { readonly runId: string; readonly workspace: string; readonly taskPrompt?: string; readonly ledgerText?: string },
     reviewerRunId: string,
     diffText: string,
     manifest: ReturnType<typeof deriveReviewCoverageManifest>,
@@ -472,7 +480,7 @@ export class HubReviewerRunner {
 
   /** Runs one isolated reviewer session over one unit's scope; verdict reasons never throw. */
   async #reviewOneUnit(
-    input: { readonly workspace: string; readonly taskPrompt?: string },
+    input: { readonly workspace: string; readonly taskPrompt?: string; readonly ledgerText?: string },
     reviewerRunId: string,
     diffText: string,
     scopeText: string,
@@ -481,6 +489,7 @@ export class HubReviewerRunner {
       diffText,
       ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }),
       manifestText: scopeText,
+      ...(input.ledgerText === undefined ? {} : { ledgerText: input.ledgerText }),
     });
     const session = await this.#spawnReviewer.spawn({
       workspace: input.workspace,

@@ -6,6 +6,7 @@ import { WorkflowApplication } from "../application/workflow.js";
 import { evidenceId, observationId, taskId, type TaskId } from "../kernel/contracts.js";
 import type { TaskGraph } from "../kernel/task-graph.js";
 import { countReferencedAxes, MIN_REFERENCED_AXES } from "../review/rubric.js";
+import { renderReviewLedgerText } from "../review/ledger-audit.js";
 import type { EvidenceContentStore } from "./evidence-content-store.js";
 import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-controller.js";
 import type { HubReviewerResult } from "./hub-reviewer.js";
@@ -17,6 +18,12 @@ export type RunReviewer = (input: {
   readonly workspace: string | undefined;
   /** The ask the run was launched with, when declared — the reviewer binds it into its provenance fingerprint (W041). */
   readonly taskPrompt?: string;
+  /**
+   * W072 I-5: the kernel step ledger under audit, rendered by the registry
+   * from the run task's canonical steps. Absent when the run has no steps so
+   * a step-less run's prompt stays byte-identical to before this slice.
+   */
+  readonly ledgerText?: string;
 }) => Promise<HubReviewerResult>;
 
 /**
@@ -671,10 +678,17 @@ export function createRunRegistry(
           let result: HubReviewerResult;
           try {
             const taskPrompt = runPrompts.get(runId);
+            // W072 I-5: render the run task's canonical step ledger so the
+            // reviewer can audit a COMPLETED step with no corresponding diff.
+            // Passed only when the task actually has steps: the renderer's
+            // empty-ledger string would change a step-less run's prompt, and
+            // there is nothing to audit.
+            const runSteps = application.taskSteps(runTaskId);
             result = await reviewer({
               runId,
               workspace: runWorkspaces.get(runId),
               ...(taskPrompt === undefined ? {} : { taskPrompt }),
+              ...(runSteps.length === 0 ? {} : { ledgerText: renderReviewLedgerText(runSteps) }),
             });
           } catch (error) {
             const reason = `hub reviewer failed: ${error instanceof Error ? error.message : String(error)}`;
