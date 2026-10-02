@@ -214,9 +214,9 @@ test("the compiled hub's /bash and /run/begin lanes: auth directions, the contai
   const endpoint = listeningMatch![1]!;
   const discoveryPath = discoveryMatch![1]!.trim();
   const token = (JSON.parse(readFileSync(discoveryPath, "utf8")) as { token: string }).token;
-  assert.match(token, /^[0-9a-f]{64}$/);
+  assert.match(token, /^[0-9a-f]{16}\.[0-9a-f]{64}$/, "W183: <generation>.<secret>");
   const verifierToken = (JSON.parse(readFileSync(join(dirname(discoveryPath), "verifier.json"), "utf8")) as { token: string }).token;
-  assert.match(verifierToken, /^[0-9a-f]{64}$/);
+  assert.match(verifierToken, /^[0-9a-f]{16}\.[0-9a-f]{64}$/, "W183: <generation>.<secret>");
   assert.notEqual(verifierToken, token, "the verifier credential is distinct from the operator credential (P1-1)");
 
   // ── /bash auth, BOTH refusal directions ─────────────────────────────────

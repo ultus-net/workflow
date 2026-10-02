@@ -168,12 +168,11 @@ export async function createWorkflowHub(
      * W182 (NVIDIA adoption wave A7): the durable egress policy revision store.
      * When provided, the hub mounts `/egress/pending` and `/egress/answer`, and
      * the composition root threads its `recordDenial` into the hub-composed
-     * proxy lanes that carry the sink as `onEgressDenied` (OpenCode, Cline, and
-     * goose's OpenRouter lane), so a credential-gate proxy denial parks a
-     * redacted pending rule. Only the credential gates reach it today: W180's
-     * path/function policy tier (issue #440) fires its own callback, so an
-     * approvable `egress_policy` denial cannot yet flow through. Absent → both
-     * routes 404 (capability withheld, fail closed).
+     * proxy lanes that carry the sink as `onEgressDenied` (OpenCode, Cline,
+     * goose's OpenRouter lane, and the W129 opencode-server lane at runtime
+     * level). As of W184 the sink receives W180's path/function policy tier too,
+     * so an approvable `egress_policy` `no_matching_rule` denial parks
+     * end-to-end. Absent → both routes 404 (capability withheld, fail closed).
      */
     egressApprovals?: EgressPolicyRevisionStore;
   } = {},

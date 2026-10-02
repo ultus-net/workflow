@@ -186,3 +186,63 @@ test("W182: the shared denial sink fires from a real proxy and reaches the hub s
   const after = await post(hub.url, token, "/egress/pending", {});
   assert.equal((after.body.revisions as unknown[]).length, 0, "nothing merged");
 });
+
+test("W184: a real proxy's W180 egress_policy denial reaches the hub store as an APPROVABLE park, and an approval merges a durable revision", async (t) => {
+  const { graph, application, workspace } = setup();
+  const dir = mkdtempSync(join(tmpdir(), "wf-egress-hub-"));
+  const revisionsPath = join(dir, "egress-revisions.json");
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+
+  const egressApprovals = createEgressPolicyRevisionStore({
+    path: revisionsPath,
+    baseline: { version: 0, rules: [] },
+    generation: "gen-1",
+    fingerprint: () => ({ policyVersion: 0, providerFingerprint: "static" }),
+  });
+  // The exact hub wiring: the shared denial sink parks on the store.
+  const sink = (event: EgressDenialEvent) =>
+    egressApprovals.recordDenial({
+      policy: event.policy,
+      reason: event.reason,
+      host: event.host,
+      pathname: event.pathname,
+      ...(event.port === undefined ? {} : { port: event.port }),
+      ...(event.method === undefined ? {} : { method: event.method }),
+    });
+  const hub = await createWorkflowHub(application, { discoveryDir: dir, graph, egressApprovals });
+  t.after(() => hub.close());
+  const { token } = JSON.parse(readFileSync(resolveHubDiscoveryPath(dir), "utf8"));
+
+  // A real proxy with a supplied policy that grants a DIFFERENT host, so the
+  // request is the deny-by-default `no_matching_rule` family. W184 routes that
+  // denial through the shared sink, so it now reaches the hub store.
+  const proxy = await createModelUsageProxy({
+    upstream: "http://127.0.0.1:9",
+    apiKey: "REAL_KEY",
+    payloadPolicy: { egressPolicy: { rules: [{ id: "elsewhere", host: "api.example.com", mode: "enforce" }] } },
+    onEgressDenied: sink,
+  });
+  t.after(() => proxy.close());
+  t.after(() => egressApprovals.cancelAll());
+  const response = await fetch(`${proxy.url}/api/v1/chat/completions?secret=QUERY_SECRET_VALUE`, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+    body: JSON.stringify({ model: "m", messages: [] }),
+  });
+  assert.equal(response.status, 403, "the policy denies the unmatched request");
+
+  const pending = await post(hub.url, token, "/egress/pending", {});
+  const parkedRows = pending.body.pending as Array<{ requestId: string; approvable: boolean; proposal: { pathname: string } }>;
+  assert.equal(parkedRows.length, 1, "the policy denial parks on the hub");
+  assert.equal(parkedRows[0]?.approvable, true, "W184 makes the egress_policy no_matching_rule family operator-approvable end-to-end");
+  assert.equal(parkedRows[0]?.proposal.pathname, "/api/v1/chat/completions", "the parked payload strips the query string");
+  assert.equal(JSON.stringify(pending.body).includes("QUERY_SECRET_VALUE"), false);
+
+  const answered = await post(hub.url, token, "/egress/answer", { requestId: parkedRows[0]!.requestId, decision: "allow" });
+  assert.equal(answered.status, 200);
+  assert.equal(answered.body.status, "merged", "an approval merges a durable revision");
+  const after = await post(hub.url, token, "/egress/pending", {});
+  assert.equal((after.body.revisions as unknown[]).length, 1, "the merged revision is durable");
+  assert.equal(JSON.parse(readFileSync(revisionsPath, "utf8")).generation, "gen-1");
+});

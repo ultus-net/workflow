@@ -156,9 +156,11 @@ the policy's allowed function set. This is **not** an erase of the residual:
 absent a policy the function-broad grant is unchanged; a policy with no
 matching rule denies (fail closed) rather than falling through; and the §5
 bypass (an agent that reaches a host directly, outside any proxy) is entirely
-unaffected. As with W179, no production launcher supplies an `egressPolicy` as
-of 2026-10-02, so this remains a **mechanism scoped to the supplied case, not a
-live enforcement claim**; wiring a production policy source is a follow-up.
+unaffected. W184 composes a production policy source: the hub loads the W183
+`WORKFLOW_EGRESS_POLICY_FILE` per turn (so a merged approval is consulted) and
+the standalone server CLI loads it once; absent a file the tier stays dark.
+The mechanism remains **scoped to where a policy is actually supplied** — that
+is the operator's configuration, not a claim about an unconfigured host.
 
 Verified by `test/model-usage-proxy.test.ts` (the proxy boundary: in-policy
 forward, out-of-policy refusal with the named label, default dark,
@@ -169,19 +171,27 @@ pure composition over `decideEgress` is additionally covered by the W178
 decision tests in `test/egress-policy.test.ts`.
 
 **Production activation status (honest).** The gate-2 mechanism and its pure
-decision are landed and tested, but as of 2026-10-02 **no production launcher
-supplies a credential binding to the proxy**. The keys the proxy injects are
-loaded from `src/integrations/upstream-key.ts` (`WORKFLOW_UPSTREAM_KEY` /
+decision are landed and tested. W184 wires a production binding source: the
+single-origin proxy lanes (opencode/cline/goose + the W129 server lane) resolve
+the upstream origin's binding from the operator credential definitions'
+`allowedEndpoints` (`src/integrations/egress-binding.ts`) and thread it into
+`createModelUsageProxy`; the standalone server CLI does the same. The W070a
+open-source-pool family proxies are deliberately excluded — their upstreams are
+vendor-specific, so the `WORKFLOW_ACP_UPSTREAM`-derived binding would not match
+and could only 403 all family traffic; they carry the policy tier and sinks
+only. The binding is
+narrowed to the proxy origin — an endpoint naming a different host/port is
+dropped, because the single-origin proxy could only blanket-refuse, never scope,
+such a request. With no definition binding the origin the gate stays **inactive
+and byte-identical**. The keys the proxy injects are still loaded from
+`src/integrations/upstream-key.ts` (`WORKFLOW_UPSTREAM_KEY` /
 `~/.config/workflow/upstream-key`), a custody path separate from
-`CredentialDefinition.allowedEndpoints`, which is loaded only by the
-admin/hub credential surfaces (and used there for the guard's stdio-env
-broker, not the proxy). The endpoint binding is therefore **inert in
-production until a composition site threads it into the proxy**: the
-mechanism is real and enforced wherever `credentialEndpoints` is supplied
-(tests, or a future caller), but the residual risk narrowing above is
-**scoped to that supplied case and not yet a live enforcement claim**. Wiring
-a production binding source is tracked as a follow-up on issue #439; until it
-lands, this item changes no surface's `advisory`/`enforced` status.
+`CredentialDefinition.allowedEndpoints`; the binding scopes *where that key may
+go*, it does not make the key an identity proof. The residual-risk narrowing
+above is therefore **live wherever an operator declares an endpoint binding, and
+absent (unchanged) otherwise** — it is not a blanket enforced claim. It is
+verified by `test/egress-binding.test.ts` (the origin-narrowing source) and the
+W184 server-lane wiring pin in `test/opencode-server-egress-wiring.test.ts`.
 
 ## 4. Destination and function inventory
 

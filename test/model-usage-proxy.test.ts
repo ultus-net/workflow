@@ -7,6 +7,7 @@ import { test } from "node:test";
 
 import { composeBodyTransforms, createModelUsageProxy, METERED_PLACEHOLDER_KEY, type EgressDenialEvent, type EgressObservation } from "../src/integrations/model-usage-proxy.js";
 import type { EgressPolicy } from "../src/integrations/egress-policy.js";
+import { isApprovableEgressDenial } from "../src/integrations/egress-policy-revisions.js";
 
 interface FakeUpstream {
   readonly url: string;
@@ -1643,6 +1644,55 @@ test("W180 A3: a supplied policy denies no_matching_rule (deny-by-default) witho
     assert.equal(response.status, 403, "a supplied policy is deny-by-default: an unmatched request is refused");
     assert.equal(((await response.json()) as { policy?: string }).policy, "egress_policy");
     assert.equal((events[0] as { reason?: string }).reason, "no_matching_rule");
+    assert.equal(upstream.seen.length, 0);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W184: the W180 egress_policy denial also reaches the shared onEgressDenied sink as the approvable family", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [] }));
+  });
+  const policyRejections: unknown[] = [];
+  const denials: EgressDenialEvent[] = [];
+  const policy: EgressPolicy = { rules: [{ id: "elsewhere", host: "api.example.com", mode: "enforce" }] };
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    payloadPolicy: { egressPolicy: policy },
+    onEgressPolicyRejected: (event) => policyRejections.push(event),
+    onEgressDenied: (event) => denials.push(event),
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions?secret=QUERY_SECRET_VALUE`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 403, "the policy denial is still answered");
+    assert.equal(policyRejections.length, 1, "the back-compat onEgressPolicyRejected sink still fires");
+    assert.equal(denials.length, 1, "the shared denial sink now receives the policy denial");
+    const denial = denials[0]!;
+    assert.equal(denial.policy, "egress_policy");
+    assert.equal(denial.reason, "no_matching_rule", "the deny-by-default family the W182 store can approve");
+    assert.equal(
+      isApprovableEgressDenial({
+        policy: denial.policy,
+        reason: denial.reason,
+        host: denial.host,
+        ...(denial.port === undefined ? {} : { port: denial.port }),
+        ...(denial.method === undefined ? {} : { method: denial.method }),
+        pathname: denial.pathname,
+      }),
+      true,
+      "the event is the operator-approvable family end-to-end",
+    );
+    assert.equal(denial.method, "POST");
+    assert.equal(denial.pathname, "/api/v1/chat/completions", "the query string is never captured");
+    assert.equal(JSON.stringify(denial).includes("QUERY_SECRET_VALUE"), false);
     assert.equal(upstream.seen.length, 0);
   } finally {
     await proxy.close();

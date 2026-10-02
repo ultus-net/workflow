@@ -175,13 +175,21 @@ discipline, not identity proof) is untouched — gate 2 scopes *where* a
 credential may be used, it does not prove *who* presented the placeholder. See
 `docs/EGRESS_CAPABILITY_AUDIT.md` §3a for the full statement.
 
-**Activation status (honest).** The gate is mechanism-complete and tested, but
-as of 2026-10-02 no production launcher supplies a binding to the proxy: the
-injected key comes from `src/integrations/upstream-key.ts`, not from
-`CredentialDefinition` custody. The narrowing above therefore applies only
-where `credentialEndpoints` is explicitly supplied, and the residual risk
-statement is scoped accordingly, not erased, until a composition site lands
-(follow-up on issue #439). No `advisory`/`enforced` status changes here.
+**Activation status (honest, updated W184).** As of W184 the single-origin
+proxy lanes (opencode/cline/goose + the W129 server lane) resolve the binding
+from the operator credential definitions' `allowedEndpoints` for the proxy
+origin (`src/integrations/egress-binding.ts`) and thread it into the proxy; the
+standalone server CLI does the same. The W070a open-source-pool family proxies
+are deliberately excluded (vendor-specific upstreams; the binding would not
+match and could only 403 all family traffic), carrying the policy tier and
+sinks only. The injected key still comes from
+`src/integrations/upstream-key.ts`, not from `CredentialDefinition` custody, so
+the binding scopes *where* that key may go; it is not an identity proof and it
+is narrowed to the proxy origin (a foreign-host binding is dropped rather than
+blanket-refusing). With no definition binding the origin, gate 2 stays inactive
+and byte-identical. The narrowing above therefore applies wherever an operator
+declares a binding and is absent otherwise — scoped, not a blanket enforced
+claim. No `advisory`/`enforced` status changes here.
 
 **Dated narrowing (W183, 2026-10-02).** The `network: "proxied"` containment
 posture (NVIDIA adoption plan Wave B, B1; `src/containment/proxied-bwrap.ts`,

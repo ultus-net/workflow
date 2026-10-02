@@ -169,13 +169,13 @@ test("W133: the compiled hub's routes enforce the operator/verifier token-class 
   const discovery = JSON.parse(readFileSync(discoveryPath, "utf8")) as { token: string };
   const token = discovery.token;
   assert.equal(typeof token, "string", "discovery.json carries the operator token");
-  assert.match(token, /^[0-9a-f]{64}$/);
+  assert.match(token, /^[0-9a-f]{16}\.[0-9a-f]{64}$/, "W183: <generation>.<secret>");
   const verifierPath = join(dirname(discoveryPath), "verifier.json");
   assert.ok(existsSync(verifierPath), `the verifier discovery is published beside discovery.json: ${verifierPath}`);
   const verifier = JSON.parse(readFileSync(verifierPath, "utf8")) as { token: string };
   const verifierToken = verifier.token;
   assert.equal(typeof verifierToken, "string", "verifier.json carries the verifier token");
-  assert.match(verifierToken, /^[0-9a-f]{64}$/);
+  assert.match(verifierToken, /^[0-9a-f]{16}\.[0-9a-f]{64}$/, "W183: <generation>.<secret>");
   assert.notEqual(verifierToken, token, "the verifier token is a distinct credential (P1-1; full shape is W128's pin)");
 
   // ── The token-class matrix, BOTH directions ─────────────────────────────

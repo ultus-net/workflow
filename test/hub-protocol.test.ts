@@ -53,7 +53,7 @@ test("discovery file matches the documented schema", async () => {
     assert.equal(discovery.protocol, 1);
     assert.match(discovery.hubId as string, /^[0-9a-f]{16}$/);
     assert.match(discovery.endpoint as string, /^http:\/\/127\.0\.0\.1:\d+$/);
-    assert.match(discovery.token as string, /^[0-9a-f]{64}$/);
+    assert.match(discovery.token as string, /^[0-9a-f]{16}\.[0-9a-f]{64}$/, "W183: tokens are <generation>.<secret>");
   });
 });
 
