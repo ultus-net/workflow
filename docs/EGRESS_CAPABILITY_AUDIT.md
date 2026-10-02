@@ -136,11 +136,27 @@ must reach its provider), so:
    reported reaches; it is advisory evidence and never enforcement (see the
    product README's trust boundaries).
 
-## 7. Follow-ups (not done here)
+## 7. Follow-ups (partially landed; remaining work stated)
 
-- Wire proxy rejections and reaches into `egress-audit-mcp` automatically
-  (today the ledger is fed by explicit `append_egress_reach` calls); W053's
-  anomaly signals consume this ledger.
+- **W181 (A5, 2026-10-02): proxy reaches and rejections auto-feed
+  `egress-audit-mcp`.** The metering proxy now emits a typed `EgressObservation`
+  on every forwarded request (`reach`) and at the credential boundary
+  (`reject`), carrying the bare destination hostname, a path-derived function
+  class, and the token class. `src/integrations/egress-audit-client.ts` maps
+  each shape onto the ledger's `AppendReachInput` / `AppendRejectInput` and
+  appends it over MCP (the `project-memory.ts` client pattern; `src/` does not
+  import across the `mcp-toolbox/` package boundary). Rejections land in a
+  separate `rejects` store (a rejection reached no destination, so it carries no
+  anomaly flags) with the refusing `policy` tag. The OpenCode runtime composes
+  the feed behind `WORKFLOW_EGRESS_AUDIT_FEED=1` and only when the vendored
+  ledger build is present; the ledger stays advisory/read-only evidence and
+  never blocks. HONEST WIRING BOUNDARY: (1) the feed is **opt-in** — OFF by
+  default, so a production run needs the operator to set the env flag; (2) the
+  Cline and goose runtime sites are not wired (the W181 issue scopes the OpenCode
+  lane); (3) the feed observes what the proxy already decided — it is evidence,
+  not a gate. No secret, placeholder value, path, or query string is persisted:
+  the seam carries a bare hostname, a bounded function-class label, a closed
+  token class, and a bounded policy tag only.
 - Payload-level egress policy (size ceilings, content filtering) at the proxy
   remains planned; see the C3 residual.
 - Any future network-layer egress control is out of scope for this item and

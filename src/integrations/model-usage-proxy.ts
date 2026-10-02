@@ -27,6 +27,38 @@ export { METERED_PLACEHOLDER_KEY };
 const MESSAGES_LANE_LABEL_LIMIT = 64;
 
 /**
+ * W181 (A5): the egress observation journal bound. Observation only; past the
+ * bound the OLDEST event drops so a long-lived proxy never grows unbounded
+ * (the same bounded-journal posture as the messages-lane labels above). 128 is
+ * a deliberately small window: the journal is a live sample for the audit
+ * bridge, not the durable ledger (that is `egress-audit-mcp`'s job).
+ */
+const EGRESS_OBSERVATION_LIMIT = 128;
+
+/**
+ * W181 (A5): a bounded, path-shape-derived function class for the observation
+ * seam. The URL's query string is never read into the result — only the path
+ * suffix selects a label — so nothing query-shaped can reach the ledger. The
+ * labels mirror the `egress-audit-mcp` suggested classes.
+ */
+function classifyEgressFunctionClass(method: string | undefined, url: string | undefined): string {
+  if (typeof url !== "string") return "unknown";
+  const path = url.split("?")[0] ?? "";
+  if (method === "POST" && /\/v1\/messages$/.test(path)) return "messages";
+  if (method === "POST" && /\/chat\/completions$/.test(path)) return "chat-completions";
+  if (/\/models$/.test(path)) return "models-list";
+  if (/\/embeddings$/.test(path)) return "embeddings";
+  return "unknown";
+}
+
+/** Structural deep copy so neither the callback nor a reader can mutate a recorded event. */
+function copyEgressObservation(observation: EgressObservation): EgressObservation {
+  return observation.kind === "reach"
+    ? { ...observation, anomalyContext: { ...observation.anomalyContext } }
+    : { ...observation, anomalyContext: { ...observation.anomalyContext } };
+}
+
+/**
  * W109 (W095 c2): a body transform for the metering proxy's policy-routing
  * seam. Pure: takes the current body, returns the next body (or a non-record
  * to be skipped). Consumers: the W070a profile shaping, the W098 c2 cache
@@ -130,12 +162,60 @@ export interface MessagesLaneLabels {
   readonly malformedBodies: number;
 }
 
+/**
+ * W181 (A5, NVIDIA adoption): the proxy's egress observation vocabulary.
+ *
+ * This is the wire shape the `egress-audit-mcp` ledger consumes
+ * (`mcp-toolbox/apps/egress-audit-mcp/src/egress-ledger.ts`): a destination,
+ * the function class reached on it, and the token class that carried it, plus
+ * the anomaly-relevant facts. It is OBSERVATION ONLY — emitting one never
+ * blocks, delays, or rewrites a request; the proxy's pass-through posture is
+ * unchanged. `destination` is a bare hostname (never a URL, path, or query),
+ * and no secret, placeholder value, or query string crosses this seam.
+ *
+ * The token classes are a structural copy of the ledger's closed set. They are
+ * redeclared here (not imported) to respect the package boundary: `src/` must
+ * not import from `mcp-toolbox/` (a separate pnpm package), so the ledger's
+ * `EgressTokenClass` cannot be the shared type. The bridge
+ * (`src/integrations/egress-audit-client.ts`) is the one place that maps this
+ * shape onto the ledger's `AppendReachInput`, and its test pins the two
+ * vocabularies together.
+ */
+export type EgressTokenClass = "session-placeholder" | "absent" | "foreign" | "unknown";
+
+export interface EgressReachEvent {
+  readonly kind: "reach";
+  /** Bare upstream hostname the proxy forwarded to (never a path or query). */
+  readonly destination: string;
+  /** Bounded identity of the function reached (`chat-completions`, `messages`, `models-list`, ...). */
+  readonly functionClass: string;
+  readonly tokenClass: EgressTokenClass;
+  /** Anomaly-relevant facts the ledger needs; values are never included, only labels. */
+  readonly anomalyContext: { readonly credentialHeader: string | undefined };
+}
+
+export interface EgressRejectEvent {
+  readonly kind: "reject";
+  readonly destination: string;
+  readonly functionClass: string;
+  readonly tokenClass: EgressTokenClass;
+  readonly anomalyContext: { readonly policy: string; readonly credentialHeader: string | undefined };
+}
+
+export type EgressObservation = EgressReachEvent | EgressRejectEvent;
+
 export interface ModelUsageProxy {
   /** Loopback base URL agents use as their provider baseUrl (no path suffix). */
   readonly url: string;
   readonly metrics: () => ModelUsageMetrics;
   /** P9 A′: the parse-only request-side model-label journal for the messages lane (observability only). */
   readonly messagesLaneLabels: () => MessagesLaneLabels;
+  /**
+   * W181 (A5): the bounded egress observation journal — reach and reject events
+   * in arrival order, oldest dropped past the bound. Observation only; a
+   * snapshot copy so consumers cannot mutate the live journal.
+   */
+  readonly egressObservations: () => readonly EgressObservation[];
   readonly close: () => Promise<void>;
 }
 
@@ -223,6 +303,15 @@ export async function createModelUsageProxy(options: {
   readonly upstream: string;
   readonly apiKey: string;
   readonly onUsage?: (usage: Record<string, unknown>) => void;
+  /**
+   * W181 (A5): optional observation sink. When provided, each forwarded request
+   * emits an `EgressReachEvent` (after the origin-form guard passes) and each
+   * boundary rejection emits an `EgressRejectEvent`. Observation only: the
+   * callback cannot block, delay, or rewrite the request — a throw is swallowed
+   * and the request continues (the pass-through posture is never changed by an
+   * observer). Absent leaves the proxy exactly as before.
+   */
+  readonly onEgressObservation?: ((observation: EgressObservation) => void) | undefined;
   /**
    * W070a: optional pure transform applied to a parsed chat-completion body
    * before forwarding. The open-source pool uses it to apply `ModelProfile`
@@ -313,6 +402,21 @@ export async function createModelUsageProxy(options: {
   // nothing here shapes or rejects the forwarded body.
   const messagesLaneModels: string[] = [];
   let malformedMessagesBodies = 0;
+  // W181 (A5): the bounded egress observation journal. Every entry is a copy,
+  // so neither the callback nor a reader can mutate a recorded event.
+  const egressObservations: EgressObservation[] = [];
+  const emitEgressObservation = (observation: EgressObservation): void => {
+    const copy = copyEgressObservation(observation);
+    egressObservations.push(copy);
+    if (egressObservations.length > EGRESS_OBSERVATION_LIMIT) egressObservations.shift();
+    try {
+      options.onEgressObservation?.(copy);
+    } catch {
+      // Observation is advisory: a throwing sink must never change the
+      // pass-through posture (the same fail-open discipline as
+      // composeBodyTransforms).
+    }
+  };
   const autoLatest = options.autoLatest;
   const aliasResolver: AliasResolver | undefined =
     autoLatest === undefined
@@ -402,6 +506,16 @@ export async function createModelUsageProxy(options: {
     // docs/EGRESS_CAPABILITY_AUDIT.md for the bypass note.
     const credential = checkEgressCredential(req.headers);
     if (!credential.allowed) {
+      // W181 (A5): the reject is observed with the destination, a path-derived
+      // function class, and the foreign token class. No credential value,
+      // placeholder, or query string is recorded — only the header NAME.
+      emitEgressObservation({
+        kind: "reject",
+        destination: upstream.hostname,
+        functionClass: classifyEgressFunctionClass(req.method, req.url),
+        tokenClass: credential.kind === "foreign" ? "foreign" : "unknown",
+        anomalyContext: { policy: "egress-credential", credentialHeader: credential.header },
+      });
       res.writeHead(403, { "content-type": "application/json" });
       res.end(JSON.stringify({
         error: `model usage proxy rejected a non-session credential in ${credential.header ?? "request headers"}`,
@@ -600,6 +714,17 @@ export async function createModelUsageProxy(options: {
       res.end(JSON.stringify({ error: "model usage proxy only forwards origin-form request targets" }));
       return;
     }
+    // W181 (A5): observe the forwarded reach. The destination is the validated
+    // upstream hostname (bare, no path/query/port); the function class is
+    // path-derived; the token class is the one the credential gate decided. No
+    // credential value, placeholder, or query string is ever included.
+    emitEgressObservation({
+      kind: "reach",
+      destination: target.hostname,
+      functionClass: classifyEgressFunctionClass(req.method, req.url),
+      tokenClass: credential.kind === "session-placeholder" ? "session-placeholder" : "absent",
+      anomalyContext: { credentialHeader: undefined },
+    });
     const response = await fetch(target, {
       method: req.method ?? "GET",
       headers: scrubRequestHeaders(req.headers, options.apiKey, outboundBody.length),
@@ -777,6 +902,8 @@ export async function createModelUsageProxy(options: {
     metrics: () => ({ ...metrics }),
     // P9 A′: a snapshot copy so consumers cannot mutate the live journal.
     messagesLaneLabels: () => ({ models: [...messagesLaneModels], malformedBodies: malformedMessagesBodies }),
+    // W181 (A5): a snapshot copy of the bounded egress observation journal.
+    egressObservations: () => egressObservations.map(copyEgressObservation),
     close: () =>
       new Promise((resolveClose, rejectClose) => {
         server.close((error) => (error ? rejectClose(error) : resolveClose()));

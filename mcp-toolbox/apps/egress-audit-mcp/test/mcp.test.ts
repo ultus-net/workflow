@@ -30,14 +30,16 @@ after(async () => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-test("exposes the three ledger tools with honest schemas and read-only flags", async () => {
+test("exposes the ledger tools with honest schemas and read-only flags", async () => {
   assert.deepEqual(client.getServerVersion(), { name: "egress-audit-mcp", version: "0.1.0" });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map((tool) => tool.name).sort(), ["append_egress_reach", "query_egress_reaches", "summarize_egress"]);
+  assert.deepEqual(tools.map((tool) => tool.name).sort(), ["append_egress_reach", "append_egress_reject", "query_egress_reaches", "query_egress_rejects", "summarize_egress"]);
   assert.ok(tools.every((tool) => tool.outputSchema));
   const annotations = Object.fromEntries(tools.map((tool) => [tool.name, tool.annotations]));
   assert.deepEqual(annotations.append_egress_reach, { readOnlyHint: false, idempotentHint: false, destructiveHint: false, openWorldHint: false });
+  assert.deepEqual(annotations.append_egress_reject, { readOnlyHint: false, idempotentHint: false, destructiveHint: false, openWorldHint: false });
   assert.deepEqual(annotations.query_egress_reaches, { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false });
+  assert.deepEqual(annotations.query_egress_rejects, { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false });
   assert.deepEqual(annotations.summarize_egress, { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false });
 });
 
@@ -76,4 +78,23 @@ test("rejects a non-hostname destination without writing a record", async () => 
   assert.equal(bad.isError, true);
   const summary = await client.callTool({ name: "summarize_egress", arguments: {} });
   assert.equal((summary.structuredContent as { entries: number }).entries, 2, "the rejected append must not change the ledger");
+});
+
+test("W181 A5: appends and queries rejects over MCP, with no query string or secret stored", async () => {
+  const appended = await client.callTool({
+    name: "append_egress_reject",
+    arguments: { domain: "api.example.com", functionClass: "file-upload", tokenClass: "foreign", policy: "egress-credential", source: "test" },
+  });
+  assert.equal(appended.isError, undefined);
+  const reject = (appended.structuredContent as { reject: { policy: string; tokenClass: string } }).reject;
+  assert.equal(reject.policy, "egress-credential");
+  assert.equal(reject.tokenClass, "foreign");
+  const queried = await client.callTool({ name: "query_egress_rejects", arguments: {} });
+  const body = queried.structuredContent as { rejects: Array<{ policy: string }>; truncated: boolean };
+  assert.equal(body.rejects.length, 1);
+  assert.equal(body.rejects[0]?.policy, "egress-credential");
+  const summary = await client.callTool({ name: "summarize_egress", arguments: {} });
+  const summaryBody = summary.structuredContent as { rejects: number; byPolicy: Array<{ key: string; count: number }> };
+  assert.equal(summaryBody.rejects, 1);
+  assert.deepEqual(summaryBody.byPolicy, [{ key: "egress-credential", count: 1 }]);
 });

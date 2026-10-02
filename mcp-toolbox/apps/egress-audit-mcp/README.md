@@ -18,11 +18,18 @@ ledger means "no anomaly was reported", not "egress is safe".
   `tokenClass`, optional `source`/`observedAt`). The ledger is append-only:
   records are never edited, rotated, or deleted. It is bounded (5000 entries /
   8 MB); when full, appends are **refused**, not pruned.
+- `append_egress_reject` (W181/A5) records one rejected attempt (`domain`,
+  `functionClass`, `tokenClass`, the refusing `policy`, optional
+  `source`/`observedAt`). Rejections are stored separately from reaches (a
+  rejection reached no destination) but share the one bounded budget.
 - `query_egress_reaches` reads recorded reaches, newest first, with optional
   `domain`, `functionClass`, `flaggedOnly`, and `since` filters, bounded by
   `limit` (max 200).
+- `query_egress_rejects` (W181/A5) reads recorded rejections, same filters
+  minus `flaggedOnly` (rejections carry no anomaly flags).
 - `summarize_egress` returns entry count, top domains/function classes/token
-  classes, and anomaly counts.
+  classes, anomaly counts, and (W181) the rejection count and policy
+  breakdown.
 
 Every result's model-visible text is bounded (48k middle-cut parity) and the
 server streams leveled MCP log notifications per tool call.
@@ -53,9 +60,13 @@ flag, so the set is not closed).
 - **No secret material is stored.** The token *class* is recorded, never a
   token value.
 - **Coverage is whatever callers feed it.** Nothing in this product observes
-  the network; it only records reaches reported to it. Today the ledger is fed
-  by explicit `append_egress_reach` calls; wiring proxy rejections/reaches in
-  automatically is a recorded follow-up in the audit doc.
+  the network; it only records reaches reported to it. Callers may feed it
+  explicitly via `append_egress_reach`, or automatically through the Workflow
+  bridge (`src/integrations/egress-audit-client.ts`, W181/A5), which maps the
+  metering proxy's `reach` observations onto appends. The automatic feed is
+  opt-in (`WORKFLOW_EGRESS_AUDIT_FEED=1`) and currently covers the OpenCode
+  runtime lane; reject auto-feed and the Cline/goose lanes remain follow-ups in
+  `docs/EGRESS_CAPABILITY_AUDIT.md` §7.
 - **The store assumes a private data directory** (`0700` dir, `0600` file,
   atomic rename). A local user with write access can append or replace bytes;
   the ledger is not an authenticated log.
