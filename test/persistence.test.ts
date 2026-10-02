@@ -668,3 +668,130 @@ test("W072 I-9: a persisted step postcondition is validated on load", async (con
     { subjects: [{ path: "a.ts", expectedFingerprint: "sha256:abc" }] },
   );
 });
+
+// W072 I-6 consistency gate: the persisted append-only log's `transition`
+// entries must match the persisted history in order. The fixtures below craft
+// snapshots directly so the cross-check is exercised against malformed pairs,
+// independent of the application's own write path.
+const coherentSnapshot = () => ({
+  version: 0,
+  state: {
+    mutationEpoch: 0,
+    tasks: [{ id: "A", title: "Crosscheck", state: "VERIFYING", dependencies: [], requiredEvidence: [] }],
+    evidence: [],
+    history: [
+      { taskId: "A", from: "READY", to: "IN_PROGRESS" },
+      { taskId: "A", from: "IN_PROGRESS", to: "VERIFYING" },
+    ],
+    executionLog: [
+      { seq: 0, at: "2026-10-02T00:00:00Z", kind: "transition", taskId: "A", from: "READY", to: "IN_PROGRESS" },
+      { seq: 1, at: "2026-10-02T00:01:00Z", kind: "transition", taskId: "A", from: "IN_PROGRESS", to: "VERIFYING" },
+    ],
+  },
+});
+
+test("W072 I-6: a coherent execution log loads after restart", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.json");
+  await writeFile(path, JSON.stringify(coherentSnapshot()));
+
+  const restored = (await new JsonWorkflowStore(path).load(host)).application;
+  assert.equal(restored.snapshot().tasks[0]?.state, "VERIFYING");
+  assert.deepEqual(
+    restored.executionLog().filter((entry) => entry.kind === "transition").map((entry) => [entry.taskId, entry.from, entry.to]),
+    [["A", "READY", "IN_PROGRESS"], ["A", "IN_PROGRESS", "VERIFYING"]],
+  );
+});
+
+test("W072 I-6: an execution log with an extra transition entry is rejected", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.json");
+  const snapshot = coherentSnapshot();
+  await writeFile(path, JSON.stringify({ ...snapshot, state: {
+    ...snapshot.state,
+    executionLog: [
+      ...snapshot.state.executionLog,
+      { seq: 2, at: "2026-10-02T00:02:00Z", kind: "transition", taskId: "A", from: "VERIFYING", to: "VERIFIED" },
+    ],
+  } }));
+  await assert.rejects(
+    () => new JsonWorkflowStore(path).load(host),
+    /persisted execution log diverges from transition history/,
+  );
+});
+
+test("W072 I-6: an execution log missing a transition entry is rejected", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.json");
+  const snapshot = coherentSnapshot();
+  await writeFile(path, JSON.stringify({ ...snapshot, state: {
+    ...snapshot.state,
+    executionLog: snapshot.state.executionLog.slice(0, 1),
+  } }));
+  await assert.rejects(
+    () => new JsonWorkflowStore(path).load(host),
+    /persisted execution log diverges from transition history/,
+  );
+});
+
+test("W072 I-6: a reordered execution log is rejected", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.json");
+  const snapshot = coherentSnapshot();
+  const [first, second] = snapshot.state.executionLog;
+  await writeFile(path, JSON.stringify({ ...snapshot, state: {
+    ...snapshot.state,
+    executionLog: [{ ...(second as object), seq: 0 }, { ...(first as object), seq: 1 }],
+  } }));
+  await assert.rejects(
+    () => new JsonWorkflowStore(path).load(host),
+    /persisted execution log diverges from transition history/,
+  );
+});
+
+test("W072 I-6: non-transition log entries are skipped by the cross-check", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.json");
+  const snapshot = coherentSnapshot();
+  await writeFile(path, JSON.stringify({ ...snapshot, state: {
+    ...snapshot.state,
+    executionLog: [
+      snapshot.state.executionLog[0],
+      { seq: 1, at: "2026-10-02T00:00:30Z", kind: "evidence", taskId: "A", summary: "environment:build:passed" },
+      { seq: 2, at: "2026-10-02T00:00:45Z", kind: "step", taskId: "A", from: "PENDING", to: "IN_PROGRESS" },
+      { ...(snapshot.state.executionLog[1] as object), seq: 3 },
+    ],
+  } }));
+  const restored = (await new JsonWorkflowStore(path).load(host)).application;
+  assert.equal(restored.snapshot().tasks[0]?.state, "VERIFYING");
+});
+
+test("W072 I-6: the restart-recovery entry keeps log and history coherent", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.json");
+  await writeFile(path, JSON.stringify({ version: 0, state: {
+    mutationEpoch: 0,
+    tasks: [{ id: "A", title: "Recover", state: "IN_PROGRESS", dependencies: [], requiredEvidence: [] }],
+    evidence: [],
+    history: [{ taskId: "A", from: "READY", to: "IN_PROGRESS" }],
+    executionLog: [
+      { seq: 0, at: "2026-10-02T00:00:00Z", kind: "transition", taskId: "A", from: "READY", to: "IN_PROGRESS" },
+    ],
+  } }));
+
+  const restored = (await new JsonWorkflowStore(path).load(host)).application;
+  const history = restored.snapshot().history;
+  const transitions = restored.executionLog().filter((entry) => entry.kind === "transition");
+  assert.equal(history.length, 2);
+  assert.deepEqual(
+    transitions.map((entry) => [entry.taskId, entry.from, entry.to]),
+    history.map((record) => [record.taskId, record.from, record.to]),
+  );
+  assert.deepEqual(history.at(-1), { taskId: "A", from: "IN_PROGRESS", to: "FAILED" });
+});

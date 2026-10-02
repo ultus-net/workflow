@@ -1263,6 +1263,32 @@ advances both by making the gate executable on the step-completion path but
 does not close either.
 
 
+**Addendum (2026-10-02, I-6 restore cross-check slice):** restore now
+**fails closed on log/history divergence**. `JsonWorkflowStore.load` (via a
+local pure helper `executionLogMatchesHistory`) compares the persisted
+append-only log's `kind === "transition"` entries, in order, against the
+persisted `history` entries by `(taskId, from, to)`: same length and same
+pairwise sequence. Evidence/step entries are log-only and skipped. An absent
+or empty log is legal (older snapshots) and skips the gate; on divergence
+`load` throws `TypeError("persisted execution log diverges from transition
+history")` **before** constructing the `WorkflowApplication`. The check is
+deliberately ordering-based, **not** a comparison of replayed final states:
+`TaskGraph` unlocks dependents internally without routing through
+`WorkflowApplication.transition` (`src/kernel/task-graph.ts:719,821`), so
+`replay` legitimately diverges from persisted states while the two journals
+stay aligned. The synthetic restart-recovery demotion is written to both
+journals, so they remain coherent across a restart. This is a **consistency
+gate, not a projection swap** — `TaskGraph` still mutates in place and state
+stays canonical. Pinned by `test/persistence.test.ts` (6 new tests: coherent
+log loads; extra entry rejected; missing entry rejected; reordered entry
+rejected; non-transition entries skipped; recovery entry keeps both journals
+coherent). **DRIFT-016 stays OPEN:** the log is additive and the unlock
+transitions `TaskGraph` performs internally are still absent from both the
+history and the log, so this cross-check does not make the log the source of
+truth.
+
+
+
 ## Phase 15: Bounded recursive self-improvement (2026-09-19)
 
 ### W073 - Bounded self-improvement loop (Karpathy loop) under Workflow authority
