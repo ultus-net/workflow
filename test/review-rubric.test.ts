@@ -90,6 +90,21 @@ test("W072 I-5: ledger audit section is absent when ledgerText is not passed", (
   assert.ok(!rubric.includes("P0/P1 finding"));
 });
 
+test("W072 I-5: the deterministic findings section renders when ledgerAuditText is supplied", () => {
+  const rubric = buildReviewRubric({
+    diffText: "+ the diff",
+    ledgerAuditText: "1 COMPLETED step(s) have no token matching a changed path:\n- step s-1 [LEDGER_STEP_WITHOUT_DIFF]: ship the parser",
+  });
+  assert.match(rubric, /### Deterministic Ledger-vs-Diff Audit \(computed, not judged\):/);
+  assert.match(rubric, /LEDGER_STEP_WITHOUT_DIFF/);
+  assert.match(rubric, /does not by itself set the verdict/);
+});
+
+test("W072 I-5: the deterministic findings section is absent when ledgerAuditText is omitted", () => {
+  const rubric = buildReviewRubric({ diffText: "+ the diff" });
+  assert.ok(!rubric.includes("Deterministic Ledger-vs-Diff Audit"));
+});
+
 test("W072 I-5: renderReviewLedgerText renders kernel state and evidence subjects only", () => {
   const text = renderReviewLedgerText(LEDGER_STEPS);
   assert.match(text, /2 steps/);

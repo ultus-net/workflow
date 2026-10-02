@@ -1313,6 +1313,26 @@ transitions `TaskGraph` performs internally are still absent from both the
 history and the log, so this cross-check does not make the log the source of
 truth.
 
+**Addendum (2026-10-02, I-5 deterministic ledger-vs-diff audit slice):** the
+prior slice put the kernel ledger in front of the reviewer but left the
+mismatch check to model judgment. This slice adds the non-model check:
+`src/review/ledger-audit.ts` now exports a **pure**
+`auditLedgerAgainstDiff(steps, changedPaths)` that flags every `COMPLETED` step
+whose content shares no token with the changed set
+(`LedgerAuditFinding.code = "LEDGER_STEP_WITHOUT_DIFF"`; empty `changedPaths`
+flags every completed step; non-completed steps are never flagged), plus
+`changedPathsFromDiff(diffText)` (reads `diff --git a/… b/…` and `+++ b/…`
+headers, skips `/dev/null`) and `renderLedgerAuditFindings`. `run-registry.ts`
+now threads the canonical `runSteps` through as `RunReviewer.ledgerSteps`, and
+`HubReviewerRunner.reviewRun` computes the audit against the diff it sources
+and passes the rendered section into every `buildReviewRubric` call (single
+session and partitioned per-unit via `#reviewOneUnit`). Absent `ledgerSteps`
+keeps the prompt byte-identical. Pinned by `test/ledger-audit.test.ts` (7 pure
+tests) and 2 new `test/hub-reviewer.test.ts` cases. **I-5 remains OPEN:** the
+findings are advisory material in the prompt; no code path converts a finding to
+`REQUEST_CHANGES`, so the verdict tie is still model judgment. The matching rule
+is a deterministic heuristic (token/basename), not a semantic step-to-diff map.
+
 
 
 ## Phase 15: Bounded recursive self-improvement (2026-09-19)

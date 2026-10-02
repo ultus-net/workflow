@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import { buildReviewRubric, countReferencedAxes, MIN_REFERENCED_AXES } from "../review/rubric.js";
+import { changedPathsFromDiff, auditLedgerAgainstDiff, renderLedgerAuditFindings } from "../review/ledger-audit.js";
+import type { WorkflowStep } from "../kernel/contracts.js";
 import { deriveReviewCoverageManifest, renderReviewManifestText, reviewCoverageGaps } from "../review/manifest.js";
 import {
   partitionReviewManifest,
@@ -199,8 +201,17 @@ export class HubReviewerRunner {
      * never fetches or infers the ledger itself.
      */
     readonly ledgerText?: string;
+    /**
+     * W072 I-5: the kernel steps the ledger was rendered from, so the runner
+     * can compute the deterministic ledger-vs-diff audit against the diff it
+     * sourced. Optional and additive: absent keeps the prompt byte-identical.
+     */
+    readonly ledgerSteps?: readonly WorkflowStep[];
   }): Promise<HubReviewerResult> {
     const diffText = await this.#diffSource(input.workspace);
+    const ledgerAuditText = input.ledgerSteps === undefined
+      ? undefined
+      : renderLedgerAuditFindings(auditLedgerAgainstDiff(input.ledgerSteps, changedPathsFromDiff(diffText)));
     const statusOutput = this.#statusSource === undefined ? undefined : await this.#statusSource(input.workspace);
     const manifest = statusOutput === undefined ? undefined : deriveReviewCoverageManifest({ statusOutput });
     const partition = manifest === undefined ? undefined : partitionReviewManifest(manifest);
@@ -232,13 +243,14 @@ export class HubReviewerRunner {
       // W040: multi-component scope is reviewed unit by unit (fresh isolated
       // sessions, focused rules, one integration review), all fail-closed.
       if (manifest !== undefined && partition !== undefined && partition.units.length > 1) {
-        return await this.#reviewPartitioned(input, reviewerRunId, diffText, manifest, partition, fingerprint);
+        return await this.#reviewPartitioned(input, reviewerRunId, diffText, manifest, partition, fingerprint, ledgerAuditText);
       }
       const prompt = buildReviewRubric({
         diffText,
         ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }),
         ...(manifest === undefined ? {} : { manifestText: renderReviewManifestText(manifest) }),
         ...(input.ledgerText === undefined ? {} : { ledgerText: input.ledgerText }),
+        ...(ledgerAuditText === undefined ? {} : { ledgerAuditText }),
       });
       session = await this.#spawnReviewer.spawn({
         workspace: input.workspace,
@@ -357,6 +369,7 @@ export class HubReviewerRunner {
     manifest: ReturnType<typeof deriveReviewCoverageManifest>,
     partition: ReviewPartition,
     fingerprint: ReviewProvenanceFingerprint | undefined,
+    ledgerAuditText: string | undefined,
   ): Promise<HubReviewerResult> {
     // W041 resume: units whose newest record is an approval with complete
     // coverage under the EXACT current fingerprint are not re-reviewed. Any
@@ -384,7 +397,7 @@ export class HubReviewerRunner {
         resumedCount += 1;
         continue;
       }
-      const outcome = await this.#reviewOneUnit(input, reviewerRunId, diffText, renderReviewUnitText(unit));
+      const outcome = await this.#reviewOneUnit(input, reviewerRunId, diffText, renderReviewUnitText(unit), ledgerAuditText);
       const failure = this.#unitFailure(unit.id, outcome, unit.paths);
       if (failure !== undefined) {
         return this.#recordFailClosed(input, reviewerRunId, fingerprint, this.#outcomeSummary(outcome), failure, {
@@ -411,7 +424,7 @@ export class HubReviewerRunner {
       if (prior !== undefined) {
         resumedCount += 1;
       } else {
-        const outcome = await this.#reviewOneUnit(input, reviewerRunId, diffText, renderIntegrationUnitText(partition));
+        const outcome = await this.#reviewOneUnit(input, reviewerRunId, diffText, renderIntegrationUnitText(partition), ledgerAuditText);
         const failure = this.#unitFailure("integration", outcome, unitIds);
         if (failure !== undefined) {
           return this.#recordFailClosed(input, reviewerRunId, fingerprint, this.#outcomeSummary(outcome), failure, {
@@ -484,12 +497,14 @@ export class HubReviewerRunner {
     reviewerRunId: string,
     diffText: string,
     scopeText: string,
+    ledgerAuditText: string | undefined,
   ): Promise<UnitReviewOutcome> {
     const prompt = buildReviewRubric({
       diffText,
       ...(input.taskPrompt === undefined ? {} : { taskPrompt: input.taskPrompt }),
       manifestText: scopeText,
       ...(input.ledgerText === undefined ? {} : { ledgerText: input.ledgerText }),
+      ...(ledgerAuditText === undefined ? {} : { ledgerAuditText }),
     });
     const session = await this.#spawnReviewer.spawn({
       workspace: input.workspace,

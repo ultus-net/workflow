@@ -129,13 +129,14 @@ export function createReviewerFactory(options: {
       spawnReviewer,
     });
     const reviewer: RunReviewer = async (input) => {
-      const { workspace, taskPrompt, ledgerText } = input;
+      const { workspace, taskPrompt, ledgerText, ledgerSteps } = input;
       if (workspace === undefined) throw new Error("hub reviewer requires a workspace");
       return runner.reviewRun({
         runId: input.runId,
         workspace,
         ...(taskPrompt === undefined ? {} : { taskPrompt }),
         ...(ledgerText === undefined ? {} : { ledgerText }),
+        ...(ledgerSteps === undefined ? {} : { ledgerSteps }),
       });
     };
     return reviewer;
