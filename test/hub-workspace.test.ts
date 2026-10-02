@@ -91,6 +91,39 @@ test("hub protects and removes verifier discovery on shutdown", async (t) => {
   assert.equal(existsSync(hub.verifierDiscoveryPath), false);
 });
 
+test("W183: hub tokens are generation-bound and a pre-restart token is rejected", async (t) => {
+  const { graph, application, hubRoot } = setup();
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-generation-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  t.after(() => rmSync(hubRoot, { recursive: true, force: true }));
+
+  const first = await createWorkflowHub(application, { discoveryDir: dir, graph });
+  const firstDiscovery = JSON.parse(readFileSync(first.discoveryPath, "utf8")) as { token: string; generation: string };
+  const firstVerifier = JSON.parse(readFileSync(first.verifierDiscoveryPath, "utf8")) as { token: string; generation: string };
+  assert.equal(firstDiscovery.generation, first.generation);
+  assert.equal(firstVerifier.generation, first.generation);
+  assert.match(firstDiscovery.token, new RegExp(`^${first.generation}\\.`));
+  // The pre-restart tokens authenticate against the live first hub...
+  assert.equal((await snapshot(first.url, firstDiscovery.token, {})).status, 200);
+  await first.close();
+
+  const second = await createWorkflowHub(application, { discoveryDir: dir, graph });
+  t.after(() => second.close());
+  assert.notEqual(second.generation, first.generation);
+  const secondDiscovery = JSON.parse(readFileSync(second.discoveryPath, "utf8")) as { token: string; generation: string };
+  assert.equal(secondDiscovery.generation, second.generation);
+
+  // ...and are rejected after the restart, even though the loopback endpoint
+  // is still a live hub. The generation binding is enforced at authorization
+  // (unit-pinned in test/hub-tokens.test.ts): the pre-restart token carries a
+  // generation that is not the live one, so it fails the binding before the
+  // constant-time digest comparison.
+  assert.equal((await snapshot(second.url, firstDiscovery.token, {})).status, 401);
+  assert.equal((await snapshot(second.url, firstVerifier.token, {})).status, 401);
+  assert.equal((await snapshot(second.url, secondDiscovery.token, {})).status, 200);
+});
+
+
 test("hub cleans up a partially started bridge when verifier discovery cannot publish", async (t) => {
   const { graph, application, hubRoot } = setup();
   const dir = mkdtempSync(join(tmpdir(), "wf-hub-discovery-"));

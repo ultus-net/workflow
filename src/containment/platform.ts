@@ -7,7 +7,8 @@ import type {
   ProcessContainment,
   WritableMountMode,
 } from "./contracts.js";
-import { LinuxBubblewrapContainment } from "./linux-bwrap.js";
+import { UNSUPPORTED_UNTIL_SUPERVISOR } from "./contracts.js";
+import { ProxiedBubblewrapContainment } from "./proxied-bwrap.js";
 
 /**
  * Policy-only execution establishes no filesystem boundary: `read-write` is
@@ -40,7 +41,9 @@ export class PassthroughContainment implements ProcessContainment {
     if (!isAbsolute(request.executable)) throw new TypeError("executable must be an absolute path");
     if (request.cwd !== undefined && !isAbsolute(request.cwd)) throw new TypeError("cwd must be an absolute path");
     const network = request.network ?? "isolated";
-    if (network !== "isolated" && network !== "host") throw new TypeError("network must be isolated or host");
+    if (network === "mediated") throw new Error(UNSUPPORTED_UNTIL_SUPERVISOR);
+    if (network === "proxied") throw new TypeError("passthrough containment cannot establish a proxied network boundary");
+    if (network !== "isolated" && network !== "host") throw new TypeError("network must be isolated, host, proxied, or mediated");
     requireSupportedWritableMountMode(request.writableMountMode);
 
     const environment = request.environment ?? {};
@@ -100,6 +103,9 @@ export class PassthroughContainment implements ProcessContainment {
   spawn(request: ContainedProcessRequest): ChildProcessWithoutNullStreams {
     if (!isAbsolute(request.executable)) throw new TypeError("executable must be an absolute path");
     if (request.cwd !== undefined && !isAbsolute(request.cwd)) throw new TypeError("cwd must be an absolute path");
+    const network = request.network ?? "isolated";
+    if (network === "mediated") throw new Error(UNSUPPORTED_UNTIL_SUPERVISOR);
+    if (network === "proxied") throw new TypeError("passthrough containment cannot establish a proxied network boundary");
     requireSupportedWritableMountMode(request.writableMountMode);
     const environment = request.environment ?? {};
     return spawn(request.executable, [...request.args], {
@@ -114,7 +120,12 @@ export function selectContainment(
   platform: NodeJS.Platform = process.platform,
   warn: (message: string) => void = (message) => console.warn(`[workflow] ${message}`),
 ): ProcessContainment {
-  if (platform === "linux") return new LinuxBubblewrapContainment();
+  // W183: on Linux the selected backend is the proxied-capable one; it runs
+  // `isolated`/`host` through the plain bwrap backend unchanged and adds the
+  // `network: "proxied"` posture. A caller that requires mediation checks
+  // `supportsProxiedNetwork`; a backend without the capability fails that
+  // caller closed rather than degrading silently.
+  if (platform === "linux") return new ProxiedBubblewrapContainment();
   warn(`no process isolation: policy gating only (platform ${platform})`);
   return new PassthroughContainment();
 }

@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { test } from "node:test";
 
-import { launchContainedAcpAgent } from "../src/adapters/acp-contained-agent.js";
+import { launchContainedAcpAgent, launchContainedAcpAgentAsync } from "../src/adapters/acp-contained-agent.js";
 import type { ContainedProcessRequest, ProcessContainment } from "../src/containment/contracts.js";
+import type { EgressPolicy } from "../src/integrations/egress-policy.js";
 
 function capturingContainment(captured: { request?: ContainedProcessRequest }): ProcessContainment {
   return {
@@ -104,4 +105,69 @@ test("contained ACP launch rejects relative paths before spawning", () => {
     /script must be an absolute path/,
   );
   assert.equal(captured.request, undefined);
+});
+
+/** A backend advertising proxied support, capturing request + async spawn use. */
+function proxiedContainment(captured: { request?: ContainedProcessRequest; asyncUsed?: boolean }): ProcessContainment {
+  return {
+    isolation: "enforced",
+    supportsProxiedNetwork: true,
+    async execute() {
+      throw new Error("not used");
+    },
+    spawn(request) {
+      captured.request = request;
+      return {} as unknown as ChildProcessWithoutNullStreams;
+    },
+    spawnAsync(request) {
+      captured.request = request;
+      captured.asyncUsed = true;
+      return Promise.resolve({} as unknown as ChildProcessWithoutNullStreams);
+    },
+  };
+}
+
+test("W183: a proxied-capable backend with a policy launches on the proxied posture", async () => {
+  const captured: { request?: ContainedProcessRequest; asyncUsed?: boolean } = {};
+  const policy: EgressPolicy = { rules: [{ id: "allow", host: "api.example.invalid", mode: "enforce" }] };
+  await launchContainedAcpAgentAsync(proxiedContainment(captured), { ...baseOptions, proxiedEgressPolicy: policy });
+  assert.equal(captured.asyncUsed, true);
+  assert.equal(captured.request?.network, "proxied");
+  assert.deepEqual(captured.request?.proxiedEgressPolicy, policy);
+});
+
+test("W183: without a policy the launcher keeps the pre-W183 host posture (activation-pending)", async () => {
+  const captured: { request?: ContainedProcessRequest; asyncUsed?: boolean } = {};
+  await launchContainedAcpAgentAsync(proxiedContainment(captured), { ...baseOptions });
+  assert.equal(captured.asyncUsed ?? false, false);
+  assert.equal(captured.request?.network, "host");
+  assert.equal(Object.hasOwn(captured.request ?? {}, "proxiedEgressPolicy"), false);
+});
+
+test("W183: requiring proxied mediation fails closed when the backend cannot provide it", () => {
+  const captured: { request?: ContainedProcessRequest } = {};
+  assert.throws(
+    () => launchContainedAcpAgent(capturingContainment(captured), { ...baseOptions, requireProxiedNetwork: true }),
+    /requires a backend that supports the proxied network posture/,
+  );
+  assert.equal(captured.request, undefined);
+});
+
+test("W183: an egress policy on a backend without proxied support fails closed, never silently degrades", () => {
+  const captured: { request?: ContainedProcessRequest } = {};
+  const policy: EgressPolicy = { rules: [{ id: "allow", host: "api.example.invalid", mode: "enforce" }] };
+  assert.throws(
+    () => launchContainedAcpAgent(capturingContainment(captured), { ...baseOptions, proxiedEgressPolicy: policy }),
+    /does not support the proxied posture/,
+  );
+  assert.equal(captured.request, undefined);
+});
+
+test("W183: the synchronous launch path refuses a proxied request (async spawn is required)", () => {
+  const captured: { request?: ContainedProcessRequest; asyncUsed?: boolean } = {};
+  const policy: EgressPolicy = { rules: [{ id: "allow", host: "api.example.invalid", mode: "enforce" }] };
+  assert.throws(
+    () => launchContainedAcpAgent(proxiedContainment(captured), { ...baseOptions, proxiedEgressPolicy: policy }),
+    /requires the async path/,
+  );
 });
