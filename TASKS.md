@@ -1333,6 +1333,39 @@ findings are advisory material in the prompt; no code path converts a finding to
 `REQUEST_CHANGES`, so the verdict tie is still model judgment. The matching rule
 is a deterministic heuristic (token/basename), not a semantic step-to-diff map.
 
+**Addendum (2026-10-03, I-5 empty-diff verdict tie slice):** the deterministic
+audit is now wired into the verdict for the one unambiguous case. A **pure**
+`ledgerRequiresRefusal(steps, changedPaths)` (`src/review/ledger-audit.ts`)
+holds exactly when `changedPaths.length === 0` and at least one step is
+`COMPLETED`. `HubReviewerRunner.reviewRun` computes it once from the sourced
+diff alongside the existing audit text, and when the model's verdict is
+`approved` while the predicate holds it **downgrades to `changes_requested`**
+with reason `"deterministic audit: completed steps with an empty diff"`, routed
+through the existing `#recordFailClosed` path (the same provenance append +
+`controller.review` + `finish` recording an unparseable/anti-rubber-stamp
+rejection uses — no parallel recording path). The single-session path gates
+after the coverage check; the partitioned path refuses once up front, before any
+unit session spawns. An already-`changes_requested`/`rejected` verdict is
+untouched, and no `ledgerSteps` ⇒ behavior byte-identical. The token/basename
+`LEDGER_STEP_WITHOUT_DIFF` findings stay **advisory in the prompt** — they are
+false-positive-prone (a step content that shares no token with a non-empty diff
+is not proof of no work) and must not force a rejection. Pinned by
+`test/ledger-audit.test.ts` (1 new pure case) and 5 new `test/hub-reviewer.test.ts`
+cases: approved + COMPLETED + empty diff ⇒ changes_requested and a
+`changes_requested` provenance record; approved + COMPLETED + non-empty backing
+diff ⇒ approved stands; approved + no `ledgerSteps` + empty diff ⇒ approved; the
+token heuristic on a non-empty diff ⇒ advisory, verdict unaffected; partitioned
+approved + COMPLETED + empty diff ⇒ refused with zero sessions spawned.
+
+**What this closes / what stays open (explicit):** the empty-diff mismatch is now
+deterministically refused. The semantic step-to-diff tie is **still heuristic**:
+a COMPLETED step whose content shares no token with a real (non-empty) diff is
+only rendered as advisory material, and the runner never converts that finding
+to a refusal. So **I-5 remains OPEN** (advanced, not closed): the deterministic
+verdict tie covers the zero-diff case only, and the token/basename matching is
+not a semantic map. `docs/COMPLIANCE_REGISTER.md` records the advance on the I-5
+row and the progress log; the I-5 invariant keeps its OPEN obligation.
+
 
 
 ## Phase 15: Bounded recursive self-improvement (2026-09-19)

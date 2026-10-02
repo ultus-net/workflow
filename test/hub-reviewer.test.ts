@@ -256,6 +256,89 @@ test("W072 I-5: ledgerSteps computes the deterministic findings against the sour
   assert.ok(!prompt.includes("step s-open [LEDGER_STEP_WITHOUT_DIFF]"), "non-COMPLETED steps are never flagged");
 });
 
+// W072 I-5 verdict tie: the unambiguous ledger/diff mismatch (a COMPLETED
+// step with a zero-path diff) is refused deterministically, whatever the model
+// said; the token/basename findings stay advisory in the prompt.
+test("W072 I-5: an approved verdict over COMPLETED steps and an empty diff is refused and recorded", async (t) => {
+  const reviewer = stubReviewer(`[APPROVE]\n${AXES_SUMMARY}\n[COVERAGE] src/a.ts, src/b.ts`);
+  const provenance = stubProvenanceStore();
+  const { controller, workspace, application, runner } = await runnerWith(t, reviewer, "no diff at all", STATUS_TWO, provenance.store);
+  await controller.begin({ runId: "author-ledger-refuse", title: "Author run", workspace, requiresReview: true });
+
+  const steps = [
+    { id: stepId("s-done"), taskId: taskId("t-1"), content: "ship the parser", state: "COMPLETED" as const, requiredEvidence: [] },
+  ];
+  const result = await runner.reviewRun({ runId: "author-ledger-refuse", workspace, ledgerSteps: steps });
+
+  assert.equal(result.verdict, "changes_requested");
+  assert.equal(result.parseFailure, "deterministic audit: completed steps with an empty diff");
+  // Recorded through the same fail-closed path: a changes_requested provenance
+  // record bound to the fingerprint, not a parallel recording path.
+  const record = provenance.appended.at(-1)!;
+  assert.equal(record.disposition, "changes_requested");
+  assert.ok(record.findings.includes("deterministic audit: completed steps with an empty diff"));
+  const runTask = application.snapshot().tasks.find((task) => task.title === "Author run");
+  assert.equal(runTask?.state, "IN_PROGRESS");
+});
+
+test("W072 I-5: an approved verdict over COMPLETED steps with a non-empty backing diff stands", async (t) => {
+  const reviewer = stubReviewer(APPROVED_MESSAGE);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/src/wired.ts b/src/wired.ts");
+  await controller.begin({ runId: "author-ledger-back", title: "Author run", workspace, requiresReview: true });
+
+  const steps = [
+    { id: stepId("s-wired"), taskId: taskId("t-1"), content: "wire src/wired.ts", state: "COMPLETED" as const, requiredEvidence: [] },
+  ];
+  const result = await runner.reviewRun({ runId: "author-ledger-back", workspace, ledgerSteps: steps });
+
+  assert.equal(result.verdict, "approved");
+  assert.equal(result.recorded, true);
+  assert.equal(result.parseFailure, undefined);
+});
+
+test("W072 I-5: the token heuristic does not force changes (non-empty diff, no shared token stays advisory)", async (t) => {
+  const reviewer = stubReviewer(APPROVED_MESSAGE);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/src/unrelated.ts b/src/unrelated.ts");
+  await controller.begin({ runId: "author-ledger-advisory", title: "Author run", workspace, requiresReview: true });
+
+  const steps = [
+    { id: stepId("s-hollow"), taskId: taskId("t-1"), content: "ship the parser", state: "COMPLETED" as const, requiredEvidence: [] },
+  ];
+  const result = await runner.reviewRun({ runId: "author-ledger-advisory", workspace, ledgerSteps: steps });
+
+  // The finding is rendered advisory in the prompt, never wired to the verdict.
+  assert.ok(reviewer.prompts[0]!.includes("step s-hollow [LEDGER_STEP_WITHOUT_DIFF]: ship the parser"));
+  assert.equal(result.verdict, "approved");
+  assert.equal(result.recorded, true);
+});
+
+test("W072 I-5: without ledgerSteps an approved verdict is unaffected by an empty diff", async (t) => {
+  const reviewer = stubReviewer(APPROVED_MESSAGE);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "no diff at all");
+  await controller.begin({ runId: "author-ledger-nosteps", title: "Author run", workspace, requiresReview: true });
+
+  const result = await runner.reviewRun({ runId: "author-ledger-nosteps", workspace });
+
+  assert.equal(result.verdict, "approved");
+  assert.equal(result.recorded, true);
+});
+
+test("W072 I-5: the partitioned path also refuses an approved review over an empty diff", async (t) => {
+  const reviewer = stubSequenceReviewer([UNIT1_APPROVED, UNIT2_APPROVED, INTEGRATION_APPROVED]);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "no diff at all", STATUS_MULTI);
+  await controller.begin({ runId: "author-ledger-part", title: "Author run", workspace, requiresReview: true });
+
+  const steps = [
+    { id: stepId("s-done"), taskId: taskId("t-1"), content: "ship the parser", state: "COMPLETED" as const, requiredEvidence: [] },
+  ];
+  const result = await runner.reviewRun({ runId: "author-ledger-part", workspace, ledgerSteps: steps });
+
+  assert.equal(result.verdict, "changes_requested");
+  assert.equal(result.parseFailure, "deterministic audit: completed steps with an empty diff");
+  // Refused before any unit session spawns: no approval can be assembled.
+  assert.equal(reviewer.prompts.length, 0);
+});
+
 test("W072 I-5: without ledgerSteps the deterministic findings section is absent", async (t) => {
   const reviewer = stubReviewer(APPROVED_MESSAGE);
   const { controller, workspace, runner } = await runnerWith(t, reviewer);
