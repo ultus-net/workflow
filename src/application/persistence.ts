@@ -1,7 +1,7 @@
 import { open, readFile, rename, unlink } from "node:fs/promises";
 
 import type { HostCapabilities } from "./host.js";
-import { TaskGraph } from "../kernel/task-graph.js";
+import { ACTOR_VOCABULARY, TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowApplication } from "./workflow.js";
 
 export interface PersistedWorkflow {
@@ -173,11 +173,24 @@ function isEvidence(value: unknown): boolean {  if (typeof value !== "object" ||
     typeof evidence.observedAt === "string" && !Number.isNaN(Date.parse(evidence.observedAt));
 }
 
+const TRANSITION_ACTORS = new Set<string>(ACTOR_VOCABULARY);
+
 function isTransitionRecord(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return false;
   const transition = value as Record<string, unknown>;
-  return isNonEmptyString(transition.taskId) && TASK_STATES.has(transition.from as string) && TASK_STATES.has(transition.to as string) &&
-    isLegalHistoryTransition(transition.from as string, transition.to as string);
+  if (!(isNonEmptyString(transition.taskId) && TASK_STATES.has(transition.from as string) && TASK_STATES.has(transition.to as string) &&
+    isLegalHistoryTransition(transition.from as string, transition.to as string))) return false;
+  // W157/W072 I-10: caller-supplied attribution is optional (absence is the
+  // legal "unattributed" state), but when present it must carry the closed
+  // actor vocabulary, a non-empty authority, and a parseable observedAt — the
+  // same shape the kernel contract and the activity timeline consume. A
+  // record with a malformed attribution is rejected, never silently dropped.
+  if (transition.attribution === undefined) return true;
+  if (typeof transition.attribution !== "object" || transition.attribution === null) return false;
+  const attribution = transition.attribution as Record<string, unknown>;
+  return TRANSITION_ACTORS.has(attribution.actor as string) &&
+    isNonEmptyString(attribution.authority) &&
+    typeof attribution.observedAt === "string" && !Number.isNaN(Date.parse(attribution.observedAt));
 }
 
 function isLegalHistoryTransition(from: string, to: string): boolean {

@@ -13,6 +13,7 @@ import type {
   TaskId,
   TaskState,
   TransitionAttribution,
+  TransitionRecord,
   TransitionResult,
   WorkflowStep,
   WorkflowTask,
@@ -36,11 +37,11 @@ export interface WorkflowSnapshot {
   readonly mutationEpoch: number;
   readonly tasks: readonly WorkflowTaskProjection[];
   readonly evidence: readonly Evidence[];
-  readonly history: readonly { readonly taskId: TaskId; readonly from: TaskState; readonly to: TaskState }[];
+  readonly history: readonly TransitionRecord[];
 }
 
 export class WorkflowApplication {
-  readonly #history: { taskId: TaskId; from: TaskState; to: TaskState }[] = [];
+  readonly #history: TransitionRecord[] = [];
   readonly #graph: TaskGraph;
   #activeTaskId?: TaskId;
   #codingSessionCorrelation?: string;
@@ -60,7 +61,7 @@ export class WorkflowApplication {
   constructor(
     graph: TaskGraph,
     readonly host: HostCapabilities,
-    history: readonly { readonly taskId: TaskId; from: TaskState; to: TaskState }[] = [],
+    history: readonly TransitionRecord[] = [],
     allowedCapabilities: ReadonlySet<ToolCapability> = new Set<ToolCapability>(["read", "mutation"]),
     readonly workspaceRoot?: string,
     codingSessionCorrelation?: string,

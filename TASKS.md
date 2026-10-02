@@ -1073,6 +1073,28 @@ and bridge behavior. **Still open:** all-surface enforcement, G6 corpus folding,
 state-diff evidence, v2 C/D reconciliation, and Phase-G probes. W072 remains **in progress**, not
 complete.
 
+**Addendum (2026-10-02, execution-log identity slice):** the application's transition
+journal now preserves the W157 caller-supplied `attribution` end to end. Before
+this slice the declared `WorkflowSnapshot.history` / constructor / `#history`
+types were the lossy `{taskId, from, to}` shape, so the type hid the attribution
+the kernel already records on `TransitionRecord` (the runtime value was passed
+through, but the contract advertised less) and the store never validated it on
+reload; the store accepted any attribution shape. Now
+`#history` is `readonly TransitionRecord[]`, the snapshot relays the record
+verbatim, and `persistence.ts` validates a present attribution (closed actor
+vocabulary, non-empty authority, parseable `observedAt`) while keeping absence
+legal (the explicit unattributed state). This advances **I-10** (identity
+survives restart/replay) and **DRIFT-020** (replay preserves attribution); it
+does **not** complete I-10, which still wants session/step identity pinned on
+every execution-log entry. Stale "the kernel records no actor/authority" comments
+in `activity-timeline.ts`, `hub-http.ts`, and `run-registry.ts` were corrected.
+Pinned by `test/persistence.test.ts` (attribution round-trips across restart;
+four malformed attributions reject, one well-formed attribution accepted).
+Residual (pre-existing W157, not introduced here): the `authority` string
+remains self-asserted and freeform — persisting and validating it narrows the
+accepted shape but does not authenticate who set it; a future audit-timeline
+claim of authority should account for that.
+
 **Addendum (2026-09-20, v2 host-version finding):** stock OpenCode **removed the `todowrite`/`todoread`
 agent tools entirely in v2** (upstream `anomalyco/opencode#42421`, closed **not planned**; verified
 on the pinned v2.0.10 binary — zero tool strings, zero HTTP todo routes; only adjacent experimental

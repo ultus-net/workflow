@@ -826,9 +826,10 @@ async function handleRequest(
       });
       // W152: the unified activity timeline rides the same snapshot response —
       // the projection over the kernel's transition log and the registry's
-      // gate records. Kernel transition rows are unattributed BY CONTRACT
-      // (the kernel records no actor/authority; W157 is the record change
-      // that would add it); the timeline's kernel segment is the fallback
+      // gate records. W157 records an optional caller-supplied attribution on
+      // each transition, so an attributed row names its actor and an
+      // unattributed one renders the explicit unattributed state; the
+      // timeline's kernel segment is the fallback
       // application's own log plus each recent run's log (bounded 64), never
       // a fabricated union of things the kernel did not record.
       const timeline = activityTimeline({

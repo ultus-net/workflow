@@ -4,20 +4,20 @@
  * one feed; it mutates nothing, owns no canonical state, and synthesizes no
  * attribution.
  *
- * ATTRIBUTION CONTRACT (the spec's kernel-boundary rule, verified
- * 2026-09-27): the kernel's `TransitionRecord` carries only
- * `{taskId, from, to}` (src/kernel/contracts.ts:72-76) — no actor, no
- * authority, no time. Kernel-transition rows therefore render the EXPLICIT
+ * ATTRIBUTION CONTRACT (the spec's kernel-boundary rule): the kernel's
+ * `TransitionRecord` carries `{taskId, from, to}` plus an OPTIONAL
+ * caller-supplied `attribution` (`{actor, authority, observedAt}`) added by
+ * W157. The kernel never fabricates it — a record whose caller did not know
+ * its actor leaves the block absent, and absence is the EXPLICIT
  * "unattributed" state (actor and authority both "unattributed", `at` null)
- * rather than a guess; the record change that would let them name more is
- * W157 (docs/ledger/W157-*.md), not this slice. Every other row's actor and
+ * rather than a guess. Every other row's actor and
  * authority come from its RECORD KIND — the same rule the W150 posture
  * projection established (the row says where the attribution came from; the
  * gate maps carry multiple families, so the kind is named). `at` is the
  * record's own time when it carries one (completion claims, run usage) and
- * null where the record is timeless (kernel transitions, review verdicts,
- * blocking reasons, run origins, budget incidents) — the view renders
- * timeless rows in the feed's order, never a fabricated time.
+ * null where the record is timeless (unattributed kernel transitions, review
+ * verdicts, blocking reasons, run origins, budget incidents) — the view
+ * renders timeless rows in the feed's order, never a fabricated time.
  *
  * ID CONTRACT (the W150 precedent): the kernel snapshot's `run:` prefix is
  * stripped at the caller's boundary, so registry joins (review outcomes,
