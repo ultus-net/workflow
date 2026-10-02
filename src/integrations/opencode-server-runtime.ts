@@ -10,7 +10,8 @@ import type { ProcessContainment } from "../containment/contracts.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
 import { opencodeMajorVersion, resolveSkillsMount } from "./acp-runtime.js";
 import { connectorReadablePaths, provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts } from "./toolbox-catalog.js";
-import { createModelUsageProxy, METERED_PLACEHOLDER_KEY, type AutoLatestProxyOptions, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
+import { createModelUsageProxy, METERED_PLACEHOLDER_KEY, type AutoLatestProxyOptions, type EgressDenialEvent, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy, type ProxyPayloadPolicy } from "./model-usage-proxy.js";
+import type { CredentialEndpoint } from "./credentials.js";
 import { globalOpencodeBinary, meteredOpencodeConfig, OPENCODE_V2_METERED_ENV_KEY, resolveOpencodeLaunch } from "./opencode-agent-config.js";
 import { probeOpencodeHealth } from "./opencode-health.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
@@ -47,6 +48,14 @@ export interface OpencodeServerProxyInput {
   readonly apiKey: string;
   readonly autoLatest?: AutoLatestProxyOptions | undefined;
   readonly budgetDowngrade?: BudgetDowngradeRuntime | undefined;
+  /** W184: gate-2 credential binding (W179); absent leaves gate 2 inactive. */
+  readonly credentialEndpoints?: readonly CredentialEndpoint[] | undefined;
+  /** W184: W180 path/function policy tier + size ceiling; absent is dark. */
+  readonly payloadPolicy?: ProxyPayloadPolicy | undefined;
+  /** W184: W181 egress observation sink; absent observes nothing. */
+  readonly onEgressObservation?: ((observation: EgressObservation) => void) | undefined;
+  /** W184: W182 shared egress-denial sink; absent observes nothing. */
+  readonly onEgressDenied?: ((event: EgressDenialEvent) => void) | undefined;
 }
 
 export interface OpencodeServerRuntimeOptions {
@@ -82,6 +91,18 @@ export interface OpencodeServerRuntimeOptions {
   readonly resolveBinary?: (() => { readonly executable: string }) | undefined;
   /** Injectable proxy factory (tests). */
   readonly createProxy?: ((input: OpencodeServerProxyInput) => Promise<ModelUsageProxy>) | undefined;
+  /** W184: gate-2 credential binding (W179) threaded into the proxy; absent leaves gate 2 inactive. */
+  readonly credentialEndpoints?: readonly CredentialEndpoint[] | undefined;
+  /**
+   * W184: the W180 path/function policy tier + payload size ceiling. Absent
+   * (the default) leaves the proxy byte-identical; present activates the
+   * deny-by-default tier for this lane.
+   */
+  readonly payloadPolicy?: ProxyPayloadPolicy | undefined;
+  /** W184: W181 egress observation sink for this lane; absent observes nothing. */
+  readonly onEgressObservation?: ((observation: EgressObservation) => void) | undefined;
+  /** W184: W182 shared egress-denial sink for this lane; absent observes nothing. */
+  readonly onEgressDenied?: ((event: EgressDenialEvent) => void) | undefined;
   /** Injectable fetch for the health poll (tests). */
   readonly fetchImpl?: typeof fetch | undefined;
   /** Health-poll timeout in ms (default 30s). */
@@ -189,6 +210,12 @@ export async function createOpencodeServerRuntime(
     apiKey,
     ...(autoLatest === undefined ? {} : { autoLatest }),
     ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }),
+    // W184: thread the egress seams the ACP lanes already carry. Each is absent
+    // by default, so an unconfigured server topology stays byte-identical.
+    ...(options.credentialEndpoints === undefined ? {} : { credentialEndpoints: options.credentialEndpoints }),
+    ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }),
+    ...(options.onEgressObservation === undefined ? {} : { onEgressObservation: options.onEgressObservation }),
+    ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }),
   });
   const container = options.containment ?? new LinuxBubblewrapContainment();
 

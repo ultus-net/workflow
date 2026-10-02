@@ -27,7 +27,7 @@ Written atomically (temp file + rename) with mode `0600`:
   "protocol": 1,
   "hubId": "577f4066848d0f24",
   "endpoint": "http://127.0.0.1:34401",
-  "token": "9469a60f…(64 hex chars)"
+  "token": "3f9a1c2d8e4b6a70…(16 hex generation, then '.', then 64 hex secret)"
 }
 ```
 
@@ -36,7 +36,7 @@ Written atomically (temp file + rename) with mode `0600`:
 | `protocol` | number | Contract version. Clients should treat any `protocol` value other than `1` as unknown and fail closed. (Note: the hub writes `protocol: 1`; the repo's reference client currently validates `hubId`/`endpoint`/`token` shape rather than asserting the protocol number — treat this field as reserved for future contract versioning.) |
 | `hubId` | string | 16 hex chars; unique per hub instance. |
 | `endpoint` | string | Loopback HTTP base URL (`http://127.0.0.1:<port>`). |
-| `token` | string | 64 hex chars; ordinary surface/hub-client bearer capability. Verifier-only endpoints use a separate capability. |
+| `token` | string | `<generation>.<secret>` — 16 hex generation + `.` + 64 hex secret (W183 generation-bound tokens: a token replayed from a previous hub start carries a different generation and is rejected). Ordinary surface/hub-client bearer capability. Verifier-only endpoints use a separate capability. |
 
 Client requirements:
 
@@ -186,19 +186,18 @@ the running surface is fully observable:
   machinery is not an enforcement claim**: a merged revision is a durable
   record the proxy may consult, never a guarantee, and a credential-custody
   refusal (foreign credential, endpoint mismatch) is never operator-approvable
-  by an egress rule. **Activation-pending scope (2026-10-02):** the
-  operator-approvable path is documented but not yet reachable end-to-end on
-  this branch. W182's only approvable family is `egress_policy` +
-  `no_matching_rule`, emitted by W180's path/function policy tier (issue #440),
-  which is a separate unmerged branch that fires its own callback rather than
-  W182's `onEgressDenied` event — so no approvable denial reaches the store
-  today. The credential-refusal family is intentionally non-approvable (custody
-  must not be operator-overridable). The proxy lanes that compose the seam today
-  are the OpenCode lane (OpenRouter + open-source pool), the Cline lane, and
-  the goose OpenRouter lane; the merge-time epoch re-check is also inert at the
-  hub (hardcoded `policyVersion: 0` and a composition-time provider fingerprint),
-  so it cannot invalidate a stale park until a live policy/provider epoch is
-  wired with #440. Tracked on #442/#440.
+  by an egress rule. W184 wires the operator-approvable path end-to-end: W180's
+  `egress_policy` + `no_matching_rule` denial now routes through W182's shared
+  `onEgressDenied` event, the hub composes the W183 `WORKFLOW_EGRESS_POLICY_FILE`
+  as the baseline (per turn, so a merged revision is consulted), and the store's
+  fingerprint reads its LIVE composed `policyVersion` so a merge between ask and
+  answer invalidates the older park in-process (the provider digest is resolved
+  at hub start, so a credential change invalidates across a restart). The
+  credential-custody family stays intentionally non-approvable. The proxy lanes
+  that compose the seam are the OpenCode lane (OpenRouter + open-source pool),
+  the Cline lane, the goose OpenRouter lane, and the W129 opencode-server lane
+  (runtime-level; the standalone server CLI composes the binding + policy but no
+  hub store, so its denials are answered, not parked).
 
 These are ordinary-token endpoints (except `/schedule/run-now`) and are
 versioned informally alongside the Workflow hub implementation, not as part of

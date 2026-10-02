@@ -19,6 +19,9 @@ import {
   writeOpencodeServerDiscovery,
 } from "../integrations/opencode-server-discovery.js";
 import { createOpencodeServerRuntime } from "../integrations/opencode-server-runtime.js";
+import { loadCredentialDefinitions } from "../integrations/credential-config.js";
+import { upstreamCredentialBinding } from "../integrations/egress-binding.js";
+import { loadEgressPolicyFile } from "../integrations/egress-policy-file.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 import { createSessionCompactionMonitor } from "../integrations/opencode-server-monitor.js";
 import { HttpRemoteEngine } from "../integrations/remote-acp/engine.js";
@@ -166,6 +169,20 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const enforcement = enforcementFromEnv(process.env);
 
   const disabledConnectors = resolveDaemonDisabledConnectors(workspace);
+  // W184: the daemon is a standalone process — it has no hub revision store, so
+  // it cannot park an operator-approvable rule. It CAN still enforce the W179
+  // gate-2 binding and the W180 policy tier from operator config, so the seams
+  // are threaded here: gate 2 from the credential definitions, the policy tier
+  // from the W183 `WORKFLOW_EGRESS_POLICY_FILE`. Both are absent-safe (an
+  // unconfigured operator keeps the pre-W179/W180 posture byte-identical); the
+  // denial sink stays unset because there is no store in this process to hang it
+  // on (a denial is still answered, just not parked).
+  const upstream = process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai";
+  const credentialEndpoints = upstreamCredentialBinding(upstream, loadCredentialDefinitions());
+  const egressPolicy = loadEgressPolicyFile();
+  const payloadPolicy = egressPolicy === undefined || egressPolicy.rules.length === 0
+    ? undefined
+    : { egressPolicy };
   // W094 (review P3-3): every failure path after composition reaps the guard
   // explicitly — the hub precedent closes its guard on composition failure,
   // and "the child self-reaps on EOF" is inferred semantics, not a mandate.
@@ -174,6 +191,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     runtime = await createOpencodeServerRuntime({
       workspace,
       stateHome,
+      ...(credentialEndpoints.length === 0 ? {} : { credentialEndpoints }),
+      ...(payloadPolicy === undefined ? {} : { payloadPolicy }),
       // W082: the daemon carries the operator's autoCompact preference into the
       // hub-written server config (same trigger the ACP lane composes). A
       // settings read failure must not block the daemon — the trigger is

@@ -38,15 +38,13 @@ import {
  *
  * Approval machinery is NOT an enforcement claim: a merged revision is a
  * durable *rule* the proxy may consult. Whether the proxy enforces it is the
- * proxy policy tier's concern (W180, issue #440) — and that tier is a SEPARATE
- * parallel branch that is not composed here. W180 currently emits its own
- * `onEgressPolicyRejected` callback rather than W182's `onEgressDenied` event,
- * so its `egress_policy` denials do NOT reach this store yet. This store's ONLY
- * approvable family is `egress_policy` + `no_matching_rule`, so on this branch
- * NO approvable denial is produced end-to-end: the park/merge mechanism is
- * tested and real, and production activation of the approvable family is
- * pending on #440 routing through W182's event (tracked on #442/#440). No
- * revision can override an explicit `enforce` deny regardless.
+ * proxy policy tier's concern (W180, issue #440). As of W184 the W180
+ * `egress_policy` denial IS routed through W182's shared `onEgressDenied`
+ * event, so this store's one approvable family (`egress_policy` +
+ * `no_matching_rule`) is produced end-to-end when a hub composes a policy and
+ * the denial sink. The park/merge mechanism is still bounded: no revision can
+ * override an explicit `enforce` deny, and a store composed without a live
+ * fingerprint source (a standalone unit) simply cannot exercise the epoch.
  */
 
 /** Value-free destination facts for a proposed rule. Never a secret, a

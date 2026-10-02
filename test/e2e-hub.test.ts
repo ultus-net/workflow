@@ -128,13 +128,14 @@ test("W128: the compiled hub publishes the discovery contract, serves the authen
   const discovery = JSON.parse(readFileSync(discoveryPath, "utf8")) as Record<string, unknown>;
   assert.deepEqual(
     Object.keys(discovery).sort(),
-    ["endpoint", "hubId", "protocol", "token"],
+    ["endpoint", "generation", "hubId", "protocol", "token"],
     `discovery.json's exact field set — observed: ${JSON.stringify(Object.keys(discovery).sort())}`,
   );
   assert.equal(discovery.protocol, 1);
   assert.match(discovery.hubId as string, /^[0-9a-f]{16}$/);
+  assert.match(discovery.generation as string, /^[0-9a-f]{16}$/, "W183: the hub-start generation is published");
   assert.equal(discovery.endpoint, endpoint, "the discovery endpoint is the banner's listening URL");
-  assert.match(discovery.token as string, /^[0-9a-f]{64}$/);
+  assert.match(discovery.token as string, /^[0-9a-f]{16}\.[0-9a-f]{64}$/, "W183: <generation>.<secret>");
   const token = discovery.token as string;
 
   // The verifier credential beside it (workflow-hub.ts:162-167): the same
@@ -143,10 +144,10 @@ test("W128: the compiled hub publishes the discovery contract, serves the authen
   const verifierPath = join(dirname(discoveryPath), "verifier.json");
   assert.ok(existsSync(verifierPath), `the verifier discovery is published beside discovery.json: ${verifierPath}`);
   const verifier = JSON.parse(readFileSync(verifierPath, "utf8")) as Record<string, unknown>;
-  assert.deepEqual(Object.keys(verifier).sort(), ["endpoint", "protocol", "token"]);
+  assert.deepEqual(Object.keys(verifier).sort(), ["endpoint", "generation", "protocol", "token"]);
   assert.equal(verifier.protocol, 1);
   assert.equal(verifier.endpoint, endpoint);
-  assert.match(verifier.token as string, /^[0-9a-f]{64}$/);
+  assert.match(verifier.token as string, /^[0-9a-f]{16}\.[0-9a-f]{64}$/, "W183: <generation>.<secret>");
   assert.notEqual(verifier.token, token, "the verifier token is distributed separately from the surface token");
 
   // /health — probeHub's contract (src/cli/hub-client.ts:44-55): POST with
@@ -218,6 +219,8 @@ test("W128: the compiled hub publishes the discovery contract, serves the authen
       reasoningClaims: {},
       reasoningClaimMetrics: { monitoredRuns: 0, flaggedRuns: 0, findings: 0, recall: "unmeasured", timeToResponseMs: "unmeasured" },
       usage: {},
+      taskUsage: [],
+      surfaceUsage: [],
     },
     `gate observability is empty-but-present on a fresh hub — observed: ${JSON.stringify(snapshotBody.gateObservability)}`,
   );

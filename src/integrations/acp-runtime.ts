@@ -32,7 +32,8 @@ import {
 } from "./opencode-agent-config.js";
 import type { PermissionBroker } from "../ui/permission-broker.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
-import { METERED_PLACEHOLDER_KEY, type EgressDenialEvent, type ModelUsageMetrics, type ModelUsageProxy, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
+import { METERED_PLACEHOLDER_KEY, type EgressDenialEvent, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy, type ProxyPayloadPolicy, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
+import type { CredentialEndpoint } from "./credentials.js";
 import { createEgressRuntimeFeed } from "./egress-audit-client.js";
 import { egressPostureFromEnv, egressRuntimeContext } from "./runtime-context.js";
 import type { TaskUsageSummary } from "./task-usage.js";
@@ -151,14 +152,30 @@ export interface AcpRuntimeOptions {
    * the cline, opencode, and goose OpenRouter lanes compose emits one value-free
    * denial event through it, so the hub's durable egress policy revision store
    * can park the denial for operator visibility. The goose azure_foundry lane
-   * composes no local proxy, so it carries no seam. Only the credential gates
-   * (foreign credential, endpoint mismatch) reach this sink today — W180's
-   * path/function policy tier (issue #440) fires its own callback, not this one,
-   * so an approvable `egress_policy` denial cannot yet flow through. Absent
-   * leaves the proxies' refusal posture byte-identical. Observation only at the
-   * proxy seam; the sink cannot block or rewrite a request.
+   * composes no local proxy, so it carries no seam. As of W184 the W180
+   * path/function policy tier routes through this same sink, so its approvable
+   * `egress_policy` `no_matching_rule` denial parks end-to-end. Absent leaves
+   * the proxies' refusal posture byte-identical. Observation only at the proxy
+   * seam; the sink cannot block or rewrite a request.
    */
   readonly onEgressDenied?: ((event: EgressDenialEvent) => void) | undefined;
+  /**
+   * W184: the W180 path/function policy tier + size ceiling, threaded into
+   * every proxy this runtime composes (opencode/cline/goose OpenRouter lanes +
+   * the open-source pool). Absent (the default) leaves every lane dark; the hub
+   * composes it FRESH per turn so a merged revision is consulted immediately.
+   */
+  readonly payloadPolicy?: ProxyPayloadPolicy | undefined;
+  /**
+   * W184: the W179 gate-2 credential-endpoint binding, threaded into every proxy
+   * this runtime composes. Empty/absent (the default) leaves gate 2 inactive.
+   */
+  readonly credentialEndpoints?: readonly CredentialEndpoint[] | undefined;
+  /**
+   * W184: the W181 egress observation sink (opencode lane only; the cline/goose
+   * lanes compose their own). Absent observes nothing.
+   */
+  readonly onEgressObservation?: ((observation: EgressObservation) => void) | undefined;
 }
 
 export async function createConfiguredAcpRuntime(
@@ -283,6 +300,8 @@ async function createOpencodeRuntime(
       ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }),
       ...(egressFeed === undefined ? {} : { onEgressObservation: egressFeed.onEgressObservation }),
       ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }),
+      ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }),
+      ...(options.credentialEndpoints === undefined ? {} : { credentialEndpoints: options.credentialEndpoints }),
     });
   } catch (error) {
     // A construction failure must not leak the already-opened ledger client.
@@ -297,7 +316,7 @@ async function createOpencodeRuntime(
   let openPool: OpenModelMeteringPool | undefined;
   try {
     openPool = Object.keys(openKeys.keys).length > 0
-      ? await createOpenModelMeteringPool({ pool: openSourcePoolFromEnv(), keys: openKeys.keys, ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }), ...(egressFeed === undefined ? {} : { onEgressObservation: egressFeed.onEgressObservation }), ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }) })
+      ? await createOpenModelMeteringPool({ pool: openSourcePoolFromEnv(), keys: openKeys.keys, ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }), ...(egressFeed === undefined ? {} : { onEgressObservation: egressFeed.onEgressObservation }), ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }), ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }) })
       : undefined;
   } catch (error) {
     // A misconfigured pool (unknown WORKFLOW_OPEN_MODEL_POOL id) must not leak
@@ -585,6 +604,8 @@ async function createClineRuntime(
     apiKey,
     ...(autoLatest === undefined ? {} : { autoLatest }),
     ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }),
+    ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }),
+    ...(options.credentialEndpoints === undefined ? {} : { credentialEndpoints: options.credentialEndpoints }),
   });
   // Each runtime owns a private provider-settings file: the metering proxy
   // port is ephemeral, so a shared providers.json let one runtime's agent
@@ -762,10 +783,13 @@ async function createGooseRuntime(
     ? await createModelUsageProxy({
         upstream: process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai",
         apiKey: loadUpstreamApiKey(),
-        // W182 (A7): the shared denial sink rides the goose OpenRouter lane too,
-        // so its credential-gate refusals park on the same hub surface. The
-        // azure_foundry lane composes no local proxy, so it has no seam to carry.
+        // W182 (A7) / W184: the shared denial sink and the W180 policy tier ride
+        // the goose OpenRouter lane too, so its refusals park on the same hub
+        // surface. The azure_foundry lane composes no local proxy, so it has no
+        // seam to carry.
         ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }),
+        ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }),
+        ...(options.credentialEndpoints === undefined ? {} : { credentialEndpoints: options.credentialEndpoints }),
       })
     : undefined;
   try {

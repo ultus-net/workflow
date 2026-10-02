@@ -47,7 +47,7 @@ test("readHubDiscovery parses a discovery file", async (t) => {
   assert.ok(discovery);
   assert.equal(discovery.endpoint, hub.url);
   assert.equal(typeof discovery.hubId, "string");
-  assert.equal(discovery.token.length, 64);
+  assert.match(discovery.token, /^[0-9a-f]{16}\.[0-9a-f]{64}$/, "W183: <generation>.<secret>");
 });
 
 test("probeHub is true for a live hub and false for a stale token or dead endpoint", async (t) => {
