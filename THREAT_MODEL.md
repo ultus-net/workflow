@@ -76,6 +76,14 @@ ceilings, content filtering). Until payload policy exists,
 operators should treat model egress as unmonitored and keep the most
 sensitive material out of agent-readable workspaces.
 
+**Dated narrowing (W183, 2026-10-02).** For agents launched under the
+`network: "proxied"` posture, model HTTP(S) egress is forced through the
+policy-gated parent forward proxy, so destination rules can deny a model
+endpoint the policy does not list (see residual 1's W183 note). This narrows
+the channel for **proxy-aware** traffic only; a raw-socket or proxy-ignoring
+exfiltration path remains, and the posture is activation-pending in production
+(no composition supplies a policy yet). The C3 statement above stands.
+
 ## Residual Risk: Durable-State Attestation Validates Structure, Not Truth (W054)
 
 Startup attestation and provenance stamps raise the cost and visibility of
@@ -123,12 +131,15 @@ inventory and the full bypass note are in
 
 **Residuals, stated plainly.**
 
-1. **Direct egress bypasses every proxy.** The contained agent runs with
-   `network=host` for model egress, so an agent that opens a connection
-   straight to a host is not blocked at any Workflow-controlled boundary.
-   Token binding is blocking only at an interposed proxy and detection only
-   where a proxy (or another reporter) observes the traffic. There is no
-   network-layer egress control today, and none is claimed.
+1. **Raw-socket egress bypasses every proxy.** Model egress that does not
+   traverse a Workflow-controlled proxy is not blocked at any Workflow
+   boundary. Token binding is blocking only at an interposed proxy and
+   detection only where a proxy (or another reporter) observes the traffic.
+   See the dated W183 narrowing below: the `network: "proxied"` posture fences
+   **proxy-aware** traffic at the parent forward proxy, but a hostile process
+   that opens a raw socket, or ignores `HTTP_PROXY`, is still carried by the
+   user-mode stack (slirp4netns) to the host unfenced. No true mediation is
+   claimed.
 2. **The placeholder is a value discipline, not an identity proof.** The check
    matches a shared constant; it does not cryptographically prove the
    credential was hub-provisioned. A process able to present that constant
@@ -171,6 +182,38 @@ injected key comes from `src/integrations/upstream-key.ts`, not from
 where `credentialEndpoints` is explicitly supplied, and the residual risk
 statement is scoped accordingly, not erased, until a composition site lands
 (follow-up on issue #439). No `advisory`/`enforced` status changes here.
+
+**Dated narrowing (W183, 2026-10-02).** The `network: "proxied"` containment
+posture (NVIDIA adoption plan Wave B, B1; `src/containment/proxied-bwrap.ts`,
+`src/integrations/egress-forward-proxy.ts`) places the contained agent behind
+slirp4netns's `10.0.2.2` user-mode stack and forces its `HTTP_PROXY` /
+`HTTPS_PROXY` (both cases) to a parent-side forward proxy, which applies W178's
+`decideEgress` over the request's `EgressPolicy` and requires a **matched rule**
+(deny-by-default) before forwarding; an unlisted host is refused `403`. This
+**narrows residual 1 in writing, it does not close it**: mediation covers
+**proxy-aware** traffic only, and the proxy is the intended host-side path but
+not the *only* one. A hostile process that opens a raw socket, speaks a
+non-proxied protocol, or ignores the forced proxy env has its packets carried
+by slirp to the host on the unfenced path; that same path reaches host-loopback
+listeners directly, because this pass does not give slirp its
+`--disable-host-loopback` (fencing it would require a supervisor-owned proxy,
+parked as P20 / issue #444). There is still no kernel fence on raw-socket
+egress, and `network: "mediated"` remains a fail-closed stub
+(`UNSUPPORTED_UNTIL_SUPERVISOR`, parked as P20 / issue #444). The C3 residual
+above is likewise narrowed only for proxy-passed model traffic, not erased.
+
+**Activation status (honest, W183).** The posture is mechanism-complete and
+tested at the backend and launcher level, and the launcher
+(`src/adapters/acp-contained-agent.ts`) selects `proxied` whenever the backend
+advertises `supportsProxiedNetwork` and a `proxiedEgressPolicy` is supplied.
+As of 2026-10-02 **no production composition supplies a policy**:
+`src/integrations/acp-runtime.ts` constructs agents with `network` unset (the
+launcher then keeps the pre-W183 `host` posture) and does not yet call
+`loadEgressPolicyFile` (`WORKFLOW_EGRESS_POLICY_FILE`) to thread one in. So
+production keeps `network: "host"` and the mechanism stays activation-pending:
+the narrowing above applies only where a policy is explicitly supplied, and the
+residual stays stated, not erased, until the runtime supplies one (follow-up on
+issue #443). No `advisory`/`enforced` status changes here.
 
 ## 2026-09-19 — W073 self-improvement loop and W074 scheduled-task manager
 

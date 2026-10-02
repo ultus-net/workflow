@@ -95,6 +95,45 @@ export interface ProxyPayloadPolicy {
 }
 
 /**
+ * W182 (NVIDIA adoption wave A7): the SHARED, value-free egress denial event —
+ * the one shape the credential-gate proxy-boundary rejections emit, so an
+ * operator-approval
+ * sink attaches at one point instead of forking per gate. On this branch it
+ * fires from gate 1 (`egress-credential`) and gate 2
+ * (`credential_endpoint_mismatch`) ONLY. The W180 path/function policy tier
+ * (issue #440) is composed on this branch through its OWN
+ * `onEgressPolicyRejected` callback; its `egress_policy` denials therefore do
+ * NOT reach this `onEgressDenied` seam yet. W182's ONLY operator-approvable
+ * family is `egress_policy` + `no_matching_rule`, so no approvable denial is
+ * ever produced end-to-end until W180 routes those denials through this event
+ * (tracked on #442/#440). Carries ONLY destination facts — host, port, method,
+ * pathname, and the policy family/reason — never a header value, secret,
+ * placeholder, or query string. `pathname` is already query-free by the time
+ * it arrives.
+ *
+ * Observation-only at this seam: the callback cannot block, delay, or rewrite
+ * a request; a throw is swallowed so an approval sink can never change the
+ * proxy's refusal posture (the refusal is answered regardless).
+ */
+export interface EgressDenialEvent {
+  /**
+   * The value-free policy family: `egress-credential` or
+   * `credential_endpoint_mismatch` on this branch. `egress_policy` is the
+   * INTENDED family (W180's policy tier) but NO emitter produces it here yet —
+   * W180's separate `onEgressPolicyRejected` callback carries it until #440
+   * routes those denials through this event.
+   */
+  readonly policy: string;
+  /** A value-free reason label; never request content. */
+  readonly reason: string;
+  readonly host: string;
+  readonly port: number | undefined;
+  readonly method: string | undefined;
+  /** Pathname only; the query string is never captured. */
+  readonly pathname: string;
+}
+
+/**
  * P9 A′: the messages-lane model-label journal bound. The journal is
  * observation only; past the bound the OLDEST label drops so a long-lived
  * proxy never grows unbounded (the repo's bounded-journal posture). 64 matches
@@ -500,6 +539,19 @@ export async function createModelUsageProxy(options: {
    * means the refusal is answered but not logged.
    */
   readonly onPayloadSizeRejected?: ((event: PayloadSizeRejection) => void) | undefined;
+  /**
+   * W182 (A7): the shared egress denial sink. When provided, every
+   * proxy-boundary rejection this proxy itself emits reports one value-free
+   * `EgressDenialEvent` here — gate 1 (`egress-credential`) and gate 2
+   * (`credential_endpoint_mismatch`). It does NOT yet carry W180's path/function
+   * policy tier (issue #440), which today fires its own separate
+   * `onEgressPolicyRejected` callback; W182's only approvable family is
+   * `egress_policy`, so no approvable denial reaches this seam until #440 routes
+   * through it. Observation only: the callback cannot block, delay, or rewrite
+   * the request, and a throw is swallowed. Absent leaves every refusal answered
+   * exactly as before.
+   */
+  readonly onEgressDenied?: ((event: EgressDenialEvent) => void) | undefined;
 }): Promise<ModelUsageProxy> {
   if (typeof options.apiKey !== "string" || options.apiKey.trim().length === 0) {
     throw new TypeError("model usage proxy requires a non-empty upstream API key");
@@ -527,6 +579,21 @@ export async function createModelUsageProxy(options: {
       // Observation is advisory: a throwing sink must never change the
       // pass-through posture (the same fail-open discipline as
       // composeBodyTransforms).
+    }
+  };
+  // W182 (A7): the shared denial emitter. The credential-gate rejections
+  // (gate 1 and gate 2) funnel through here so an operator-approval sink
+  // attaches at one point. W180's path/function policy tier (issue #440) does
+  // NOT route through it yet — it carries its own `onEgressPolicyRejected`
+  // callback — so an approvable `egress_policy` denial cannot reach this seam
+  // on this branch. Observation only: a throwing sink is swallowed and never
+  // changes the refusal posture.
+  const emitEgressDenial = (event: EgressDenialEvent): void => {
+    try {
+      options.onEgressDenied?.(event);
+    } catch {
+      // Observation is advisory at this seam: a throwing sink must never
+      // suppress the refusal (the pass-through/refusal posture is unchanged).
     }
   };
   const autoLatest = options.autoLatest;
@@ -627,6 +694,21 @@ export async function createModelUsageProxy(options: {
         functionClass: classifyEgressFunctionClass(req.method, req.url),
         tokenClass: credential.kind === "foreign" ? "foreign" : "unknown",
         anomalyContext: { policy: "egress-credential", credentialHeader: credential.header },
+      });
+      // W182 (A7): emit the shared value-free denial event so an operator
+      // sink can park a pending rule. A foreign credential is credential
+      // custody, not an approvable egress rule — the sink itself decides that
+      // (`isApprovableEgressDenial`), this seam only reports the facts. The
+      // destination is the proxy's own upstream (a single-origin proxy), never
+      // an attacker-supplied absolute-form host; only the request path is read.
+      const denialPath = new URL(req.url ?? "/", upstream).pathname;
+      emitEgressDenial({
+        policy: "egress-credential",
+        reason: "foreign-credential",
+        host: upstream.hostname,
+        port: upstream.port === "" ? (upstream.protocol === "https:" ? 443 : 80) : Number(upstream.port),
+        method: req.method,
+        pathname: denialPath,
       });
       res.writeHead(403, { "content-type": "application/json" });
       res.end(JSON.stringify({
@@ -919,6 +1001,18 @@ export async function createModelUsageProxy(options: {
           anomalyContext: { policy: rejection.policy, credentialHeader: undefined },
         });
         options.onCredentialEndpointRejected?.(rejection);
+        // W182 (A7): the same shared value-free denial event. This gate's
+        // reason is recorded as the policy family so a sink can classify it
+        // non-approvable (a credential-custody refusal, never loosened by an
+        // egress rule).
+        emitEgressDenial({
+          policy: rejection.policy,
+          reason: "destination-outside-credential-binding",
+          host: rejection.host,
+          port: rejection.port,
+          method: req.method,
+          pathname: rejection.pathname,
+        });
         res.writeHead(403, { "content-type": "application/json" });
         res.end(JSON.stringify({
           error: "model usage proxy refused to inject the credential: request destination is outside the credential endpoint binding",

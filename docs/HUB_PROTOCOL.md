@@ -167,6 +167,38 @@ the running surface is fully observable:
   (it fires a real contained run); the other three are ordinary-token. The
   asymmetry is pinned as observed in `test/e2e-hub-routes.test.ts` (the W151
   review P3 owed this line).
+- `POST /egress/pending` — W182 (A7): the operator approval surface over the
+  hub-scoped durable egress policy revision store. Returns
+  `{ "generation": "<backing session/sandbox id>", "pending": [<redacted rule
+  proposal + approvable flag>], "revisions": [<merged durable revision>] }`.
+  Parked proposals carry only value-free destination facts (host, port, method,
+  pathname) — no secret, placeholder value, or query string — plus an
+  `approvable` flag (false for a credential-custody refusal). Ordinary-token.
+- `POST /egress/answer` — W182 (A7): records the operator's decision for a
+  parked egress rule: `{ "requestId": "<id>", "decision": "allow" | "deny" }`.
+  An `allow` re-checks current policy + provider bindings at merge time and
+  merges a durable revision (`{ "status": "merged", "revision": <n> }`); a
+  policy or provider change since the park invalidates it (`{ "status":
+  "invalidated", "reason": "<why>" }`, nothing merged); a `deny` returns
+  `{ "status": "denied" }`; an approval of a parked credential-custody refusal
+  returns the structured `409 { "status": "not-approvable" }` (nothing merged).
+  An unknown/stale id is a client fault (404). Ordinary-token. **Approval
+  machinery is not an enforcement claim**: a merged revision is a durable
+  record the proxy may consult, never a guarantee, and a credential-custody
+  refusal (foreign credential, endpoint mismatch) is never operator-approvable
+  by an egress rule. **Activation-pending scope (2026-10-02):** the
+  operator-approvable path is documented but not yet reachable end-to-end on
+  this branch. W182's only approvable family is `egress_policy` +
+  `no_matching_rule`, emitted by W180's path/function policy tier (issue #440),
+  which is a separate unmerged branch that fires its own callback rather than
+  W182's `onEgressDenied` event — so no approvable denial reaches the store
+  today. The credential-refusal family is intentionally non-approvable (custody
+  must not be operator-overridable). The proxy lanes that compose the seam today
+  are the OpenCode lane (OpenRouter + open-source pool), the Cline lane, and
+  the goose OpenRouter lane; the merge-time epoch re-check is also inert at the
+  hub (hardcoded `policyVersion: 0` and a composition-time provider fingerprint),
+  so it cannot invalidate a stale park until a live policy/provider epoch is
+  wired with #440. Tracked on #442/#440.
 
 These are ordinary-token endpoints (except `/schedule/run-now`) and are
 versioned informally alongside the Workflow hub implementation, not as part of

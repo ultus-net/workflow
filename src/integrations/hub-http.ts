@@ -1,5 +1,7 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+
+import { authorizeHubToken, mintHubGeneration, mintHubToken } from "./hub-tokens.js";
 
 import type { WorkflowApplication, WorkflowSnapshot } from "../application/workflow.js";
 import type { PermissionBroker } from "../ui/permission-broker.js";
@@ -35,12 +37,19 @@ export interface WorkflowHubBridge {
   readonly url: string;
   readonly token: string;
   readonly verificationToken: string;
+  /**
+   * W183: the hub-start generation every issued token is bound to. Written to
+   * `discovery.json` / `verifier.json` so a client can distinguish a live hub
+   * from a restarted one; a token minted by a previous generation is rejected.
+   */
+  readonly generation: string;
   close(): Promise<void>;
 }
 
 interface HubRequestContext {
   readonly token: string;
   readonly verificationToken: string;
+  readonly generation: string;
   readonly resolveApplication: WorkflowApplicationResolver;
   readonly runController: WorkflowRunController | undefined;
   readonly guard: WorkflowGuardProvider | undefined;
@@ -157,6 +166,29 @@ interface HubRequestContext {
    * plumbing.
    */
   readonly permissionBroker?: PermissionBroker;
+  /**
+   * W182 (NVIDIA adoption wave A7): the hub-scoped durable egress policy
+   * revision store — the operator-approval surface behind a proxy egress
+   * denial. When composed, the hub serves `/egress/pending` (the redacted
+   * parked proposals + merged revisions + the backing generation) and
+   * `/egress/answer` (an approval merges a durable revision; a deny or a stale
+   * park resolves reject). Absent → both routes 404 (capability withheld, fail
+   * closed). Ordinary-token class, like `/api/permission` and `/run/begin`:
+   * same-process loopback authority, no kernel state moves through it.
+   */
+  readonly egressApprovals?: EgressApprovals;
+}
+
+/**
+ * W182: the slice of the durable revision store the hub routes consume. Typed
+ * structurally so hub-http does not import the store module (the bridge's
+ * capability-extension discipline: a field, never a positional).
+ */
+export interface EgressApprovals {
+  readonly generation: string;
+  pending(): readonly import("./egress-policy-revisions.js").PendingEgressRule[];
+  revisions(): readonly import("./egress-policy-revisions.js").EgressPolicyRevision[];
+  answer(requestId: string, decision: "allow" | "deny"): import("./egress-policy-revisions.js").EgressAnswerResult;
 }
 
 export interface HubBridgeCapabilities {
@@ -186,6 +218,8 @@ export interface HubBridgeCapabilities {
   /** P6 (issue #285): the same-process broker (see HubRequestContext) — a FIELD
    * on the capabilities object, never a positional. */
   readonly permissionBroker?: PermissionBroker;
+  /** W182 (A7): the durable egress policy revision store (see HubRequestContext). */
+  readonly egressApprovals?: EgressApprovals;
 }
 
 /**
@@ -209,9 +243,10 @@ export async function createWorkflowHubBridge(
   contentStore?: HubRequestContext["contentStore"],
   capabilities: HubBridgeCapabilities = {},
 ): Promise<WorkflowHubBridge> {
-  const token = randomBytes(32).toString("hex");
-  const verificationToken = randomBytes(32).toString("hex");
-  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...capabilities };
+  const generation = mintHubGeneration();
+  const token = mintHubToken(generation).token;
+  const verificationToken = mintHubToken(generation).token;
+  const context: HubRequestContext = { token, verificationToken, generation, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...capabilities };
 
   const server = createServer((request, response) => {
     if (request.url !== undefined) observeRequest?.(new URL(request.url, "http://127.0.0.1").pathname);
@@ -233,6 +268,7 @@ export async function createWorkflowHubBridge(
     url: `http://127.0.0.1:${address.port}`,
     token,
     verificationToken,
+    generation,
     close: () => new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error))),
   };
 }
@@ -256,7 +292,7 @@ async function handleRequest(
       request.url === "/rsi/start" ||
       request.url === "/schedule/run-now";
     const requiredToken = verifierOnly ? context.verificationToken : context.token;
-    if (!authorized(request, requiredToken)) return send(response, 401, { error: "unauthorized" });
+    if (!authorized(request, requiredToken, context.generation)) return send(response, 401, { error: "unauthorized" });
     if (request.url === "/health") return send(response, 200, { status: "ok" });
     const body = await readJson(request);
     if (request.url === "/api/permission") {
@@ -273,6 +309,43 @@ async function handleRequest(
       if (context.permissionBroker === undefined) return send(response, 404, { error: "not found" });
       const result = permissionAnswerRoute(context.permissionBroker, body);
       return send(response, result.status, result.body);
+    }
+    if (request.url === "/egress/pending") {
+      // W182 (A7): the operator surface for pending egress approvals. Reads the
+      // redacted parked proposals (no secret, placeholder, or query string),
+      // the merged durable revisions, and the backing session/sandbox
+      // generation. Ordinary-token class. Absent store → 404, fail closed.
+      if (context.egressApprovals === undefined) return send(response, 404, { error: "not found" });
+      return send(response, 200, {
+        generation: context.egressApprovals.generation,
+        pending: context.egressApprovals.pending(),
+        revisions: context.egressApprovals.revisions(),
+      });
+    }
+    if (request.url === "/egress/answer") {
+      // W182 (A7): record the operator's decision for a parked egress rule. An
+      // `allow` re-checks current policy + providers at merge time and merges a
+      // durable revision; a `deny` (or a stale/invalidated park) resolves the
+      // hold reject, fail closed. Malformed input is a 400; an unknown/stale id
+      // is a 404. The result names the status
+      // (`merged`/`invalidated`/`denied`/`unknown`) so the surface never implies
+      // a merge that did not happen.
+      if (context.egressApprovals === undefined) return send(response, 404, { error: "not found" });
+      if (
+        !isRecord(body) ||
+        typeof body.requestId !== "string" ||
+        body.requestId.length === 0 ||
+        !(body.decision === "allow" || body.decision === "deny")
+      ) {
+        return send(response, 400, { error: "invalid egress answer request: requestId and allow|deny are required" });
+      }
+      const result = context.egressApprovals.answer(body.requestId, body.decision);
+      if (result.status === "unknown") return send(response, 404, { error: "unknown or stale egress approval request" });
+      // A custody refusal is visible but not approvable: answer 409 (the
+      // structured refusal, like /api/permission's not-approvable) so no
+      // surface can imply a merge that did not happen.
+      if (result.status === "not-approvable") return send(response, 409, result);
+      return send(response, 200, result);
     }
     if (request.url === "/evidence-content") {
       // W158: the bounded content behind an evidence record's reference — the
@@ -906,11 +979,11 @@ async function handleRequest(
  * catch-all classifies it 400, never 500 (the W133 finding). */
 class HubRequestError extends Error {}
 
-function authorized(request: IncomingMessage, token: string): boolean {
+function authorized(request: IncomingMessage, token: string, generation: string): boolean {
   const supplied = request.headers.authorization?.replace(/^Bearer /, "") ?? "";
-  const expected = Buffer.from(token);
-  const actual = Buffer.from(supplied);
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
+  // W183: generation-bound. The prefix is checked first (the explicit binding),
+  // then constant-time full-token equality. Both must hold.
+  return authorizeHubToken(supplied, token, generation);
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {

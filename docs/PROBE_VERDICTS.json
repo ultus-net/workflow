@@ -1,7 +1,19 @@
 {
   "version": 1,
-  "updated": "2026-09-30",
+  "updated": "2026-10-02",
   "verdicts": [
+    {
+      "id": "acp-contained-egress-probe",
+      "host": "contained ACP agent (W183 proxied network posture)",
+      "hostVersion": "bwrap + slirp4netns user-mode stack (ambient host version)",
+      "probe": "test/acp-contained-egress-probe.test.ts",
+      "gate": "WORKFLOW_ACP_CONTAINED_EGRESS",
+      "date": "2026-10-02",
+      "result": "green",
+      "posture": "advisory",
+      "evidence": "docs/HOST_ADAPTERS.md W183 proxied-network containment entry",
+      "note": "LIVE green 2026-10-02 (3/3 runs on this host): a contained process under ProxiedBubblewrapContainment reached an allowed origin through the parent forward proxy (returned the upstream body) and an unlisted host was refused 403 at the proxy, not carried through by slirp. The probe is hermetic on loopback (a real sandbox, a loopback upstream, no credentials). This earns evidence ONLY for the W183 proxy-aware narrowing, never for a raw-socket fence, which stays a stated THREAT_MODEL.md residual #1. Posture advisory: production activation is pending — src/integrations/acp-runtime.ts does not yet thread loadEgressPolicyFile() into the launch, so production keeps network: host."
+    },
     {
       "id": "acp-cline-probe",
       "host": "cline",

@@ -16,6 +16,18 @@ The environment clears ambient credentials (`HOME`, `TOKEN`, `SECRET`, `KEY`). S
 
 Networking defaults to a new network namespace. Runtime tests inspect `/proc/net/dev` to prove host interfaces are absent on the supported Linux runtime. Requesting `network: "host"` through `WorkflowContainedProcess` automatically requires Workflow's default-withheld `network` capability.
 
+### W183: the `network: "proxied"` posture and the `mediated` stub
+
+On Linux `selectContainment` returns `ProxiedBubblewrapContainment`, a backend that composes the plain Bubblewrap boundary and adds a **third** network posture:
+
+- `network: "proxied"` (`src/containment/proxied-bwrap.ts`): a private network namespace placed behind slirp4netns's `10.0.2.2` user-mode stack, with a parent-side forward proxy (`src/integrations/egress-forward-proxy.ts`) as the intended host-side path. A user-namespace holder (`unshare -Ur`) makes the sandbox netns joinable by an unprivileged slirp; bwrap `--block-fd` gates the child's exec until the proxy is listening and slirp has configured the interface. The sandbox's `HTTP_PROXY`/`HTTPS_PROXY` (both cases) are forced to the proxy, which applies W178's `decideEgress` over the request's `EgressPolicy` and forwards only on a **matched rule** (deny-by-default); an unlisted host is refused `403`. A proxied request with no `proxiedEgressPolicy` fails closed. **Honesty boundary:** the forced proxy is not a kernel fence. slirp is not given `--disable-host-loopback` in this pass, so a process that ignores the proxy env and opens a raw socket reaches the host (including host-loopback listeners) unfenced — that is the W183 `THREAT_MODEL.md` residual, not a mediated claim.
+- `network: "mediated"`: a true mediated channel (supervisor-class). It is a **fail-closed stub**: every backend rejects it with `UNSUPPORTED_UNTIL_SUPERVISOR`, and it is never reported as `enforced`. Reserved for the Wave C / P20 decision (issue #444).
+
+The host network posture still requires the withheld `network` capability; so do `proxied` and the `mediated` stub — only `isolated` is capability-free (`src/containment/workflow-process.ts`).
+
+**Honesty boundary (do not overclaim).** The proxied posture mediates **proxy-aware** traffic only. A hostile process that opens a raw socket, speaks a non-proxied protocol, or ignores the forced proxy env has its packets carried by slirp to the host **unfenced**; there is no kernel fence on raw-socket egress. The proxy is the allow path, not a fence. `THREAT_MODEL.md` residual #1 records this narrowing, not a closure. The posture is mechanism-complete and tested; production runtime activation (supplying an `EgressPolicy` from `WORKFLOW_EGRESS_POLICY_FILE`) is pending, so launches without a policy keep `network: "host"`.
+
+
 ## Example
 
 ```ts

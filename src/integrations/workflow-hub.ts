@@ -16,6 +16,7 @@ import type { SelfImprovementRegistry } from "./self-improvement-registry.js";
 import type { ScheduleRegistry } from "./schedule-registry.js";
 import type { ProjectRegistry } from "./project-registry.js";
 import type { PermissionBroker } from "../ui/permission-broker.js";
+import type { EgressPolicyRevisionStore } from "./egress-policy-revisions.js";
 
 /**
  * The Workflow hub daemon: a long-running loopback authority that any Cline
@@ -27,6 +28,8 @@ export interface WorkflowHub {
   readonly discoveryPath: string;
   readonly verifierDiscoveryPath: string;
   readonly verificationToken: string;
+  /** W183: the hub-start generation bound to every issued token. */
+  readonly generation: string;
   close(): Promise<void>;
 }
 
@@ -161,6 +164,18 @@ export async function createWorkflowHub(
      * never cross-process plumbing.
      */
     permissionBroker?: PermissionBroker;
+    /**
+     * W182 (NVIDIA adoption wave A7): the durable egress policy revision store.
+     * When provided, the hub mounts `/egress/pending` and `/egress/answer`, and
+     * the composition root threads its `recordDenial` into the hub-composed
+     * proxy lanes that carry the sink as `onEgressDenied` (OpenCode, Cline, and
+     * goose's OpenRouter lane), so a credential-gate proxy denial parks a
+     * redacted pending rule. Only the credential gates reach it today: W180's
+     * path/function policy tier (issue #440) fires its own callback, so an
+     * approvable `egress_policy` denial cannot yet flow through. Absent → both
+     * routes 404 (capability withheld, fail closed).
+     */
+    egressApprovals?: EgressPolicyRevisionStore;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -241,6 +256,9 @@ export async function createWorkflowHub(
         ...(runs === undefined ? {} : { registerSurfaceSession: runs.registerSurfaceSession }),
         ...(runs === undefined ? {} : { consumeSurfaceSession: runs.consumeSurfaceSession }),
         ...(options.permissionBroker === undefined ? {} : { permissionBroker: options.permissionBroker }),
+        // W182 (A7): the durable egress policy revision store — the operator
+        // approval surface (routes + the proxy denial sink).
+        ...(options.egressApprovals === undefined ? {} : { egressApprovals: options.egressApprovals }),
       },
     );
     options.observeBridgeStarted?.(bridge.url);
@@ -254,6 +272,11 @@ export async function createWorkflowHub(
         hubId: randomBytes(8).toString("hex"),
         endpoint: bridge.url,
         token: bridge.token,
+        // W183: the hub-start generation. A token replayed from a previous
+        // hub start carries a different generation prefix and is rejected; the
+        // same-UID file-read residual (THREAT_MODEL W073 item 1) is NOT closed
+        // by this binding.
+        generation: bridge.generation,
       }),
       { encoding: "utf8", mode: 0o600 },
     );
@@ -261,7 +284,7 @@ export async function createWorkflowHub(
     discoveryPublished = true;
     writeFileSync(
       verifierTemporaryPath,
-      JSON.stringify({ protocol: 1, endpoint: bridge.url, token: bridge.verificationToken }),
+      JSON.stringify({ protocol: 1, endpoint: bridge.url, token: bridge.verificationToken, generation: bridge.generation }),
       { encoding: "utf8", mode: 0o600 },
     );
     renameSync(verifierTemporaryPath, verifierDiscoveryPath);
@@ -272,6 +295,7 @@ export async function createWorkflowHub(
       discoveryPath,
       verifierDiscoveryPath,
       verificationToken: activeBridge.verificationToken,
+      generation: activeBridge.generation,
       close: async () => {
         scheduler?.stop();
         await activeBridge.close();
