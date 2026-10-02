@@ -1262,6 +1262,32 @@ fingerprint sourcing and the admission path remain the blockers); this slice
 advances both by making the gate executable on the step-completion path but
 does not close either.
 
+**Addendum (2026-10-02, I-9 production re-query caller slice):** a real
+production observation now reaches the state-diff gate.
+`WorkflowApplication.completeStepWithRequery(id)` reads the step's
+`requiredPostcondition`, and for each claimed subject path calls the existing
+application-layer fingerprint source `fingerprintFile(path)`
+(`src/application/file-claim-ledger.ts:5`, sha256 of the file bytes), mapping
+`digest` → `ChangeObservation.fingerprint`. A claimed path that cannot be read
+(`ENOENT`) is **omitted** from the observation, so `evaluateStateDiff` reports
+`absent` and the kernel refuses with `STEP_POSTCONDITION_UNMET`; any other read
+error is rethrown (fail loud, no swallow). A step without a postcondition calls
+`this.#graph.completeStep(id)` exactly as before — byte-identical behavior. The
+kernel stays pure (no IO/clock); the IO lives in the application layer. The web
+operator surface (`POST /api/steps/complete`, `src/ui/web.ts:842`) now routes
+through `completeStepWithRequery` instead of `completeTaskStep(id)`, so an
+operator-completed guarded step is really re-observed. Pinned by the new
+`test/state-diff-admission.test.ts` (4 tests: on-disk match completes; changed
+file refuses `STEP_POSTCONDITION_UNMET`; absent file refuses as absent; a step
+without a postcondition keeps the I-3 evidence path). `completeTaskStep` keeps
+its optional-observation passthrough for callers that already hold an
+observation (e.g. the `hub-run-gates` ledger test). **What remains open:** the
+hub/ACP admission lane and the ordered codes→schema→cross-field→state-diff→tests
+runner still do not call the re-query variant — only the web operator surface
+does — and there is still no v2-compatible fingerprint source; therefore
+**DRIFT-019 and DRIFT-024 stay OPEN**, now advanced by a real production
+observation on one surface rather than by the contract alone.
+
 
 **Addendum (2026-10-02, I-6 restore cross-check slice):** restore now
 **fails closed on log/history divergence**. `JsonWorkflowStore.load` (via a

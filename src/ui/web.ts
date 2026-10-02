@@ -839,7 +839,7 @@ export function createWorkflowWebServer(
         const result = pathname === "/api/steps/start"
           ? application.startTaskStep(id)
           : pathname === "/api/steps/complete"
-            ? application.completeTaskStep(id)
+            ? application.completeStepWithRequery(id)
             : application.cancelTaskStep(id);
         // Rejections are kernel decisions (illegal transition, missing fresh
         // evidence, task not in progress) — 409 with the structured code and
