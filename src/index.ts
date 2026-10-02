@@ -2,6 +2,8 @@ export const WORKFLOW_PROTOCOL_VERSION = "0.0.0";
 
 export * from "./kernel/contracts.js";
 export * from "./kernel/task-graph.js";
+export * from "./kernel/state-diff.js";
+export * from "./kernel/execution-log.js";
 export * from "./adapters/host.js";
 export * from "./adapters/mcp.js";
 export * from "./integrations/contained-shell-executor.js";
@@ -30,6 +32,7 @@ export * from "./pedagogy/checkpoints.js";
 export * from "./pedagogy/primm.js";
 export * from "./integrations/response-style.js";
 export * from "./review/rubric.js";
+export * from "./review/ledger-audit.js";
 export * from "./review/manifest.js";
 export * from "./review/partition.js";
 export * from "./review/provenance.js";

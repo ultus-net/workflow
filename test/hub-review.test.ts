@@ -124,3 +124,22 @@ test("the rubric endpoint embeds the supplied diff", async (t) => {
   assert.match(String(response.body.rubric), /do the thing/);
   assert.match(String(response.body.rubric), /\+change/);
 });
+
+// W072 I-5: the route accepts an optional ledgerText and passes it through;
+// absent stays byte-identical, a non-string present value fails closed (400).
+test("the rubric endpoint passes ledgerText through and validates it", async (t) => {
+  const { hub, token } = await hubWith(t);
+  const absent = await post(hub.url, token, "/review/rubric", { diffText: "+change" });
+  assert.equal(absent.status, 200);
+  assert.ok(!String(absent.body.rubric).includes("### Step Ledger Under Audit"));
+  assert.ok(!String(absent.body.rubric).includes("P0/P1 finding"));
+
+  const withLedger = await post(hub.url, token, "/review/rubric", { diffText: "+change", ledgerText: "- step s-1 [COMPLETED] task t-1: do work" });
+  assert.equal(withLedger.status, 200);
+  assert.match(String(withLedger.body.rubric), /### Step Ledger Under Audit/);
+  assert.match(String(withLedger.body.rubric), /do work/);
+  assert.match(String(withLedger.body.rubric), /P0\/P1 finding/);
+
+  const invalid = await post(hub.url, token, "/review/rubric", { diffText: "+change", ledgerText: 42 });
+  assert.equal(invalid.status, 400);
+});

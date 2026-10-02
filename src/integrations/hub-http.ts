@@ -363,10 +363,16 @@ async function handleRequest(
       if (!isRecord(body) || typeof body.diffText !== "string") {
         return send(response, 400, { error: "invalid review rubric request" });
       }
+      // W072 I-5: an optional kernel-authoritative step ledger. Absent/omitted
+      // keeps today's wire byte-identical; a non-string present value is a 400.
+      if (body.ledgerText !== undefined && typeof body.ledgerText !== "string") {
+        return send(response, 400, { error: "invalid review rubric request: ledgerText must be a string" });
+      }
       return send(response, 200, {
         rubric: buildReviewRubric({
           diffText: body.diffText,
           ...(typeof body.taskPrompt === "string" ? { taskPrompt: body.taskPrompt } : {}),
+          ...(typeof body.ledgerText === "string" ? { ledgerText: body.ledgerText } : {}),
         }),
       });
     }
