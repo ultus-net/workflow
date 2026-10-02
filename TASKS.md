@@ -1110,6 +1110,32 @@ surfacing it in the custom web UI is the accepted track; an upstream-candidate P
 generic todo tool is parked, and the interim advisory workaround is a plan file via
 `WORKFLOW_ADVISORY_NOTES`. Recorded in project memory 2026-09-20.
 
+**Addendum (2026-10-02, I-9 state-diff contract slice):** the pure, deterministic
+state-diff re-query contract for **I-9** now exists at `src/kernel/state-diff.ts`
+(kernel-pure: no IO, no clock, no SDK). `evaluateStateDiff(claim, observation)`
+takes a `ChangeClaim` (subjects with expected fingerprints) and a
+`ChangeObservation` (what the re-query actually saw), and returns a
+`StateDiffVerdict`: `confirmed` only when every claimed subject is re-observed
+with a matching fingerprint, `absent` (`STATE_DIFF_ABSENT`) when a claimed
+subject is missing, `mismatch` (`STATE_DIFF_MISMATCH`) when a re-observed
+fingerprint differs, and `empty` (`STATE_DIFF_EMPTY`) when the claim is vacuous
+(a gate that judged nothing does not silently pass). Diagnostics are
+deterministic: claimed subjects are scanned in claim order and the first
+offender is reported. Pinned by `test/state-diff.test.ts` (6/6 focused tests:
+confirmed, absent, mismatch, empty claim, deterministic order, multi-subject
+partial failure; assertions on `code`, not booleans). Exports added to
+`src/index.ts`.
+
+This advances **I-9** (the state-diff rung of the ordered
+codes→schema→cross-field→state-diff→tests gate) and registers the advance on
+**DRIFT-019** / **DRIFT-024**. **Still open, and deliberately not done here:**
+the contract is NOT wired into `WorkflowApplication.authorize`, the evidence
+admission path, or any ordered-gate runner; there is no v2-compatible
+fingerprint source supplying observations yet; and the "claimed-but-absent
+change is rejected on the real completion path" obligation is not met until
+that wiring lands. Do not read this slice as a wired gate or as closing either
+DRIFT.
+
 
 ## Phase 15: Bounded recursive self-improvement (2026-09-19)
 
