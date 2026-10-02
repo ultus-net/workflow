@@ -27,7 +27,8 @@ Written atomically (temp file + rename) with mode `0600`:
   "protocol": 1,
   "hubId": "577f4066848d0f24",
   "endpoint": "http://127.0.0.1:34401",
-  "token": "3f9a1c2d8e4b6a70…(16 hex generation, then '.', then 64 hex secret)"
+  "token": "3f9a1c2d8e4b6a70…(16 hex generation, then '.', then 64 hex secret)",
+  "generation": "3f9a1c2d8e4b6a70"
 }
 ```
 
