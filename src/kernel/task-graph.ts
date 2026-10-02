@@ -16,6 +16,7 @@ import type {
   WorkflowTask,
 } from "./contracts.js";
 import { stepId } from "./contracts.js";
+import { evaluateStateDiff, type ChangeObservation } from "./state-diff.js";
 
 const LEGAL_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
   // W159/W166: the explicit exit — legal only for a live blocked record whose
@@ -154,6 +155,11 @@ export class TaskGraph {
       if (step.state === "COMPLETED" && !graph.#stepHasEvidence(step)) {
         throw new TypeError(`persisted completed step ${step.id} lacks fresh passing evidence`);
       }
+      // W072 I-9: a persisted COMPLETED step that declares a postcondition is
+      // accepted on reload without re-deriving the state diff — the observation
+      // was checked at completion time and is not persisted. Re-deriving here
+      // would require IO the kernel is forbidden; the evidence check above
+      // remains the restore-time gate.
     }
     for (const task of graph.#tasks.values()) {
       if (task.state === "VERIFIED" && !task.requiredEvidence.every((requirement) => graph.#hasEvidence(requirement))) {
@@ -218,7 +224,7 @@ export class TaskGraph {
    */
   defineSteps(
     taskId: TaskId,
-    proposed: readonly { readonly id?: string; readonly content: string; readonly requiredEvidence?: readonly EvidenceRequirement[] }[],
+    proposed: readonly { readonly id?: string; readonly content: string; readonly requiredEvidence?: readonly EvidenceRequirement[]; readonly requiredPostcondition?: WorkflowStep["requiredPostcondition"] }[],
   ): readonly WorkflowStep[] {
     const task = this.get(taskId);
     if (task.state !== "READY" && task.state !== "IN_PROGRESS") {
@@ -253,12 +259,16 @@ export class TaskGraph {
       const prior = existingById.get(id);
       const requiredEvidence = [...(entry.requiredEvidence ?? prior?.requiredEvidence ?? [])];
       if (requiredEvidence.length === 0) throw new TypeError(`step '${content}' must declare a done-condition/evidence requirement`);
+      // W072 I-9: carry the postcondition through when present; absent stays
+      // absent so a step without one behaves exactly as before.
+      const requiredPostcondition = entry.requiredPostcondition ?? prior?.requiredPostcondition;
       next.push({
         id,
         taskId,
         content,
         state: prior?.state ?? "PENDING",
         requiredEvidence,
+        ...(requiredPostcondition === undefined ? {} : { requiredPostcondition }),
       });
     }
     // I-2: an active step cannot silently disappear from the ledger.
@@ -282,14 +292,25 @@ export class TaskGraph {
   }
 
   /** I-3: completion requires the step to have started and to hold fresh
-   * passing evidence for every requirement it declares. */
-  completeStep(id: StepId): StepTransitionResult {
+   * passing evidence for every requirement it declares. W072 I-9: a step that
+   * declares a `requiredPostcondition` must additionally have its claimed
+   * change re-observed (the caller supplies the observation; the kernel reads
+   * no clock and performs no IO). */
+  completeStep(id: StepId, observation?: ChangeObservation): StepTransitionResult {
     const step = this.step(id);
     if (step.state !== "IN_PROGRESS") {
       return { kind: "rejected", code: "ILLEGAL_STEP_TRANSITION", reason: `cannot complete step ${id} from ${step.state}` };
     }
     if (!this.#stepHasEvidence(step)) {
       return { kind: "rejected", code: "STEP_EVIDENCE_REQUIRED", reason: `step ${id} lacks fresh passing evidence for every requirement` };
+    }
+    if (step.requiredPostcondition !== undefined) {
+      const verdict = evaluateStateDiff(step.requiredPostcondition, observation ?? { observed: [] });
+      if (verdict.kind !== "confirmed") {
+        // The evaluator's verdict is surfaced verbatim; the kernel does not
+        // fabricate a pass from an absent/empty/mismatched observation.
+        return { kind: "rejected", code: "STEP_POSTCONDITION_UNMET", reason: verdict.reason };
+      }
     }
     this.#steps.set(id, { ...step, state: "COMPLETED" });
     return { kind: "accepted", step: this.step(id) };

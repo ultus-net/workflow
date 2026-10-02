@@ -19,6 +19,7 @@ import type {
   WorkflowTask,
 } from "../kernel/contracts.js";
 import { TaskGraph, isRunComplete, type StepTransitionResult } from "../kernel/task-graph.js";
+import type { ChangeObservation } from "../kernel/state-diff.js";
 import { mutationGate, verifyingGate, type CheckpointLedger } from "../pedagogy/checkpoints.js";
 import { PolicyFailureTracker } from "./policy-failure-tracker.js";
 import { FileClaimLedger } from "./file-claim-ledger.js";
@@ -357,7 +358,7 @@ export class WorkflowApplication {
   /** Defines/replaces a task's canonical step ledger (I-2 enforced in the kernel). */
   defineTaskSteps(
     taskId: TaskId,
-    proposed: readonly { readonly id?: string; readonly content: string; readonly requiredEvidence?: readonly EvidenceRequirement[] }[],
+    proposed: readonly { readonly id?: string; readonly content: string; readonly requiredEvidence?: readonly EvidenceRequirement[]; readonly requiredPostcondition?: WorkflowStep["requiredPostcondition"] }[],
   ): readonly WorkflowStep[] {
     return this.#graph.defineSteps(taskId, proposed);
   }
@@ -370,8 +371,8 @@ export class WorkflowApplication {
     return this.#graph.startStep(id);
   }
 
-  completeTaskStep(id: StepId): StepTransitionResult {
-    return this.#graph.completeStep(id);
+  completeTaskStep(id: StepId, observation?: ChangeObservation): StepTransitionResult {
+    return this.#graph.completeStep(id, observation);
   }
 
   cancelTaskStep(id: StepId): StepTransitionResult {

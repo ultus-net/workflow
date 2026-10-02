@@ -1189,6 +1189,34 @@ review test forces `REQUEST_CHANGES` from a ledger/diff mismatch. The
 log records the advance. Governed by the existing rubric text (added in the
 prior slice), not by new verdict logic.
 
+**Addendum (2026-10-02, I-9 state-diff completion-gate slice):** the pure
+state-diff contract is now WIRED into step completion as a real deterministic
+gate. `WorkflowStep` gains an optional `requiredPostcondition?: ChangeClaim`
+(additive; absence means no state-diff gate). `TaskGraph.completeStep(id,
+observation?)` runs `evaluateStateDiff` when the step declares a postcondition:
+`confirmed` proceeds; `empty`/`absent`/`mismatch` return a rejected
+`StepTransitionResult` with code `STEP_POSTCONDITION_UNMET` and the evaluator's
+own `reason` surfaced verbatim (the kernel does not fabricate a pass). The
+observation is caller-supplied — the kernel reads no clock and performs no IO.
+`defineSteps` carries the postcondition through when present (absent stays
+absent). `restore` still accepts a persisted COMPLETED postcondition step via
+the existing evidence check and deliberately does NOT re-derive the state diff
+(the observation was checked at completion time and is not persisted; the
+kernel cannot re-observe it). `WorkflowApplication.completeTaskStep(id,
+observation?)` and `defineTaskSteps` thread the optional passthrough. Pinned by
+`test/step-ledger.test.ts` (19/19 focused tests; six new I-9 cases: absent
+rejection, mismatch rejection, confirmed completion, no-postcondition
+regression guard, defineSteps preservation, restore acceptance).
+
+**Still open, and deliberately not stated otherwise:** there is NO production
+caller that supplies an observation and NO v2-compatible fingerprint source, so
+the gate is enforced only when a caller passes one; the ordered
+codes→schema→cross-field→state-diff→tests runner and admission-path wiring are
+unchanged. Therefore **DRIFT-019 stays OPEN** and **DRIFT-024 stays OPEN** (v2
+fingerprint sourcing and the admission path remain the blockers); this slice
+advances both by making the gate executable on the step-completion path but
+does not close either.
+
 
 ## Phase 15: Bounded recursive self-improvement (2026-09-19)
 
