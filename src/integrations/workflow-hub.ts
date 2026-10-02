@@ -16,6 +16,7 @@ import type { SelfImprovementRegistry } from "./self-improvement-registry.js";
 import type { ScheduleRegistry } from "./schedule-registry.js";
 import type { ProjectRegistry } from "./project-registry.js";
 import type { PermissionBroker } from "../ui/permission-broker.js";
+import type { EgressPolicyRevisionStore } from "./egress-policy-revisions.js";
 
 /**
  * The Workflow hub daemon: a long-running loopback authority that any Cline
@@ -163,6 +164,18 @@ export async function createWorkflowHub(
      * never cross-process plumbing.
      */
     permissionBroker?: PermissionBroker;
+    /**
+     * W182 (NVIDIA adoption wave A7): the durable egress policy revision store.
+     * When provided, the hub mounts `/egress/pending` and `/egress/answer`, and
+     * the composition root threads its `recordDenial` into the hub-composed
+     * proxy lanes that carry the sink as `onEgressDenied` (OpenCode, Cline, and
+     * goose's OpenRouter lane), so a credential-gate proxy denial parks a
+     * redacted pending rule. Only the credential gates reach it today: W180's
+     * path/function policy tier (issue #440) fires its own callback, so an
+     * approvable `egress_policy` denial cannot yet flow through. Absent → both
+     * routes 404 (capability withheld, fail closed).
+     */
+    egressApprovals?: EgressPolicyRevisionStore;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -243,6 +256,9 @@ export async function createWorkflowHub(
         ...(runs === undefined ? {} : { registerSurfaceSession: runs.registerSurfaceSession }),
         ...(runs === undefined ? {} : { consumeSurfaceSession: runs.consumeSurfaceSession }),
         ...(options.permissionBroker === undefined ? {} : { permissionBroker: options.permissionBroker }),
+        // W182 (A7): the durable egress policy revision store — the operator
+        // approval surface (routes + the proxy denial sink).
+        ...(options.egressApprovals === undefined ? {} : { egressApprovals: options.egressApprovals }),
       },
     );
     options.observeBridgeStarted?.(bridge.url);

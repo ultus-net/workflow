@@ -166,6 +166,29 @@ interface HubRequestContext {
    * plumbing.
    */
   readonly permissionBroker?: PermissionBroker;
+  /**
+   * W182 (NVIDIA adoption wave A7): the hub-scoped durable egress policy
+   * revision store — the operator-approval surface behind a proxy egress
+   * denial. When composed, the hub serves `/egress/pending` (the redacted
+   * parked proposals + merged revisions + the backing generation) and
+   * `/egress/answer` (an approval merges a durable revision; a deny or a stale
+   * park resolves reject). Absent → both routes 404 (capability withheld, fail
+   * closed). Ordinary-token class, like `/api/permission` and `/run/begin`:
+   * same-process loopback authority, no kernel state moves through it.
+   */
+  readonly egressApprovals?: EgressApprovals;
+}
+
+/**
+ * W182: the slice of the durable revision store the hub routes consume. Typed
+ * structurally so hub-http does not import the store module (the bridge's
+ * capability-extension discipline: a field, never a positional).
+ */
+export interface EgressApprovals {
+  readonly generation: string;
+  pending(): readonly import("./egress-policy-revisions.js").PendingEgressRule[];
+  revisions(): readonly import("./egress-policy-revisions.js").EgressPolicyRevision[];
+  answer(requestId: string, decision: "allow" | "deny"): import("./egress-policy-revisions.js").EgressAnswerResult;
 }
 
 export interface HubBridgeCapabilities {
@@ -195,6 +218,8 @@ export interface HubBridgeCapabilities {
   /** P6 (issue #285): the same-process broker (see HubRequestContext) — a FIELD
    * on the capabilities object, never a positional. */
   readonly permissionBroker?: PermissionBroker;
+  /** W182 (A7): the durable egress policy revision store (see HubRequestContext). */
+  readonly egressApprovals?: EgressApprovals;
 }
 
 /**
@@ -284,6 +309,43 @@ async function handleRequest(
       if (context.permissionBroker === undefined) return send(response, 404, { error: "not found" });
       const result = permissionAnswerRoute(context.permissionBroker, body);
       return send(response, result.status, result.body);
+    }
+    if (request.url === "/egress/pending") {
+      // W182 (A7): the operator surface for pending egress approvals. Reads the
+      // redacted parked proposals (no secret, placeholder, or query string),
+      // the merged durable revisions, and the backing session/sandbox
+      // generation. Ordinary-token class. Absent store → 404, fail closed.
+      if (context.egressApprovals === undefined) return send(response, 404, { error: "not found" });
+      return send(response, 200, {
+        generation: context.egressApprovals.generation,
+        pending: context.egressApprovals.pending(),
+        revisions: context.egressApprovals.revisions(),
+      });
+    }
+    if (request.url === "/egress/answer") {
+      // W182 (A7): record the operator's decision for a parked egress rule. An
+      // `allow` re-checks current policy + providers at merge time and merges a
+      // durable revision; a `deny` (or a stale/invalidated park) resolves the
+      // hold reject, fail closed. Malformed input is a 400; an unknown/stale id
+      // is a 404. The result names the status
+      // (`merged`/`invalidated`/`denied`/`unknown`) so the surface never implies
+      // a merge that did not happen.
+      if (context.egressApprovals === undefined) return send(response, 404, { error: "not found" });
+      if (
+        !isRecord(body) ||
+        typeof body.requestId !== "string" ||
+        body.requestId.length === 0 ||
+        !(body.decision === "allow" || body.decision === "deny")
+      ) {
+        return send(response, 400, { error: "invalid egress answer request: requestId and allow|deny are required" });
+      }
+      const result = context.egressApprovals.answer(body.requestId, body.decision);
+      if (result.status === "unknown") return send(response, 404, { error: "unknown or stale egress approval request" });
+      // A custody refusal is visible but not approvable: answer 409 (the
+      // structured refusal, like /api/permission's not-approvable) so no
+      // surface can imply a merge that did not happen.
+      if (result.status === "not-approvable") return send(response, 409, result);
+      return send(response, 200, result);
     }
     if (request.url === "/evidence-content") {
       // W158: the bounded content behind an evidence record's reference — the
