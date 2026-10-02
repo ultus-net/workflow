@@ -132,7 +132,8 @@ inventory and the full bypass note are in
 2. **The placeholder is a value discipline, not an identity proof.** The check
    matches a shared constant; it does not cryptographically prove the
    credential was hub-provisioned. A process able to present that constant
-   passes.
+   passes. (Narrowed for endpoint-bound credentials by W179 — the dated note
+   below; the value discipline itself is unchanged.)
 3. **Payloads are not inspected.** The proxy meters volume and usage; it does
    not read or filter request/response content. Token binding prevents key
    substitution, not content exfiltration under the hub token — the C3
@@ -149,6 +150,27 @@ inventory and the full bypass note are in
    (`WORKFLOW_OPEN_MODEL_LIVE=1` plus a vendor key) exercises the same
    placeholder discipline but was not run here because no vendor key was
    available.
+
+**Dated narrowing (W179, 2026-10-02).** The second credential gate
+(`checkCredentialEndpoint`, `src/integrations/egress-credential.ts`) narrows
+residual 4 **for proxy-passed traffic whose credential carries an
+`allowedEndpoints` binding**: the proxy refuses to inject the real key when the
+request's (host, port, path) falls outside every bound endpoint, answering a
+`credential_endpoint_mismatch` 403 that logs neither the secret, the
+placeholder, nor the query string. This is a stated narrowing, not an erase:
+a credential with no binding keeps the function-broad grant, residual 1
+(direct egress bypasses every proxy) is unaffected, and residual 2 (value
+discipline, not identity proof) is untouched — gate 2 scopes *where* a
+credential may be used, it does not prove *who* presented the placeholder. See
+`docs/EGRESS_CAPABILITY_AUDIT.md` §3a for the full statement.
+
+**Activation status (honest).** The gate is mechanism-complete and tested, but
+as of 2026-10-02 no production launcher supplies a binding to the proxy: the
+injected key comes from `src/integrations/upstream-key.ts`, not from
+`CredentialDefinition` custody. The narrowing above therefore applies only
+where `credentialEndpoints` is explicitly supplied, and the residual risk
+statement is scoped accordingly, not erased, until a composition site lands
+(follow-up on issue #439). No `advisory`/`enforced` status changes here.
 
 ## 2026-09-19 — W073 self-improvement loop and W074 scheduled-task manager
 

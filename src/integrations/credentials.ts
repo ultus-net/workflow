@@ -5,6 +5,26 @@ export interface SecretStore {
   delete(id: string): Promise<void>;
 }
 
+/**
+ * W179 (NVIDIA adoption wave A2): a destination a credential binding may
+ * cover. The proxy's second gate (`checkCredentialEndpoint`) refuses to inject
+ * the real key when the request's (host, port, path) falls outside every
+ * binding. Value-free by construction: only the destination, never secret
+ * material, so credential metadata JSON stays safe to persist and display.
+ */
+export interface CredentialEndpoint {
+  /** Host to match exactly (case-insensitive). No wildcards. */
+  readonly host: string;
+  /** Port to match exactly. Absent matches any port. */
+  readonly port?: number;
+  /**
+   * Path prefix the request path must fall under, matched on a segment
+   * boundary (`/v1` matches `/v1` and `/v1/messages`, never `/v1beta`). Absent
+   * matches any path. The query string is never part of a match.
+   */
+  readonly pathPrefix?: string;
+}
+
 export type CredentialDefinition = {
   id: string;
   label: string;
@@ -12,6 +32,13 @@ export type CredentialDefinition = {
   allowedConsumers: readonly string[];
   allowedPurposes: readonly string[];
   workspace?: string;
+  /**
+   * W179: optional endpoint scoping for the credential binding. Absent keeps
+   * today's behavior exactly (the second gate is not applied); present narrows
+   * which destinations the proxy will inject the key toward. Both credential
+   * gates must pass; each alone grants nothing.
+   */
+  allowedEndpoints?: readonly CredentialEndpoint[];
 };
 
 export type CredentialMetadata = CredentialDefinition & {
@@ -213,6 +240,28 @@ export function validateCredentialDefinition(definition: CredentialDefinition): 
   if (definition.label.trim().length === 0) throw new TypeError("credential label required");
   if (definition.allowedConsumers.length === 0) throw new TypeError("credential consumer required");
   if (definition.allowedPurposes.length === 0) throw new TypeError("credential purpose required");
+  if (definition.allowedEndpoints !== undefined) {
+    for (const endpoint of definition.allowedEndpoints) validateCredentialEndpoint(endpoint);
+  }
+}
+
+/**
+ * W179: fail-closed validation for an endpoint binding. Mirrors the
+ * value-free discipline: only destination facts are checked, and a malformed
+ * binding is rejected at definition time rather than silently widening (or
+ * narrowing) the credential's reach at request time.
+ */
+export function validateCredentialEndpoint(endpoint: CredentialEndpoint): void {
+  if (typeof endpoint.host !== "string" || endpoint.host.trim().length === 0) {
+    throw new TypeError("credential endpoint host required");
+  }
+  if (/[/\s:@]/.test(endpoint.host)) throw new TypeError("invalid credential endpoint host");
+  if (endpoint.port !== undefined && (!Number.isInteger(endpoint.port) || endpoint.port < 1 || endpoint.port > 65_535)) {
+    throw new TypeError("invalid credential endpoint port");
+  }
+  if (endpoint.pathPrefix !== undefined && !endpoint.pathPrefix.startsWith("/")) {
+    throw new TypeError("credential endpoint pathPrefix must start with /");
+  }
 }
 
 function parseSecretReference(reference: string): string | undefined {

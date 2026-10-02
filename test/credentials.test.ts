@@ -72,6 +72,24 @@ test("credential metadata never exposes stored secret material", async () => {
   assert.equal(JSON.stringify(metadata).includes("ghp_super_secret"), false);
 });
 
+test("credential metadata with endpoint bindings stays value-free (W179)", async () => {
+  const store = new InMemorySecretStore();
+  await store.put("openrouter-key", "sk-super-secret-value");
+  const bound: CredentialDefinition = {
+    ...githubCredential,
+    id: "openrouter-key",
+    label: "OpenRouter",
+    allowedEndpoints: [{ host: "api.openrouter.ai", port: 443, pathPrefix: "/api/v1" }],
+  };
+  const broker = createCredentialBroker(store, [bound]);
+
+  const metadata = await broker.list();
+  assert.deepEqual(metadata, [{ ...bound, configured: true }]);
+  const serialized = JSON.stringify(metadata);
+  assert.equal(serialized.includes("sk-super-secret-value"), false, "metadata JSON must never carry secret material");
+  assert.equal(serialized.includes("api.openrouter.ai"), true, "endpoint facts are value-free and expected to persist");
+});
+
 test("credential broker fails closed when a referenced secret is absent or reference is invalid", async () => {
   const broker = createCredentialBroker(new InMemorySecretStore(), [githubCredential]);
   const request = {
