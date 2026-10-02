@@ -11,12 +11,28 @@ import {
   type AliasResolver,
   type AutoLatestAffinityOptions,
 } from "./openrouter-auto-latest.js";
-import { checkEgressCredential, METERED_PLACEHOLDER_KEY } from "./egress-credential.js";
+import { checkEgressCredential, checkCredentialEndpoint, METERED_PLACEHOLDER_KEY } from "./egress-credential.js";
+import type { CredentialEndpoint } from "./credentials.js";
 import { enforceReplayPolicy } from "./model-replay-policy.js";
 import { enforceMessagesReplayIntegrity, unparseableMessagesBodyRejection } from "./messages-replay-integrity.js";
 import { budgetDowngradeActive, type BudgetDowngradeRuntime } from "./session-budget.js";
 
 export { METERED_PLACEHOLDER_KEY };
+
+/**
+ * W179: the value-free refusal event for the second credential gate. Only
+ * destination facts travel — the request host/port/pathname and the policy
+ * family. Deliberately carries NO header value, NO placeholder, and NO query
+ * string, so any consumer (log, ledger) that prints this event cannot leak
+ * secret or request content.
+ */
+export interface CredentialEndpointRejection {
+  readonly policy: "credential_endpoint_mismatch";
+  readonly host: string;
+  readonly port: number | undefined;
+  /** Pathname only; the query string is never captured. */
+  readonly pathname: string;
+}
 
 /**
  * P9 A′: the messages-lane model-label journal bound. The journal is
@@ -388,6 +404,23 @@ export async function createModelUsageProxy(options: {
    * forwarding. Absent leaves traffic untouched.
    */
   readonly autoLatest?: AutoLatestProxyOptions | undefined;
+  /**
+   * W179 (NVIDIA adoption wave A2): the endpoint binding for the injected
+   * credential — the SECOND gate. When present, the proxy refuses to inject
+   * the real key unless the request's (host, port, path) is covered by one of
+   * these endpoints, answering a `credential_endpoint_mismatch` 403 that logs
+   * neither secret, nor placeholder, nor query string. Absent leaves today's
+   * behavior byte-identical (gate 2 inactive); this option is the composition
+   * point where the credential definition's `allowedEndpoints` is threaded in.
+   */
+  readonly credentialEndpoints?: readonly CredentialEndpoint[] | undefined;
+  /**
+   * W179: observability sink for a gate-2 refusal. Receives only value-free
+   * destination facts (policy family, host, port, pathname, endpoint index) —
+   * never the secret, the placeholder, or the query string. Absent means the
+   * refusal is answered but not logged; the proxy itself writes no log line.
+   */
+  readonly onCredentialEndpointRejected?: ((event: CredentialEndpointRejection) => void) | undefined;
 }): Promise<ModelUsageProxy> {
   if (typeof options.apiKey !== "string" || options.apiKey.trim().length === 0) {
     throw new TypeError("model usage proxy requires a non-empty upstream API key");
@@ -714,10 +747,53 @@ export async function createModelUsageProxy(options: {
       res.end(JSON.stringify({ error: "model usage proxy only forwards origin-form request targets" }));
       return;
     }
-    // W181 (A5): observe the forwarded reach. The destination is the validated
-    // upstream hostname (bare, no path/query/port); the function class is
-    // path-derived; the token class is the one the credential gate decided. No
-    // credential value, placeholder, or query string is ever included.
+    // W179 (NVIDIA adoption wave A2): the SECOND credential gate, at the
+    // header-injection point. Gate 1 (above) proved the request carried no
+    // foreign credential; this gate proves the credential BINDING covers the
+    // destination before the real key is injected. Both must pass — a valid
+    // placeholder with an out-of-binding destination is refused here. The
+    // decision reads only `target.pathname`, `target.hostname`, and the
+    // resolved port; the query string and request headers never enter it, and
+    // the refusal body/event carry neither secret nor placeholder nor query.
+    if (options.credentialEndpoints !== undefined) {
+      const port = target.port === "" ? (target.protocol === "https:" ? 443 : 80) : Number(target.port);
+      const endpointDecision = checkCredentialEndpoint(
+        { host: target.hostname, port, path: target.pathname },
+        options.credentialEndpoints,
+      );
+      if (!endpointDecision.allowed) {
+        const rejection: CredentialEndpointRejection = {
+          policy: "credential_endpoint_mismatch",
+          host: target.hostname,
+          port,
+          pathname: target.pathname,
+        };
+        // W181 (A5): observe the gate-2 refusal too, so the ledger sees every
+        // proxy-boundary rejection. Value-free: destination, a path-derived
+        // function class, the policy family, and the credential header NAME
+        // only (here undefined) — never a secret, placeholder, or query.
+        emitEgressObservation({
+          kind: "reject",
+          destination: target.hostname,
+          functionClass: classifyEgressFunctionClass(req.method, req.url),
+          tokenClass: credential.kind === "session-placeholder" ? "session-placeholder" : "absent",
+          anomalyContext: { policy: rejection.policy, credentialHeader: undefined },
+        });
+        options.onCredentialEndpointRejected?.(rejection);
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({
+          error: "model usage proxy refused to inject the credential: request destination is outside the credential endpoint binding",
+          policy: rejection.policy,
+        }));
+        return;
+      }
+    }
+    // W181 (A5): observe the forwarded reach AFTER every gate has passed, so a
+    // request refused by gate 2 is never miscounted as a reach. The destination
+    // is the validated upstream hostname (bare, no path/query/port); the
+    // function class is path-derived; the token class is the one the credential
+    // gate decided. No credential value, placeholder, or query string is ever
+    // included.
     emitEgressObservation({
       kind: "reach",
       destination: target.hostname,

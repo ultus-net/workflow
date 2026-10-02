@@ -122,6 +122,9 @@ from fingerprinted provenance, never from stale approvals
   `docs/HUB_PROTOCOL.md`; adapter matrix and probe verdicts
   `docs/HOST_ADAPTERS.md`; honest feature status `docs/FEATURES.md`;
   goose's full ACP implementation map `docs/GOOSE_ACP_IMPLEMENTATION.md`
+- NVIDIA substrate adoption: `docs/NVIDIA_ADOPTION_PLAN.md` (OpenShell/NemoClaw
+  research → TypeScript adoption waves, 2026-10-02; filed as issues W178–W183
+  with deferred items parked as P20–P24)
 - Cline connector: the thin stock-ACP connector
   (`src/integrations/cline-launch.ts` resolves the ambient `cline --acp`; the
   `cline` driver/agent kind composes the generic ACP runtime). The vendored

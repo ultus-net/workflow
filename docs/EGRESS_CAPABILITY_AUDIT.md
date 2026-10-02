@@ -70,6 +70,61 @@ tests (`test/egress-credential.test.ts`, plus the proxy-boundary cases in
 `test/model-usage-proxy.test.ts`); no live vendor keys were required because
 the check is on the proxy's own request surface.
 
+### 3a. Second credential gate — endpoint scoping (W179, 2026-10-02)
+
+`checkEgressCredential` is gate 1 (token provenance). W179 adds gate 2,
+`checkCredentialEndpoint` (`src/integrations/egress-credential.ts`): given a
+request target `(host, port, path)` and a credential's optional
+`allowedEndpoints` binding (`CredentialDefinition`,
+`src/integrations/credentials.ts`), it decides whether the binding covers the
+destination. The metering proxy applies it at the point where the real key is
+injected (`model-usage-proxy.ts`): when a binding is present and the request
+falls outside every endpoint, the proxy refuses to inject and answers a `403`
+with policy family `credential_endpoint_mismatch`. **Both gates must pass;
+each alone grants nothing** — a valid placeholder toward an out-of-binding
+destination is still refused, and a foreign credential toward an in-binding
+destination is still refused by gate 1.
+
+The refusal body and the value-free rejection event
+(`onCredentialEndpointRejected`) carry neither the secret, the placeholder, nor
+the query string — only the policy family and the destination facts (host,
+port, pathname). Coverage is host-exact (case-insensitive), port-exact when
+specified (absent on either side matches any port), and path-prefix matched on
+a segment boundary; the query string never participates. An ABSENT binding
+preserves today's behavior exactly (gate 2 inactive); an empty binding matches
+nothing (fail closed).
+
+**Narrowing, stated precisely:** for proxy-passed traffic whose credential
+carries an endpoint binding, the function-broad grant of §2 is narrowed to the
+bound destination set. This is **not** an erase of the residual: a credential
+without a binding keeps the function-broad grant, and the §5 bypass (an agent
+that reaches a host directly, outside any proxy) is unaffected. The
+placeholder-value residual in §6.2 is also narrowed for endpoint-bound
+credentials — presenting the constant is no longer sufficient to obtain
+injection, because the destination must additionally fall inside the binding.
+It is still not an identity proof: gate 2 scopes *where* a credential may be
+used, it does not prove *who* presented the placeholder, and an unbound
+credential keeps the old grant.
+
+This is verified by loopback tests in `test/egress-credential.test.ts`
+(the pure decision) and `test/model-usage-proxy.test.ts` (the proxy boundary,
+including a log-hygiene pin).
+
+**Production activation status (honest).** The gate-2 mechanism and its pure
+decision are landed and tested, but as of 2026-10-02 **no production launcher
+supplies a credential binding to the proxy**. The keys the proxy injects are
+loaded from `src/integrations/upstream-key.ts` (`WORKFLOW_UPSTREAM_KEY` /
+`~/.config/workflow/upstream-key`), a custody path separate from
+`CredentialDefinition.allowedEndpoints`, which is loaded only by the
+admin/hub credential surfaces (and used there for the guard's stdio-env
+broker, not the proxy). The endpoint binding is therefore **inert in
+production until a composition site threads it into the proxy**: the
+mechanism is real and enforced wherever `credentialEndpoints` is supplied
+(tests, or a future caller), but the residual risk narrowing above is
+**scoped to that supplied case and not yet a live enforcement claim**. Wiring
+a production binding source is tracked as a follow-up on issue #439; until it
+lands, this item changes no surface's `advisory`/`enforced` status.
+
 ## 4. Destination and function inventory
 
 Every external destination referenced by agent-facing code, and the functions

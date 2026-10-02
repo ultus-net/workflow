@@ -470,6 +470,157 @@ test("model usage proxy still forwards the session placeholder and absent creden
   }
 });
 
+// ---- W179 (NVIDIA adoption wave A2): the SECOND credential gate. Gate 1
+// (checkEgressCredential) validates the request's own credential; gate 2
+// (checkCredentialEndpoint) validates that the credential binding covers the
+// destination. Both must pass; each alone grants nothing.
+test("model usage proxy refuses an out-of-binding destination even with the session placeholder (gate 2, W179)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const rejections: unknown[] = [];
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    credentialEndpoints: [{ host: "127.0.0.1", pathPrefix: "/api/v1/allowlisted-only" }],
+    onCredentialEndpointRejected: (event) => rejections.push(event),
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/models`, { headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` } });
+    assert.equal(response.status, 403);
+    const body = (await response.json()) as { policy?: string; error?: string };
+    assert.equal(body.policy, "credential_endpoint_mismatch");
+    assert.equal(upstream.seen.length, 0, "an out-of-binding destination must never reach the upstream");
+    // The refusal event carries only value-free destination facts.
+    assert.deepEqual(rejections[0], { policy: "credential_endpoint_mismatch", host: "127.0.0.1", port: Number(new URL(upstream.url).port), pathname: "/api/v1/models" });
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("model usage proxy gate 1 alone grants nothing: a foreign credential is refused even when the endpoint binding covers it (W179)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    credentialEndpoints: [{ host: "127.0.0.1", pathPrefix: "/api/v1" }],
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/models`, { headers: { authorization: "Bearer sk-attacker-controlled" } });
+    assert.equal(response.status, 403);
+    const body = (await response.json()) as { policy?: string };
+    // Gate 1 fires first and labels the refusal under its own policy family.
+    assert.equal(body.policy, "egress-credential");
+    assert.equal(upstream.seen.length, 0);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("model usage proxy injects when both gates pass, and gate 2 refuses a disallowed port (W179)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const port = Number(new URL(upstream.url).port);
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    credentialEndpoints: [{ host: "127.0.0.1", port, pathPrefix: "/api/v1" }],
+  });
+  try {
+    const allowed = await fetch(`${proxy.url}/api/v1/models`, { headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` } });
+    assert.equal(allowed.status, 200);
+    assert.equal(upstream.seen[0]?.authorization, "Bearer REAL_KEY");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+
+  const portBound = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const mismatched = await createModelUsageProxy({
+    upstream: portBound.url,
+    apiKey: "REAL_KEY",
+    // A port that cannot match the loopback test server's ephemeral port.
+    credentialEndpoints: [{ host: "127.0.0.1", port: 1, pathPrefix: "/api/v1" }],
+  });
+  try {
+    const response = await fetch(`${mismatched.url}/api/v1/models`, { headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` } });
+    assert.equal(response.status, 403);
+    assert.equal(((await response.json()) as { policy?: string }).policy, "credential_endpoint_mismatch");
+    assert.equal(portBound.seen.length, 0);
+  } finally {
+    await mismatched.close();
+    await portBound.close();
+  }
+});
+
+test("model usage proxy gate-2 refusal log-hygiene: neither secret, placeholder, nor query string leaks (W179)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const events: unknown[] = [];
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_SECRET_KEY",
+    credentialEndpoints: [{ host: "127.0.0.1", pathPrefix: "/api/v1/allowed-only" }],
+    onCredentialEndpointRejected: (event) => events.push(event),
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/models?api_key=QUERY_SECRET_VALUE&token=leak`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 403);
+    const text = await response.text();
+    // Response body hygiene: no secret, no placeholder, no query string.
+    assert.equal(text.includes("REAL_SECRET_KEY"), false, "response must not leak the upstream secret");
+    assert.equal(text.includes(METERED_PLACEHOLDER_KEY), false, "response must not leak the placeholder");
+    assert.equal(text.includes("QUERY_SECRET_VALUE"), false, "response must not leak the query string");
+    assert.equal(text.includes("api_key="), false, "response must not include the raw query");
+    // Captured log-event hygiene: the value-free position is enforced here too.
+    const serialized = JSON.stringify(events);
+    assert.equal(serialized.includes("REAL_SECRET_KEY"), false, "log event must not leak the upstream secret");
+    assert.equal(serialized.includes(METERED_PLACEHOLDER_KEY), false, "log event must not leak the placeholder");
+    assert.equal(serialized.includes("QUERY_SECRET_VALUE"), false, "log event must not leak the query string");
+    assert.equal(serialized.includes("api_key="), false, "log event must not include the raw query");
+    assert.deepEqual(events[0], { policy: "credential_endpoint_mismatch", host: "127.0.0.1", port: Number(new URL(upstream.url).port), pathname: "/api/v1/models" });
+    assert.equal(upstream.seen.length, 0);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("model usage proxy with no credential binding preserves today's behavior (gate 2 inactive, W179)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    // A path a binding would have refused is forwarded unchanged with no binding set.
+    const response = await fetch(`${proxy.url}/api/v1/anything`, { headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` } });
+    assert.equal(response.status, 200);
+    assert.equal(upstream.seen.length, 1);
+    assert.equal(upstream.seen[0]?.authorization, "Bearer REAL_KEY");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
 // ---- W109 (W095 c2): the transformBody seam shaped for policy routing —
 // the composition helper lets a second consumer (the budget-downgrade
 // rewrite the W095 design note names) attach in order, with the SAME
@@ -1258,6 +1409,35 @@ test("W181 A5: the observation journal is bounded and the callback cannot change
       assert.equal(response.status, 200, "a throwing observer must not affect the response");
     }
     assert.equal(proxy.egressObservations().length, 128, "the observation journal is bounded at 128 entries");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W181 A5: a gate-2 refusal is observed as a reject, never a reach (W179 integration)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const observations: EgressObservation[] = [];
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    credentialEndpoints: [{ host: "127.0.0.1", pathPrefix: "/api/v1/allowed-only" }],
+    onEgressObservation: (observation) => observations.push(observation),
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/models`, { headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` } });
+    assert.equal(response.status, 403);
+    assert.equal(upstream.seen.length, 0, "the refused request never reaches the upstream");
+    assert.deepEqual(observations, [{
+      kind: "reject",
+      destination: "127.0.0.1",
+      functionClass: "models-list",
+      tokenClass: "session-placeholder",
+      anomalyContext: { policy: "credential_endpoint_mismatch", credentialHeader: undefined },
+    }], "a gate-2 refusal emits a reject observation and no reach");
   } finally {
     await proxy.close();
     await upstream.close();

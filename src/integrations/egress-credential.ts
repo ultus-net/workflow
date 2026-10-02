@@ -16,6 +16,8 @@
  * No IO, no clock, no SDK imports: the proxy and its tests share one decision.
  */
 
+import type { CredentialEndpoint } from "./credentials.js";
+
 /** Placeholder credential agents receive; the proxy ignores it upstream. */
 export const METERED_PLACEHOLDER_KEY = "workflow-metered";
 
@@ -74,4 +76,77 @@ export function checkEgressCredential(
     return { allowed: false, kind: "foreign", header: name };
   }
   return sawPlaceholder ? { allowed: true, kind: "session-placeholder" } : { allowed: true, kind: "absent" };
+}
+
+/**
+ * W179 (NVIDIA adoption wave A2): the SECOND credential gate — endpoint
+ * coverage. Gate 1 (`checkEgressCredential`) decides whether the request's own
+ * credential is the hub-provisioned placeholder; this gate decides whether the
+ * credential *binding* covers the destination the request is headed to. Both
+ * must pass before the proxy injects the real key: a request may present a
+ * perfectly valid placeholder and still be refused because its (host, port,
+ * path) falls outside every `allowedEndpoints` entry. Each gate alone grants
+ * nothing.
+ *
+ * The request target is captured as value-free facts only — no header, no
+ * query string — so a refusal built from this decision cannot leak secret or
+ * request content (OpenShell's logging discipline). Pure: no IO, no clock, no
+ * SDK imports; the proxy and its tests share this one decision.
+ */
+export interface CredentialEndpointRequest {
+  readonly host: string;
+  readonly port?: number;
+  readonly path?: string;
+}
+
+export interface CredentialEndpointDecision {
+  /** True when the binding grants nothing and the proxy MUST refuse injection. */
+  readonly allowed: boolean;
+  /**
+   * Index of the covering endpoint in `allowedEndpoints`, or `undefined` when
+   * no endpoint covers the request. An ABSENT binding is represented by
+   * `bindingPresent: false` and always decides `allowed: true` (today's
+   * behavior preserved).
+   */
+  readonly endpointIndex?: number;
+  /** False when the credential carried no endpoint binding (gate 2 inactive). */
+  readonly bindingPresent: boolean;
+}
+
+/**
+ * Decides whether a credential's optional endpoint binding covers a request
+ * target. `allowedEndpoints` absent (or `undefined`) preserves today's
+ * behavior exactly: gate 2 is inactive and the request is allowed without
+ * narrowing. An empty array is a present-but-empty binding and matches
+ * nothing — fail closed. Host matches case-insensitively and exactly; an
+ * absent `port` on either side matches any port; `pathPrefix` matches on a
+ * segment boundary and never reads the query string.
+ */
+export function checkCredentialEndpoint(
+  request: CredentialEndpointRequest,
+  allowedEndpoints: readonly CredentialEndpoint[] | undefined,
+): CredentialEndpointDecision {
+  if (allowedEndpoints === undefined) return { allowed: true, bindingPresent: false };
+  const host = request.host.toLowerCase();
+  const port = request.port;
+  const path = request.path ?? "/";
+  for (const [index, endpoint] of allowedEndpoints.entries()) {
+    if (endpoint.host.toLowerCase() !== host) continue;
+    if (endpoint.port !== undefined && endpoint.port !== port) continue;
+    if (endpoint.pathPrefix !== undefined && !pathMatchesPrefix(path, endpoint.pathPrefix)) continue;
+    return { allowed: true, bindingPresent: true, endpointIndex: index };
+  }
+  return { allowed: false, bindingPresent: true };
+}
+
+/**
+ * Segment-boundary prefix match: `/v1` covers `/v1` and `/v1/messages` but not
+ * `/v1beta`. The comparison is made against the PATH ONLY (the caller passes a
+ * pathname, never a request-target with a query), so a query string can never
+ * influence coverage.
+ */
+function pathMatchesPrefix(path: string, prefix: string): boolean {
+  if (prefix === "/") return true;
+  if (path === prefix) return true;
+  return path.startsWith(`${prefix}/`);
 }
