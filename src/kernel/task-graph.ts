@@ -33,7 +33,7 @@ const LEGAL_TRANSITIONS: Readonly<Record<TaskState, readonly TaskState[]>> = {
  * owner must match. No new actor vocabulary is invented inside the kernel;
  * a caller whose actor is outside this closed set can never name an owner.
  */
-const ACTOR_VOCABULARY = ["operator", "agent", "system", "scheduler"] as const satisfies readonly TransitionAttribution["actor"][];
+export const ACTOR_VOCABULARY = ["operator", "agent", "system", "scheduler"] as const satisfies readonly TransitionAttribution["actor"][];
 
 /**
  * W166 P3: compile-time drift pin, both directions — the vocabulary cannot

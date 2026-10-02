@@ -316,6 +316,74 @@ test("stale writer is rejected by optimistic version check", async (context) => 
   await assert.rejects(() => store.save(stale.application, stale.version), WorkflowVersionConflict);
 });
 
+test("W072 I-10: the application history preserves transition attribution verbatim across restart", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new JsonWorkflowStore(join(directory, "state.json"));
+  const application = new WorkflowApplication(new TaskGraph([
+    { id: taskId("A"), title: "Attributed", state: "BLOCKED", dependencies: [], requiredEvidence: [] },
+  ]), host);
+  await store.create(application);
+  // W157: the caller supplies the attribution; the kernel fabricates none.
+  application.transition(taskId("A"), "IN_PROGRESS", {
+    actor: "operator",
+    authority: "interactive approval",
+    observedAt: "2026-10-02T00:00:00.000Z",
+  });
+  // An unattributed transition stays legal and carries no fabricated block.
+  application.transition(taskId("A"), "FAILED");
+  await store.save(application, 0);
+
+  const live = application.snapshot().history;
+  assert.deepEqual(live[0]?.attribution, {
+    actor: "operator",
+    authority: "interactive approval",
+    observedAt: "2026-10-02T00:00:00.000Z",
+  }, "the live snapshot history carries the caller attribution, not a stripped {taskId,from,to}");
+  assert.equal("attribution" in (live[1] ?? {}), false, "absence stays legal — the unattributed state is a contract citizen");
+
+  const restored = await store.load(host);
+  assert.deepEqual(restored.application.snapshot().history[0]?.attribution, {
+    actor: "operator",
+    authority: "interactive approval",
+    observedAt: "2026-10-02T00:00:00.000Z",
+  }, "replay preserves attribution (I-10: identity survives restart)");
+});
+
+test("persisted history rejects a malformed transition attribution", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "state.json");
+  const store = new JsonWorkflowStore(path);
+  const task = { id: "A", title: "Attributed", state: "IN_PROGRESS", dependencies: [], requiredEvidence: [] };
+  const base = { taskId: "A", from: "READY", to: "IN_PROGRESS" };
+
+  for (const attribution of [
+    { actor: "impostor", authority: "x", observedAt: "2026-10-02T00:00:00.000Z" },
+    { actor: "operator", authority: "", observedAt: "2026-10-02T00:00:00.000Z" },
+    { actor: "operator", authority: "x", observedAt: "not-a-date" },
+    { actor: "operator", authority: "x" },
+  ]) {
+    await writeFile(path, JSON.stringify({ version: 0, state: {
+      mutationEpoch: 0,
+      tasks: [task],
+      evidence: [],
+      history: [{ ...base, attribution }],
+    } }));
+    await assert.rejects(() => store.load(host), /invalid persisted workflow/, `malformed attribution must be rejected: ${JSON.stringify(attribution)}`);
+  }
+
+  // A well-formed attribution is accepted (the positive control).
+  await writeFile(path, JSON.stringify({ version: 0, state: {
+    mutationEpoch: 0,
+    tasks: [task],
+    evidence: [],
+    history: [{ ...base, attribution: { actor: "operator", authority: "interactive approval", observedAt: "2026-10-02T00:00:00.000Z" } }],
+  } }));
+  const restored = await store.load(host);
+  assert.equal(restored.application.snapshot().history[0]?.attribution?.actor, "operator");
+});
+
 test("concurrent writers cannot both commit the same version", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "workflow-test-"));
   context.after(() => rm(directory, { recursive: true, force: true }));

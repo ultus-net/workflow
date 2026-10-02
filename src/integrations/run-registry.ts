@@ -511,9 +511,11 @@ export function createRunRegistry(
         /**
          * W152: each run's own kernel transition log (its application's
          * `#history`), bounded to the most recent 64 runs in begin order — the
-         * same bounded-observability rule as the gate maps. The kernel records
-         * no actor or authority on transitions; the timeline renders those
-         * rows unattributed (W157 is the record change that would add it).
+         * same bounded-observability rule as the gate maps. W157 records a
+         * caller-supplied `attribution` (actor/authority/observedAt) on the
+         * transition, so attributed rows name their actor; a record whose
+         * caller did not know its actor renders the explicit unattributed
+         * state.
          */
         transitionLogs: (() => {
           const bounded = [...runs.entries()].slice(-64);
