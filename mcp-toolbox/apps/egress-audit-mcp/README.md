@@ -63,9 +63,9 @@ flag, so the set is not closed).
   the network; it only records reaches reported to it. Callers may feed it
   explicitly via `append_egress_reach`, or automatically through the Workflow
   bridge (`src/integrations/egress-audit-client.ts`, W181/A5), which maps the
-  metering proxy's `reach` observations onto appends. The automatic feed is
-  opt-in (`WORKFLOW_EGRESS_AUDIT_FEED=1`) and currently covers the OpenCode
-  runtime lane; reject auto-feed and the Cline/goose lanes remain follow-ups in
+  metering proxy's `reach` **and** `reject` observations onto appends. The
+  automatic feed is opt-in (`WORKFLOW_EGRESS_AUDIT_FEED=1`) and currently covers
+  the OpenCode runtime lane; the Cline/goose lanes remain follow-ups in
   `docs/EGRESS_CAPABILITY_AUDIT.md` §7.
 - **The store assumes a private data directory** (`0700` dir, `0600` file,
   atomic rename). A local user with write access can append or replace bytes;
