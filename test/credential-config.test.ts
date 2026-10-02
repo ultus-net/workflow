@@ -44,3 +44,36 @@ test("credential metadata fails closed on malformed persisted policy", () => {
   const malformed = [{ id: "github-pat", label: "GitHub", kind: "api-key" as const, allowedConsumers: [], allowedPurposes: [] }];
   assert.throws(() => saveCredentialDefinitions(malformed, path), /credential consumer required/);
 });
+
+test("credential endpoint bindings round-trip without persisting secret values (W179)", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "workflow-credentials-")), "credentials.json");
+  const definitions = [{
+    id: "openrouter-key", label: "OpenRouter", kind: "api-key" as const,
+    allowedConsumers: ["mcp:openrouter"], allowedPurposes: ["stdio-env:OPENROUTER_API_KEY"],
+    allowedEndpoints: [{ host: "api.openrouter.ai", port: 443, pathPrefix: "/api/v1" }],
+  }];
+  saveCredentialDefinitions(definitions, path);
+
+  assert.deepEqual(loadCredentialDefinitions(path), definitions);
+  assert.equal(readFileSync(path, "utf8").includes("sk-secret"), false);
+});
+
+test("malformed endpoint bindings fail closed at persistence time (W179)", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "workflow-credentials-")), "credentials.json");
+  const base = {
+    id: "openrouter-key", label: "OpenRouter", kind: "api-key" as const,
+    allowedConsumers: ["mcp:openrouter"], allowedPurposes: ["stdio-env:OPENROUTER_API_KEY"],
+  };
+  assert.throws(
+    () => saveCredentialDefinitions([{ ...base, allowedEndpoints: [{ host: "" }] }], path),
+    /credential endpoint host required/,
+  );
+  assert.throws(
+    () => saveCredentialDefinitions([{ ...base, allowedEndpoints: [{ host: "api.openrouter.ai", port: 0 }] }], path),
+    /invalid credential endpoint port/,
+  );
+  assert.throws(
+    () => saveCredentialDefinitions([{ ...base, allowedEndpoints: [{ host: "api.openrouter.ai", pathPrefix: "api/v1" }] }], path),
+    /pathPrefix must start with \//,
+  );
+});

@@ -84,7 +84,17 @@ function isCredentialInput(input: unknown): input is CredentialInput {
     (value.kind === "api-key" || value.kind === "token") && typeof value.value === "string" &&
     Array.isArray(value.allowedConsumers) && value.allowedConsumers.every((item) => typeof item === "string") &&
     Array.isArray(value.allowedPurposes) && value.allowedPurposes.every((item) => typeof item === "string") &&
-    (value.workspace === undefined || typeof value.workspace === "string");
+    (value.workspace === undefined || typeof value.workspace === "string") &&
+    (value.allowedEndpoints === undefined ||
+      (Array.isArray(value.allowedEndpoints) && value.allowedEndpoints.every(isCredentialEndpointInput)));
+}
+
+function isCredentialEndpointInput(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const input = value as Record<string, unknown>;
+  return typeof input.host === "string" &&
+    (input.port === undefined || typeof input.port === "number") &&
+    (input.pathPrefix === undefined || typeof input.pathPrefix === "string");
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {

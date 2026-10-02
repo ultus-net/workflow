@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 
-import { validateCredentialDefinition, type CredentialDefinition } from "./credentials.js";
+import { validateCredentialDefinition, type CredentialDefinition, type CredentialEndpoint } from "./credentials.js";
 
 export function defaultCredentialConfigPath(): string {
   return resolve(homedir(), ".workflow", "credentials.json");
@@ -42,5 +42,15 @@ function isCredentialDefinition(value: unknown): value is CredentialDefinition {
     (input.kind === "api-key" || input.kind === "token") &&
     Array.isArray(input.allowedConsumers) && input.allowedConsumers.every((item) => typeof item === "string") &&
     Array.isArray(input.allowedPurposes) && input.allowedPurposes.every((item) => typeof item === "string") &&
-    (input.workspace === undefined || typeof input.workspace === "string");
+    (input.workspace === undefined || typeof input.workspace === "string") &&
+    (input.allowedEndpoints === undefined ||
+      (Array.isArray(input.allowedEndpoints) && input.allowedEndpoints.every(isCredentialEndpoint)));
+}
+
+function isCredentialEndpoint(value: unknown): value is CredentialEndpoint {
+  if (typeof value !== "object" || value === null) return false;
+  const input = value as Record<string, unknown>;
+  return typeof input.host === "string" &&
+    (input.port === undefined || typeof input.port === "number") &&
+    (input.pathPrefix === undefined || typeof input.pathPrefix === "string");
 }
