@@ -45,12 +45,14 @@ Agent model egress is composed through loopback metering proxies
 - rewrites the inbound `authorization` header to the real key before
   forwarding.
 
-The proxy is **not** a path allowlist. `handle()` parses the request target as
-`new URL(req.url, upstream)` and forwards any **origin-form** target whose
-origin equals the upstream origin; absolute-form targets are rejected (P1
-regression). So every function on the upstream origin is reachable with the
-injected key — the grant is function-broad by construction, and the
-destination alone tells you nothing about the blast radius.
+The proxy is **not** a path allowlist by default. `handle()` parses the
+request target as `new URL(req.url, upstream)` and forwards any **origin-form**
+target whose origin equals the upstream origin; absolute-form targets are
+rejected (P1 regression). So every function on the upstream origin is reachable
+with the injected key — the grant is function-broad by construction, and the
+destination alone tells you nothing about the blast radius. **W180 (2026-10-02)
+narrows this for proxy-passed traffic only when the proxy is composed with an
+`egressPolicy`** (§3b); absent that composition the grant is unchanged.
 
 ## 3. Token binding (W052 slice 2)
 
@@ -110,6 +112,62 @@ This is verified by loopback tests in `test/egress-credential.test.ts`
 (the pure decision) and `test/model-usage-proxy.test.ts` (the proxy boundary,
 including a log-hygiene pin).
 
+### 3b. Path/function allowlist reject tier (W180, 2026-10-02)
+
+W179 scoped *which destination* a credential may reach; W180 adds the function
+granularity: an optional `ProxyPayloadPolicy.egressPolicy`
+(`src/integrations/model-usage-proxy.ts`) consults W178's shared, pure
+`decideEgress` (`src/integrations/egress-policy.ts`) for the request's
+(host, port, method, path). A request whose function falls outside the allowed
+set for its upstream is refused with the named policy family `egress_policy`
+and a value-free event (host, port, method, pathname, reason — never the
+secret, the placeholder, or the query string), and never reaches the upstream.
+
+**The tier is dark by default.** With no `egressPolicy` supplied the gate is
+skipped entirely and today's behavior is byte-identical; the tier is a
+composition seam, not a new default. When a policy IS supplied the tier is
+**fail closed** on the no-rule case: W178's `decideEgress` deliberately reports
+`no_matching_rule` as allowed-but-reported (the honest core contract,
+unchanged), and the proxy tier promotes exactly that case to DENY — a supplied
+policy that names no rule for the destination must not silently re-open the
+function-broad grant. Per-endpoint posture is honored: an `enforce`-mode
+endpoint refuses out-of-scope functions (`denied_by_enforce_rule`), while an
+`audit`-mode endpoint observes-and-forwards them (`audit_only`, W178's
+documented posture). The core decision is not modified; the tier is the
+deny-by-default posture the proxy applies on top of it (`applyEgressPolicyTier`).
+Load-time policy validation (`validateEgressPolicy`) remains the caller's
+startup gate.
+
+**Ordering and payload extension point (W180 A4).** The gate order is: gate 1
+`checkEgressCredential` → the origin-form guard → the W180 policy gate → the
+lane parse and body-transform seam → gate 2 `checkCredentialEndpoint` → header
+injection → forward. The after-policy-before-injection ordering is pinned by
+test
+(`test/model-usage-proxy.test.ts`), not a comment: a body transform can never
+observe the resolved upstream key, and a policy-refused request never reaches
+the transform seam. The same policy seam carries the C3 payload size-ceiling
+extension point (`maxRequestBodyBytes`): a body over the configured limit is
+refused with the named `payload_too_large` error before any transform or
+injection, with a value-free event carrying byte counts only. Default dark.
+
+**Narrowing, stated precisely:** for proxy-passed traffic whose proxy is
+composed with an `egressPolicy`, the function-broad grant of §2 is narrowed to
+the policy's allowed function set. This is **not** an erase of the residual:
+absent a policy the function-broad grant is unchanged; a policy with no
+matching rule denies (fail closed) rather than falling through; and the §5
+bypass (an agent that reaches a host directly, outside any proxy) is entirely
+unaffected. As with W179, no production launcher supplies an `egressPolicy` as
+of 2026-10-02, so this remains a **mechanism scoped to the supplied case, not a
+live enforcement claim**; wiring a production policy source is a follow-up.
+
+Verified by `test/model-usage-proxy.test.ts` (the proxy boundary: in-policy
+forward, out-of-policy refusal with the named label, default dark,
+deny-by-default `no_matching_rule`, log hygiene, the ordering invariant, and
+the size ceiling) and by `test/open-model-proxy.test.ts` (the W070a per-family
+proxies inherit the tier by composition, not reimplementation). The tier's
+pure composition over `decideEgress` is additionally covered by the W178
+decision tests in `test/egress-policy.test.ts`.
+
 **Production activation status (honest).** The gate-2 mechanism and its pure
 decision are landed and tested, but as of 2026-10-02 **no production launcher
 supplies a credential binding to the proxy**. The keys the proxy injects are
@@ -168,7 +226,8 @@ must reach its provider), so:
 - **Payloads are not inspected.** `createModelUsageProxy` observes request
   volume and meters usage; it does not read or filter request/response
   content. Token binding prevents key substitution, not content exfiltration
-  under the hub token.
+  under the hub token. W180's size ceiling (§3b) is an optional byte bound, not
+  content inspection, and is dark unless composed.
 - **`network=host` is a containment property, not an egress policy.** See the
   C3 residual in `THREAT_MODEL.md`; the per-run budget caps bound channel
   capacity only.
@@ -212,7 +271,10 @@ must reach its provider), so:
   not a gate. No secret, placeholder value, path, or query string is persisted:
   the seam carries a bare hostname, a bounded function-class label, a closed
   token class, and a bounded policy tag only.
-- Payload-level egress policy (size ceilings, content filtering) at the proxy
-  remains planned; see the C3 residual.
+- **W180 (A3/A4, 2026-10-02): payload-level egress policy extension point and
+  the size-ceiling stage.** `payloadPolicy` (`ProxyPayloadPolicy`) is the C3
+  extension point, dark by default; the proxy rejects an oversize request body
+  with the named `payload_too_large` error. Content classification/filtering
+  itself is still not built. See §3b.
 - Any future network-layer egress control is out of scope for this item and
   would need its own work item and probe evidence.

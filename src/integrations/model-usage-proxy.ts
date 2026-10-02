@@ -13,6 +13,7 @@ import {
 } from "./openrouter-auto-latest.js";
 import { checkEgressCredential, checkCredentialEndpoint, METERED_PLACEHOLDER_KEY } from "./egress-credential.js";
 import type { CredentialEndpoint } from "./credentials.js";
+import { decideEgress, type EgressDecision, type EgressPolicy, type EgressRequest } from "./egress-policy.js";
 import { enforceReplayPolicy } from "./model-replay-policy.js";
 import { enforceMessagesReplayIntegrity, unparseableMessagesBodyRejection } from "./messages-replay-integrity.js";
 import { budgetDowngradeActive, type BudgetDowngradeRuntime } from "./session-budget.js";
@@ -32,6 +33,65 @@ export interface CredentialEndpointRejection {
   readonly port: number | undefined;
   /** Pathname only; the query string is never captured. */
   readonly pathname: string;
+}
+
+/**
+ * W180 (NVIDIA adoption wave A3): the value-free refusal event for the
+ * path/function allowlist tier. Only destination facts travel — host, port,
+ * method, pathname, and the policy family. Deliberately carries NO header
+ * value, NO placeholder, and NO query string, so a consumer that prints this
+ * event cannot leak secret or request content. The method/pathname are request
+ * facts, not credential or body content.
+ */
+export interface EgressPolicyRejection {
+  readonly policy: "egress_policy";
+  readonly host: string;
+  readonly port: number | undefined;
+  readonly method: string | undefined;
+  /** Pathname only; the query string is never captured. */
+  readonly pathname: string;
+  /** The shared decision's reason, e.g. `denied_by_enforce_rule` or `no_matching_rule`. */
+  readonly reason: string;
+}
+
+/**
+ * W180 (NVIDIA adoption wave A4): the value-free refusal event for the
+ * payload size ceiling — the C3 payload-policy extension point. Only byte
+ * counts and the policy family travel; never body bytes or headers.
+ */
+export interface PayloadSizeRejection {
+  readonly policy: "payload_too_large";
+  readonly limitBytes: number;
+  readonly observedBytes: number;
+}
+
+/**
+ * W180 (A3/A4): the composed payload/egress policy axes. Both sub-policies
+ * default dark. The `egressPolicy` may be supplied alone (path/function
+ * allowlist) and the `maxRequestBodyBytes` may be supplied alone (size
+ * ceiling). They are grouped so an extension surface has one typed seam.
+ */
+export interface ProxyPayloadPolicy {
+  /**
+   * A3: the path/function allowlist consulted through W178's shared
+   * `decideEgress`. It applies ONLY to requests bound for the proxy's own
+   * upstream origin (a proxy is single-origin by construction), so the L4
+   * `host` is not part of the grant — the tier closes the function-broad
+   * grant for proxy-passed traffic. The tier is deny-by-default for a supplied
+   * policy: `decideEgress`'s `no_matching_rule` (its documented default-allow
+   * reason, which the W178 core reports rather than denies) is treated as DENY.
+   * Per-endpoint posture is respected: an `audit`-mode endpoint still forwards
+   * out-of-scope requests (`audit_only`), and an `enforce`-mode endpoint
+   * refuses them (`denied_by_enforce_rule`). See `applyEgressPolicyTier`.
+   */
+  readonly egressPolicy?: EgressPolicy | undefined;
+  /**
+   * A4: the size ceiling (C3 extension point). A request body larger than
+   * this many bytes is refused BEFORE any body transform, credential
+   * injection, or forwarding. Absent leaves today's behavior byte-identical.
+   * Fail closed: a supplied limit of `0` refuses every non-empty body.
+   */
+  readonly maxRequestBodyBytes?: number | undefined;
 }
 
 /**
@@ -421,6 +481,25 @@ export async function createModelUsageProxy(options: {
    * refusal is answered but not logged; the proxy itself writes no log line.
    */
   readonly onCredentialEndpointRejected?: ((event: CredentialEndpointRejection) => void) | undefined;
+  /**
+   * W180 (NVIDIA adoption waves A3+A4): the composed proxy payload/egress
+   * policy. Absent (the default) leaves today's behavior byte-identical.
+   * When supplied, the tier is fail-closed: see `ProxyPayloadPolicy`.
+   */
+  readonly payloadPolicy?: ProxyPayloadPolicy | undefined;
+  /**
+   * W180 (A3): observability sink for a path/function policy refusal.
+   * Receives only value-free destination facts (host, port, method, pathname,
+   * reason) — never the secret, the placeholder, the query string, or body
+   * bytes. Absent means the refusal is answered but not logged.
+   */
+  readonly onEgressPolicyRejected?: ((event: EgressPolicyRejection) => void) | undefined;
+  /**
+   * W180 (A4): observability sink for a payload size-ceiling refusal.
+   * Receives only the configured limit and the observed byte count. Absent
+   * means the refusal is answered but not logged.
+   */
+  readonly onPayloadSizeRejected?: ((event: PayloadSizeRejection) => void) | undefined;
 }): Promise<ModelUsageProxy> {
   if (typeof options.apiKey !== "string" || options.apiKey.trim().length === 0) {
     throw new TypeError("model usage proxy requires a non-empty upstream API key");
@@ -556,7 +635,76 @@ export async function createModelUsageProxy(options: {
       }));
       return;
     }
+    // P1: reject absolute-form request-targets — RFC 7230 allows
+    // `GET http://attacker/...` which would make new URL(absolute, base)
+    // ignore the upstream and exfiltrate the injected Bearer key. The target
+    // is resolved once here and reused by the W180 gate and the injection gate
+    // below; this guard runs BEFORE the W180 policy gate so a policy is only
+    // ever consulted for a same-origin request (an absolute-form target is
+    // answered 400 exactly as before, with or without a policy).
+    const target = new URL(req.url ?? "/", upstream);
+    if (target.origin !== upstream.origin) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "model usage proxy only forwards origin-form request targets" }));
+      return;
+    }
+    // W180 (NVIDIA adoption waves A3+A4): the payload/egress policy gate,
+    // inserted in the gate order AFTER gate 1 (`checkEgressCredential`) and
+    // BEFORE the lane parse, the body transforms, the credential-injection
+    // gate, and forwarding. This ordering is the A4 invariant pinned by test
+    // (`test/model-usage-proxy.test.ts#"W180 A4: the policy/body-transform
+    // seam runs before credential injection and never observes the resolved
+    // key"`): a body transform or policy stage can never observe the resolved
+    // upstream key because injection happens strictly later.
+    //
+    // Both tiers are DARK by default (`options.payloadPolicy` absent): absent
+    // the gate is skipped entirely and today's behavior is byte-identical.
+    if (options.payloadPolicy !== undefined) {
+      // A3: the path/function allowlist through W178's shared decision. The
+      // tier's deny-by-default composition lives in `applyEgressPolicyTier`.
+      // The port used for the L4 match is the ORIGIN port (443/80 for a
+      // scheme-default target), matching the credential-endpoint gate.
+      const port = target.port === "" ? (target.protocol === "https:" ? 443 : 80) : Number(target.port);
+      const policy = options.payloadPolicy.egressPolicy;
+      if (policy !== undefined) {
+        const request: EgressRequest = {
+          host: target.hostname,
+          port,
+          ...(req.method === undefined ? {} : { method: req.method }),
+          path: target.pathname,
+        };
+        const tier = applyEgressPolicyTier(request, policy);
+        if (!tier.allowed) {
+          const rejection = egressPolicyRejection(request, tier.decision);
+          options.onEgressPolicyRejected?.(rejection);
+          res.writeHead(403, { "content-type": "application/json" });
+          res.end(JSON.stringify({
+            error: `model usage proxy rejected a request outside the egress policy's allowed function set (${rejection.reason})`,
+            policy: rejection.policy,
+          }));
+          return;
+        }
+      }
+    }
     const inbound = await readAll(req);
+    if (options.payloadPolicy?.maxRequestBodyBytes !== undefined && inbound.length > options.payloadPolicy.maxRequestBodyBytes) {
+      // A4: the size-ceiling stage (C3 payload-policy extension point). It
+      // runs BEFORE any body transform, credential injection, or forwarding;
+      // the refusal carries only byte counts. Fail closed: a supplied `0`
+      // refuses every non-empty body.
+      const rejection: PayloadSizeRejection = {
+        policy: "payload_too_large",
+        limitBytes: options.payloadPolicy.maxRequestBodyBytes,
+        observedBytes: inbound.length,
+      };
+      options.onPayloadSizeRejected?.(rejection);
+      res.writeHead(413, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        error: `model usage proxy refused a request body over the configured size ceiling (${rejection.observedBytes} > ${rejection.limitBytes} bytes)`,
+        policy: rejection.policy,
+      }));
+      return;
+    }
     const isCompletions = req.method === "POST" && typeof req.url === "string" && /\/chat\/completions$/.test(req.url);
     const isMessages = req.method === "POST" && typeof req.url === "string" && /\/v1\/messages$/.test(req.url);
     let outboundBody = inbound;
@@ -738,15 +886,6 @@ export async function createModelUsageProxy(options: {
       outboundBody = Buffer.from(JSON.stringify({ ...routed, usage: { ...existing, include: true } }), "utf8");
     }
 
-    // P1: reject absolute-form request-targets — RFC 7230 allows
-    // `GET http://attacker/...` which would make new URL(absolute, base)
-    // ignore the upstream and exfiltrate the injected Bearer key.
-    const target = new URL(req.url ?? "/", upstream);
-    if (target.origin !== upstream.origin) {
-      res.writeHead(400, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: "model usage proxy only forwards origin-form request targets" }));
-      return;
-    }
     // W179 (NVIDIA adoption wave A2): the SECOND credential gate, at the
     // header-injection point. Gate 1 (above) proved the request carried no
     // foreign credential; this gate proves the credential BINDING covers the
@@ -1101,4 +1240,56 @@ function readAll(stream: http.IncomingMessage): Promise<Buffer> {
     stream.on("end", () => resolveRead(Buffer.concat(chunks)));
     stream.on("error", rejectRead);
   });
+}
+
+/**
+ * W180 (A3): the path/function allowlist tier's composition over W178's
+ * shared `decideEgress`.
+ *
+ * The tier does NOT reimplement policy logic: it asks the one pure decision
+ * and then applies the deny-by-default posture the proxy issue requires. W178's
+ * `decideEgress` deliberately reports `no_matching_rule` as allowed-but-reported
+ * — that is the honest core contract and is left untouched (the W178 review
+ * P2). The PROXY tier, once an `EgressPolicy` is supplied, promotes exactly
+ * that case to a denial, because a supplied policy that names no rule for the
+ * destination must not silently re-open the function-broad grant:
+ *
+ *   - `rule_matched`            → allow (an explicit grant; `audit` mode still
+ *     forwards because the rule granted the function);
+ *   - `audit_only`              → allow (the endpoint's declared posture is
+ *     `audit` — W178's documented observe-and-forward; the tier does not
+ *     silently convert an audit posture into enforcement);
+ *   - `denied_by_enforce_rule`  → deny (the core's own enforce deny);
+ *   - `no_matching_rule`        → deny (deny-by-default for a supplied policy).
+ *
+ * Equivalent formulation: allow iff the core allows AND the reason is not
+ * `no_matching_rule`. This is the precise composition the issue names: the core
+ * decides per-endpoint posture, the tier only closes the no-rule case.
+ * Absent a supplied policy the caller never invokes this function, so today's
+ * behavior stays byte-identical.
+ */
+export function applyEgressPolicyTier(
+  request: EgressRequest,
+  policy: EgressPolicy,
+): { readonly allowed: boolean; readonly decision: EgressDecision } {
+  const decision = decideEgress(request, policy);
+  if (decision.allowed && decision.reason !== "no_matching_rule") {
+    return { allowed: true, decision };
+  }
+  return { allowed: false, decision };
+}
+
+/** W180: the value-free rejection facts derived from a tier decision. */
+export function egressPolicyRejection(
+  request: EgressRequest,
+  decision: EgressDecision,
+): EgressPolicyRejection {
+  return {
+    policy: "egress_policy",
+    host: request.host,
+    port: request.port,
+    method: request.method,
+    pathname: request.path ?? "/",
+    reason: decision.reason,
+  };
 }

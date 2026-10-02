@@ -8,6 +8,7 @@ import type { RunBudget } from "../src/integrations/hub-scheduler.js";
 import { METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
 import { DEFAULT_OPEN_SOURCE_POOL, type OpenModelDefinition } from "../src/integrations/open-source-pool.js";
 import type { ModelFamily } from "../src/integrations/model-profile.js";
+import type { EgressPolicy } from "../src/integrations/egress-policy.js";
 
 interface FakeUpstream {
   readonly url: string;
@@ -243,6 +244,60 @@ test("a family split across endpoints fails closed instead of misrouting", async
     createOpenModelMeteringPool({ pool, keys: { glm: "GLM_KEY" }, upstreamOverride: (def) => def.endpoint }),
     /spans multiple endpoints/,
   );
+});
+
+// W180 (NVIDIA adoption wave A3): the per-family proxies inherit the
+// path/function tier BY COMPOSITION — the same `payloadPolicy` seam is threaded
+// to each family proxy's `createModelUsageProxy`, so the shared W178
+// `decideEgress` decision governs every family. This pins that the pool does
+// not reimplement the tier: an out-of-policy function is refused with the same
+// named label, and the family proxy never forwards it.
+test("W180 A3: the per-family proxies inherit the path/function tier by composition", async (context) => {
+  const upstream = await fakeUpstream({ prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, cost: 0 });
+  context.after(() => upstream.close());
+  const policy: EgressPolicy = {
+    // The family proxy's upstream is loopback; grant only the chat function.
+    rules: [{ id: "chat", host: "127.0.0.1", methods: ["POST"], paths: ["/chat"], mode: "enforce" }],
+  };
+  const pool = await createOpenModelMeteringPool({
+    pool: DEFAULT_OPEN_SOURCE_POOL.filter((def) => def.family === "deepseek"),
+    keys: { deepseek: "DEEPSEEK_KEY" },
+    upstreamOverride: () => upstream.url,
+    payloadPolicy: { egressPolicy: policy },
+  });
+  try {
+    const deepseek = pool.byFamily.get("deepseek")!;
+    const allowed = await fetch(`${deepseek.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "deepseek-flash", messages: [] }),
+    });
+    assert.equal(allowed.status, 200, "the granted function forwards through the family proxy");
+    const refused = await fetch(`${deepseek.baseUrl}/models`, { headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` } });
+    assert.equal(refused.status, 403, "an out-of-policy function is refused by the inherited tier");
+    assert.equal(((await refused.json()) as { policy?: string }).policy, "egress_policy");
+    assert.equal(upstream.seen.length, 1, "only the granted function reached the vendor upstream");
+  } finally {
+    await pool.close();
+  }
+});
+
+test("W180 A3: the pool's default (no policy) leaves every family proxy byte-identical", async (context) => {
+  const upstream = await fakeUpstream({ prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, cost: 0 });
+  context.after(() => upstream.close());
+  const pool = await createOpenModelMeteringPool({
+    pool: DEFAULT_OPEN_SOURCE_POOL.filter((def) => def.family === "deepseek"),
+    keys: { deepseek: "DEEPSEEK_KEY" },
+    upstreamOverride: () => upstream.url,
+  });
+  try {
+    const deepseek = pool.byFamily.get("deepseek")!;
+    const response = await fetch(`${deepseek.baseUrl}/models`, { headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` } });
+    assert.equal(response.status, 200, "with no payloadPolicy the tier is dark");
+    assert.equal(upstream.seen.length, 1);
+  } finally {
+    await pool.close();
+  }
 });
 
 // ---- W109 (W098 c2): an anthropic-wire pool with the cacheMarkers opt-in

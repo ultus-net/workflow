@@ -10,7 +10,7 @@
  * `resolveOpenModelRoute`); nothing here guesses an id or invents a key.
  */
 
-import { composeBodyTransforms, createModelUsageProxy, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
+import { composeBodyTransforms, createModelUsageProxy, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy, type ProxyPayloadPolicy } from "./model-usage-proxy.js";
 import { applyCacheMarkers, modelProfile, shapeRequestBody, type CacheMarkerOptIn, type ModelFamily, type ModelTaskClass } from "./model-profile.js";
 import { DEFAULT_OPEN_SOURCE_POOL, type OpenModelDefinition } from "./open-source-pool.js";
 import type { BudgetDowngradeRuntime } from "./session-budget.js";
@@ -63,6 +63,15 @@ export interface CreateOpenModelMeteringPoolOptions {
    * turn anything ON.
    */
   readonly messagesReplayIntegrity?: boolean;
+  /**
+   * W180 (NVIDIA adoption wave A3): the proxy payload/egress policy threaded
+   * into every family proxy BY COMPOSITION. The W070a per-family proxies do not
+   * reimplement the tier: they pass the same `payloadPolicy` seam through to
+   * `createModelUsageProxy`, so the shared W178 `decideEgress` decision governs
+   * each family proxy exactly as it governs the OpenRouter lane. Absent (the
+   * default) leaves every family proxy byte-identical to today.
+   */
+  readonly payloadPolicy?: ProxyPayloadPolicy;
   readonly onUsage?: (family: ModelFamily, usage: Record<string, unknown>) => void;
   /**
    * W181 (A5): shared egress observation sink applied to every family proxy in
@@ -194,6 +203,9 @@ export async function createOpenModelMeteringPool(options: CreateOpenModelMeteri
         // pool never gets the tier (the lane stays dark/byte-unchanged).
         ...(options.messagesReplayIntegrity === true ? { messagesReplayIntegrity: true } : {}),
         ...(options.onEgressObservation === undefined ? {} : { onEgressObservation: options.onEgressObservation }),
+        // W180 (A3/A4): threaded by composition — the family proxy consults the
+        // same shared decision; absent leaves the proxy byte-identical.
+        ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }),
       });
       started.push(proxy);
       const provider: OpenModelProvider = {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { composeBodyTransforms, createModelUsageProxy, METERED_PLACEHOLDER_KEY, type EgressObservation } from "../src/integrations/model-usage-proxy.js";
+import type { EgressPolicy } from "../src/integrations/egress-policy.js";
 
 interface FakeUpstream {
   readonly url: string;
@@ -1466,3 +1467,280 @@ test("W181 A5: an absolute-form target is rejected before any reach is observed"
     await attacker.close();
   }
 });
+test("W180 A3: an in-policy path forwards and receives the injected key", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [] }));
+  });
+  const policy: EgressPolicy = {
+    rules: [{ id: "chat", host: "127.0.0.1", methods: ["POST"], paths: ["/api/v1/chat"], mode: "enforce" }],
+  };
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY", payloadPolicy: { egressPolicy: policy } });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 200, "an in-policy function must forward");
+    assert.equal(upstream.seen.length, 1);
+    assert.equal(upstream.seen[0]?.authorization, "Bearer REAL_KEY", "the real key is injected only for an allowed function");
+    assert.equal(upstream.seen[0]?.url, "/api/v1/chat/completions");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W180 A3: an out-of-policy path is refused with the named label and never reaches upstream", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [] }));
+  });
+  const events: unknown[] = [];
+  const policy: EgressPolicy = {
+    rules: [{ id: "chat-only", host: "127.0.0.1", methods: ["POST"], paths: ["/api/v1/chat"], mode: "enforce" }],
+  };
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_SECRET_KEY",
+    payloadPolicy: { egressPolicy: policy },
+    onEgressPolicyRejected: (event) => events.push(event),
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/admin/keys?token=QUERY_SECRET_VALUE`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 403, "an out-of-policy function is refused fail-closed");
+    const body = (await response.json()) as { policy?: string; error?: string };
+    assert.equal(body.policy, "egress_policy", "the refusal is structured under its own policy family");
+    assert.match(body.error ?? "", /denied_by_enforce_rule/, "the named reason is surfaced");
+    assert.equal(upstream.seen.length, 0, "the refused function must never reach the upstream");
+    // The value-free event carries destination facts only — no secret,
+    // placeholder, or query string.
+    assert.deepEqual(events[0], {
+      policy: "egress_policy",
+      host: "127.0.0.1",
+      port: Number(new URL(upstream.url).port),
+      method: "POST",
+      pathname: "/api/v1/admin/keys",
+      reason: "denied_by_enforce_rule",
+    });
+    const serialized = JSON.stringify(events) + JSON.stringify(body);
+    assert.equal(serialized.includes("REAL_SECRET_KEY"), false, "no secret may leak");
+    assert.equal(serialized.includes(METERED_PLACEHOLDER_KEY), false, "no placeholder may leak");
+    assert.equal(serialized.includes("QUERY_SECRET_VALUE"), false, "no query string may leak");
+    assert.equal(serialized.includes("token="), false, "no raw query may leak");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W180 A3: a supplied policy denies no_matching_rule (deny-by-default) without changing the W178 core", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [] }));
+  });
+  const events: unknown[] = [];
+  // The policy grants a DIFFERENT host, so the request matches no rule at all.
+  const policy: EgressPolicy = { rules: [{ id: "elsewhere", host: "api.example.com", mode: "enforce" }] };
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    payloadPolicy: { egressPolicy: policy },
+    onEgressPolicyRejected: (event) => events.push(event),
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/models`);
+    assert.equal(response.status, 403, "a supplied policy is deny-by-default: an unmatched request is refused");
+    assert.equal(((await response.json()) as { policy?: string }).policy, "egress_policy");
+    assert.equal((events[0] as { reason?: string }).reason, "no_matching_rule");
+    assert.equal(upstream.seen.length, 0);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W180 A3: an audit-mode endpoint forwards both a matched and an out-of-scope function (audit_only honored)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const policy: EgressPolicy = { rules: [{ id: "audited", host: "127.0.0.1", paths: ["/api/v1/chat"], mode: "audit" }] };
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY", payloadPolicy: { egressPolicy: policy } });
+  try {
+    const allowed = await fetch(`${proxy.url}/api/v1/chat/completions`, { method: "POST", body: "{}" });
+    assert.equal(allowed.status, 200, "an audit rule that grants the function forwards");
+    const auditOnly = await fetch(`${proxy.url}/api/v1/models`);
+    assert.equal(auditOnly.status, 200, "an audit-mode endpoint observes-and-forwards an out-of-scope function (audit_only)");
+    assert.equal(upstream.seen.length, 2, "the audit endpoint's traffic forwards under its declared posture");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W180 A3: with no policy supplied the default is dark and preserves today's behavior", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/admin/keys`);
+    assert.equal(response.status, 200, "the tier is dark by default");
+    assert.equal(upstream.seen.length, 1);
+    assert.equal(upstream.seen[0]?.authorization, "Bearer REAL_KEY");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W180 A4: the policy/body-transform seam runs before credential injection and never observes the resolved key", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [] }));
+  });
+  const bodiesSeenByTransform: string[] = [];
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_SECRET",
+    transformBody: (body) => {
+      // Snapshot exactly what the seam observes. Because injection happens
+      // later (in `scrubRequestHeaders`, after this stage), no resolved key can
+      // appear here.
+      bodiesSeenByTransform.push(JSON.stringify(body));
+      return body;
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 200);
+    assert.equal(bodiesSeenByTransform.length, 1, "the seam runs once before forwarding");
+    const observed = bodiesSeenByTransform[0] ?? "";
+    assert.equal(observed.includes("REAL_SECRET"), false, "the seam never observes the resolved key");
+    assert.equal(observed.includes(METERED_PLACEHOLDER_KEY), false, "the seam never observes the placeholder header either");
+    // The real key was injected strictly later, at the forward step.
+    assert.equal(upstream.seen[0]?.authorization, "Bearer REAL_SECRET", "injection happens AFTER the transform seam");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W180 A4: a policy-refused request never reaches the body-transform seam", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  let transformCalls = 0;
+  const policy: EgressPolicy = { rules: [{ id: "chat", host: "127.0.0.1", paths: ["/api/v1/chat"], mode: "enforce" }] };
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_SECRET",
+    transformBody: (body) => {
+      transformCalls += 1;
+      return body;
+    },
+    payloadPolicy: { egressPolicy: policy },
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/admin/keys`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 403, "the policy gate refuses before any transform");
+    assert.equal(transformCalls, 0, "a policy-refused request never invokes the body-transform seam");
+    assert.equal(upstream.seen.length, 0);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W180 A4: a body over the size ceiling is refused with the named error and never forwarded", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const events: unknown[] = [];
+  let transformCalls = 0;
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_SECRET",
+    transformBody: (body) => {
+      transformCalls += 1;
+      return body;
+    },
+    payloadPolicy: { maxRequestBodyBytes: 16 },
+    onPayloadSizeRejected: (event) => events.push(event),
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "test-model", messages: [{ role: "user", content: "many bytes over the ceiling" }] }),
+    });
+    assert.equal(response.status, 413, "an oversized body is refused fail-closed");
+    const body = (await response.json()) as { policy?: string; error?: string };
+    assert.equal(body.policy, "payload_too_large", "the refusal is structured under its own policy family");
+    assert.match(body.error ?? "", /size ceiling/, "the named reason is surfaced");
+    assert.equal(transformCalls, 0, "the size ceiling precedes the body-transform seam");
+    assert.equal(upstream.seen.length, 0, "the refused body never reaches upstream");
+    const event = events[0] as { policy: string; limitBytes: number; observedBytes: number };
+    assert.equal(event.policy, "payload_too_large");
+    assert.equal(event.limitBytes, 16);
+    assert.ok(event.observedBytes > 16, "the observed byte count is recorded");
+    // Value-free: no body bytes, secret, or placeholder in the event.
+    const serialized = JSON.stringify(events);
+    assert.equal(serialized.includes("many bytes"), false);
+    assert.equal(serialized.includes("REAL_SECRET"), false);
+    assert.equal(serialized.includes(METERED_PLACEHOLDER_KEY), false);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W180 A4: a body at or under the size ceiling forwards; absent leaves behavior unchanged", async (context) => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  context.after(() => upstream.close());
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY", payloadPolicy: { maxRequestBodyBytes: 4096 } });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/models`);
+    assert.equal(response.status, 200, "no body is under any ceiling");
+    assert.equal(upstream.seen.length, 1);
+  } finally {
+    await proxy.close();
+  }
+
+  // Dark default: a request over any would-be ceiling forwards when no policy
+  // is supplied.
+  const dark = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    const big = JSON.stringify({ model: "test-model", messages: [{ role: "user", content: "x".repeat(8192) }] });
+    const response = await fetch(`${dark.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: big,
+    });
+    assert.equal(response.status, 200, "with no size ceiling supplied the default is dark");
+    assert.equal(upstream.seen.length, 2);
+  } finally {
+    await dark.close();
+  }
+});
+
