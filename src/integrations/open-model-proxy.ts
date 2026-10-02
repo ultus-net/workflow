@@ -10,7 +10,7 @@
  * `resolveOpenModelRoute`); nothing here guesses an id or invents a key.
  */
 
-import { composeBodyTransforms, createModelUsageProxy, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
+import { composeBodyTransforms, createModelUsageProxy, type EgressDenialEvent, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
 import { applyCacheMarkers, modelProfile, shapeRequestBody, type CacheMarkerOptIn, type ModelFamily, type ModelTaskClass } from "./model-profile.js";
 import { DEFAULT_OPEN_SOURCE_POOL, type OpenModelDefinition } from "./open-source-pool.js";
 import type { BudgetDowngradeRuntime } from "./session-budget.js";
@@ -69,6 +69,15 @@ export interface CreateOpenModelMeteringPoolOptions {
    * the pool. Absent leaves each proxy's default (no observation).
    */
   readonly onEgressObservation?: (observation: EgressObservation) => void;
+  /**
+   * W182 (A7): the shared egress-denial sink threaded into every family proxy,
+   * so a credential-gate denial through the open-source lane parks on the same
+   * hub surface as the OpenRouter lane. Only the credential gates reach it —
+   * W180's path/function policy tier (issue #440) does not yet route here, so an
+   * approvable `egress_policy` denial cannot flow through. Absent leaves the
+   * family proxies' refusal posture byte-identical. Observation only.
+   */
+  readonly onEgressDenied?: ((event: EgressDenialEvent) => void) | undefined;
 }
 
 export interface OpenModelMeteringPool {
@@ -190,6 +199,8 @@ export async function createOpenModelMeteringPool(options: CreateOpenModelMeteri
           ? {}
           : { onUsage: (usage: Record<string, unknown>) => options.onUsage?.(family, usage) }),
         ...(options.budgetDowngrade === undefined ? {} : { budgetDowngrade: options.budgetDowngrade }),
+        // W182 (A7): the shared egress-denial sink rides every family proxy.
+        ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }),
         // P9 option D: supplied ONLY on an explicit true opt-in, so the default
         // pool never gets the tier (the lane stays dark/byte-unchanged).
         ...(options.messagesReplayIntegrity === true ? { messagesReplayIntegrity: true } : {}),

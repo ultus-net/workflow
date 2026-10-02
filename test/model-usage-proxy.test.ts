@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { composeBodyTransforms, createModelUsageProxy, METERED_PLACEHOLDER_KEY, type EgressObservation } from "../src/integrations/model-usage-proxy.js";
+import { composeBodyTransforms, createModelUsageProxy, METERED_PLACEHOLDER_KEY, type EgressDenialEvent, type EgressObservation } from "../src/integrations/model-usage-proxy.js";
 
 interface FakeUpstream {
   readonly url: string;
@@ -1466,3 +1466,88 @@ test("W181 A5: an absolute-form target is rejected before any reach is observed"
     await attacker.close();
   }
 });
+test("W182: the shared egress-denial sink reports a gate-1 refusal value-free (no secret, placeholder, or query)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const denials: EgressDenialEvent[] = [];
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY", onEgressDenied: (event) => denials.push(event) });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions?secret=QUERY_SECRET_VALUE`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer FOREIGN_KEY" },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 403, "a foreign credential is still refused");
+    assert.equal(upstream.seen.length, 0, "the refused request never reaches upstream");
+    assert.equal(denials.length, 1, "the shared denial sink observed exactly one refusal");
+    const denial = denials[0]!;
+    assert.equal(denial.policy, "egress-credential");
+    assert.equal(denial.reason, "foreign-credential");
+    assert.equal(denial.method, "POST");
+    assert.equal(denial.pathname, "/api/v1/chat/completions", "the query string is never captured");
+    assert.equal(JSON.stringify(denial).includes("FOREIGN_KEY"), false);
+    assert.equal(JSON.stringify(denial).includes("QUERY_SECRET_VALUE"), false);
+    assert.equal(JSON.stringify(denial).includes(METERED_PLACEHOLDER_KEY), false);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W182: the shared egress-denial sink reports a gate-2 refusal value-free", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const denials: EgressDenialEvent[] = [];
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    credentialEndpoints: [{ host: "127.0.0.1", port: 443, pathPrefix: "/allowed" }],
+    onEgressDenied: (event) => denials.push(event),
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions?secret=QUERY_SECRET_VALUE`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 403, "an out-of-binding destination is refused");
+    assert.equal(upstream.seen.length, 0);
+    assert.equal(denials.length, 1);
+    assert.equal(denials[0]!.policy, "credential_endpoint_mismatch");
+    assert.equal(denials[0]!.pathname, "/api/v1/chat/completions");
+    assert.equal(JSON.stringify(denials[0]).includes("QUERY_SECRET_VALUE"), false);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W182: a throwing egress-denial sink never changes the refusal posture", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    onEgressDenied: () => {
+      throw new Error("sink failure must be swallowed");
+    },
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: "Bearer FOREIGN_KEY" },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 403, "the refusal is answered regardless of a throwing observer");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+

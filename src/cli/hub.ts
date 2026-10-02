@@ -28,6 +28,8 @@ import {
 import { createScheduleRegistry } from "../integrations/schedule-registry.js";
 import { createProjectRegistry } from "../integrations/project-registry.js";
 import { createSelfImprovementRegistry } from "../integrations/self-improvement-registry.js";
+import { createEgressPolicyRevisionStore } from "../integrations/egress-policy-revisions.js";
+import type { EgressDenialEvent } from "../integrations/model-usage-proxy.js";
 import {
   createAgentDrivenRunLoop,
   beginProposalTurnTask,
@@ -112,6 +114,54 @@ const guard = await createDefaultToolboxGuardProvider({
 // `createWorkflowOpenCodePluginRoot`.
 const permissionBroker = new PermissionBroker();
 
+// W182 (NVIDIA adoption wave A7): the hub-scoped durable egress policy revision
+// store. A proxy egress denial parks a redacted pending rule; an operator
+// approval re-checks current policy + providers at merge time and merges a
+// durable revision persisted under the hub's data dir. Revisions survive a hub
+// restart (same `generation`) but reset when the backing session/sandbox is
+// recreated (a new `WORKFLOW_EGRESS_GENERATION`). The baseline policy is an
+// input this store never rewrites (the read-only `baseline` below; W180's
+// policy tier, a separate unmerged branch, would compose it once it lands). The
+// provider fingerprint is value-free:
+// the credential definitions' `allowedEndpoints` and the upstream host — never
+// a secret.
+//
+// ACTIVATION GAP (honest): the anti-stale epoch does not currently fire at the
+// hub. `policyVersion` is hardcoded 0 because no live egress policy object is
+// composed into the hub on this branch (W180 owns the policy tier and is a
+// separate unmerged branch), so a policy change cannot move it; and the
+// providerFingerprint derives from module-static inputs (loaded credential
+// definitions + `WORKFLOW_ACP_UPSTREAM`) resolved once at composition, so a
+// provider-binding change after startup cannot move it either. The store-level
+// invalidation pin is real and tested (`test/egress-policy-revisions.test.ts`),
+// but the hub currently cannot invalidate a stale park end-to-end. Wiring a
+// live policy/credential epoch is pending on W180 (#440) and tracked on #442.
+const egressGeneration = process.env.WORKFLOW_EGRESS_GENERATION?.trim() || "default";
+const egressRevisionsPath = process.env.WORKFLOW_HUB_EGRESS_REVISIONS ?? join(homedir(), ".workflow", "egress-revisions.json");
+const egressProviderFingerprint = (): string => {
+  const endpoints = credentialDefinitions
+    .flatMap((definition) => definition.allowedEndpoints ?? [])
+    .map((endpoint) => `${endpoint.host}:${endpoint.port ?? "*"}${endpoint.pathPrefix ?? ""}`)
+    .sort();
+  return [...endpoints, `upstream:${process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai"}`].join("|");
+};
+const egressApprovals = createEgressPolicyRevisionStore({
+  path: egressRevisionsPath,
+  baseline: { version: 0, rules: [] },
+  generation: egressGeneration,
+  fingerprint: () => ({ policyVersion: 0, providerFingerprint: egressProviderFingerprint() }),
+});
+const onEgressDenied = (event: EgressDenialEvent): void => {
+  egressApprovals.recordDenial({
+    policy: event.policy,
+    reason: event.reason,
+    host: event.host,
+    ...(event.port === undefined ? {} : { port: event.port }),
+    ...(event.method === undefined ? {} : { method: event.method }),
+    pathname: event.pathname,
+  });
+};
+
 // Hub-owned run gates (plan Tasks A2/D1): the reviewer is a contained ACP
 // agent authorized read-only against its own session task; diff sourcing and
 // test execution go through the same contained shell as the /bash route.
@@ -173,6 +223,7 @@ const reviewerFactory = createReviewerFactory({
     // `usage` is deferred: the runtime exists by turn boundary.
     const runtime: WorkflowAcpRuntime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerRunCorrelationTaskId, undefined, guard, {
       taskUsage: laneTaskUsageSink(() => runtime.metrics?.(), (delta) => recordTaskUsage(delta)),
+      onEgressDenied,
     }).catch((error: unknown) => {
       // #134: a runtime that never came up still opened its kernel task —
       // close it failed so the shared graph never carries an IN_PROGRESS
@@ -317,6 +368,7 @@ const rsiAgentTurn = (handles: WorkflowHubSchedulerHandles): AgentTurnRunner => 
   // composition. `usage` is deferred: the runtime exists by turn boundary.
   const runtime = await createConfiguredAcpRuntime(turnApplication, input.workspace, turnTaskId, undefined, guard, {
     taskUsage: laneTaskUsageSink(() => runtime.metrics?.(), (delta) => handles.recordTaskUsage(delta)),
+    onEgressDenied,
   });
   console.log(`rsi ${input.kind} turn budget mechanism: ${runtime.budgetMechanism}`);
   try {
@@ -392,7 +444,7 @@ const schedulerFactory = (handles: WorkflowHubSchedulerHandles) => {
       const runApplication = handles.resolve(workspace, runId);
       const runTaskId: TaskId = taskId(`run:${runId}`);
       const turnWorkspace = workspace ?? process.cwd();
-      const runtime = await createConfiguredAcpRuntime(runApplication, turnWorkspace, runTaskId, undefined, guard);
+      const runtime = await createConfiguredAcpRuntime(runApplication, turnWorkspace, runTaskId, undefined, guard, { onEgressDenied });
       // W045: record which interactive budget enforcement mechanism this
       // scheduled run's runtime carries (local guard vs the OpenRouter
       // per-key backstop) alongside the schedule's own run budget.
@@ -525,6 +577,10 @@ try {
     // P6 (issue #285): compose the same-process broker so the hub serves
     // /api/permission and its containment lanes hold answerable asks.
     permissionBroker,
+    // W182 (A7): compose the durable egress policy revision store so the hub
+    // serves /egress/pending and /egress/answer and the proxy denial sink parks
+    // redacted pending rules.
+    egressApprovals,
     schedulerFactory,
     schedules: scheduleRegistry,
     projects: projectRegistry,
