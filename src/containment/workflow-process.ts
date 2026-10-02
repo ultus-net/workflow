@@ -28,7 +28,10 @@ export class WorkflowContainedProcess {
     }
     const requiredCapabilities = new Set(action.requiredCapabilities ?? []);
     if (Object.keys(request.environment ?? {}).length > 0) requiredCapabilities.add("credentials");
-    if (request.network === "host") requiredCapabilities.add("network");
+    // Any network posture that grants reach beyond the private namespace
+    // (host, proxied, or the mediated stub) requires the withheld `network`
+    // capability; `isolated` does not.
+    if (request.network !== undefined && request.network !== "isolated") requiredCapabilities.add("network");
     const mutating = action.mutating || Boolean(request.writablePaths?.length);
     const filesystemSubjects = [
       ...(request.cwd === undefined ? [] : [request.cwd]),

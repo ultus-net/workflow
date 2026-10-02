@@ -1,5 +1,7 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+
+import { authorizeHubToken, mintHubGeneration, mintHubToken } from "./hub-tokens.js";
 
 import type { WorkflowApplication, WorkflowSnapshot } from "../application/workflow.js";
 import type { PermissionBroker } from "../ui/permission-broker.js";
@@ -35,12 +37,19 @@ export interface WorkflowHubBridge {
   readonly url: string;
   readonly token: string;
   readonly verificationToken: string;
+  /**
+   * W183: the hub-start generation every issued token is bound to. Written to
+   * `discovery.json` / `verifier.json` so a client can distinguish a live hub
+   * from a restarted one; a token minted by a previous generation is rejected.
+   */
+  readonly generation: string;
   close(): Promise<void>;
 }
 
 interface HubRequestContext {
   readonly token: string;
   readonly verificationToken: string;
+  readonly generation: string;
   readonly resolveApplication: WorkflowApplicationResolver;
   readonly runController: WorkflowRunController | undefined;
   readonly guard: WorkflowGuardProvider | undefined;
@@ -209,9 +218,10 @@ export async function createWorkflowHubBridge(
   contentStore?: HubRequestContext["contentStore"],
   capabilities: HubBridgeCapabilities = {},
 ): Promise<WorkflowHubBridge> {
-  const token = randomBytes(32).toString("hex");
-  const verificationToken = randomBytes(32).toString("hex");
-  const context: HubRequestContext = { token, verificationToken, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...capabilities };
+  const generation = mintHubGeneration();
+  const token = mintHubToken(generation).token;
+  const verificationToken = mintHubToken(generation).token;
+  const context: HubRequestContext = { token, verificationToken, generation, resolveApplication, runController, guard, selfImprovement, schedules, ...(contentStore === undefined ? {} : { contentStore }), ...capabilities };
 
   const server = createServer((request, response) => {
     if (request.url !== undefined) observeRequest?.(new URL(request.url, "http://127.0.0.1").pathname);
@@ -233,6 +243,7 @@ export async function createWorkflowHubBridge(
     url: `http://127.0.0.1:${address.port}`,
     token,
     verificationToken,
+    generation,
     close: () => new Promise<void>((resolve, reject) => server.close((error) => error === undefined ? resolve() : reject(error))),
   };
 }
@@ -256,7 +267,7 @@ async function handleRequest(
       request.url === "/rsi/start" ||
       request.url === "/schedule/run-now";
     const requiredToken = verifierOnly ? context.verificationToken : context.token;
-    if (!authorized(request, requiredToken)) return send(response, 401, { error: "unauthorized" });
+    if (!authorized(request, requiredToken, context.generation)) return send(response, 401, { error: "unauthorized" });
     if (request.url === "/health") return send(response, 200, { status: "ok" });
     const body = await readJson(request);
     if (request.url === "/api/permission") {
@@ -906,11 +917,11 @@ async function handleRequest(
  * catch-all classifies it 400, never 500 (the W133 finding). */
 class HubRequestError extends Error {}
 
-function authorized(request: IncomingMessage, token: string): boolean {
+function authorized(request: IncomingMessage, token: string, generation: string): boolean {
   const supplied = request.headers.authorization?.replace(/^Bearer /, "") ?? "";
-  const expected = Buffer.from(token);
-  const actual = Buffer.from(supplied);
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
+  // W183: generation-bound. The prefix is checked first (the explicit binding),
+  // then constant-time full-token equality. Both must hold.
+  return authorizeHubToken(supplied, token, generation);
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {

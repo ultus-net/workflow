@@ -27,6 +27,8 @@ export interface WorkflowHub {
   readonly discoveryPath: string;
   readonly verifierDiscoveryPath: string;
   readonly verificationToken: string;
+  /** W183: the hub-start generation bound to every issued token. */
+  readonly generation: string;
   close(): Promise<void>;
 }
 
@@ -254,6 +256,11 @@ export async function createWorkflowHub(
         hubId: randomBytes(8).toString("hex"),
         endpoint: bridge.url,
         token: bridge.token,
+        // W183: the hub-start generation. A token replayed from a previous
+        // hub start carries a different generation prefix and is rejected; the
+        // same-UID file-read residual (THREAT_MODEL W073 item 1) is NOT closed
+        // by this binding.
+        generation: bridge.generation,
       }),
       { encoding: "utf8", mode: 0o600 },
     );
@@ -261,7 +268,7 @@ export async function createWorkflowHub(
     discoveryPublished = true;
     writeFileSync(
       verifierTemporaryPath,
-      JSON.stringify({ protocol: 1, endpoint: bridge.url, token: bridge.verificationToken }),
+      JSON.stringify({ protocol: 1, endpoint: bridge.url, token: bridge.verificationToken, generation: bridge.generation }),
       { encoding: "utf8", mode: 0o600 },
     );
     renameSync(verifierTemporaryPath, verifierDiscoveryPath);
@@ -272,6 +279,7 @@ export async function createWorkflowHub(
       discoveryPath,
       verifierDiscoveryPath,
       verificationToken: activeBridge.verificationToken,
+      generation: activeBridge.generation,
       close: async () => {
         scheduler?.stop();
         await activeBridge.close();

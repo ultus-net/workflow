@@ -11,6 +11,7 @@ import type { ProcessContainment } from "../containment/contracts.js";
 import { AcpHostAdapter } from "../adapters/acp.js";
 import {
   launchContainedAcpAgent,
+  launchContainedAcpAgentAsync,
   type ContainedAcpAgentLaunchOptions,
 } from "../adapters/acp-contained-agent.js";
 import {
@@ -286,7 +287,7 @@ export class AcpSessionDriver implements CodingSessionDriver {
    * Default spawn path: launch the agent process itself under an enforced
    * containment boundary (the lead surface's launch mode).
    */
-  static contained(options: {
+  static async contained(options: {
     containment: ProcessContainment;
     launch: ContainedAcpAgentLaunchOptions;
     authorize: WorkflowApplication | ((action: ProposedToolAction) => PolicyDecision | Promise<PolicyDecision>);
@@ -310,8 +311,13 @@ export class AcpSessionDriver implements CodingSessionDriver {
         usage: () => ModelUsageMetrics | undefined;
         record: (delta: Omit<TaskUsageSummary, "recordedAt">) => void;
       };
-   }): AcpSessionDriver {
-    const child = launchContainedAcpAgent(options.containment, options.launch);
+   }): Promise<AcpSessionDriver> {
+    // W183: prefer the async launch path so a proxied-capable backend can build
+    // its forward proxy and network before the agent starts. Backends without
+    // async spawn still use the synchronous path (unchanged posture).
+    const child = options.containment.spawnAsync !== undefined
+      ? await launchContainedAcpAgentAsync(options.containment, options.launch)
+      : launchContainedAcpAgent(options.containment, options.launch);
     return new AcpSessionDriver({ ...options, child });
   }
 

@@ -398,7 +398,7 @@ async function createOpencodeRuntime(
       { encoding: "utf8", mode: 0o600 },
     );
     const resume = resumeFrom ?? process.env.WORKFLOW_ACP_RESUME;
-    const driver = AcpSessionDriver.contained({
+    const driver = await AcpSessionDriver.contained({
       containment: new LinuxBubblewrapContainment(),
       launch: {
         executable: opencode.executable,
@@ -580,7 +580,7 @@ async function createClineRuntime(
     writeFileSync(settingsPath, JSON.stringify(meteredProviderSettings(proxy.url, provider)), { encoding: "utf8", mode: 0o600 });
     const model = process.env.CLINE_MODEL;
     const resume = resumeFrom ?? process.env.WORKFLOW_ACP_RESUME;
-    const driver = AcpSessionDriver.contained({
+    const driver = await AcpSessionDriver.contained({
       containment: new LinuxBubblewrapContainment(),
       launch: {
         executable: launchCline.executable,
@@ -763,7 +763,7 @@ async function createGooseRuntime(
       gooseOnPath: globalGooseBinary(),
     });
     const resume = resumeFrom ?? process.env.WORKFLOW_ACP_RESUME;
-    const driver = AcpSessionDriver.contained({
+    const driver = await AcpSessionDriver.contained({
       containment: new LinuxBubblewrapContainment(),
       launch: {
         executable: goose.executable,

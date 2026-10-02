@@ -3,9 +3,18 @@ import test from "node:test";
 
 import { PassthroughContainment, selectContainment } from "../src/containment/platform.js";
 import { LinuxBubblewrapContainment } from "../src/containment/linux-bwrap.js";
+import { ProxiedBubblewrapContainment } from "../src/containment/proxied-bwrap.js";
 
 test("selectContainment picks bubblewrap on Linux", () => {
   assert.ok(selectContainment("linux") instanceof LinuxBubblewrapContainment);
+});
+
+test("selectContainment picks the proxied-capable backend on Linux (W183)", () => {
+  const containment = selectContainment("linux");
+  // Directly pin the W183 selection, not a subclass-satisfied `instanceof`: the
+  // proxied posture is only reachable when the selected backend advertises it.
+  assert.ok(containment instanceof ProxiedBubblewrapContainment);
+  assert.equal(containment.supportsProxiedNetwork, true);
 });
 
 test("selectContainment degrades to a passthrough on non-Linux with a warning", () => {
@@ -36,6 +45,22 @@ test("passthrough containment refuses read-write-no-delete it cannot enforce", a
   assert.throws(
     () => containment.spawn({ executable: "/usr/bin/true", args: [], writableMountMode: "read-write-no-delete" }),
     /cannot enforce read-write-no-delete/,
+  );
+});
+
+test("W183: the mediated network posture fails closed with UNSUPPORTED_UNTIL_SUPERVISOR", async () => {
+  const containment = new PassthroughContainment();
+  await assert.rejects(
+    () => containment.execute({ executable: "/usr/bin/true", args: [], network: "mediated" }),
+    /UNSUPPORTED_UNTIL_SUPERVISOR/,
+  );
+  assert.throws(
+    () => containment.spawn({ executable: "/usr/bin/true", args: [], network: "mediated" }),
+    /UNSUPPORTED_UNTIL_SUPERVISOR/,
+  );
+  await assert.rejects(
+    () => containment.execute({ executable: "/usr/bin/true", args: [], network: "proxied" }),
+    /passthrough containment cannot establish a proxied network boundary/,
   );
 });
 
