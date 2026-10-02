@@ -41,10 +41,40 @@ export interface EgressReach {
   readonly anomalies: readonly EgressAnomalyFlag[];
 }
 
+/**
+ * W181 (A5): a recorded egress *rejection* — a request the proxy refused at an
+ * enforcing boundary before it reached any destination. Structurally an
+ * `EgressReach` without anomaly flags (there is no "reach" to flag) plus the
+ * policy that refused it. It carries the same domain/function/token-class
+ * fields so the capability-grant accounting can see what was *attempted*, and
+ * the `policy` tag distinguishes a credential gate from a future path gate —
+ * never a secret, placeholder value, or query string.
+ */
+export interface EgressReject {
+  readonly id: string;
+  readonly domain: string;
+  readonly functionClass: string;
+  readonly tokenClass: EgressTokenClass;
+  readonly source: string;
+  readonly policy: string;
+  readonly observedAt: number;
+  readonly recordedAt: number;
+}
+
 export interface AppendReachInput {
   readonly domain: string;
   readonly functionClass: string;
   readonly tokenClass: EgressTokenClass;
+  readonly source?: string;
+  readonly observedAt?: number;
+}
+
+/** W181 (A5): append a rejection at an enforcing boundary. */
+export interface AppendRejectInput {
+  readonly domain: string;
+  readonly functionClass: string;
+  readonly tokenClass: EgressTokenClass;
+  readonly policy: string;
   readonly source?: string;
   readonly observedAt?: number;
 }
@@ -68,11 +98,20 @@ export interface EgressSummary {
   readonly byFunctionClass: readonly { readonly key: string; readonly count: number }[];
   readonly byTokenClass: readonly { readonly key: string; readonly count: number }[];
   readonly anomalies: readonly { readonly flag: EgressAnomalyFlag; readonly count: number }[];
+  /** W181 (A5): rejected egress attempts, with their policy tags. */
+  readonly rejects: number;
+  readonly byPolicy: readonly { readonly key: string; readonly count: number }[];
 }
 
 interface LedgerDocument {
   version: 1;
   entries: EgressReach[];
+  /**
+   * W181 (A5): rejected egress attempts, stored separately from reaches because
+   * a rejection has no anomaly flags (nothing was reached). Optional so a
+   * pre-W181 ledger document loads unchanged.
+   */
+  rejects?: EgressReject[];
 }
 
 const MAX_ENTRIES = 5000;
@@ -118,6 +157,16 @@ export function isEgressReach(value: unknown): value is EgressReach {
     && typeof reach.observedAt === "number" && Number.isSafeInteger(reach.observedAt) && reach.observedAt >= 0
     && typeof reach.recordedAt === "number" && Number.isSafeInteger(reach.recordedAt) && reach.recordedAt >= 0
     && Array.isArray(reach.anomalies) && reach.anomalies.every((flag) => (EGRESS_ANOMALY_FLAGS as readonly unknown[]).includes(flag));
+}
+
+export function isEgressReject(value: unknown): value is EgressReject {
+  if (!value || typeof value !== "object") return false;
+  const reject = value as Partial<EgressReject>;
+  return isIdentity(reject.id) && isIdentity(reject.domain)
+    && isFunctionClass(reject.functionClass) && isTokenClass(reject.tokenClass)
+    && isIdentity(reject.source) && isIdentity(reject.policy, 120)
+    && typeof reject.observedAt === "number" && Number.isSafeInteger(reject.observedAt) && reject.observedAt >= 0
+    && typeof reject.recordedAt === "number" && Number.isSafeInteger(reject.recordedAt) && reject.recordedAt >= 0;
 }
 
 /**
@@ -166,8 +215,10 @@ export class EgressAuditLedger {
       const value: unknown = JSON.parse(raw);
       if (!value || typeof value !== "object") throw new Error();
       const document = value as Partial<LedgerDocument>;
+      const rejects = document.rejects ?? [];
       if (document.version !== 1 || !Array.isArray(document.entries) || document.entries.length > this.maxEntries || !document.entries.every(isEgressReach)) throw new Error();
-      return document as LedgerDocument;
+      if (!Array.isArray(rejects) || rejects.length > this.maxEntries || !rejects.every(isEgressReject)) throw new Error();
+      return { version: 1, entries: document.entries, rejects };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, entries: [] };
       if (error instanceof Error && error.message.includes("size limit")) throw error;
@@ -208,7 +259,7 @@ export class EgressAuditLedger {
     const write = previous.catch(() => undefined).then(async () => {
       abortIfNeeded(signal);
       const document = await this.load();
-      if (document.entries.length >= this.maxEntries) {
+      if (document.entries.length + (document.rejects?.length ?? 0) >= this.maxEntries) {
         throw new Error("Egress audit ledger is full; appends are refused (append-only: history is never rotated or deleted).");
       }
       stored = {
@@ -231,6 +282,71 @@ export class EgressAuditLedger {
     } finally {
       if (this.writes.get(key) === write) this.writes.delete(key);
     }
+  }
+
+  /**
+   * W181 (A5): append a rejection at an enforcing boundary. Rejections are kept
+   * separate from reaches (a rejection reached no destination) and share the
+   * one append-only bounded store budget. No anomaly flags are computed — the
+   * `policy` tag is the distinguishing fact.
+   */
+  async appendReject(input: AppendRejectInput, signal?: AbortSignal): Promise<EgressReject> {
+    abortIfNeeded(signal);
+    const domain = normalizeDomain(input.domain);
+    if (!isFunctionClass(input.functionClass)) throw new Error("Egress reject function class must be 1-120 characters.");
+    if (!isTokenClass(input.tokenClass)) throw new Error("Egress reject token class is invalid.");
+    if (!isIdentity(input.policy, 120)) throw new Error("Egress reject policy must be 1-120 characters.");
+    const source = input.source ?? "unspecified";
+    if (!isIdentity(source, 120)) throw new Error("Egress reject source must be 1-120 characters.");
+    const observedAt = input.observedAt ?? Date.now();
+    if (!Number.isSafeInteger(observedAt) || observedAt < 0) throw new Error("Egress reject observedAt must be a non-negative integer.");
+
+    let stored!: EgressReject;
+    const key = this.dataRoot;
+    const previous = this.writes.get(key) ?? Promise.resolve();
+    const write = previous.catch(() => undefined).then(async () => {
+      abortIfNeeded(signal);
+      const document = await this.load();
+      if (document.entries.length + (document.rejects?.length ?? 0) >= this.maxEntries) {
+        throw new Error("Egress audit ledger is full; appends are refused (append-only: history is never rotated or deleted).");
+      }
+      stored = {
+        id: randomUUID(),
+        domain,
+        functionClass: input.functionClass,
+        tokenClass: input.tokenClass,
+        source,
+        policy: input.policy,
+        observedAt,
+        recordedAt: Date.now(),
+      };
+      document.rejects = [...(document.rejects ?? []), stored];
+      await this.persist(document, signal);
+    });
+    this.writes.set(key, write);
+    try {
+      await write;
+      return stored;
+    } finally {
+      if (this.writes.get(key) === write) this.writes.delete(key);
+    }
+  }
+
+  async queryRejects(input: QueryReachInput, signal?: AbortSignal): Promise<{ readonly rejects: readonly EgressReject[]; readonly truncated: boolean }> {
+    abortIfNeeded(signal);
+    const limit = input.limit ?? 50;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error("Egress audit query limit must be 1-200.");
+    const domain = input.domain === undefined ? undefined : normalizeDomain(input.domain);
+    if (input.functionClass !== undefined && !isFunctionClass(input.functionClass)) throw new Error("Egress audit query function class is invalid.");
+    if (input.since !== undefined && (!Number.isSafeInteger(input.since) || input.since < 0)) throw new Error("Egress audit query since must be a non-negative integer.");
+    const document = await this.load();
+    abortIfNeeded(signal);
+    const matched = (document.rejects ?? []).filter((reject) =>
+      (domain === undefined || reject.domain === domain)
+      && (input.functionClass === undefined || reject.functionClass === input.functionClass)
+      && (input.since === undefined || reject.observedAt >= input.since));
+    const sorted = matched.slice().sort((a, b) => b.observedAt - a.observedAt || b.recordedAt - a.recordedAt || a.id.localeCompare(b.id));
+    return { rejects: sorted.slice(0, limit), truncated: matched.length > limit };
   }
 
   async query(input: QueryReachInput, signal?: AbortSignal): Promise<QueryReachResult> {
@@ -264,6 +380,8 @@ export class EgressAuditLedger {
         flag,
         count: document.entries.filter((reach) => reach.anomalies.includes(flag)).length,
       })),
+      rejects: (document.rejects ?? []).length,
+      byPolicy: topCounts((document.rejects ?? []).map((reject) => reject.policy)),
     };
   }
 }

@@ -106,6 +106,53 @@ test("domain normalization rejects non-hostname shapes", () => {
   }
 });
 
+test("W181 A5: rejects are stored separately, carry the policy tag, and never mint anomaly flags", async () => {
+  await withLedger(async (ledger) => {
+    const stored = await ledger.appendReject({ domain: "api.example.com", functionClass: "file-upload", tokenClass: "foreign", policy: "egress-credential", source: "test", observedAt: 1000 });
+    assert.equal(stored.policy, "egress-credential");
+    assert.equal(stored.tokenClass, "foreign");
+    assert.equal("anomalies" in stored, false, "a rejection reached no destination, so it carries no anomaly flags");
+    const { rejects, truncated } = await ledger.queryRejects({});
+    assert.equal(truncated, false);
+    assert.deepEqual(rejects.map((entry) => entry.id), [stored.id]);
+    // Reaches and rejects are independent stores.
+    const { reaches } = await ledger.query({});
+    assert.equal(reaches.length, 0);
+    const summary = await ledger.summarize();
+    assert.equal(summary.entries, 0);
+    assert.equal(summary.rejects, 1);
+    assert.deepEqual(summary.byPolicy, [{ key: "egress-credential", count: 1 }]);
+  });
+});
+
+test("W181 A5: a malformed policy or bad token class is refused", async () => {
+  await withLedger(async (ledger) => {
+    await assert.rejects(() => ledger.appendReject({ domain: "api.example.com", functionClass: "file-upload", tokenClass: "foreign", policy: " padded " }), /policy/);
+    await assert.rejects(() => ledger.appendReject({ domain: "api.example.com", functionClass: "file-upload", tokenClass: "nonsense" as never, policy: "egress-credential" }), /token class/);
+    assert.equal((await ledger.queryRejects({})).rejects.length, 0, "a refused reject writes nothing");
+  });
+});
+
+test("W181 A5: a full shared budget refuses both reaches and rejects (append-only)", async () => {
+  await withLedger(async (ledger) => {
+    await ledger.append({ domain: "a.example.com", functionClass: "chat-completions", tokenClass: "session-placeholder" });
+    await assert.rejects(() => ledger.appendReject({ domain: "a.example.com", functionClass: "file-upload", tokenClass: "foreign", policy: "egress-credential" }), /append-only/);
+  }, { maxEntries: 1 });
+});
+
+test("W181 A5: a pre-W181 ledger document (no rejects field) loads unchanged", async () => {
+  await withLedger(async (ledger, dir) => {
+    await ledger.append({ domain: "a.example.com", functionClass: "chat-completions", tokenClass: "session-placeholder" });
+    const path = join(dir, "egress-audit-ledger.json");
+    const document = JSON.parse(readFileSync(path, "utf8")) as { rejects?: unknown };
+    delete document.rejects;
+    writeFileSync(path, JSON.stringify(document));
+    const { reaches } = await ledger.query({});
+    assert.equal(reaches.length, 1, "an older document without the rejects field still loads");
+    assert.equal((await ledger.queryRejects({})).rejects.length, 0);
+  });
+});
+
 test("a malformed ledger fails closed rather than returning partial data", async () => {
   await withLedger(async (ledger, dir) => {
     await ledger.append({ domain: "a.example.com", functionClass: "chat-completions", tokenClass: "session-placeholder" });

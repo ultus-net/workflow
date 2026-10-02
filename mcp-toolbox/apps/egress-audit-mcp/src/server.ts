@@ -51,6 +51,10 @@ const reach = z.object({
   id: z.string(), domain: z.string(), functionClass: z.string(), tokenClass,
   source: z.string(), observedAt: z.number(), recordedAt: z.number(), anomalies: z.array(anomaly),
 });
+const reject = z.object({
+  id: z.string(), domain: z.string(), functionClass: z.string(), tokenClass,
+  source: z.string(), policy: z.string(), observedAt: z.number(), recordedAt: z.number(),
+});
 
 server.registerTool(
   "append_egress_reach",
@@ -72,6 +76,31 @@ server.registerTool(
   async (input, extra) => {
     const record = await ledger.append(input, extra.signal);
     const structuredContent = { reach: record };
+    return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };
+  },
+);
+
+server.registerTool(
+  "append_egress_reject",
+  {
+    description:
+      `Record one rejected egress attempt: a destination the boundary refused, the function class attempted on it, the token class that carried it, and the policy tag that refused it ` +
+      `(for example egress-credential). The ledger is append-only and bounded; it records evidence and never enforces egress policy. ` +
+      `No secret, placeholder value, path, or query string is stored — pass a bare hostname and a policy tag only.`,
+    inputSchema: {
+      domain: z.string().min(1).max(253),
+      functionClass: z.string().min(1).max(120),
+      tokenClass,
+      policy: z.string().min(1).max(120),
+      source: z.string().min(1).max(120).default("unspecified"),
+      observedAt: z.number().int().nonnegative().optional(),
+    },
+    outputSchema: { reject },
+    annotations: { readOnlyHint: false, idempotentHint: false, destructiveHint: false, openWorldHint: false },
+  },
+  async (input, extra) => {
+    const record = await ledger.appendReject(input, extra.signal);
+    const structuredContent = { reject: record };
     return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };
   },
 );
@@ -99,6 +128,27 @@ server.registerTool(
 );
 
 server.registerTool(
+  "query_egress_rejects",
+  {
+    description:
+      "Read recorded egress rejections, newest first, bounded by limit. Advisory evidence about attempts the boundary refused, never a complete or authoritative record.",
+    inputSchema: {
+      domain: z.string().min(1).max(253).optional(),
+      functionClass: z.string().min(1).max(120).optional(),
+      since: z.number().int().nonnegative().optional(),
+      limit: z.number().int().positive().max(200).default(50),
+    },
+    outputSchema: { rejects: z.array(reject), truncated: z.boolean() },
+    annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false },
+  },
+  async (input, extra) => {
+    const result = await ledger.queryRejects(input, extra.signal);
+    const structuredContent = { rejects: result.rejects, truncated: result.truncated };
+    return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };
+  },
+);
+
+server.registerTool(
   "summarize_egress",
   {
     description:
@@ -110,6 +160,8 @@ server.registerTool(
       byFunctionClass: z.array(z.object({ key: z.string(), count: z.number() })),
       byTokenClass: z.array(z.object({ key: z.string(), count: z.number() })),
       anomalies: z.array(z.object({ flag: anomaly, count: z.number() })),
+      rejects: z.number(),
+      byPolicy: z.array(z.object({ key: z.string(), count: z.number() })),
     },
     annotations: { readOnlyHint: true, idempotentHint: true, destructiveHint: false, openWorldHint: false },
   },

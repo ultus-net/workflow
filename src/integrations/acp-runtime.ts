@@ -33,6 +33,8 @@ import {
 import type { PermissionBroker } from "../ui/permission-broker.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { METERED_PLACEHOLDER_KEY, type ModelUsageMetrics, type ModelUsageProxy, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
+import { createEgressRuntimeFeed } from "./egress-audit-client.js";
+import { egressPostureFromEnv, egressRuntimeContext } from "./runtime-context.js";
 import type { TaskUsageSummary } from "./task-usage.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
 import { loadOpenModelKeys } from "./open-model-keys.js";
@@ -254,12 +256,25 @@ async function createOpencodeRuntime(
   // Auto Router lane the proxy's narrowing variant carries it; the open pool
   // below keeps the W118 body-rewrite lane. The Cline/goose runtime sites
   // stay unwired (the W118 wiring breadth remains queued).
-  const proxy = await createModelUsageProxy({
-    upstream,
-    apiKey,
-    ...(autoLatest === undefined ? {} : { autoLatest }),
-    ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }),
-  });
+  // W181 (A5): the egress observation feed rides the same proxy. Env-gated
+  // (WORKFLOW_EGRESS_AUDIT_FEED=1) and absent when the vendored ledger build
+  // is missing, so the default composition is unchanged.
+  const runtimeRoot = resolve(fileURLToPath(import.meta.url), "..", "..", "..");
+  const egressFeed = await createEgressRuntimeFeed({ root: runtimeRoot });
+  let proxy: ModelUsageProxy;
+  try {
+    proxy = await createModelUsageProxy({
+      upstream,
+      apiKey,
+      ...(autoLatest === undefined ? {} : { autoLatest }),
+      ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }),
+      ...(egressFeed === undefined ? {} : { onEgressObservation: egressFeed.onEgressObservation }),
+    });
+  } catch (error) {
+    // A construction failure must not leak the already-opened ledger client.
+    await egressFeed?.close();
+    throw error;
+  }
   // W070a: compose the open-source vendors through their own loopback proxies
   // when their keys are present. With no vendor keys the pool stays empty and
   // the agent keeps the existing OpenRouter/Auto-Router surface unchanged
@@ -268,12 +283,13 @@ async function createOpencodeRuntime(
   let openPool: OpenModelMeteringPool | undefined;
   try {
     openPool = Object.keys(openKeys.keys).length > 0
-      ? await createOpenModelMeteringPool({ pool: openSourcePoolFromEnv(), keys: openKeys.keys, ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }) })
+      ? await createOpenModelMeteringPool({ pool: openSourcePoolFromEnv(), keys: openKeys.keys, ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }), ...(egressFeed === undefined ? {} : { onEgressObservation: egressFeed.onEgressObservation }) })
       : undefined;
   } catch (error) {
     // A misconfigured pool (unknown WORKFLOW_OPEN_MODEL_POOL id) must not leak
-    // the already-started OpenRouter proxy listener.
+    // the already-started OpenRouter proxy listener or the ledger client.
     await proxy.close();
+    await egressFeed?.close();
     throw error;
   }
   // Each runtime owns a private config dir: the metering proxy port is
@@ -315,6 +331,17 @@ async function createOpencodeRuntime(
       } catch (error) {
         console.error(`workflow-toolbox skill delivery failed (continuing without it): ${error instanceof Error ? error.message : String(error)}`);
       }
+    }
+    // W181 (A6): the posture-gated runtime-context instruction. The posture is
+    // read from the environment NOW (the W178 policy engine / W180 reject tier
+    // do not exist at this revision), so production stays `absent` and nothing
+    // is written. When an enforcing posture is declared, the guidance is
+    // written into the hub-owned config dir and referenced from the config.
+    const egressGuidance = egressRuntimeContext(egressPostureFromEnv());
+    let egressGuidancePath: string | undefined;
+    if (egressGuidance !== undefined) {
+      egressGuidancePath = join(configDir, "opencode", "egress-runtime-context.md");
+      writeFileSync(egressGuidancePath, egressGuidance, { encoding: "utf8", mode: 0o600 });
     }
     const openSelection = openPool === undefined ? undefined : openSourceConfig(openPool);
     // An operator override that names a live open-source pool model is handled
@@ -360,6 +387,10 @@ async function createOpencodeRuntime(
       ...(skillsMount === undefined ? {} : { skills: skillsMount }),
       ...(skillConnectors.length === 0 ? {} : { skillConnectors }),
       ...(options.settings === undefined ? {} : { mcpServers: enabledMcpServers(options.settings) }),
+      // W181 (A6): the posture-gated runtime-context instruction. Written into
+      // the hub-owned config dir ONLY when an enforcing posture is declared;
+      // the absent posture leaves both the file and the config key out.
+      ...(egressGuidancePath === undefined ? {} : { instructions: [egressGuidancePath] }),
     });
     writeFileSync(
       join(configDir, "opencode", "opencode.json"),
@@ -462,6 +493,7 @@ async function createOpencodeRuntime(
         } finally {
           await proxy.close();
           await openPool?.close();
+          await egressFeed?.close();
           rmSync(configDir, { recursive: true, force: true });
           console.log("metering proxy metrics:", JSON.stringify({ openRouter: proxy.metrics(), openSource: openPool?.metrics() }, null, 2));
         }
@@ -473,6 +505,7 @@ async function createOpencodeRuntime(
     // or the per-runtime config dir — mirror the Cline path's cleanup.
     await proxy.close();
     await openPool?.close();
+    await egressFeed?.close();
     rmSync(configDir, { recursive: true, force: true });
     throw error;
   }

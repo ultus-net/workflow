@@ -217,6 +217,14 @@ export interface MeteredOpencodeConfigOptions {
    * unchanged.
    */
   readonly opencodeMajor?: number | undefined;
+  /**
+   * W181 (A6): agent-facing instruction-file paths projected into the
+   * hub-written config. The caller supplies them only when an enforcing egress
+   * posture actually exists (`egressRuntimeContext` returns `undefined`
+   * otherwise), so the config never asserts a gate that is not real. Absent
+   * leaves the config byte-identical to before this option existed.
+   */
+  readonly instructions?: readonly string[] | undefined;
 }
 
 export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Record<string, unknown> {
@@ -344,6 +352,11 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
     // PROVEN enforcement today is structural (the store lives outside every
     // agent workspace, so the workspace-confined fs lane cannot reach it).
     permission: { edit: "ask", bash: "ask", task: "ask", skill: "deny" },
+    // W181 (A6): the posture-gated runtime-context instruction references.
+    // Only composed when the caller supplied paths (which it derives from an
+    // ACTIVE enforcing posture), so an absent posture leaves this key out
+    // entirely — the config never claims deny-by-default on its own.
+    ...(options.instructions === undefined || options.instructions.length === 0 ? {} : { instructions: [...options.instructions] }),
     // W082 config-side auto-compaction trigger: only composed when the
     // operator opted in — absent means the runtime's ambient compaction
     // defaults apply, exactly as before this option existed.

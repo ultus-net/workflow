@@ -10,7 +10,7 @@
  * `resolveOpenModelRoute`); nothing here guesses an id or invents a key.
  */
 
-import { composeBodyTransforms, createModelUsageProxy, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
+import { composeBodyTransforms, createModelUsageProxy, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy } from "./model-usage-proxy.js";
 import { applyCacheMarkers, modelProfile, shapeRequestBody, type CacheMarkerOptIn, type ModelFamily, type ModelTaskClass } from "./model-profile.js";
 import { DEFAULT_OPEN_SOURCE_POOL, type OpenModelDefinition } from "./open-source-pool.js";
 import type { BudgetDowngradeRuntime } from "./session-budget.js";
@@ -64,6 +64,11 @@ export interface CreateOpenModelMeteringPoolOptions {
    */
   readonly messagesReplayIntegrity?: boolean;
   readonly onUsage?: (family: ModelFamily, usage: Record<string, unknown>) => void;
+  /**
+   * W181 (A5): shared egress observation sink applied to every family proxy in
+   * the pool. Absent leaves each proxy's default (no observation).
+   */
+  readonly onEgressObservation?: (observation: EgressObservation) => void;
 }
 
 export interface OpenModelMeteringPool {
@@ -188,6 +193,7 @@ export async function createOpenModelMeteringPool(options: CreateOpenModelMeteri
         // P9 option D: supplied ONLY on an explicit true opt-in, so the default
         // pool never gets the tier (the lane stays dark/byte-unchanged).
         ...(options.messagesReplayIntegrity === true ? { messagesReplayIntegrity: true } : {}),
+        ...(options.onEgressObservation === undefined ? {} : { onEgressObservation: options.onEgressObservation }),
       });
       started.push(proxy);
       const provider: OpenModelProvider = {

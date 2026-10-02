@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { composeBodyTransforms, createModelUsageProxy, METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
+import { composeBodyTransforms, createModelUsageProxy, METERED_PLACEHOLDER_KEY, type EgressObservation } from "../src/integrations/model-usage-proxy.js";
 
 interface FakeUpstream {
   readonly url: string;
@@ -1302,5 +1302,167 @@ test("P9 D: under the opt-in an unparseable messages body fails closed with the 
   } finally {
     await proxy.close();
     await upstream.close();
+  }
+});
+
+// ── W181 (A5, NVIDIA adoption): the egress observation seam ──────────────────
+//
+// The proxy emits a reach on every forwarded request and a reject at the
+// credential boundary, with the fields the `egress-audit-mcp` ledger needs
+// (destination, function class, token class, anomaly-relevant facts). The seam
+// is OBSERVATION ONLY: it never blocks, delays, or rewrites, and no secret,
+// placeholder value, path, or query string crosses it — only a bare hostname,
+// a path-derived function-class label, and a closed token class.
+
+test("W181 A5: a forwarded request emits a reach with the destination, function class, and token class", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [], usage: { total_tokens: 1 } }));
+  });
+  const seen: EgressObservation[] = [];
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY", onEgressObservation: (observation) => seen.push(observation) });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(seen, [{
+      kind: "reach",
+      destination: "127.0.0.1",
+      functionClass: "chat-completions",
+      tokenClass: "session-placeholder",
+      anomalyContext: { credentialHeader: undefined },
+    }], "the reach carries the bare hostname, path-derived class, and the placeholder token class");
+    assert.deepEqual(proxy.egressObservations(), seen, "the journal mirrors the callback");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W181 A5: a foreign credential emits a reject with the policy tag, function class, and no header value", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const seen: EgressObservation[] = [];
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY", onEgressObservation: (observation) => seen.push(observation) });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/chat/completions?secret=sk-should-never-be-recorded`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": "sk-attacker-controlled" },
+      body: JSON.stringify({ model: "test-model", messages: [] }),
+    });
+    assert.equal(response.status, 403);
+    assert.deepEqual(seen, [{
+      kind: "reject",
+      destination: "127.0.0.1",
+      functionClass: "chat-completions",
+      tokenClass: "foreign",
+      anomalyContext: { policy: "egress-credential", credentialHeader: "x-api-key" },
+    }], "the reject records the header NAME, never its value, and drops the query string");
+    assert.ok(!JSON.stringify(seen).includes("sk-attacker-controlled"), "the attacker credential value is never observed");
+    assert.ok(!JSON.stringify(seen).includes("secret"), "the query string is never observed");
+    assert.equal(upstream.seen.length, 0);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W181 A5: absent and placeholder credentials record distinct token classes; a GET /models is models-list", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const proxy = await createModelUsageProxy({ upstream: upstream.url, apiKey: "REAL_KEY" });
+  try {
+    await fetch(`${proxy.url}/api/v1/models`);
+    await fetch(`${proxy.url}/api/v1/models`, { headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` } });
+    const observations = proxy.egressObservations();
+    assert.deepEqual(observations.map((observation) => (observation.kind === "reach" ? observation.tokenClass : "reject")), ["absent", "session-placeholder"]);
+    assert.deepEqual(observations.map((observation) => (observation.kind === "reach" ? observation.functionClass : "reject")), ["models-list", "models-list"]);
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W181 A5: the observation journal is bounded and the callback cannot change the pass-through posture", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [], usage: { total_tokens: 1 } }));
+  });
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    // A throwing observer must never fail the request (fail-open observation).
+    onEgressObservation: () => {
+      throw new Error("observer bug");
+    },
+  });
+  try {
+    for (let index = 0; index < 130; index += 1) {
+      const response = await fetch(`${proxy.url}/api/v1/models`);
+      assert.equal(response.status, 200, "a throwing observer must not affect the response");
+    }
+    assert.equal(proxy.egressObservations().length, 128, "the observation journal is bounded at 128 entries");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W181 A5: a gate-2 refusal is observed as a reject, never a reach (W179 integration)", async () => {
+  const upstream = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const observations: EgressObservation[] = [];
+  const proxy = await createModelUsageProxy({
+    upstream: upstream.url,
+    apiKey: "REAL_KEY",
+    credentialEndpoints: [{ host: "127.0.0.1", pathPrefix: "/api/v1/allowed-only" }],
+    onEgressObservation: (observation) => observations.push(observation),
+  });
+  try {
+    const response = await fetch(`${proxy.url}/api/v1/models`, { headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` } });
+    assert.equal(response.status, 403);
+    assert.equal(upstream.seen.length, 0, "the refused request never reaches the upstream");
+    assert.deepEqual(observations, [{
+      kind: "reject",
+      destination: "127.0.0.1",
+      functionClass: "models-list",
+      tokenClass: "session-placeholder",
+      anomalyContext: { policy: "credential_endpoint_mismatch", credentialHeader: undefined },
+    }], "a gate-2 refusal emits a reject observation and no reach");
+  } finally {
+    await proxy.close();
+    await upstream.close();
+  }
+});
+
+test("W181 A5: an absolute-form target is rejected before any reach is observed", async () => {
+  const attacker = await fakeUpstream((_req, _body, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+  });
+  const proxy = await createModelUsageProxy({ upstream: "https://openrouter.ai", apiKey: "REAL_SECRET_KEY" });
+  try {
+    const { connect } = await import("node:net");
+    await new Promise<void>((resolve, reject) => {
+      const socket = connect(Number(new URL(proxy.url).port), "127.0.0.1", () => {
+        socket.write(`GET ${attacker.url}/exfil HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`);
+      });
+      socket.on("data", () => undefined);
+      socket.on("end", () => resolve());
+      socket.on("error", reject);
+    });
+    assert.deepEqual(proxy.egressObservations(), [], "an unforwarded target produces no reach observation");
+  } finally {
+    await proxy.close();
+    await attacker.close();
   }
 });
