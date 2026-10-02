@@ -196,6 +196,17 @@ decision before any issue is filed. **Recorded decision (operator,
 2026-10-02):** the default stands; this section is parked as P20 (issue #444)
 for future re-address once W178–W183 have landed.
 
+**Dated decision note (2026-10-02):** W178–W183 have landed (W184's activation
+wiring, PR #457, is authored and under review). The operator re-addressed P20
+and
+**confirmed option 1** — keep B1's honest `network: "proxied"` posture and
+claim no true mediation. No W-numbered issue is filed. Options 2/3 stay
+recorded with explicit re-open triggers (option 3 when a
+raw-socket/host-loopback fence is required on a fixed Linux host; option 2 when
+a fleet/K8s/libkrun/GPU substrate is adopted, which also delivers P21/P22 as a
+bundle). P21/P22 remain parked and P23 item (c) stays gated on option 2. Full
+note: `docs/ledger/p20-decision.md`.
+
 ## Explicitly not adopted
 
 With reasons, so the scope line is auditable:
