@@ -56,3 +56,11 @@ Option 1 stands. Re-open only on a concrete requirement, not speculatively:
 - B1's claim is unchanged: L7 egress for proxy-aware traffic is mediated and
   policy-gated; raw-socket egress (and host-loopback, since slirp is not given
   `--disable-host-loopback`) remains a stated `THREAT_MODEL.md` residual.
+
+## Dated supersession note (2026-10-02)
+
+W184 (PR #457) merged to `main` at 05:24:54Z (`2ce0f8ee`) after this fragment was
+first pushed, so the "authored and under review / gated on that merge" status at
+line 23 is superseded: the egress seams are now live in the server lane and hub.
+This does not change the decision (option 1) — B1's `network: "proxied"` posture
+and the raw-socket/host-loopback residual are unaffected by activation.

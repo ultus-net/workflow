@@ -207,6 +207,11 @@ a fleet/K8s/libkrun/GPU substrate is adopted, which also delivers P21/P22 as a
 bundle). P21/P22 remain parked and P23 item (c) stays gated on option 2. Full
 note: `docs/ledger/p20-decision.md`.
 
+**Supersession (2026-10-02):** W184 (PR #457) merged to `main` the same day
+(`2ce0f8ee`), so the "authored and under review" status above is superseded —
+the egress seams are live in the server lane and hub. The decision (option 1) is
+unchanged.
+
 ## Explicitly not adopted
 
 With reasons, so the scope line is auditable:
