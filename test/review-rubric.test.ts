@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildReviewRubric, countReferencedAxes, REVIEW_AXES } from "../src/review/rubric.js";
+import { renderReviewLedgerText } from "../src/review/ledger-audit.js";
+import { stepId, taskId } from "../src/kernel/contracts.js";
 
 test("rubric covers all five axes with severity tiers and verdict format", () => {
   const rubric = buildReviewRubric({ diffText: "diff --git a/x b/x\n+change" });
@@ -44,6 +46,58 @@ test("rubric caps the embedded diff and includes task context when given", () =>
   const rubric = buildReviewRubric({ diffText: big, taskPrompt: "implement hub" });
   assert.ok(rubric.length < 40_000);
   assert.match(rubric, /implement hub/);
+});
+
+// W072 I-5: the reviewer's ledger audit. When the kernel-authoritative step
+// ledger is supplied, the rubric must embed it ahead of the diff and instruct
+// the reviewer that a COMPLETED step with no corresponding diff change/evidence
+// is a P0/P1 finding requiring [REQUEST_CHANGES]. Absent, the section must not
+// render (byte-identical to before for existing callers).
+const LEDGER_STEPS = [
+  {
+    id: stepId("s-1"),
+    taskId: taskId("t-1"),
+    content: "add the ledger renderer",
+    state: "COMPLETED" as const,
+    requiredEvidence: [{ authority: "environment" as const, subject: "test:review-rubric" }],
+  },
+  {
+    id: stepId("s-2"),
+    taskId: taskId("t-1"),
+    content: "wire the hub route",
+    state: "PENDING" as const,
+    requiredEvidence: [],
+  },
+];
+
+test("W072 I-5: the rubric embeds the ledger and its audit instruction when given", () => {
+  const ledgerText = renderReviewLedgerText(LEDGER_STEPS);
+  const rubric = buildReviewRubric({ diffText: "+ the diff", ledgerText });
+  const section = rubric.indexOf("### Step Ledger Under Audit (deterministic kernel state):");
+  const diff = rubric.indexOf("### Code Diff Under Review:");
+  assert.ok(section !== -1 && diff !== -1, "ledger section and diff render");
+  assert.ok(section < diff, "the ledger audit section precedes the diff");
+  assert.match(rubric, /add the ledger renderer/);
+  assert.match(rubric, /environment:test:review-rubric/);
+  assert.match(rubric, /COMPLETED/);
+  assert.match(rubric, /P0\/P1 finding/);
+  assert.match(rubric, /\[REQUEST_CHANGES\]/);
+});
+
+test("W072 I-5: ledger audit section is absent when ledgerText is not passed", () => {
+  const rubric = buildReviewRubric({ diffText: "+ the diff" });
+  assert.ok(!rubric.includes("### Step Ledger Under Audit"));
+  assert.ok(!rubric.includes("P0/P1 finding"));
+});
+
+test("W072 I-5: renderReviewLedgerText renders kernel state and evidence subjects only", () => {
+  const text = renderReviewLedgerText(LEDGER_STEPS);
+  assert.match(text, /2 steps/);
+  assert.match(text, /step s-1 \[COMPLETED\] task t-1: add the ledger renderer/);
+  assert.match(text, /required evidence: environment:test:review-rubric/);
+  assert.match(text, /step s-2 \[PENDING\] task t-1: wire the hub route/);
+  assert.match(text, /required evidence: \(none\)/);
+  assert.equal(renderReviewLedgerText([]), "No step ledger is attached to the active task.");
 });
 
 test("countReferencedAxes counts exact axis references (anti-rubber-stamp gate)", () => {

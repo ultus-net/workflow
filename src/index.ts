@@ -30,6 +30,7 @@ export * from "./pedagogy/checkpoints.js";
 export * from "./pedagogy/primm.js";
 export * from "./integrations/response-style.js";
 export * from "./review/rubric.js";
+export * from "./review/ledger-audit.js";
 export * from "./review/manifest.js";
 export * from "./review/partition.js";
 export * from "./review/provenance.js";

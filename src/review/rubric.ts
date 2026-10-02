@@ -27,8 +27,14 @@ export function buildReviewRubric(input: {
   readonly taskPrompt?: string;
   /** Deterministic review scope (W039): when present, coverage is enforced on approval. */
   readonly manifestText?: string;
+  /**
+   * W072 I-5: the kernel-authoritative step ledger under audit. When present,
+   * the reviewer must check every COMPLETED step against the diff; a step with
+   * no corresponding change/evidence is a P0/P1 and forces [REQUEST_CHANGES].
+   */
+  readonly ledgerText?: string;
 }): string {
-  const { diffText, taskPrompt, manifestText } = input;
+  const { diffText, taskPrompt, manifestText, ledgerText } = input;
   return [
     "# Secondary Review Agent Quality Gate",
     "",
@@ -66,6 +72,18 @@ export function buildReviewRubric(input: {
       : [
           "### Review Coverage Manifest (deterministic scope):",
           manifestText,
+          "",
+        ]),
+    ...(ledgerText === undefined
+      ? []
+      : [
+          "### Step Ledger Under Audit (deterministic kernel state):",
+          ledgerText,
+          "",
+          "Audit every step recorded COMPLETED above against the diff under review:",
+          "a completed step with no corresponding diff change or evidence in this diff",
+          "is a P0/P1 finding and requires a `[REQUEST_CHANGES]` verdict — name the",
+          "offending step explicitly in your findings.",
           "",
         ]),
     "### Code Diff Under Review:",
