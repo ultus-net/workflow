@@ -1345,6 +1345,46 @@ advanced by a second production surface driving the re-query variant. The
 `/steps/list`.
 
 
+**Addendum (2026-10-03, I-9 ordered admission-gate slice):** the ordered
+runner now exists and the state-diff rung runs through it. `src/kernel/admission-gate.ts`
+is a pure contract — `AdmissionRung` = `"codes" | "schema" | "cross-field" |
+"state-diff" | "tests"`, `AdmissionStage<Input>`, `AdmissionRungResult`, and
+`runAdmissionGates(stages, input)`. Order is a property of the exported
+`ADMISSION_RUNG_ORDER` vocabulary, NOT the caller's array: the runner iterates
+the fixed spec order (codes → schema → cross-field → state-diff → tests),
+short-circuits on the first reject, and never evaluates a later stage after an
+earlier reject. A rung with no stage is skipped (so the optional `tests` rung
+being absent changes nothing); a duplicate rung throws (caller error, fail
+loud). `src/application/admission-gate.ts` composes the real step-completion
+stages: `codes` (a matching authority/subject record exists), `schema` (the
+record is passing and a declared postcondition is non-empty/well-formed), and
+`cross-field` (the passing record is fresh) are decomposed projections of the
+EXISTING I-3 evidence admittance predicate — no new evidence semantics — and
+`state-diff` wraps `evaluateStateDiff` with the real `fingerprintFile`
+re-query (`observeChangeClaim`). `tests` is deliberately absent (no runner is
+wired). `WorkflowApplication.completeStepWithRequery` now assembles these stages
+and runs them through the pure runner; a rejecting cheap rung short-circuits
+before the re-query IO, and a pass hands the same observation to the kernel
+gate. A step with NO postcondition is byte-identical to today (the additive I-3
+path). Pinned by `test/admission-gate.test.ts` (8 pure: fixed order; shuffled
+array still runs in rung order; first-reject short-circuits with call counters;
+a rejecting `codes` means `state-diff`/`tests` functions are never called;
+each rung's reject code surfaces with its rung name; absent optional rung
+skipped; duplicate rung throws) and `test/admission-gate-admission.test.ts`
+(4 application: changed file refuses `STEP_POSTCONDITION_UNMET`; match
+completes; a cheaper evidence rung short-circuits before the state-diff IO;
+no-postcondition unchanged).
+
+**What remains open (precisely):** the `tests` rung is not wired to a real
+test runner (it is absent by default, and its absence is behavior-neutral); the
+`codes`/`schema`/`cross-field` rungs are composed from the existing I-3
+evidence-admittance checks, not yet a v2 event/response source; and there is
+still no v2-compatible fingerprint source (the state-diff rung uses the
+application-layer sha256 of `fingerprintFile`). Therefore **DRIFT-019 and
+DRIFT-024 stay OPEN**, advanced by an ordered runner and the state-diff wiring
+through it rather than by one rung alone.
+
+
 **Addendum (2026-10-02, I-6 restore cross-check slice):** restore now
 **fails closed on log/history divergence**. `JsonWorkflowStore.load` (via a
 local pure helper `executionLogMatchesHistory`) compares the persisted
