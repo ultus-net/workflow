@@ -123,6 +123,33 @@ test("bubblewrap keeps external hardlinks read-only across overlapping writable 
   }
 });
 
+test("bubblewrap keeps a read-only grant nested under a writable grant read-only", async () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-overlap-readonly-"));
+  const workspace = join(root, "workspace");
+  const secretDir = join(workspace, "secret");
+  mkdirSync(secretDir, { recursive: true });
+  const secret = join(secretDir, "f.txt");
+  writeFileSync(secret, "host-data");
+  try {
+    const containment = new LinuxBubblewrapContainment();
+    // The nested `secret` is granted read-only while its PARENT is writable.
+    // The builder binds readable grants before writable ones, so without an
+    // explicit re-assert the writable parent bind shadows the read-only child
+    // and the contained process can write it.
+    const result = await containment.execute({
+      executable: "/bin/bash",
+      args: ["-c", "printf changed > secret/f.txt"],
+      cwd: workspace,
+      readablePaths: [secretDir],
+      writablePaths: [workspace],
+    });
+    assert.notEqual(result.exitCode, 0, "a read-only grant nested under a writable grant must stay read-only");
+    assert.equal(readFileSync(secret, "utf8"), "host-data");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("bubblewrap spawn validates requests before spawning", () => {
   const containment = new LinuxBubblewrapContainment();
   assert.throws(() => containment.spawn({ executable: "cat", args: [] }), /absolute path/);

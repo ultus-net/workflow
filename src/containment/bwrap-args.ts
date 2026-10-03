@@ -49,6 +49,15 @@ function writableRegularFiles(path: string): string[] {
   return files;
 }
 
+function isStrictlyNestedUnderAny(path: string, parents: readonly string[]): boolean {
+  for (const parent of parents) {
+    if (path === parent) continue;
+    const rel = relative(parent, path);
+    if (rel !== "" && !rel.startsWith("..") && !isAbsolute(rel)) return true;
+  }
+  return false;
+}
+
 function externalHardlinks(path: string): string[] {
   const inodes = new Map<string, { nlink: number; paths: string[] }>();
   const visit = (candidate: string): void => {
@@ -183,6 +192,17 @@ export function buildBubblewrapInvocation(
       args.push("--bind", path, path);
     }
     for (const alias of externalHardlinks(path)) hardlinkOverlays.add(alias);
+  }
+  // A read-only grant nested under a writable one is shadowed by the later
+  // writable bind (bwrap applies mounts in order, so the writable parent
+  // overmounts the read-only child). Re-assert every strictly-nested
+  // read-only grant AFTER the writable binds so the narrower read-only
+  // boundary wins. Same-path readable+writable grants are intentionally left
+  // to the writable bind (the caller asked for it writable).
+  for (const readable of request.readablePaths ?? []) {
+    if (isStrictlyNestedUnderAny(readable, request.writablePaths ?? [])) {
+      args.push("--ro-bind", readable, readable);
+    }
   }
   // Apply protections last so an overlapping writable grant cannot remount
   // an externally linked inode writable after its read-only overlay.
