@@ -18,6 +18,12 @@
 # var — never by direct ${{ }} interpolation into the script text. The
 # repository name is alphanumeric-plus-dash/dot (GitHub-enforced), and
 # action-input interpolations (with:) are not shell.
+#
+# Manual runs (W149 review P3 fix): `workflow_dispatch` takes a required `tag`
+# input and the FIRST step resolves one RELEASE_TAG (the input when given, else
+# the pushed ref), failing closed on a non-`v` value and exporting it through
+# GITHUB_ENV. A dispatch from `main` therefore targets the release tag rather
+# than the branch.
 
 name: publish-image
 
@@ -25,6 +31,11 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* release tag to publish (the release must already carry the qualified opencode asset)"
+        required: true
+        type: string
 
 permissions:
   contents: write # release asset + notes upload
@@ -36,6 +47,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # A manual run starts from a branch, so `github.ref_name` is `main`, not
+      # the release tag. Resolve ONE tag for every release step: the dispatch
+      # input when given (a manual run), else the pushed tag ref. Fail closed on
+      # a non-`v` value so a typo cannot target a branch. The tag is exported
+      # through GITHUB_ENV and consumed only through env vars (shell-safety).
+      - name: Resolve the release tag (dispatch input or pushed tag, fail closed)
+        env:
+          RELEASE_TAG_INPUT: ${{ inputs.tag }}
+          PUSHED_REF: ${{ github.ref_name }}
+        run: |
+          resolved="$RELEASE_TAG_INPUT"
+          if [ -z "$resolved" ]; then
+            resolved="$PUSHED_REF"
+          fi
+          if ! printf '%s\n' "$resolved" | grep -Eq '^v'; then
+            echo "::error::the release tag must start with 'v' (got: ${resolved})" >&2
+            exit 1
+          fi
+          printf 'RELEASE_TAG=%s\n' "$resolved" >> "$GITHUB_ENV"
+
       # GHCR requires lowercase image names; GITHUB_REPOSITORY may contain
       # uppercase (ultus-net/Workflow would break the push).
       - name: Normalize the image reference (lowercase repository for GHCR)
@@ -45,7 +76,7 @@ jobs:
       - name: Download the qualified opencode release asset (fail closed)
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           gh release download "$RELEASE_TAG" \
             --repo "${GITHUB_REPOSITORY}" \
@@ -78,13 +109,13 @@ jobs:
           file: images/control-plane/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ env.IMAGE_REPOSITORY }}:${{ github.ref_name }}
+            ghcr.io/${{ env.IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
             ghcr.io/${{ env.IMAGE_REPOSITORY }}:sha-${{ github.sha }}
 
       - name: Record the digest at the tagged release (the verify-pin contract)
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
           IMAGE_DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           # build-push-action's `digest` output is ALREADY `sha256:<64hex>`;

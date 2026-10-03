@@ -109,3 +109,55 @@ test("W149: the record step keeps the verbatim single-prefix write and the forma
   );
   assert.ok(block.includes("^sha256:[0-9a-f]{64}$"), "the fail-closed format assertion must be present");
 });
+
+/**
+ * W149 review P3: `workflow_dispatch` had no `tag` input, so a manual run had
+ * to be dispatched from the `v*` tag ref or `github.ref_name` resolved to the
+ * branch (`main`) and every release step targeted the wrong ref. The fix adds
+ * a required `tag` input plus a resolve step that prefers it over the pushed
+ * ref and fails closed on a non-`v` value.
+ */
+test("W149: workflow_dispatch declares a required tag input", () => {
+  const match = /^ {2}workflow_dispatch:\n((?: {4}.*\n)+)/m.exec(workflow);
+  assert.ok(match, "workflow_dispatch must be declared");
+  const block = match[1] ?? "";
+  assert.match(block, /inputs:/, "workflow_dispatch must declare inputs");
+  assert.match(block, /tag:/, "workflow_dispatch must declare a tag input");
+  assert.match(block, /required: true/, "the tag input must be required");
+});
+
+test("W149: the tag resolve step prefers the dispatch input and fails closed on a non-v tag", () => {
+  const resolveTag = (input: string, pushedRef: string): { status: number | null; resolved: string | undefined; stderr: string } => {
+    const workdir = mkdtempSync(join(tmpdir(), "w149-tag-"));
+    try {
+      // GITHUB_ENV is a file the step appends to; point it inside workdir.
+      const envFile = join(workdir, "github_env");
+      writeFileSync(envFile, "");
+      const scriptPath = join(workdir, "tag.sh");
+      writeFileSync(scriptPath, runBlockForStep("Resolve the release tag (dispatch input or pushed tag, fail closed)"));
+      const result = spawnSync("bash", ["-e", scriptPath], {
+        cwd: workdir,
+        encoding: "utf8",
+        env: { ...process.env, RELEASE_TAG_INPUT: input, PUSHED_REF: pushedRef, GITHUB_ENV: envFile },
+      });
+      const text = readFileSync(envFile, "utf8");
+      const resolved = /^RELEASE_TAG=(.*)$/m.exec(text)?.[1];
+      return { status: result.status, resolved, stderr: result.stderr };
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  };
+
+  const fromInput = resolveTag("v2.0.10", "main");
+  assert.equal(fromInput.status, 0, fromInput.stderr);
+  assert.equal(fromInput.resolved, "v2.0.10", "the dispatch input must win over the branch ref");
+
+  const fromPush = resolveTag("", "v2.0.10");
+  assert.equal(fromPush.status, 0, fromPush.stderr);
+  assert.equal(fromPush.resolved, "v2.0.10", "a pushed tag ref must be used when no input is given");
+
+  const rejected = resolveTag("2.0.10", "main");
+  assert.notEqual(rejected.status, 0, "a non-v tag must fail closed");
+  assert.match(rejected.stderr, /::error::/);
+  assert.equal(rejected.resolved, undefined, "no RELEASE_TAG may be exported on a bad tag");
+});
