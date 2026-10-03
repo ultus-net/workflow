@@ -38,3 +38,67 @@ interpretation · keep/revert · next hypothesis
 - **interpretation:** negative result — the predicted defect was falsified by probe; the honest residue (an untested contract) was landed as a characterization pin and the falsified prediction recorded rather than hidden.
 - **keep/revert:** keep the pin-only characterization (review APPROVE, five axes, fingerprint `1c56fa3ffb30`); revert the workflow hardening (not committed).
 - **next hypothesis:** another base-loop iteration should either (a) take the one genuinely-open W-item with an offline-acceptable slice if the operator authorizes a live/gated run, or (b) explicitly name the selection exhaustion (all open issues parked/human-gated/merged-but-open) instead of manufacturing a third item; a future candidate class is the missing `docs/ledger/` fragments for W178-W184 on main (docs-only, but must not duplicate the issues' own records).
+
+---
+
+# Campaign 1 — bounded multi-iteration RSI campaign (2026-10-04)
+
+Protocol: `docs/agents/rsi-loop-playbook.md` "Multi-iteration campaigns".
+N = 3 (default; cap 5). Candidate set and appraisal recorded in the iteration-1
+branch `w185/actions-sha-pin` (PR #472): (1) `security` SHA-pin actions,
+(2) `gate` executable kernel purity, (3) `docs` worktree-convention
+reconciliation. This branch is candidate 2.
+
+## Iteration 2 (campaign n=2) — 2026-10-04
+
+- **n:** 2
+- **date:** 2026-10-04
+- **pain point:** campaign candidacy 2 (`gate`).
+- **selection:** highest-value unblocked candidate; previous iteration's tag was
+  `security`, this one is `gate` (diversity brake satisfied). Tag: `gate`.
+- **hypothesis (falsifiable):** `AGENTS.md` states the kernel layer
+  (`src/kernel/`) "can never depend on a host surface" (no LLM, IO, UI, or SDK
+  imports), but NO test enforces it. Every kernel import is relative today
+  (`grep` of `src/kernel/**.ts` shows only `./contracts.js`, `./state-diff.js`),
+  so a future `import { readFileSync } from "node:fs"` or an SDK import would
+  pass lint, typecheck, and every focused suite silently, eroding the
+  architectural invariant the repo's whole trust argument rests on. Predicted
+  effect: an offline gate test that scans every `src/kernel/**.ts` module
+  specifier and fails on any non-relative specifier.
+- **at-risk regressions:** none to production code (test-only addition); the
+  risk is a false positive if a legitimate relative-with-extension or a
+  type-only import is misclassified.
+- **accept/reject rule:** accept iff the gate passes on the clean tree; a
+  mutation (injecting `import "node:fs"` into a kernel file) turns it RED with
+  the offending file named; `npm run lint` + `npm run typecheck` exit 0.
+- **non-goals:** no kernel source change; no runtime behavior change; no new
+  layering beyond the documented purity rule.
+- **trace evidence:** `find src/kernel -name "*.ts"` = 6 files
+  (admission-gate, contracts, execution-log, invariants, state-diff,
+  task-graph); all module specifiers = `./contracts.js`, `./state-diff.js`;
+  `grep "import("`/`require(` = none.
+- **preregistered:** before edit (this entry).
+
+### Result — iteration 2 (campaign n=2)
+
+- **change:** `test/kernel-purity.test.ts` added (1 gate); `package.json`
+  `test:ci` gains the new suite (CI-enforced). No `src/` change.
+- **commit:** (this branch `w186/kernel-purity-gate`).
+- **evidence (external verifier):** clean run 1/1 pass; mutation (inject
+  `import "node:fs"` as line 1 of `src/kernel/contracts.ts`) -> RED naming
+  `src/kernel/contracts.ts: node:fs`; restored -> 1/1 pass.
+  `npm run lint` exit 0; `npm run typecheck` exit 0; `test/contracts.test.ts`
+  5/5 (regression sanity).
+- **score:** gain. Prediction held: the kernel-purity rule is now executable;
+  a future non-relative kernel import (IO/SDK) fails CI with the offending
+  file and specifier named.
+- **losses/exceptions:** none to production code. Coverage caveat (reviewer
+  P2, closed in-round): the first cut allowed any relative specifier, so
+  `../application/...` traversal to a host layer would have passed; the gate
+  now resolves each specifier and requires it to stay inside `src/kernel/`.
+  The remaining honest gap is *import-free ambient IO* (`fetch`, `process.env`,
+  `Date.now`, `Math.random`), a different class needing a separate scan; the
+  test's bounded claim says so.
+- **keep/revert:** keep.
+- **next hypothesis:** candidate 3 (`docs`) — reconcile the AGENTS.md worktree
+  convention with the guard's workspace confinement.
