@@ -47,6 +47,7 @@ export const TOOLBOX_CATALOG: readonly ToolboxApp[] = [
   { name: "continuity-checkpoint-mcp", description: "Bounded read-only continuity recovery for coding agents over MCP." },
   { name: "egress-audit-mcp", description: "Append-only, bounded egress-reach ledger with anomaly flags for coding agents over MCP." },
   { name: "learning-mcp", description: "Adaptive pedagogy engine (learner profile, stage progression, intervention budgeting, Socratic checkpoints) over MCP." },
+  { name: "workflow-task-mcp", description: "The canonical Workflow step ledger over MCP: define, start, complete, and cancel evidence-bound task steps." },
 ];
 
 /** Package root: two levels up from this module (src|dist/integrations → root). */
