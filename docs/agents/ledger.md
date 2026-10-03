@@ -38,3 +38,74 @@ interpretation · keep/revert · next hypothesis
 - **interpretation:** negative result — the predicted defect was falsified by probe; the honest residue (an untested contract) was landed as a characterization pin and the falsified prediction recorded rather than hidden.
 - **keep/revert:** keep the pin-only characterization (review APPROVE, five axes, fingerprint `1c56fa3ffb30`); revert the workflow hardening (not committed).
 - **next hypothesis:** another base-loop iteration should either (a) take the one genuinely-open W-item with an offline-acceptable slice if the operator authorizes a live/gated run, or (b) explicitly name the selection exhaustion (all open issues parked/human-gated/merged-but-open) instead of manufacturing a third item; a future candidate class is the missing `docs/ledger/` fragments for W178-W184 on main (docs-only, but must not duplicate the issues' own records).
+
+---
+
+# Campaign 1 — bounded multi-iteration RSI campaign (2026-10-04)
+
+Protocol: `docs/agents/rsi-loop-playbook.md` "Multi-iteration campaigns".
+N = 3 (default; cap 5). Candidate set and appraisal recorded in iteration 1
+(`w185/actions-sha-pin`, PR #472); iteration 2 = `gate` (PR #473). This branch
+is candidate 3.
+
+## Iteration 3 (campaign n=3) — 2026-10-04
+
+- **n:** 3
+- **date:** 2026-10-04
+- **pain point:** campaign candidacy 3 (`docs`).
+- **selection:** last candidate; previous tag was `gate`, this one is `docs`
+  (diversity brake satisfied). Tag: `docs`. Edit budget annealed (single file).
+- **hypothesis (falsifiable):** `AGENTS.md` "Git / PR conventions" tells an
+  agent to create worktrees at `/var/home/hunter/worktrees/<name>` and claims
+  `.git/info/exclude` covers them, but the enforced guard confines mutations
+  to the workspace root (`/var/home/hunter/Documents/projects/personal/Workflow`)
+  and blocks any write/symlink outside it; this session tripped that block
+  three times before discovering `.worktrees/` (inside the checkout) is the
+  path `.git/info/exclude:13` actually covers. Predicted effect: after the doc
+  points at the in-checkout `.worktrees/` path (and notes the guard boundary),
+  an agent following it can create+use a worktree without a blocked mutation.
+- **at-risk regressions:** none (docs-only); the risk is under-updating (leaving
+  the old path implied) or over-editing unrelated guidance.
+- **accept/reject rule:** accept iff the documented path is one the guard
+  permits (inside the workspace root), `.git/info/exclude` actually covers it,
+  and the surrounding conventions are unchanged except the worktree bullet.
+- **non-goals:** no guard-policy change; no new workflow; no code.
+- **trace evidence:** `.git/info/exclude:13` = `.worktrees/` (confirmed via
+  `git check-ignore -v .worktrees/x`); `git check-ignore .campaign/x` exit 1
+  (not ignored); the guard block message this session named the workspace root
+  and rejected `/var/home/hunter/worktrees/w185-actions-pin/node_modules`.
+- **preregistered:** before edit (this entry).
+
+### Result — iteration 3 (campaign n=3)
+
+- **change:** `AGENTS.md` "Git / PR conventions" worktree bullet — documents
+  the in-checkout `.worktrees/<name>` path the guard permits and
+  `.git/info/exclude` covers, and names the out-of-checkout path as blocked.
+  Single file (annealed edit budget).
+- **commit:** (this branch `w187/worktree-doc-reconcile`).
+- **evidence:** `.git/info/exclude:13` = `.worktrees/` (via
+  `git check-ignore -v .worktrees/x`); `git check-ignore .campaign/x` exit 1;
+  the guard's own block message this session named the workspace-root
+  confinement. Docs-only: `npm run lint` + `npm run typecheck` unaffected by a
+  markdown edit (re-run for the record: exit 0).
+- **score:** gain. Prediction held: the guide now points at a path the enforced
+  policy allows, removing the three-block friction this campaign hit.
+- **losses/exceptions:** docs-only; no executable pin (the guard is the
+  enforcement, and prose is the right artifact for a convention). Cannot be
+  fully "verified" beyond the check-ignore/info-exclude facts.
+- **keep/revert:** keep.
+
+## Campaign close-out (2026-10-04)
+
+- **iterations:** 3 (N=3, cap 5), each one branch one PR, distinct
+  change-types `security` -> `gate` -> `docs` (no diversity collapse; no
+  no-gain streak).
+- **PRs:** #472 (w185, security), #473 (w186, gate), campaign-3 PR (w187,
+  docs) — all open for operator review.
+- **stop reason:** N iterations done.
+- **next hypothesis:** the `security` and `gate` candidates both landed a new
+  CI-enforced pinch; the natural follow-on families are (a) `config` — a
+  Dependabot/renovate lane so the SHA pins do not rot (explicitly a non-goal
+  of #472), and (b) `gate` — extend the purity gate to the import-free ambient
+  IO class (`fetch`/`process.env`/`Date.now`/`Math.random`) the kernel-purity
+  test's bounded claim excludes.
