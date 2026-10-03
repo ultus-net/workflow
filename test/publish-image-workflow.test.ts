@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -18,6 +19,12 @@ import { test } from "node:test";
  * (a static string assert alone could be satisfied by a comment), so the
  * double prefix cannot come back: a valid digest records verbatim, a
  * non-contract digest fails closed with `::error::` and writes nothing.
+ *
+ * The verify step (`sha256sum -c opencode.sha256`) is pinned the same way: it
+ * hashes the DOWNLOADED asset and compares it to the committed pin, so a
+ * matching asset passes and a re-tagged asset fails closed. A characterization
+ * pin constrains the check to the committed pin file itself (a download-step
+ * output the workflow never wires to this step cannot silently replace it).
  */
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -25,15 +32,24 @@ const workflowPath = join(repoRoot, ".github", "workflows", "publish-image.yml")
 const workflow = readFileSync(workflowPath, "utf8");
 
 const STEP_NAME = "Record the digest at the tagged release (the verify-pin contract)";
+const VERIFY_STEP_NAME = "Verify the vendored binary against the recorded pin";
 
-/** Extract a step's `run: |` block scalar (two-space body indent). */
+/**
+ * Extract a step's `run:` script. Supports both GitHub Actions forms: the
+ * `run: |` block scalar (two-space body indent) and the inline
+ * `run: <command>` scalar (a single-line script).
+ */
 function runBlockForStep(name: string): string {
   const lines = workflow.split("\n");
   const nameIdx = lines.findIndex((line) => line.trim() === `- name: ${name}`);
   assert.ok(nameIdx >= 0, `workflow step not found: ${name}`);
-  const runIdx = lines.findIndex((line, index) => index > nameIdx && line.trim() === "run: |");
+  const runIdx = lines.findIndex((line, index) => index > nameIdx && line.trimStart().startsWith("run:"));
   assert.ok(runIdx >= 0, `run block not found for step: ${name}`);
-  const runIndent = (lines[runIdx] ?? "").search(/\S/);
+  const runLine = lines[runIdx] ?? "";
+  const runIndent = runLine.search(/\S/);
+  const inline = runLine.trim().slice("run:".length).trim();
+  // Inline scalar (`run: sha256sum -c opencode.sha256`): return it verbatim.
+  if (inline !== "" && inline !== "|" && inline !== ">") return inline;
   const body: string[] = [];
   for (let index = runIdx + 1; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
@@ -108,4 +124,54 @@ test("W149: the record step keeps the verbatim single-prefix write and the forma
     "the double-prefixing write must be gone",
   );
   assert.ok(block.includes("^sha256:[0-9a-f]{64}$"), "the fail-closed format assertion must be present");
+});
+
+interface VerifyRun {
+  readonly status: number | null;
+  readonly stderr: string;
+}
+
+// The downloaded asset's real bytes (content is arbitrary; only its digest
+// against the pin matters). `sha256sum -c` hashes THIS file and compares it to
+// `opencode.sha256`, so `actualAssetSha256` is the digest the check computes.
+const ASSET_BYTES = "qualified-stock-opencode-binary\n";
+const ACTUAL_ASSET_SHA256 = createHash("sha256").update(ASSET_BYTES).digest("hex");
+
+/**
+ * Execute the real verify step's `run:` block against a downloaded `opencode`
+ * asset plus a recorded `opencode.sha256` pin. The block is `sha256sum -c
+ * opencode.sha256`: it hashes the downloaded file and compares that digest to
+ * the pin. A matching pin exits 0; a re-tagged asset (whose bytes differ from
+ * the pin) exits non-zero.
+ */
+function verifyAsset(pinSha256: string): VerifyRun {
+  const workdir = mkdtempSync(join(tmpdir(), "w149-verify-"));
+  try {
+    writeFileSync(join(workdir, "opencode"), ASSET_BYTES);
+    // The committed pin file's format: "<64hex>  opencode" (GNU coreutils).
+    writeFileSync(join(workdir, "opencode.sha256"), `${pinSha256}  opencode\n`);
+    const scriptPath = join(workdir, "verify.sh");
+    writeFileSync(scriptPath, runBlockForStep(VERIFY_STEP_NAME));
+    const result = spawnSync("bash", ["-e", scriptPath], { cwd: workdir, encoding: "utf8" });
+    return { status: result.status, stderr: result.stderr };
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+}
+
+test("W149: the verify step passes when the downloaded asset matches the recorded pin", () => {
+  const result = verifyAsset(ACTUAL_ASSET_SHA256);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("W149: the verify step fails closed when a re-tagged asset diverges from the recorded pin", () => {
+  const result = verifyAsset("a".repeat(64));
+  assert.notEqual(result.status, 0, "a re-tagged/mismatched asset must fail the build");
+  assert.match(result.stderr, /did NOT match/, "the coreutils mismatch report must be present");
+});
+
+test("W149: the verify step hashes the downloaded file against the committed pin file (not a recorded output)", () => {
+  const block = runBlockForStep(VERIFY_STEP_NAME);
+  assert.ok(block.includes("sha256sum -c opencode.sha256"), "the committed pin must be the comparison source");
+  assert.ok(!block.includes("$BINARY_SHA256"), "the check must not depend on a download-step output it never wires");
 });
