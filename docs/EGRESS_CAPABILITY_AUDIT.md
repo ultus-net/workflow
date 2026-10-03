@@ -176,22 +176,29 @@ single-origin proxy lanes (opencode/cline/goose + the W129 server lane) resolve
 the upstream origin's binding from the operator credential definitions'
 `allowedEndpoints` (`src/integrations/egress-binding.ts`) and thread it into
 `createModelUsageProxy`; the standalone server CLI does the same. The W070a
-open-source-pool family proxies are deliberately excluded — their upstreams are
-vendor-specific, so the `WORKFLOW_ACP_UPSTREAM`-derived binding would not match
-and could only 403 all family traffic; they carry the policy tier and sinks
-only. The binding is
+open-source-pool family proxies are wired through the SAME `allowedEndpoints`
+source, narrowed per family against each vendor's OWN origin
+(`perFamilyCredentialBinding`): a definition binding the vendor host/port scopes
+that family, and a family whose origin no definition binds stays dark
+(byte-identical). Deriving the family binding from the OpenRouter origin would
+not match a vendor host and could only 403 all family traffic, so the origin is
+the vendor's, not `WORKFLOW_ACP_UPSTREAM`. The binding is
 narrowed to the proxy origin — an endpoint naming a different host/port is
 dropped, because the single-origin proxy could only blanket-refuse, never scope,
 such a request. With no definition binding the origin the gate stays **inactive
 and byte-identical**. The keys the proxy injects are still loaded from
 `src/integrations/upstream-key.ts` (`WORKFLOW_UPSTREAM_KEY` /
-`~/.config/workflow/upstream-key`), a custody path separate from
-`CredentialDefinition.allowedEndpoints`; the binding scopes *where that key may
-go*, it does not make the key an identity proof. The residual-risk narrowing
-above is therefore **live wherever an operator declares an endpoint binding, and
-absent (unchanged) otherwise** — it is not a blanket enforced claim. It is
-verified by `test/egress-binding.test.ts` (the origin-narrowing source) and the
-W184 server-lane wiring pin in `test/opencode-server-egress-wiring.test.ts`.
+`~/.config/workflow/upstream-key`) on the single-origin lanes and
+`src/integrations/open-model-keys.ts` on the family lanes, custody paths
+separate from `CredentialDefinition.allowedEndpoints`; the binding scopes *where
+that key may go*, it does not make the key an identity proof. The residual-risk
+narrowing above is therefore **live wherever an operator declares an endpoint
+binding AND the family's key is present** (a family with no key composes no
+proxy and falls back to OpenRouter), and absent (unchanged) otherwise — it is
+not a blanket enforced claim. It is verified by `test/egress-binding.test.ts`
+(the origin-narrowing source and the per-family narrowing),
+`test/open-model-proxy.test.ts` (the family boundary), and the W184 server-lane
+wiring pin in `test/opencode-server-egress-wiring.test.ts`.
 
 ## 4. Destination and function inventory
 

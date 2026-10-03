@@ -175,7 +175,7 @@ test("W128: the compiled hub publishes the discovery contract, serves the authen
   // /snapshot — the authenticated canonical route (hub-http.ts:228-254, POST
   // with a JSON body): the hub's canonical task state carries the seeded
   // "interactive" READY task from src/cli/hub.ts:41-49, projected through the
-  // full WorkflowSnapshot shape (src/application/workflow.ts:30-37).
+  // full WorkflowSnapshot shape (src/application/workflow.ts:38-46).
   const snapshotResponse = await fetch(`${endpoint}/snapshot`, {
     method: "POST",
     headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -193,8 +193,10 @@ test("W128: the compiled hub publishes the discovery contract, serves the authen
   // (src/integrations/run-registry.ts:251-257), which hides exactly that seed
   // (matched by title) plus finished run tasks, so hub-attached surfaces never
   // render the hub's own placeholder. The WorkflowSnapshot envelope itself is
-  // full shape (src/application/workflow.ts:30-37), enforcement enforced (the
-  // hub composes authoritativePreMutation, src/cli/hub.ts:52).
+  // full shape (src/application/workflow.ts:38-46). W072 (I-6/I-10) added the
+  // append-only `executionLog` to the envelope; a fresh hub has appended
+  // nothing, so it projects as an empty array. enforcement enforced (the hub
+  // composes authoritativePreMutation, src/cli/hub.ts:52).
   assert.deepEqual(
     snapshotBody.snapshot,
     {
@@ -204,6 +206,7 @@ test("W128: the compiled hub publishes the discovery contract, serves the authen
       tasks: [],
       evidence: [],
       history: [],
+      executionLog: [],
     },
     `the canonical projection is the full WorkflowSnapshot envelope with the seed task suppressed — observed: ${JSON.stringify(snapshotBody.snapshot)}`,
   );

@@ -17,6 +17,8 @@
  */
 
 import type { CredentialDefinition, CredentialEndpoint } from "./credentials.js";
+import type { ModelFamily } from "./model-profile.js";
+import type { OpenModelDefinition } from "./open-source-pool.js";
 
 /** The proxy's origin facts. `port` is the scheme-default when unspecified. */
 export interface UpstreamOrigin {
@@ -67,6 +69,26 @@ export function upstreamCredentialBinding(
     }
   }
   return binding;
+}
+
+/**
+ * W179 gate-2 bindings for the open-source-pool family proxies, keyed by
+ * family. The pool proxies inject a VENDOR key whose custody is separate from
+ * the OpenRouter-origin operator binding, so each family is narrowed against
+ * its OWN vendor origin. A family whose origin no definition binds is omitted,
+ * leaving that family's gate 2 inactive (absent, byte-identical). Value-free.
+ */
+export function perFamilyCredentialBinding(
+  pool: readonly OpenModelDefinition[],
+  definitions: readonly CredentialDefinition[],
+): Partial<Record<ModelFamily, CredentialEndpoint[]>> {
+  const byFamily: Partial<Record<ModelFamily, CredentialEndpoint[]>> = {};
+  for (const def of pool) {
+    if (byFamily[def.family] !== undefined) continue;
+    const binding = upstreamCredentialBinding(def.endpoint, definitions);
+    if (binding.length > 0) byFamily[def.family] = binding;
+  }
+  return byFamily;
 }
 
 /**
