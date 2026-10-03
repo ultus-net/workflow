@@ -1381,20 +1381,30 @@ test("P18 (c): the -c= EQUALS-expansion spelling classifies like sh/bash (the pa
   assert.equal(checkPolicy({ action: "shell", command: "zsh -c'git commit -m x'", currentBranch: "main" }).decision, "deny");
 });
 
-test("P18 (over-block watch): non-shell names ending in sh are not sh-family wrappers", () => {
-  // The watch this pin answers: a bare suffix predicate (`/sh$/i`) would treat
-  // ANY name ending in "sh" — publish, flush, push, bush, hush — as a shell
-  // interpreter and classify a would-deny inner command as a wrapped deny,
-  // over-blocking ordinary commands. The landed predicate is anchored to the
-  // family (`/^(?:ba|z|da|k|x)?sh$/i`) in all three lanes (shell, git, boundary),
-  // so these non-shell heads stay allow. The pin discriminates against a future
-  // widening to a bare `/sh$/` suffix match: under that widening the first
-  // assertion flips to deny, which is exactly the reopened over-block. (The
-  // mirror concern — a widening that matches a real shell the family omits — is
-  // a bypass, not an over-block, and is not what this pin guards.)
+test("P18 (over-block watch): the deliberate fail-closed suffix over-match is pinned, and a NON-shell name that does not take -c stays allow", () => {
+  // RECONCILIATION (2026-10-03, G6 corpus baseline repair): the prior pin here
+  // encoded the PRE-closure expectation — the anchored predicate
+  // `/^(?:ba|z|da|k|x)?sh$/i` matched only known shells, so a non-shell name
+  // ending in `sh` with `-c <would-deny>` stayed allow. The P18(a) class
+  // closure (2026-09-30, operator-approved 2026-09-24) superseded that
+  // predicate with the single-sourced bare suffix `isShFamilyInterpreter`
+  // (`/sh$/i`, `src/shell.ts`), so the over-match below is now the DELIBERATE,
+  // fail-closed, operator-approved behavior and is already pinned at the
+  // P18 (a) class-closure test above. This pin reconciles with it rather than
+  // restating the pre-closure allow. Do NOT reintroduce a second contradictory
+  // pin against the landed predicate.
+  //
+  // Approved over-block holds: a non-shell name ending in `sh` that takes
+  // `-c <git-denied>` denies (it cannot be told from a shell without executing
+  // it); its benign payload stays allow.
+  assert.equal(checkPolicy({ action: "shell", command: "publish -c 'git commit -m x'", currentBranch: "main" }).decision, "deny");
+  assert.equal(checkPolicy({ action: "shell", command: "publish -c 'echo hi'", currentBranch: "main" }).decision, "allow");
+  // WEAKENING DETECTOR retained: a non-shell `*sh` name used WITHOUT `-c`
+  // stays allow — the suffix predicate only over-matches at the `-c` wrapper
+  // boundary, so these ordinary invocations must not regress to a blanket deny.
   for (const name of ["publish", "flush", "push", "bush", "hush"]) {
-    assert.equal(checkPolicy({ action: "shell", command: `${name} -c 'git commit -m x'`, currentBranch: "main" }).decision, "allow", `${name} commit`);
-    assert.equal(checkPolicy({ action: "shell", command: `${name} -c 'top'` }).decision, "allow", `${name} top`);
+    assert.equal(checkPolicy({ action: "shell", command: `${name} --version` }).decision, "allow", `${name} --version`);
+    assert.equal(checkPolicy({ action: "shell", command: `${name}` }).decision, "allow", `${name}`);
   }
   // Contrast arm: the genuine family still classifies (the pin is a boundary,
   // not a blanket allow).
