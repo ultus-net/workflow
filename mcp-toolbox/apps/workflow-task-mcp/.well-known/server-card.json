@@ -1,0 +1,55 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "workflow-task-mcp",
+  "version": "0.1.0",
+  "description": "The canonical Workflow step ledger over MCP: define, start, complete, and cancel evidence-bound task steps.",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "step_list",
+      "description": "Proactively call when deciding what canonical step to work on next. Lists the task's step ledger in order; the ledger is the authority on what should happen, not the host's local todo list.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "step_define",
+      "description": "Define/replace the canonical ordered step ledger for a task. Every step must declare its done-condition (requiredEvidence, and optionally a requiredPostcondition re-queried at completion). The kernel enforces I-2 (no silent deletion of an active step) and fails the whole define when a proposal is malformed — the prior ledger is preserved.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "step_start",
+      "description": "Start the single active canonical step (I-8: at most one step is IN_PROGRESS). Starting a step that is not PENDING, or while another step is active, is the kernel's decision and is surfaced as a refusal.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "step_complete",
+      "description": "Complete a step. The hub re-queries the real file fingerprint for every claimed subject before the kernel admits the completion; a step whose required evidence is missing/stale, or whose claimed change did not actually re-appear, is refused with the kernel's own code — never accepted on the caller's word.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "step_cancel",
+      "description": "Cancel a step (PENDING or IN_PROGRESS -> CANCELLED). Cancelling preserves the ledger entry; steps are never deleted from history.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 10458,
+    "toolIndexBytes": 1585
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}

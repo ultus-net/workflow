@@ -35,6 +35,7 @@ export const APPS: readonly AppDescriptor[] = [
     taskTool: "run_verification_async",
   },
   { id: "workflow-guard-mcp", contentOnlyTools: ["guard_check", "guard_status"] },
+  { id: "workflow-task-mcp", contentOnlyTools: [] },
 ];
 
 export function findApp(id: string): AppDescriptor {
