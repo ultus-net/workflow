@@ -31,6 +31,8 @@ export interface WorkflowTaskProjection {
   readonly title: string;
   readonly state: TaskState;
   readonly blockers: readonly TaskId[];
+  /** W072 I-10: the task's current IN_PROGRESS step, omitted when none. */
+  readonly stepId?: StepId;
 }
 
 export interface WorkflowSnapshot {
@@ -540,12 +542,16 @@ export class WorkflowApplication {
       enforcementLevel: this.host.enforcementLevel,
       transport: this.host.transport,
       mutationEpoch: this.#graph.mutationEpoch,
-      tasks: this.#graph.tasks().map((task) => ({
-        id: task.id,
-        title: task.title,
-        state: task.state,
-        blockers: task.dependencies.filter((dependency) => this.#graph.get(dependency).state !== "VERIFIED"),
-      })),
+      tasks: this.#graph.tasks().map((task) => {
+        const stepId = this.#graph.activeStepId(task.id);
+        return {
+          id: task.id,
+          title: task.title,
+          state: task.state,
+          blockers: task.dependencies.filter((dependency) => this.#graph.get(dependency).state !== "VERIFIED"),
+          ...(stepId === undefined ? {} : { stepId }),
+        };
+      }),
       evidence: this.#graph.evidence(),
       history: [...this.#history],
       executionLog: this.#executionLog.entries(),
