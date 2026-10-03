@@ -5,6 +5,7 @@ import { stepId, taskId, type WorkflowStep } from "../src/kernel/contracts.js";
 import {
   auditLedgerAgainstDiff,
   changedPathsFromDiff,
+  ledgerRequiresRefusal,
   renderLedgerAuditFindings,
 } from "../src/review/ledger-audit.js";
 
@@ -57,6 +58,15 @@ test("W072 I-5: empty changedPaths flags every COMPLETED step", () => {
   );
   assert.deepEqual(findings.map((finding) => finding.stepId), [stepId("s-audit"), stepId("s-audit")]);
   assert.ok(findings.every((finding) => finding.code === "LEDGER_STEP_WITHOUT_DIFF"));
+});
+
+test("W072 I-5: ledgerRequiresRefusal holds only for a COMPLETED step with an empty diff", () => {
+  assert.equal(ledgerRequiresRefusal([step("ship the parser", "COMPLETED")], []), true);
+  // A non-empty diff absents the refusal even when no token matches (advisory).
+  assert.equal(ledgerRequiresRefusal([step("ship the parser", "COMPLETED")], ["src/a.ts"]), false);
+  // No COMPLETED step means nothing to refuse.
+  assert.equal(ledgerRequiresRefusal([step("open", "PENDING")], []), false);
+  assert.equal(ledgerRequiresRefusal([], []), false);
 });
 
 test("W072 I-5: changedPathsFromDiff reads diff --git and +++ headers, skipping /dev/null", () => {

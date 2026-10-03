@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { buildReviewRubric, countReferencedAxes, MIN_REFERENCED_AXES } from "../review/rubric.js";
-import { changedPathsFromDiff, auditLedgerAgainstDiff, renderLedgerAuditFindings } from "../review/ledger-audit.js";
+import { changedPathsFromDiff, auditLedgerAgainstDiff, ledgerRequiresRefusal, renderLedgerAuditFindings } from "../review/ledger-audit.js";
 import type { WorkflowStep } from "../kernel/contracts.js";
 import { deriveReviewCoverageManifest, renderReviewManifestText, reviewCoverageGaps } from "../review/manifest.js";
 import {
@@ -209,9 +209,14 @@ export class HubReviewerRunner {
     readonly ledgerSteps?: readonly WorkflowStep[];
   }): Promise<HubReviewerResult> {
     const diffText = await this.#diffSource(input.workspace);
+    const changedPaths = changedPathsFromDiff(diffText);
     const ledgerAuditText = input.ledgerSteps === undefined
       ? undefined
-      : renderLedgerAuditFindings(auditLedgerAgainstDiff(input.ledgerSteps, changedPathsFromDiff(diffText)));
+      : renderLedgerAuditFindings(auditLedgerAgainstDiff(input.ledgerSteps, changedPaths));
+    // W072 I-5: only the unambiguous case (a ledger with a COMPLETED step and
+    // zero changed paths) is a hard refusal; the token/basename findings stay
+    // advisory in the prompt.
+    const ledgerRefusal = input.ledgerSteps !== undefined && ledgerRequiresRefusal(input.ledgerSteps, changedPaths);
     const statusOutput = this.#statusSource === undefined ? undefined : await this.#statusSource(input.workspace);
     const manifest = statusOutput === undefined ? undefined : deriveReviewCoverageManifest({ statusOutput });
     const partition = manifest === undefined ? undefined : partitionReviewManifest(manifest);
@@ -243,7 +248,7 @@ export class HubReviewerRunner {
       // W040: multi-component scope is reviewed unit by unit (fresh isolated
       // sessions, focused rules, one integration review), all fail-closed.
       if (manifest !== undefined && partition !== undefined && partition.units.length > 1) {
-        return await this.#reviewPartitioned(input, reviewerRunId, diffText, manifest, partition, fingerprint, ledgerAuditText);
+        return await this.#reviewPartitioned(input, reviewerRunId, diffText, manifest, partition, fingerprint, ledgerAuditText, ledgerRefusal);
       }
       const prompt = buildReviewRubric({
         diffText,
@@ -279,6 +284,26 @@ export class HubReviewerRunner {
           coveredPaths: [],
           verification: ["fail-closed: unparseable verdict"],
         });
+      }
+      // W072 I-5 deterministic refusal: a ledger with a COMPLETED step and an
+      // empty sourced diff can never be approved, whatever the model said.
+      // Recorded through the same fail-closed path as an unparseable verdict.
+      if (parsed.verdict === "approved" && ledgerRefusal) {
+        return this.#recordFailClosed(
+          input,
+          reviewerRunId,
+          fingerprint,
+          parsed.summary,
+          "deterministic audit: completed steps with an empty diff",
+          {
+            inspectedUnits: ["manifest"],
+            coveredPaths: parsed.coveredPaths,
+            verification: [
+              `axes: ${countReferencedAxes(parsed.summary)}/5`,
+              "deterministic ledger-vs-diff audit: COMPLETED step(s), 0 changed paths",
+            ],
+          },
+        );
       }
       if (parsed.verdict === "approved" && countReferencedAxes(parsed.summary) < MIN_REFERENCED_AXES) {
         return this.#recordFailClosed(
@@ -370,7 +395,24 @@ export class HubReviewerRunner {
     partition: ReviewPartition,
     fingerprint: ReviewProvenanceFingerprint | undefined,
     ledgerAuditText: string | undefined,
+    ledgerRefusal: boolean,
   ): Promise<HubReviewerResult> {
+    // W072 I-5 deterministic refusal: with COMPLETED steps and an empty diff,
+    // no unit or integration approval can stand. Fail closed once, up front.
+    if (ledgerRefusal) {
+      return this.#recordFailClosed(
+        input,
+        reviewerRunId,
+        fingerprint,
+        "deterministic audit: completed steps with an empty diff",
+        "deterministic audit: completed steps with an empty diff",
+        {
+          inspectedUnits: ["ledger"],
+          coveredPaths: [],
+          verification: ["deterministic ledger-vs-diff audit: COMPLETED step(s), 0 changed paths"],
+        },
+      );
+    }
     // W041 resume: units whose newest record is an approval with complete
     // coverage under the EXACT current fingerprint are not re-reviewed. Any
     // change — commit, prompt, scope, partition, or rules — resumes nothing,

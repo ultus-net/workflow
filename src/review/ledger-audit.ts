@@ -113,6 +113,19 @@ export function auditLedgerAgainstDiff(
 }
 
 /**
+ * W072 I-5 refusal predicate: the unambiguous ledger/diff mismatch is a run
+ * that HAS a step ledger with at least one COMPLETED step while the sourced
+ * diff changed ZERO paths. Unlike the token/basename findings above (which can
+ * be false positives), this deterministic case can never be approved. Pure.
+ */
+export function ledgerRequiresRefusal(
+  steps: readonly WorkflowStep[],
+  changedPaths: readonly string[],
+): boolean {
+  return changedPaths.length === 0 && steps.some((step) => step.state === "COMPLETED");
+}
+
+/**
  * Deterministic prompt rendering of the audit findings. Pure. An empty
  * findings list renders the honest all-backed result, never silence.
  */
