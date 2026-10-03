@@ -1306,6 +1306,44 @@ does — and there is still no v2-compatible fingerprint source; therefore
 **DRIFT-019 and DRIFT-024 stay OPEN**, now advanced by a real production
 observation on one surface rather than by the contract alone.
 
+**Addendum (2026-10-02, I-9 hub step-ledger admission-lane slice):** the
+canonical step API now has hub protocol routes. `src/integrations/hub-http.ts`
+serves five POST routes — `/steps/list`, `/steps/define`, `/steps/start`,
+`/steps/complete`, `/steps/cancel` — in the ordinary-token class (a verifier
+credential is refused 401, the same class as `/run/begin`; the step ledger is a
+workspace-scoped tracking surface, not an autonomous mutation loop). The
+application is resolved exactly like `/snapshot`
+(`context.resolveApplication(workspace, undefined, { activateInteractiveTask:
+false })`, `/review/rubric` resolves none), so a client may target a workspace
+and the default resolver returns the base application when none is passed.
+`/steps/list` returns a JSON-safe projection (branded `StepId`/`TaskId`
+serialized to strings; `requiredEvidence` as `{authority, subject}`;
+`requiredPostcondition` only when present). `/steps/define` validates the body
+at the boundary with a new `parseStepProposals` (array shape; non-empty
+`content`; known evidence authorities only; `requiredPostcondition` validated as
+a non-empty `subjects` array of `{path, expectedFingerprint}`) and composes
+typed objects only — a client-supplied `producingFlow`/`requiredDecisions` is
+never accepted and no raw object reaches the kernel; a malformed body is 400 and
+a kernel `TypeError` (empty content, no done-condition, dropped active step,
+foreign id) is a 409 with the kernel's message (mirroring `src/ui/web.ts`).
+`start`/`complete`/`cancel` map a `StepTransitionResult.kind === "rejected"` to
+409 with the structured result verbatim; `/steps/complete` calls
+`completeStepWithRequery`, so the I-9 production re-query now runs on the hub
+admission lane, not only the web surface. Pinned by the new
+`test/hub-steps.test.ts` (7 tests: ordinary-token class; JSON-safe list;
+define→start→complete happy path; a rejected transition 409 with its code;
+malformed define 400s incl. an unknown authority and a malformed postcondition;
+`/steps/complete` re-queries the real on-disk sha256 and completes on a match;
+a changed file refuses `STEP_POSTCONDITION_UNMET`). **What remains open:** the
+ordered codes→schema→cross-field→state-diff→tests runner is still not composed
+(this slice wires one rung — state-diff — onto the hub lane; the gates before
+and after it and the ordered composition are absent), and there is still no
+v2-compatible fingerprint source (the re-query uses the application-layer
+sha256 of `fingerprintFile`). Therefore **DRIFT-019 and DRIFT-024 stay OPEN**,
+advanced by a second production surface driving the re-query variant. The
+`GET /api/steps` web read has no hub read route counterpart beyond
+`/steps/list`.
+
 
 **Addendum (2026-10-02, I-6 restore cross-check slice):** restore now
 **fails closed on log/history divergence**. `JsonWorkflowStore.load` (via a
