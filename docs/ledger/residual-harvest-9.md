@@ -157,3 +157,21 @@ ancestors of this branch's base; items 2(b), 3, and 5 re-verify or re-record
 decisions made on those unmerged branches, so the durable copy lands here. No
 `npm test` (focused suites only, per the operator resource directive). No
 operator direction needed beyond the dispatch; no push/PR.
+
+**SUPERSESSION NOTE (2026-10-03, G6 corpus baseline repair, branch
+`fix/g6-p18-pin-reconciliation`):** item 1's premise is superseded. It probed
+the anchored regex `/^(?:ba|z|da|k|x)?sh$/i` in
+`src/shell-policy.ts`/`src/git-policy.ts`/`src/boundary-policy.ts`, but the
+P18(a) class closure (2026-09-30, operator-approved 2026-09-24) replaced the
+enumeration with the single-sourced bare suffix `isShFamilyInterpreter`
+(`src/shell.ts`, `/sh$/i`). The over-block therefore now EXISTS and is
+DELIBERATE/operator-approved — `publish -c 'git commit -m x'` denies, already
+pinned at the P18(a) class-closure test. Item 1's `test/policy.test.ts`
+"over-block watch" pin (which asserted the pre-closure `allow`) contradicted
+that and left the guard corpus baseline at 125/126. The watch was reconciled
+(2026-10-03) to pin the approved over-block plus a retained weakening detector
+(non-shell `*sh` names WITHOUT `-c` stay allow; genuine family still
+classifies). This fragment's own pin and `/sh$/` mutation proof are historical
+and no longer describe the landed predicate; the durable current record lives in
+`docs/PARKED_AND_LIMITATIONS.md` (P18 row) and `docs/SECURITY_ASSURANCE.md`
+(residual #20).
