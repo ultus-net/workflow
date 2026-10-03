@@ -20,8 +20,20 @@
       "taskSupport": "forbidden"
     },
     {
+      "name": "append_egress_reject",
+      "description": "Record one rejected egress attempt: a destination the boundary refused, the function class attempted on it, the token class that carried it, and the policy tag that refused it (for example egress-credential). The ledger is append-only and bounded; it records evidence and never enforces egress policy. No secret, placeholder value, path, or query string is stored — pass a bare hostname and a policy tag only.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
       "name": "query_egress_reaches",
       "description": "Read recorded egress reaches, newest first, bounded by limit. Results are advisory evidence about what was reported, not a complete or authoritative egress record.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "query_egress_rejects",
+      "description": "Read recorded egress rejections, newest first, bounded by limit. Advisory evidence about attempts the boundary refused, never a complete or authoritative record.",
       "readOnly": true,
       "taskSupport": "forbidden"
     },
@@ -35,8 +47,8 @@
   "discovery": {
     "strategy": "host-side-progressive",
     "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
-    "fullCatalogBytes": 4867,
-    "toolIndexBytes": 968
+    "fullCatalogBytes": 8292,
+    "toolIndexBytes": 1723
   },
   "generatedBy": "@agent-tools/protocol-baseline",
   "surveyedAt": "2026-09-19"

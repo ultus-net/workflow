@@ -1462,7 +1462,33 @@ verdict tie covers the zero-diff case only, and the token/basename matching is
 not a semantic map. `docs/COMPLIANCE_REGISTER.md` records the advance on the I-5
 row and the progress log; the I-5 invariant keeps its OPEN obligation.
 
-
+**Addendum (2026-10-03, Stage 3 `workflow-task-mcp` publish slice):** the
+canonical step ledger is now published over MCP as a first-party toolbox
+product, `mcp-toolbox/apps/workflow-task-mcp`. It is the host-agnostic
+retirement target for the native `todowrite` bridge named in §4: any MCP-capable
+host defines/lists/starts/completes/cancels canonical steps through this server
+(`step_list`, `step_define`, `step_start`, `step_complete`, `step_cancel`),
+which drives the hub's ordinary-token `/steps/*` routes (PR #464). The hub is
+the authority — `/steps/start|complete|cancel` answer 409 with the kernel's own
+`StepTransitionResult` and the server surfaces it as a tool error, never a
+success; `/steps/complete` re-queries the real file fingerprint on the hub side,
+so the server cannot fabricate a change. Credentials are read from the hub's
+published `discovery.json` (`WORKFLOW_HUB_DIR`/`~/.workflow`, re-read per call;
+`WORKFLOW_HUB_URL`/`WORKFLOW_HUB_TOKEN` override for tests) — never on argv —
+and a missing/unreachable hub is a clear error, not a silent no-op. Wired into
+the corpus: `TOOLBOX_CATALOG` (root), the protocol-baseline `APPS` inventory
+(count 15→16 in `conformance.test.ts`/`measure.test.ts`), a generated
+`.well-known/server-card.json`, and the `result-bounds` vendor-drift list (the
+app vendored the canonical helper verbatim). Pinned by
+`test/hub-client.test.ts` (6) and `test/mcp.test.ts` (4, over a fake hub:
+advertised tools + declared output schemas, Bearer + path/body mapping, a 409
+refusal is a tool error, an accepted transition round-trips), plus
+`test/toolbox-catalog.test.ts` (5), the protocol-baseline
+cards/conformance/measure tests (6), and the result-bounds vendor-drift test
+(2). **Stage 3 remains PARTIAL:** this is the publish half only — no host has
+been live-probed against the app yet (probe-gated, never date-gated), the hub
+step-route auth is a loopback ordinary token, and the native-todo bridge in
+`src/application/workflow.ts` is not yet retired in favor of this server.
 
 ## Phase 15: Bounded recursive self-improvement (2026-09-19)
 
