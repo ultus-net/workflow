@@ -193,11 +193,12 @@ and byte-identical**. The keys the proxy injects are still loaded from
 separate from `CredentialDefinition.allowedEndpoints`; the binding scopes *where
 that key may go*, it does not make the key an identity proof. The residual-risk
 narrowing above is therefore **live wherever an operator declares an endpoint
-binding, and absent (unchanged) otherwise** — it is not a blanket enforced
-claim. It is verified by `test/egress-binding.test.ts` (the origin-narrowing
-source and the per-family narrowing), `test/open-model-proxy.test.ts` (the
-family boundary), and the W184 server-lane wiring pin in
-`test/opencode-server-egress-wiring.test.ts`.
+binding AND the family's key is present** (a family with no key composes no
+proxy and falls back to OpenRouter), and absent (unchanged) otherwise — it is
+not a blanket enforced claim. It is verified by `test/egress-binding.test.ts`
+(the origin-narrowing source and the per-family narrowing),
+`test/open-model-proxy.test.ts` (the family boundary), and the W184 server-lane
+wiring pin in `test/opencode-server-egress-wiring.test.ts`.
 
 ## 4. Destination and function inventory
 

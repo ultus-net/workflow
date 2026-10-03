@@ -160,4 +160,11 @@ test("W149: the tag resolve step prefers the dispatch input and fails closed on 
   assert.notEqual(rejected.status, 0, "a non-v tag must fail closed");
   assert.match(rejected.stderr, /::error::/);
   assert.equal(rejected.resolved, undefined, "no RELEASE_TAG may be exported on a bad tag");
+
+  // A newline in the tag would let a caller inject extra GITHUB_ENV entries;
+  // the character-class guard must reject it (grep alone is line-based and
+  // would accept it).
+  const injected = resolveTag("v2.0.10\nINJECTED_VAR=attacker-controlled", "main");
+  assert.notEqual(injected.status, 0, "a newline-bearing tag must fail closed");
+  assert.equal(injected.resolved, undefined, "no RELEASE_TAG may be exported on an injected tag");
 });

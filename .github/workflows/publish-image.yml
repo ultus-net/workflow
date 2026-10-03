@@ -61,8 +61,12 @@ jobs:
           if [ -z "$resolved" ]; then
             resolved="$PUSHED_REF"
           fi
-          if ! printf '%s\n' "$resolved" | grep -Eq '^v'; then
-            echo "::error::the release tag must start with 'v' (got: ${resolved})" >&2
+          # A strict bash regex, not an anchored `grep`: grep is line-based, so
+          # a newline-bearing value (`v2.0.10\nINJECTED=...`) would match on its
+          # first line and inject extra GITHUB_ENV entries. `[[ =~ ]]` matches
+          # the whole value, so the newline is rejected.
+          if [[ ! "$resolved" =~ ^v[0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "::error::the release tag must match ^v[0-9][A-Za-z0-9._-]*\$ (got: ${resolved})" >&2
             exit 1
           fi
           printf 'RELEASE_TAG=%s\n' "$resolved" >> "$GITHUB_ENV"
