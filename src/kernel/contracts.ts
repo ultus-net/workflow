@@ -1,3 +1,5 @@
+import type { ChangeClaim } from "./state-diff.js";
+
 type Brand<Value, Name extends string> = Value & { readonly __brand: Name };
 
 export type TaskId = Brand<string, "TaskId">;
@@ -148,6 +150,13 @@ export interface WorkflowStep {
   readonly requiredEvidence: readonly EvidenceRequirement[];
   /** W166 P3: operator-decision requirements for the step (optional, additive). */
   readonly requiredDecisions?: readonly DecisionRequirement[];
+  /**
+   * W072 I-9 (§3.9): the state-diff postcondition. A step declaring it must
+   * re-observe the claimed change (the caller supplies the observation — the
+   * kernel performs no IO and reads no clock) before it can be COMPLETED.
+   * Absence means no state-diff gate (today's behavior, byte-identical).
+   */
+  readonly requiredPostcondition?: ChangeClaim;
 }
 
 export interface Mutation {

@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { WorkflowApplication } from "../src/application/workflow.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
 import { hostCapabilities } from "../src/adapters/host.js";
-import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
+import { evidenceId, observationId, taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createRunRegistry } from "../src/integrations/run-registry.js";
 import { createReviewerFactory, createRunTestRunner, reviewerRunTaskId } from "../src/integrations/hub-run-gates.js";
 
@@ -112,6 +112,73 @@ test("createReviewerFactory drives a full registry review through the runtime se
   assert.equal(disposed, 1);
   const runTask = base.application.snapshot().tasks.find((task) => task.title === "Author run");
   assert.equal(runTask?.state, "VERIFIED");
+});
+
+test("W072 I-5: the registry derives the run task's ledger and threads it into the reviewer prompt", async (t) => {
+  const base = setup();
+  t.after(() => rmSync(base.workspace, { recursive: true, force: true }));
+  const prompts: string[] = [];
+  const factory = createReviewerFactory({
+    shell: async (command) => (command.startsWith("git status") ? "M  src/thing.ts\0" : "diff --git a/x b/x"),
+    createRuntime: async () => ({
+      async submit(prompt: string) {
+        prompts.push(prompt);
+      },
+      snapshot: () => ({ state: "completed", result: `[APPROVE]\n${AXES_SUMMARY}\n[COVERAGE] src/thing.ts` }),
+      async dispose() {},
+    }),
+  });
+  const registry = createRunRegistry(base.application, base.graph, { reviewer: factory });
+  await registry.controller.begin({ runId: "author-ledger", title: "Author run", workspace: base.workspace, requiresReview: true });
+  // The registry renders the RUN task's canonical steps (shared graph). I-4
+  // blocks promotion while a step is open, so the ledger here is terminal:
+  // one COMPLETED step, completed through the kernel's evidence gate.
+  const [ledgerStep] = base.application.defineTaskSteps(taskId("run:author-ledger"), [
+    { content: "ship the thing", requiredEvidence: [{ authority: "environment", subject: "step:run:author-ledger-step-1" }] },
+  ]);
+  base.application.startTaskStep(ledgerStep!.id);
+  base.application.recordEvidence({
+    id: evidenceId("e-ledger"),
+    observationId: observationId("o-ledger"),
+    authority: "environment",
+    subject: "step:run:author-ledger-step-1",
+    result: "passed",
+    freshness: "fresh",
+    mutationEpoch: base.application.snapshot().mutationEpoch,
+    observedAt: new Date().toISOString(),
+  });
+  base.application.completeTaskStep(ledgerStep!.id);
+
+  await registry.controller.finish({ runId: "author-ledger", outcome: "verified" });
+
+  assert.equal(prompts.length, 1);
+  assert.ok(prompts[0]!.includes("### Step Ledger Under Audit (deterministic kernel state):"));
+  assert.ok(prompts[0]!.includes("ship the thing"));
+  assert.ok(prompts[0]!.includes("[COMPLETED]"), "the kernel state is rendered verbatim, not inferred");
+});
+
+test("W072 I-5: a step-less run's reviewer prompt carries no ledger section (byte-identical path)", async (t) => {
+  const base = setup();
+  t.after(() => rmSync(base.workspace, { recursive: true, force: true }));
+  const prompts: string[] = [];
+  const factory = createReviewerFactory({
+    shell: async (command) => (command.startsWith("git status") ? "M  src/thing.ts\0" : "diff --git a/x b/x"),
+    createRuntime: async () => ({
+      async submit(prompt: string) {
+        prompts.push(prompt);
+      },
+      snapshot: () => ({ state: "completed", result: `[APPROVE]\n${AXES_SUMMARY}\n[COVERAGE] src/thing.ts` }),
+      async dispose() {},
+    }),
+  });
+  const registry = createRunRegistry(base.application, base.graph, { reviewer: factory });
+  await registry.controller.begin({ runId: "author-noledger", title: "Author run", workspace: base.workspace, requiresReview: true });
+
+  await registry.controller.finish({ runId: "author-noledger", outcome: "verified" });
+
+  assert.equal(prompts.length, 1);
+  assert.ok(!prompts[0]!.includes("Step Ledger Under Audit"));
+  assert.ok(!prompts[0]!.includes("No step ledger is attached"));
 });
 
 test("createReviewerFactory surfaces reviewer runtime failures fail-closed", async (t) => {

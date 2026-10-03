@@ -193,6 +193,49 @@ test("an approved reviewer verdict records reviewer evidence for the run", async
   assert.equal(runTask?.state, "VERIFIED");
 });
 
+// W072 I-5: the caller threads the kernel step ledger into the review prompt
+// so the reviewer can audit a COMPLETED step with no corresponding diff.
+const LEDGER_TEXT = "1 step in the kernel ledger:\n- step W1-step-1 [COMPLETED] task W1: ship the thing\n  required evidence: environment:step:W1-step-1";
+
+test("W072 I-5: a threaded ledgerText renders the Step Ledger Under Audit section and its P0/P1/[REQUEST_CHANGES] instruction", async (t) => {
+  const reviewer = stubReviewer(APPROVED_MESSAGE);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer);
+  await controller.begin({ runId: "author-ledger-1", title: "Author run", workspace, requiresReview: true });
+
+  const result = await runner.reviewRun({ runId: "author-ledger-1", workspace, ledgerText: LEDGER_TEXT });
+
+  assert.equal(result.verdict, "approved");
+  const prompt = reviewer.prompts[0]!;
+  assert.ok(prompt.includes("### Step Ledger Under Audit (deterministic kernel state):"));
+  assert.ok(prompt.includes(LEDGER_TEXT));
+  assert.ok(prompt.includes("is a P0/P1 finding and requires a `[REQUEST_CHANGES]` verdict"));
+  assert.ok(prompt.includes("offending step explicitly in your findings."));
+});
+
+test("W072 I-5: without ledgerText the Step Ledger section is absent (backward-compatible composition)", async (t) => {
+  const reviewer = stubReviewer(APPROVED_MESSAGE);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer);
+  await controller.begin({ runId: "author-ledger-2", title: "Author run", workspace, requiresReview: true });
+
+  await runner.reviewRun({ runId: "author-ledger-2", workspace });
+
+  assert.ok(!reviewer.prompts[0]!.includes("Step Ledger Under Audit"));
+});
+
+test("W072 I-5: the partitioned per-unit path threads ledgerText into every unit prompt", async (t) => {
+  const reviewer = stubSequenceReviewer([UNIT1_APPROVED, UNIT2_APPROVED, INTEGRATION_APPROVED]);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/x b/x", STATUS_MULTI);
+  await controller.begin({ runId: "author-ledger-3", title: "Author run", workspace, requiresReview: true });
+
+  await runner.reviewRun({ runId: "author-ledger-3", workspace, ledgerText: LEDGER_TEXT });
+
+  assert.equal(reviewer.prompts.length, 3);
+  for (const prompt of reviewer.prompts) {
+    assert.ok(prompt.includes("### Step Ledger Under Audit (deterministic kernel state):"));
+    assert.ok(prompt.includes(LEDGER_TEXT));
+  }
+});
+
 test("the reviewer run is distinct from the subject run and registered before review", async (t) => {
   const reviewer = stubReviewer(APPROVED_MESSAGE);
   const { controller, workspace, runner } = await runnerWith(t, reviewer);

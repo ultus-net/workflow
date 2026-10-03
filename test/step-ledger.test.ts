@@ -10,11 +10,20 @@ import {
   type WorkflowTask,
 } from "../src/kernel/contracts.js";
 import { TaskGraph, isRunComplete } from "../src/kernel/task-graph.js";
+import type { ChangeClaim, ChangeObservation } from "../src/kernel/state-diff.js";
 import { WorkflowApplication } from "../src/application/workflow.js";
 import { hostCapabilities } from "../src/application/host.js";
 
 const T = taskId("t1");
 const DONE = { authority: "environment" as const, subject: "step:done" };
+
+function claim(...subjects: readonly (readonly [string, string])[]): ChangeClaim {
+  return { subjects: subjects.map(([path, expectedFingerprint]) => ({ path, expectedFingerprint })) };
+}
+
+function observed(...subjects: readonly (readonly [string, string])[]): ChangeObservation {
+  return { observed: subjects.map(([path, fingerprint]) => ({ path, fingerprint })) };
+}
 
 function task(): WorkflowTask {
   return { id: T, title: "Task", state: "READY", dependencies: [], requiredEvidence: [] };
@@ -227,4 +236,94 @@ test("I-1: once a task declares a step ledger, mutations require an in-progress 
   assert.equal(application.startTaskStep(step.id).kind, "accepted");
   assert.equal(application.authorize(mutation).kind, "allow");
   assert.equal(application.isRunComplete(), false);
+});
+
+test("I-9: a declared postcondition rejects completion when the observation is absent", () => {
+  const graph = inProgressTask();
+  const [step] = graph.defineSteps(T, [
+    { content: "edit", requiredEvidence: [DONE], requiredPostcondition: claim(["src/a.ts", "sha-a"]) },
+  ]);
+  assert.ok(step !== undefined);
+  assert.equal(graph.startStep(step.id).kind, "accepted");
+  graph.recordEvidence(evidence("step:done"));
+
+  const result = graph.completeStep(step.id);
+  assert.equal(result.kind, "rejected");
+  if (result.kind === "rejected") {
+    assert.equal(result.code, "STEP_POSTCONDITION_UNMET");
+    assert.equal(result.reason, "claimed subject 'src/a.ts' was not re-observed in the target system");
+  }
+  assert.equal(graph.step(step.id).state, "IN_PROGRESS");
+});
+
+test("I-9: a declared postcondition rejects completion when the re-observation mismatches", () => {
+  const graph = inProgressTask();
+  const [step] = graph.defineSteps(T, [
+    { content: "edit", requiredEvidence: [DONE], requiredPostcondition: claim(["src/a.ts", "sha-a"]) },
+  ]);
+  assert.ok(step !== undefined);
+  assert.equal(graph.startStep(step.id).kind, "accepted");
+  graph.recordEvidence(evidence("step:done"));
+
+  const result = graph.completeStep(step.id, observed(["src/a.ts", "sha-WRONG"]));
+  assert.equal(result.kind, "rejected");
+  if (result.kind === "rejected") {
+    assert.equal(result.code, "STEP_POSTCONDITION_UNMET");
+    assert.equal(result.reason, "claimed subject 'src/a.ts' re-observed with a different fingerprint");
+  }
+});
+
+test("I-9: a declared postcondition completes when the observation confirms it", () => {
+  const graph = inProgressTask();
+  const [step] = graph.defineSteps(T, [
+    { content: "edit", requiredEvidence: [DONE], requiredPostcondition: claim(["src/a.ts", "sha-a"]) },
+  ]);
+  assert.ok(step !== undefined);
+  assert.equal(graph.startStep(step.id).kind, "accepted");
+  graph.recordEvidence(evidence("step:done"));
+
+  const result = graph.completeStep(step.id, observed(["src/a.ts", "sha-a"]));
+  assert.equal(result.kind, "accepted");
+  assert.equal(graph.step(step.id).state, "COMPLETED");
+});
+
+test("I-9: a step without a postcondition completes exactly as before (regression guard)", () => {
+  const graph = inProgressTask();
+  const [step] = graph.defineSteps(T, [{ content: "edit", requiredEvidence: [{ authority: "environment", subject: "step:s1" }] }]);
+  assert.ok(step !== undefined);
+  assert.equal(graph.startStep(step.id).kind, "accepted");
+  // No observation supplied at all: the state-diff gate must not engage.
+  assert.equal(graph.completeStep(step.id).kind, "rejected");
+  graph.recordEvidence(evidence("step:s1"));
+  assert.equal(graph.completeStep(step.id).kind, "accepted");
+  assert.equal(graph.step(step.id).state, "COMPLETED");
+});
+
+test("I-9: defineSteps preserves a declared postcondition and leaves absence absent", () => {
+  const graph = inProgressTask();
+  const postcondition = claim(["src/a.ts", "sha-a"]);
+  const [withGate, withoutGate] = graph.defineSteps(T, [
+    { content: "guarded", requiredEvidence: [DONE], requiredPostcondition: postcondition },
+    { content: "plain", requiredEvidence: [DONE] },
+  ]);
+  assert.ok(withGate !== undefined && withoutGate !== undefined);
+  assert.deepEqual(graph.step(withGate.id).requiredPostcondition, postcondition);
+  assert.equal(graph.step(withoutGate.id).requiredPostcondition, undefined);
+});
+
+test("I-9: restore accepts a COMPLETED step that declares a postcondition", () => {
+  const graph = inProgressTask();
+  const [step] = graph.defineSteps(T, [
+    { content: "edit", requiredEvidence: [{ authority: "environment", subject: "step:s1" }], requiredPostcondition: claim(["src/a.ts", "sha-a"]) },
+  ]);
+  assert.ok(step !== undefined);
+  graph.startStep(step.id);
+  graph.recordEvidence(evidence("step:s1"));
+  assert.equal(graph.completeStep(step.id, observed(["src/a.ts", "sha-a"])).kind, "accepted");
+
+  // The observation was checked at completion time and is not persisted; the
+  // restore path keeps the existing evidence check and does not re-derive it.
+  const restored = TaskGraph.restore(graph.persistedState());
+  assert.equal(restored.step(step.id).state, "COMPLETED");
+  assert.deepEqual(restored.step(step.id).requiredPostcondition, claim(["src/a.ts", "sha-a"]));
 });
