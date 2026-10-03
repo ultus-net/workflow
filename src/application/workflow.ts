@@ -20,10 +20,10 @@ import type {
 } from "../kernel/contracts.js";
 import { TaskGraph, isRunComplete, type StepTransitionResult } from "../kernel/task-graph.js";
 import { ExecutionLog, type ExecutionLogEntry } from "../kernel/execution-log.js";
-import type { ChangeObservation } from "../kernel/state-diff.js";
+import type { ChangeObservation, ChangeObservationEntry } from "../kernel/state-diff.js";
 import { mutationGate, verifyingGate, type CheckpointLedger } from "../pedagogy/checkpoints.js";
 import { PolicyFailureTracker } from "./policy-failure-tracker.js";
-import { FileClaimLedger } from "./file-claim-ledger.js";
+import { FileClaimLedger, fingerprintFile } from "./file-claim-ledger.js";
 import { MutationBudget } from "./mutation-budget.js";
 
 export interface WorkflowTaskProjection {
@@ -325,6 +325,7 @@ export class WorkflowApplication {
         from: result.transition.from,
         to: result.transition.to,
         ...(actor === undefined ? {} : { actor }),
+        ...this.#entryIdentity(result.transition.taskId),
       });
     }
     return result;
@@ -392,6 +393,30 @@ export class WorkflowApplication {
 
   completeTaskStep(id: StepId, observation?: ChangeObservation): StepTransitionResult {
     return this.#graph.completeStep(id, observation);
+  }
+
+  /**
+   * W072 I-9: the production completion path. When the step declares a
+   * `requiredPostcondition`, re-observe the claimed subjects by fingerprinting
+   * the real files here (application-layer IO — the kernel stays pure) and
+   * hand the observation to the kernel gate. A claimed path that cannot be
+   * read (ENOENT) is omitted, so it evaluates as `absent` and refuses rather
+   * than fabricating a pass; any other read error is rethrown (fail loud). A
+   * step without a postcondition completes exactly as `completeTaskStep(id)`.
+   */
+  completeStepWithRequery(id: StepId): StepTransitionResult {
+    const postcondition = this.#graph.step(id).requiredPostcondition;
+    if (postcondition === undefined) return this.#graph.completeStep(id);
+    const observed: ChangeObservationEntry[] = [];
+    for (const subject of postcondition.subjects) {
+      try {
+        observed.push({ path: subject.path, fingerprint: fingerprintFile(subject.path).digest });
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+    }
+    return this.#graph.completeStep(id, { observed });
   }
 
   cancelTaskStep(id: StepId): StepTransitionResult {
@@ -466,6 +491,7 @@ export class WorkflowApplication {
       taskId: resolved,
       summary: `${evidence.authority}:${evidence.subject}:${evidence.result}`,
       ...(evidence.content === undefined ? {} : { ref: evidence.content.ref }),
+      ...this.#entryIdentity(resolved),
     });
   }
 
@@ -485,8 +511,23 @@ export class WorkflowApplication {
         from: transition.from,
         to: transition.to,
         ...(actor === undefined ? {} : { actor }),
+        ...this.#entryIdentity(transition.taskId),
       });
     }
+  }
+
+  /**
+   * W072 I-10: the durable identity floor for a log entry about `taskId` — the
+   * task's active step and the coding-session correlation at append time.
+   * Absent fields are omitted, never fabricated: the kernel and the log stay
+   * honest when a task has no active step or the app has no session.
+   */
+  #entryIdentity(taskId: TaskId): { readonly stepId?: StepId; readonly sessionId?: string } {
+    const stepId = this.#graph.activeStepId(taskId);
+    return {
+      ...(stepId === undefined ? {} : { stepId }),
+      ...(this.#codingSessionCorrelation === undefined ? {} : { sessionId: this.#codingSessionCorrelation }),
+    };
   }
 
   /** W072 I-6: the append-only execution log, read-only (a fresh copy each call). */

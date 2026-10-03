@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { WorkflowApplication } from "../src/application/workflow.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
 import { hostCapabilities } from "../src/adapters/host.js";
-import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
+import { stepId, taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createRunRegistry } from "../src/integrations/run-registry.js";
 import {
   HubReviewerRunner,
@@ -234,6 +234,36 @@ test("W072 I-5: the partitioned per-unit path threads ledgerText into every unit
     assert.ok(prompt.includes("### Step Ledger Under Audit (deterministic kernel state):"));
     assert.ok(prompt.includes(LEDGER_TEXT));
   }
+});
+
+test("W072 I-5: ledgerSteps computes the deterministic findings against the sourced diff", async (t) => {
+  const reviewer = stubReviewer(APPROVED_MESSAGE);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer, "diff --git a/src/wired.ts b/src/wired.ts");
+  await controller.begin({ runId: "author-ledger-4", title: "Author run", workspace, requiresReview: true });
+
+  const steps = [
+    { id: stepId("s-wired"), taskId: taskId("t-1"), content: "wire src/wired.ts into the runner", state: "COMPLETED" as const, requiredEvidence: [] },
+    { id: stepId("s-hollow"), taskId: taskId("t-1"), content: "ship the parser", state: "COMPLETED" as const, requiredEvidence: [] },
+    { id: stepId("s-open"), taskId: taskId("t-1"), content: "ship the parser", state: "PENDING" as const, requiredEvidence: [] },
+  ];
+  const result = await runner.reviewRun({ runId: "author-ledger-4", workspace, ledgerSteps: steps });
+
+  assert.equal(result.verdict, "approved");
+  const prompt = reviewer.prompts[0]!;
+  assert.ok(prompt.includes("### Deterministic Ledger-vs-Diff Audit (computed, not judged):"));
+  assert.ok(prompt.includes("step s-hollow [LEDGER_STEP_WITHOUT_DIFF]: ship the parser"));
+  assert.ok(!prompt.includes("step s-wired [LEDGER_STEP_WITHOUT_DIFF]"), "the backed step is not flagged");
+  assert.ok(!prompt.includes("step s-open [LEDGER_STEP_WITHOUT_DIFF]"), "non-COMPLETED steps are never flagged");
+});
+
+test("W072 I-5: without ledgerSteps the deterministic findings section is absent", async (t) => {
+  const reviewer = stubReviewer(APPROVED_MESSAGE);
+  const { controller, workspace, runner } = await runnerWith(t, reviewer);
+  await controller.begin({ runId: "author-ledger-5", title: "Author run", workspace, requiresReview: true });
+
+  await runner.reviewRun({ runId: "author-ledger-5", workspace, ledgerText: LEDGER_TEXT });
+
+  assert.ok(!reviewer.prompts[0]!.includes("Deterministic Ledger-vs-Diff Audit"));
 });
 
 test("the reviewer run is distinct from the subject run and registered before review", async (t) => {

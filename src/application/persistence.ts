@@ -1,6 +1,8 @@
 import { open, readFile, rename, unlink } from "node:fs/promises";
 
 import type { HostCapabilities } from "./host.js";
+import type { TransitionRecord } from "../kernel/contracts.js";
+import type { ExecutionLogEntry } from "../kernel/execution-log.js";
 import { ACTOR_VOCABULARY, TaskGraph } from "../kernel/task-graph.js";
 import { WorkflowApplication } from "./workflow.js";
 
@@ -21,6 +23,19 @@ export class JsonWorkflowStore {
 
   async load(host: HostCapabilities): Promise<{ application: WorkflowApplication; version: number }> {
     const persisted = await this.#read();
+    // W072 I-6 consistency gate: the persisted append-only log's `transition`
+    // entries must equal the persisted transition history, in order, by
+    // (taskId, from, to). We do NOT compare replayed final states — `TaskGraph`
+    // unlocks dependents internally without going through
+    // `WorkflowApplication.transition` (src/kernel/task-graph.ts:719,821), so
+    // replay legitimately diverges from persisted states. An absent or empty
+    // log is legal (older snapshots) and skips the gate. On divergence, fail
+    // closed BEFORE constructing the application. This is a cross-check, not a
+    // projection swap: state stays canonical.
+    if (persisted.state.executionLog !== undefined && persisted.state.executionLog.length > 0 &&
+      !executionLogMatchesHistory(persisted.state.executionLog, persisted.state.history)) {
+      throw new TypeError("persisted execution log diverges from transition history");
+    }
     const graph = TaskGraph.restore(persisted.state);
     const recoveryHistory = persisted.state.tasks
       .filter((task) => task.state === "IN_PROGRESS")
@@ -264,6 +279,32 @@ function isExecutionLog(value: unknown): boolean {
     }
     return false;
   });
+}
+
+/**
+ * W072 I-6 consistency gate: the persisted append-only execution log's
+ * `transition` entries must equal the persisted transition history, in order,
+ * pairwise on (taskId, from, to). Evidence/step entries are log-only and are
+ * skipped. This is deliberately NOT a comparison of replayed final states:
+ * `TaskGraph` unlocks dependents internally without routing through
+ * `WorkflowApplication.transition`, so replay legitimately diverges from the
+ * persisted state while the two journals stay aligned. Pure and ordering-based.
+ */
+function executionLogMatchesHistory(
+  log: readonly ExecutionLogEntry[],
+  history: readonly TransitionRecord[],
+): boolean {
+  let index = 0;
+  for (const entry of log) {
+    if (entry.kind !== "transition") continue;
+    const record = history[index];
+    if (record === undefined ||
+      entry.taskId !== record.taskId ||
+      entry.from !== record.from ||
+      entry.to !== record.to) return false;
+    index += 1;
+  }
+  return index === history.length;
 }
 
 function isCoherentHistory(tasks: Record<string, unknown>[], history: Record<string, unknown>[]): boolean {

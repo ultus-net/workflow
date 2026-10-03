@@ -33,8 +33,14 @@ export function buildReviewRubric(input: {
    * no corresponding change/evidence is a P0/P1 and forces [REQUEST_CHANGES].
    */
   readonly ledgerText?: string;
+  /**
+   * W072 I-5: the deterministic ledger-vs-diff audit, rendered by the caller
+   * (`renderLedgerAuditFindings`). Advisory material: it names COMPLETED steps
+   * no changed path backs, but the verdict gates are unchanged.
+   */
+  readonly ledgerAuditText?: string;
 }): string {
-  const { diffText, taskPrompt, manifestText, ledgerText } = input;
+  const { diffText, taskPrompt, manifestText, ledgerText, ledgerAuditText } = input;
   return [
     "# Secondary Review Agent Quality Gate",
     "",
@@ -84,6 +90,16 @@ export function buildReviewRubric(input: {
           "a completed step with no corresponding diff change or evidence in this diff",
           "is a P0/P1 finding and requires a `[REQUEST_CHANGES]` verdict — name the",
           "offending step explicitly in your findings.",
+          "",
+        ]),
+    ...(ledgerAuditText === undefined
+      ? []
+      : [
+          "### Deterministic Ledger-vs-Diff Audit (computed, not judged):",
+          ledgerAuditText,
+          "",
+          "This section is computed mechanically from the ledger and the diff. Weigh it",
+          "under test integrity and task completeness; it does not by itself set the verdict.",
           "",
         ]),
     "### Code Diff Under Review:",

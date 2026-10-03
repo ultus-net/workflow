@@ -3,7 +3,7 @@ import { realpathSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
 import { WorkflowApplication } from "../application/workflow.js";
-import { evidenceId, observationId, taskId, type TaskId } from "../kernel/contracts.js";
+import { evidenceId, observationId, taskId, type TaskId, type WorkflowStep } from "../kernel/contracts.js";
 import type { TaskGraph } from "../kernel/task-graph.js";
 import { countReferencedAxes, MIN_REFERENCED_AXES } from "../review/rubric.js";
 import { renderReviewLedgerText } from "../review/ledger-audit.js";
@@ -24,6 +24,12 @@ export type RunReviewer = (input: {
    * a step-less run's prompt stays byte-identical to before this slice.
    */
   readonly ledgerText?: string;
+  /**
+   * W072 I-5: the canonical steps the ledger was rendered from, so the
+   * reviewer runner can compute the deterministic ledger-vs-diff audit
+   * against the diff it sources. Additive; absent for step-less runs.
+   */
+  readonly ledgerSteps?: readonly WorkflowStep[];
 }) => Promise<HubReviewerResult>;
 
 /**
@@ -688,7 +694,7 @@ export function createRunRegistry(
               runId,
               workspace: runWorkspaces.get(runId),
               ...(taskPrompt === undefined ? {} : { taskPrompt }),
-              ...(runSteps.length === 0 ? {} : { ledgerText: renderReviewLedgerText(runSteps) }),
+              ...(runSteps.length === 0 ? {} : { ledgerText: renderReviewLedgerText(runSteps), ledgerSteps: runSteps }),
             });
           } catch (error) {
             const reason = `hub reviewer failed: ${error instanceof Error ? error.message : String(error)}`;
