@@ -41,6 +41,8 @@ import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
 import { loadOpenModelKeys } from "./open-model-keys.js";
 import { createOpenModelMeteringPool, type OpenModelMeteringPool } from "./open-model-proxy.js";
 import { findOpenModel, openSourcePoolFromEnv } from "./open-source-pool.js";
+import { loadCredentialDefinitions } from "./credential-config.js";
+import { perFamilyCredentialBinding } from "./egress-binding.js";
 import { DEFAULT_OPENCODE_MODEL, OPENCODE_METERED_PROVIDER_ID, type MeteredVendorProvider } from "./opencode-agent-config.js";
 import { loadUpstreamApiKey } from "./upstream-key.js";
 import { enabledMcpServers, type WorkflowSettings } from "./workflow-settings.js";
@@ -311,7 +313,7 @@ async function createOpencodeRuntime(
   let openPool: OpenModelMeteringPool | undefined;
   try {
     openPool = Object.keys(openKeys.keys).length > 0
-      ? await createOpenModelMeteringPool({ pool: openSourcePoolFromEnv(), keys: openKeys.keys, ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }), ...(egressFeed === undefined ? {} : { onEgressObservation: egressFeed.onEgressObservation }), ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }), ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }) })
+      ? await createOpenModelMeteringPool({ pool: openSourcePoolFromEnv(), keys: openKeys.keys, ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }), ...(egressFeed === undefined ? {} : { onEgressObservation: egressFeed.onEgressObservation }), ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }), ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }), credentialEndpointsByFamily: perFamilyCredentialBinding(openSourcePoolFromEnv(), loadCredentialDefinitions()) })
       : undefined;
   } catch (error) {
     // A misconfigured pool (unknown WORKFLOW_OPEN_MODEL_POOL id) must not leak

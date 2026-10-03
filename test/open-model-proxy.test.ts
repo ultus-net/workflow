@@ -300,6 +300,60 @@ test("W180 A3: the pool's default (no policy) leaves every family proxy byte-ide
   }
 });
 
+test("W179: a per-family credential binding refuses an out-of-binding destination at the family proxy", async (context) => {
+  const upstream = await fakeUpstream({ prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, cost: 0 });
+  context.after(() => upstream.close());
+  // Bind deepseek to a host that is NOT the loopback fake upstream, so the
+  // family proxy must refuse injection and never reach the upstream.
+  const pool = await createOpenModelMeteringPool({
+    pool: DEFAULT_OPEN_SOURCE_POOL.filter((def) => def.family === "deepseek"),
+    keys: { deepseek: "DEEPSEEK_KEY" },
+    upstreamOverride: () => upstream.url,
+    credentialEndpointsByFamily: {
+      deepseek: [{ host: "api.deepseek.com", pathPrefix: "/v1" }],
+    },
+  });
+  try {
+    const deepseek = pool.byFamily.get("deepseek")!;
+    const refused = await fetch(`${deepseek.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "deepseek-flash", messages: [] }),
+    });
+    assert.equal(refused.status, 403, "the out-of-binding destination is refused");
+    assert.equal(((await refused.json()) as { policy?: string }).policy, "credential_endpoint_mismatch");
+    assert.equal(upstream.seen.length, 0, "a refused request never reaches the vendor upstream");
+  } finally {
+    await pool.close();
+  }
+});
+
+test("W179: a per-family credential binding that covers the origin still forwards", async (context) => {
+  const upstream = await fakeUpstream({ prompt_tokens: 1, completion_tokens: 1, total_tokens: 2, cost: 0 });
+  context.after(() => upstream.close());
+  const pool = await createOpenModelMeteringPool({
+    pool: DEFAULT_OPEN_SOURCE_POOL.filter((def) => def.family === "deepseek"),
+    keys: { deepseek: "DEEPSEEK_KEY" },
+    upstreamOverride: () => upstream.url,
+    credentialEndpointsByFamily: {
+      // `upstreamOverride` is loopback 127.0.0.1; bind exactly it (any port).
+      deepseek: [{ host: "127.0.0.1" }],
+    },
+  });
+  try {
+    const deepseek = pool.byFamily.get("deepseek")!;
+    const allowed = await fetch(`${deepseek.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}` },
+      body: JSON.stringify({ model: "deepseek-flash", messages: [] }),
+    });
+    assert.equal(allowed.status, 200, "a covered destination forwards");
+    assert.equal(upstream.seen.length, 1);
+  } finally {
+    await pool.close();
+  }
+});
+
 // ---- W109 (W098 c2): an anthropic-wire pool with the cacheMarkers opt-in
 // marks the stable composition-time prefixes through the governed pipeline;
 // the pool without the opt-in passes through; the definition's wire reaches

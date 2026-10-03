@@ -14,6 +14,7 @@ import { composeBodyTransforms, createModelUsageProxy, type EgressDenialEvent, t
 import { applyCacheMarkers, modelProfile, shapeRequestBody, type CacheMarkerOptIn, type ModelFamily, type ModelTaskClass } from "./model-profile.js";
 import { DEFAULT_OPEN_SOURCE_POOL, type OpenModelDefinition } from "./open-source-pool.js";
 import type { BudgetDowngradeRuntime } from "./session-budget.js";
+import type { CredentialEndpoint } from "./credentials.js";
 
 export interface OpenModelProvider {
   readonly providerId: string;
@@ -87,6 +88,16 @@ export interface CreateOpenModelMeteringPoolOptions {
    * family proxies' refusal posture byte-identical. Observation only.
    */
   readonly onEgressDenied?: ((event: EgressDenialEvent) => void) | undefined;
+  /**
+   * W179 gate-2 binding, per family. The family proxies inject a vendor key
+   * loaded through a SEPARATE custody path (`OPEN_MODEL_KEY_ENV` / key files)
+   * — not `CredentialDefinition.allowedEndpoints` — so the binding is supplied
+   * explicitly per family, never derived from the OpenRouter-origin operator
+   * definitions (which would not match a vendor host and could only 403 all
+   * family traffic). Absent leaves every family proxy's gate 2 inactive and
+   * byte-identical; an empty array for a family matches nothing (fail closed).
+   */
+  readonly credentialEndpointsByFamily?: Readonly<Partial<Record<ModelFamily, readonly CredentialEndpoint[]>>>;
 }
 
 export interface OpenModelMeteringPool {
@@ -217,6 +228,10 @@ export async function createOpenModelMeteringPool(options: CreateOpenModelMeteri
         // W180 (A3/A4): threaded by composition — the family proxy consults the
         // same shared decision; absent leaves the proxy byte-identical.
         ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }),
+        // W179 gate-2: the family's explicit binding (dark when absent).
+        ...(options.credentialEndpointsByFamily?.[family] === undefined
+          ? {}
+          : { credentialEndpoints: options.credentialEndpointsByFamily[family] }),
       });
       started.push(proxy);
       const provider: OpenModelProvider = {

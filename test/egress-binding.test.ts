@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { credentialBindingFingerprint, upstreamCredentialBinding, upstreamOrigin } from "../src/integrations/egress-binding.js";
+import { credentialBindingFingerprint, perFamilyCredentialBinding, upstreamCredentialBinding, upstreamOrigin } from "../src/integrations/egress-binding.js";
 import type { CredentialDefinition } from "../src/integrations/credentials.js";
+import { DEFAULT_OPEN_SOURCE_POOL } from "../src/integrations/open-source-pool.js";
+import { VENDOR_DEFAULTS } from "../src/integrations/model-profile.js";
 
 /**
  * W184: the production source for the proxy's W179 gate-2 credential binding.
@@ -69,4 +71,21 @@ test("W184 credentialBindingFingerprint is value-free, order-stable, and changes
   assert.equal(credentialBindingFingerprint([a, b]), credentialBindingFingerprint([b, a]), "order does not change the digest");
   assert.notEqual(credentialBindingFingerprint([a]), credentialBindingFingerprint([b]), "a binding change moves the digest");
   assert.equal(credentialBindingFingerprint([definition({})]), "", "no bindings digests to the empty string");
+});
+
+test("W179 perFamilyCredentialBinding narrows each family against its OWN vendor origin", () => {
+  const deepseekHost = new URL(VENDOR_DEFAULTS.deepseek.endpoint).hostname;
+  const byFamily = perFamilyCredentialBinding(DEFAULT_OPEN_SOURCE_POOL, [
+    definition({ allowedEndpoints: [{ host: deepseekHost, pathPrefix: "/v1" }] }),
+    // The OpenRouter-origin binding must NOT leak onto a vendor family.
+    definition({ allowedEndpoints: [{ host: "openrouter.ai" }] }),
+  ]);
+  assert.deepEqual(byFamily.deepseek, [{ host: deepseekHost, pathPrefix: "/v1" }]);
+  assert.equal(byFamily.glm, undefined, "a family with no matching definition stays dark");
+  assert.equal(byFamily.kimi, undefined);
+});
+
+test("W179 perFamilyCredentialBinding is empty when no definition binds any vendor origin", () => {
+  const byFamily = perFamilyCredentialBinding(DEFAULT_OPEN_SOURCE_POOL, [definition({ allowedEndpoints: [{ host: "openrouter.ai" }] })]);
+  assert.deepEqual(byFamily, {});
 });
