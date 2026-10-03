@@ -3,8 +3,10 @@
 One structured record per base-loop iteration. This file did not exist when the
 loop started (the repo's durable memory is `docs/agents/lessons.md`, a
 monolithic append-only file); this ledger was created at iteration LESS-0067 to
-carry the reproducibility schema the playbook specifies. Never rewrite an
-existing record; append supersession notes to a record's tail instead.
+carry the reproducibility schema below, which this iteration adopted on its own
+initiative — the RSI-lite playbook names only `docs/agents/lessons.md` and does
+not define this file or its schema. Never rewrite an existing record; append
+supersession notes to a record's tail instead.
 
 ```text
 n · date · hypothesis (falsifiable) · trace evidence · code change · commit SHA
