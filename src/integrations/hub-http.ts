@@ -4,6 +4,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { authorizeHubToken, mintHubGeneration, mintHubToken } from "./hub-tokens.js";
 
 import type { WorkflowApplication, WorkflowSnapshot } from "../application/workflow.js";
+import { stepId, taskId, type EvidenceAuthority, type EvidenceRequirement, type WorkflowStep } from "../kernel/contracts.js";
+import type { ChangeClaim } from "../kernel/state-diff.js";
 import type { PermissionBroker } from "../ui/permission-broker.js";
 import { permissionAnswerRoute } from "../ui/permission-broker-route.js";
 import { buildReviewRubric } from "../review/rubric.js";
@@ -375,6 +377,62 @@ async function handleRequest(
           ...(typeof body.ledgerText === "string" ? { ledgerText: body.ledgerText } : {}),
         }),
       });
+    }
+    // ── W072 I-9: the canonical step-ledger routes (Stage 3 API half) ──
+    // The application's step API already existed but only the web surface drove
+    // it. These routes put the same ledger on the hub admission lane so a hub
+    // client can define/start/complete/cancel steps. Ordinary-token class (the
+    // same class as /run/begin and /bash): the step ledger is a workspace-scoped
+    // tracking surface, not an autonomous mutation loop. A kernel rejection is
+    // the kernel's decision — 409 with the structured result, never rewritten
+    // to a client-side success (the web surface's contract). The application is
+    // resolved exactly like /snapshot (the /review/rubric route resolves none).
+    if (
+      request.url === "/steps/list" || request.url === "/steps/define" ||
+      request.url === "/steps/start" || request.url === "/steps/complete" || request.url === "/steps/cancel"
+    ) {
+      if (!isRecord(body)) return send(response, 400, { error: "invalid step request" });
+      const stepWorkspace = typeof body.workspace === "string" ? body.workspace : undefined;
+      let stepApplication: WorkflowApplication;
+      try {
+        stepApplication = context.resolveApplication(stepWorkspace, undefined, { activateInteractiveTask: false });
+      } catch (error) {
+        if (sendClientFault(response, error)) return;
+        throw error;
+      }
+      if (request.url === "/steps/list") {
+        if (typeof body.taskId !== "string" || body.taskId.trim().length === 0) {
+          return send(response, 400, { error: "invalid step list request: taskId must be a non-empty string" });
+        }
+        return send(response, 200, { steps: stepApplication.taskSteps(taskId(body.taskId)).map(projectStep) });
+      }
+      if (request.url === "/steps/define") {
+        if (typeof body.taskId !== "string" || body.taskId.trim().length === 0) {
+          return send(response, 400, { error: "invalid step define request: taskId must be a non-empty string" });
+        }
+        const parsed = parseStepProposals(body.steps);
+        if (typeof parsed === "string") return send(response, 400, { error: parsed });
+        try {
+          return send(response, 200, { steps: stepApplication.defineTaskSteps(taskId(body.taskId), parsed).map(projectStep) });
+        } catch (error) {
+          // A kernel validation failure (empty content, a step with no
+          // done-condition, an active step dropped, a foreign step id) is a
+          // CLIENT fault — 409 with the kernel's own message, never a 500.
+          if (error instanceof TypeError) return send(response, 409, { error: error.message });
+          throw error;
+        }
+      }
+      if (typeof body.id !== "string" || body.id.trim().length === 0) {
+        return send(response, 400, { error: "invalid step request: id must be a non-empty string" });
+      }
+      const id = stepId(body.id);
+      const result =
+        request.url === "/steps/start"
+          ? stepApplication.startTaskStep(id)
+          : request.url === "/steps/complete"
+            ? stepApplication.completeStepWithRequery(id)
+            : stepApplication.cancelTaskStep(id);
+      return send(response, result.kind === "accepted" ? 200 : 409, result);
     }
     if (request.url === "/usage/session") {
       // P4 topology Option A2 (issue #283): the hub MINTS a single-use session
@@ -1060,6 +1118,108 @@ function parseProjectRecord(body: unknown): ProjectRecord | string {
     ...(budget === undefined ? {} : { budget }),
     workspaces: body.workspaces as readonly string[],
   };
+}
+
+/**
+ * W072 I-9 (Stage 3 API half): the /steps/* routes' JSON-safe projection. The
+ * kernel's `WorkflowStep` carries branded `StepId`/`TaskId` and an optional
+ * state-diff postcondition; the wire never leaks the brands (serialized to
+ * strings) and carries the postcondition verbatim only when present. Unknown
+ * keys can never ride a projection composed field-by-field like this.
+ */
+function projectStep(step: WorkflowStep): Record<string, unknown> {
+  return {
+    id: step.id,
+    taskId: step.taskId,
+    content: step.content,
+    state: step.state,
+    requiredEvidence: step.requiredEvidence.map((requirement) => ({ authority: requirement.authority, subject: requirement.subject })),
+    ...(step.requiredPostcondition === undefined ? {} : { requiredPostcondition: step.requiredPostcondition }),
+  };
+}
+
+const EVIDENCE_AUTHORITIES: ReadonlySet<string> = new Set<EvidenceAuthority>(["environment", "host", "mcp", "reviewer"]);
+
+/**
+ * W072 I-9: the /steps/define boundary parser — composes each proposal from
+ * VALIDATED fields only. A malformed entry (bad content, an unknown evidence
+ * authority, a malformed state-diff postcondition) is a client fault returned
+ * as the message, so the kernel never receives an unvalidated object and an
+ * unknown postcondition shape is rejected at the boundary (fail closed). The
+ * inert `producingFlow` pointer and `requiredDecisions` are deliberately not
+ * accepted from a client.
+ */
+function parseStepProposals(input: unknown): readonly {
+  readonly id?: string;
+  readonly content: string;
+  readonly requiredEvidence?: readonly EvidenceRequirement[];
+  readonly requiredPostcondition?: ChangeClaim;
+}[] | string {
+  if (!Array.isArray(input)) return "invalid step define request: steps must be an array";
+  const proposals: {
+    readonly id?: string;
+    readonly content: string;
+    readonly requiredEvidence?: readonly EvidenceRequirement[];
+    readonly requiredPostcondition?: ChangeClaim;
+  }[] = [];
+  for (const raw of input) {
+    if (!isRecord(raw)) return "invalid step define request: each step must be an object";
+    if (typeof raw.content !== "string" || raw.content.trim().length === 0) {
+      return "invalid step define request: step content must be a non-empty string";
+    }
+    if (raw.id !== undefined && (typeof raw.id !== "string" || raw.id.trim().length === 0)) {
+      return "invalid step define request: step id must be a non-empty string when present";
+    }
+    let requiredEvidence: readonly EvidenceRequirement[] | undefined;
+    if (raw.requiredEvidence !== undefined) {
+      if (!Array.isArray(raw.requiredEvidence)) return "invalid step define request: requiredEvidence must be an array";
+      const requirements: EvidenceRequirement[] = [];
+      for (const entry of raw.requiredEvidence) {
+        if (!isRecord(entry)) return "invalid step define request: each evidence requirement must be an object";
+        if (typeof entry.authority !== "string" || !EVIDENCE_AUTHORITIES.has(entry.authority)) {
+          return "invalid step define request: evidence authority must be environment, host, mcp, or reviewer";
+        }
+        if (typeof entry.subject !== "string" || entry.subject.trim().length === 0) {
+          return "invalid step define request: evidence subject must be a non-empty string";
+        }
+        requirements.push({ authority: entry.authority as EvidenceAuthority, subject: entry.subject });
+      }
+      requiredEvidence = requirements;
+    }
+    let requiredPostcondition: ChangeClaim | undefined;
+    if (raw.requiredPostcondition !== undefined) {
+      const claim = parseChangeClaim(raw.requiredPostcondition);
+      if (typeof claim === "string") return claim;
+      requiredPostcondition = claim;
+    }
+    proposals.push({
+      ...(typeof raw.id === "string" ? { id: raw.id } : {}),
+      content: raw.content,
+      ...(requiredEvidence === undefined ? {} : { requiredEvidence }),
+      ...(requiredPostcondition === undefined ? {} : { requiredPostcondition }),
+    });
+  }
+  return proposals;
+}
+
+/** W072 I-9: validates a client state-diff postcondition against `ChangeClaim`. */
+function parseChangeClaim(input: unknown): ChangeClaim | string {
+  if (!isRecord(input)) return "invalid step define request: requiredPostcondition must be an object";
+  if (!Array.isArray(input.subjects) || input.subjects.length === 0) {
+    return "invalid step define request: requiredPostcondition.subjects must be a non-empty array";
+  }
+  const subjects: { readonly path: string; readonly expectedFingerprint: string }[] = [];
+  for (const entry of input.subjects) {
+    if (!isRecord(entry)) return "invalid step define request: each postcondition subject must be an object";
+    if (typeof entry.path !== "string" || entry.path.trim().length === 0) {
+      return "invalid step define request: postcondition subject path must be a non-empty string";
+    }
+    if (typeof entry.expectedFingerprint !== "string" || entry.expectedFingerprint.trim().length === 0) {
+      return "invalid step define request: postcondition expectedFingerprint must be a non-empty string";
+    }
+    subjects.push({ path: entry.path, expectedFingerprint: entry.expectedFingerprint });
+  }
+  return { subjects };
 }
 
 /**
