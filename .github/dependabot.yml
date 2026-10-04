@@ -1,0 +1,26 @@
+# Dependabot (W188, campaign iteration 1): keep the W185 SHA pins fresh.
+#
+# W185 pinned every root workflow `uses:` to an immutable 40-hex commit. That
+# closed the supply-chain hole (a moved tag can no longer change what runs) but
+# left the pins to rot: nothing advances a pin when upstream cuts a release, so
+# this repo silently runs an ever-older action while "pinned" reads as "safe".
+# Dependabot's github-actions ecosystem is expected to advance a pinned SHA in
+# place (retaining the `# vX.Y.Z` comment); that is upstream behavior this repo
+# cannot verify offline, so the `test/workflow-action-pins.test.ts` shape pin
+# remains the authoritative enforcement: any PR that regressed to a mutable tag
+# fails it.
+#
+# Scope: the ROOT only. The vendored `mcp-toolbox/` subtree carries its own
+# dependency graph and its own CI; scanning it here would open foreign PRs the
+# repo does not own (matching the W185 pin test's stated scope).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

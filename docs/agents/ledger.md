@@ -253,3 +253,137 @@ is candidate 3.
   of #472), and (b) `gate` — extend the purity gate to the import-free ambient
   IO class (`fetch`/`process.env`/`Date.now`/`Math.random`) the kernel-purity
   test's bounded claim excludes.
+
+---
+
+# Campaign 2 — bounded multi-iteration RSI campaign (2026-10-04)
+
+Protocol: `docs/agents/rsi-loop-playbook.md` "Multi-iteration campaigns";
+citations by name + id per the campaign template. N = 3 (default; hard cap 5).
+Feedback-fidelity / backbone-capability appraisal per HSI (2608.08466).
+
+**Candidate set (built before iterating — AIDE² 2609.26457 diversity):**
+
+1. `config` — **A Dependabot lane so the W185 SHA pins do not rot.** W185
+   content-addressed every `uses:` (13 refs across ci/publish-image/update-deps)
+   but nothing refreshes them; over time the pinned commits drift behind the
+   mutable tags security wanted to leave. No `.github/dependabot.yml` exists
+   (`git ls-tree origin/main` → empty). This was the campaign-1 close-out's
+   explicit follow-on (a).
+2. `docs` — **Backfill the `docs/ledger/` fragments for W178–W184.** W178,
+   W180–W184 are merged/closed issues with no fragment; only `w179-pool-gate2.md`
+   exists. TASKS.md's frozen-roadmap note claims "one write-once file per item"
+   (137 fragments at 52aa74d); 6 landed items diverged. Docs-only; must not
+   duplicate the issues' own records.
+3. `gate` — **Extend kernel purity to the import-free ambient-IO class.**
+   `src/kernel/**.ts` has zero `fetch`/`process.env`/`Date.now`/`Math.random`
+   occurrences today (trace), but the W186 gate deliberately excludes these;
+   a future `Date.now()` or `fetch()` in the kernel would pass CI silently.
+   This was the campaign-1 close-out's explicit follow-on (b).
+
+Appraisal: each has an informative, purely-offline signal (route check,
+fragment-existence check, source scan) and asks nothing beyond the frozen
+model's ceiling — no drop.
+
+## Iteration 1 (campaign n=1) — 2026-10-04
+
+- **n:** 1
+- **date:** 2026-10-04
+- **pain point:** campaign candidacy 1 (`config`) — the campaign-1 close-out
+  follow-on (a).
+- **selection:** highest-value unblocked candidate; no previous tag (first
+  iteration). Tag: `config`.
+- **hypothesis (falsifiable):** W185 made every workflow `uses:` an immutable
+  commit SHA, but with no update automation the pins silently rot: the pinned
+  commit is never advanced when upstream cuts a release, so this repo keeps
+  running an ever-older action while `security` intent reads as "pinned = safe."
+  Predicted effect: a `.github/dependabot.yml` with a `github-actions` update
+  lane (weekly) makes Dependabot open a PR that advances the pinned SHA when
+  upstream tags move, so the pin stays current without losing immutability; a
+  `npm` lane keeps the same discipline for the runtime deps.
+- **at-risk regressions:** (a) a Dependabot PR that *reverts* a pin to a
+  mutable tag would defeat W185 — the W185 shape pin must stay the enforcement
+  and must be checked against any such PR (Dependabot's github-actions updater
+  rewrites the SHA, retaining the `# vX` comment; verify); (b) over-broad
+  lanes (e.g. vendored `mcp-toolbox/**`) create noise; (c) the file must be
+  valid YAML accepted by GitHub, or the lane is silently inert.
+- **accept/reject rule:** accept iff the config is valid YAML, names only the
+  root ecosystems (`github-actions` on `/`, `npm` on `/`), uses a bounded
+  weekly schedule, and a parse check confirms the lane entries; reject if the
+  lane targets the vendored subtree or the file fails to parse. No `src/`
+  change; no workflow behavior change.
+- **non-goals:** no action-version bumps themselves (Dependabot proposes those
+  later); no renovate; no change to the W185 pin test; no auto-merge config.
+- **trace evidence:** `grep -rn "uses:" .github/workflows/` = 13 refs, all
+  40-hex-pinned; `git ls-tree -r origin/main --name-only | grep -iE
+  'dependabot|renovate'` = empty; root ecosystems available: `github-actions`
+  (native) + `npm` (package.json at root; lockfile present).
+- **preregistered:** before edit (this entry).
+- **result:** (filled on completion; append, never rewrite)
+
+### Result — iteration 1 (campaign n=1)
+
+- **change:** `.github/dependabot.yml` added (version 2; `github-actions`
+  weekly on `/`, `npm` weekly on `/` with `open-pull-requests-limit: 5`);
+  `test/dependabot-lane.test.ts` added (1 gate); `package.json` `test:ci` gains
+  the suite (CI-enforced, not just present).
+- **commit:** (this branch `w188/dependabot-lane`).
+- **evidence (external verifier):** `node --import tsx --test
+  test/dependabot-lane.test.ts` = 1/1 pass; mutations (drop the
+  `github-actions` lane; remove the `updates:` key; drop the `schedule` block;
+  retarget a lane to `mcp-toolbox/`) -> each RED with a distinct message;
+  reorder (directory before package-ecosystem, a schema-legal YAML mapping
+  order) -> GREEN; restored -> GREEN. `npm run lint` exit 0; `npm run
+  typecheck` exit 0. The config parses under a real YAML parser
+  (Python `yaml`), confirming the shape assertions sit on valid YAML.
+- **score:** gain. Prediction held: the W185 SHA pins now have a lane that
+  advances them when upstream releases, closing the "pinned but stale" gap
+  the close-out named, without reintroducing mutable refs.
+- **review (fresh-eyes, 4 rounds REQUEST_CHANGES x3 -> fixes -> ACCEPT at tip
+  71949e64):** no P0/P1. Round 0 P2s fixed in-iteration: (1)
+  the line-wise parser never required `updates:` or a `schedule` block, so the
+  pin could stay GREEN over a config Dependabot would ignore — the test now
+  asserts the top-level `updates:` list and a `schedule.interval` per entry;
+  (2) the docstring overclaimed "YAML validity is asserted" — restated as
+  structural shape only. P3s: the parser was document-order dependent (a legal
+  reorder of `directory`/`package-ecosystem` mis-parsed) — rewritten to read
+  each list block's keys independently of order; the "rewrites the SHA in
+  place and retains the comment" claim in the config comment softened to
+  "expected to", with the W185 shape pin named as the authoritative
+  enforcement. Round 1 found the dead-lane class was still unguarded
+  (`open-pull-requests-limit: 0`, `ignore`, `target-branch` all pass GREEN),
+  the block-splitter truncated an entry at a nested list (a non-blanket
+  `ignore:` before `schedule:` false-failed), and the interval allowlist was
+  too narrow / unanchored. Round 2 showed the kill-switch checks enumerated
+  SPELLINGS, not the property (single-quoted `'0'`/`'*'`, a trailing
+  `# comment`, flow-style `ignore`, or a second entry all bypassed). The final
+  (round-3) design matches on a NORMALIZED form and PARSED VALUES: full-line
+  and inline comments stripped, quotes removed, keys read as `key : value`
+  (whitespace before the colon tolerated), the limit tested numerically
+  (`Number(value) === 0`, catching `'0'`/`00`/`+0`/`0x0`), the ignore glob
+  tested as all-stars (`*`/`**`, block or flow), `target-branch` and group
+  constructs rejected file-wide. Probe matrix (23 shapes): 17 bypass shapes RED
+  with distinct messages, 6 legitimate shapes GREEN (quoted values,
+  trailing/leading comments including one documenting `target-branch:`/
+  `dependency-name: *`, a non-blanket nested `ignore:`, a scalar key reorder).
+  `test:ci` wiring confirmed present via `node -e` on the parsed
+  package.json. The npm lane is within scope (the preregistration above
+  predicts it: "a `npm` lane keeps the same discipline for the runtime deps").
+  Residual (honest, non-blocking, reviewer-accepted): a value on the NEXT line
+  is not modeled; escape-encoded globs (`"\x2a"`) and YAML 1.1 exotic integers
+  (`0_000`, sexagesimal) evade the parsed-value checks; `directory: ./` (a
+  legal synonym for `/`) false-fails by deliberate strictness; the list-block
+  boundary latches the file's first dash, so a future config with an earlier
+  value-list would need the parser anchored to `updates:`. The docstring states
+  the parser is not a YAML validator. Reviewer verdict: ACCEPT/APPROVE across
+  test integrity, task completeness, cleanliness, security, platform fit.
+- **losses/exceptions:** Dependabot's actual SHA-rewrite behavior (does it
+  preserve the 40-hex shape and the `# vX` comment?) is GitHub-side and cannot
+  be executed offline; the W185 pin test is the backstop that fails any
+  regression, and this is stated rather than claimed as verified. Docs/ledger
+  only; no `src/` change.
+- **keep/revert:** keep.
+- **next hypothesis:** candidate 2 (`docs`) — backfill the W178–W184
+  `docs/ledger/` fragments; or candidate 3 (`gate`) — ambient-IO kernel purity.
+
+
