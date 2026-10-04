@@ -1366,7 +1366,10 @@ function UserMessage() {
     <MessagePrimitive.Root className="msg msg-user">
       <MessagePrimitive.Attachments>
         {({ attachment }) => {
-          const imagePart = attachment.content.find((part) => part.type === "image");
+          // 0.15.22: `content` is optional on the base Attachment (a pending
+          // upload has none yet); a pending attachment renders no image, so the
+          // chain is the honest shape rather than a non-null assertion.
+          const imagePart = attachment.content?.find((part) => part.type === "image");
           return imagePart !== undefined && imagePart.type === "image"
             ? <img className="msg-attachment" src={imagePart.image} alt={attachment.name} />
             : null;
