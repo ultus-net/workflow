@@ -494,5 +494,95 @@ model's ceiling — no drop.
   `docs/ledger/` fragments (the last remaining candidate; tag would be `docs`,
   distinct from `gate`).
 
+## Iteration 3 (campaign n=3) — 2026-10-04
+
+- **n:** 3
+- **date:** 2026-10-04
+- **pain point:** campaign candidacy 2 (`docs`) — the missing `docs/ledger/`
+  fragments for the W178–W184 egress wave.
+- **selection:** last candidate; previous tag was `gate`, this one is `docs`
+  (diversity brake satisfied). Tag: `docs`. Edit budget: six write-once
+  fragments plus one ledger entry.
+- **hypothesis (falsifiable):** `origin/main` carries a `docs/ledger/` fragment
+  for W179 (`w179-pool-gate2.md`) but none for W178 or W180–W184, so five-plus
+  merged issues in the same wave (the egress policy/credential/approval/network
+  work, #438 and #440–#443, plus the W184 activation wiring #457) have no
+  durable write-once record; `git ls-tree origin/main docs/ledger/` shows the
+  W001–W177 fragments and `w179` but nothing for W178/W180–W184. Predicted
+  effect: after adding one fragment per gap, following the existing W-fragment
+  convention (write-once, source/decision/verification/residual), every W-number
+  in the W178–W184 wave resolves to a fragment, and the "activation-pending"
+  drift W184's own ledger-era docs closed is recorded where a future session
+  looks (the ledger).
+- **at-risk regressions:** the fragments must NOT duplicate the issues' own
+  records or invent source not in the repo; every claim is sourced to a landed
+  file, test, or doc. The main hazard is doc drift (a fragment overclaiming
+  `enforced`, or restating a superseded "activation-pending" status).
+- **accept/reject rule:** accept iff each of W178, W180, W181, W182, W183, W184
+  has a fragment, each fragment's Source/Decision/Verification lines resolve to a
+  real `src/`, `test/`, or `docs/` artifact, and no new claim exceeds what the
+  landed code and the W184 activation docs support.
+- **non-goals:** no `src/`/test change; no new claim or status change; no
+  rewrite of the existing W179 fragment; do not invent a W185/W186 fragment
+  (those are the campaign-1 iterations, recorded in this ledger, not issues).
+- **trace evidence:** `git ls-tree --name-only origin/main docs/ledger/` lists
+  `w179-pool-gate2.md` but no `W178`/`W180`–`W184` file; the source-of-truth
+  docs are `docs/EGRESS_CAPABILITY_AUDIT.md` (W178/W180/W181 §3b/§7),
+  `docs/HUB_PROTOCOL.md` (W182 §egress routes, W183 token generation),
+  `docs/HOST_ADAPTERS.md` + `THREAT_MODEL.md` (W183), and
+  `docs/NVIDIA_ADOPTION_PLAN.md` (the wave table, PR #457 supersession); commit
+  stats for the six W-commits (`5d528dbd`, `966bdb3f`, `fa7e70cc`, `1c207304`,
+  `f737f3f3`, `a6c6b195`) name the exact files and tests.
+- **preregistered:** before edit (this entry).
+
+### Result — iteration 3 (campaign n=3)
+
+- **change:** six write-once `docs/ledger/` fragments following the W179
+  convention (`<!-- Write-once... -->` + `### Wxxx — title` +
+  Source/Decision/Honest boundary/Verification) — `W178-egress-policy-ssrf-core.md`,
+  `W180-proxy-function-allowlist.md`, `W181-egress-ledger-autofeed.md`,
+  `W182-egress-deny-approval.md`, `W183-proxied-network-generation-tokens.md`,
+  `W184-egress-activation-wiring.md`. No `src/` or test change.
+- **commit:** (this branch `w190/ledger-backfill`).
+- **evidence (external verifier):** every `src/`, `test/`, and `mcp-toolbox/`
+  path cited in the six fragments was checked to exist (20 tests + 14 src files,
+  all present). Focused suites: `test/egress-policy.test.ts`,
+  `test/egress-policy-revisions.test.ts`, `test/egress-policy-file.test.ts`,
+  `test/hub-egress-approvals.test.ts`, `test/hub-tokens.test.ts`,
+  `test/egress-forward-proxy.test.ts`, `test/egress-binding.test.ts`,
+  `test/egress-audit-client.test.ts`, `test/runtime-context.test.ts`,
+  `test/opencode-server-egress-wiring.test.ts`, `test/text-hygiene.test.ts` =
+  89 tests, 88 pass, 0 fail (1 skipped: the env-gated `WORKFLOW_ACP_CONTAINED_EGRESS`
+  probe). `npm run lint` exit 0; `npm run typecheck` exit 0.
+- **score:** gain. Prediction held: `origin/main` had a fragment for W179 but
+  none for W178/W180–W184; after this change every W-number in the W178–W184
+  wave resolves to a fragment. The W183 fragment states the "activation-pending"
+  posture and carries the explicit supersession pointer to W184, so the drift
+  W184's docs closed is recorded where a future session looks.
+- **losses/exceptions:** docs-only; cannot be "verified" beyond the source-path
+  existence check and the suites staying green. The fragments restate what the
+  landed code and the existing audit/hub/threat docs already claim — they add
+  no new claim and no enforcement status. No fragment is created for W185/W186
+  (campaign-1 iterations, recorded in this ledger, not issues).
+- **keep/revert:** keep.
+
+## Campaign close-out (campaign 2, 2026-10-04)
+
+- **iterations:** 3 (N=3, cap 5), each one branch one PR, change-types
+  `config` -> `gate` -> `docs` (no diversity collapse; no no-gain streak).
+- **PRs:** #475 (w188, `config` — Dependabot lane), #476 (w189, `gate` —
+  ambient-host-global kernel purity, stacked on #475), w190 (this branch,
+  `docs` — W178–W184 fragment backfill, stacked on w189). Merge order:
+  #475 -> #476 -> w190.
+- **stop reason:** N iterations done.
+- **next hypothesis:** the campaign's three chosen families are now spent. The
+  open candidate classes: (a) route test 1's `stripComments` through the W189
+  lexer (round-3 P3 on iteration 2 — make the import gate string-aware); (b) a
+  `config`/`gate` follow-on that pins the Dependabot lane's shape against the
+  W185 SHA-pin gate on a schedule; (c) the base-loop selection exhaustion noted
+  in campaign 1 — the remaining open issues are parked P20–P24 or human-gated
+  (W149 #142, W179 #439 already merged).
+
+
 
 
