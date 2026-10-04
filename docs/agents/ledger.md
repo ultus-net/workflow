@@ -543,7 +543,7 @@ model's ceiling — no drop.
   `W180-proxy-function-allowlist.md`, `W181-egress-ledger-autofeed.md`,
   `W182-egress-deny-approval.md`, `W183-proxied-network-generation-tokens.md`,
   `W184-egress-activation-wiring.md`. No `src/` or test change.
-- **commit:** (this branch `w190/ledger-backfill`).
+- **commit:** PR #477 (this branch `w190/ledger-backfill`).
 - **evidence (external verifier):** every `src/`, `test/`, and `mcp-toolbox/`
   path cited in the six fragments was checked to exist (20 tests + 14 src files,
   all present). Focused suites: `test/egress-policy.test.ts`,
@@ -571,9 +571,8 @@ model's ceiling — no drop.
 - **iterations:** 3 (N=3, cap 5), each one branch one PR, change-types
   `config` -> `gate` -> `docs` (no diversity collapse; no no-gain streak).
 - **PRs:** #475 (w188, `config` — Dependabot lane), #476 (w189, `gate` —
-  ambient-host-global kernel purity, stacked on #475), w190 (this branch,
-  `docs` — W178–W184 fragment backfill, stacked on w189). Merge order:
-  #475 -> #476 -> w190.
+  ambient-host-global kernel purity, stacked on #475), #477 (w190, `docs` —
+  W178–W184 fragment backfill, stacked on w189). Merge order: #475 -> #476 -> #477.
 - **stop reason:** N iterations done.
 - **next hypothesis:** the campaign's three chosen families are now spent. The
   open candidate classes: (a) route test 1's `stripComments` through the W189
