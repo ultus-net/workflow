@@ -386,4 +386,113 @@ model's ceiling — no drop.
 - **next hypothesis:** candidate 2 (`docs`) — backfill the W178–W184
   `docs/ledger/` fragments; or candidate 3 (`gate`) — ambient-IO kernel purity.
 
+## Iteration 2 (campaign n=2) — 2026-10-04
+
+- **n:** 2
+- **date:** 2026-10-04
+- **pain point:** campaign candidacy 3 (`gate`) — the campaign-1 close-out
+  follow-on (b).
+- **selection:** previous iteration's tag was `config`, this one is `gate`
+  (diversity brake satisfied). Tag: `gate`. Edit budget annealed (single test
+  file).
+- **hypothesis (falsifiable):** the W186 gate closes the kernel's
+  *import-graph* half but its own docstring names the excluded class:
+  import-free ambient IO (`fetch`/`process.env`/`Date.now`/`Math.random`). Today
+  `src/kernel/**.ts` has zero such tokens even in comments (grep), so the gap is
+  latent: a future `Date.now()` for a timestamp or a `process.env` read would
+  pass lint, typecheck, and every focused suite silently, eroding the
+  determinism the kernel's whole trust argument rests on. Predicted effect: an
+  offline scan that strips comments/strings, then fails on any ambient-global
+  reference (`Date`, `Math.random`, `fetch`, `process`, `require`, timers,
+  `crypto`, `performance`, `globalThis`, host globals, `console`, `Buffer`) in
+  `src/kernel/**.ts`, naming the file, line, and token.
+- **at-risk regressions:** (a) false positives from `Date`/`Math` appearing as
+  substrings (e.g. `update`, `Math.max`) — the scan is token-bounded
+  (`\bDate\b`, `Math.random`) so `Math.max`/`Math.min` (pure) stay allowed;
+  (b) a comment or string literal mentioning a token could false-trip — the
+  scan strips comments and string/template contents first; (c) over-broad
+  token selection flagging legitimate pure code.
+- **accept/reject rule:** accept iff the scan is GREEN on the current tree and
+  a mutation (inject `Date.now()` into a kernel file) turns it RED naming the
+  file, line, and token; `npm run lint` + `npm run typecheck` exit 0. Reject if
+  any false positive on the existing tree.
+- **non-goals:** no kernel source change; no attempt to model every host global
+  (the list is the documented high-value class, stated as such); no change to
+  the W186 import gate.
+- **trace evidence:** stripped-source scan over `src/kernel/**.ts` = 0 hits for
+  the token set; the lone raw match is a comment (`task-graph.ts:161` "would
+  require IO...") which comment-stripping removes; `Math` appears only as
+  `Math.max`/`Math.min` in pure code (allowed by the token-bounded scan).
+- **preregistered:** before edit (this entry).
+
+### Result — iteration 2 (campaign n=2)
+
+- **change:** `test/kernel-purity.test.ts` gains a second test, "src/kernel
+  does not reach ambient host globals", plus a local `scanAmbient()` single-pass
+  scanner (comments and string/template literal text blanked, newlines
+  preserved, template `${...}` bodies RE-EMITTED as scannable). No `src/`
+  change; the file was already wired into `test:ci` by W186.
+- **commit:** (this branch `w189/kernel-ambient-purity`).
+- **evidence (external verifier):** `node --import tsx --test
+  test/kernel-purity.test.ts` = 2/2 pass. Probe matrix (25 shapes): 19 RED —
+  `Date.now()`/`new Date()`, `Math.random()`, `fetch`, `process.env`,
+  `require("x")`, `setTimeout`, `crypto`, `performance`, `globalThis`,
+  `globalThis["fetch"]`, `console`, `Buffer`, `window`, `eval`, and the two
+  regression probes the review forced (`${Date.now()}` template interpolation;
+  a `http://` string before a `Date.now()`); 6 GREEN — comments (line/block),
+  a string/template mentioning tokens, `Math.max`/`Math.min`, and the
+  `update`/`procession` substrings. `npm run lint` exit 0; `npm run typecheck`
+  exit 0; the three pin suites 5/5.
+- **score:** gain. Prediction held: the ambient class the W186 docstring
+  excludes is now executable, so kernel nondeterminism (a future `Date.now()`
+  / `process.env` read) fails CI instead of passing silently.
+- **review (fresh-eyes, rounds 0-3 REQUEST_CHANGES -> fixed; round 4 ACCEPT):**
+  no P0. Round 0 P1: template `${...}` interpolation
+  was blanked by the naive template regex, so `${Date.now()}` survived GREEN —
+  a real vector in the named class; fixed with a scanner that re-emits
+  interpolation bodies (regression probe added). Round 0 P2: comment-stripping
+  ran before string stripping, so a `//` or `/*` inside a string could truncate
+  the line and hide a later token; fixed. Round 1 then showed the interpolation
+  handler was a naive brace counter: a `}` inside a string/comment/regex within
+  `${...}` closed the body early and hid a following `Date.now()` (P1), and
+  literal text inside `${...}` was re-emitted causing new false positives (P2);
+  block-comment deletion could also fuse two identifiers past the `\b` anchors
+  (`await/*c*/fetch()`). Fixed by rewriting `scanAmbient` as a recursive lexer:
+  `${...}` bodies are lexed with full string/comment/escape state, and every
+  blanked region emits a separator (space) so token boundaries survive; escaped
+  newlines preserve line numbers. Round 2 found the remaining blocking item:
+  regex-literal state is absent, so a `}` inside a regex in a `${...}` body
+  closes the interpolation early and hides a following `Date.now()`. The
+  reviewer allowed either implementing regex-literal state or narrowing the
+  stated contract; chose the latter (a kernel regex lexer is over-engineering
+  for a file with zero regex literals — verified, below) and first enumerated
+  four regex-driven modes. Round 3 (P1) then showed a categorical enumeration is
+  itself an overclaim (a quote or backtick inside a regex also opens the
+  string/template branch and can hide code), so the count was dropped for the
+  umbrella bound the reviewer confirmed accurate: the guarantee holds ONLY
+  without regex literals; if one is added the scanner needs regex-literal state.
+  The mutable-state claim ("the kernel has none today") was moved out of the
+  test docstring to this ledger entry (round-3 P3).
+  Probe matrix (26 shapes): 19 RED including the round-1 residuals
+  (`${"}" + Date.now()}`, `${/* } */ Date.now()}`, a nested template inside
+  `${}`, `await/*c*/fetch()`, `return/*c*/Date.now()`), 7 GREEN (comments,
+  strings/templates mentioning tokens, a string arg `fmt("Date")` and a
+  `/* Date */` inside `${}`, `Math.max`/`Math.min`, substrings).
+- **losses/exceptions:** the token list is the named high-value class, not
+  exhaustive; regex-literal state is absent, so the bounded claim is the
+  umbrella bound only (a regex can false-trip or blank following code; the
+  guarantee holds only without regex literals). Verified: `src/kernel` has zero
+  regex literals (a tokenizing scan over the six files after stripping
+  strings/comments matched none), so the residual is latent, not live. `Math`
+  reached other than by a dot is also unmodelled. Round-3 P3 (accepted,
+  out of scope): test 1's pre-existing `stripComments` is string-unaware, so a
+  `//` or `/*` inside a string could in principle truncate a line before a
+  specifier — a candidate for a future iteration, not this one. Offline and
+  deterministic; no `src/` change.
+- **keep/revert:** keep.
+- **next hypothesis:** candidate 2 (`docs`) — backfill the W178–W184
+  `docs/ledger/` fragments (the last remaining candidate; tag would be `docs`,
+  distinct from `gate`).
+
+
 
