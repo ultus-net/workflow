@@ -43,6 +43,91 @@ interpretation · keep/revert · next hypothesis
 
 # Campaign 1 — bounded multi-iteration RSI campaign (2026-10-04)
 
+Protocol: `docs/agents/rsi-loop-playbook.md` "Multi-iteration campaigns";
+reading-list citations per the campaign template. N = 3 (default; hard cap 5).
+
+**Candidate set (built before iterating — AIDE² 2609.26457 diversity):**
+
+1. `security` — **SHA-pin the GitHub Action refs.** All 13 `uses:` across the
+   three workflows are mutable major-version tags (`@v4`/`@v3`/`@v6`); none is
+   an immutable commit. Moving a major tag is the standard supply-chain vector.
+2. `gate` — **Make the kernel-purity rule executable.** `AGENTS.md` states
+   `src/kernel/` "can never depend on a host surface," but no test enforces it
+   (all kernel imports are relative today; a future `node:`/SDK import would
+   pass CI silently).
+3. `docs` — **Reconcile the worktree convention with guard confinement.**
+   `AGENTS.md` "Worktrees" says add at `/var/home/hunter/worktrees/<name>`, but
+   the guard confines mutations to the workspace root and blocked that path
+   repeatedly this session; the guidance contradicts the enforced policy.
+
+**Appraisal (HSI 2608.08466 two bounds):** each candidate has an informative
+offline signal and is within the frozen model's ceiling — no drop.
+
+## Iteration 2 (campaign n=1) — 2026-10-04
+
+- **n:** 2
+- **date:** 2026-10-04
+- **pain point:** campaign candidacy 1 (`security`).
+- **selection:** highest-value unblocked candidate; no previous tag (first
+  iteration). Tag: `security`.
+- **hypothesis (falsifiable):** every `uses:` in `.github/workflows/` resolves
+  through a mutable tag, so a compromised/moved upstream tag can execute
+  arbitrary code in this repo's CI with `contents: write` / `packages: write`
+  (publish) or `contents: read` (ci). Predicted effect: after pinning each
+  action to the exact commit SHA its current major tag points at (with the
+  human-readable tag retained in a trailing comment), the workflows become
+  content-addressed: a moved tag cannot change what runs. Pre-change a
+  `uses: actions/checkout@v4` is mutable; post-change the SHA is fixed.
+- **at-risk regressions:** (a) a wrong SHA breaks CI outright; (b) a nested
+  annotated tag needs dereferencing (pnpm/action-setup@v4 is `type=tag`, every
+  other is `type=commit`); (c) the tag comment must survive lint/format.
+- **accept/reject rule:** accept iff every `uses:` is a 40-hex SHA, each SHA
+  equals `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` dereferenced to a
+  commit, the trailing `# <tag>` comment names the human-readable ref, and
+  `npm run lint` + `npm run typecheck` exit 0. Reject if any SHA cannot be
+  resolved or any workflow breaks.
+- **non-goals:** no new workflow features, no permission-narrowing (separate
+  axis), no Dependabot/renovate config.
+- **trace evidence:** `grep -rn "uses:" .github/workflows/` = 13 refs
+  (ci.yml:22,23,27,41,42,46; publish-image.yml:48,99,102,110;
+  update-deps.yml:11,12,15); `grep -rnE "uses:.*@[0-9a-f]{40}"` = empty;
+  SHAs resolved via `gh api` (checkout v4.4.0 `11d5960a…`, setup-node v4.4.0
+  `49933ea5…`, pnpm v4 deref `b906affc…`, buildx v3 `8d2750c6…`, login v3
+  `c94ce9fb…`, build-push v6 `10e90e36…`).
+- **preregistered:** before edit (this entry).
+
+### Result — iteration 1 (campaign n=1)
+
+- **change:** `.github/workflows/{ci,publish-image,update-deps}.yml` — 13 refs
+  pinned to 40-hex commits with trailing `# <tag>` comments;
+  `test/workflow-action-pins.test.ts` added (2 shape pins);
+  `package.json` `test:ci` gains the new suite (the gate is CI-enforced, not
+  just present).
+- **commit:** `b5603fda` on `w185/actions-sha-pin`.
+- **SHA↔tag correspondence (verified live, `gh api`, 2026-10-04):**
+  | action | tag | committed SHA |
+  |---|---|---|
+  | actions/checkout | v4.4.0 | `11d5960a326750d5838078e36cf38b85af677262` |
+  | actions/setup-node | v4.4.0 | `49933ea5288caeca8642d1e84afbd3f7d6820020` |
+  | pnpm/action-setup | v4 (annotated → deref) | `b906affcce14559ad1aafd4ab0e942779e9f58b1` |
+  | docker/setup-buildx-action | v3 | `8d2750c68a42422c14e847fe6c8ac0403b4cbd6f` |
+  | docker/login-action | v3 | `c94ce9fb468520275223c153574b00df6fe4bcc9` |
+  | docker/build-push-action | v6 | `10e90e3645eae34f1e60eeb005ba3a3d33f178e8` |
+- **evidence (external verifier):** `node --import tsx --test
+  test/workflow-action-pins.test.ts` = 2/2; mutation test (one ref reverted to
+  `@v4`) = 2/2 RED, restored GREEN; `test/publish-image-workflow.test.ts` =
+  8/8; `npm run lint` exit 0; `npm run typecheck` exit 0.
+- **score:** gain. Prediction held: all 13 refs content-addressed; a moved
+  upstream tag can no longer change what executes in this repo's CI.
+- **losses/exceptions:** the vendored `mcp-toolbox/.github/workflows/ci.yml`
+  is NOT scanned — GitHub runs only root `.github/workflows/`, so the nested
+  file is inert; scope stated in the test header. Reviewer P2 (wire into
+  `test:ci`) and P3 (count 14→13) fixed in this iteration.
+- **keep/revert:** keep.
+- **next hypothesis:** candidate 2 (`gate`, kernel-purity executable) — the
+  reviewer's own findings also suggest a `docs` follow-up (scope note shipped
+  inline here).
+
 Protocol: `docs/agents/rsi-loop-playbook.md` "Multi-iteration campaigns".
 N = 3 (default; cap 5). Candidate set and appraisal recorded in iteration 1
 (`w185/actions-sha-pin`, PR #472); iteration 2 = `gate` (PR #473). This branch
