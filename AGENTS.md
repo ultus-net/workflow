@@ -69,9 +69,14 @@ material claim bound to its verification: `docs/SECURITY_ASSURANCE.md`
   `main` — never onto another feature branch. (The old
   `feat/opencode-conformance-probes` integration branch was retired once main
   caught up via PR #31; long-lived side trunks are how main fell behind.)
-- **Worktrees**: `git worktree add /var/home/hunter/worktrees/<name> -b <branch> <base>`
-  from the main checkout; symlink `node_modules` into it (`.git/info/exclude`
-  already covers it).
+- **Worktrees**: create them **inside the checkout**, e.g.
+  `git worktree add .worktrees/<name> -b <branch> <base>` from the main
+  checkout, then symlink `node_modules` into it. `.git/info/exclude` covers
+  `.worktrees/` — an out-of-checkout path such as
+  `/var/home/hunter/worktrees/<name>` is NOT covered and is **blocked by the
+  workflow guard**, which confines mutations to the workspace root
+  (`/var/home/hunter/Documents/projects/personal/Workflow`); a worktree there
+  can be created but its `node_modules` symlink (and any edit) is refused.
 - **Stacked PRs strand.** A PR merged into its stacked base branch does not
   reach the trunk — that happened twice (PRs #15/#17, #19) and needed sync
   PRs (#20, #23) to repair. Fold shared content into one branch when two PRs
