@@ -6,7 +6,14 @@
  * authority/subject/result/freshness predicate `TaskGraph` already applies, in
  * increasing-cost order — and the state-diff rung wraps `evaluateStateDiff`
  * with the real `fingerprintFile` re-query. No new evidence semantics are
- * invented here; a `tests` rung is deliberately absent (no runner is wired).
+ * invented here.
+ *
+ * The costliest rung, `tests`, is a SEAM: this module performs no test
+ * execution itself (the kernel stays pure and the application reads no
+ * process). A caller may inject a `StepTestEvaluator`; when none is supplied
+ * the rung is absent (skipped) and behavior is exactly as before. A wired
+ * evaluator runs only after every cheaper rung passed and rejects with
+ * `STEP_TESTS_FAILED`.
  */
 
 import type { Evidence, WorkflowStep } from "../kernel/contracts.js";
@@ -29,6 +36,20 @@ export interface StepAdmissionInput {
    */
   readonly readObservation: () => ChangeObservation;
 }
+
+/** The `tests` rung result: pass, or a machine-readable refusal. */
+export type StepTestResult =
+  | { readonly kind: "pass" }
+  | { readonly kind: "reject"; readonly reason: string };
+
+/**
+ * The `tests` rung runner, injected by the composition (the application layer
+ * performs the IO; the kernel stays pure). It receives the LIVE step and the
+ * evidence available at completion time, so it can judge whatever it needs.
+ * The only wired default is the operator's `tests` seam; wiring a real test
+ * command is a separate composition slice.
+ */
+export type StepTestEvaluator = (input: StepAdmissionInput) => StepTestResult;
 
 export type StepAdmissionOutcome =
   | { readonly kind: "pass"; readonly observation: ChangeObservation }
@@ -119,31 +140,48 @@ function evaluateStateDiffRung(input: StepAdmissionInput): AdmissionRungResult {
   return { kind: "reject", code: "STEP_POSTCONDITION_UNMET", reason: verdict.reason };
 }
 
-/** The ordered stage set; `tests` is absent until a runner is wired. */
-export function assembleStepAdmissionStages(): readonly AdmissionStage<StepAdmissionInput>[] {
+/** Tests rung: the injected evaluator (the application's IO seam). A rejecting
+ * result surfaces as `STEP_TESTS_FAILED`; the evaluator's reason is verbatim. */
+function evaluateTests(input: StepAdmissionInput, evaluator: StepTestEvaluator): AdmissionRungResult {
+  const result = evaluator(input);
+  if (result.kind === "pass") return { kind: "pass" };
+  return { kind: "reject", code: "STEP_TESTS_FAILED", reason: result.reason };
+}
+
+/**
+ * The ordered stage set. `tests` is present only when the caller injects an
+ * evaluator; without one it is skipped and behavior matches the pre-seam
+ * four-rung set exactly.
+ */
+export function assembleStepAdmissionStages(
+  evaluateTestsRung?: StepTestEvaluator,
+): readonly AdmissionStage<StepAdmissionInput>[] {
   return [
     { rung: "codes", evaluate: evaluateCodes },
     { rung: "schema", evaluate: evaluateSchema },
     { rung: "cross-field", evaluate: evaluateCrossField },
     { rung: "state-diff", evaluate: evaluateStateDiffRung },
+    ...(evaluateTestsRung === undefined ? [] : [{ rung: "tests" as const, evaluate: (input: StepAdmissionInput) => evaluateTests(input, evaluateTestsRung) }]),
   ];
 }
 
 /**
  * Runs the ordered gates for a step and, on a pass, returns the same
  * observation the state-diff rung judged so the caller can hand it to the
- * kernel without a second re-query.
+ * kernel without a second re-query. An optional `tests` evaluator wires the
+ * costliest rung; absent, it is skipped.
  */
 export function runStepCompletionAdmission(input: {
   readonly step: WorkflowStep;
   readonly evidence: readonly Evidence[];
+  readonly tests?: StepTestEvaluator | undefined;
 }): StepAdmissionOutcome {
   let built: ChangeObservation | undefined;
   const readObservation = (): ChangeObservation => {
     built ??= observeChangeClaim(input.step.requiredPostcondition ?? { subjects: [] });
     return built;
   };
-  const outcome = runAdmissionGates(assembleStepAdmissionStages(), {
+  const outcome = runAdmissionGates(assembleStepAdmissionStages(input.tests), {
     step: input.step,
     evidence: input.evidence,
     readObservation,
