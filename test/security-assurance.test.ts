@@ -159,6 +159,28 @@ test("the honesty rules stay pinned: advisory is never upgraded, residuals stay 
   assert.ok(!/\bTODO\b|\bTBD\b/.test(doc), "the assurance case must not carry placeholder claims");
 });
 
+test("the FEATURES.md residual-risk count matches the assurance case's stated entries", () => {
+  // docs/FEATURES.md advertises this assurance case with a residual count.
+  // That number must equal the numbered residual entries in the case's
+  // "Known residual risks" section: understating residual risk is itself an
+  // honesty defect (the count drifted to 19 while the case stated 26), and an
+  // unverified numeric claim in the feature ledger is exactly the drift this
+  // checker exists to catch.
+  const featuresPath = join(repoRoot, "docs", "FEATURES.md");
+  const features = readFileSync(featuresPath, "utf8");
+  const advertised = features.match(/(\d+) known residual risks/)?.[1];
+  assert.ok(advertised !== undefined, "docs/FEATURES.md must keep advertising the residual-risk count");
+  const start = doc.indexOf("## Known residual risks");
+  const end = doc.indexOf("\n## ", start + 1);
+  const residualSection = doc.slice(start, end === -1 ? undefined : end);
+  const stated = [...residualSection.matchAll(/^\d+\. /gm)].length;
+  assert.equal(
+    Number(advertised),
+    stated,
+    `docs/FEATURES.md advertises ${advertised} residual risks but the assurance case states ${stated}`,
+  );
+});
+
 test("the external-standards citations stay pinned and dated (W064)", () => {
   // Dated, append-only external-standards tracking. Each entry says what
   // Workflow claims and does not claim relative to the standard; the

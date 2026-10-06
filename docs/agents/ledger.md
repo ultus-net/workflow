@@ -922,3 +922,44 @@ already partly covered (W188's own test pins the lane). Candidate 1 picked.
 - **next hypothesis:** the closed-W fragment set is now complete; the next
   offline candidates narrow to the review-follow-up store and staleness hunts.
 
+---
+
+## Task F — 2026-10-06 — correct + pin the advertised residual-risk count
+
+- **pain point:** `docs/FEATURES.md:38` advertised "**19** known residual
+  risks stay stated" for the W042 assurance case, but
+  `docs/SECURITY_ASSURANCE.md` states **26** (numbered entries 1-26; the
+  P10/MITIGATED disposition at :295 explicitly keeps the count at 26).
+  Understating residual risk by seven is itself an honesty defect in the
+  document whose job is to not understate risk.
+- **selection:** the ADVANCED 2026-10-02/03 work on DRIFT-019/024 and the
+  `tests` rung are design-gated (a test-execution adapter is a design, not a
+  bounded loop change); the P6 ask-channel and egress waves are landed. A
+  systematic scan for stale numeric claims surfaced this one.
+- **hypothesis (falsifiable):** the true stated count is 26 and the FEATURES.md
+  number is stale, and a count pin can make the claim executable.
+- **trace evidence:** `grep -c '^[0-9]+\. '` over the residual section
+  (SECURITY_ASSURANCE.md:259-296) = 26; max residual index = 26;
+  FEATURES.md row 38 read "19". No test or checker asserted the count before.
+- **code change:** `test/security-assurance.test.ts` gains a tenth pin — the
+  FEATURES.md "N known residual risks" number must equal the count of numbered
+  entries in the case's "Known residual risks" section (red-first: fails with
+  "advertises 19 residual risks but the assurance case states 26");
+  `docs/FEATURES.md:38` corrected 19 to 26 and notes the checker now pins it.
+  No `src/` change; one test added, no existing assertion weakened.
+- **commit SHA:** (pending, this branch)
+- **git tree / base:** `origin/main@28205bb0`; worktree `.worktrees/w132-active-block`
+- **exact command/config:** `node --import tsx --test test/security-assurance.test.ts`;
+  `test/text-hygiene.test.ts`; `npm run lint`; `npm run typecheck`.
+- **test results:** security-assurance 8/8 (the new pin red first, then green),
+  text-hygiene 9/9; lint 0; typecheck 0.
+- **score:** gain. The advertised residual count now cannot drift from the
+  case it describes.
+- **losses/exceptions:** the pin asserts the FEATURES.md count only; other
+  prose numeric claims (e.g. "130+ citations", "twelve surface sections")
+  remain unchecked — recorded, not silently assumed pinned.
+- **keep/revert:** keep.
+- **next hypothesis:** sweep other docs for stale numeric/factual claims
+  (a docs-accuracy pass), or wire the design-gated `tests` rung if the
+  operator opens that design.
+
