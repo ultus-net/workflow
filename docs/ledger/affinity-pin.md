@@ -105,6 +105,9 @@ cache-hit measurement (P11) stays `unmeasured` until P12's fields are consumed
 downstream; the failover backstop (key 4) stays unwired; the §9 restart /
 alias-drift semantics stand as specced (pin the resolved slug, drift recorded).
 
+> **Dated supersession (2026-10-02): key 4 is now wired for the Synthetic→OpenRouter lane.** The operator pivot makes Synthetic the primary metered upstream with an automatic OpenRouter failover on 429/5xx/connection failure, pre-first-byte, body re-pinned to `openrouter/auto` (`src/integrations/synthetic-provider.ts` + the `syntheticFailover` seam; `docs/ledger/synthetic-primary-failover.md`). The "failover backstop (key 4) stays unwired" boundary above and every "(key 4) is NOT wired" line in this fragment are scoped: key 4 IS wired for the Synthetic lane; the open-source-pool lane's own `resolveOpenModelRoute` failover remains unwired (zero production callers). The affinity narrowing's outage-persistence cost (a pinned vendor degrades until the turn boundary) is reduced on the Synthetic lane and unchanged elsewhere. No code or test change to the affinity pin itself.
+
+
 > **Dated note (2026-09-30, branch `feat/harvest-7`): the "commit to be linked"
 > placeholder above is `c6768cd7`.** The affinity-pin P3 (`guard_review_followups`,
 > commit `c6768cd7807857e8e3d8169895f8a6ebaeebd342`) recorded that the fragment

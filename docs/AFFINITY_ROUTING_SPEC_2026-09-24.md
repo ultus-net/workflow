@@ -294,3 +294,18 @@ no force-push/refspec shapes and carries no guard-vocabulary command
 forms; the policy-routing claims cite the seams (openrouter-auto-latest
 alias resolution, model-profile classes, the W109 transformBody seam)
 rather than embedding request shapes.
+
+## 12. Dated supersession — key 4 wired for the Synthetic→OpenRouter lane (2026-10-02)
+
+The operator pivot makes Synthetic (`https://api.synthetic.new`) the primary
+metered upstream with an automatic OpenRouter failover. This narrows the
+"key 4 is NOT wired" statements in §4 and §5 and the round-1 P2-6 finding:
+key 4 is now wired **for the Synthetic→OpenRouter pair only**
+(`src/integrations/synthetic-provider.ts` + the `syntheticFailover` option;
+429/5xx/connection failure, pre-first-byte, body re-pinned to
+`openrouter/auto`). The affinity narrowing still removes OpenRouter's own
+cross-vendor reroute for a pinned session, and the open-source-pool lane's
+own `resolveOpenModelRoute` failover remains unwired (zero production
+callers) — both statements stand. The outage-persistence cost in §4/§5 is
+therefore reduced for sessions on the Synthetic lane and unchanged
+otherwise. Full record: `docs/ledger/synthetic-primary-failover.md`.

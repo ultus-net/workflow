@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
-import { acpAgentKind, openrouterAuthKeyFromAuth, resolveSkillsMountFor } from "../src/integrations/acp-runtime.js";
+import { acpAgentKind, openrouterAuthKeyFromAuth, resolveRuntimeMeteredLane, resolveSkillsMountFor } from "../src/integrations/acp-runtime.js";
 import { METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
+import { OPENROUTER_UPSTREAM, SYNTHETIC_UPSTREAM } from "../src/integrations/synthetic-provider.js";
 import {
   DEFAULT_OPENCODE_MODEL,
   OPENCODE_METERED_PROVIDER_ID,
@@ -20,6 +24,35 @@ function withEnv(env: Record<string, string | undefined>, body: () => void): voi
   try {
     body();
   } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+/**
+ * Runs `body` with the Synthetic lane inputs pinned to a fresh temp HOME and
+ * every lane env arm cleared, so the resolver reads only what the test seeds.
+ * `resolveRuntimeMeteredLane` reads WORKFLOW_ACP_UPSTREAM, SYNTHETIC_API_KEY,
+ * the auth store, and the key file (the latter two under `homedir()`), so a
+ * lane resolver is a host resolver until isolated.
+ */
+function withIsolatedLane(env: Record<string, string>, body: (home: string) => void): void {
+  const saved = new Map<string, string | undefined>();
+  const home = mkdtempSync(join(tmpdir(), "wf-lane-resolver-"));
+  for (const key of ["SYNTHETIC_API_KEY", "WORKFLOW_SYNTHETIC", "WORKFLOW_ACP_UPSTREAM", "HOME", ...Object.keys(env)]) {
+    if (!saved.has(key)) saved.set(key, process.env[key]);
+  }
+  try {
+    process.env.HOME = home;
+    delete process.env.SYNTHETIC_API_KEY;
+    delete process.env.WORKFLOW_SYNTHETIC;
+    delete process.env.WORKFLOW_ACP_UPSTREAM;
+    Object.assign(process.env, env);
+    body(home);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
     for (const [key, value] of saved) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -163,4 +196,58 @@ test("resolveSkillsMountFor composes the delivery mount from the shared skills d
   assert.equal(resolveSkillsMountFor({ ...base, envSkillsDir: undefined, exists: () => false }), undefined);
   const noDir = (path: string) => path === "/repo/mcp-toolbox/apps/skills-mcp/dist/server.js";
   assert.equal(resolveSkillsMountFor({ ...base, envSkillsDir: undefined, exists: noDir }), undefined);
+});
+
+// ── The shared lane resolver (the operator pivot) ───────────────────────────
+
+test("resolveRuntimeMeteredLane: a Synthetic env key composes Synthetic primary + OpenRouter failover", () => {
+  withIsolatedLane({ SYNTHETIC_API_KEY: "env-syn" }, () => {
+    const lane = resolveRuntimeMeteredLane("or-key");
+    assert.equal(lane.upstream, SYNTHETIC_UPSTREAM, "the env Synthetic key makes Synthetic primary");
+    assert.equal(lane.apiKey, "env-syn", "the env key rides the primary hop");
+    assert.equal(lane.failover?.fallback, OPENROUTER_UPSTREAM, "the failover is OpenRouter");
+    assert.equal(lane.failover?.openrouterApiKey, "or-key", "the fallback key is the resolved OpenRouter key");
+  });
+});
+
+test("resolveRuntimeMeteredLane: the auth store's synthetic.key alone composes the pair", () => {
+  withIsolatedLane({}, (home) => {
+    const dir = join(home, ".local", "share", "opencode");
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, "auth.json"), JSON.stringify({ synthetic: { key: "auth-syn" } }), { mode: 0o600 });
+    const lane = resolveRuntimeMeteredLane("or-key");
+    assert.equal(lane.upstream, SYNTHETIC_UPSTREAM, "the auth-store key composes the pair with no env key");
+    assert.equal(lane.apiKey, "auth-syn", "the auth-store key rides the primary hop");
+    assert.equal(lane.failover?.fallback, OPENROUTER_UPSTREAM);
+  });
+});
+
+test("resolveRuntimeMeteredLane: the synthetic-api-key file alone composes the pair", () => {
+  withIsolatedLane({}, (home) => {
+    const dir = join(home, ".config", "workflow");
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, "synthetic-api-key"), "file-syn", { mode: 0o600 });
+    const lane = resolveRuntimeMeteredLane("or-key");
+    assert.equal(lane.upstream, SYNTHETIC_UPSTREAM, "the key file composes the pair with no env/auth key");
+    assert.equal(lane.apiKey, "file-syn");
+  });
+});
+
+test("resolveRuntimeMeteredLane: an explicit env upstream is honored and never composes the pair", () => {
+  withIsolatedLane({ SYNTHETIC_API_KEY: "env-syn", WORKFLOW_ACP_UPSTREAM: OPENROUTER_UPSTREAM }, () => {
+    // configuredUpstream omitted -> the parameter default reads the env arm.
+    const lane = resolveRuntimeMeteredLane("or-key");
+    assert.equal(lane.upstream, OPENROUTER_UPSTREAM, "an explicit non-Synthetic upstream is never overridden");
+    assert.equal(lane.apiKey, "or-key", "a non-Synthetic upstream takes the OpenRouter key");
+    assert.equal(lane.failover, undefined, "the pair composes only for a Synthetic primary");
+  });
+});
+
+test("resolveRuntimeMeteredLane: no resolvable key keeps the OpenRouter single-upstream lane", () => {
+  withIsolatedLane({}, () => {
+    const lane = resolveRuntimeMeteredLane("or-key");
+    assert.equal(lane.upstream, OPENROUTER_UPSTREAM, "with no Synthetic key the lane is unchanged");
+    assert.equal(lane.apiKey, "or-key");
+    assert.equal(lane.failover, undefined, "the failover seam is absent without the pair");
+  });
 });

@@ -207,3 +207,27 @@ substance survived; the counts are now current as of the W109 merge.
 
 **Round 3 verdict binding:** the criterion's "frontier-verified" state
 is reached — W095 criterion 1 ticks with this record.
+
+## 9. Dated supersession — key 4 (failover) is now wired for Synthetic→OpenRouter (2026-10-02)
+
+The operator pivot makes Synthetic (`https://api.synthetic.new`) the primary
+metered upstream with an automatic OpenRouter failover. This supersedes the
+"key 4 is NOT wired" statements in §2 row 4, §4, §5, and §8 **for this pair
+only**:
+
+- `src/integrations/synthetic-provider.ts` + the `syntheticFailover` option in
+  `model-usage-proxy.ts` retry a failure-class response (429/5xx) or a
+  connection-level rejection ONCE against `https://openrouter.ai`,
+  pre-first-byte, with the body re-pinned to `openrouter/auto` (the operator's
+  always-resolving fallback target).
+- The trigger is the operator's named one (rate limit) extended to 5xx and
+  connection failures; the pre-first-byte and SSE-mid-stream limitations the
+  note already records still hold.
+- **The open-source-pool lane's own failover is unchanged and still unwired:**
+  `resolveOpenModelRoute` has zero production callers (re-verified on this
+  base); `open-model-proxy.ts` still skips no-key families rather than
+  rerouting them. The supersession is scoped to the Synthetic→OpenRouter
+  metered lane.
+- Full record: `docs/ledger/synthetic-primary-failover.md`. No live probe was
+  run; the lane is policy-proven by focused loopback tests only.
+

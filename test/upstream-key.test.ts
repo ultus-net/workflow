@@ -10,10 +10,13 @@ import {
   legacyUpstreamKeyFilePath,
   loadUpstreamApiKey,
   readUpstreamKeyFile,
+  readWorkflowKeyFile,
+  syntheticKeyPresent,
   upstreamKeyFilePath,
   upstreamKeyFromEnv,
   upstreamKeyPresent,
 } from "../src/integrations/upstream-key.js";
+import { SYNTHETIC_KEY_FILE, SYNTHETIC_KEY_ENV } from "../src/integrations/synthetic-provider.js";
 
 function withHome(files: { canonical?: string; legacy?: string }): { home: string; cleanup: () => void } {
   const home = mkdtempSync(join(tmpdir(), "wf-upstream-key-"));
@@ -76,5 +79,37 @@ test("loadUpstreamApiKey reads env first, then file, and fails closed with both 
     assert.throws(() => loadUpstreamApiKey({} as NodeJS.ProcessEnv, empty.home), /CLINE_API_KEY/);
   } finally {
     empty.cleanup();
+  }
+});
+
+test("syntheticKeyPresent resolves env, then the auth-store key, then the key file", () => {
+  const none = withHome({});
+  try {
+    assert.equal(syntheticKeyPresent({} as NodeJS.ProcessEnv, none.home), false, "nothing resolvable");
+    assert.equal(
+      syntheticKeyPresent({ [SYNTHETIC_KEY_ENV]: "env-syn" } as NodeJS.ProcessEnv, none.home),
+      true,
+      "env key",
+    );
+    assert.equal(
+      syntheticKeyPresent({} as NodeJS.ProcessEnv, none.home, " auth-syn "),
+      true,
+      "auth-store key with no env/file",
+    );
+    assert.equal(
+      syntheticKeyPresent({} as NodeJS.ProcessEnv, none.home, "   "),
+      false,
+      "blank auth key falls through",
+    );
+  } finally {
+    none.cleanup();
+  }
+  const withFile = withHome({});
+  try {
+    writeFileSync(join(withFile.home, ".config", "workflow", SYNTHETIC_KEY_FILE), "file-syn", { mode: 0o600 });
+    assert.equal(readWorkflowKeyFile(SYNTHETIC_KEY_FILE, withFile.home), "file-syn");
+    assert.equal(syntheticKeyPresent({} as NodeJS.ProcessEnv, withFile.home), true, "key file");
+  } finally {
+    withFile.cleanup();
   }
 });

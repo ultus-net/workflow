@@ -88,3 +88,6 @@ warn-threshold source (part c) is decided as option (a), the env axis
 (`WORKFLOW_BUDGET_DOWNGRADE_FRACTION`, default 0.8). The P15 parts (b)/(c)
 records stand in `docs/ledger/P15b-per-family-metrics.md` and
 `docs/ledger/P15c-decision-recorded.md`.
+
+**Dated supersession (2026-10-02): key 4 is now wired for the Synthetic→OpenRouter lane.** The operator pivot makes Synthetic the primary metered upstream with an automatic OpenRouter failover on 429/5xx/connection failure, pre-first-byte, body re-pinned to `openrouter/auto` (`src/integrations/synthetic-provider.ts` + the `syntheticFailover` seam; `docs/ledger/synthetic-primary-failover.md`). Every "failover (key 4) is NOT wired" statement above is therefore scoped: key 4 IS wired for the Synthetic lane; the open-source-pool lane's own `resolveOpenModelRoute` failover remains unwired (zero production callers), and the Cline/goose breadth boundary above is unchanged.
+

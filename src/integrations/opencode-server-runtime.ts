@@ -8,9 +8,9 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { launchContainedAcpAgent } from "../adapters/acp-contained-agent.js";
 import type { ProcessContainment } from "../containment/contracts.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
-import { opencodeMajorVersion, resolveSkillsMount } from "./acp-runtime.js";
+import { opencodeMajorVersion, resolveSkillsMount, resolveRuntimeMeteredLane } from "./acp-runtime.js";
 import { connectorReadablePaths, provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts } from "./toolbox-catalog.js";
-import { createModelUsageProxy, METERED_PLACEHOLDER_KEY, type AutoLatestProxyOptions, type EgressDenialEvent, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy, type ProxyPayloadPolicy } from "./model-usage-proxy.js";
+import { createModelUsageProxy, METERED_PLACEHOLDER_KEY, syntheticFailoverProxyOptions, type AutoLatestProxyOptions, type EgressDenialEvent, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy, type ProxyPayloadPolicy, type SyntheticFailoverProxyOptions } from "./model-usage-proxy.js";
 import type { CredentialEndpoint } from "./credentials.js";
 import { globalOpencodeBinary, meteredOpencodeConfig, OPENCODE_V2_METERED_ENV_KEY, resolveOpencodeLaunch } from "./opencode-agent-config.js";
 import { probeOpencodeHealth } from "./opencode-health.js";
@@ -56,6 +56,8 @@ export interface OpencodeServerProxyInput {
   readonly onEgressObservation?: ((observation: EgressObservation) => void) | undefined;
   /** W184: W182 shared egress-denial sink; absent observes nothing. */
   readonly onEgressDenied?: ((event: EgressDenialEvent) => void) | undefined;
+  /** Synthetic→OpenRouter failover composition; absent leaves the lane single-upstream. */
+  readonly syntheticFailover?: SyntheticFailoverProxyOptions | undefined;
 }
 
 export interface OpencodeServerRuntimeOptions {
@@ -122,7 +124,6 @@ export interface OpencodeServerRuntime {
   dispose(): Promise<void>;
 }
 
-const DEFAULT_UPSTREAM = "https://openrouter.ai";
 const DEFAULT_USERNAME = "opencode";
 
 /** Workspace-keyed, filesystem-safe state tag (history/resume survives restarts). */
@@ -182,8 +183,13 @@ export async function createOpencodeServerRuntime(
   mkdirSync(join(configDir, "opencode"), { recursive: true, mode: 0o700 });
   mkdirSync(home, { recursive: true, mode: 0o700 });
 
-  const upstream = options.upstream ?? process.env.WORKFLOW_ACP_UPSTREAM ?? DEFAULT_UPSTREAM;
   const apiKey = options.apiKey ?? loadUpstreamApiKey();
+  // Operator pivot: Synthetic is the primary metered upstream with an
+  // automatic OpenRouter failover on rate-limit/5xx/connection failure, when
+  // a Synthetic key is resolvable; else OpenRouter single-upstream (unchanged).
+  // An explicit `options.upstream` or `WORKFLOW_ACP_UPSTREAM` always wins.
+  const lane = resolveRuntimeMeteredLane(apiKey, options.upstream ?? process.env.WORKFLOW_ACP_UPSTREAM);
+  const meteredUpstream = lane.upstream;
   // W118 (the W095 budget-downgrade consumer) + P15(a) wiring breadth: the
   // server-runtime proxy composes the SAME axes the ACP lane composes
   // (`createOpencodeRuntime`): the downgrade additionally requires budget caps
@@ -202,12 +208,12 @@ export async function createOpencodeServerRuntime(
   // auto-router request narrows the injected `allowed_models` to the target
   // (narrow-before-inject, resolver-independent) instead of switching the
   // session off the router; a concrete-model request keeps the W118 rewrite.
-  const autoLatest = autoLatestConfigFromEnv({ upstream });
+  const autoLatest = autoLatestConfigFromEnv({ upstream: meteredUpstream });
   const defaultCreateProxy = (input: OpencodeServerProxyInput): Promise<ModelUsageProxy> => createModelUsageProxy(input);
   const createProxy = options.createProxy ?? defaultCreateProxy;
   const proxy = await createProxy({
-    upstream,
-    apiKey,
+    upstream: meteredUpstream,
+    apiKey: lane.apiKey,
     ...(autoLatest === undefined ? {} : { autoLatest }),
     ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }),
     // W184: thread the egress seams the ACP lanes already carry. Each is absent
@@ -216,6 +222,7 @@ export async function createOpencodeServerRuntime(
     ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }),
     ...(options.onEgressObservation === undefined ? {} : { onEgressObservation: options.onEgressObservation }),
     ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }),
+    ...(lane.failover === undefined ? {} : { syntheticFailover: syntheticFailoverProxyOptions(lane.failover) }),
   });
   const container = options.containment ?? new LinuxBubblewrapContainment();
 

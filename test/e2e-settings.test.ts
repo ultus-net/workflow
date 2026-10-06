@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -107,6 +107,8 @@ interface AgentsSettingsRead {
     readonly envModelOpencode: boolean;
     readonly envModelGoose: boolean;
     readonly managementKey: boolean;
+    readonly syntheticKeyPresent: boolean;
+    readonly syntheticEnabled: boolean;
   };
 }
 
@@ -153,6 +155,12 @@ test("W131: the compiled settings panel serves the settings-document HTTP contra
   delete childEnv.DISPLAY;
   delete childEnv.WAYLAND_DISPLAY;
   delete childEnv.DBUS_SESSION_BUS_ADDRESS;
+  // Hermetic for the presence-boolean facts pin below: an ambient
+  // SYNTHETIC_API_KEY or WORKFLOW_SYNTHETIC on the deploy machine would flip
+  // `syntheticKeyPresent`/`syntheticEnabled` and fail the strict deepEqual.
+  // Delete them so the test asserts the default state, not the host's.
+  delete childEnv.SYNTHETIC_API_KEY;
+  delete childEnv.WORKFLOW_SYNTHETIC;
 
   let output = "";
   let exit: ChildExit | undefined;
@@ -280,10 +288,69 @@ test("W131: the compiled settings panel serves the settings-document HTTP contra
     envModelOpencode: true,
     envModelGoose: false,
     managementKey: true,
+    syntheticKeyPresent: false,
+    syntheticEnabled: true,
   });
+  // The auth-store resolution path (the operator's real "connect Synthetic"
+  // route): src/integrations/acp-runtime.ts resolves the store under
+  // homedir(), so a seeded auth.json under the REDIRECTED HOME must flip the
+  // presence fact. Reads are computed fresh per request (src/ui/web.ts:1174),
+  // so no respawn is needed. Presence only — the key value must never echo.
+  const authDir = join(home, ".local", "share", "opencode");
+  mkdirSync(authDir, { recursive: true, mode: 0o700 });
+  writeFileSync(join(authDir, "auth.json"), JSON.stringify({ synthetic: { key: "w131-synthetic-auth-secret" } }), { mode: 0o600 });
+  const agentsWithAuthResponse = await fetch(`${base}/api/settings/agents`);
+  assert.equal(agentsWithAuthResponse.status, 200);
+  const agentsWithAuthBody = await agentsWithAuthResponse.text();
+  const agentsWithAuth = JSON.parse(agentsWithAuthBody) as AgentsSettingsRead;
+  assert.equal(
+    agentsWithAuth.facts.syntheticKeyPresent,
+    true,
+    "a seeded auth-store synthetic.key must flip the presence fact (the auth-store resolution order)",
+  );
+  assert.equal(agentsWithAuth.facts.syntheticEnabled, true, "the toggle fact is unchanged by the auth store");
+  assert.ok(
+    !agentsWithAuthBody.includes("w131-synthetic-auth-secret"),
+    "the synthetic key value must never appear in the facts read — presence booleans only",
+  );
   assert.ok(
     !agentsBody.includes("w131-ephemeral-management-key"),
     "the management key value must never appear in the facts read — presence booleans only",
+  );
+
+  // The KEY-FILE arm of the Synthetic resolution order (env -> auth store ->
+  // ~/.config/workflow/synthetic-api-key — readWorkflowKeyFile at
+  // src/integrations/upstream-key.ts). The child's HOME is fixed at spawn, so
+  // the arm is isolated ON ITS OWN by turning the auth-store arm dark first:
+  // deleting the seeded auth.json (the paired control — the fact falls back
+  // to false, proving the earlier true came from the store, not the file),
+  // then seeding the key file. The fact is computed fresh per request
+  // (src/ui/web.ts), so no respawn is needed. Presence only — the key value
+  // must never echo.
+  rmSync(join(authDir, "auth.json"), { force: true });
+  const agentsNoKeyResponse = await fetch(`${base}/api/settings/agents`);
+  assert.equal(agentsNoKeyResponse.status, 200);
+  const agentsNoKey = await agentsNoKeyResponse.json() as AgentsSettingsRead;
+  assert.equal(
+    agentsNoKey.facts.syntheticKeyPresent,
+    false,
+    "with no env key, no auth store, and no key file the presence fact is false again (the paired control for the auth-store arm)",
+  );
+  mkdirSync(join(home, ".config", "workflow"), { recursive: true, mode: 0o700 });
+  writeFileSync(join(home, ".config", "workflow", "synthetic-api-key"), "w131-synthetic-file-secret\n", { mode: 0o600 });
+  const agentsWithFileResponse = await fetch(`${base}/api/settings/agents`);
+  assert.equal(agentsWithFileResponse.status, 200);
+  const agentsWithFileBody = await agentsWithFileResponse.text();
+  const agentsWithFile = JSON.parse(agentsWithFileBody) as AgentsSettingsRead;
+  assert.equal(
+    agentsWithFile.facts.syntheticKeyPresent,
+    true,
+    "a seeded ~/.config/workflow/synthetic-api-key must flip the presence fact (the key-file arm of the resolution order)",
+  );
+  assert.equal(agentsWithFile.facts.syntheticEnabled, true, "the toggle fact is unchanged by the key file");
+  assert.ok(
+    !agentsWithFileBody.includes("w131-synthetic-file-secret"),
+    "the key-file value must never appear in the facts read — presence booleans only",
   );
 
   // The honest live-MCP refusal: no topology daemon under the redirected
