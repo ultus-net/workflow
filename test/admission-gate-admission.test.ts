@@ -233,9 +233,9 @@ test("I-9 tests rung: the evaluator receives the live step and the recorded evid
   const { application, path } = setup(context);
   const step = defineAndStartPostconditionStep(application, path);
   recordDone(application, "tests-input");
-  let received: { id: string; evidenceSubjects: readonly string[] } | undefined;
+  let received: { id: string; state: string; evidenceSubjects: readonly string[] } | undefined;
   application.setStepTestEvaluator((input) => {
-    received = { id: input.step.id, evidenceSubjects: input.evidence.map((record) => record.subject) };
+    received = { id: input.step.id, state: input.step.state, evidenceSubjects: input.evidence.map((record) => record.subject) };
     return { kind: "pass" };
   });
 
@@ -243,6 +243,10 @@ test("I-9 tests rung: the evaluator receives the live step and the recorded evid
   assert.ok(received !== undefined);
   // The evaluator judges the LIVE (IN_PROGRESS) step and the same evidence the
   // cheaper rungs read, so a runner can key off the step and its done-marker.
+  // The `state` pin is load-bearing: the id alone is snapshot-invariant, so a
+  // regression that handed the evaluator the stale define-time (PENDING) step
+  // would still match on id; asserting IN_PROGRESS rules that out.
   assert.equal(received.id, step.id);
+  assert.equal(received.state, "IN_PROGRESS");
   assert.ok(received.evidenceSubjects.includes(DONE.subject));
 });
