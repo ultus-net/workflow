@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -157,6 +157,53 @@ test("the honesty rules stay pinned: advisory is never upgraded, residuals stay 
   assert.ok(doc.includes("G7 compaction is outside hub control over ACP"), "the G7 residual must stay stated");
   assert.ok(doc.includes("discipline honest clients only"), "the same-user honesty limit must stay stated");
   assert.ok(!/\bTODO\b|\bTBD\b/.test(doc), "the assurance case must not carry placeholder claims");
+});
+
+test("the FEATURES.md residual-risk count matches the assurance case's stated entries", () => {
+  // docs/FEATURES.md advertises this assurance case with a residual count.
+  // That number must equal the numbered residual entries in the case's
+  // "Known residual risks" section: understating residual risk is itself an
+  // honesty defect (the count drifted to 19 while the case stated 26), and an
+  // unverified numeric claim in the feature ledger is exactly the drift this
+  // checker exists to catch.
+  const featuresPath = join(repoRoot, "docs", "FEATURES.md");
+  const features = readFileSync(featuresPath, "utf8");
+  const advertised = features.match(/(\d+) known residual risks/)?.[1];
+  assert.ok(advertised !== undefined, "docs/FEATURES.md must keep advertising the residual-risk count");
+  const start = doc.indexOf("## Known residual risks");
+  const end = doc.indexOf("\n## ", start + 1);
+  const residualSection = doc.slice(start, end === -1 ? undefined : end);
+  const stated = [...residualSection.matchAll(/^\d+\. /gm)].length;
+  assert.equal(
+    Number(advertised),
+    stated,
+    `docs/FEATURES.md advertises ${advertised} residual risks but the assurance case states ${stated}`,
+  );
+});
+
+test("the FEATURES.md toolbox server count matches the vendored app corpus", () => {
+  // docs/FEATURES.md advertises the MCP toolbox with a server count in two
+  // places: the section heading "(N servers)" and the settings-catalog row
+  // ", N apps, test-pinned against the corpus". The vendored corpus is the
+  // source of truth (test/toolbox-catalog.test.ts proves the settings catalog
+  // covers exactly the apps on disk), so every advertised count must equal the
+  // app directories; both drifted to 15 after egress-audit-mcp (W181) took the
+  // corpus to 16.
+  const features = readFileSync(join(repoRoot, "docs", "FEATURES.md"), "utf8");
+  const appsDir = join(repoRoot, "mcp-toolbox", "apps");
+  const onDisk = readdirSync(appsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).length;
+  const claims = [
+    { label: "section heading", match: features.match(/## MCP Toolbox \((\d+) servers\)/)?.[1] },
+    { label: "settings-catalog row", match: features.match(/, (\d+) apps, test-pinned against the corpus/)?.[1] },
+  ];
+  for (const claim of claims) {
+    assert.ok(claim.match !== undefined, `docs/FEATURES.md must keep advertising the toolbox count in its ${claim.label}`);
+    assert.equal(
+      Number(claim.match),
+      onDisk,
+      `docs/FEATURES.md ${claim.label} advertises ${claim.match} toolbox servers but the corpus has ${onDisk}`,
+    );
+  }
 });
 
 test("the external-standards citations stay pinned and dated (W064)", () => {
