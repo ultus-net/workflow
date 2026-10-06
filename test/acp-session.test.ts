@@ -6,7 +6,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { WorkflowCodingSession, type CodingSessionEvent } from "../src/application/coding-session.js";
-import { taskId, type PolicyDecision } from "../src/kernel/contracts.js";
+import { hostCapabilities } from "../src/application/host.js";
+import { WorkflowApplication } from "../src/application/workflow.js";
+import { TaskGraph } from "../src/kernel/task-graph.js";
+import { evidenceId, observationId, taskId, type PolicyDecision } from "../src/kernel/contracts.js";
 import { AcpSessionDriver, displayRawToolText } from "../src/integrations/acp-session.js";
 import type { GuardDecision, WorkflowGuardProvider } from "../src/integrations/mcp-toolbox-guard.js";
 import { createOperatorAskHold, type OperatorAskHold } from "../src/integrations/operator-ask-hold.js";
@@ -776,5 +779,94 @@ test("P6 fs seat: a broker-composed driver rides the broker's one answer transpo
     await driver.dispose();
     await cleanup(child);
     await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("W072 I-10: the composing application correlates the driver's session id so log entries carry it", () => {
+  const task = taskId("CORRELATE-TASK");
+  const application = new WorkflowApplication(
+    new TaskGraph([{
+      id: task,
+      title: "correlation probe",
+      state: "BLOCKED",
+      dependencies: [],
+      requiredEvidence: [{ authority: "environment", subject: "probe" }],
+    }]),
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+  );
+  application.transition(task, "IN_PROGRESS");
+  application.selectActiveTask(task);
+  // DRIFT-020: the direct (non-broker) ACP lanes pass the application itself;
+  // constructing the driver is what stamps the session identity.
+  const child = fakeAgent("done");
+  const driver = new AcpSessionDriver({
+    child,
+    authorize: application,
+    workspace: "/repo",
+    workspaceSessionId: "acp-correlation-probe",
+    taskId: task,
+  });
+  try {
+    assert.equal(application.codingSessionCorrelation, "acp-correlation-probe");
+    application.recordEvidence({
+      id: evidenceId("e-correlate"),
+      observationId: observationId("o-correlate"),
+      authority: "environment",
+      subject: "probe",
+      result: "passed",
+      freshness: "fresh",
+      mutationEpoch: application.snapshot().mutationEpoch,
+      observedAt: new Date().toISOString(),
+    });
+    const entry = application.executionLog().find((candidate) => candidate.kind === "evidence");
+    assert.equal(entry?.sessionId, "acp-correlation-probe", "the evidence entry carries the correlated session id");
+  } finally {
+    driver.dispose();
+    cleanup(child);
+  }
+});
+
+test("W072 I-10: a broker-backed driver (function authorize) leaves the shared application uncorrelated", () => {
+  const task = taskId("SHARED-TASK");
+  const application = new WorkflowApplication(
+    new TaskGraph([{
+      id: task,
+      title: "shared correlation probe",
+      state: "BLOCKED",
+      dependencies: [],
+      requiredEvidence: [{ authority: "environment", subject: "probe" }],
+    }]),
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+  );
+  application.transition(task, "IN_PROGRESS");
+  application.selectActiveTask(task);
+  const child = fakeAgent("done");
+  const driver = new AcpSessionDriver({
+    child,
+    // The multi-session web service passes a function (broker intercept), not
+    // the application; one correlation slot cannot represent concurrent
+    // sessions, so the driver deliberately leaves it unset.
+    authorize: () => ({ kind: "allow" }),
+    workspace: "/repo",
+    workspaceSessionId: "acp-shared-probe",
+    taskId: task,
+  });
+  try {
+    assert.equal(application.codingSessionCorrelation, undefined);
+    application.recordEvidence({
+      id: evidenceId("e-shared"),
+      observationId: observationId("o-shared"),
+      authority: "environment",
+      subject: "probe",
+      result: "passed",
+      freshness: "fresh",
+      mutationEpoch: application.snapshot().mutationEpoch,
+      observedAt: new Date().toISOString(),
+    });
+    const entry = application.executionLog().find((candidate) => candidate.kind === "evidence");
+    assert.equal(entry?.sessionId, undefined, "no session id is fabricated for the shared application");
+  } finally {
+    driver.dispose();
+    cleanup(child);
   }
 });

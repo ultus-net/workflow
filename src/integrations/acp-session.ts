@@ -187,6 +187,20 @@ export class AcpSessionDriver implements CodingSessionDriver {
     this.#adapter = options.adapter ?? new AcpHostAdapter({ authoritativePermissions: true });
     this.#workspace = options.workspace;
     this.#workflowSessionId = options.workspaceSessionId;
+    // W072 I-10 (DRIFT-020): when the driver authorizes directly against the
+    // application (the non-broker ACP lanes — the interactive TUI, the driver
+    // registry, and the hub reviewer/RSI/scheduler turns), correlate that
+    // application with this runtime's session id so every execution-log entry
+    // it appends carries the durable `sessionId` identity anchor. Those lanes
+    // never run two sessions concurrently on one application (runs and turns
+    // are per-run; the RSI proposal lane and the TUIs are serial), so one
+    // slot holds. The broker path (the multi-session web service) passes a
+    // function instead of the application and is deliberately skipped: its
+    // single application is shared across concurrent sessions, which one
+    // correlation slot cannot represent.
+    if (typeof options.authorize !== "function") {
+      options.authorize.setCodingSessionCorrelation(options.workspaceSessionId);
+    }
     this.#taskId = options.taskId;
     this.#resumeFrom = options.resumeFrom;
     this.#selectModel = options.selectModel;
