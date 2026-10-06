@@ -215,3 +215,38 @@ test("I-9 tests rung: clearing the evaluator leaves the rung absent (behavior un
   assert.equal(application.completeStepWithRequery(step.id).kind, "accepted");
   assert.equal(application.taskSteps(T)[0]?.state, "COMPLETED");
 });
+
+test("I-9 tests rung: a throwing evaluator propagates fail-loud (it is not swallowed into a pass)", (context) => {
+  const { application, path } = setup(context);
+  const step = defineAndStartPostconditionStep(application, path);
+  recordDone(application, "tests-throws");
+  application.setStepTestEvaluator(() => { throw new Error("runner crashed"); });
+
+  // The seam does not catch: a crash is an environment failure, surfaced as an
+  // exception exactly like the state-diff rung's non-ENOENT read errors — never
+  // silently converted into a pass (fail closed by failing loud).
+  assert.throws(() => application.completeStepWithRequery(step.id), /runner crashed/);
+  assert.equal(application.taskSteps(T)[0]?.state, "IN_PROGRESS");
+});
+
+test("I-9 tests rung: the evaluator receives the live step and the recorded evidence", (context) => {
+  const { application, path } = setup(context);
+  const step = defineAndStartPostconditionStep(application, path);
+  recordDone(application, "tests-input");
+  let received: { id: string; state: string; evidenceSubjects: readonly string[] } | undefined;
+  application.setStepTestEvaluator((input) => {
+    received = { id: input.step.id, state: input.step.state, evidenceSubjects: input.evidence.map((record) => record.subject) };
+    return { kind: "pass" };
+  });
+
+  assert.equal(application.completeStepWithRequery(step.id).kind, "accepted");
+  assert.ok(received !== undefined);
+  // The evaluator judges the LIVE (IN_PROGRESS) step and the same evidence the
+  // cheaper rungs read, so a runner can key off the step and its done-marker.
+  // The `state` pin is load-bearing: the id alone is snapshot-invariant, so a
+  // regression that handed the evaluator the stale define-time (PENDING) step
+  // would still match on id; asserting IN_PROGRESS rules that out.
+  assert.equal(received.id, step.id);
+  assert.equal(received.state, "IN_PROGRESS");
+  assert.ok(received.evidenceSubjects.includes(DONE.subject));
+});
