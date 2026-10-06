@@ -690,4 +690,39 @@ already partly covered (W188's own test pins the lane). Candidate 1 picked.
 
 
 
+## Campaign close-out (campaign 3, 2026-10-06)
+
+- **iterations:** 1 of N=3. The diversity/selection machinery applies, not the
+  iteration count: iteration 1's change-type is `gate`, and no distinct high-value
+  candidate remained. Per the command's per-iteration rule ("if only the same
+  type remains, stop early and say so") and the playbook's selection set
+  (AIDE² 2609.26457), the campaign stops at 1 with an honest exhaustion
+  statement rather than manufacturing a second `gate` iteration.
+- **PR:** # (pending) — branch `w191/kernel-purity-lexer`, one commit `fd114121`,
+  base `origin/main@a326cfa7`. Not pushed: operator gate (never push without
+  direction).
+- **stop reason:** candidate exhaustion. The offline-landable set is empty:
+  - The open review follow-ups are historical accepted reviews (their P2/P3s
+    were findings about the changes then under review, not open tasks) plus this
+    campaign's own two `record_review` entries — no distinct-type item.
+  - Issues #439 (W179) and #315/#321/#319 (W162/W165/W167) are **merged but left
+    open**; their bodies already carry "closing"/satisfied comments. They are
+    issue-housekeeping, not code iterations (a `docs`-type closure iteration is
+    not a measurable repo improvement, so it is not claimed as a gain).
+  - `#438/#440` (W178/W180) show OPEN here yet their PRs (#450/#452/#457 etc.)
+    merged; re-landing their already-merged code is the LESS-0063 duplicate-work
+    trap, avoided.
+  - Every genuinely-open parked item (P11 #290 affinity measurement, P5 #284
+    per-role e2e, P13 #292 / P14 #293 vendor-probe-gated activation, P17
+    build-break already retired, P18 landability boundary, P19 #297
+    W095-key-1-gated, P20–P24 #444–#448 operator/decision-gated) is
+    **operator- or probe-gated**, not landable offline.
+- **next hypothesis:** the loop is selection-exhausted for offline-landable
+  work. The highest-value future candidate classes are all gated: (a) the W072
+  ordered admission-gate `tests` rung (needs a test-runner source, DRIFT-019/024
+  stay OPEN); (b) the P13/P14 per-vendor marker activation (needs the
+  operator-gated live probe verdicts); (c) the W162/W165/W167 board-item
+  follow-ups that require new lands. A continuation needs an operator decision
+  (authorize a live/probe run, or point at a specific unlanded item), not
+  another autonomous iteration.
 
