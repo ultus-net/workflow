@@ -239,6 +239,32 @@ test("agent options group boolean config options as tools and list remembered de
   assert.ok(markup.includes("read_files") && markup.includes("run_commands"), "the tool patterns must be named");
 });
 
+test("agent options render the W112 allow_always grant lifecycle records (P2 remainder)", () => {
+  const markup = renderToStaticMarkup(createElement(AgentOptionsSection, {
+    options: FULL_OPTIONS,
+    setOption: noop,
+    patterns: {
+      alwaysAllow: ["read_files"],
+      alwaysReject: [],
+      grants: [{ tool: "read_files", sessionId: "s1", expiresAt: Date.now() + 60_000, consumed: 4 }],
+    },
+  }));
+  assert.ok(markup.includes("Grant lifecycle:"), "the grant lifecycle line must render");
+  assert.ok(markup.includes("read_files · 4 uses · expires in"), "the grant record must name its tool, usage, and window");
+  // A grant record alone (no legacy list entry) still renders the subgroup.
+  const grantOnly = renderToStaticMarkup(createElement(AgentOptionsSection, {
+    options: FULL_OPTIONS,
+    setOption: noop,
+    patterns: {
+      alwaysAllow: [],
+      alwaysReject: [],
+      grants: [{ tool: "run_commands", sessionId: "s2", expiresAt: Date.now() - 1, consumed: 0 }],
+    },
+  }));
+  assert.ok(grantOnly.includes("Remembered tool decisions"), "a grant-only surface must still render the subgroup");
+  assert.ok(grantOnly.includes("run_commands · 0 uses · expired"), "an expired grant must render as history");
+});
+
 test("command palette lists commands with keybinds and session switches (the ctrl+p affordance)", () => {
   const markup = renderToStaticMarkup(createElement(CommandPalette, {
     commands: [

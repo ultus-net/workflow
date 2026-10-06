@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { diffLineClass, looksLikeDiff } from "../src/ui/webapp/diff-text.js";
-import { describeActivity, formatElapsed, formatRelativeTime, formatTokens, withCurrentChoice } from "../src/ui/webapp/presenters.js";
+import { describeActivity, describeGrantLifecycle, formatElapsed, formatRelativeTime, formatTokens, withCurrentChoice } from "../src/ui/webapp/presenters.js";
 
 test("formatTokens compacts counts for meters and readouts", () => {
   assert.equal(formatTokens(0), "0");
@@ -97,6 +97,35 @@ test("formatElapsed renders seconds then minutes", () => {
   assert.equal(formatElapsed(45), "45s");
   assert.equal(formatElapsed(60), "1m 0s");
   assert.equal(formatElapsed(75), "1m 15s");
+});
+
+test("describeGrantLifecycle renders a live grant's tool, usage, and remaining window", () => {
+  const now = 1_000_000;
+  assert.equal(
+    describeGrantLifecycle({ tool: "read_files", sessionId: "s1", expiresAt: now + 45_000, consumed: 2 }, now),
+    "read_files · 2 uses · expires in 45s",
+  );
+  assert.equal(
+    describeGrantLifecycle({ tool: "read_files", sessionId: "s1", expiresAt: now + 5 * 60_000, consumed: 1 }, now),
+    "read_files · 1 use · expires in 5m",
+  );
+  assert.equal(
+    describeGrantLifecycle({ tool: "run_commands", sessionId: "s1", expiresAt: now + 3 * 3_600_000, consumed: 0 }, now),
+    "run_commands · 0 uses · expires in 3h",
+  );
+});
+
+test("describeGrantLifecycle marks an expired grant as history, not live", () => {
+  const now = 1_000_000;
+  assert.equal(
+    describeGrantLifecycle({ tool: "read_files", sessionId: "s1", expiresAt: now - 1, consumed: 7 }, now),
+    "read_files · 7 uses · expired",
+  );
+  // The boundary itself is stale (matches the broker's now() < expiresAt rule).
+  assert.equal(
+    describeGrantLifecycle({ tool: "read_files", sessionId: "s1", expiresAt: now, consumed: 3 }, now),
+    "read_files · 3 uses · expired",
+  );
 });
 
 test("describeActivity reports the latest unfinished work", () => {

@@ -175,3 +175,34 @@ export function formatElapsed(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
+
+/** Structural slice of the broker's W112 `AllowAlwaysGrant` (browser-safe: the
+ * webapp never imports node:crypto transitively). Keep in lockstep with
+ * `src/ui/permission-broker.ts`. */
+export interface GrantRecord {
+  readonly tool: string;
+  readonly sessionId: string;
+  readonly expiresAt: number;
+  readonly consumed: number;
+}
+
+/** Compact remaining-time for a grant deadline: "in 45s", "in 5m", "in 3h". */
+function formatGrantRemaining(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `in ${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `in ${minutes}m`;
+  return `in ${Math.floor(minutes / 60)}h`;
+}
+
+/**
+ * Renders one allow_always grant's lifecycle for the settings surface: the
+ * tool, its consumption count, and whether it is still live or already expired.
+ * Expired records stay visible as history (the broker keeps them `grants` until
+ * replaced or reset).
+ */
+export function describeGrantLifecycle(grant: GrantRecord, now: number = Date.now()): string {
+  const uses = `${grant.consumed} use${grant.consumed === 1 ? "" : "s"}`;
+  if (now >= grant.expiresAt) return `${grant.tool} · ${uses} · expired`;
+  return `${grant.tool} · ${uses} · expires ${formatGrantRemaining(grant.expiresAt - now)}`;
+}

@@ -11,7 +11,7 @@ import { ActionPart, AttentionPart, CompletionPart, OutcomePart, PlanPart, Think
 import { ConfigField } from "./config-field.js";
 import { DiffText, looksLikeDiff } from "./diff-text.js";
 import { MarkdownText } from "./markdown-text.js";
-import { describeActivity, formatElapsed, formatRelativeTime, formatTokens, statusToken, BOARD_POLL_MS } from "./presenters.js";
+import { describeActivity, formatElapsed, formatRelativeTime, formatTokens, statusToken, BOARD_POLL_MS, type GrantRecord } from "./presenters.js";
 import { useSessionCommands, useSessionState, useSessionStatus, useSessionUsage, WorkflowRuntimeProvider, type SessionUsage } from "./runtime.js";
 import { SettingsDialog, type RoutingFacts } from "./settings-dialog.js";
 import { AgentsView, budgetRaiseOutcome } from "./agents-view.js";
@@ -502,7 +502,7 @@ interface PermissionsState {
   readonly available: boolean;
   readonly mode: "auto" | "ask";
   readonly pending: PendingPermission | null;
-  readonly patterns: { readonly alwaysAllow: readonly string[]; readonly alwaysReject: readonly string[] };
+  readonly patterns: { readonly alwaysAllow: readonly string[]; readonly alwaysReject: readonly string[]; readonly grants?: readonly GrantRecord[] | undefined };
 }
 
 const PERMISSION_POLL_MS = 1000;
