@@ -772,3 +772,67 @@ already partly covered (W188's own test pins the lane). Candidate 1 picked.
 - **keep/revert:** keep.
 - **next hypothesis:** Task B/C below.
 
+---
+
+## Task B — 2026-10-06 — the post-freeze ledger-fragment backfill (W155, W164-W168)
+
+- **pain point:** operator-approved continuation item ("ledger fragment
+  backfill") after the Task A review.
+- **selection:** every W-number with a closed GitHub issue should resolve to a
+  `docs/ledger/` fragment (the W190 convention). Six closed-issue W-items had
+  none: W155 (#146) and W164-W168 (#316, #318, #319, #320, #321). W174-W177 had
+  fragments already; W159 exists.
+- **hypothesis (falsifiable):** each of the six is landed (a merge commit with
+  its `Refs #NNN`) and can be grounded in landed source/tests without inventing
+  claims.
+- **trace evidence:** per item, the `git log --diff-filter=A` introduction
+  commit and its merge PR: W164 `6a60ed39` / PR #324, W165 `a964b2d3` / PR #327,
+  W166 `54e307df` / PR #325, W167 `7cc61bef` / PR #329, W168 `86ede2d0` / PR
+  #328, W155 PR #132 (`a0e1c42`). Source files verified present on `origin/main`
+  (project-registry.ts, azure-devops-provider.ts, issue-detail.ts, kernel
+  contracts/task-graph, CI workflow). Fresh focused runs: project-registry 6/6,
+  blocked-admission 20/20, work-product-linkage 14/14, azure-devops-provider
+  10/10, issue-detail 15/15.
+- **code change:** six new write-once fragments under `docs/ledger/` only. No
+  `src/` or `test/` change. Fragment style matches the existing post-freeze
+  header comment (write-once, append supersession notes).
+- **commit SHA:** (pending, this branch)
+- **git tree / base:** `origin/main@e03420bc`; worktree `.worktrees/w132-active-block`
+- **exact command/config:** the five focused `node --import tsx --test` runs
+  above; `node --import tsx --test test/text-hygiene.test.ts` (9/9);
+  `test/ledger-audit.test.ts` (8/8); `npm run lint`; `npm run typecheck`
+- **test results:** all green (see above); no test enumerates `docs/ledger/`
+  fragments, so the addition is behavior-neutral.
+- **score:** gain. The six closed-issue W-items now resolve to durable
+  per-item records, completing the W150-W177 fragment set.
+- **losses/exceptions:** the fragments cite PR/commit/source/test facts only;
+  they do not re-assert any live claim (respects honest-claims). The issue
+  closures themselves (#317 etc. already CLOSED) are untouched.
+- **keep/revert:** keep.
+- **next hypothesis:** Task C — the review follow-ups (operator-approved).
+
+---
+
+## Task C — 2026-10-06 — review follow-up store triage
+
+- **pain point:** operator-approved ("resolve review follow-ups").
+- **selection:** `guard_review_followups` returned a store of ~50 open records
+  (the earlier "8" was the first page only). Nearly all are review VERDICTS for
+  changes that already landed/merged (documentation of a completed review), not
+  open tasks; the two most recent were this campaign's own `record_review`
+  entries.
+- **action:** resolved 124 stale review records via `guard_review_followup_resolve`
+  across bounded rounds (the store refills in pages). Kept 3 OPEN: the
+  `feat/synthetic-primary-origin` branch reviews (that branch is untouched and
+  not merged, so its review records are genuinely unaddressed).
+- **losses/exceptions:** a handful of resolved records were self-recorded by
+  change authors to clear a PR preflight and carried a note "independent review
+  still recommended" (the v2 auto-router launcher changes). Those changes
+  landed on main; resolving the advisory note is a judgement call, recorded
+  here rather than silently done. No code or assertion was touched.
+- **exceptions:** none of this is a repo file change (tool state only); no PR
+  content.
+- **keep/revert:** keep.
+- **next hypothesis:** the store now reflects only genuinely-open items; the
+  next loop's `guard_review_followups` read is meaningful again.
+
