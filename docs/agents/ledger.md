@@ -887,3 +887,38 @@ already partly covered (W188's own test pins the lane). Candidate 1 picked.
 - **next hypothesis:** backfill the last missing closed-issue W-fragment (W147,
   #145); a different change-type, so the diversity brake permits it next.
 
+---
+
+## Task E — 2026-10-06 — backfill the last missing closed-issue W-fragment (W147)
+
+- **pain point:** the W-item fragment backfill (earlier this session, Task B)
+  left exactly one gap: W147 (#145, closed) had no `docs/ledger/` fragment.
+  W148 (#141) is correctly absent (still OPEN, its strip unexecuted).
+- **selection:** compared the closed-issue W-numbers (155) against fragment
+  filenames (167). W147 is the only closed-issue W-number without a fragment.
+- **hypothesis (falsifiable):** W147 is landed and can be grounded in landed
+  artifacts without inventing claims.
+- **trace evidence:** PR #132 (merge `a0e1c42`, 2026-09-26) is the landing;
+  issue #145 closed 2026-09-26. Intro commits: `LICENSE` `584bd613`,
+  `instances/azure/*` and the spec `5ee56dba`, `verify-pin.sh` `d2161766`.
+  All artifacts present on `origin/main`: `LICENSE` (MIT), `package.json`
+  `"license": "MIT"`, the spec, and the four `instances/azure/` seed files.
+  `infra/c0/` still present (W148's unexecuted strip — correctly left out).
+- **code change:** one new write-once fragment
+  `docs/ledger/W147-open-core-deployment-instance-repo-split.md` only. No
+  `src/` or `test/` change.
+- **commit SHA:** (pending, this branch)
+- **git tree / base:** `origin/main@278e933b`; worktree `.worktrees/w132-active-block`
+- **exact command/config:** focused `node --import tsx --test`
+  `test/ledger-audit.test.ts` and `test/text-hygiene.test.ts`; `npm run lint`;
+  `npm run typecheck`.
+- **test results:** ledger-audit 8/8, text-hygiene 9/9; lint 0; typecheck 0. No
+  test enumerates `docs/ledger/` fragments, so the addition is behavior-neutral.
+- **score:** gain. Every closed-issue W-number now resolves to a fragment.
+- **losses/exceptions:** the fragment cites PR/commit/source facts only; it
+  re-asserts no live claim (honest-claims). The seed is recorded as a DRAFT
+  template and the strip as unexecuted, matching reality.
+- **keep/revert:** keep.
+- **next hypothesis:** the closed-W fragment set is now complete; the next
+  offline candidates narrow to the review-follow-up store and staleness hunts.
+
