@@ -584,4 +584,110 @@ model's ceiling — no drop.
 
 
 
+---
+
+# Campaign 3 — bounded multi-iteration RSI campaign (2026-10-06)
+
+Protocol: `docs/agents/rsi-loop-playbook.md` "Multi-iteration campaigns";
+reading-list citations per the campaign template. N = 3 (default; hard cap 5).
+Base `origin/main@a326cfa7` (PR #488 merge). Each iteration: one branch, one PR.
+
+**Candidate set (built before iterating — AIDE² 2609.26457 diversity):**
+
+1. `gate` — **Make the import gate's comment stripping string-aware.** The
+   W186 import gate blanks comments with a regex `stripComments`
+   (`source.replace(/\/\*[\s\S]*?\*\//g,"").replace(/\/\/[^\n]*/g,"")`) that
+   ignores string context, so a `//` or `/*` inside a string/template blanks
+   the rest of the line — potentially hiding a real `import` specifier. The
+   W189 ambient gate already solved this with a lexer; the import gate should
+   route through the same lexer. This is campaign-2 close-out next-hypothesis
+   (a) and a round-3 P3 on W189.
+2. `docs` — **Backfill the missing ledger fragments** for any W-item lands
+   without one (candidate (c)-adjacent, docs-only).
+3. `config`/`gate` — **Pin the Dependabot lane shape against the W185 SHA-pin
+   gate on a schedule** (campaign-2 next-hypothesis (b)).
+
+**Appraisal (HSI 2608.08466 two bounds):** candidate 1 has an informative
+offline signal (a synthetic input that the old stripper mis-handles) and is
+within the frozen model's ceiling; candidates 2/3 depend on new lands or are
+already partly covered (W188's own test pins the lane). Candidate 1 picked.
+
+## Iteration 1 (campaign n=1) — 2026-10-06
+
+- **n:** 1
+- **date:** 2026-10-06
+- **pain point:** kernel-purity gate truthfulness. Change-type: `gate`.
+- **selection:** highest-value unblocked candidate (campaign-2 follow-on (a));
+  no previous tag (first iteration).
+- **hypothesis (falsifiable):** the W186 import gate's regex `stripComments`
+  can hide a real import violation whose specifier sits on the same line after
+  a string containing `//` (or after a block-comment marker inside a string),
+  because the regex blanks from the `//` to end-of-line regardless of string
+  context. Predicted effect: after routing the import gate through the W189
+  lexer (`blankComments` = `lexBlank(source, false)`, strings preserved,
+  comment markers inside strings not treated as comments), a `node:fs` import
+  placed after a `//`-bearing string is detected; pre-change it is missed.
+- **at-risk regressions:** (a) the import gate would false-report a comment
+  mentioning an import (must still strip real comments); (b) the ambient gate
+  would change behavior (the lexer is shared); (c) blanked regions must keep
+  emitting newlines so line numbers stay exact.
+- **accept/reject rule:** accept iff (i) the shared lexer passes the current
+  kernel (both gates green), (ii) a mutation restoring the old regex makes a
+  new string-awareness pin RED, (iii) a hidden-in-string `node:fs` import is
+  RED under the lexer and GREEN (undetected) under the old regex, (iv) ambient
+  tokens only inside string literals do NOT trip the ambient gate and a real
+  `Date.now()` still does, and (v) lint + typecheck exit 0.
+- **non-goals:** no `src/` change; no new ambient token names; no regex-literal
+  modelling (documented bounded claim retained on the shared lexer).
+- **trace evidence:** `test/kernel-purity.test.ts:42-44` (old
+  `stripComments`); the W189 `scanAmbient` lexer at `:132-231`; no `//` or `/*`
+  occurs inside a string/template in the three current `src/kernel/` modules
+  (author scan), so no live kernel input exercises the gap — the pin is the
+  only regression witness.
+- **preregistered:** before edit (this entry).
+
+### Result — iteration 1 (campaign n=1)
+
+- **change:** `test/kernel-purity.test.ts` — the W189 lexer is factored into one
+  shared `lexBlank(source, blankStrings)`; `blankComments(source)` =
+  `lexBlank(source, false)` (comments only, strings preserved) feeds the import
+  gate; `scanAmbient(source)` = `lexBlank(source, true)` keeps the ambient
+  gate's behavior; the dead regex `stripComments` is removed. One new pin:
+  "the import gate is string-aware (a // inside a string is not a comment)".
+  Test-only; no `src/` change.
+- **commit:** uncommitted on branch `w191/kernel-purity-lexer` at record time.
+- **artifact name + checksum:** `test/kernel-purity.test.ts` — sha256 (see git
+  blob of the commit).
+- **exact command/config:** `node --import tsx --test test/kernel-purity.test.ts`;
+  `npm run lint`; `npm run typecheck`.
+- **test results:** focused 3/3 pass. Mutation evidence (orchestrator-executed,
+  worktree): (A) restoring the old regex `stripComments` as `blankComments`
+  makes the new pin RED (tests 2/3); (B) with a synthetic
+  `src/kernel/.probe-gen.ts` containing `const u="a//b"; import {x} from
+  "node:fs";`, the lexer REDs the import gate naming `node:fs`, while the old
+  regex leaves the import gate GREEN (the violation is hidden) — the
+  discriminating pair; (C) a probe whose only ambient tokens (`Date`,`fetch`,
+  …) live inside string/template literals stays GREEN, and appending a real
+  `Date.now()` REDs the ambient gate. `npm run lint` exit 0; `npm run typecheck`
+  exit 0.
+- **score:** gain. Prediction held: the old stripper hides a specifier on the
+  same line after a `//`-bearing string; the shared lexer finds it without
+  false-reporting a genuine comment.
+- **losses/exceptions:** the reviewer subagent in this session had no shell, so
+  it verified the refactor by reading + symbolic trace rather than execution;
+  the orchestrator supplied the executed mutation evidence it could not. The
+  refactor is behavior-neutral on the current kernel (no string contains a
+  comment marker), so the change's value is future-proofing the gate, not a
+  live defect fix — an honest characterization, not a claimed current bug.
+- **keep/revert:** keep (review APPROVE, five axes, reviewer-w191-r1,
+  fingerprint 2b581a37b1fe, bound a326cfa7ec6c).
+- **next hypothesis:** the import gate still preserves string LITERALS
+  verbatim, so a string whose DATA contains `from "node:x"` would false-trip it
+  (conservative direction, pre-existing). Candidate (b) for iteration 2: not
+  landable until a new W-item appears; the Dependabot shape is already pinned by
+  W188. If no distinct-tag candidate remains, stop early per the diversity
+  brake.
+
+
+
 
