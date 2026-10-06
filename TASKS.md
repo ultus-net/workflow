@@ -28,10 +28,10 @@ landed-record index — new work items are NOT appended here anymore.**
 
 | Item | Status | Where |
 | --- | --- | --- |
-| PR #132: split + CI + publish machinery (W147-W149, W155) | PR open; CI fixes landing | PR #132 (its branch carries `docs/CI.md` and the W147-W149/W155 records until merge) |
-| W148 infra/c0 strip | gated on the work AzDO repo existing | PR #132, spec §11 (record lands in `docs/ledger/` at merge) |
-| W149 publish workflow | drafted, unverified until first tagged run | PR #132 |
-| W150-W154 Paperclip borrow waves | Planned (not picked up) | issues + `docs/ledger/W150-*.md` … `W154-*.md` |
+| PR #132: split + CI + publish machinery (W147-W149, W155) | **merged 2026-09-26** (`feat/deployment-instance-split-rebase` → `a0e1c42`); its records now live in `docs/CI.md` and `docs/ledger/` | `docs/CI.md`; `docs/ledger/` |
+| W148 infra/c0 strip | **still gated** on the work AzDO repo existing (operator action; issue #141 open) | spec §11; seed on main via `a0e1c42` |
+| W149 publish workflow | **machinery landed + regression-pinned** (3/3 execution pins); live = unrun until the first tagged run with the qualified opencode asset attached (operator; issue #142 open) | `docs/ledger/w149-publish-digest.md`; #142 |
+| W150-W154 Paperclip borrow waves | **landed** (each carries a dated closure note) | `docs/ledger/W150-*.md` … `docs/ledger/W154-*.md` |
 
 ## Goal
 

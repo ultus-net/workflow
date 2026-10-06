@@ -725,4 +725,50 @@ already partly covered (W188's own test pins the lane). Candidate 1 picked.
   follow-ups that require new lands. A continuation needs an operator decision
   (authorize a live/probe run, or point at a specific unlanded item), not
   another autonomous iteration.
+- **supersession (2026-10-06):** the "PR: # (pending) — ... Not pushed" line
+  above no longer holds. Branch `w191/kernel-purity-lexer` was pushed and merged
+  to `main` as PR #489; this is a dated supersession note, not a rewrite of the
+  close-out record.
+
+---
+
+## Task A — 2026-10-06 — the ACTIVE block's stale merge status (loop entry point)
+
+- **pain point:** operator direction "pick the next lot of work, up to 3 tasks
+  this loop. check open issues, close any that we have resolved."
+- **selection:** the open-issue audit again found all 10 open issues
+  (#141/#142/#284/#290/#439/#444-#448) parked or operator-gated, and live issue
+  closure is blocked by the guard's `destructive`/`live_mutation` policy (the
+  override requires `WORKFLOW_GUARD_ALLOW_LIVE=1` at agent launch). The highest
+  -value OFFLINE item was a guard-queue correctness defect: `TASKS.md`'s ACTIVE
+  block — the block `guard_next_tasks` reads as the loop entry point — still
+  listed PR #132 as "PR open; CI fixes landing" although it merged 2026-09-26,
+  and listed W150-W154 as "Planned (not picked up)" although they landed.
+- **hypothesis (falsifiable):** the ACTIVE block is stale against `origin/main`;
+  correcting it changes the next loop's `guard_next_tasks` output from a
+  dead/merged queue to live pointers.
+- **trace evidence:** `gh pr view 132` -> `state: MERGED`, `mergedAt:
+  2026-09-26T10:49:17Z`, head `feat/deployment-instance-split-rebase`;
+  `git show origin/main:TASKS.md:29-34` (the stale rows); `docs/CI.md` present
+  on main; `docs/ledger/w149-publish-digest.md` present; W150-W154 fragments
+  each carry a dated closure note (`docs/ledger/W150-...md` head); issues
+  #141/#142 remain open and operator-gated (do NOT close).
+- **code change:** `TASKS.md` ACTIVE block only — the four rows corrected to
+  merged/landed/operator-gated status; no code, no test, no `src/` change.
+- **commit SHA:** (pending, this branch `fix/w132-active-block-guard-queue`)
+- **git tree / base:** based on `origin/main@e03420bc` (the #489 merge); worktree
+  `.worktrees/w132-active-block`
+- **artifact name + checksum:** `TASKS.md` — sha256 (see the commit blob)
+- **exact command/config:** `git diff --stat` (expect `TASKS.md | 8 ++++----`);
+  `npm run lint`; `npm run typecheck`
+- **test results:** no test pins the ACTIVE block (the three `test/*` files that
+  grep `TASKS.md` cite it in comments only, not its content); docs-only change.
+- **score:** gain. The loop entry point no longer advertises a merged PR as
+  open, so the next `guard_next_tasks` read points at live work.
+- **losses/exceptions:** issue closure is NOT performed — the guard blocks the
+  live destructive operation (`live_mutation`); #439 is resolved but can only be
+  closed by the operator or a `WORKFLOW_GUARD_ALLOW_LIVE=1` launch. Recorded,
+  not worked around.
+- **keep/revert:** keep.
+- **next hypothesis:** Task B/C below.
 
