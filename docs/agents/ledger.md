@@ -981,3 +981,64 @@ already partly covered (W188's own test pins the lane). Candidate 1 picked.
   (a docs-accuracy pass), or wire the design-gated `tests` rung if the
   operator opens that design.
 
+
+## Task G — 2026-10-06 — correlate the ACP driver's session id onto the application (DRIFT-020)
+
+- **pain point (a dead identity seam):** `WorkflowApplication.setCodingSessionCorrelation`
+  had **no production caller** (`grep` found only `test/persistence.test.ts`), so
+  `#codingSessionCorrelation` stayed undefined on every real launch and
+  `#entryIdentity(taskId)` omitted `sessionId` from every execution-log entry.
+  The map-side identity landed 2026-10-02 with the DRIFT-020 note "unset in many
+  launcher paths", but no launcher ever called the setter — the anchor was
+  stamped only in tests.
+- **selection:** Task F was docs+test (a count pin), so the diversity brake
+  wants a different change-type. The candidate pool: DRIFT-020 (code) versus
+  DRIFT-011/008 (docs/staleness or design-gated). DRIFT-020's driver seam is a
+  bounded code change: the `AcpSessionDriver` constructor already holds both the
+  `WorkflowApplication` (via `authorize`) and `workspaceSessionId`.
+- **hypothesis (falsifiable):** the driver can populate the application's
+  correlation at construction for the lanes that authorize directly against it,
+  making `sessionId` appear on subsequent log entries.
+- **trace evidence:** `setCodingSessionCorrelation` callers = only the
+  persistence test; `acp-session.ts:189` sets `#workflowSessionId` from
+  `workspaceSessionId`; the constructor already branches on
+  `typeof options.authorize === "function"` to wire `recordToolOutcome`/
+  `recordReadFingerprint` defaults (`acp-session.ts:211-212`). Production
+  non-broker lanes pass the application object (acp-tui `acp-tui.tsx:69`,
+  driver-registry `driver-registry.ts:82`, hub reviewer/RSI/scheduler
+  `hub.ts:249/394/472`); the multi-session web service passes a broker-intercept
+  **function** (`web-service.ts:89-100`) over one shared application.
+- **code change:** `src/integrations/acp-session.ts` — after assigning
+  `#workflowSessionId`, call `options.authorize.setCodingSessionCorrelation(
+  options.workspaceSessionId)` when `authorize` is not a function. The broker
+  (function) path is deliberately skipped: its single application is shared
+  across concurrent web sessions, which one correlation slot cannot represent
+  (per-call identity threading would be required — recorded, not attempted).
+  `docs/COMPLIANCE_REGISTER.md` DRIFT-020 note + progress row updated; the
+  "unset in many launcher paths" claim narrowed to the web broker lane and
+  non-ACP launchers.
+- **commit SHA:** (pending, this branch)
+- **git tree / base:** `origin/main@948cb098`; worktree `.worktrees/w132-active-block`.
+- **exact command/config:** `node --import tsx --test test/acp-session.test.ts`;
+  `test/error-surfacing.test.ts`; `test/persistence.test.ts`; `npm run lint`;
+  `npm run typecheck`; `npm run build`.
+- **test results:** acp-session 34/34 (2 new: the directly-authorized
+  application is correlated and its evidence entry carries `sessionId`; a
+  function-authorized driver leaves the shared application uncorrelated and
+  fabricates no id). Red-first confirmed: reverting the `src` change failed the
+  correlation test (`not ok 33`), then green after restore. error-surfacing
+  12/12; persistence 34/34; lint 0; typecheck 0; build 0.
+- **score:** gain. The dead `setCodingSessionCorrelation` API is live, and the
+  ACP lanes' execution-log entries now carry a real `sessionId` identity anchor.
+- **losses/exceptions:** the multi-session web broker lane and non-ACP
+  launchers still omit `sessionId`; a single correlation slot cannot represent
+  the web service's concurrent sessions, so DRIFT-020 stays **advanced, not
+  closed**. The correlated id is the runtime's generated `acp-<hex>`
+  `workspaceSessionId`, consistent with the `sessionId` already carried on every
+  proposal and tool outcome.
+- **keep/revert:** keep.
+- **next hypothesis:** thread `sessionId` per call through
+  `recordMutation`/`recordEvidence`/`transition` for the web lane (a wider API
+  change, design-sensitive), or continue the offline staleness hunt / log
+  exhaustion.
+
