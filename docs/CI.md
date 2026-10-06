@@ -90,7 +90,8 @@ passed, not that "the tests passed".
   `packageManager: pnpm@11.5.2` — corepack's default shim resolves a newer
   pnpm and pnpm refuses the mismatch, caught live in the first CI run
   2026-09-26); both on PRs and pushes to main.
-- `package.json`: `test:ci` enumerating 27 suites by name — the 15
+- `package.json`: `test:ci` enumerating 27 suites by name at the W155
+  landing — the 15
   LESS-0051-contract e2e suites (`e2e-admin`, `e2e-admin-azure-kv`,
   `e2e-contained-shell`,
   `e2e-doctor`, `e2e-hub-bash`, `e2e-hub-routes`, `e2e-hub-schedule`,
@@ -104,6 +105,24 @@ passed, not that "the tests passed".
   runs until the guard's preflight lockfile false positive stopped blocking
   manifest-touching PRs). `publish-image-workflow` (added 2026-09-30, W149
   issue #142) pins the publish workflow's digest-record format.
+- **Dated additions after the W155 landing** (the set stays enumerated by
+  name; each later add is its own ledger-visible act). `workflow-action-pins`
+  (W185), `kernel-purity` (W186), and `dependabot-lane` (W188) took the set
+  from 27 to 30 suites. **2026-10-06 — gate the egress-security behavior:**
+  the W178-W184 egress wave (gate 1 credential custody, gate 2 binding
+  resolution, the SSRF policy engine, the metering proxy) is the repo's
+  security core, yet only `security-assurance` — an honesty-doc pin, not a
+  behavior pin — ran in CI. A behavioral regression in any of those seams
+  could therefore merge uncaught: the LESS-0068 finding that a pin outside
+  the curated set is not a gate, at the layer where it matters most. The 14
+  pure offline behavior suites are now enumerated: `egress-policy`,
+  `egress-policy-file`, `egress-policy-revisions`, `egress-credential` (gate
+  1), `egress-binding` (gate 2), `egress-forward-proxy`, `egress-audit-client`,
+  `hub-egress-approvals`, `model-usage-proxy` (proxy gate-2 refusal + log
+  hygiene), `opencode-server-egress-wiring`, `credentials`, `credential-config`,
+  `credential-mcp`, and `operator-ask-hold` (161 tests; the sole skip is an
+  unbuilt-toolbox arm that the evidence job's build satisfies). No new CI
+  precondition is introduced: the keyring setup already served `e2e-admin`.
 - `release-gate.yml`: deferred per decision 2.
 - Branch protection: the operator flips the required-checks toggle in GitHub
   settings to name `gate` and `evidence` (CI defines the check names; the
