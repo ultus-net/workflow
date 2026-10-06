@@ -24,7 +24,7 @@ import type { ChangeObservation } from "../kernel/state-diff.js";
 import { mutationGate, verifyingGate, type CheckpointLedger } from "../pedagogy/checkpoints.js";
 import { PolicyFailureTracker } from "./policy-failure-tracker.js";
 import { FileClaimLedger } from "./file-claim-ledger.js";
-import { runStepCompletionAdmission } from "./admission-gate.js";
+import { runStepCompletionAdmission, type StepTestEvaluator } from "./admission-gate.js";
 import { MutationBudget } from "./mutation-budget.js";
 
 export interface WorkflowTaskProjection {
@@ -64,6 +64,10 @@ export class WorkflowApplication {
   readonly #policyFailures = new PolicyFailureTracker();
   readonly #fileClaims = new FileClaimLedger();
   readonly #mutationBudget = new MutationBudget();
+  // W072 I-9: the optional `tests` rung. Absent by default (the rung is
+  // skipped); a composition wires it with `setStepTestEvaluator`. It performs
+  // no IO itself and runs only after every cheaper rung passed.
+  #stepTestEvaluator: StepTestEvaluator | undefined;
 
   constructor(
     graph: TaskGraph,
@@ -409,16 +413,28 @@ export class WorkflowApplication {
    * A claimed path that cannot be read (ENOENT) is omitted, so it evaluates as
    * `absent` and refuses rather than fabricating a pass; any other read error
    * is rethrown (fail loud). A step without a postcondition completes exactly
-   * as `completeTaskStep(id)` (the additive I-3 path).
+   * as `completeTaskStep(id)` (the additive I-3 path). When a `tests` evaluator
+   * is wired (see `setStepTestEvaluator`), the costliest rung runs after every
+   * cheaper rung passed.
    */
   completeStepWithRequery(id: StepId): StepTransitionResult {
     const step = this.#graph.step(id);
     if (step.requiredPostcondition === undefined) return this.#graph.completeStep(id);
-    const outcome = runStepCompletionAdmission({ step, evidence: this.#graph.evidence() });
+    const outcome = runStepCompletionAdmission({ step, evidence: this.#graph.evidence(), tests: this.#stepTestEvaluator });
     if (outcome.kind === "reject") {
       return { kind: "rejected", code: outcome.code, reason: outcome.reason };
     }
     return this.#graph.completeStep(id, outcome.observation);
+  }
+
+  /**
+   * W072 I-9: wires the optional `tests` rung for this application. The
+   * evaluator is the application-layer IO seam (the kernel stays pure); it runs
+   * only after every cheaper admission rung passed. Passing `undefined` leaves
+   * the rung absent (skipped), matching the pre-seam behavior.
+   */
+  setStepTestEvaluator(evaluator: StepTestEvaluator | undefined): void {
+    this.#stepTestEvaluator = evaluator;
   }
 
   cancelTaskStep(id: StepId): StepTransitionResult {

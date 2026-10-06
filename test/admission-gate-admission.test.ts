@@ -161,3 +161,57 @@ test("I-9 schema rung: a postcondition subject with an empty path/fingerprint is
   }
   assert.equal(application.taskSteps(T)[0]?.state, "IN_PROGRESS");
 });
+
+test("I-9 tests rung: a wired evaluator runs after every cheaper rung passes and refuses on failure", (context) => {
+  const { application, path } = setup(context);
+  const step = defineAndStartPostconditionStep(application, path);
+  recordDone(application, "tests-fail");
+  let called = 0;
+  application.setStepTestEvaluator(() => { called += 1; return { kind: "reject", reason: "suite red" }; });
+
+  const result = application.completeStepWithRequery(step.id);
+  assert.equal(result.kind, "rejected");
+  if (result.kind === "rejected") {
+    assert.equal(result.code, "STEP_TESTS_FAILED");
+    assert.match(result.reason, /suite red/);
+  }
+  assert.equal(called, 1);
+  assert.equal(application.taskSteps(T)[0]?.state, "IN_PROGRESS");
+});
+
+test("I-9 tests rung: a passing evaluator admits the completion (all five rungs exercised)", (context) => {
+  const { application, path } = setup(context);
+  const step = defineAndStartPostconditionStep(application, path);
+  recordDone(application, "tests-pass");
+  application.setStepTestEvaluator(() => ({ kind: "pass" }));
+
+  const result = application.completeStepWithRequery(step.id);
+  assert.equal(result.kind, "accepted");
+  assert.equal(application.taskSteps(T)[0]?.state, "COMPLETED");
+});
+
+test("I-9 tests rung: a cheaper reject short-circuits before the injected evaluator runs", (context) => {
+  const { application, path } = setup(context);
+  // A postcondition step with no recorded evidence: the codes rung rejects, so
+  // the costliest rung must never be reached.
+  const step = defineAndStartPostconditionStep(application, path);
+  let called = 0;
+  application.setStepTestEvaluator(() => { called += 1; return { kind: "pass" }; });
+
+  const result = application.completeStepWithRequery(step.id);
+  assert.equal(result.kind, "rejected");
+  if (result.kind === "rejected") assert.equal(result.code, "STEP_EVIDENCE_REQUIRED");
+  assert.equal(called, 0);
+});
+
+test("I-9 tests rung: clearing the evaluator leaves the rung absent (behavior unchanged)", (context) => {
+  const { application, path } = setup(context);
+  const step = defineAndStartPostconditionStep(application, path);
+  recordDone(application, "tests-clear");
+  application.setStepTestEvaluator(() => ({ kind: "reject", reason: "would fail" }));
+  application.setStepTestEvaluator(undefined);
+
+  // With the evaluator cleared the step completes on the cheaper rungs alone.
+  assert.equal(application.completeStepWithRequery(step.id).kind, "accepted");
+  assert.equal(application.taskSteps(T)[0]?.state, "COMPLETED");
+});
