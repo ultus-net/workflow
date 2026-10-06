@@ -4,7 +4,7 @@ import type { AgentRuntimePreference, McpServerSetting, McpTransport } from "../
 import type { LiveMcpState } from "../../integrations/opencode-live-state.js";
 import type { WebConfigOption } from "../web-config-options.js";
 import { ConfigField } from "./config-field.js";
-import { formatTokens } from "./presenters.js";
+import { describeGrantLifecycle, formatTokens, type GrantRecord } from "./presenters.js";
 import { useSessionState, useSessionUsage } from "./runtime.js";
 import type { PaletteSummary } from "./theme/palettes.js";
 
@@ -13,7 +13,7 @@ export interface SettingsPermissions {
   readonly available: boolean;
   readonly mode: "auto" | "ask";
   readonly update: (body: { mode?: "auto" | "ask"; reset?: boolean }) => Promise<void>;
-  readonly patterns: { readonly alwaysAllow: readonly string[]; readonly alwaysReject: readonly string[] };
+  readonly patterns: { readonly alwaysAllow: readonly string[]; readonly alwaysReject: readonly string[]; readonly grants?: readonly GrantRecord[] | undefined };
 }
 
 export interface SettingsCapabilities {
@@ -401,7 +401,7 @@ export function AgentSection({ agents, currentAgent, onSwitchAgent }: {
 export function AgentOptionsSection({ options, setOption, patterns }: {
   readonly options: readonly WebConfigOption[];
   readonly setOption: (id: string, value: string | boolean) => void;
-  readonly patterns?: { readonly alwaysAllow: readonly string[]; readonly alwaysReject: readonly string[] } | undefined;
+  readonly patterns?: { readonly alwaysAllow: readonly string[]; readonly alwaysReject: readonly string[]; readonly grants?: readonly GrantRecord[] | undefined } | undefined;
 }) {
   if (options.length === 0) {
     return (
@@ -412,6 +412,7 @@ export function AgentOptionsSection({ options, setOption, patterns }: {
   }
   const selects = options.filter((option) => option.type !== "boolean");
   const toggles = options.filter((option) => option.type === "boolean");
+  const grants = patterns?.grants ?? [];
   return (
     <Section title="Agent options">
       {selects.map((option) => (
@@ -446,7 +447,7 @@ export function AgentOptionsSection({ options, setOption, patterns }: {
           ))}
         </div>
       )}
-      {patterns !== undefined && (patterns.alwaysAllow.length > 0 || patterns.alwaysReject.length > 0) && (
+      {patterns !== undefined && (patterns.alwaysAllow.length > 0 || patterns.alwaysReject.length > 0 || grants.length > 0) && (
         <div className="settings-subgroup">
           <h4>Remembered tool decisions</h4>
           {patterns.alwaysAllow.length > 0 && (
@@ -454,6 +455,16 @@ export function AgentOptionsSection({ options, setOption, patterns }: {
           )}
           {patterns.alwaysReject.length > 0 && (
             <p className="settings-desc">Always rejected: <span className="settings-pattern-list">{patterns.alwaysReject.join(", ")}</span></p>
+          )}
+          {grants.length > 0 && (
+            <p className="settings-desc">
+              Grant lifecycle:{" "}
+              <span className="settings-pattern-list">
+                {grants.map((grant, index) => (
+                  <span key={`${grant.tool}-${index}`}>{index > 0 ? " · " : ""}{describeGrantLifecycle(grant)}</span>
+                ))}
+              </span>
+            </p>
           )}
           <p className="settings-desc">Clear these from Approvals below.</p>
         </div>
