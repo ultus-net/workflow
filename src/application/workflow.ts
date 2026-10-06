@@ -405,7 +405,8 @@ export class WorkflowApplication {
   /**
    * W072 I-9: the production completion path. When the step declares a
    * `requiredPostcondition`, assemble the ORDERED admission gates
-   * (codes → schema → cross-field → state-diff; `tests` unwired) and run them
+   * (codes → schema → cross-field → state-diff, plus `tests` when an evaluator
+   * is wired — see `setStepTestEvaluator`) and run them
    * through the pure kernel runner — the state-diff rung re-observes the
    * claimed subjects by fingerprinting the real files here (application-layer
    * IO — the kernel stays pure). A rejecting cheap rung short-circuits and is
