@@ -924,39 +924,51 @@ already partly covered (W188's own test pins the lane). Candidate 1 picked.
 
 ---
 
-## Task F — 2026-10-06 — correct + pin the advertised residual-risk count
+## Task F — 2026-10-06 — correct + pin stale advertised counts in FEATURES.md
 
-- **pain point:** `docs/FEATURES.md:38` advertised "**19** known residual
-  risks stay stated" for the W042 assurance case, but
-  `docs/SECURITY_ASSURANCE.md` states **26** (numbered entries 1-26; the
-  P10/MITIGATED disposition at :295 explicitly keeps the count at 26).
-  Understating residual risk by seven is itself an honesty defect in the
-  document whose job is to not understate risk.
+- **pain point (two stale numeric claims in the honest-status doc):**
+  (1) `docs/FEATURES.md:38` advertised "**19** known residual risks stay
+  stated" for the W042 assurance case, but `docs/SECURITY_ASSURANCE.md` states
+  **26** (numbered entries 1-26; the P10/MITIGATED disposition at :295
+  explicitly keeps the count at 26). Understating residual risk by seven is
+  itself an honesty defect in the document whose job is to not understate
+  risk. (2) `docs/FEATURES.md:91` headed the MCP toolbox "(15 servers)" while
+  `mcp-toolbox/apps/` holds 16 server workspaces (the W181 `egress-audit-mcp`
+  took it past 15); `test/toolbox-catalog.test.ts` proves the catalog covers
+  exactly the apps on disk, so the corpus is the truth and the heading drifted.
 - **selection:** the ADVANCED 2026-10-02/03 work on DRIFT-019/024 and the
   `tests` rung are design-gated (a test-execution adapter is a design, not a
   bounded loop change); the P6 ask-channel and egress waves are landed. A
-  systematic scan for stale numeric claims surfaced this one.
-- **hypothesis (falsifiable):** the true stated count is 26 and the FEATURES.md
-  number is stale, and a count pin can make the claim executable.
+  systematic scan for stale numeric claims surfaced both; both are the same
+  axis (an unpinned count in the feature ledger), so they fold into one
+  branch rather than two same-type iterations.
+- **hypothesis (falsifiable):** the true stated counts are 26 residuals and 16
+  toolbox servers, the FEATURES.md numbers are stale, and count pins can make
+  both claims executable.
 - **trace evidence:** `grep -c '^[0-9]+\. '` over the residual section
-  (SECURITY_ASSURANCE.md:259-296) = 26; max residual index = 26;
-  FEATURES.md row 38 read "19". No test or checker asserted the count before.
-- **code change:** `test/security-assurance.test.ts` gains a tenth pin — the
+  (SECURITY_ASSURANCE.md:259-296) = 26; max residual index = 26; FEATURES.md
+  row 38 read "19". `TOOLBOX_CATALOG.length` = 16 and `mcp-toolbox/apps/*/` =
+  16; FEATURES.md:91 read "15 servers". No test or checker asserted either
+  count before.
+- **code change:** `test/security-assurance.test.ts` gains two pins — the
   FEATURES.md "N known residual risks" number must equal the count of numbered
-  entries in the case's "Known residual risks" section (red-first: fails with
-  "advertises 19 residual risks but the assurance case states 26");
-  `docs/FEATURES.md:38` corrected 19 to 26 and notes the checker now pins it.
-  No `src/` change; one test added, no existing assertion weakened.
+  entries in the case's "Known residual risks" section (bounded at the next
+  `## ` heading), and the FEATURES.md "MCP Toolbox (N servers)" heading must
+  equal the `mcp-toolbox/apps/` directory count. Red-first: the residual pin
+  failed with "advertises 19 residual risks but the assurance case states 26"
+  before the doc fix. `docs/FEATURES.md` corrected 19 to 26 (:38) and 15 to 16
+  (:91), and notes the checker now pins the residual count. No `src/` change;
+  tests added, no existing assertion weakened.
 - **commit SHA:** (pending, this branch)
 - **git tree / base:** `origin/main@28205bb0`; worktree `.worktrees/w132-active-block`
 - **exact command/config:** `node --import tsx --test test/security-assurance.test.ts`;
   `test/text-hygiene.test.ts`; `npm run lint`; `npm run typecheck`.
-- **test results:** security-assurance 8/8 (the new pin red first, then green),
+- **test results:** security-assurance 9/9 (each pin red first, then green),
   text-hygiene 9/9; lint 0; typecheck 0.
-- **score:** gain. The advertised residual count now cannot drift from the
-  case it describes.
-- **losses/exceptions:** the pin asserts the FEATURES.md count only; other
-  prose numeric claims (e.g. "130+ citations", "twelve surface sections")
+- **score:** gain. Two advertised counts in the feature ledger now cannot drift
+  from the artifacts they describe.
+- **losses/exceptions:** the pins assert only these two FEATURES.md counts;
+  other prose numeric claims (e.g. "130+ citations", "twelve surface sections")
   remain unchecked — recorded, not silently assumed pinned.
 - **keep/revert:** keep.
 - **next hypothesis:** sweep other docs for stale numeric/factual claims

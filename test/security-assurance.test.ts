@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -178,6 +178,24 @@ test("the FEATURES.md residual-risk count matches the assurance case's stated en
     Number(advertised),
     stated,
     `docs/FEATURES.md advertises ${advertised} residual risks but the assurance case states ${stated}`,
+  );
+});
+
+test("the FEATURES.md toolbox server count matches the vendored app corpus", () => {
+  // docs/FEATURES.md advertises the MCP toolbox with a server count. The
+  // vendored corpus is the source of truth (test/toolbox-catalog.test.ts
+  // proves the settings catalog covers exactly the apps on disk), so the
+  // headline count must equal the app directories; the header drifted to 15
+  // after egress-audit-mcp (W181) took the corpus to 16.
+  const features = readFileSync(join(repoRoot, "docs", "FEATURES.md"), "utf8");
+  const advertised = features.match(/## MCP Toolbox \((\d+) servers\)/)?.[1];
+  assert.ok(advertised !== undefined, "docs/FEATURES.md must keep advertising the toolbox server count");
+  const appsDir = join(repoRoot, "mcp-toolbox", "apps");
+  const onDisk = readdirSync(appsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).length;
+  assert.equal(
+    Number(advertised),
+    onDisk,
+    `docs/FEATURES.md advertises ${advertised} toolbox servers but the corpus has ${onDisk}`,
   );
 });
 

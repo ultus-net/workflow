@@ -88,7 +88,7 @@ trip over.
 | OpenRouter analytics client (Usage page) | Partial | `src/integrations/openrouter-analytics.ts` — Management-key `/analytics/query` + `/meta` + `/credits`; metric availability gated by `/analytics/meta`, credits degrade to absent on scope errors; **requires `WORKFLOW_OPENROUTER_MANAGEMENT_KEY`** (server-side only) |
 | Standard-TUI server surface (W071) | Partial | `workflow-opencode-server` (daemon) + `workflow-opencode` (launcher): a Workflow-owned, contained `opencode serve` behind a credential-split authority gateway; the operator keeps the **stock `opencode attach`** TUI; the broker answers `permission.asked` through `WorkflowApplication.authorize` (+ guard), with `auto-resolve`/`ask-me` operator modes, a `WORKFLOW_OPENCODE_ENFORCEMENT=enforced` posture (startup ruleset verification + bypass alarm), a session-budget watcher, skill-delivery journaling, and observed-mutation recording. **Topology live-qualified on stock v2.0.10 (2026-09-20, M1 probe re-worked to the v2 `/api/*` spellings): runtime + gateway live, hub config loaded and parsed, authority split holds, broker SSE subscribes and intercepts without forwarding. Still advisory**: the live `permission.asked` → authorize → reply path against a real model turn needs a model key, so no `enforced` claim; the v2 provider-visibility caveat (config-defined providers do not list in `/api/provider` on v2.0.10) is recorded in §9; `docs/OPENCODE_SERVER_AUTHORITY.md`, `docs/superpowers/plans/2026-09-19-standard-tui-background-authority.md` |
 
-## MCP Toolbox (15 servers)
+## MCP Toolbox (16 servers)
 
 | Feature | Status | Notes |
 |---|---|---|
