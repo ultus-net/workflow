@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import { createModelUsageProxy, METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
@@ -30,18 +33,30 @@ const CATALOG = {
 
 /** Runs the runtime with an injected factory that captures its input, then
  *  aborts before the launch (the factory boundary is the seam under test, so
- *  no binary, containment, or health poll is needed). */
-async function captureProxyInput(env: Record<string, string>): Promise<OpencodeServerProxyInput> {
+ *  no binary, containment, or health poll is needed). `upstream` is forwarded
+ *  when given (omitted exercises the env/default lane selection). HOME is
+ *  redirected to an empty temp dir and every lane env arm is cleared:
+ *  `resolveRuntimeMeteredLane` reads `WORKFLOW_ACP_UPSTREAM`, the Synthetic
+ *  env toggle/key, and the auth store and `~/.config/workflow/synthetic-api-key`
+ *  files under `homedir()`, so without this isolation these lane pins would
+ *  assert the HOST's state — a machine with a connected Synthetic key or an
+ *  exported `WORKFLOW_ACP_UPSTREAM` would false-fail the "no key" case. */
+async function captureProxyInput(env: Record<string, string>, upstream?: string): Promise<OpencodeServerProxyInput> {
+  const LANE_ENV = ["SYNTHETIC_API_KEY", "WORKFLOW_SYNTHETIC", "WORKFLOW_ACP_UPSTREAM", "HOME"];
+  const isolated = [...LANE_ENV, ...Object.keys(env)];
   const saved: Record<string, string | undefined> = {};
-  for (const key of Object.keys(env)) saved[key] = process.env[key];
-  Object.assign(process.env, env);
+  for (const key of isolated) saved[key] = process.env[key];
+  const emptyHome = mkdtempSync(join(tmpdir(), "wf-lane-home-"));
   let captured: OpencodeServerProxyInput | undefined;
   try {
+    process.env.HOME = emptyHome;
+    for (const key of LANE_ENV) if (key !== "HOME") delete process.env[key];
+    Object.assign(process.env, env);
     await assert.rejects(
       createOpencodeServerRuntime({
         workspace: "/tmp/p15-wiring-breadth-ws",
         stateHome: "/tmp/p15-wiring-breadth-state",
-        upstream: "https://openrouter.ai",
+        ...(upstream === undefined ? {} : { upstream }),
         apiKey: "test-key-not-used",
         createProxy: async (input) => {
           captured = input;
@@ -51,7 +66,8 @@ async function captureProxyInput(env: Record<string, string>): Promise<OpencodeS
       /captured: stop before launch/,
     );
   } finally {
-    for (const key of Object.keys(env)) {
+    rmSync(emptyHome, { recursive: true, force: true });
+    for (const key of isolated) {
       const prior = saved[key];
       if (prior === undefined) delete process.env[key];
       else process.env[key] = prior;
@@ -185,4 +201,38 @@ test("P15 wiring: the composed proxy narrows the auto lane and rewrites the conc
     await proxy.close();
     await upstream.close();
   }
+});
+
+// ── The Synthetic lane composition (the operator pivot) ─────────────────────
+
+test("Synthetic lane: a resolvable Synthetic key composes the pair on the server runtime", async () => {
+  const input = await captureProxyInput({ SYNTHETIC_API_KEY: "syn-test-key" });
+  assert.equal(input.upstream, "https://api.synthetic.new", "the Synthetic key makes Synthetic the primary upstream");
+  assert.equal(input.apiKey, "syn-test-key", "the primary key is the Synthetic key");
+  assert.equal(input.syntheticFailover?.fallback, "https://openrouter.ai", "the fallback is OpenRouter");
+  assert.equal(input.syntheticFailover?.fallbackApiKey, "test-key-not-used", "the fallback key is the OpenRouter upstream key");
+  assert.equal(typeof input.syntheticFailover?.onFailover, "function", "the runtime sink is wired with the failover mapping");
+});
+
+test("Synthetic lane: WORKFLOW_SYNTHETIC=0 leaves the server runtime single-upstream OpenRouter", async () => {
+  const input = await captureProxyInput({ SYNTHETIC_API_KEY: "syn-test-key", WORKFLOW_SYNTHETIC: "0" });
+  assert.equal(input.upstream, "https://openrouter.ai", "the off toggle disables the pair; the lane stays OpenRouter");
+  assert.equal(input.apiKey, "test-key-not-used", "the OpenRouter key rides the single lane");
+  assert.equal(input.syntheticFailover, undefined, "no pair is composed when disabled");
+});
+
+test("Synthetic lane: no Synthetic key keeps the server runtime single-upstream OpenRouter", async () => {
+  const input = await captureProxyInput({});
+  assert.equal(input.upstream, "https://openrouter.ai", "with no Synthetic key the lane is unchanged");
+  assert.equal(input.syntheticFailover, undefined, "the failover seam is absent without the pair");
+});
+
+test("Synthetic lane: an explicit upstream is never overridden by the Synthetic key", async () => {
+  // A NON-default explicit upstream: a default-equal value could not
+  // distinguish "option forwarded verbatim" from "the Synthetic key was
+  // silently unresolvable", so this pin is self-sufficient.
+  const input = await captureProxyInput({ SYNTHETIC_API_KEY: "syn-test-key" }, "https://explicit.example.test");
+  assert.equal(input.upstream, "https://explicit.example.test", "an explicit upstream option always wins");
+  assert.equal(input.apiKey, "test-key-not-used", "a non-Synthetic configured upstream takes the OpenRouter key");
+  assert.equal(input.syntheticFailover, undefined, "the pair composes only for a Synthetic primary");
 });

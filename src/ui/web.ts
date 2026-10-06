@@ -14,6 +14,9 @@ import { nextCronMatch, type ScheduleDefinition } from "../integrations/hub-sche
 import type { ProjectRecord, ProjectStatus } from "../integrations/project-registry.js";
 import { defaultSettings, mergeSettings, normalizeSettings, readSettingsFile, settingsPaths, writeSettingsFile } from "../integrations/workflow-settings.js";
 import { resolveToolboxCatalog } from "../integrations/toolbox-catalog.js";
+import { opencodeAuthPath } from "../integrations/acp-runtime.js";
+import { syntheticToggleEnabled } from "../integrations/synthetic-provider.js";
+import { syntheticKeyFromAuthFile, syntheticKeyPresent } from "../integrations/upstream-key.js";
 import { stepId, taskId, type TaskState } from "../kernel/contracts.js";
 import { transportPermissionView } from "./permission-broker.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
@@ -1164,6 +1167,12 @@ export function createWorkflowWebServer(
               process.env.AZURE_FOUNDRY_MODEL,
             ].some((entry) => (entry ?? "").trim().length > 0),
             managementKey: (process.env.WORKFLOW_OPENROUTER_MANAGEMENT_KEY ?? "").trim().length > 0,
+            // Operator pivot: Synthetic is the primary metered upstream when
+            // its key is resolvable, with an OpenRouter failover. Presence
+            // booleans only — never secret values. The auth-store key is read
+            // so the fact matches the runtime lane's resolution order.
+            syntheticKeyPresent: syntheticKeyPresent(process.env, homedir(), syntheticKeyFromAuthFile(opencodeAuthPath())),
+            syntheticEnabled: syntheticToggleEnabled(),
           },
         });
       }

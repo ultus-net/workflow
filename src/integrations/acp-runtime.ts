@@ -32,7 +32,7 @@ import {
 } from "./opencode-agent-config.js";
 import type { PermissionBroker } from "../ui/permission-broker.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
-import { METERED_PLACEHOLDER_KEY, type EgressDenialEvent, type ModelUsageMetrics, type ModelUsageProxy, type ProxyPayloadPolicy, createModelUsageProxy, meteredProviderSettings } from "./model-usage-proxy.js";
+import { METERED_PLACEHOLDER_KEY, type EgressDenialEvent, type ModelUsageMetrics, type ModelUsageProxy, type ProxyPayloadPolicy, createModelUsageProxy, meteredProviderSettings, syntheticFailoverProxyOptions } from "./model-usage-proxy.js";
 import type { CredentialEndpoint } from "./credentials.js";
 import { createEgressRuntimeFeed } from "./egress-audit-client.js";
 import { egressPostureFromEnv, egressRuntimeContext } from "./runtime-context.js";
@@ -44,7 +44,9 @@ import { findOpenModel, openSourcePoolFromEnv } from "./open-source-pool.js";
 import { loadCredentialDefinitions } from "./credential-config.js";
 import { perFamilyCredentialBinding } from "./egress-binding.js";
 import { DEFAULT_OPENCODE_MODEL, OPENCODE_METERED_PROVIDER_ID, type MeteredVendorProvider } from "./opencode-agent-config.js";
-import { loadUpstreamApiKey } from "./upstream-key.js";
+import { loadUpstreamApiKey, readWorkflowKeyFile } from "./upstream-key.js";
+import { resolveMeteredLane, SYNTHETIC_KEY_FILE } from "./synthetic-provider.js";
+import { syntheticKeyFromAuthFile } from "./upstream-key.js";
 import { enabledMcpServers, type WorkflowSettings } from "./workflow-settings.js";
 import { connectorReadablePaths, provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts } from "./toolbox-catalog.js";
 
@@ -265,10 +267,16 @@ async function createOpencodeRuntime(
   const scratchHome = resolve(homedir(), ".workflow", "acp-home");
   mkdirSync(scratchHome, { recursive: true, mode: 0o700 });
 
-  const apiKey = loadOpencodeUpstreamApiKey();
-  const upstream = process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai";
+  // Operator pivot: Synthetic is the PRIMARY metered upstream with an
+  // automatic OpenRouter failover on rate-limit/5xx/connection failure. The
+  // lane is Synthetic only when a Synthetic key is resolvable; otherwise the
+  // proxy stays OpenRouter single-upstream (unchanged). An explicit
+  // `WORKFLOW_ACP_UPSTREAM` always wins.
+  const lane = resolveOpencodeMeteredLane();
+  const upstream = lane.upstream;
   // Hub-owned Auto Router pool (default on for OpenRouter upstreams): resolve
   // `~...-latest` aliases in the proxy so agents never need a client plugin.
+  // Synthetic serves no such aliases, so the seam is absent on that lane.
   const autoLatest = autoLatestConfigFromEnv({ upstream });
   // W118: the downgrade axes are parsed once from the env; the downgrade
   // additionally requires budget caps to exist (no caps = nothing to warn
@@ -292,13 +300,14 @@ async function createOpencodeRuntime(
   try {
     proxy = await createModelUsageProxy({
       upstream,
-      apiKey,
+      apiKey: lane.apiKey,
       ...(autoLatest === undefined ? {} : { autoLatest }),
       ...(budgetDowngrade === undefined ? {} : { budgetDowngrade }),
       ...(egressFeed === undefined ? {} : { onEgressObservation: egressFeed.onEgressObservation }),
       ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }),
       ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }),
       ...(options.credentialEndpoints === undefined ? {} : { credentialEndpoints: options.credentialEndpoints }),
+      ...(lane.failover === undefined ? {} : { syntheticFailover: syntheticFailoverProxyOptions(lane.failover) }),
     });
   } catch (error) {
     // A construction failure must not leak the already-opened ledger client.
@@ -594,15 +603,20 @@ async function createClineRuntime(
   });
   const apiKey = loadUpstreamApiKey();
   const provider = process.env.CLINE_PROVIDER ?? "openrouter";
-  const upstream = process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai";
+  // Synthetic primary with OpenRouter failover, when a Synthetic key resolves;
+  // the metering proxy abstracts the origin, so Cline keeps its OpenAI-compatible
+  // provider id while `baseUrl` (below) points at the proxy.
+  const lane = resolveRuntimeMeteredLane(apiKey);
+  const upstream = lane.upstream;
   const autoLatest = autoLatestConfigFromEnv({ upstream });
   const proxy = await createModelUsageProxy({
     upstream,
-    apiKey,
+    apiKey: lane.apiKey,
     ...(autoLatest === undefined ? {} : { autoLatest }),
     ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }),
     ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }),
     ...(options.credentialEndpoints === undefined ? {} : { credentialEndpoints: options.credentialEndpoints }),
+    ...(lane.failover === undefined ? {} : { syntheticFailover: syntheticFailoverProxyOptions(lane.failover) }),
   });
   // Each runtime owns a private provider-settings file: the metering proxy
   // port is ephemeral, so a shared providers.json let one runtime's agent
@@ -727,6 +741,41 @@ function loadOpencodeUpstreamApiKey(): string {
   }
 }
 
+/** The Synthetic key from `~/.config/workflow/synthetic-api-key`, if present. */
+function readSyntheticKeyFile(): string | undefined {
+  return readWorkflowKeyFile(SYNTHETIC_KEY_FILE);
+}
+
+/**
+ * The metered lane for a runtime: Synthetic primary with an OpenRouter
+ * failover when a Synthetic key is resolvable (env, OpenCode auth store, then
+ * the 0600 key file), else the existing OpenRouter single-upstream behavior.
+ * An explicit upstream always wins (see `resolveMeteredLane`). Shared by the
+ * OpenCode/Cline/goose/server lanes so they agree on the lane, and by the
+ * settings fact's key presence.
+ */
+export function resolveRuntimeMeteredLane(
+  openrouterApiKey: string,
+  configuredUpstream: string | undefined = process.env.WORKFLOW_ACP_UPSTREAM,
+): ReturnType<typeof resolveMeteredLane> {
+  const syntheticAuth = syntheticKeyFromAuthFile(opencodeAuthPath());
+  return resolveMeteredLane({
+    ...(configuredUpstream === undefined ? {} : { configuredUpstream }),
+    openrouterApiKey,
+    ...(syntheticAuth === undefined ? {} : { authKey: syntheticAuth }),
+    readKeyFile: () => readSyntheticKeyFile(),
+  });
+}
+
+/**
+ * The metered lane for the OpenCode ACP runtime. Kept as a named wrapper so
+ * the OpenCode key fallback (`loadOpencodeUpstreamApiKey`, which reads the
+ * auth store's OpenRouter key) is applied before delegating.
+ */
+function resolveOpencodeMeteredLane(): ReturnType<typeof resolveMeteredLane> {
+  return resolveRuntimeMeteredLane(loadOpencodeUpstreamApiKey());
+}
+
 /**
  * W048: the goose (AAIF) runtime — the third `WORKFLOW_ACP_AGENT` kind and
  * the staged candidate for the vendored-Cline fallback slot. Structurally an
@@ -777,17 +826,21 @@ async function createGooseRuntime(
   // OpenRouter rides the hub-side metering proxy (the real key stays
   // proxy-side); azure_foundry runs direct with no local proxy.
   const proxy = provider === "openrouter"
-    ? await createModelUsageProxy({
-        upstream: process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai",
-        apiKey: loadUpstreamApiKey(),
-        // W182 (A7) / W184: the shared denial sink and the W180 policy tier ride
-        // the goose OpenRouter lane too, so its refusals park on the same hub
-        // surface. The azure_foundry lane composes no local proxy, so it has no
-        // seam to carry.
-        ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }),
-        ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }),
-        ...(options.credentialEndpoints === undefined ? {} : { credentialEndpoints: options.credentialEndpoints }),
-      })
+    ? await (async (): Promise<ModelUsageProxy> => {
+        const lane = resolveRuntimeMeteredLane(loadUpstreamApiKey());
+        return createModelUsageProxy({
+          upstream: lane.upstream,
+          apiKey: lane.apiKey,
+          // W182 (A7) / W184: the shared denial sink and the W180 policy tier ride
+          // the goose OpenRouter lane too, so its refusals park on the same hub
+          // surface. The azure_foundry lane composes no local proxy, so it has no
+          // seam to carry.
+          ...(options.onEgressDenied === undefined ? {} : { onEgressDenied: options.onEgressDenied }),
+          ...(options.payloadPolicy === undefined ? {} : { payloadPolicy: options.payloadPolicy }),
+          ...(options.credentialEndpoints === undefined ? {} : { credentialEndpoints: options.credentialEndpoints }),
+          ...(lane.failover === undefined ? {} : { syntheticFailover: syntheticFailoverProxyOptions(lane.failover) }),
+        });
+      })()
     : undefined;
   try {
     mkdirSync(join(configDir, "config"), { recursive: true, mode: 0o700 });

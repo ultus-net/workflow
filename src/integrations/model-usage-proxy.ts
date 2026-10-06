@@ -17,6 +17,16 @@ import { decideEgress, type EgressDecision, type EgressPolicy, type EgressReques
 import { enforceReplayPolicy } from "./model-replay-policy.js";
 import { enforceMessagesReplayIntegrity, unparseableMessagesBodyRejection } from "./messages-replay-integrity.js";
 import { budgetDowngradeActive, type BudgetDowngradeRuntime } from "./session-budget.js";
+import {
+  fallbackBody,
+  fallbackModelLabel,
+  isFailoverStatus,
+  logFailover,
+  SYNTHETIC_DEFAULT_MODEL,
+  syntheticUpstreamPath,
+  type SyntheticFailoverEvent,
+  type SyntheticFailoverResolved,
+} from "./synthetic-provider.js";
 
 export { METERED_PLACEHOLDER_KEY };
 
@@ -135,11 +145,11 @@ const MESSAGES_LANE_LABEL_LIMIT = 64;
 
 /**
  * W181 (A5): the egress observation journal bound. Observation only; past the
- * bound the OLDEST event drops so a long-lived proxy never grows unbounded
- * (the same bounded-journal posture as the messages-lane labels above). 128 is
- * a deliberately small window: the journal is a live sample for the audit
- * bridge, not the durable ledger (that is `egress-audit-mcp`'s job).
- */
+   * bound the OLDEST event drops so a long-lived proxy never grows unbounded
+   * (the same bounded-journal posture as the messages-lane labels above). 128 is
+   * a deliberately small window: the journal is a live sample for the audit
+   * bridge, not the durable ledger (that is `egress-audit-mcp`'s job).
+   */
 const EGRESS_OBSERVATION_LIMIT = 128;
 
 /**
@@ -164,6 +174,12 @@ function copyEgressObservation(observation: EgressObservation): EgressObservatio
     ? { ...observation, anomalyContext: { ...observation.anomalyContext } }
     : { ...observation, anomalyContext: { ...observation.anomalyContext } };
 }
+
+/**
+ * Synthetic→OpenRouter failover journal bound (observation only). Matches the
+ * messages-lane journal and the run registry's bounded gate journals.
+ */
+const FAILOVER_JOURNAL_LIMIT = 64;
 
 /**
  * W109 (W095 c2): a body transform for the metering proxy's policy-routing
@@ -323,7 +339,44 @@ export interface ModelUsageProxy {
    * snapshot copy so consumers cannot mutate the live journal.
    */
   readonly egressObservations: () => readonly EgressObservation[];
+  /**
+   * Synthetic→OpenRouter failover journal (bounded, observation only). Empty
+   * unless the pair is composed. Re-pins the model to `openrouter/auto`; the
+   * `status` is undefined for a connection-level failover.
+   */
+  readonly failovers: () => readonly SyntheticFailoverEvent[];
   readonly close: () => Promise<void>;
+}
+
+/**
+ * Synthetic (primary) → OpenRouter (failover) composition. Supplied by
+ * `resolveMeteredLane` (`synthetic-provider.ts`) only when a Synthetic key is
+ * resolvable; absent leaves the proxy single-upstream (today's behavior). The
+ * primary origin and key are the proxy's own `upstream`/`apiKey`; only the
+ * fallback side is declared here.
+ */
+export interface SyntheticFailoverProxyOptions {
+  /** Fallback upstream base, e.g. `https://openrouter.ai`. */
+  readonly fallback: string;
+  readonly fallbackApiKey: string;
+  readonly onFailover?: ((event: SyntheticFailoverEvent) => void) | undefined;
+  readonly now?: (() => number) | undefined;
+}
+
+/**
+ * Maps a resolved Synthetic failover pair (from `synthetic-provider.ts`) to
+ * the proxy option, wiring the runtime `console.error` sink. Keeps the four
+ * runtime composition sites (OpenCode ACP, Cline, goose, server) free of the
+ * repeated field mapping. The primary origin/key ride the proxy's own
+ * `upstream`/`apiKey`; `resolved.primary`/`syntheticApiKey` are therefore not
+ * copied here.
+ */
+export function syntheticFailoverProxyOptions(resolved: SyntheticFailoverResolved): SyntheticFailoverProxyOptions {
+  return {
+    fallback: resolved.fallback,
+    fallbackApiKey: resolved.openrouterApiKey,
+    onFailover: logFailover,
+  };
 }
 
 /**
@@ -543,6 +596,15 @@ export async function createModelUsageProxy(options: {
    * swallowed. Absent leaves every refusal answered exactly as before.
    */
   readonly onEgressDenied?: ((event: EgressDenialEvent) => void) | undefined;
+  /**
+   * Synthetic primary → OpenRouter failover. When set, a failure-class
+   * response (429/5xx) or a connection-level error from the primary is
+   * retried ONCE against the fallback before first byte, with the body's
+   * `model` re-pinned to `openrouter/auto`. The agent's default
+   * `openrouter/auto` is also mapped to a Synthetic model on the primary hop
+   * (see `synthetic-provider.ts`). Absent leaves the proxy single-upstream.
+   */
+  readonly syntheticFailover?: SyntheticFailoverProxyOptions | undefined;
 }): Promise<ModelUsageProxy> {
   if (typeof options.apiKey !== "string" || options.apiKey.trim().length === 0) {
     throw new TypeError("model usage proxy requires a non-empty upstream API key");
@@ -587,6 +649,14 @@ export async function createModelUsageProxy(options: {
       // suppress the refusal (the pass-through/refusal posture is unchanged).
     }
   };
+  // Synthetic→OpenRouter failover: the primary upstream is the proxy's own
+  // `upstream`; the fallback and both keys come from the composition. The
+  // alias resolver stays bound to the PRIMARY origin (Synthetic serves no
+  // `~...-latest` aliases; the failover lane disables the injection entirely
+  // and forwards a concrete `auto`).
+  const syntheticFailover = options.syntheticFailover;
+  const failoverJournal: SyntheticFailoverEvent[] = [];
+  const failoverNow = syntheticFailover?.now ?? Date.now;
   const autoLatest = options.autoLatest;
   const aliasResolver: AliasResolver | undefined =
     autoLatest === undefined
@@ -1040,13 +1110,95 @@ export async function createModelUsageProxy(options: {
       tokenClass: credential.kind === "session-placeholder" ? "session-placeholder" : "absent",
       anomalyContext: { credentialHeader: undefined },
     });
-    const response = await fetch(target, {
-      method: req.method ?? "GET",
-      headers: scrubRequestHeaders(req.headers, options.apiKey, outboundBody.length),
-      body: req.method === "GET" || req.method === "HEAD" ? null : new Uint8Array(outboundBody),
-      redirect: "manual",
-      signal: AbortSignal.timeout(300_000),
-    });
+    const method = req.method ?? "GET";
+    const hasBody = method !== "GET" && method !== "HEAD";
+    const attempt = (url: URL, key: string, body: Buffer): Promise<Response> =>
+      fetch(url, {
+        method,
+        headers: scrubRequestHeaders(req.headers, key, body.length),
+        body: hasBody ? new Uint8Array(body) : null,
+        redirect: "manual",
+        signal: AbortSignal.timeout(300_000),
+      });
+    // On the Synthetic primary the agent's default `openrouter/auto` (the
+    // picker-valid id the hub composes, and the id the v2 ACP pin requires) is
+    // rewritten to a Synthetic model ON THE PRIMARY HOP ONLY. The fallback
+    // maps back to `openrouter/auto` (its concrete router id). This keeps the
+    // v2 model pin valid (the ref never leaves the config) while Synthetic
+    // receives a model it recognizes. An explicit operator model passes
+    // through unchanged. Scoped to the chat-completions lane: the anthropic
+    // messages lane keeps its byte-identity posture (A′), and its model ids
+    // are concrete vendor ids, not the auto-router default.
+    const primaryBytes = () => {
+      if (syntheticFailover === undefined || !hasBody || !isCompletions) return outboundBody;
+      const body = parseBodyRecord(outboundBody);
+      if (body === undefined || !isAutoRouterModel(body.model)) return outboundBody;
+      return Buffer.from(JSON.stringify({ ...body, model: SYNTHETIC_DEFAULT_MODEL }), "utf8");
+    };
+    // Synthetic primary → OpenRouter failover. ONCE, pre-first-byte only:
+    // a failure-class status (429/5xx) or a connection-level rejection
+    // re-pins the body to `openrouter/auto` and retries the SAME target path
+    // against the fallback origin. A mid-stream failure never reaches here
+    // (the response has already begun streaming), matching the routing
+    // policy's recorded SSE limitation. The fallback request is NEVER
+    // itself failed over again: a failed fallback propagates to the server's
+    // 502 handler, and a fallback 429 is surfaced (no loop).
+    const recordFailover = (status: number | undefined, primaryBody: Buffer): void => {
+      const config = syntheticFailover;
+      if (config === undefined) return;
+      const event: SyntheticFailoverEvent = {
+        status,
+        fromModel: readBodyModel(primaryBody),
+        toModel: fallbackModelLabel(),
+        at: failoverNow(),
+      };
+      failoverJournal.push(event);
+      if (failoverJournal.length > FAILOVER_JOURNAL_LIMIT) failoverJournal.shift();
+      config.onFailover?.(event);
+    };
+    const failoverRequest = (): Promise<Response> => {
+      const config = syntheticFailover;
+      if (config === undefined) throw new Error("failover attempted without a composition");
+      const fallbackUrl = new URL(`${target.pathname}${target.search}`, config.fallback);
+      // The re-pin is a chat-completions concern; a non-completions body
+      // forwards unchanged (belt-and-braces with the primary-hop scope).
+      const parsedBody = isCompletions ? parseBodyRecord(outboundBody) : undefined;
+      const fallbackBytes = parsedBody === undefined ? outboundBody : Buffer.from(JSON.stringify(fallbackBody(parsedBody)), "utf8");
+      outboundBody = fallbackBytes;
+      return attempt(fallbackUrl, config.fallbackApiKey, fallbackBytes);
+    };
+    let response: Response;
+    const primaryBody = primaryBytes();
+    // Synthetic serves `/v1/...`, but the agent's baseURL is `/api/v1` (the
+    // OpenRouter shape). Translate the path on the primary hop; the fallback
+    // hop keeps the original (OpenRouter) path.
+    const primaryTarget =
+      syntheticFailover === undefined
+        ? target
+        : new URL(syntheticUpstreamPath(target.pathname) + target.search, target);
+    // `failedOver` makes the fallback terminal: once the fallback has been
+    // attempted, neither a fallback status NOR a throw from the fallback
+    // triggers another failover (the once-only invariant).
+    let failedOver = false;
+    try {
+      response = await attempt(primaryTarget, options.apiKey, primaryBody);
+      if (syntheticFailover !== undefined && isFailoverStatus(response.status)) {
+        // Drain the failed primary response so its socket is released; its
+        // body is discarded (the fallback answer is authoritative).
+        try { await response.text(); } catch { /* best-effort drain */ }
+        recordFailover(response.status, primaryBody);
+        failedOver = true;
+        response = await failoverRequest();
+      }
+    } catch (error) {
+      // Connection-level failure (DNS, refused, TLS, timeout) is the same
+      // class as a status trigger: retry the fallback once before surfacing.
+      // A throw from the fallback attempt itself (failedOver already true)
+      // propagates rather than failing over again.
+      if (syntheticFailover === undefined || failedOver) throw error;
+      recordFailover(undefined, primaryBody);
+      response = await failoverRequest();
+    }
 
     const contentType = response.headers.get("content-type") ?? "";
     res.writeHead(response.status, forwardedResponseHeaders(response, contentType));
@@ -1219,6 +1371,8 @@ export async function createModelUsageProxy(options: {
     messagesLaneLabels: () => ({ models: [...messagesLaneModels], malformedBodies: malformedMessagesBodies }),
     // W181 (A5): a snapshot copy of the bounded egress observation journal.
     egressObservations: () => egressObservations.map(copyEgressObservation),
+    // Synthetic→OpenRouter failover journal: a snapshot copy (observation only).
+    failovers: () => failoverJournal.map((event) => ({ ...event })),
     close: () =>
       new Promise((resolveClose, rejectClose) => {
         server.close((error) => (error ? rejectClose(error) : resolveClose()));
@@ -1331,6 +1485,22 @@ function anthropicUsageNumbers(usage: Record<string, unknown>): Record<string, n
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Parses a JSON object body for the failover re-pin; undefined when unparseable. */
+function parseBodyRecord(body: Buffer): Record<string, unknown> | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body.toString("utf8"));
+    return isRecord(parsed) ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The request-side model id for the failover journal (observation only). */
+function readBodyModel(body: Buffer): string | undefined {
+  const parsed = parseBodyRecord(body);
+  return typeof parsed?.model === "string" ? parsed.model : undefined;
 }
 
 function readAll(stream: http.IncomingMessage): Promise<Buffer> {
