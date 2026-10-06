@@ -197,6 +197,36 @@ test("persistence round-trips steps and rejects a completed step without evidenc
   );
 });
 
+test("I-7: a step must declare a done-condition/evidence requirement at definition", () => {
+  const graph = inProgressTask();
+  // The done-condition is the evidence requirement; a step with none can never
+  // fail I-3 (completeStep has nothing to require), so it is refused up front.
+  assert.throws(
+    () => graph.defineSteps(T, [{ content: "no-done-condition" }]),
+    /must declare a done-condition/,
+  );
+  assert.throws(
+    () => graph.defineSteps(T, [{ content: "empty", requiredEvidence: [] }]),
+    /must declare a done-condition/,
+  );
+  // The refusal is not a blanket ban: a step that DOES declare one is accepted.
+  assert.doesNotThrow(() => graph.defineSteps(T, [{ content: "declared", requiredEvidence: [DONE] }]));
+});
+
+test("I-7: restore rejects a persisted step without a done-condition", () => {
+  const graph = inProgressTask();
+  const [step] = graph.defineSteps(T, [{ content: "edit", requiredEvidence: [{ authority: "environment", subject: "step:s1" }] }]);
+  assert.ok(step !== undefined);
+  const persisted = graph.persistedState();
+  assert.throws(
+    () => TaskGraph.restore({
+      ...persisted,
+      steps: [{ ...step, requiredEvidence: [] }],
+    }),
+    /lacks a done-condition/,
+  );
+});
+
 test("native todo bridge mirrors decomposition into canonical steps without self-completing", () => {
   const graph = new TaskGraph([task()]);
   const application = new WorkflowApplication(graph, hostCapabilities({ transport: "native", authoritativePreMutation: true }));

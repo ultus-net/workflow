@@ -103,7 +103,7 @@ trip over.
 
 | Feature | Status | Notes |
 |---|---|---|
-| Compaction ↔ memory bridge (recall at start, flush on completion) | Complete | bounded (2k) provenance-tagged recall; outcome `lesson` records |
+| Compaction ↔ memory bridge (recall at start, flush on completion) | **Partial (corrected 2026-10-06; previously Complete)** | recall/flush engine + prompt formatter are built and unit-tested (`src/integrations/project-memory.ts:47-116`; `test/project-memory.test.ts`), but the only production composition lived in the removed `src/integrations/cline-runtime.ts` (W050 step 6), so no live surface wires it today — the client and formatter have no caller. Re-wiring is tracked by DRIFT-011 (`docs/COMPLIANCE_REGISTER.md`) |
 | Streamed logs reach the LLM | Never | logs/progress are UI-only by design |
 
 ## Honest Gaps
