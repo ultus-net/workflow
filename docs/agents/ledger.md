@@ -836,3 +836,54 @@ already partly covered (W188's own test pins the lane). Candidate 1 picked.
 - **next hypothesis:** the store now reflects only genuinely-open items; the
   next loop's `guard_review_followups` read is meaningful again.
 
+---
+
+## Task D — 2026-10-06 — gate the egress-security behavior in CI
+
+- **pain point:** the offline pool for campaign 3 is thin; a fresh survey found
+  the W178-W184 egress-security wave (the repo's security core) had its
+  behavioral pins run only in focused local runs, not in the Tier-B merge gate.
+  This is the LESS-0068 class — "a pin not in the curated set is not a gate" —
+  at the layer where it matters most.
+- **selection:** `test:ci` enumerated 30 suites; the only security entry was
+  `security-assurance` (an honesty-doc pin, not a behavior pin). Measured the
+  304-file test tree against the enumerated set: 274 outside, by design. The
+  actionable subset is the egress/credential behavior suites.
+- **hypothesis (falsifiable):** the egress/credential behavior suites are
+  (a) absent from `test:ci`, (b) CI-safe (no PTY/agent/hub-daemon, no network,
+  no new precondition), and (c) green. All three held.
+- **trace evidence:** `grep` of package.json showed no egress/credential suite
+  enumerated except `security-assurance`. Focused runs (pre-change): all 14
+  pass; combined 161 tests, 160 pass, 1 skipped (an unbuilt-toolbox arm), 0
+  fail; wall 2.24s. External-host grep of the eight egress suites resolves only
+  to loopback / `example.com` / an `openrouter.ai` URL string (never fetched —
+  the gate refuses before forwarding). The
+  keyring precondition docs/CI.md records already serves `e2e-admin` (in CI);
+  no new setup step.
+- **code change:** `package.json` `test:ci` gains 14 enumerated suites
+  (`egress-policy`, `egress-policy-file`, `egress-policy-revisions`,
+  `egress-credential`, `egress-binding`, `egress-forward-proxy`,
+  `egress-audit-client`, `hub-egress-approvals`, `model-usage-proxy`,
+  `opencode-server-egress-wiring`, `credentials`, `credential-config`,
+  `credential-mcp`, `operator-ask-hold`). `docs/CI.md` §7 gains a dated
+  additions record and its stale "27 suites" count is scoped to the W155
+  landing (W185/W186/W188 already took it to 30). No `src/` or `test/` change.
+- **commit SHA:** (pending, this branch)
+- **git tree / base:** `origin/main@278e933b`; worktree `.worktrees/w132-active-block`
+- **exact command/config:** the combined `node --import tsx --test` run above;
+  `npm run lint`; `npm run typecheck`; and the doc-pin suites
+  `text-hygiene` 9/9, `security-assurance` 7/7, `contracts` 5/5,
+  `dependabot-lane` 1/1, `workflow-action-pins` 2/2.
+- **test results:** 161 tests / 160 pass / 1 skip / 0 fail; lint 0; typecheck 0.
+  JSON validates: 44 enumerated suites, none missing, no duplicates.
+- **score:** gain. The egress gate-1/gate-2/policy/proxy behavior pins now
+  block a merge, closing the LESS-0068 gap for the security wave.
+- **losses/exceptions:** CI budget grows ~2.2s locally; the full enumerated set
+  in CI also needs the toolbox build (unchanged preconditions). The egress-wave
+  PRs' own focused runs remain the historical verification; this makes the pins
+  durable, not new. Acknowledged: probe-only or PTY-spawning suites stay Tier C
+  by the curation rule — only pure offline suites were added.
+- **keep/revert:** keep.
+- **next hypothesis:** backfill the last missing closed-issue W-fragment (W147,
+  #145); a different change-type, so the diversity brake permits it next.
+
