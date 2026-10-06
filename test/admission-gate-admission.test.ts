@@ -123,3 +123,41 @@ test("I-9 ordered path: a not-IN_PROGRESS postcondition step reports the kernel'
     assert.match(result.reason, /from PENDING/);
   }
 });
+
+test("I-9 schema rung: an empty-subject postcondition is refused as malformed before any re-query IO", (context) => {
+  const { application } = setup(context);
+  // A vacuous claim (no subjects) confirms nothing, so the schema rung refuses
+  // it by code rather than letting the state-diff gate pass an empty observation.
+  const [step] = application.defineTaskSteps(T, [
+    { content: "vacuous claim", requiredEvidence: [DONE], requiredPostcondition: { subjects: [] } },
+  ]);
+  assert.ok(step !== undefined);
+  assert.equal(application.startTaskStep(step.id).kind, "accepted");
+  recordDone(application, "vacuous");
+
+  const result = application.completeStepWithRequery(step.id);
+  assert.equal(result.kind, "rejected");
+  if (result.kind === "rejected") {
+    assert.equal(result.code, "STEP_POSTCONDITION_MALFORMED");
+    assert.match(result.reason, /at least one subject/);
+  }
+  assert.equal(application.taskSteps(T)[0]?.state, "IN_PROGRESS");
+});
+
+test("I-9 schema rung: a postcondition subject with an empty path/fingerprint is refused as malformed", (context) => {
+  const { application } = setup(context);
+  const [step] = application.defineTaskSteps(T, [
+    { content: "blank subject", requiredEvidence: [DONE], requiredPostcondition: { subjects: [{ path: "  ", expectedFingerprint: "sha-declared" }] } },
+  ]);
+  assert.ok(step !== undefined);
+  assert.equal(application.startTaskStep(step.id).kind, "accepted");
+  recordDone(application, "blank");
+
+  const result = application.completeStepWithRequery(step.id);
+  assert.equal(result.kind, "rejected");
+  if (result.kind === "rejected") {
+    assert.equal(result.code, "STEP_POSTCONDITION_MALFORMED");
+    assert.match(result.reason, /non-empty path and expectedFingerprint/);
+  }
+  assert.equal(application.taskSteps(T)[0]?.state, "IN_PROGRESS");
+});
