@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isEntrypoint } from "./entrypoint.js";
 import { globalOpencodeBinary } from "../integrations/opencode-agent-config.js";
 import {
   opencodeServerDiscoveryPath,
@@ -261,7 +262,7 @@ export function terminateProcessGroup(pid: number | undefined): void {
   }
 }
 
-const invokedDirectly = process.argv[1] !== undefined && /opencode-attach\.[cm]?[jt]s$/.test(process.argv[1]);
+const invokedDirectly = isEntrypoint(import.meta.url, process.argv[1]);
 if (invokedDirectly) {
   main().catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

@@ -123,6 +123,15 @@ passed, not that "the tests passed".
   `credential-mcp`, and `operator-ask-hold` (161 tests; the sole skip is an
   unbuilt-toolbox arm that the evidence job's build satisfies). No new CI
   precondition is introduced: the keyring setup already served `e2e-admin`.
+  **2026-10-09 — gate the control-plane deploy path:** the image the Azure
+  instance pins by digest had no executable pins (its first real build found
+  six defects plus an unguarded `.gitignore`; `docs/ledger/control-plane-c1-composition.md`). Two offline
+  suites are added: `control-plane-dockerfile` (the `src`-flatten `TS18003`,
+  the `/tmp/opencode` `EEXIST`, the pnpm no-TTY toolbox skip, the missing
+  `npm link` CMD resolution, the nested-`node_modules` context, and the
+  un-ignored 198 MB vendor binary) and
+  `cli-entrypoint` (the symlinked-`bin` entrypoint guard that silently
+  no-op'd the daemons — `src/cli/entrypoint.ts`). The set goes 44 to 46 suites.
 - `release-gate.yml`: deferred per decision 2.
 - Branch protection: the operator flips the required-checks toggle in GitHub
   settings to name `gate` and `evidence` (CI defines the check names; the

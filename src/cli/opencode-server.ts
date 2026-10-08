@@ -27,6 +27,7 @@ import { createSessionCompactionMonitor } from "../integrations/opencode-server-
 import { HttpRemoteEngine } from "../integrations/remote-acp/engine.js";
 import { loadSettings } from "../integrations/workflow-settings.js";
 import { sessionBudgetFromEnv } from "../integrations/session-budget.js";
+import { isEntrypoint } from "./entrypoint.js";
 
 /**
  * W082: whether the daemon's hub-written server config composes the
@@ -367,7 +368,9 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   console.log("[metering]", JSON.stringify(runtime.usage()));
 }
 
-const invokedDirectly = process.argv[1] !== undefined && /opencode-server\.[cm]?[jt]s$/.test(process.argv[1]);
+// Symlink-aware: the installed `workflow-opencode-server` bin is a symlink, so
+// a lexical argv[1] compare no-ops the daemon (see entrypoint.ts).
+const invokedDirectly = isEntrypoint(import.meta.url, process.argv[1]);
 if (invokedDirectly) {
   main().catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

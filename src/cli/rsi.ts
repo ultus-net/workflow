@@ -2,8 +2,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
+import { isEntrypoint } from "./entrypoint.js";
 import { resolveHubDiscoveryPath } from "../integrations/workflow-hub.js";
 import type { SelfImprovementSpec } from "../integrations/self-improvement-registry.js";
 import { readHubDiscovery, type ResolvedHub } from "./hub-client.js";
@@ -172,7 +172,7 @@ async function main(): Promise<void> {
   }
 }
 
-const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+const invokedDirectly = isEntrypoint(import.meta.url, process.argv[1]);
 if (invokedDirectly) {
   await main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));

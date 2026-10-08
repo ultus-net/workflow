@@ -7,6 +7,10 @@ coverage/
 infra/c0/c0.env
 infra/c0/.deploy-tmp/
 infra/c0/image/opencode
+# The vendored stock opencode binary is attached to the tagged release and
+# downloaded into the build context by publish-image.yml; it is fetched per
+# publish, never committed (198 MB, dev-channel build, not publicly fetchable).
+images/control-plane/opencode
 *.pem
 *.key
 .DS_Store

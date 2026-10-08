@@ -35,6 +35,7 @@ import {
 
 import { createRemoteAcpAgent } from "../integrations/remote-acp/agent.js";
 import { HttpRemoteEngine } from "../integrations/remote-acp/engine.js";
+import { isEntrypoint } from "./entrypoint.js";
 
 interface CliArgs {
   readonly url?: string;
@@ -168,7 +169,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   });
 }
 
-const invokedDirectly = process.argv[1] !== undefined && /acp-remote\.[cm]?[jt]s$/.test(process.argv[1]);
+const invokedDirectly = isEntrypoint(import.meta.url, process.argv[1]);
 if (invokedDirectly) {
   main().catch((error: unknown) => {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { homedir } from "node:os";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
+import { isEntrypoint } from "./entrypoint.js";
 import { ensureDiscovery } from "./opencode-attach.js";
 import { openBrowser } from "./open-browser.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
@@ -121,7 +121,7 @@ export async function runWebLaunch(argv: readonly string[]): Promise<WebLaunchHa
   return { url: service.url, workspace, close: () => service.close() };
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+if (isEntrypoint(import.meta.url, process.argv[1])) {
   // The help guard lives inside runWebLaunch (the in-process dispatcher call
   // shares it); this block is a thin entry.
   await runWebLaunch(process.argv.slice(2));

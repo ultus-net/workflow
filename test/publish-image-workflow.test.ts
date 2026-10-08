@@ -234,3 +234,113 @@ test("W149: the verify step hashes the downloaded file against the committed pin
   assert.ok(block.includes("sha256sum -c opencode.sha256"), "the committed pin must be the comparison source");
   assert.ok(!block.includes("$BINARY_SHA256"), "the check must not depend on a download-step output it never wires");
 });
+
+const NORMALIZE_STEP_NAME = "Normalize the image reference (lowercase repository for GHCR)";
+const DOWNLOAD_STEP_NAME = "Download the qualified opencode release asset (fail closed)";
+
+interface EnvRun {
+  readonly status: number | null;
+  readonly stderr: string;
+  readonly env: Readonly<Record<string, string>>;
+}
+
+/** Read a key appended to a GITHUB_ENV file. */
+function parseEnvFile(text: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const line of text.split("\n")) {
+    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
+    if (match) out[match[1]!] = match[2]!;
+  }
+  return out;
+}
+
+/**
+ * W149: GHCR rejects an uppercase repository path, and `ultus-net/Workflow`
+ * carries one. The normalize step pipes GITHUB_REPOSITORY through
+ * `tr '[:upper:]' '[:lower:]'`; execute the real block to prove the
+ * transformation (a mixed-case repo becomes all-lowercase, and a newline in
+ * the value cannot inject extra GITHUB_ENV lines).
+ */
+function normalize(repository: string): EnvRun {
+  const workdir = mkdtempSync(join(tmpdir(), "w149-lower-"));
+  try {
+    const envFile = join(workdir, "github_env");
+    writeFileSync(envFile, "");
+    const scriptPath = join(workdir, "normalize.sh");
+    writeFileSync(scriptPath, runBlockForStep(NORMALIZE_STEP_NAME));
+    const result = spawnSync("bash", ["-e", scriptPath], {
+      cwd: workdir,
+      encoding: "utf8",
+      env: { ...process.env, GITHUB_REPOSITORY: repository, GITHUB_ENV: envFile },
+    });
+    return { status: result.status, stderr: result.stderr, env: parseEnvFile(readFileSync(envFile, "utf8")) };
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+}
+
+test("W149: the image reference is lowercased for GHCR", () => {
+  const result = normalize("ultus-net/Workflow");
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.env.IMAGE_REPOSITORY, "ultus-net/workflow", "GHCR requires a lowercase repository");
+});
+
+/**
+ * W149: the release must carry the qualified opencode binary as an asset. The
+ * download step shells `gh release download`; a stub `gh` lets us execute the
+ * real block for the fail-closed arms. `GITHUB_REPOSITORY` is GitHub-format
+ * constrained (alphanumeric-plus-dash/dot, per the workflow header), so the
+ * newline-injection class the tag-resolve step guards does not apply here.
+ *
+ * Arm `gh-exit` models gh returning nonzero (the realistic absent-asset case);
+ * arm `gh-empty-ok` models gh succeeding yet writing nothing, which the step's
+ * explicit presence check must still refuse.
+ */
+function downloadAsset(arm: "present" | "gh-exit" | "gh-empty-ok"): { readonly status: number | null; readonly stderr: string } {
+  const workdir = mkdtempSync(join(tmpdir(), "w149-dl-"));
+  try {
+    mkdirSync(join(workdir, "images", "control-plane"), { recursive: true });
+    const bin = join(workdir, "bin");
+    mkdirSync(bin);
+    const ghBody = [
+      "#!/usr/bin/env bash",
+      'dir="."',
+      'while [ "$#" -gt 0 ]; do',
+      '  if [ "$1" = "--dir" ]; then dir="$2"; shift 2; continue; fi',
+      "  shift",
+      "done",
+      arm === "present" ? 'printf "qualified\\n" > "$dir/opencode"' : "",
+      arm === "gh-exit" ? "exit 1" : "exit 0",
+    ].join("\n");
+    writeFileSync(join(bin, "gh"), `${ghBody}\n`);
+    chmodSync(join(bin, "gh"), 0o755);
+    const scriptPath = join(workdir, "download.sh");
+    writeFileSync(scriptPath, runBlockForStep(DOWNLOAD_STEP_NAME));
+    const result = spawnSync("bash", ["-e", scriptPath], {
+      cwd: workdir,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, GH_TOKEN: "t", RELEASE_TAG: "v2.0.10", GITHUB_REPOSITORY: "ultus-net/workflow" },
+    });
+    return { status: result.status, stderr: result.stderr };
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+}
+
+test("W149: the download step passes when the release carries the opencode asset", () => {
+  const result = downloadAsset("present");
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("W149: the download step fails closed when gh returns nonzero (no asset)", () => {
+  const result = downloadAsset("gh-exit");
+  assert.notEqual(result.status, 0, "a release without the asset must fail the build");
+});
+
+test("W149: the download step fails closed when gh succeeds but writes no artifact", () => {
+  const result = downloadAsset("gh-empty-ok");
+  assert.notEqual(result.status, 0, "a missing artifact must fail the build even if gh exits 0");
+  assert.match(result.stderr, /::error::/, "the explicit presence check must emit a clear ::error::");
+});
+
+
