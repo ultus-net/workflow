@@ -201,6 +201,12 @@ test("W071 gateway: unauthenticated and wrong-password clients are rejected", as
 
   assert.equal((await fetch(gateway.url + "/health")).status, 401);
   assert.equal((await fetch(gateway.url + "/health", { headers: { authorization: basic("opencode", "nope") } })).status, 401);
+
+  // A browser only prompts for Basic auth when the 401 carries a challenge;
+  // without it the web UI renders the bare JSON error. Pin the header and the
+  // stock-opencode realm so a regression fails here, not in a browser.
+  const denied = await fetch(gateway.url + "/health");
+  assert.equal(denied.headers.get("www-authenticate"), 'Basic realm="Secure Area"');
 });
 
 test("W071 gateway: the TUI password reaches the upstream, and gzipped JSON survives", async (t) => {
