@@ -54,6 +54,24 @@ export class WorkerEvidenceError extends Error {
   }
 }
 
+/**
+ * A malformed ingest REQUEST (e.g. an unsafe taskId) — a client fault, distinct
+ * from a transport fault. A dedicated class so the route classifies a 400 by
+ * type, not by message-string inspection (the `AzureJobMessageError` discipline
+ * on the enqueue side).
+ */
+export class DispatchRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DispatchRequestError";
+  }
+}
+
+/** The route's fault classifier for a malformed ingest request. */
+export function isDispatchRequestError(error: unknown): error is DispatchRequestError {
+  return error instanceof DispatchRequestError;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -146,7 +164,7 @@ export interface DispatchRecordRegistry {
   records(): readonly DispatchRecord[];
 }
 
-/** The registry bound: keeps a long-lived hub from growing without limit. */
+/** The registry bound: keeps a long-lived hub from growing without limit. Both the lookup map and the two journals are bounded to this size. */
 export const DISPATCH_JOURNAL_LIMIT = 64;
 
 export function createDispatchRecordRegistry(): DispatchRecordRegistry {
@@ -155,7 +173,18 @@ export function createDispatchRecordRegistry(): DispatchRecordRegistry {
   const outcomeJournal: DispatchValidationOutcome[] = [];
   return {
     record(record) {
+      // Re-insert so a re-recorded task moves to the freshest position (Map
+      // iteration is insertion-order), matching the journal's oldest-first
+      // eviction.
+      byTask.delete(record.taskId);
       byTask.set(record.taskId, record);
+      // Bound the primary lookup too: an evicted task validates as "unknown"
+      // (honest), matching the journal's oldest-first eviction.
+      while (byTask.size > DISPATCH_JOURNAL_LIMIT) {
+        const oldest = byTask.keys().next().value;
+        if (oldest === undefined) break;
+        byTask.delete(oldest);
+      }
       journal.push(record);
       while (journal.length > DISPATCH_JOURNAL_LIMIT) journal.shift();
     },
@@ -208,7 +237,7 @@ export function createAzureJobsIngest(options: AzureJobsIngestOptions): Validate
 
   async function read(taskId: string): Promise<DispatchValidationOutcome> {
     if (!SAFE_SEGMENT.test(taskId)) {
-      throw new Error(`invalid dispatch validation request: taskId must be a safe path segment`);
+      throw new DispatchRequestError(`invalid dispatch validation request: taskId must be a safe path segment`);
     }
     const record = options.registry.get(taskId);
     if (record === undefined) return { taskId, status: "unknown" };

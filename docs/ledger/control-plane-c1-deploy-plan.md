@@ -803,9 +803,9 @@ path; recorded in `docs/ledger/control-plane-c1-dispatch-seam.md`).
 - **Registry-as-denominator (recorded):** the hub records the declaration at
   enqueue and the ingest checks the blob against it — the alternative (client
   supplies expectations) would let the caller self-satisfy the check.
-- Evidence: `azure-jobs-record` + `azure-jobs-hub-route` → 27/27; wider focused
-  set 57/57; `npm run typecheck` exit 0; `npm run lint` exit 0; `test:ci`
-  53 → 54 suites.
+- Evidence: `azure-jobs-record` + `azure-jobs-hub-route` → 29/29; `worker-image`
+  18/18 (incl. the worker→hub evidence cross-pin); wider focused set 77/77;
+  `npm run typecheck` exit 0; `npm run lint` exit 0; `test:ci` 53 → 54 suites.
 - **Not live-verified:** the blob GET is pinned by an injected fetcher; the
   live e2e is task 6 (🛰). The record is in-memory (durability rides C2). The
   coverage check is name-set membership, not deep per-artifact verification.

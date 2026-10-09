@@ -19,19 +19,25 @@ not advance state."
     DECLARED (`declaredEvidence`, `corpusFingerprint`, the evidence blob path,
     the container, the message id). Without a hub-held record, a caller could
     self-satisfy its own coverage check; the record is written by the hub's own
-    enqueue wrapper, never supplied by the client. Two bounded (64) journals:
-    the dispatch records and the validation outcomes.
+    enqueue wrapper, never supplied by the client. Both the lookup map and the
+    two journals (dispatch records, validation outcomes) are bounded (64).
   - **`validateWorkerEvidence`** — the structural validator for the worker's
     returned evidence blob (the `images/worker/run.mjs` result record), the
-    hub-side intake that the image's own copy mirrors.
+    hub-side intake that the image's own copy mirrors. The shapes are pinned to
+    agree by a cross-suite test (`test/worker-image.test.ts` runs the blob the
+    worker actually uploads through this validator), so drift fails a test.
   - **`createAzureJobsIngest`** — the `validateDispatch(taskId)` closure.
     Resolves the hub record; an unknown id is `unknown` (fail-closed, never a
     fabricated pass); fetches the evidence blob (a 404 is `missing`); validates
-    it (`invalid`); checks the declared evidence is covered (`incomplete` names
-    the gap); checks the corpus fingerprint (`stale-corpus`); a nonzero worker
-    exit is `failed`; otherwise `covered`. Every RESOLVED outcome is journaled;
-    a non-404 transport fault THROWS so the route 5xx's. REST only, no Azure
-    SDK — the same shared Bearer chain as the enqueue client.
+    it (`invalid`); rejects a blob whose `taskId` disagrees with the requested
+    one (`invalid`, so a blob for task A cannot satisfy a validate for task B);
+    checks the declared evidence is covered (`incomplete` names the gap); checks
+    the corpus fingerprint (`stale-corpus`); a nonzero worker exit is `failed`;
+    otherwise `covered`. Every RESOLVED outcome is journaled; a non-404
+    transport fault THROWS so the route 5xx's. A malformed taskId raises the
+    typed `DispatchRequestError` (the route classifies the 400 by type, not by
+    message prefix). REST only, no Azure SDK — the same shared Bearer chain as
+    the enqueue client.
   - **`createRecordingEnqueue`** — wraps the enqueue closure so a SUCCESSFUL
     dispatch is recorded; a failed enqueue records nothing, and a malformed
     message keeps its `AzureJobMessageError` (the 400 classification).
@@ -56,10 +62,14 @@ discipline applied to the return leg.
 #### Verification (measured, this session)
 
 - `node --import tsx --test test/azure-jobs-record.test.ts
-  test/azure-jobs-hub-route.test.ts` → 27/27 (the record suite + the four new
-  route pins).
-- Wider focused set (the two suites + `azure-jobs-schema` + `azure-jobs-dispatch`
-  + `kernel-purity` + `text-hygiene` + `cli-entrypoint`) → 57/57.
+  test/azure-jobs-hub-route.test.ts` → 29/29 (the 20-pin record suite + the nine
+  hub-route pins, four of them the new validate route).
+- `node --import tsx --test test/worker-image.test.ts` → 18/18, including the
+  cross-suite pin that runs the worker's uploaded evidence blob through the
+  hub's `validateWorkerEvidence`.
+- Wider focused set (the three suites + `azure-jobs-schema` +
+  `azure-jobs-dispatch` + `kernel-purity` + `text-hygiene` + `cli-entrypoint`)
+  → 77/77.
 - `npm run typecheck`, `npm run lint` → exit 0.
 - `test:ci` grows by one suite: 53 → 54.
 

@@ -9,6 +9,7 @@ import {
   validateAzureJobMessage as validateHubMessage,
   validateAzureJobRefEnvelope as validateHubEnvelope,
 } from "../src/integrations/azure-jobs-schema.js";
+import { validateWorkerEvidence } from "../src/integrations/azure-jobs-record.js";
 import {
   fingerprintCorpus,
   gitAuthEnv,
@@ -427,11 +428,18 @@ test("worker main: renews visibility after pre-work checks and deletes with the 
   const dequeueXml = `<?xml version="1.0"?><QueueMessagesList><QueueMessage><MessageId>mid-1</MessageId><PopReceipt>receipt-1</PopReceipt><MessageText>${Buffer.from(JSON.stringify(message)).toString("base64")}</MessageText></QueueMessage></QueueMessagesList>`;
   const renewXml = `<?xml version="1.0"?><QueueMessage><PopReceipt>receipt-2</PopReceipt></QueueMessage>`;
   const seen: string[] = [];
+  let evidenceBody: string | undefined;
   const fetcher = async (url: string, init?: RequestInit) => {
     seen.push(`${init?.method ?? "GET"} ${url}`);
     if (url.includes("oauth2/token")) return new Response(JSON.stringify({ access_token: "t", expires_in: 3600 }), { status: 200 });
     if (url.includes("vault.azure.net")) return new Response(JSON.stringify({ value: "secret-value" }), { status: 200 });
     if (url.includes("/messages?visibilitytimeout=")) return new Response(dequeueXml, { status: 200 });
+    // The evidence blob PUT (to the container) — capture the body so the test
+    // can prove the hub's intake accepts exactly what the worker writes.
+    if (init?.method === "PUT" && url.includes("/evidence/runs/")) {
+      evidenceBody = typeof init.body === "string" ? init.body : String(init.body);
+      return new Response("", { status: 201 });
+    }
     if (init?.method === "PUT") return new Response(renewXml, { status: 200 });
     if (init?.method === "DELETE") return new Response(null, { status: 200 });
     return new Response("", { status: 200 }); // blob
@@ -464,4 +472,14 @@ test("worker main: renews visibility after pre-work checks and deletes with the 
   const deleteCall = seen.find((entry) => entry.startsWith("DELETE "));
   assert.ok(putIndex >= 0, "visibility must be renewed with the dequeue receipt");
   assert.ok(deleteCall !== undefined && deleteCall.includes("popreceipt=receipt-2"), "delete must use the renewed receipt");
+  // Cross-suite pin (C1 task 4 return leg): the evidence blob the worker
+  // actually uploads must pass the hub's intake validator. A drift between
+  // images/worker/run.mjs's evidence literal and
+  // src/integrations/azure-jobs-record.ts's validateWorkerEvidence fails here.
+  assert.ok(evidenceBody !== undefined, "the worker must upload an evidence blob");
+  const parsedEvidence = validateWorkerEvidence(JSON.parse(evidenceBody));
+  assert.equal(parsedEvidence.taskId, "task-1");
+  assert.equal(parsedEvidence.specVersion, 1);
+  assert.deepEqual(parsedEvidence.declaredEvidence, ["tests"]);
+  assert.equal(parsedEvidence.corpusFingerprint, fingerprint);
 });

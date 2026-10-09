@@ -13,7 +13,7 @@ import type { ReviewProvenanceRecord } from "../review/provenance.js";
 import { DuplicateRunError, WorkspaceDeclarationError } from "./run-registry.js";
 import { isAzureJobMessageError } from "./azure-jobs-schema.js";
 import type { AzureJobDispatchFn } from "./azure-jobs-dispatch.js";
-import type { ValidateDispatchFn } from "./azure-jobs-record.js";
+import { isDispatchRequestError, type ValidateDispatchFn } from "./azure-jobs-record.js";
 import { shellExecutorFor, type WorkflowApplicationResolver, type WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import type { SelfImprovementRegistry, SelfImprovementSpec } from "./self-improvement-registry.js";
@@ -423,13 +423,11 @@ async function handleRequest(
         const outcome = await context.validateDispatch(body.taskId);
         return send(response, 200, { validation: outcome });
       } catch (error) {
-        // A malformed taskId is a client fault; a transport fault is not. The
-        // ingest closure throws a plain Error naming the taskId fault; a fetch
-        // transport failure is a TypeError. Distinguish by the message prefix so
-        // neither is misreported (mirrors the enqueue route's discipline).
-        if (error instanceof Error && error.message.startsWith("invalid dispatch validation request")) {
-          return send(response, 400, { error: error.message });
-        }
+        // A malformed taskId is a client fault (a dedicated error class, never a
+        // bare Error or `instanceof TypeError` — a Node fetch transport failure
+        // is itself a TypeError, so classifying on the prefix would misreport a
+        // network fault). Everything else propagates to the 500 path.
+        if (isDispatchRequestError(error)) return send(response, 400, { error: error.message });
         throw error;
       }
     }

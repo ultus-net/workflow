@@ -202,10 +202,12 @@ passed, not that "the tests passed".
   worker-evidence structural validator, the full outcome matrix
   (`unknown`/`missing`/`invalid`/`incomplete`/`stale-corpus`/`failed`/`covered`),
   the journaled-outcome rule, the Bearer GET to the recorded blob path, the
-  transport-fault throw, and the recording enqueue (records on success, nothing
-  on a failed enqueue, `AzureJobMessageError` preserved), and
-  `azure-jobs-hub-route` grows the validate route's token class + 404/400/5xx
-  semantics. The set goes 53 to 54 suites.
+  transport-fault throw, the taskId-match refusal, and the recording enqueue
+  (records on success, nothing on a failed enqueue, `AzureJobMessageError`
+  preserved); `azure-jobs-hub-route` grows the validate route's token class +
+  404/400/5xx semantics; `worker-image` gains the cross-suite pin that the
+  worker's uploaded evidence blob passes the hub's `validateWorkerEvidence`. The
+  set goes 53 to 54 suites.
 - `release-gate.yml`: deferred per decision 2.
 - Branch protection: the operator flips the required-checks toggle in GitHub
   settings to name `gate` and `evidence` (CI defines the check names; the

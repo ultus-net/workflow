@@ -5,6 +5,7 @@ import {
   createAzureJobsIngest,
   createDispatchRecordRegistry,
   createRecordingEnqueue,
+  isDispatchRequestError,
   validateWorkerEvidence,
   WorkerEvidenceError,
   type DispatchRecord,
@@ -87,6 +88,25 @@ test("azure-jobs-record: the record journal is bounded", () => {
   for (let index = 0; index < 70; index += 1) registry.record(record({ taskId: `task-${index}` }));
   assert.equal(registry.records().length, 64);
   assert.equal(registry.records()[0]?.taskId, "task-6", "the oldest are evicted first.");
+});
+
+test("azure-jobs-record: the lookup map is bounded too (an evicted task is 'unknown')", () => {
+  const registry = createDispatchRecordRegistry();
+  for (let index = 0; index < 70; index += 1) registry.record(record({ taskId: `task-${index}` }));
+  assert.equal(registry.get("task-0"), undefined, "the oldest lookup is evicted.");
+  assert.equal(registry.get("task-69")?.taskId, "task-69", "the newest is retained.");
+});
+
+test("azure-jobs-record: a re-recorded task moves to the freshest lookup position", () => {
+  const registry = createDispatchRecordRegistry();
+  for (let index = 0; index < 70; index += 1) registry.record(record({ taskId: `task-${index}` }));
+  // task-6 is the oldest surviving; re-recording it moves it to the freshest
+  // position, so the NEXT eviction (a new task grows the map past the bound)
+  // drops task-7, not task-6.
+  registry.record(record({ taskId: "task-6", messageId: "mid-fresh" }));
+  registry.record(record({ taskId: "task-70" }));
+  assert.equal(registry.get("task-6")?.messageId, "mid-fresh", "the re-recorded task survives.");
+  assert.equal(registry.get("task-7"), undefined, "task-7, not task-6, is now the oldest.");
 });
 
 test("azure-jobs-record: validateWorkerEvidence accepts a full record and rejects the faults", () => {
@@ -187,9 +207,15 @@ test("azure-jobs-record: a non-404 transport fault throws (the route 5xx's), nev
   await assert.rejects(() => validate("task-1"), /answered 503/);
 });
 
-test("azure-jobs-record: a malformed taskId is a named client fault", async () => {
+test("azure-jobs-record: a malformed taskId is a typed client fault", async () => {
   const { validate } = ingest(200, evidence());
-  await assert.rejects(() => validate("bad/segment"), /safe path segment/);
+  // A dedicated class so the route classifies a 400 by type, not by message
+  // prefix (a fetch transport failure is a TypeError, so prefix checks are
+  // fragile).
+  await assert.rejects(
+    () => validate("bad/segment"),
+    (error: unknown) => isDispatchRequestError(error) && /safe path segment/.test((error as Error).message),
+  );
 });
 
 test("azure-jobs-record: every resolved outcome is journaled", async () => {
