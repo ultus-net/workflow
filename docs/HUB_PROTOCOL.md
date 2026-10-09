@@ -211,6 +211,17 @@ the running surface is fully observable:
   values. Success returns `{ "dispatch": { "state": "queued", "taskId",
   "messageId", "viaBlobRef" } }`. Capability withheld (no `WORKFLOW_AZURE_JOBS=1`)
   → 404; a transport fault is a 5xx (never a fabricated success). Ordinary-token.
+- `POST /dispatch/azure-job/validate` — C1 deploy plan §2.c (the return leg):
+  the `validateDispatch(taskId)` evidence-ingest read path. The body is
+  `{ "taskId": "<id>" }`. The hub resolves its own dispatch record for the
+  task (written at enqueue — the coverage DENOMINATOR), fetches the worker's
+  evidence blob at the recorded `<blobPrefix>/<taskId>.json`, structurally
+  validates it, and checks the declared evidence is covered and the guard-corpus
+  fingerprint still matches. Returns
+  `{ "validation": { "taskId", "status": "covered"|"unknown"|"missing"|"invalid"|"incomplete"|"stale-corpus"|"failed", ... } }`
+  (no state transition; outcomes are journaled for observability). An unknown
+  taskId is `"unknown"`, never a fabricated pass; a missing taskId is a 400; a
+  transport fault is a 5xx. Ordinary-token. Capability withheld → 404.
 
 These are ordinary-token endpoints (except `/schedule/run-now`) and are
 versioned informally alongside the Workflow hub implementation, not as part of

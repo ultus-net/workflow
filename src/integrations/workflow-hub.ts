@@ -11,6 +11,7 @@ import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-c
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { createRunRegistry, type RunReviewerFactory, type RunTestRunner } from "./run-registry.js";
 import type { AzureJobDispatchFn } from "./azure-jobs-dispatch.js";
+import type { ValidateDispatchFn } from "./azure-jobs-record.js";
 import type { TaskUsageSummary } from "./task-usage.js";
 import type { HubScheduler } from "./hub-scheduler.js";
 import type { SelfImprovementRegistry } from "./self-improvement-registry.js";
@@ -183,6 +184,13 @@ export async function createWorkflowHub(
      * → the route 404s (capability withheld, fail closed).
      */
     dispatchAzureJob?: AzureJobDispatchFn;
+    /**
+     * C1 deploy plan §2.c (the return leg): the `validateDispatch(taskId)`
+     * evidence-ingest read path. When provided, the hub mounts
+     * POST /dispatch/azure-job/validate. Absent → the route 404s (capability
+     * withheld, fail closed).
+     */
+    validateDispatch?: ValidateDispatchFn;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -270,6 +278,7 @@ export async function createWorkflowHub(
         // POST /dispatch/azure-job. Present only when the instance configured
         // the dispatch env (the closure is built and validated at startup).
         ...(options.dispatchAzureJob === undefined ? {} : { dispatchAzureJob: options.dispatchAzureJob }),
+        ...(options.validateDispatch === undefined ? {} : { validateDispatch: options.validateDispatch }),
       },
     );
     options.observeBridgeStarted?.(bridge.url);

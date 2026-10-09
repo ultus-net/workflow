@@ -13,6 +13,7 @@ import type { ReviewProvenanceRecord } from "../review/provenance.js";
 import { DuplicateRunError, WorkspaceDeclarationError } from "./run-registry.js";
 import { isAzureJobMessageError } from "./azure-jobs-schema.js";
 import type { AzureJobDispatchFn } from "./azure-jobs-dispatch.js";
+import { isDispatchRequestError, type ValidateDispatchFn } from "./azure-jobs-record.js";
 import { shellExecutorFor, type WorkflowApplicationResolver, type WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import type { SelfImprovementRegistry, SelfImprovementSpec } from "./self-improvement-registry.js";
@@ -189,6 +190,12 @@ interface HubRequestContext {
    * structurally before enqueue and never returns credential material.
    */
   readonly dispatchAzureJob?: AzureJobDispatchFn;
+  /**
+   * C1 deploy plan §2.c (the return leg): the `validateDispatch(taskId)`
+   * evidence-ingest read path (see HubRequestContext). A FIELD on the
+   * capabilities object, never a positional. Absent → the route 404s.
+   */
+  readonly validateDispatch?: ValidateDispatchFn;
 }
 
 /**
@@ -240,6 +247,16 @@ export interface HubBridgeCapabilities {
    * the message structurally and enqueues; it never returns credential material.
    */
   readonly dispatchAzureJob?: AzureJobDispatchFn;
+  /**
+   * C1 deploy plan §2.c (the return leg): the `validateDispatch(taskId)` read
+   * path. When composed the hub serves the operator-token
+   * `POST /dispatch/azure-job/validate` route: it pulls the worker's evidence
+   * blob, checks the hub-recorded `declaredEvidence` coverage + the corpus
+   * fingerprint, and journals the outcome. Absent → the route 404s (capability
+   * withheld, fail closed). Never mutates task state; an unknown taskId is
+   * `unknown`, never a fabricated pass.
+   */
+  readonly validateDispatch?: ValidateDispatchFn;
 }
 
 /**
@@ -387,6 +404,30 @@ async function handleRequest(
         // transport fault) propagates to the 500 path — never a fabricated
         // success.
         if (isAzureJobMessageError(error)) return send(response, 400, { error: error.message });
+        throw error;
+      }
+    }
+    if (request.url === "/dispatch/azure-job/validate") {
+      // C1 deploy plan §2.c (the return leg): the `validateDispatch(taskId)`
+      // read path. Operator-token class (a deliberate operator read), no state
+      // transition — it pulls the worker's evidence blob, checks the
+      // hub-recorded declaredEvidence coverage + corpus fingerprint, and
+      // journals the outcome. Absent capability → 404 (withheld). A missing /
+      // malformed taskId is a 400; a transport fault propagates to the 500
+      // path (never a fabricated outcome).
+      if (context.validateDispatch === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body) || typeof body.taskId !== "string" || body.taskId.length === 0) {
+        return send(response, 400, { error: "invalid dispatch validation request: taskId is required" });
+      }
+      try {
+        const outcome = await context.validateDispatch(body.taskId);
+        return send(response, 200, { validation: outcome });
+      } catch (error) {
+        // A malformed taskId is a client fault (a dedicated error class, never a
+        // bare Error or `instanceof TypeError` — a Node fetch transport failure
+        // is itself a TypeError, so classifying on the prefix would misreport a
+        // network fault). Everything else propagates to the 500 path.
+        if (isDispatchRequestError(error)) return send(response, 400, { error: error.message });
         throw error;
       }
     }

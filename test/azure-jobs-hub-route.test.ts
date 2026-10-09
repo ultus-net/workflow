@@ -177,3 +177,94 @@ test("hub /dispatch/azure-job: a transport fault is a 5xx, never a fabricated su
     await bridge.close();
   }
 });
+
+// C1 deploy plan §2.c (the return leg) — POST /dispatch/azure-job/validate.
+// Operator-token class; capability withheld -> 404; a missing taskId -> 400; a
+// resolved outcome -> 200 with the structured validation; a transport fault
+// propagates (5xx, never a fabricated outcome).
+
+test("hub /dispatch/azure-job/validate: capability withheld -> 404", async () => {
+  const bridge = await createWorkflowHubBridge(applicationFixture());
+  try {
+    const response = await fetch(`${bridge.url}/dispatch/azure-job/validate`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bridge.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ taskId: "task-1" }),
+    });
+    assert.equal(response.status, 404);
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("hub /dispatch/azure-job/validate: operator-token class, 200 with the structured outcome", async () => {
+  const seen: string[] = [];
+  const bridge = await createWorkflowHubBridge(
+    applicationFixture(),
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    {
+      validateDispatch: async (taskId) => {
+        seen.push(taskId);
+        return { taskId, status: "covered", exitCode: 0 };
+      },
+    },
+  );
+  try {
+    const denied = await fetch(`${bridge.url}/dispatch/azure-job/validate`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${"f".repeat(64)}`, "content-type": "application/json" },
+      body: JSON.stringify({ taskId: "task-1" }),
+    });
+    assert.equal(denied.status, 401);
+    assert.equal(seen.length, 0, "an unauthorized request never reaches the closure");
+
+    const answered = await fetch(`${bridge.url}/dispatch/azure-job/validate`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bridge.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ taskId: "task-1" }),
+    });
+    assert.equal(answered.status, 200);
+    assert.deepEqual(await answered.json(), { validation: { taskId: "task-1", status: "covered", exitCode: 0 } });
+    assert.deepEqual(seen, ["task-1"]);
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("hub /dispatch/azure-job/validate: a missing taskId is a 400", async () => {
+  let called = false;
+  const bridge = await createWorkflowHubBridge(
+    applicationFixture(),
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    { validateDispatch: async () => { called = true; return { taskId: "x", status: "unknown" }; } },
+  );
+  try {
+    const response = await fetch(`${bridge.url}/dispatch/azure-job/validate`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bridge.token}`, "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(response.status, 400);
+    assert.equal(called, false, "a malformed request never reaches the closure");
+  } finally {
+    await bridge.close();
+  }
+});
+
+test("hub /dispatch/azure-job/validate: a transport fault is a 5xx, never a fabricated outcome", async () => {
+  const bridge = await createWorkflowHubBridge(
+    applicationFixture(),
+    undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+    { validateDispatch: async () => { throw new TypeError("fetch failed"); } },
+  );
+  try {
+    const response = await fetch(`${bridge.url}/dispatch/azure-job/validate`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${bridge.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ taskId: "task-1" }),
+    });
+    assert.ok(response.status >= 500, `expected a server fault, got ${response.status}`);
+  } finally {
+    await bridge.close();
+  }
+});

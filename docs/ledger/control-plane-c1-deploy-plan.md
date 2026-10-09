@@ -783,3 +783,30 @@ gateway health before attaching and classifies before acting.
 - **Not live-verified:** the `az`-backed deps and the real `containerapp
   update` are pinned by construction, not executed here (C1 live is task 3.1,
   🛰 `WORKFLOW_AZURE_PLANE_PROBE=1`). No "plane wakes in Azure" claim is made.
+
+### Task 4 return leg — dispatch record registry + `validateDispatch` ingest (DONE 2026-10-09)
+
+The task-4 residual "`validateDispatch(taskId)` result ingest" (plan §2.c read
+path; recorded in `docs/ledger/control-plane-c1-dispatch-seam.md`).
+
+- New `src/integrations/azure-jobs-record.ts`: the dispatch-record registry
+  (the hub-held coverage DENOMINATOR, written by the enqueue wrapper),
+  `validateWorkerEvidence` (the worker evidence-blob intake), the
+  `createAzureJobsIngest` closure (the outcome matrix `unknown`/`missing`/
+  `invalid`/`incomplete`/`stale-corpus`/`failed`/`covered`; every resolved
+  outcome journaled, a transport fault thrown), and `createRecordingEnqueue`.
+- Hub route `POST /dispatch/azure-job/validate` (`hub-http.ts` +
+  `workflow-hub.ts` + `cli/hub.ts`): operator-token; withheld → 404; missing
+  taskId → 400; a resolved outcome → 200; a transport fault → 5xx. The
+  composition root wraps the enqueue closure with the recorder (one registry,
+  both legs).
+- **Registry-as-denominator (recorded):** the hub records the declaration at
+  enqueue and the ingest checks the blob against it — the alternative (client
+  supplies expectations) would let the caller self-satisfy the check.
+- Evidence: `azure-jobs-record` + `azure-jobs-hub-route` → 30/30; `worker-image`
+  18/18 (incl. the worker→hub evidence cross-pin); wider focused set 78/78;
+  `npm run typecheck` exit 0; `npm run lint` exit 0; `test:ci` 53 → 54 suites.
+- **Not live-verified:** the blob GET is pinned by an injected fetcher; the
+  live e2e is task 6 (🛰). The record is in-memory (durability rides C2). The
+  coverage check is name-set membership, not deep per-artifact verification.
+  No live claim is made.
