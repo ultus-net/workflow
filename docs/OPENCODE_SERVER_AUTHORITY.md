@@ -415,3 +415,19 @@ guard). Credential note: the daemon's guard is composed without the hub's
 credential broker — inert today (the vendored guard consumes only HOME), and
 if `mcp:workflow-guard` credentials are ever configured the daemon must
 compose the broker like the hub does.
+
+## Addendum (2026-10-09, C1 deploy plan task 3.1 — the ingress-transport probe)
+
+The C1 Azure control plane moves this authority chain behind a public ACA
+ingress (the gateway front door, `0.0.0.0:4096`) rather than loopback. The
+route-class/permission matrix above is re-certified at the new transport by a
+new gated instrument, `test/c1-plane-probe.test.ts` (gate
+`WORKFLOW_AZURE_PLANE_PROBE=1`), mirroring this doc's M0/M1 probe discipline:
+unauthenticated reads are rejected at ingress (401), an authenticated
+`/api/info` succeeds, the client/upstream credential split holds, the broker
+SSE subscribes without forwarding, the route-class matrix is probed, and the
+discovery record reports `boundaryKind === "container-boundary"`. The 240s
+ingress-idle survival arm is a separate gate
+(`WORKFLOW_AZURE_PLANE_PROBE_IDLE=1`). Status: **PENDING (never run live)** —
+the instrument landing does not upgrade any claim here. A green earns only C1
+Partial (advisory); nothing in this probe is a pod-side `enforced` claim.

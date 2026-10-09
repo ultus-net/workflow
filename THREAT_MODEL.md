@@ -326,3 +326,44 @@ reachability and can wake a scaled-to-zero plane. One dated residual:
    "inside a real container/pod boundary", not an intra-pod OS boundary) is a
    separate C1 residual recorded at the docs-hygiene landing (task 12), not
    by this task.
+
+## 2026-10-09 — C1 delegated container boundary + job pod egress (task 12 docs hygiene)
+
+Two dated C1 residuals. Neither is a measured incident; both bound what the
+C1 deployment may claim. Triggering events landed: the delegated
+container-boundary backend (plan task 1) and the worker image (task 5).
+
+1. **Delegated container-boundary backend (C1).** On the Azure control-plane
+   lane the `enforced` marker means "the workload is inside a real
+   container/pod boundary" — NOT "an intra-pod OS boundary isolates the
+   contained `opencode serve` from the hub/proxy/toolbox". The delegated
+   backend (`src/containment/container-boundary.ts`, selected by
+   `WORKFLOW_CONTAINMENT_BACKEND=container-boundary`) reports
+   `boundaryKind: "container-boundary"`, distinct from local bubblewrap's
+   `boundaryKind: "bwrap"`. What is claimed: the contained serve runs inside
+   the ACA pod boundary and the marker discriminates the lane everywhere it is
+   reported (the discovery file, `ProcessContainment.boundaryKind`). What is
+   NOT claimed: an intra-pod OS boundary between same-pod processes —
+   same-pod agent tool processes share filesystem, network, and `/proc` with
+   the plane. Mitigations on record: the model key is memory-only
+   (`src/integrations/opencode-server-runtime.ts`), Key Vault secrets ride the
+   memory-only W156 seam, `USER node`, no ambient image credentials, a
+   disposable single-tenant pod, and intra-pod narrowing grants are
+   validated-but-delegated (the backend validates the request shape and then
+   delegates — it cannot enforce `readablePaths`/`writablePaths`/
+   `writableMountMode` intra-pod, and rejects `proxied`/`mediated`/
+   `read-write-no-delete` fail-closed). The ACA-ingress live probe that would
+   certify `container-boundary` over the wire (plan task 3.1,
+   `WORKFLOW_AZURE_PLANE_PROBE=1`) is UNRUN; the in-container loopback arm is
+   measured green.
+
+2. **Job pod egress is unfenced (P-track).** ACA does not give Workflow a
+   per-pod egress fence for the container-apps job fleet: pod →
+   storage/git/model endpoints is identity-gated (managed identity + Key Vault
+   refs), not network-gated. Same class as the recorded raw-socket residual
+   (W183), a different surface. What is NOT claimed: any network-level
+   confinement of a job pod's outbound connections. The P0 e2e
+   (`WORKFLOW_AZURE_JOBS_PROBE=1`, plan task 6) and the P1 fail-closed sweep
+   (task 7) are UNRUN, so no live posture is claimed for the fleet; the
+   interception story for a dispatched job is deliberately evidence + the
+   human merge gate, not enforcement (spec §6).

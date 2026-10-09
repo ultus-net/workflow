@@ -310,6 +310,48 @@ export function createWorkflowWebServer(
         return json(response, 400, { error: "invalid request body" });
       }
     }
+    if (request.method === "POST" && pathname === "/api/dispatch/azure-job") {
+      // C1 deploy plan §2.c (D1/D3): same-origin relay for the hub's
+      // operator-token `POST /dispatch/azure-job` enqueue route. The browser
+      // asks THIS service, which forwards the full task-spec message upstream;
+      // the hub validates it structurally (a malformed message is the hub's
+      // 400, passed through verbatim). The browser never holds a hub token.
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        if (typeof body !== "object" || body === null || Array.isArray(body)) {
+          return json(response, 400, { error: "invalid dispatch request: an azure job message is required" });
+        }
+        const result = await hubPost("/dispatch/azure-job", body);
+        return json(response, result.status, result.payload);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
+    if (request.method === "POST" && pathname === "/api/dispatch/azure-job/validate") {
+      // C1 deploy plan §2.c (the return leg): same-origin relay for the hub's
+      // operator-token `POST /dispatch/azure-job/validate` read path. Only a
+      // string taskId is required here; the hub's own verdict (unknown /
+      // missing / invalid / incomplete / stale-corpus / failed / covered) is
+      // passed through verbatim — never rewritten into a fabricated outcome.
+      if (!isTrustedMutation(request)) return json(response, 403, { error: "cross-origin mutation denied" });
+      if (!request.headers["content-type"]?.toLowerCase().startsWith("application/json")) {
+        return json(response, 415, { error: "content-type must be application/json" });
+      }
+      try {
+        const body = await readJson(request);
+        if (typeof body !== "object" || body === null || typeof (body as Record<string, unknown>).taskId !== "string") {
+          return json(response, 400, { error: "invalid dispatch validation request: taskId is required" });
+        }
+        const result = await hubPost("/dispatch/azure-job/validate", { taskId: (body as Record<string, unknown>).taskId });
+        return json(response, result.status, result.payload);
+      } catch {
+        return json(response, 400, { error: "invalid request body" });
+      }
+    }
     if (request.method === "POST" && pathname === "/api/evidence-content") {
       // W158: the strip's same-origin preview fetch — the browser asks THIS
       // service, which forwards the operator-token class upstream; the browser

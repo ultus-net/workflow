@@ -810,3 +810,46 @@ path; recorded in `docs/ledger/control-plane-c1-dispatch-seam.md`).
   live e2e is task 6 (🛰). The record is in-memory (durability rides C2). The
   coverage check is name-set membership, not deep per-artifact verification.
   No live claim is made.
+
+### Tasks 3.1 + 6 instruments landed (authored 2026-10-09; both UNRUN)
+
+The two gated live instruments the deploy plan needs exist now. Landing an
+instrument is not running it: both verdicts stay `pending` in
+`docs/PROBE_VERDICTS.json`, and no claim upgrades off an instrument that has
+never executed.
+
+- **Task 3.1 — `test/c1-plane-probe.test.ts`** (gate
+  `WORKFLOW_AZURE_PLANE_PROBE=1`). Reuses the shared pure
+  `qualifyOpenCodeV2Route` + `classifySseIdleHold` (no new logic). Arms:
+  unauthenticated reads rejected at ingress (401); authenticated `/api/info`;
+  client/upstream credential split; broker SSE liveness; the route-class
+  matrix (posture-independent invariants only — a deny-class is never
+  plain-forwarded by the qualifier, auth precedes classification at ingress;
+  no enforced-403 wire claim while C1 is advisory); and the discovery record's
+  `boundaryKind === "container-boundary"`. The 240s ingress-idle arm is gated
+  separately (`WORKFLOW_AZURE_PLANE_PROBE_IDLE=1`) so the default probe is not
+  taxed by the hold.
+- **Task 6 — `test/azure-jobs-probe.test.ts`** (gate
+  `WORKFLOW_AZURE_JOBS_PROBE=1`). Drives the real
+  `createAzureJobsDispatch` / `createRecordingEnqueue` / `createAzureJobsIngest`
+  seam end-to-end, including the unknown-taskId denominator arm.
+- **Enabling change — the discovery file surfaces `boundaryKind`.** Task 3.1
+  asserts the marker "in discovery", so the daemon now writes it:
+  `src/integrations/opencode-server-discovery.ts` adds the optional field (the
+  reader drops unknown values, fail-closed to "unreported");
+  `src/cli/opencode-server.ts` resolves `selectedContainment` once in plane
+  mode and writes the selected kind. Pinned by
+  `test/opencode-server-launcher.test.ts` (round-trip + unknown-kind drop).
+- **Browser relay for dispatch.** `src/ui/web.ts` gains same-origin
+  `POST /api/dispatch/azure-job` and `POST /api/dispatch/azure-job/validate`,
+  mirroring the board-delegate relay (same-origin + content-type gates; the
+  hub's verdict passes through verbatim, the browser never holds a hub token).
+  Pinned by `test/web-dispatch-relay.test.ts`.
+- **Anti-drift backfill:** four already-shipped gates present on `origin/main`
+  but absent from the register (`WORKFLOW_AFFINITY_MEASUREMENT`,
+  `WORKFLOW_OPENCODE_SERVER_METERED`, `WORKFLOW_OPENCODE_V2_VENDORS`,
+  `WORKFLOW_OPENCODE_V2_VENDORS_ACP`) were registered using their recorded
+  2026-09-30 verdicts, so `test/probe-verdict-register.test.ts` is green.
+- **Not live-verified:** neither probe has run against a real ACA plane or a
+  real job fleet. The C1 ceiling stays Partial (advisory); the job fleet stays
+  Planned. The first live run of each gate is the measurement.

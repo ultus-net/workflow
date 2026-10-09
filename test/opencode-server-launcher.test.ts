@@ -75,6 +75,34 @@ test("W071 discovery: round-trips and is written 0600", () => {
   }
 });
 
+test("C1 discovery: the boundaryKind round-trips and only known kinds are read", () => {
+  // The C1 live probe asserts `container-boundary` from this field, so a
+  // tampered/unknown kind must be dropped (fail-closed to "unreported"),
+  // never echoed into a discovery consumer as a boundary claim.
+  const dir = mkdtempSync(join(tmpdir(), "wf-disc-bk-"));
+  try {
+    const path = opencodeServerDiscoveryPath(dir, "/tmp/alpha");
+    writeOpencodeServerDiscovery(path, {
+      protocol: 1, pid: 42, workspace: "/tmp/alpha",
+      gatewayUrl: "http://127.0.0.1:5", tuiUsername: "opencode", tuiPassword: "secret",
+      version: "2.0.10", boundaryKind: "container-boundary",
+    });
+    assert.equal(readOpencodeServerDiscovery(path)?.boundaryKind, "container-boundary");
+    writeOpencodeServerDiscovery(path, {
+      protocol: 1, pid: 42, workspace: "/tmp/alpha",
+      gatewayUrl: "http://127.0.0.1:5", tuiUsername: "opencode", tuiPassword: "secret", boundaryKind: "bwrap",
+    });
+    assert.equal(readOpencodeServerDiscovery(path)?.boundaryKind, "bwrap");
+    writeFileSync(path, JSON.stringify({
+      protocol: 1, pid: 42, workspace: "/tmp/alpha",
+      gatewayUrl: "http://127.0.0.1:5", tuiUsername: "opencode", tuiPassword: "secret", boundaryKind: "made-up",
+    }));
+    assert.equal(readOpencodeServerDiscovery(path)?.boundaryKind, undefined, "an unknown kind must not be read as a boundary claim");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("W071 discovery: malformed entries are rejected", () => {
   const dir = mkdtempSync(join(tmpdir(), "wf-disc-bad-"));
   try {

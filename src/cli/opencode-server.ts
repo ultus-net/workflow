@@ -166,6 +166,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   // password rides the env, never argv (the daemon keeps secrets out of argv;
   // see the TUI-password P3 note in docs/OPENCODE_SERVER_AUTHORITY.md).
   const plane = process.env.WORKFLOW_PLANE === "1" ? resolvePlaneConfig(process.env, workspace) : undefined;
+  // C1: resolve the containment backend ONCE in plane mode so the selected
+  // boundary kind can be surfaced in the discovery file (the C1 live probe
+  // asserts `container-boundary` over the wire before any pod-side `enforced`
+  // label is claimed). Non-plane keeps the runtime's own bwrap default.
+  const selectedContainment = plane === undefined ? undefined : selectContainment();
   // W094: fail-closed composition — if the vendored guard cannot start, the
   // daemon refuses to run guard-less (the hub's "no hub, no mutations"
   // posture; a guardless authority issues permissive decisions no operator
@@ -203,7 +208,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       // env-selected backend (the delegated container boundary inside a pod).
       // Absent plane mode the runtime keeps its own bwrap default, so the
       // local daemon is byte-identical.
-      ...(plane === undefined ? {} : { containment: selectContainment() }),
+      ...(plane === undefined ? {} : { containment: selectedContainment }),
       ...(credentialEndpoints.length === 0 ? {} : { credentialEndpoints }),
       ...(payloadPolicy === undefined ? {} : { payloadPolicy }),
       // W082: the daemon carries the operator's autoCompact preference into the
@@ -341,6 +346,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     tuiUsername: runtime.username,
     tuiPassword: gateway.password,
     ...(runtime.version === undefined ? {} : { version: runtime.version }),
+    // C1: surface the contained serve's boundary kind so the live probe and any
+    // discovery consumer can discriminate the pod boundary from local bwrap.
+    // Absent on the ambient lane (selectedContainment is undefined there).
+    ...(selectedContainment?.boundaryKind === undefined ? {} : { boundaryKind: selectedContainment.boundaryKind }),
   });
   console.log(`Workflow OpenCode server gateway at ${gateway.url} for ${workspace}`);
   console.log(`Discovery file: ${discoveryPath}`);
