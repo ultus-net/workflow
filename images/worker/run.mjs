@@ -250,10 +250,10 @@ function storageAuthHeaders(token, extra = {}) {
 
 /**
  * Pulls ONE message from the queue with a visibility timeout, decoding the
- * base64 `<MessageText>` XML wrapper. Returns `{ raw, encoded, messageId,
- * popReceipt }` where `raw` is the UTF-8 JSON string and `encoded` is the
- * original base64 (needed to DELETE the message later, since Delete requires
- * the same popReceipt + the URL-encoded MessageText).
+ * base64 `<MessageText>` XML wrapper. Returns `{ raw, messageId, popReceipt }`
+ * where `raw` is the UTF-8 JSON string. The dequeue-time popReceipt is returned
+ * so the caller can renew/delete; note the receipt CHANGES on every Update, so
+ * a renewal's returned receipt must be the one used for delete.
  */
 export async function dequeue(queueUrl, token, visibilitySeconds, fetcher = fetch) {
   const url = `${queueUrl}/messages?visibilitytimeout=${visibilitySeconds}&numofmessages=1`;
@@ -265,7 +265,24 @@ export async function dequeue(queueUrl, token, visibilitySeconds, fetcher = fetc
   const encoded = /<MessageText>([^<]*)<\/MessageText>/.exec(xml)?.[1];
   if (messageId === undefined || popReceipt === undefined || encoded === undefined) return undefined; // empty queue
   const raw = Buffer.from(encoded, "base64").toString("utf8");
-  return { raw, encoded, messageId, popReceipt };
+  return { raw, messageId, popReceipt };
+}
+
+/**
+ * Extends a message's visibility (Update Message REST) and returns the NEW
+ * popReceipt. This is the concurrency guard: the dequeue-time visibility may
+ * expire before a long run finishes, after which the message is redeliverable
+ * (a second pod could run it) and the stale receipt is rejected on delete. The
+ * caller renews to cover `task.budgetSeconds` and uses the returned receipt.
+ */
+export async function renewMessage(queueUrl, token, messageId, popReceipt, visibilitySeconds, fetcher = fetch) {
+  const url = `${queueUrl}/messages/${encodeURIComponent(messageId)}?visibilitytimeout=${visibilitySeconds}&popreceipt=${encodeURIComponent(popReceipt)}`;
+  const response = await fetcher(url, { method: "PUT", headers: storageAuthHeaders(token) });
+  if (!response.ok) throw new Error(`azure worker: the queue answered ${response.status} on renew`);
+  const xml = await response.text();
+  const renewed = /<PopReceipt>([^<]*)<\/PopReceipt>/.exec(xml)?.[1];
+  if (renewed === undefined) throw new Error("azure worker: the queue renewal carried no PopReceipt");
+  return renewed;
 }
 
 /** Deletes a message by its id + popReceipt (the completion signal). */
@@ -349,24 +366,34 @@ export async function runOpencode({ cwd, prompt, modelId, modelEnv, budgetSecond
 }
 
 /** Clones `url`@`ref` into a fresh dir under `parent`, returning the checkout path. */
-export async function cloneCheckout({ parent, url, ref }) {
+export async function cloneCheckout({ parent, url, ref, authEnv = {} }) {
   const dir = mkdtempSync(join(parent, "checkout-"));
-  await execFileAsync("git", ["clone", "--no-checkout", url, dir]);
-  await execFileAsync("git", ["-C", dir, "checkout", ref]);
+  await execFileAsync("git", ["clone", "--no-checkout", url, dir], { env: { ...process.env, ...authEnv } });
+  await execFileAsync("git", ["-C", dir, "checkout", ref], { env: { ...process.env, ...authEnv } });
   return dir;
 }
 
 /**
- * Builds an https clone URL carrying a token for private repos, preserving the
- * original host/path. Non-https URLs are returned unchanged (the schema already
- * requires an https repo.url, so this is defense in depth).
+ * Builds the git auth environment for an https remote WITHOUT putting the
+ * token in argv or on disk. git is told to send an `Authorization: Basic`
+ * header via the `GIT_CONFIG_*` env-injection interface (git >= 2.31), scoped to
+ * the exact server origin. This is deliberately NOT a token-in-URL:
+ *   - a token in argv is visible in the process table and is echoed by git on
+ *     any failure (`fatal: unable to access 'https://x-access-token:<TOKEN>@...'`),
+ *     reaching the pod's stderr/Log Analytics (the review's P1);
+ *   - a token in the clone URL is persisted in `<checkout>/.git/config`, which
+ *     the untrusted agent (cwd = checkout) can read (the review's P2).
+ * With env-injected extraheader, git's error messages carry only the clean URL
+ * and nothing is written to `.git/config`.
  */
-export function authedCloneUrl(url, token) {
-  const parsed = new URL(url);
-  if (parsed.protocol !== "https:") return url;
-  parsed.username = "x-access-token";
-  parsed.password = token;
-  return parsed.toString();
+export function gitAuthEnv(repoUrl, token) {
+  const origin = new URL(repoUrl).origin;
+  const basic = Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
+  return {
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: `http.${origin}/.extraheader`,
+    GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}`,
+  };
 }
 
 /**
@@ -383,17 +410,20 @@ export function parseGithubRepo(url) {
 /**
  * Publishes the run's work: a branch + commit on the checkout, a push with the
  * materialized git credential, and (on GitHub) a PR. Returns the branch name and
- * the PR URL when one was opened. `token` is the git-push secret value; it is
- * injected into the push URL and never logged. Fail-closed: any git or API
- * non-success throws.
+ * the PR URL when one was opened. The credential is injected via
+ * `gitAuthEnv` (env-scoped extraheader), never in argv or on disk, so git error
+ * messages carry only the clean URL. Fail-closed: any git or API non-success
+ * throws with the token REDACTED from any message.
  */
 export async function publishResult({ checkout, taskId, baseRef, repoUrl, gitToken, title, fetcher = fetch }) {
   const branch = `workflow/${taskId}`;
+  const authEnv = gitAuthEnv(repoUrl, gitToken);
   const commitEnv = {
     GIT_AUTHOR_NAME: "workflow-worker",
     GIT_AUTHOR_EMAIL: "workflow-worker@users.noreply.github.com",
     GIT_COMMITTER_NAME: "workflow-worker",
     GIT_COMMITTER_EMAIL: "workflow-worker@users.noreply.github.com",
+    ...authEnv,
   };
   await execFileAsync("git", ["-C", checkout, "checkout", "-b", branch]);
   await execFileAsync("git", ["-C", checkout, "add", "-A"]);
@@ -401,9 +431,11 @@ export async function publishResult({ checkout, taskId, baseRef, repoUrl, gitTok
   // produces a reviewable branch rather than failing opaquely.
   await execFileAsync("git", ["-C", checkout, "commit", "--allow-empty", "-m", `workflow: ${taskId}`], { env: commitEnv });
   const repo = parseGithubRepo(repoUrl);
-  const host = repo === undefined ? new URL(repoUrl).host : "github.com";
-  const authedUrl = `https://x-access-token:${encodeURIComponent(gitToken)}@${host}${new URL(repoUrl).pathname}`;
-  await execFileAsync("git", ["-C", checkout, "push", authedUrl, `${branch}:${branch}`]);
+  try {
+    await execFileAsync("git", ["-C", checkout, "push", "origin", `${branch}:${branch}`], { env: { ...process.env, ...authEnv } });
+  } catch (error) {
+    throw new Error(`azure worker: git push failed: ${redactSecret(error, gitToken)}`, { cause: error });
+  }
   if (repo === undefined) return { branch };
   const response = await fetcher(`${repo.apiBase}/repos/${repo.owner}/${repo.repo}/pulls`, {
     method: "POST",
@@ -413,6 +445,20 @@ export async function publishResult({ checkout, taskId, baseRef, repoUrl, gitTok
   if (!response.ok) throw new Error(`azure worker: the PR API answered ${response.status}`);
   const body = await response.json();
   return { branch, prUrl: typeof body.html_url === "string" ? body.html_url : undefined };
+}
+
+/**
+ * Renders an error for logging with the secret value REMOVED. The token is
+ * never expected in an argv/URL in this module (it rides an env-scoped git
+ * extraheader), but a defense-in-depth scrub guarantees a future regression
+ * cannot leak it into job stderr/Log Analytics.
+ */
+export function redactSecret(error, secret) {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (typeof secret === "string" && secret.length > 0) {
+    return raw.split(secret).join("[REDACTED]");
+  }
+  return raw;
 }
 
 /**
@@ -434,6 +480,15 @@ export async function runWorkerTurn({ message, config, deps = {} }) {
   const corpus = verifyCorpus(corpusRoot, message.mcp.corpusFingerprint, fingerprintFile);
   log(`corpus verified (${corpus.fileCount} files, ${corpus.fingerprint})`);
 
+  // The model key is exposed to the child ONLY through the declared provider
+  // env var. FAIL CLOSED if no env var is mapped, BEFORE fetching a key we then
+  // never pass (a silent keyless run dressed as a real one).
+  if (config.modelEnvVar === undefined) {
+    throw new Error(
+      "azure worker: WORKFLOW_WORKER_MODEL_ENV_VAR is required to pass the model key to opencode (refusing to run keyless, fail-closed)",
+    );
+  }
+
   // 3. Materialize ONLY the named secrets, in memory.
   const storageToken = await getAccessToken(STORAGE_SCOPE, fetcher);
   const kvToken = await getAccessToken(KV_SCOPE, fetcher);
@@ -441,18 +496,19 @@ export async function runWorkerTurn({ message, config, deps = {} }) {
   log(`materialized secret ref '${message.model.secretRef}' (value not logged)`);
   const gitPushKey = await readKeyVaultSecret(config.vaultName, message.gitPush.secretRef, kvToken, fetcher);
   log(`materialized secret ref '${message.gitPush.secretRef}' (value not logged)`);
-  // The model key is exposed to the child ONLY through the declared provider
-  // env var; the git credential rides the clone + push URL (host/path preserved;
-  // never logged — the log names the unauthenticated URL).
-  const modelEnv = config.modelEnvVar ? { [config.modelEnvVar]: modelKey } : {};
+  const modelEnv = { [config.modelEnvVar]: modelKey };
+  // The git credential rides an env-scoped git extraheader (never argv, never
+  // on disk); git's own error text cannot echo it (the P1 fix).
+  const authEnv = gitAuthEnv(message.repo.url, gitPushKey);
 
-  // 4. Clone a disposable checkout (authenticated URL for private repos).
+  // 4. Clone a disposable checkout with the clean URL + auth env.
   const workParent = mkdtempSync(join(tmpdir(), "workflow-worker-"));
-  const checkout = await clone({
-    parent: workParent,
-    url: authedCloneUrl(message.repo.url, gitPushKey),
-    ref: message.repo.ref,
-  });
+  let checkout;
+  try {
+    checkout = await clone({ parent: workParent, url: message.repo.url, ref: message.repo.ref, authEnv });
+  } catch (error) {
+    throw new Error(`azure worker: git clone failed: ${redactSecret(error, gitPushKey)}`, { cause: error });
+  }
   log(`cloned ${message.repo.url}@${message.repo.ref}`);
 
   // 5. Run stock opencode headless with the wall-clock budget.
@@ -563,8 +619,21 @@ export async function main(env = process.env, deps = {}) {
     parsed = JSON.parse(body);
   }
   const message = validateAzureJobMessage(parsed);
+  // Renew visibility to cover the whole run budget BEFORE any work, so the
+  // dequeue-time timeout cannot expire mid-run (which would let a second pod
+  // redeliver the message) and the renewed receipt is valid for the delete.
+  // `task.budgetSeconds` + a small margin; Azure caps the renewal window, so a
+  // budget beyond the cap still relies on the pod finishing within it.
+  const renewedReceipt = await renewMessage(
+    config.queueUrl,
+    token,
+    pulled.messageId,
+    pulled.popReceipt,
+    message.task.budgetSeconds + 30,
+    fetcher,
+  );
   await runWorkerTurn({ message, config, deps });
-  await deleteMessage(config.queueUrl, token, pulled.messageId, pulled.popReceipt, fetcher);
+  await deleteMessage(config.queueUrl, token, pulled.messageId, renewedReceipt, fetcher);
 }
 
 // ── 7. Build-time fingerprint write + CLI dispatch ──────────────────────────

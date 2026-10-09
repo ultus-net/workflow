@@ -58,7 +58,7 @@ export interface WorkerDeps {
     budgetSeconds: number;
     opencodeBin?: string;
   }) => Promise<{ stdout: string; stderr: string; exitCode: number }>;
-  readonly clone?: (args: { parent: string; url: string; ref: string }) => Promise<string>;
+  readonly clone?: (args: { parent: string; url: string; ref: string; authEnv?: Record<string, string> }) => Promise<string>;
   readonly publish?: (args: {
     checkout: string;
     taskId: string;
@@ -81,7 +81,74 @@ export function fingerprintCorpus(appsRoot: string): CorpusFingerprint;
 export function readRecordedFingerprint(path: string): string;
 export function verifyCorpus(corpusAppsRoot: string, declared: string, fingerprintFile?: string): CorpusFingerprint;
 export function getAccessToken(scope: string, fetcher?: (url: string, init?: RequestInit) => Promise<Response>): Promise<string>;
+export function dequeue(
+  queueUrl: string,
+  token: string,
+  visibilitySeconds: number,
+  fetcher?: (url: string, init?: RequestInit) => Promise<Response>,
+): Promise<{ raw: string; messageId: string; popReceipt: string } | undefined>;
+export function renewMessage(
+  queueUrl: string,
+  token: string,
+  messageId: string,
+  popReceipt: string,
+  visibilitySeconds: number,
+  fetcher?: (url: string, init?: RequestInit) => Promise<Response>,
+): Promise<string>;
+export function deleteMessage(
+  queueUrl: string,
+  token: string,
+  messageId: string,
+  popReceipt: string,
+  fetcher?: (url: string, init?: RequestInit) => Promise<Response>,
+): Promise<void>;
+export function readBlob(
+  accountUrl: string,
+  container: string,
+  blobPath: string,
+  token: string,
+  fetcher?: (url: string, init?: RequestInit) => Promise<Response>,
+): Promise<string>;
+export function putBlob(
+  accountUrl: string,
+  container: string,
+  blobPath: string,
+  body: string,
+  token: string,
+  fetcher?: (url: string, init?: RequestInit) => Promise<Response>,
+): Promise<void>;
+export function readKeyVaultSecret(
+  vaultName: string,
+  secretRef: string,
+  token: string,
+  fetcher?: (url: string, init?: RequestInit) => Promise<Response>,
+): Promise<string>;
+export function runOpencode(args: {
+  cwd: string;
+  prompt: string;
+  modelId: string;
+  modelEnv: Record<string, string>;
+  budgetSeconds: number;
+  opencodeBin?: string;
+}): Promise<{ stdout: string; stderr: string; exitCode: number }>;
+export function cloneCheckout(args: {
+  parent: string;
+  url: string;
+  ref: string;
+  authEnv?: Record<string, string>;
+}): Promise<string>;
+export function gitAuthEnv(repoUrl: string, token: string): Record<string, string>;
 export function parseGithubRepo(url: string): { owner: string; repo: string; apiBase: string } | undefined;
+export function publishResult(args: {
+  checkout: string;
+  taskId: string;
+  baseRef: string;
+  repoUrl: string;
+  gitToken: string;
+  title?: string;
+  fetcher?: (url: string, init?: RequestInit) => Promise<Response>;
+}): Promise<{ branch: string; prUrl?: string }>;
+export function redactSecret(error: unknown, secret: string): string;
 export function workerConfigFromEnv(env?: Record<string, string | undefined>): WorkerConfig;
 export function runWorkerTurn(args: {
   message: AzureJobMessage;

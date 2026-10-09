@@ -82,15 +82,21 @@ digest) — stated plainly so no claim overreaches (spec §11:296-298).
 
 #### Verification (measured, this session)
 
-- `node --import tsx --test test/worker-image.test.ts` → 14/14.
+- `node --import tsx --test test/worker-image.test.ts` → 17/17 (14 initial
+  pins + 3 added in the review round).
+- Wider focused set (`worker-image` + the three task-4 suites +
+  `control-plane-dockerfile` + `kernel-purity` + `text-hygiene`) → 59/59.
 - `npm run typecheck`, `npm run lint` → exit 0.
 - **Build (measured, podman):** `podman build -f images/worker/Dockerfile -t
-  workflow-worker:c1 .` → **green**,
-  `baebab91b255eca8afbce41d2e9bc4addbc9d84816b788b674c5abca54ca3e17`. The
-  build's fingerprint step wrote `385b30eb36edeec1236c65b6cb6f73b9c966f09cdbf13ea09cd78ba4b8d02ad9`
-  (63 `.js` files) into `/opt/workflow/corpus-fingerprint`. The FIRST build
-  failed closed at that step on a wrong corpus-root default (`/opt/workflow/...`
-  where the toolbox is built at `/app/mcp-toolbox/apps`) — the correction is the
+  workflow-worker:c1 .` → **green**, rebuilt after the review fixes to
+  `de6a21ce2fc0802dcfc0e965f2926316b55e7ce00d67a19103002ff07fdf0789` (the first
+  green build of the pre-review script was
+  `baebab91b255eca8afbce41d2e9bc4addbc9d84816b788b674c5abca54ca3e17`). The
+  build's fingerprint step writes
+  `385b30eb36edeec1236c65b6cb6f73b9c966f09cdbf13ea09cd78ba4b8d02ad9` (63 `.js`
+  files) into `/opt/workflow/corpus-fingerprint`. The FIRST-ever build failed
+  closed at that step on a wrong corpus-root default (`/opt/workflow/...` where
+  the toolbox is built at `/app/mcp-toolbox/apps`) — the correction is the
   fail-closed behavior working, recorded so the fix is not mistaken for luck.
 - **In-container checks (measured):** `podman run --rm <image> cat
   /opt/workflow/corpus-fingerprint` → the recorded digest; a live recompute of
@@ -98,6 +104,41 @@ digest) — stated plainly so no claim overreaches (spec §11:296-298).
   recorded digest (`match true`); `podman run --rm <image>` with no config →
   exit **1** naming `WORKFLOW_AZURE_QUEUE_URL, WORKFLOW_KEYVAULT_NAME,
   WORKFLOW_AZURE_ACCOUNT_URL` (fail-closed).
+
+#### Independent review round (2026-10-09)
+
+Fresh-eyes review of the committed diff (`independent-reviewer-task5`). Verdict
+round 1: **REJECT** with one P1 + three P2 + four P3. All addressed before this
+fragment's "DONE":
+
+- **P1 (security) — git token could reach stderr.** The push/clone embedded the
+  token in the URL argv, which git echoes on failure (`fatal: ... x-access-token:<TOKEN>@...`),
+  reaching the pod's Log Analytics. Fixed: the credential now rides an
+  env-scoped `http.<origin>/.extraheader` (`gitAuthEnv`, git >= 2.31
+  `GIT_CONFIG_*` injection) — never argv, never on disk; git error text carries
+  only the clean URL. Belt-and-braces: `redactSecret` scrubs the token from any
+  clone/push error before it can be logged. Pinned by two tests.
+- **P2 — token persisted to `.git/config`.** A token-in-clone-URL is written to
+  `<checkout>/.git/config`, readable by the untrusted agent (cwd = checkout).
+  Fixed by the same `gitAuthEnv` change (the clean URL is what git stores).
+- **P2 — visibility timeout not coupled to `budgetSeconds`.** The dequeue-time
+  visibility (default 60s) could expire mid-run, letting a second pod redeliver
+  the message while the stale receipt fails its delete. Fixed: `renewMessage`
+  extends visibility to `budgetSeconds + 30` before any work and returns the
+  NEW popReceipt, which the delete uses.
+- **P2 — untrusted agent shares the pod MI.** `opencode run` inherits
+  `process.env` (MI endpoints), so the agent could fetch its own storage/KV
+  tokens. This is the recorded residual below (plan §6.1), not closable in task
+  5's file set; kept on the security axis explicitly.
+- **P3s fixed:** the `.d.mts` now declares every public export; the dead
+  `encoded` return + wrong comment on `dequeue` removed; an unmapped
+  `WORKFLOW_WORKER_MODEL_ENV_VAR` now refuses keyless (fail-closed) instead of
+  fetching a key it never passes; the schema-mirror test grew from six to twelve
+  reject classes (empty taskId, non-advisory posture, bad evidenceContainer,
+  non-integer/zero budget, empty fingerprint).
+
+Verdict round 2: **APPROVE** (recorded by the reviewer subagent against the
+fixed commit; all P0/P1 clear, P2s addressed or recorded).
 
 #### Residuals (recorded, not claimed)
 
@@ -108,9 +149,16 @@ digest) — stated plainly so no claim overreaches (spec §11:296-298).
 - **The P0 e2e's evidence-ingest path** (the hub reading the evidence blob and
   checking `declaredEvidence` coverage, `validateDispatch(taskId)`) is a later
   slice; task 5 only writes the blob.
-- **`gitEnv`/git-credential mechanics in `publishResult`** are proven
-  structurally, not live: the authenticated push URL + GitHub PR API are pinned
-  by the harness construction, but no live GitHub push happened in task 5 (the
-  live path is task 6). Recorded so the claim is bounded.
+- **The untrusted agent shares the pod managed identity** (the review's P2):
+  `opencode run` inherits `process.env`, including the IMDS endpoint, so the
+  agent can mint the pod's own storage/KV tokens and read the same secrets it
+  was given. The "secrets are memory-only" mitigation is therefore narrowed to
+  "not written to disk by the WORKER", not "unreachable by the agent". This is
+  plan §6.1's recorded residual (least-privilege RBAC on the worker MI is the
+  instance-side lever); restated here so no claim overreaches. A future slice
+  could scrub the MI endpoints from the child env.
+- **`gitAuthEnv`/`publishResult`** are proven structurally, not live: the
+  env-scoped extraheader + GitHub PR API are pinned by construction and unit
+  tests, but no live GitHub push happened in task 5 (the live path is task 6).
 - **Browser-verification-mcp is not in the worker manifest** (spec §11:299-303):
   it needs a browser runtime the worker image does not carry; the plane keeps it.

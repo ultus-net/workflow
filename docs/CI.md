@@ -177,8 +177,10 @@ passed, not that "the tests passed".
   contract (accept + six reject classes), the ref-envelope mirror, the corpus
   fingerprint's determinism/content-sensitivity, a missing/empty corpus refusal,
   the `verifyCorpus` declined-mismatch + image-tamper refusals, fail-closed
-  config classification, an empty-queue exit 0, and a corpus mismatch refusing
-  BEFORE any clone or run. The set goes 51 to 52 suites.
+  config classification, an empty-queue exit 0, a corpus mismatch refusing
+  BEFORE any clone or run, the git token riding an env-scoped extraheader (the
+  P1 review fix: never argv, never on disk), `redactSecret`, and an unmapped
+  model env var refusing keyless. The set goes 51 to 52 suites.
 - `release-gate.yml`: deferred per decision 2.
 - Branch protection: the operator flips the required-checks toggle in GitHub
   settings to name `gate` and `evidence` (CI defines the check names; the

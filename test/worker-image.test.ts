@@ -11,8 +11,10 @@ import {
 } from "../src/integrations/azure-jobs-schema.js";
 import {
   fingerprintCorpus,
+  gitAuthEnv,
   isRefEnvelope,
   main as workerMain,
+  redactSecret,
   runWorkerTurn,
   validateAzureJobMessage as validateWorkerMessage,
   validateRefEnvelope as validateWorkerEnvelope,
@@ -108,9 +110,15 @@ test("worker entry: the schema mirror agrees with the hub contract on accept + r
     ["unknown specVersion", { ...good, specVersion: 2 }],
     ["empty declaredEvidence", { ...good, task: { ...good.task, declaredEvidence: [] } }],
     ["enforced posture", { ...good, task: { ...good.task, permissionPosture: "enforced" } }],
+    ["non-advisory posture", { ...good, task: { ...good.task, permissionPosture: "mediated" } }],
     ["unsafe taskId", { ...good, taskId: "../escape" }],
+    ["empty taskId", { ...good, taskId: "  " }],
     ["non-https repo url", { ...good, repo: { ...good.repo, url: "git://x" } }],
     ["dot-segment blobPrefix", { ...good, artifacts: { ...good.artifacts, blobPrefix: "a/../b" } }],
+    ["invalid evidenceContainer", { ...good, artifacts: { ...good.artifacts, evidenceContainer: "Bad_Name" } }],
+    ["non-integer budgetSeconds", { ...good, task: { ...good.task, budgetSeconds: 1.5 } }],
+    ["zero budgetSeconds", { ...good, task: { ...good.task, budgetSeconds: 0 } }],
+    ["empty corpusFingerprint", { ...good, mcp: { ...good.mcp, corpusFingerprint: "" } }],
   ];
   for (const [name, value] of rejects) {
     const hub = (() => {
@@ -262,6 +270,27 @@ test("worker intake: an invalid config refuses before any network call", async (
   assert.equal(called, false, "a config fault must not reach the network");
 });
 
+test("git auth (P1 fix): the token rides an env-scoped extraheader, never argv or disk", () => {
+  const token = "ghs_supersecret_token_value";
+  const env = gitAuthEnv("https://github.com/o/r.git", token);
+  // The token is base64'd into GIT_CONFIG_VALUE_0 (Basic auth), scoped to the
+  // exact origin. It is NOT a URL credential (which git persists to
+  // .git/config and echoes in errors).
+  assert.equal(env.GIT_CONFIG_COUNT, "1");
+  assert.equal(env.GIT_CONFIG_KEY_0, "http.https://github.com/.extraheader");
+  assert.equal(env.GIT_CONFIG_VALUE_0, `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString("base64")}`);
+});
+
+test("redactSecret (P1 fix): the git token is removed from any error text", () => {
+  const token = "ghs_supersecret_token_value";
+  const error = new Error(`Command failed: git push https://x-access-token:${token}@github.com/o/r.git`);
+  const redacted = redactSecret(error, token);
+  assert.ok(!redacted.includes(token), "the token must be scrubbed");
+  assert.ok(redacted.includes("[REDACTED]"));
+  // A non-string/absent secret is a no-op, never a crash.
+  assert.equal(redactSecret(new Error("plain"), ""), "plain");
+});
+
 test("worker turn: a corpus mismatch refuses BEFORE any clone or run (fail-closed)", async () => {
   // The plan's task-5 acceptance: "corpus mismatch refuses". A run whose
   // declared fingerprint disagrees with the pod's verified corpus must abort
@@ -317,4 +346,61 @@ test("worker turn: a corpus mismatch refuses BEFORE any clone or run (fail-close
   }
   assert.equal(cloned, false, "a corpus mismatch must refuse before the clone");
   assert.equal(ran, false, "a corpus mismatch must refuse before the run");
+});
+
+test("worker turn: an unmapped model env var refuses keyless (fail-closed)", async () => {
+  // With a verified corpus but no WORKFLOW_WORKER_MODEL_ENV_VAR, the worker must
+  // refuse rather than fetch a key it never passes to opencode (a silent
+  // keyless run dressed as a real one).
+  const root = scratchCorpus({ "a/server.js": "console.log(1)" });
+  const { fingerprint } = fingerprintCorpus(root);
+  const recorded = join(root, "..", `recorded-keyless-${process.pid}.txt`);
+  writeFileSync(recorded, `${fingerprint}\n`);
+  const message = validateWorkerMessage({
+    specVersion: 1,
+    taskId: "task-1",
+    repo: { url: "https://github.com/o/r.git", ref: "main" },
+    gitPush: { secretRef: "git-push" },
+    model: { id: "openrouter/x", secretRef: "model-key" },
+    task: { message: "do it", declaredEvidence: ["tests"], budgetSeconds: 10, permissionPosture: "advisory" },
+    mcp: { manifest: [], corpusFingerprint: fingerprint },
+    artifacts: { evidenceContainer: "evidence", blobPrefix: "runs" },
+  });
+  const fetcher = async (url: string) => {
+    if (url.includes("oauth2/token")) return new Response(JSON.stringify({ access_token: "t", expires_in: 3600 }), { status: 200 });
+    if (url.includes("vault.azure.net")) return new Response(JSON.stringify({ value: "secret-value" }), { status: 200 });
+    return new Response("", { status: 200 });
+  };
+  let cloned = false;
+  try {
+    await assert.rejects(
+      () =>
+        runWorkerTurn({
+          message,
+          config: {
+            kind: "configured",
+            queueUrl: "https://a.queue.core.windows.net/queue",
+            vaultName: "kv",
+            accountUrl: "https://a.blob.core.windows.net",
+            visibilitySeconds: 60,
+            modelEnvVar: undefined,
+          },
+          deps: {
+            fetcher,
+            corpusRoot: root,
+            fingerprintFile: recorded,
+            log: () => {},
+            clone: async () => {
+              cloned = true;
+              return root;
+            },
+          },
+        }),
+      /refusing to run keyless/,
+    );
+  } finally {
+    rmSync(recorded, { force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+  assert.equal(cloned, false, "a keyless run must refuse before the clone");
 });
