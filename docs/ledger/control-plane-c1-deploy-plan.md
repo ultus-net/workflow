@@ -743,3 +743,42 @@ option was **not** needed (dropped to reduce surface).
 - **Still open (task 6, 🛰 live):** the P0 e2e (queue → pod → stock run →
   branch+PR + evidence blob). The hermetic tests prove the fail-closed seams,
   not a live run.
+
+### Task 2b — launcher plane-awareness (DONE 2026-10-09)
+
+Decided posture (spec §10:230-246, "rides C1"): the remote plane is
+always-on by posture, but can still be unreachable. The launcher probes
+gateway health before attaching and classifies before acting.
+
+- New `src/integrations/plane-wake.ts`: the pure classification table
+  (`classifyPlaneState` → `ready`/`asleep`/`broken`/`no-az`; reachability wins,
+  the `az` session gates the wake, scale-to-zero is the one wakeable state and
+  outranks a stopped running status), the honest `planeStateLine`, the bounded
+  `ensurePlaneReady` (prove-ready → classify → wake a proven-asleep plane →
+  bounded health poll; every path resolves to an outcome, never throws for a
+  transport fault), the fail-closed `resolvePlaneWakeTarget` (both ACA env vars
+  or neither), the `az`-backed deps (`account show` / `containerapp show` /
+  `containerapp update --min-replicas 1`; argument array, no shell), and the
+  `ensureExplicitPlaneReady` lane the launcher calls.
+- `src/cli/opencode-attach.ts`: the explicit-gateway lane now classifies via
+  `ensureExplicitPlaneReady` and fails closed with the honest state line for
+  any non-ready verdict (previously it attached unconditionally); the usage
+  text documents the plane + wake env vars.
+- **One-way rule kept:** the module names only env VARIABLE names
+  (`WORKFLOW_PLANE_ACA_RESOURCE_GROUP`, `WORKFLOW_PLANE_ACA_APP`); the instance
+  supplies the values.
+- New `test/plane-wake.test.ts` (15 pins): the classification table, the
+  scale-to-zero precedence, **no-az never polls (never hangs)**, a ready plane
+  never touches `az`, the wake-then-attach path, a wake that never becomes
+  healthy resolves `broken` (not thrown), a wake failure carries the az cause,
+  a throwing resource read is `broken` (never asleep), the env target's
+  fail-closed partial pair, the `az` JSON parse, the honest state lines, the
+  three explicit-lane behaviors, and a `main()` source-artifact pin (the
+  LESS-0004 precedent).
+- Evidence: `node --import tsx --test test/plane-wake.test.ts` → 15/15; with
+  `plane-supervisor` + `opencode-server-launcher` + `workflow-launcher` +
+  `kernel-purity` + `text-hygiene`, 64/64; `npm run typecheck` exit 0;
+  `npm run lint` exit 0.
+- **Not live-verified:** the `az`-backed deps and the real `containerapp
+  update` are pinned by construction, not executed here (C1 live is task 3.1,
+  🛰 `WORKFLOW_AZURE_PLANE_PROBE=1`). No "plane wakes in Azure" claim is made.

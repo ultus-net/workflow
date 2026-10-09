@@ -293,3 +293,36 @@ residuals and closures, stated precisely:
    budget pressure a loop can therefore spend slightly more than
    `budgetUsd` across its final iterations. Recorded, not solved
    (per-iteration ceilings are the box-5 gap).
+
+## 2026-10-09 — C1 launcher plane-awareness (task 2b)
+
+The C1 Azure control plane adds a remote plane lane: a gateway exposed through
+ACA ingress, and a launcher (`workflow-opencode`) that classifies plane
+reachability and can wake a scaled-to-zero plane. One dated residual:
+
+1. **The launcher's plane wake is an operator-authorized control-plane
+   mutation driven by ambient `az` credentials.** The explicit-gateway lane
+   (`src/integrations/plane-wake.ts`, wired in `src/cli/opencode-attach.ts`)
+   runs `az containerapp update --min-replicas 1` when it classifies the plane
+   `asleep`, using whatever credential the ambient `az` cli session holds.
+   What is claimed: the wake is attempted ONLY for a proven `minReplicas===0`
+   resource and ONLY with a live `az` session, and the classification is
+   fail-closed (a missing session is `no-az`, an unreadable resource is
+   `broken`, never `asleep`). What is not claimed: any authorization beyond
+   the ambient `az` session's own RBAC — a same-user process that can set the
+   ACA env vars (`WORKFLOW_PLANE_ACA_RESOURCE_GROUP`/`_APP`) and reach the
+   gateway URL can trigger the update, and the minimum-replica change has a
+   cost consequence the operator's RBAC, not Workflow, bounds. The wake is an
+   availability action, not an authority escalation: `minReplicas` 0→1 only.
+
+   This residual also covers the earlier-created explicit-gateway lane:
+   `WORKFLOW_OPENCODE_GATEWAY_URL`/`_PASSWORD` take precedence over loopback
+   discovery, so a same-user process that sets those env vars can point the
+   client at an arbitrary http(s) host with a chosen credential — a narrowing
+   from "only loopback is reachable locally" (plan §6 item 8, recorded here
+   rather than deferred).
+
+   The delegated container-boundary marker (plan §6 item 1: `enforced` means
+   "inside a real container/pod boundary", not an intra-pod OS boundary) is a
+   separate C1 residual recorded at the docs-hygiene landing (task 12), not
+   by this task.
