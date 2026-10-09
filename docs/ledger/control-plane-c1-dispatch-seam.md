@@ -73,5 +73,9 @@ records task 4's execution). Decisions D1 (dispatch owner = hub) and D3
 - **`validateDispatch(taskId)` result ingest** (the plan §2.c read path that
   pulls the evidence blob and checks `declaredEvidence` coverage) is a later
   task; only the enqueue path is built here.
+  **SUPERSEDED 2026-10-09:** the return leg is now built — see
+  `docs/ledger/control-plane-c1-dispatch-ingest.md` (the dispatch-record
+  registry + `validateDispatch` ingest + `POST /dispatch/azure-job/validate`).
+  Only the web relay + webapp view from the residual above remains.
 - The live e2e (queue message → job pod → stock `opencode run` → branch+PR +
   evidence blob) is task 6 (🛰 probe-gated); nothing live is claimed.
