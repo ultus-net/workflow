@@ -56,6 +56,15 @@ export interface OpencodeServerGatewayOptions {
   readonly observedRequest?: ((path: string) => void) | undefined;
   /** Observation hook for the event-stream keepalive timer (tests/monitors). */
   readonly observedKeepalive?: ((event: OpencodeSseKeepaliveEvent) => void) | undefined;
+  /**
+   * C1 plane bind. Defaults to an ephemeral loopback port (`127.0.0.1:0`) —
+   * byte-identical to the pre-C1 behavior. The plane supervisor sets
+   * `{ host: "0.0.0.0", port: 4096 }` so the gateway is the single ingress
+   * front door. A non-loopback host binds a public surface and must never be
+   * a silent default.
+   */
+  readonly host?: string | undefined;
+  readonly port?: number | undefined;
 }
 
 /**
@@ -120,9 +129,11 @@ export async function createOpencodeServerGateway(
       else response.destroy();
     });
   });
+  const host = options.host ?? "127.0.0.1";
+  const port = options.port ?? 0;
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => { server.off("error", reject); resolve(); });
+    server.listen(port, host, () => { server.off("error", reject); resolve(); });
   });
   const address = server.address();
   if (address === null || typeof address === "string") {
@@ -130,7 +141,10 @@ export async function createOpencodeServerGateway(
     throw new Error("OpenCode server gateway could not bind a loopback port");
   }
   return {
-    url: `http://127.0.0.1:${address.port}`,
+    // A non-loopback bind is advertised by its literal host so the plane can
+    // report the real front-door address; the loopback default keeps the
+    // historical `127.0.0.1:<port>` URL.
+    url: `http://${host === "0.0.0.0" || host === "::" ? "127.0.0.1" : host}:${address.port}`,
     password: options.tuiPassword,
     close: () => closeServer(server),
   };
