@@ -208,6 +208,15 @@ passed, not that "the tests passed".
   404/400/5xx semantics; `worker-image` gains the cross-suite pin that the
   worker's uploaded evidence blob passes the hub's `validateWorkerEvidence`. The
   set goes 53 to 54 suites.
+  **2026-10-09 (same day) — gate the C1 dispatch web relay:** the same-origin
+  browser relays for the hub's operator-token dispatch routes
+  (`src/ui/web.ts`: `POST /api/dispatch/azure-job` and
+  `/api/dispatch/azure-job/validate`) are added offline: `web-dispatch-relay`
+  pins that the browser never holds a hub token (a direct hub call is 401), the
+  full task-spec message forwards verbatim, only a string taskId reaches the
+  validate route, proxy-side shape guards 400 before any queue write,
+  cross-origin is 403 and a non-JSON content-type 415, a withheld capability is
+  404, and a missing hub is 503. The set goes 54 to 55 suites.
 - `release-gate.yml`: deferred per decision 2.
 - Branch protection: the operator flips the required-checks toggle in GitHub
   settings to name `gate` and `evidence` (CI defines the check names; the

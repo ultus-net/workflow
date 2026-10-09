@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-02",
+  "updated": "2026-10-09",
   "verdicts": [
     {
       "id": "acp-contained-egress-probe",
@@ -568,6 +568,93 @@
       "posture": "advisory",
       "evidence": "docs/HOST_ADAPTERS.md Vendor anthropic cache-marker probes; docs/P8_LIVE_RUN_RECIPE.md; docs/PARKED_AND_LIMITATIONS.md P8 row (L8); docs/ledger/p8-prefix-correction.md",
       "note": "DIRECT EVIDENCE 2026-09-30 (orchestrator-run, direct POST https://openrouter.ai/api/v1/messages carrying a ~4.8k-token system block with cache_control:{type:\"ephemeral\"}, two sequential turns with the same prefix; operator's OpenRouter key). moonshotai/kimi-k2.6 (served by Inceptron): turn 1 cache_creation_input_tokens null / cache_read_input_tokens 0; turn 2 null / read 4784. Field shape: these non-anthropic endpoints report cache_creation_input_tokens as null (no creation field) but DO surface cache_read_input_tokens, so accounting is observable as a nonzero cache READ on turn 2. This is the OpenRouter route, NOT direct-vendor (native) coverage. Verdict green/advisory: accepted AND provider-side cache accounted. Supersedes the retracted sub-minimum-prefix negative, whose 0/0 came from the single-request probe (creation field null there)."
+    },
+    {
+      "id": "opencode-server-metered",
+      "host": "opencode v2 (server/topology lane, metered route)",
+      "hostVersion": "2.0.10",
+      "probe": "test/opencode-server-metered-probe.test.ts",
+      "gate": "WORKFLOW_OPENCODE_SERVER_METERED",
+      "date": "2026-09-30",
+      "result": "green",
+      "posture": "advisory",
+      "evidence": "docs/ledger/opencode-v2-server-lane.md; test/opencode-server-metered-probe.test.ts header",
+      "note": "Live green 2026-09-30 (opencode v2.0.10): the version-aware daemon config routes a v2 HTTP session through the loopback metering proxy (v2 providers/package/settings shape, the built-in openrouter provider, the placeholder OPENROUTER_API_KEY activation with a cleared environment so the real key stays proxy-side) and the config model is honored for POST /api/session. ADVISORY: proves the metered route resolves and meters; no enforcement claim. This row was added 2026-10-09 to close an anti-drift gap (the gate existed unregistered); the verdict is the already-recorded 2026-09-30 live run, not a new measurement."
+    },
+    {
+      "id": "opencode-v2-vendors",
+      "host": "opencode v2 (open-source vendor lane, server topology)",
+      "hostVersion": "2.0.10",
+      "probe": "test/opencode-v2-vendors-probe.test.ts",
+      "gate": "WORKFLOW_OPENCODE_V2_VENDORS",
+      "date": "2026-09-30",
+      "result": "green",
+      "posture": "advisory",
+      "evidence": "docs/ledger/opencode-v2-vendors.md; test/opencode-v2-vendors-probe.test.ts header",
+      "note": "Live green 2026-09-30 (opencode v2.0.10): each open-source vendor rides its v2 BUILT-IN provider id, launched with only the vendor's placeholder env key, and the session ran on the built-in provider with the mock upstream receiving the placeholder bearer. ADVISORY: proves the vendor route resolves; no enforcement claim. Added 2026-10-09 to close an anti-drift gap; the verdict is the already-recorded 2026-09-30 live run."
+    },
+    {
+      "id": "opencode-v2-vendors-acp",
+      "host": "opencode v2 (open-source vendor lane, ACP subprocess client)",
+      "hostVersion": "2.0.10",
+      "probe": "test/opencode-v2-vendors-acp-probe.test.ts",
+      "gate": "WORKFLOW_OPENCODE_V2_VENDORS_ACP",
+      "date": "2026-09-30",
+      "result": "green",
+      "posture": "advisory",
+      "evidence": "docs/ledger/opencode-v2-acp-vendors.md; test/opencode-v2-vendors-acp-probe.test.ts header",
+      "note": "Live green 2026-09-30 (opencode v2.0.10): the ACP subprocess lane routes the open-source vendor picker/route to the vendor's built-in provider over the ACP client, the server-topology probe's sibling. ADVISORY: proves the vendor route resolves over ACP; no enforcement claim. Added 2026-10-09 to close an anti-drift gap; the verdict is the already-recorded 2026-09-30 live run."
+    },
+    {
+      "id": "affinity-measurement",
+      "host": "OpenCode via OpenRouter Auto Router (P11 affinity, issue #290)",
+      "hostVersion": "unqualified",
+      "probe": "test/affinity-measurement-probe.test.ts",
+      "gate": "WORKFLOW_AFFINITY_MEASUREMENT",
+      "date": "2026-09-30",
+      "result": "negative",
+      "posture": "advisory",
+      "evidence": "docs/ledger/P11-affinity-measurement.md; docs/P11_AFFINITY_MEASUREMENT_RECIPE.md",
+      "note": "P11 with/without-affinity cache-hit MEASUREMENT. First live run (2026-09-30) returned a NON-EFFECT for the observed 18-alias pool: the pinned arm served anthropic/claude-opus-5.5 (Azure) with 2 turns / 0 cache-create / 0 cache-read, and the dated re-run on the corrected OpenAI-lane instrument reproduced the same non-effect. Per recipe §5 the P11 row stays `unmeasured` (one observation is not a rate, scoped to this pool + this route) — hence negative/advisory, observability only, never a savings claim or an authority claim."
+    },
+    {
+      "id": "c1-plane-ingress",
+      "host": "Workflow C1 control plane (Azure Container Apps)",
+      "hostVersion": "unqualified",
+      "probe": "test/c1-plane-probe.test.ts",
+      "gate": "WORKFLOW_AZURE_PLANE_PROBE",
+      "date": "2026-10-09",
+      "result": "pending",
+      "posture": "unqualified",
+      "evidence": "docs/ledger/control-plane-c1-deploy-plan.md task 3.1; test/c1-plane-probe.test.ts header",
+      "blocker": "needs a deployed C1 plane behind ACA ingress plus the client credential; the transport has never been measured live",
+      "note": "Live C1 probe (deploy plan §4 task 3.1): unauthenticated 401, authenticated /api/info 200, client/upstream credential split, broker SSE subscription liveness, the gateway route-class matrix (auth precedes classification), and boundaryKind === container-boundary read from the in-pod discovery file. A green upgrades C1 to Partial (advisory) only: an enforced label for pods is withheld until the P2 model-key probe (task 8, spec §6:127-128). The 240s idle-survival arm is a SEPARATE gate (WORKFLOW_AZURE_PLANE_PROBE_IDLE); its survival decision is the pure classifySseIdleHold shared with the acp-remote-sse-idle arm."
+    },
+    {
+      "id": "c1-plane-idle",
+      "host": "Workflow C1 control plane (Azure Container Apps)",
+      "hostVersion": "unqualified",
+      "probe": "test/c1-plane-probe.test.ts",
+      "gate": "WORKFLOW_AZURE_PLANE_PROBE_IDLE",
+      "date": "2026-10-09",
+      "result": "pending",
+      "posture": "unqualified",
+      "evidence": "docs/ledger/control-plane-c1-deploy-plan.md task 3.1; infra/c0/README.md idle-survival gate (mirrored); test/c1-plane-probe.test.ts header",
+      "blocker": "needs the deployed C1 plane plus the client credential; the 240s no-event ingress-idle window has never been held live against the Workflow gateway",
+      "note": "Idle arm of test/c1-plane-probe.test.ts, gated separately so the default probe run is not taxed by a 4-minute hold. Holds ONE /api/event subscription through the full 240s ingress idle window and fails only on a drop or a silent resume; the survival decision is the pure classifySseIdleHold in src/integrations/probe-verdicts.ts, re-derived by the register. Transport liveness only — never an enforcement claim."
+    },
+    {
+      "id": "azure-jobs-p0",
+      "host": "Azure Container Apps job fleet (Shape-A worker)",
+      "hostVersion": "unqualified",
+      "probe": "test/azure-jobs-probe.test.ts",
+      "gate": "WORKFLOW_AZURE_JOBS_PROBE",
+      "date": "2026-10-09",
+      "result": "pending",
+      "posture": "unqualified",
+      "evidence": "docs/ledger/control-plane-c1-deploy-plan.md task 6; test/azure-jobs-probe.test.ts header",
+      "blocker": "needs the live queue + storage account, the worker image deployed, a throwaway git repo, the model + git push Key Vault refs, and the deployed corpus fingerprint; the e2e has never run live",
+      "note": "P0 e2e (deploy plan §4 task 6): one dispatch message -> job pod pulls it -> stock opencode run -> branch+PR + evidence blob, and the hub's validateDispatch reads the blob back as covered under the dispatched corpus fingerprint. Drives the REAL production dispatch/record/ingest seam, not a parallel copy. A green earns the P-track Partial status; pods stay advisory until the P2 model-key probe (task 8). Interception story is evidence + the human merge gate (spec §6:126-128)."
     }
   ]
 }

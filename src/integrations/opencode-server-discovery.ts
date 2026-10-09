@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+import type { BoundaryKind } from "../containment/contracts.js";
 import { opencodeServerWorkspaceTag } from "./opencode-server-runtime.js";
 import { probeOpencodeHealth } from "./opencode-health.js";
 
@@ -22,6 +23,15 @@ export interface OpencodeServerDiscovery {
   readonly tuiUsername: string;
   readonly tuiPassword: string;
   readonly version?: string;
+  /**
+   * C1: which containment boundary the daemon's contained `opencode serve`
+   * runs behind (`bwrap` locally, `container-boundary` in the ACA pod). Set
+   * only in plane mode; absent on the ambient loopback daemon, whose boundary
+   * is not a deploy claim. The C1 live probe asserts `container-boundary`
+   * over the wire before any pod-side `enforced` label is claimed (deploy
+   * plan §2.b/§4 task 3.1).
+   */
+  readonly boundaryKind?: BoundaryKind;
 }
 
 export function opencodeServerDiscoveryDir(home: string = homedir()): string {
@@ -55,6 +65,7 @@ export function readOpencodeServerDiscovery(path: string): OpencodeServerDiscove
       tuiUsername: value.tuiUsername,
       tuiPassword: value.tuiPassword,
       ...(typeof value.version === "string" ? { version: value.version } : {}),
+      ...(value.boundaryKind === "bwrap" || value.boundaryKind === "container-boundary" ? { boundaryKind: value.boundaryKind } : {}),
     };
   } catch {
     return undefined;
