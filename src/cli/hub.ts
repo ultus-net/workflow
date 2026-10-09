@@ -30,6 +30,12 @@ import { createProjectRegistry } from "../integrations/project-registry.js";
 import { createSelfImprovementRegistry } from "../integrations/self-improvement-registry.js";
 import { createEgressPolicyRevisionStore } from "../integrations/egress-policy-revisions.js";
 import { azureJobsDispatchFromEnv, createAzureJobsDispatch } from "../integrations/azure-jobs-dispatch.js";
+import {
+  createAzureJobsIngest,
+  createDispatchRecordRegistry,
+  createRecordingEnqueue,
+} from "../integrations/azure-jobs-record.js";
+import { validateAzureJobMessage } from "../integrations/azure-jobs-schema.js";
 import { loadEgressPolicyFile } from "../integrations/egress-policy-file.js";
 import { credentialBindingFingerprint, upstreamCredentialBinding } from "../integrations/egress-binding.js";
 import type { CredentialEndpoint } from "../integrations/credentials.js";
@@ -176,6 +182,25 @@ const azureJobsDispatch =
         evidenceContainer: azureJobsDispatchEnv.evidenceContainer,
       })
     : undefined;
+// C1 deploy plan §2.c (the return leg): the dispatch RECORD registry + the
+// `validateDispatch(taskId)` ingest closure. The registry holds what each
+// dispatched job declared (the coverage denominator), written by the recording
+// enqueue wrapper below. Absent when the capability is off → both routes 404.
+const dispatchRecordRegistry = azureJobsDispatchEnv.kind === "configured" ? createDispatchRecordRegistry() : undefined;
+const dispatchAzureJob = azureJobsDispatch === undefined || dispatchRecordRegistry === undefined
+  ? undefined
+  : createRecordingEnqueue({
+      registry: dispatchRecordRegistry,
+      enqueue: azureJobsDispatch.enqueue,
+      validate: (message) => validateAzureJobMessage(message),
+    });
+const validateDispatch = azureJobsDispatchEnv.kind === "configured" && dispatchRecordRegistry !== undefined
+  ? createAzureJobsIngest({
+      registry: dispatchRecordRegistry,
+      accountUrl: azureJobsDispatchEnv.accountUrl,
+      evidenceContainer: azureJobsDispatchEnv.evidenceContainer,
+    })
+  : undefined;
 // W184: the per-turn W180 payload policy, read FRESH at each runtime composition
 // so a revision merged by the operator is consulted by the next turn's proxy.
 // Absent rules (no file, no revisions) leaves the tier dark.
@@ -629,7 +654,8 @@ try {
     // Opt-in via WORKFLOW_AZURE_JOBS=1; when on, a missing/malformed queue
     // declaration throws here at startup (fail-closed, never best-effort).
     // When off, the capability is withheld and the route 404s.
-    ...(azureJobsDispatch === undefined ? {} : { dispatchAzureJob: azureJobsDispatch.enqueue }),
+    ...(dispatchAzureJob === undefined ? {} : { dispatchAzureJob }),
+    ...(validateDispatch === undefined ? {} : { validateDispatch }),
     schedulerFactory,
     schedules: scheduleRegistry,
     projects: projectRegistry,

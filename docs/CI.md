@@ -193,6 +193,19 @@ passed, not that "the tests passed".
   lines, the `az` argv shape (the show query + the exact `containerapp update
   --min-replicas 1`), and a `main()` source-artifact pin. The set goes 52 to 53
   suites.
+  **2026-10-09 (same day) — gate the dispatch evidence-ingest return leg:** the
+  dispatch-record registry + `validateDispatch(taskId)` read path
+  (`src/integrations/azure-jobs-record.ts` + the
+  `POST /dispatch/azure-job/validate` hub route + the recording-enqueue
+  wrapper) is added offline: `azure-jobs-record` pins the registry as the
+  hub-held denominator (unknown → `unknown`, never a fabricated pass), the
+  worker-evidence structural validator, the full outcome matrix
+  (`unknown`/`missing`/`invalid`/`incomplete`/`stale-corpus`/`failed`/`covered`),
+  the journaled-outcome rule, the Bearer GET to the recorded blob path, the
+  transport-fault throw, and the recording enqueue (records on success, nothing
+  on a failed enqueue, `AzureJobMessageError` preserved), and
+  `azure-jobs-hub-route` grows the validate route's token class + 404/400/5xx
+  semantics. The set goes 53 to 54 suites.
 - `release-gate.yml`: deferred per decision 2.
 - Branch protection: the operator flips the required-checks toggle in GitHub
   settings to name `gate` and `evidence` (CI defines the check names; the
