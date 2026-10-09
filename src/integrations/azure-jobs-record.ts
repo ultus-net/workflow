@@ -242,6 +242,15 @@ export function createAzureJobsIngest(options: AzureJobsIngestOptions): Validate
     } catch (error) {
       return { taskId, status: "invalid", reason: error instanceof Error ? error.message : String(error) };
     }
+    // The returned blob must belong to the record we asked about: a blob for
+    // task A cannot satisfy a validate for task B (the registry keys by id).
+    if (evidence.taskId !== record.taskId) {
+      return {
+        taskId,
+        status: "invalid",
+        reason: `evidence taskId '${evidence.taskId}' does not match the requested '${record.taskId}'`,
+      };
+    }
 
     const returned = new Set(evidence.declaredEvidence);
     const missing = record.declaredEvidence.filter((name) => !returned.has(name));

@@ -56,10 +56,10 @@ discipline applied to the return leg.
 #### Verification (measured, this session)
 
 - `node --import tsx --test test/azure-jobs-record.test.ts
-  test/azure-jobs-hub-route.test.ts` → 26/26 (the record suite + the four new
+  test/azure-jobs-hub-route.test.ts` → 27/27 (the record suite + the four new
   route pins).
 - Wider focused set (the two suites + `azure-jobs-schema` + `azure-jobs-dispatch`
-  + `kernel-purity` + `text-hygiene` + `cli-entrypoint`) → 56/56.
+  + `kernel-purity` + `text-hygiene` + `cli-entrypoint`) → 57/57.
 - `npm run typecheck`, `npm run lint` → exit 0.
 - `test:ci` grows by one suite: 53 → 54.
 
@@ -81,4 +81,6 @@ discipline applied to the return leg.
   verification.** The ingest checks that each declared evidence NAME is present
   in the returned record; it does not (yet) open each evidence artifact. The
   plan's "checks `declaredEvidence` coverage" is satisfied at the name level;
-  deeper per-artifact checks are a later slice.
+  deeper per-artifact checks are a later slice. The returned record's `taskId`
+  IS checked against the requested one (a blob for task A cannot satisfy a
+  validate for task B), so name-set coverage is scoped to the right task.

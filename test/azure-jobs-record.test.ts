@@ -127,6 +127,14 @@ test("azure-jobs-record: a malformed blob is 'invalid' (not JSON, and not a work
   assert.equal((await ingest(200, JSON.stringify({ specVersion: 2 })).validate("task-1")).status, "invalid");
 });
 
+test("azure-jobs-record: a blob whose taskId disagrees with the record is 'invalid'", async () => {
+  // The registry keyed the request as task-1; a blob claiming task-2 must not
+  // satisfy it (cross-task substitution is refused by construction).
+  const outcome = await ingest(200, evidence({ taskId: "task-2" })).validate("task-1");
+  assert.equal(outcome.status, "invalid");
+  assert.match(outcome.reason ?? "", /does not match the requested 'task-1'/);
+});
+
 test("azure-jobs-record: uncovered declared evidence is 'incomplete' and names the gap", async () => {
   // The worker returned only one of the two declared items.
   const { validate } = ingest(200, evidence({ declaredEvidence: ["test:<workspace>"] }));
