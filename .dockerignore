@@ -3,7 +3,16 @@
 .git
 .github
 .worktrees
+# Every node_modules, including the mcp-toolbox workspace's nested trees
+# (mcp-toolbox/node_modules, mcp-toolbox/apps/*/node_modules, ...). The bare
+# `node_modules` pattern matched only the root; the nested trees were copied
+# into the build context (verified 2026-10-09) — host-specific, stale, and
+# carrying native binaries, they defeat the reproducible `pnpm install`
+# prepare-tool.mjs performs. Force a clean in-container install. The bare
+# pattern is kept beside the glob because Docker's `**/` matching of a root
+# entry is version-dependent; both together are unambiguous.
 node_modules
+**/node_modules
 coverage
 *.log
 .tmp-*

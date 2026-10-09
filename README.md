@@ -49,6 +49,7 @@ Installs:
 - `workflow-shell` — contained shell
 - `workflow-opencode-server` — OpenCode server topology daemon
 - `workflow-opencode` — attach the official OpenCode TUI through the hub gateway
+- `workflow-plane` — C1 control-plane supervisor (hub + OpenCode server gateway; plane mode via `WORKFLOW_PLANE=1`)
 - `workflow-rsi` — RSI loop trigger client (start/status/cancel via the hub)
 
 ## Commands

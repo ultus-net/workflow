@@ -123,6 +123,38 @@ passed, not that "the tests passed".
   `credential-mcp`, and `operator-ask-hold` (161 tests; the sole skip is an
   unbuilt-toolbox arm that the evidence job's build satisfies). No new CI
   precondition is introduced: the keyring setup already served `e2e-admin`.
+  **2026-10-09 — gate the control-plane deploy path:** the image the Azure
+  instance pins by digest had no executable pins (its first real build found
+  six defects plus an unguarded `.gitignore`; `docs/ledger/control-plane-c1-composition.md`). Two offline
+  suites are added: `control-plane-dockerfile` (the `src`-flatten `TS18003`,
+  the `/tmp/opencode` `EEXIST`, the pnpm no-TTY toolbox skip, the missing
+  `npm link` CMD resolution, the nested-`node_modules` context, and the
+  un-ignored 198 MB vendor binary) and
+  `cli-entrypoint` (the symlinked-`bin` entrypoint guard that silently
+  no-op'd the daemons — `src/cli/entrypoint.ts`). The set goes 44 to 46 suites.
+  **2026-10-09 (same day) — gate the C1 containment posture:** the delegated
+  container-boundary backend (`src/containment/container-boundary.ts`) plus the
+  `boundaryKind` discriminator on `ProcessContainment` are added offline:
+  `container-boundary` pins the fail-closed construction outside a container,
+  the `enforced`/`container-boundary` marker, the intra-pod posture refusals
+  (`mediated`, `proxied`, `read-write-no-delete`), the explicit-opt-in
+  selection, and the `bwrap` vs `container-boundary` non-conflation. The set
+  goes 46 to 47 suites.
+  **2026-10-09 (same day) — gate the C1 plane supervisor:** `workflow-plane`
+  (`src/cli/plane.ts`) plus the pure config seam (`src/cli/plane-config.ts`) and
+  the gateway's additive `host`/`port` bind options are added offline:
+  `plane-supervisor` pins the fail-closed `WORKFLOW_PLANE=1` gate, the stable
+  `WORKFLOW_PLANE_CLIENT_PASSWORD` requirement (no random-per-roll), the
+  `0.0.0.0:4096` default front door, the supervised child list, the daemon env
+  carried to the child, and the gateway's explicit bind + 401 split. The
+  non-loopback attach lane (`resolveExplicitGateway`) is pinned in
+  `opencode-server-launcher`. The set goes 47 to 48 suites.
+  **2026-10-09 (same day) — the C1 image becomes the plane:** the
+  control-plane Dockerfile `CMD` moves from the hub-only entry to
+  `workflow-plane`, gains `USER node` and a pre-created node-owned state root,
+  and bakes no instance value; the `control-plane-dockerfile` suite grows 6 to
+  9 tests (plane CMD present + hub CMD gone, `USER node` + created/chowned
+  state root, instance-values-never-baked). No new suite, so the set stays 48.
 - `release-gate.yml`: deferred per decision 2.
 - Branch protection: the operator flips the required-checks toggle in GitHub
   settings to name `gate` and `evidence` (CI defines the check names; the
