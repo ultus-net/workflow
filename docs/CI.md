@@ -167,6 +167,18 @@ passed, not that "the tests passed".
   blob-ref path, and the transport-fault throw, and `azure-jobs-hub-route`
   pins the `POST /dispatch/azure-job` token class + 404/400/5xx semantics.
   The set goes 48 to 51 suites.
+  **2026-10-09 (same day) — gate the C1 worker image:** the Shape-A worker job
+  image (`images/worker/Dockerfile` + the dependency-free entry
+  `images/worker/run.mjs`) is added offline: `worker-image` pins `USER node` +
+  a pre-created node-owned state root, the absence of any `||`-swallowed RUN
+  (every RUN must genuinely succeed), the vendored opencode sha-verify (the same
+  pin as the plane image), the fingerprint-written-after-toolbox-build order, no
+  `EXPOSE`/baked token/instance value, the schema-mirror agreement with the hub
+  contract (accept + six reject classes), the ref-envelope mirror, the corpus
+  fingerprint's determinism/content-sensitivity, a missing/empty corpus refusal,
+  the `verifyCorpus` declined-mismatch + image-tamper refusals, fail-closed
+  config classification, an empty-queue exit 0, and a corpus mismatch refusing
+  BEFORE any clone or run. The set goes 51 to 52 suites.
 - `release-gate.yml`: deferred per decision 2.
 - Branch protection: the operator flips the required-checks toggle in GitHub
   settings to name `gate` and `evidence` (CI defines the check names; the

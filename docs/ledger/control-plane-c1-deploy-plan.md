@@ -710,3 +710,32 @@ option was **not** needed (dropped to reduce surface).
   the wire). The local probe proves the in-container loopback path, not the
   deployed ingress path. No `enforced` label is claimed for pods until P2 (task
   8).
+
+### Task 5 — worker job image + entry script + corpus fingerprint (DONE 2026-10-09)
+
+- New `images/worker/Dockerfile`: `USER node` (D6); no `EXPOSE`; the same
+  sha-verified vendored opencode as the plane image; the toolbox built (the
+  corpus the worker verifies) with the fingerprint written AFTER the build
+  (`RUN node /opt/workflow/run.mjs --write-fingerprint /opt/workflow/corpus-fingerprint`).
+  `CMD ["node", "/opt/workflow/run.mjs"]`.
+- New `images/worker/run.mjs` (Node builtins only) + hand-maintained
+  `images/worker/run.d.mts` types. It re-validates the message structurally
+  (a pinned mirror of `azure-jobs-schema.ts`), verifies the corpus against both
+  the dispatch's declared fingerprint and the image's recorded digest, resolves
+  only the named Key Vault secrets in memory, clones, runs stock `opencode run`
+  headless under a wall-clock budget, pushes a branch + opens a PR, and uploads
+  the evidence blob; exit 0 deletes the message.
+- New `test/worker-image.test.ts` (14 pins, hermetic). Evidence:
+  `node --import tsx --test test/worker-image.test.ts` 14/14; with the task-4
+  suites + `control-plane-dockerfile` + `kernel-purity`, 47/47;
+  `npm run typecheck` exit 0; `npm run lint` exit 0.
+- **Build (measured, podman):** recorded in the task-5 ledger fragment
+  `docs/ledger/control-plane-c1-worker-image.md` (green;
+  `baebab91b255eca8afbce41d2e9bc4addbc9d84816b788b674c5abca54ca3e17`, the
+  recorded corpus digest `385b30eb36edeec1236c65b6cb6f73b9c966f09cdbf13ea09cd78ba4b8d02ad9`
+  over 63 files). The first build failed closed at the fingerprint step on a
+  wrong corpus-root default — corrected; the correction is the fail-closed
+  behavior working.
+- **Still open (task 6, 🛰 live):** the P0 e2e (queue → pod → stock run →
+  branch+PR + evidence blob). The hermetic tests prove the fail-closed seams,
+  not a live run.

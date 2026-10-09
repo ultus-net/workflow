@@ -31,6 +31,16 @@ pinned open-core artifacts and supplies everything environment-specific.
 - [ ] Pin-verification wiring: the digest expectation is DOWNLOADED from the
       pinned tag's release (a git checkout does not carry release objects)
       and verify-pin.sh is invoked via bash with absolute paths
+- [ ] **Worker job definition** (C1 task 5): the Shape-A worker image by
+      digest, `replicaTimeout` sized to the task budget class, a KEDA queue
+      scaler (`minExecutions: 0`), no ingress, a workload-identity profile, and
+      env of URIs only (`WORKFLOW_AZURE_QUEUE_URL`, `WORKFLOW_AZURE_ACCOUNT_URL`,
+      `WORKFLOW_KEYVAULT_NAME`, optional `WORKFLOW_AZURE_VISIBILITY_SECONDS`
+      and `WORKFLOW_WORKER_MODEL_ENV_VAR`) — never a secret value
+- [ ] **Corpus fingerprint** (C1 task 5): read the worker image's recorded
+      digest (`/opt/workflow/corpus-fingerprint`, or `docker run --rm <digest>
+      cat /opt/workflow/corpus-fingerprint`) and supply it as
+      `mcp.corpusFingerprint` in each dispatch message
 - [ ] Boards work item per instance PR, linked `AB#`, citing the open release tag consumed
 
 ## Rules (non-negotiable)
