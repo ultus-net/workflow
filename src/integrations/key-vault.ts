@@ -1,4 +1,9 @@
 import type { SecretStore } from "./credentials.js";
+import { defaultAzureTokenFetcher, type AccessTokenFetcher, type AzureTokenHttpFetcher } from "./azure-token.js";
+
+// The access-token chain (IMDS + azure-cli, no SDK) now lives in azure-token.ts
+// — extracted on its second use (the Storage Queue dispatch client). This file
+// re-exports the fetcher types for existing callers.
 
 // W156: the Azure Key Vault secret-store backend. Implements the same
 // SecretStore port as the D-Bus keyring store (secret-service.ts) so the
@@ -22,10 +27,8 @@ const API_VERSION = "7.4";
 // dead cached token costs availability for the whole fabricated TTL.
 const DEFAULT_TOKEN_TTL_MS = 300_000;
 
-export type KeyVaultFetcher = (url: string, init?: RequestInit) => Promise<Response>;
-export type AccessTokenFetcher = (
-  scope: string,
-) => Promise<string | { token: string; expiresInSeconds?: number }>;
+export type KeyVaultFetcher = AzureTokenHttpFetcher;
+export type { AccessTokenFetcher };
 
 export function createKeyVaultSecretStore(options: {
   vaultName?: string;
@@ -43,44 +46,10 @@ export function createKeyVaultSecretStore(options: {
   const fetcher = options.fetcher ?? ((url, init) => fetch(url, init));
   let cachedToken: { token: string; expiresAt: number } | undefined;
 
-  const getToken: AccessTokenFetcher =
-    options.getToken ??
-    (async (scope) => {
-      // Managed identity / developer credential chain, without importing the
-      // full Azure SDK: IMDS on Azure, azure-cli token locally.
-      const imds =
-        process.env.MSI_ENDPOINT ?? process.env.IDENTITY_ENDPOINT ?? "http://169.254.169.254/metadata/identity/oauth2/token";
-      const imdsResponse = await fetcher(
-        `${imds}?resource=${encodeURIComponent(scope)}&api-version=2018-02-01`,
-        { headers: { Metadata: "true" } },
-      ).catch(() => undefined);
-      if (imdsResponse?.ok) {
-        const body = (await imdsResponse.json()) as { access_token?: string; expires_in?: number | string };
-        if (body.access_token) {
-          const seconds =
-            typeof body.expires_in === "number" ? body.expires_in : Number.parseInt(body.expires_in ?? "", 10);
-          if (Number.isFinite(seconds) && seconds > 0) {
-            return { token: body.access_token, expiresInSeconds: seconds };
-          }
-          return body.access_token;
-        }
-      }
-      const { execFile } = await import("node:child_process");
-      const { promisify } = await import("node:util");
-      const az = await promisify(execFile)("az", [
-        "account",
-        "get-access-token",
-        "--resource",
-        scope,
-        "--query",
-        "accessToken",
-        "-o",
-        "tsv",
-      ]);
-      const token = az.stdout.trim();
-      if (!token) throw new Error("azure-cli returned no access token");
-      return token;
-    });
+  // The shared IMDS/azure-cli chain (azure-token.ts). key-vault keeps its own
+  // cache so the 401-invalidation below can drop it; the extraction is the
+  // exact previous body (the injected fetcher still carries the IMDS call).
+  const getToken: AccessTokenFetcher = options.getToken ?? defaultAzureTokenFetcher(process.env, fetcher);
 
   async function token(): Promise<string> {
     const now = Date.now();

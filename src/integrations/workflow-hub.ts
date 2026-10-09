@@ -10,6 +10,7 @@ import type { EvidenceContentStore } from "./evidence-content-store.js";
 import type { WorkflowApplicationResolver, WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import { createRunRegistry, type RunReviewerFactory, type RunTestRunner } from "./run-registry.js";
+import type { AzureJobDispatchFn } from "./azure-jobs-dispatch.js";
 import type { TaskUsageSummary } from "./task-usage.js";
 import type { HubScheduler } from "./hub-scheduler.js";
 import type { SelfImprovementRegistry } from "./self-improvement-registry.js";
@@ -175,6 +176,13 @@ export async function createWorkflowHub(
      * end-to-end. Absent → both routes 404 (capability withheld, fail closed).
      */
     egressApprovals?: EgressPolicyRevisionStore;
+    /**
+     * C1 deploy plan §2.c (D1/D3): the Azure job-dispatch enqueue closure. When
+     * provided, the hub mounts POST /dispatch/azure-job; the composition root
+     * builds it from the dispatch env (opt-in `WORKFLOW_AZURE_JOBS=1`). Absent
+     * → the route 404s (capability withheld, fail closed).
+     */
+    dispatchAzureJob?: AzureJobDispatchFn;
   } = {},
 ): Promise<WorkflowHub> {
   const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
@@ -258,6 +266,10 @@ export async function createWorkflowHub(
         // W182 (A7): the durable egress policy revision store — the operator
         // approval surface (routes + the proxy denial sink).
         ...(options.egressApprovals === undefined ? {} : { egressApprovals: options.egressApprovals }),
+        // C1 deploy plan §2.c: the Azure job-dispatch enqueue closure behind
+        // POST /dispatch/azure-job. Present only when the instance configured
+        // the dispatch env (the closure is built and validated at startup).
+        ...(options.dispatchAzureJob === undefined ? {} : { dispatchAzureJob: options.dispatchAzureJob }),
       },
     );
     options.observeBridgeStarted?.(bridge.url);

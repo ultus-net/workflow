@@ -11,6 +11,8 @@ import { permissionAnswerRoute } from "../ui/permission-broker-route.js";
 import { buildReviewRubric } from "../review/rubric.js";
 import type { ReviewProvenanceRecord } from "../review/provenance.js";
 import { DuplicateRunError, WorkspaceDeclarationError } from "./run-registry.js";
+import { isAzureJobMessageError } from "./azure-jobs-schema.js";
+import type { AzureJobDispatchFn } from "./azure-jobs-dispatch.js";
 import { shellExecutorFor, type WorkflowApplicationResolver, type WorkflowRunController } from "./run-controller.js";
 import type { WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
 import type { SelfImprovementRegistry, SelfImprovementSpec } from "./self-improvement-registry.js";
@@ -179,6 +181,14 @@ interface HubRequestContext {
    * same-process loopback authority, no kernel state moves through it.
    */
   readonly egressApprovals?: EgressApprovals;
+  /**
+   * C1 deploy plan §2.c (D1/D3): the Azure job-dispatch enqueue closure. When
+   * composed the hub serves the operator-token `POST /dispatch/azure-job`
+   * route (the click/API that enqueues one worker job). Absent → the route
+   * 404s (capability withheld, fail closed). The closure validates the message
+   * structurally before enqueue and never returns credential material.
+   */
+  readonly dispatchAzureJob?: AzureJobDispatchFn;
 }
 
 /**
@@ -222,6 +232,14 @@ export interface HubBridgeCapabilities {
   readonly permissionBroker?: PermissionBroker;
   /** W182 (A7): the durable egress policy revision store (see HubRequestContext). */
   readonly egressApprovals?: EgressApprovals;
+  /**
+   * C1 deploy plan §2.c (decision D1/D3): the Azure job-dispatch capability —
+   * the hub-side enqueue closure over `azure-jobs-dispatch.ts`. When composed
+   * the hub serves the operator-token `POST /dispatch/azure-job` route; absent
+   * → the route 404s (capability withheld, fail closed). The closure validates
+   * the message structurally and enqueues; it never returns credential material.
+   */
+  readonly dispatchAzureJob?: AzureJobDispatchFn;
 }
 
 /**
@@ -348,6 +366,29 @@ async function handleRequest(
       // surface can imply a merge that did not happen.
       if (result.status === "not-approvable") return send(response, 409, result);
       return send(response, 200, result);
+    }
+    if (request.url === "/dispatch/azure-job") {
+      // C1 deploy plan §2.c (D1/D3): enqueue one Azure Container Apps job.
+      // Operator-token class (the same class as /run/begin and /board/delegate
+      // — a deliberate operator action, not autonomous). The body carries the
+      // full task-spec message; the closure validates it structurally before
+      // enqueue (fail-closed: a malformed message is a 400, never a queued
+      // job). Absent capability → 404 (withheld, like the other registries).
+      if (context.dispatchAzureJob === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body)) return send(response, 400, { error: "invalid dispatch request: an azure job message is required" });
+      try {
+        const result = await context.dispatchAzureJob(body);
+        return send(response, 200, { dispatch: { state: "queued", ...result } });
+      } catch (error) {
+        // Only a STRUCTURAL validation failure is a client fault (400) — a
+        // dedicated error class, never `instanceof TypeError` (a Node fetch
+        // transport failure is itself a TypeError; classifying on that would
+        // misreport a network fault as a bad message). Everything else (a
+        // transport fault) propagates to the 500 path — never a fabricated
+        // success.
+        if (isAzureJobMessageError(error)) return send(response, 400, { error: error.message });
+        throw error;
+      }
     }
     if (request.url === "/evidence-content") {
       // W158: the bounded content behind an evidence record's reference — the

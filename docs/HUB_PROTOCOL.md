@@ -200,6 +200,17 @@ the running surface is fully observable:
   the Cline lane, the goose OpenRouter lane, and the W129 opencode-server lane
   (runtime-level; the standalone server CLI composes the binding + policy but no
   hub store, so its denials are answered, not parked).
+- `POST /dispatch/azure-job` — C1 deploy plan §2.c (D1/D3): enqueues one Azure
+  Container Apps worker job. The body is a specVersion-1 dispatch message
+  (`src/integrations/azure-jobs-schema.ts`): `taskId`, `repo {url,ref}`,
+  `gitPush {secretRef}`, `model {id,secretRef}`, `task {message,
+  declaredEvidence[], budgetSeconds, permissionPosture}`, `mcp
+  {manifest[],corpusFingerprint}`, `artifacts {evidenceContainer,blobPrefix}`.
+  The hub validates it structurally before enqueue (a malformed message is a
+  400, never a queued job); secret fields are Key Vault ref NAMES, never
+  values. Success returns `{ "dispatch": { "state": "queued", "taskId",
+  "messageId", "viaBlobRef" } }`. Capability withheld (no `WORKFLOW_AZURE_JOBS=1`)
+  → 404; a transport fault is a 5xx (never a fabricated success). Ordinary-token.
 
 These are ordinary-token endpoints (except `/schedule/run-now`) and are
 versioned informally alongside the Workflow hub implementation, not as part of
