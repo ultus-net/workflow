@@ -62,14 +62,14 @@ discipline applied to the return leg.
 #### Verification (measured, this session)
 
 - `node --import tsx --test test/azure-jobs-record.test.ts
-  test/azure-jobs-hub-route.test.ts` → 29/29 (the 20-pin record suite + the nine
+  test/azure-jobs-hub-route.test.ts` → 30/30 (the 21-pin record suite + the nine
   hub-route pins, four of them the new validate route).
 - `node --import tsx --test test/worker-image.test.ts` → 18/18, including the
   cross-suite pin that runs the worker's uploaded evidence blob through the
   hub's `validateWorkerEvidence`.
 - Wider focused set (the three suites + `azure-jobs-schema` +
   `azure-jobs-dispatch` + `kernel-purity` + `text-hygiene` + `cli-entrypoint`)
-  → 77/77.
+  → 78/78.
 - `npm run typecheck`, `npm run lint` → exit 0.
 - `test:ci` grows by one suite: 53 → 54.
 

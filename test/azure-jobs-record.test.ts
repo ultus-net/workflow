@@ -65,7 +65,6 @@ function ingest(status: number, body: string, capture?: (url: string, init?: Req
   const validate = createAzureJobsIngest({
     registry,
     accountUrl: "https://acct.blob.core.windows.net",
-    evidenceContainer: "evidence",
     fetcher: blobFetcher(status, body, capture),
     getToken: async () => "token",
   });
@@ -129,7 +128,6 @@ test("azure-jobs-record: an unknown taskId is 'unknown', never a fabricated pass
   const validate = createAzureJobsIngest({
     registry,
     accountUrl: "https://acct.blob.core.windows.net",
-    evidenceContainer: "evidence",
     fetcher: (async () => { called = true; return new Response("{}", { status: 200 }); }) as unknown as typeof fetch,
     getToken: async () => "token",
   });
@@ -200,6 +198,24 @@ test("azure-jobs-record: the ingest reads the recorded blob path with a Bearer G
   assert.equal(seen.url, "https://acct.blob.core.windows.net/evidence/runs/task-1.json");
   assert.equal(seen.method, "GET");
   assert.match(seen.auth, /^Bearer /);
+});
+
+test("azure-jobs-record: the ingest reads the container the RECORD names, not a separate option", async () => {
+  // The record's own evidenceContainer is the single source of truth for where
+  // the blob lives (the enqueue path bound the two). A record in a different
+  // container must be fetched from THAT container.
+  const registry = createDispatchRecordRegistry();
+  registry.record(record({ evidenceContainer: "other-evidence" }));
+  let seenUrl = "";
+  const validate = createAzureJobsIngest({
+    registry,
+    accountUrl: "https://acct.blob.core.windows.net",
+    fetcher: (async (url: string) => { seenUrl = url; return new Response(evidence(), { status: 200 }); }) as unknown as typeof fetch,
+    getToken: async () => "token",
+  });
+  const outcome = await validate("task-1");
+  assert.equal(outcome.status, "covered");
+  assert.equal(seenUrl, "https://acct.blob.core.windows.net/other-evidence/runs/task-1.json");
 });
 
 test("azure-jobs-record: a non-404 transport fault throws (the route 5xx's), never a fabricated outcome", async () => {

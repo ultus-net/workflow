@@ -198,7 +198,6 @@ const validateDispatch = azureJobsDispatchEnv.kind === "configured" && dispatchR
   ? createAzureJobsIngest({
       registry: dispatchRecordRegistry,
       accountUrl: azureJobsDispatchEnv.accountUrl,
-      evidenceContainer: azureJobsDispatchEnv.evidenceContainer,
     })
   : undefined;
 // W184: the per-turn W180 payload policy, read FRESH at each runtime composition

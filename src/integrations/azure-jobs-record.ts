@@ -212,7 +212,6 @@ export type ValidateDispatchFn = (taskId: string) => Promise<DispatchValidationO
 export interface AzureJobsIngestOptions {
   readonly registry: DispatchRecordRegistry;
   readonly accountUrl: string;
-  readonly evidenceContainer: string;
   readonly fetcher?: AzureJobsHttpFetcher;
   readonly getToken?: AccessTokenFetcher;
   readonly timeoutMs?: number;
@@ -243,7 +242,10 @@ export function createAzureJobsIngest(options: AzureJobsIngestOptions): Validate
     if (record === undefined) return { taskId, status: "unknown" };
 
     const path = record.blobPath.split("/").map(encodeURIComponent).join("/");
-    const url = `${options.accountUrl}/${encodeURIComponent(options.evidenceContainer)}/${path}`;
+    // Read from the container the record itself names, not a separately
+    // configured one: the record is the single source of truth for where this
+    // job's evidence lives (the enqueue path already bound the two).
+    const url = `${options.accountUrl}/${encodeURIComponent(record.evidenceContainer)}/${path}`;
     const response = await fetcher(url, {
       method: "GET",
       headers: {
