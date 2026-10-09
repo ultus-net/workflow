@@ -132,6 +132,23 @@ passed, not that "the tests passed".
   un-ignored 198 MB vendor binary) and
   `cli-entrypoint` (the symlinked-`bin` entrypoint guard that silently
   no-op'd the daemons — `src/cli/entrypoint.ts`). The set goes 44 to 46 suites.
+  **2026-10-09 (same day) — gate the C1 containment posture:** the delegated
+  container-boundary backend (`src/containment/container-boundary.ts`) plus the
+  `boundaryKind` discriminator on `ProcessContainment` are added offline:
+  `container-boundary` pins the fail-closed construction outside a container,
+  the `enforced`/`container-boundary` marker, the intra-pod posture refusals
+  (`mediated`, `proxied`, `read-write-no-delete`), the explicit-opt-in
+  selection, and the `bwrap` vs `container-boundary` non-conflation. The set
+  goes 46 to 47 suites.
+  **2026-10-09 (same day) — gate the C1 plane supervisor:** `workflow-plane`
+  (`src/cli/plane.ts`) plus the pure config seam (`src/cli/plane-config.ts`) and
+  the gateway's additive `host`/`port` bind options are added offline:
+  `plane-supervisor` pins the fail-closed `WORKFLOW_PLANE=1` gate, the stable
+  `WORKFLOW_PLANE_CLIENT_PASSWORD` requirement (no random-per-roll), the
+  `0.0.0.0:4096` default front door, the supervised child list, the daemon env
+  carried to the child, and the gateway's explicit bind + 401 split. The
+  non-loopback attach lane (`resolveExplicitGateway`) is pinned in
+  `opencode-server-launcher`. The set goes 47 to 48 suites.
 - `release-gate.yml`: deferred per decision 2.
 - Branch protection: the operator flips the required-checks toggle in GitHub
   settings to name `gate` and `evidence` (CI defines the check names; the

@@ -8,6 +8,7 @@ import type {
   WritableMountMode,
 } from "./contracts.js";
 import { UNSUPPORTED_UNTIL_SUPERVISOR } from "./contracts.js";
+import { ContainerBoundaryContainment } from "./container-boundary.js";
 import { ProxiedBubblewrapContainment } from "./proxied-bwrap.js";
 
 /**
@@ -120,6 +121,17 @@ export function selectContainment(
   platform: NodeJS.Platform = process.platform,
   warn: (message: string) => void = (message) => console.warn(`[workflow] ${message}`),
 ): ProcessContainment {
+  // C1 delegated container boundary (2026-10-09): the Azure control-plane
+  // topology runs the contained serve inside a Container Apps pod, where a
+  // nested Bubblewrap namespace is not expressible (measured) and ACA exposes
+  // no privileged knob. `WORKFLOW_CONTAINMENT_BACKEND=container-boundary`
+  // selects the delegated backend, which verifies it is inside a container
+  // before reporting `enforced` (fail closed otherwise). This is an explicit
+  // opt-in, never a silent default: a container-boundary claim on a bare host
+  // would report `enforced` with no boundary.
+  if (process.env.WORKFLOW_CONTAINMENT_BACKEND === "container-boundary") {
+    return new ContainerBoundaryContainment();
+  }
   // W183: on Linux the selected backend is the proxied-capable one; it runs
   // `isolated`/`host` through the plain bwrap backend unchanged and adds the
   // `network: "proxied"` posture. A caller that requires mediation checks

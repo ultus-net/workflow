@@ -14,6 +14,7 @@ import {
   opencodeAttachArgs,
   parseAttachArgs,
   resolveDaemonSpawnCandidates,
+  resolveExplicitGateway,
   terminateProcessGroup,
 } from "../src/cli/opencode-attach.js";
 import {
@@ -123,6 +124,38 @@ test("W071 launcher: discovery is only trusted for a loopback gateway (review P3
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ── C1 plane lane: an operator-exported remote gateway is trusted as intent ──
+// The loopback discovery gate (review P3i) rejects a tampered DISCOVERY file;
+// an explicitly exported URL is operator intent, not local state, so the plane
+// FQDN lane attaches to it — fail-closed on a missing credential or bad scheme.
+
+test("C1 plane: an explicit gateway URL + password resolves (operator intent)", () => {
+  assert.deepEqual(
+    resolveExplicitGateway({ WORKFLOW_OPENCODE_GATEWAY_URL: "https://control.example.net", WORKFLOW_OPENCODE_GATEWAY_PASSWORD: "pw" }),
+    { gatewayUrl: "https://control.example.net", tuiUsername: "opencode", tuiPassword: "pw" },
+  );
+  assert.deepEqual(
+    resolveExplicitGateway({ WORKFLOW_OPENCODE_GATEWAY_URL: "https://x", WORKFLOW_OPENCODE_GATEWAY_PASSWORD: "pw", WORKFLOW_OPENCODE_GATEWAY_USERNAME: "op" }),
+    { gatewayUrl: "https://x", tuiUsername: "op", tuiPassword: "pw" },
+  );
+  assert.equal(resolveExplicitGateway({}), undefined);
+});
+
+test("C1 plane: the explicit lane fails closed on a missing password or non-http(s) URL", () => {
+  assert.throws(
+    () => resolveExplicitGateway({ WORKFLOW_OPENCODE_GATEWAY_URL: "https://x" }),
+    /WORKFLOW_OPENCODE_GATEWAY_PASSWORD is missing/,
+  );
+  assert.throws(
+    () => resolveExplicitGateway({ WORKFLOW_OPENCODE_GATEWAY_URL: "ftp://x", WORKFLOW_OPENCODE_GATEWAY_PASSWORD: "pw" }),
+    /must be http\(s\)/,
+  );
+  assert.throws(
+    () => resolveExplicitGateway({ WORKFLOW_OPENCODE_GATEWAY_URL: "not a url", WORKFLOW_OPENCODE_GATEWAY_PASSWORD: "pw" }),
+    /not a URL/,
+  );
 });
 
 test("W071 launcher: no candidates fails closed", () => {

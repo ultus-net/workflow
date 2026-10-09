@@ -63,7 +63,7 @@ export function parseAttachArgs(argv: readonly string[]): OpencodeAttachArgs {
 }
 
 /** Stock-client arguments: connect to the gateway (password rides the env). */
-export function opencodeAttachArgs(discovery: OpencodeServerDiscovery): readonly string[] {
+export function opencodeAttachArgs(discovery: { readonly gatewayUrl: string; readonly workspace: string }): readonly string[] {
   return ["attach", discovery.gatewayUrl, "--dir", discovery.workspace];
 }
 
@@ -83,6 +83,45 @@ export function isLoopbackGatewayUrl(url: string): boolean {
 
 function discoveryIsTrusted(discovery: OpencodeServerDiscovery): boolean {
   return isLoopbackGatewayUrl(discovery.gatewayUrl) && discovery.workspace !== "";
+}
+
+/**
+ * C1 plane lane — an operator-supplied remote gateway (the plane FQDN behind
+ * the ingress front door).
+ *
+ * The loopback gate above exists to reject a TAMPERED discovery file: the
+ * launcher must never be steered to an arbitrary host by local state. An
+ * explicitly exported URL is operator intent, not discovery state, so it is
+ * trusted as-is. It still fails closed on a missing password (a remote attach
+ * with no credential cannot authenticate) and on a non-http(s) scheme.
+ */
+export interface ExplicitGateway {
+  readonly gatewayUrl: string;
+  readonly tuiUsername: string;
+  readonly tuiPassword: string;
+}
+
+export function resolveExplicitGateway(env: NodeJS.ProcessEnv): ExplicitGateway | undefined {
+  const url = env.WORKFLOW_OPENCODE_GATEWAY_URL;
+  if (url === undefined) return undefined;
+  const password = env.WORKFLOW_OPENCODE_GATEWAY_PASSWORD;
+  if (password === undefined || password === "") {
+    throw new Error("WORKFLOW_OPENCODE_GATEWAY_URL is set but WORKFLOW_OPENCODE_GATEWAY_PASSWORD is missing");
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`WORKFLOW_OPENCODE_GATEWAY_URL is not a URL: ${url}`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`WORKFLOW_OPENCODE_GATEWAY_URL must be http(s): ${url}`);
+  }
+  return {
+    gatewayUrl: url,
+    tuiUsername: env.WORKFLOW_OPENCODE_GATEWAY_USERNAME ?? "opencode",
+    tuiPassword: password,
+  };
 }
 
 export interface SpawnCandidate {
@@ -210,7 +249,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
   const workspace = resolve(args.workspace);
   const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? resolve(homedir(), ".workflow", "opencode-server");
-  const discovery = await ensureDiscovery({ workspace, stateHome, autostart: args.autostart });
+  // C1 plane lane: an explicit operator-exported gateway takes precedence over
+  // discovery. No autostart, no discovery read — the plane is a remote surface.
+  const explicit = resolveExplicitGateway(process.env);
+  const discovery = explicit === undefined
+    ? await ensureDiscovery({ workspace, stateHome, autostart: args.autostart })
+    : { ...explicit, workspace };
   if (discovery === undefined) {
     throw new Error("Workflow OpenCode server is unavailable; start it with `workflow-opencode-server` or check the upstream key/containment prerequisites");
   }

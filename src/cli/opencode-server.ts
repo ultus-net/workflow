@@ -28,6 +28,8 @@ import { HttpRemoteEngine } from "../integrations/remote-acp/engine.js";
 import { loadSettings } from "../integrations/workflow-settings.js";
 import { sessionBudgetFromEnv } from "../integrations/session-budget.js";
 import { isEntrypoint } from "./entrypoint.js";
+import { resolvePlaneConfig } from "./plane-config.js";
+import { selectContainment } from "../containment/platform.js";
 
 /**
  * W082: whether the daemon's hub-written server config composes the
@@ -159,6 +161,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
   const workspace = resolve(args.workspace);
+  // C1 plane mode (opt-in via WORKFLOW_PLANE=1): bind the gateway to the fixed
+  // ingress front door and use the injected stable client credential. The
+  // password rides the env, never argv (the daemon keeps secrets out of argv;
+  // see the TUI-password P3 note in docs/OPENCODE_SERVER_AUTHORITY.md).
+  const plane = process.env.WORKFLOW_PLANE === "1" ? resolvePlaneConfig(process.env, workspace) : undefined;
   // W094: fail-closed composition — if the vendored guard cannot start, the
   // daemon refuses to run guard-less (the hub's "no hub, no mutations"
   // posture; a guardless authority issues permissive decisions no operator
@@ -192,6 +199,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     runtime = await createOpencodeServerRuntime({
       workspace,
       stateHome,
+      // C1 plane: the contained `opencode serve` launches through the
+      // env-selected backend (the delegated container boundary inside a pod).
+      // Absent plane mode the runtime keeps its own bwrap default, so the
+      // local daemon is byte-identical.
+      ...(plane === undefined ? {} : { containment: selectContainment() }),
       ...(credentialEndpoints.length === 0 ? {} : { credentialEndpoints }),
       ...(payloadPolicy === undefined ? {} : { payloadPolicy }),
       // W082: the daemon carries the operator's autoCompact preference into the
@@ -309,9 +321,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       upstream: runtime.url,
       upstreamUsername: runtime.username,
       upstreamPassword: runtime.password,
-      tuiPassword: newTuiPassword(),
+      tuiPassword: plane?.clientPassword ?? newTuiPassword(),
       onPermissionReply: (reply) => authority.handleOperatorReply(reply),
       enforced: enforcement === "enforced",
+      ...(plane === undefined ? {} : { host: plane.gatewayHost, port: plane.gatewayPort }),
     });
   } catch (error) {
     await authority.stop();

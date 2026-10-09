@@ -16,6 +16,7 @@ import { buildBubblewrapInvocation } from "./bwrap-args.js";
  */
 export class LinuxBubblewrapContainment implements ProcessContainment {
   readonly isolation = "enforced" as const;
+  readonly boundaryKind = "bwrap" as const;
   readonly supportsProxiedNetwork: boolean = false;
 
   constructor(readonly bwrapPath = "/usr/bin/bwrap") {}

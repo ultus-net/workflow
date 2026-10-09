@@ -81,14 +81,34 @@ export interface ContainedProcessResult {
  */
 export const UNSUPPORTED_UNTIL_SUPERVISOR = "UNSUPPORTED_UNTIL_SUPERVISOR" as const;
 
+/**
+ * Which boundary an `enforced` backend established. `bwrap` is the local
+ * Linux Bubblewrap namespace boundary. `container-boundary` is the C1
+ * delegated posture: the process is contained by the container/pod it already
+ * runs in (Azure Container Apps), so the in-container boundary IS the
+ * container — there is no nested namespace. The discriminator exists so a
+ * discovery file, probe, or doc claim can never conflate the two: the pod
+ * boundary is strictly stronger on its outside (no host FS/net/other tenants)
+ * but provides NO intra-pod narrowing (siblings share the pod's FS/net/proc).
+ * See `THREAT_MODEL.md` residual for the C1 lane.
+ */
+export type BoundaryKind = "bwrap" | "container-boundary";
+
 export interface ProcessContainment {
   /**
-   * `enforced` means the backend establishes a real OS isolation boundary
-   * (Linux bubblewrap). `policy-only` means requests are validated but run
-   * with NO isolation. Launchers that require an enforced boundary must check
-   * this marker instead of assuming one exists.
+   * `enforced` means the backend establishes or verifies a real OS isolation
+   * boundary (Linux bubblewrap, or the container/pod boundary the backend
+   * runs inside — see `boundaryKind`). `policy-only` means requests are
+   * validated but run with NO isolation. Launchers that require an enforced
+   * boundary must check this marker instead of assuming one exists.
    */
   readonly isolation: "enforced" | "policy-only";
+  /**
+   * Required on an `enforced` backend: which boundary kind it reports, so
+   * callers and probes can distinguish a local bwrap boundary from the C1
+   * delegated container boundary. Absent only on `policy-only` backends.
+   */
+  readonly boundaryKind?: BoundaryKind;
   /**
    * W183: whether this backend can run the `network: "proxied"` posture (a
    * private netns reachable only through the backend's policy-gated parent
