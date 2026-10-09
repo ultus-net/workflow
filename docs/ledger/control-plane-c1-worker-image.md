@@ -82,15 +82,15 @@ digest) — stated plainly so no claim overreaches (spec §11:296-298).
 
 #### Verification (measured, this session)
 
-- `node --import tsx --test test/worker-image.test.ts` → 17/17 (14 initial
-  pins + 3 added in the review round).
+- `node --import tsx --test test/worker-image.test.ts` → 18/18 (14 initial
+  pins + 4 added across the two review rounds).
 - Wider focused set (`worker-image` + the three task-4 suites +
-  `control-plane-dockerfile` + `kernel-purity` + `text-hygiene`) → 59/59.
+  `control-plane-dockerfile` + `kernel-purity` + `text-hygiene`) → 60/60.
 - `npm run typecheck`, `npm run lint` → exit 0.
 - **Build (measured, podman):** `podman build -f images/worker/Dockerfile -t
-  workflow-worker:c1 .` → **green**, rebuilt after the review fixes to
-  `de6a21ce2fc0802dcfc0e965f2926316b55e7ce00d67a19103002ff07fdf0789` (the first
-  green build of the pre-review script was
+  workflow-worker:c1 .` → **green**, rebuilt after each review round, final
+  digest `bf9ecec3f9792776e7bd3223c38a5710d49a498a715869acfd81233ee94ccc0d` (the
+  first green build of the pre-review script was
   `baebab91b255eca8afbce41d2e9bc4addbc9d84816b788b674c5abca54ca3e17`). The
   build's fingerprint step writes
   `385b30eb36edeec1236c65b6cb6f73b9c966f09cdbf13ea09cd78ba4b8d02ad9` (63 `.js`
@@ -137,8 +137,17 @@ fragment's "DONE":
   reject classes (empty taskId, non-advisory posture, bad evidenceContainer,
   non-integer/zero budget, empty fingerprint).
 
-Verdict round 2: **APPROVE** (recorded by the reviewer subagent against the
-fixed commit; all P0/P1 clear, P2s addressed or recorded).
+Verdict round 2: **APPROVE/ACCEPT** (all five axes; the prior P1 resolved by
+construction — the credential now rides an env-scoped `GIT_CONFIG_*`
+extraheader and both clone/push error paths scrub it; the prior P2s addressed;
+three non-blocking P3 notes). The three P3s were then closed: the stale CI.md
+"six reject classes" count corrected to twelve; the visibility renewal moved to
+AFTER the cheap pre-work refusals (a poison message redelivers on the dequeue
+timeout, not a full budget window) and its margin widened to `budgetSeconds +
+120` to cover publish + upload; the ledger citation corrected to "plan §6 item
+1's same-pod-boundary residual". The round-2 fixes are pinned by a new
+`main()`-level test (dequeue → renew → run → delete-with-the-renewed-receipt);
+the suite is 18/18.
 
 #### Residuals (recorded, not claimed)
 
@@ -154,9 +163,11 @@ fixed commit; all P0/P1 clear, P2s addressed or recorded).
   agent can mint the pod's own storage/KV tokens and read the same secrets it
   was given. The "secrets are memory-only" mitigation is therefore narrowed to
   "not written to disk by the WORKER", not "unreachable by the agent". This is
-  plan §6.1's recorded residual (least-privilege RBAC on the worker MI is the
-  instance-side lever); restated here so no claim overreaches. A future slice
-  could scrub the MI endpoints from the child env.
+  an instance of plan §6 item 1's same-pod-boundary residual
+  (`docs/ledger/control-plane-c1-deploy-plan.md` §6, the plan-doc file rather
+  than a fixed line: least-privilege RBAC on the worker MI is the instance-side
+  lever); restated here so no claim overreaches. A future slice could scrub the
+  MI endpoints from the child env.
 - **`gitAuthEnv`/`publishResult`** are proven structurally, not live: the
   env-scoped extraheader + GitHub PR API are pinned by construction and unit
   tests, but no live GitHub push happened in task 5 (the live path is task 6).

@@ -72,6 +72,8 @@ export interface WorkerDeps {
   readonly log?: (line: string) => void;
   readonly corpusRoot?: string;
   readonly fingerprintFile?: string;
+  /** Called after all cheap pre-work refusals pass, before any clone/run/etc. */
+  readonly beforeWork?: () => Promise<void>;
 }
 
 export function validateAzureJobMessage(value: unknown): AzureJobMessage;

@@ -489,6 +489,12 @@ export async function runWorkerTurn({ message, config, deps = {} }) {
     );
   }
 
+  // All cheap pre-work refusals have passed. NOW (and not before) extend the
+  // message's visibility so a poison message that fails the checks above
+  // redelivers on the dequeue timeout, not after a full budget wait; and the
+  // renewed receipt is the window that must cover the run + publish + upload.
+  if (deps.beforeWork !== undefined) await deps.beforeWork();
+
   // 3. Materialize ONLY the named secrets, in memory.
   const storageToken = await getAccessToken(STORAGE_SCOPE, fetcher);
   const kvToken = await getAccessToken(KV_SCOPE, fetcher);
@@ -619,20 +625,28 @@ export async function main(env = process.env, deps = {}) {
     parsed = JSON.parse(body);
   }
   const message = validateAzureJobMessage(parsed);
-  // Renew visibility to cover the whole run budget BEFORE any work, so the
-  // dequeue-time timeout cannot expire mid-run (which would let a second pod
-  // redeliver the message) and the renewed receipt is valid for the delete.
-  // `task.budgetSeconds` + a small margin; Azure caps the renewal window, so a
-  // budget beyond the cap still relies on the pod finishing within it.
-  const renewedReceipt = await renewMessage(
-    config.queueUrl,
-    token,
-    pulled.messageId,
-    pulled.popReceipt,
-    message.task.budgetSeconds + 30,
-    fetcher,
-  );
-  await runWorkerTurn({ message, config, deps });
+  // The visibility renewal is deferred to the turn's pre-work point (after the
+  // corpus + keyless checks), so a message that fails those checks redelivers on
+  // the short dequeue timeout instead of waiting out a full budget window. The
+  // window covers the run budget PLUS the publish + evidence-upload phases
+  // (which the budget does not bound); Azure caps it, so an unusually slow
+  // publish still relies on the pod finishing within the cap. The renewed
+  // receipt is what the delete uses.
+  let renewedReceipt = pulled.popReceipt;
+  const renewalDeps = {
+    ...deps,
+    beforeWork: async () => {
+      renewedReceipt = await renewMessage(
+        config.queueUrl,
+        token,
+        pulled.messageId,
+        pulled.popReceipt,
+        message.task.budgetSeconds + 120,
+        fetcher,
+      );
+    },
+  };
+  await runWorkerTurn({ message, config, deps: renewalDeps });
   await deleteMessage(config.queueUrl, token, pulled.messageId, renewedReceipt, fetcher);
 }
 

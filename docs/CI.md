@@ -174,7 +174,7 @@ passed, not that "the tests passed".
   (every RUN must genuinely succeed), the vendored opencode sha-verify (the same
   pin as the plane image), the fingerprint-written-after-toolbox-build order, no
   `EXPOSE`/baked token/instance value, the schema-mirror agreement with the hub
-  contract (accept + six reject classes), the ref-envelope mirror, the corpus
+  contract (accept + twelve reject classes), the ref-envelope mirror, the corpus
   fingerprint's determinism/content-sensitivity, a missing/empty corpus refusal,
   the `verifyCorpus` declined-mismatch + image-tamper refusals, fail-closed
   config classification, an empty-queue exit 0, a corpus mismatch refusing

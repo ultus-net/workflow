@@ -725,10 +725,14 @@ option was **not** needed (dropped to reduce surface).
   only the named Key Vault secrets in memory, clones, runs stock `opencode run`
   headless under a wall-clock budget, pushes a branch + opens a PR, and uploads
   the evidence blob; exit 0 deletes the message.
-- New `test/worker-image.test.ts` (14 pins, hermetic). Evidence:
-  `node --import tsx --test test/worker-image.test.ts` 14/14; with the task-4
-  suites + `control-plane-dockerfile` + `kernel-purity`, 47/47;
+- New `test/worker-image.test.ts` (hermetic pins).
+- Evidence: `node --import tsx --test test/worker-image.test.ts` → 14/14; with
+  the task-4 suites + `control-plane-dockerfile` + `kernel-purity`, 47/47;
   `npm run typecheck` exit 0; `npm run lint` exit 0.
+- Independent review round 1 REJECT (one P1: git token echoed to stderr; three
+  P2: token on disk, visibility/budget coupling, MI sharing) — all fixed;
+  round 2 verdict recorded in
+  `docs/ledger/control-plane-c1-worker-image.md`. Tests 14 → 17.
 - **Build (measured, podman):** recorded in the task-5 ledger fragment
   `docs/ledger/control-plane-c1-worker-image.md` (green;
   `baebab91b255eca8afbce41d2e9bc4addbc9d84816b788b674c5abca54ca3e17`, the

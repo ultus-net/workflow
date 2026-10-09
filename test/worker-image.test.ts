@@ -404,3 +404,64 @@ test("worker turn: an unmapped model env var refuses keyless (fail-closed)", asy
   }
   assert.equal(cloned, false, "a keyless run must refuse before the clone");
 });
+
+test("worker main: renews visibility after pre-work checks and deletes with the renewed receipt", async () => {
+  // The P2 fix: the dequeue-time popReceipt is stale once visibility is renewed,
+  // so delete must use the receipt RETURNED by the renew. This pins the whole
+  // main() wiring hermetically: dequeue → validate → renew (PUT) → run → delete
+  // (DELETE) using the renewed receipt.
+  const root = scratchCorpus({ "a/server.js": "console.log(1)" });
+  const { fingerprint } = fingerprintCorpus(root);
+  const recorded = join(root, "..", `recorded-main-${process.pid}.txt`);
+  writeFileSync(recorded, `${fingerprint}\n`);
+  const message = {
+    specVersion: 1,
+    taskId: "task-1",
+    repo: { url: "https://github.com/o/r.git", ref: "main" },
+    gitPush: { secretRef: "git-push" },
+    model: { id: "openrouter/x", secretRef: "model-key" },
+    task: { message: "do it", declaredEvidence: ["tests"], budgetSeconds: 10, permissionPosture: "advisory" },
+    mcp: { manifest: [], corpusFingerprint: fingerprint },
+    artifacts: { evidenceContainer: "evidence", blobPrefix: "runs" },
+  };
+  const dequeueXml = `<?xml version="1.0"?><QueueMessagesList><QueueMessage><MessageId>mid-1</MessageId><PopReceipt>receipt-1</PopReceipt><MessageText>${Buffer.from(JSON.stringify(message)).toString("base64")}</MessageText></QueueMessage></QueueMessagesList>`;
+  const renewXml = `<?xml version="1.0"?><QueueMessage><PopReceipt>receipt-2</PopReceipt></QueueMessage>`;
+  const seen: string[] = [];
+  const fetcher = async (url: string, init?: RequestInit) => {
+    seen.push(`${init?.method ?? "GET"} ${url}`);
+    if (url.includes("oauth2/token")) return new Response(JSON.stringify({ access_token: "t", expires_in: 3600 }), { status: 200 });
+    if (url.includes("vault.azure.net")) return new Response(JSON.stringify({ value: "secret-value" }), { status: 200 });
+    if (url.includes("/messages?visibilitytimeout=")) return new Response(dequeueXml, { status: 200 });
+    if (init?.method === "PUT") return new Response(renewXml, { status: 200 });
+    if (init?.method === "DELETE") return new Response(null, { status: 200 });
+    return new Response("", { status: 200 }); // blob
+  };
+  try {
+    await workerMain(
+      {
+        WORKFLOW_AZURE_QUEUE_URL: "https://acct.queue.core.windows.net/queue",
+        WORKFLOW_KEYVAULT_NAME: "mykv",
+        WORKFLOW_AZURE_ACCOUNT_URL: "https://acct.blob.core.windows.net",
+        WORKFLOW_WORKER_MODEL_ENV_VAR: "OPENROUTER_API_KEY",
+      },
+      {
+        fetcher,
+        corpusRoot: root,
+        fingerprintFile: recorded,
+        log: () => {},
+        clone: async () => root,
+        run: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
+        publish: async () => ({ branch: "workflow/task-1" }),
+      },
+    );
+  } finally {
+    rmSync(recorded, { force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+  // The renewal happened (a PUT) before the delete, and the delete carried the
+  // RENEWED receipt (receipt-2), not the dequeue receipt (receipt-1).
+  const putIndex = seen.findIndex((entry) => entry.startsWith("PUT ") && entry.includes("popreceipt=receipt-1"));
+  const deleteCall = seen.find((entry) => entry.startsWith("DELETE "));
+  assert.ok(putIndex >= 0, "visibility must be renewed with the dequeue receipt");
+  assert.ok(deleteCall !== undefined && deleteCall.includes("popreceipt=receipt-2"), "delete must use the renewed receipt");
+});
