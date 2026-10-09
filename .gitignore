@@ -16,3 +16,7 @@ images/control-plane/opencode
 .DS_Store
 .tmp-*
 .superpowers/
+
+# Stale PR-body scratch (drafts for already-merged PRs)
+.pr-bodies/
+.pr-body-*.md
