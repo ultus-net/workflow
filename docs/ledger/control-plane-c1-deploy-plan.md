@@ -767,17 +767,18 @@ gateway health before attaching and classifies before acting.
 - **One-way rule kept:** the module names only env VARIABLE names
   (`WORKFLOW_PLANE_ACA_RESOURCE_GROUP`, `WORKFLOW_PLANE_ACA_APP`); the instance
   supplies the values.
-- New `test/plane-wake.test.ts` (15 pins): the classification table, the
+- New `test/plane-wake.test.ts` (17 pins): the classification table, the
   scale-to-zero precedence, **no-az never polls (never hangs)**, a ready plane
   never touches `az`, the wake-then-attach path, a wake that never becomes
   healthy resolves `broken` (not thrown), a wake failure carries the az cause,
   a throwing resource read is `broken` (never asleep), the env target's
   fail-closed partial pair, the `az` JSON parse, the honest state lines, the
-  three explicit-lane behaviors, and a `main()` source-artifact pin (the
-  LESS-0004 precedent).
-- Evidence: `node --import tsx --test test/plane-wake.test.ts` → 15/15; with
+  three explicit-lane behaviors, the `az` argv shape (the show query + the
+  exact `containerapp update --min-replicas 1` wake; a throwing session check),
+  and a `main()` source-artifact pin (the LESS-0004 precedent).
+- Evidence: `node --import tsx --test test/plane-wake.test.ts` → 17/17; with
   `plane-supervisor` + `opencode-server-launcher` + `workflow-launcher` +
-  `kernel-purity` + `text-hygiene`, 64/64; `npm run typecheck` exit 0;
+  `kernel-purity` + `text-hygiene`, 66/66; `npm run typecheck` exit 0;
   `npm run lint` exit 0.
 - **Not live-verified:** the `az`-backed deps and the real `containerapp
   update` are pinned by construction, not executed here (C1 live is task 3.1,

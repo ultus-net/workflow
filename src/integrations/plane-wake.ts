@@ -38,7 +38,6 @@ export interface PlaneResourceFacts {
   readonly provisioningState?: string | undefined;
   readonly runningStatus?: string | undefined;
   readonly minReplicas?: number | undefined;
-  readonly ingressFqdn?: string | undefined;
 }
 
 /** The launcher's verdict about the plane. */
@@ -262,7 +261,6 @@ export function parsePlaneResourceFacts(stdout: string): PlaneResourceFacts | un
     ...(typeof record.provisioningState === "string" ? { provisioningState: record.provisioningState } : {}),
     ...(typeof record.runningStatus === "string" ? { runningStatus: record.runningStatus } : {}),
     ...(typeof record.minReplicas === "number" ? { minReplicas: record.minReplicas } : {}),
-    ...(typeof record.ingressFqdn === "string" ? { ingressFqdn: record.ingressFqdn } : {}),
   };
 }
 
@@ -299,7 +297,7 @@ export function createAzurePlaneWakeDeps(options: CreateAzurePlaneWakeDepsOption
           "--name", options.target.app,
           "--resource-group", options.target.resourceGroup,
           "--query",
-          "{provisioningState:properties.provisioningState,runningStatus:properties.runningStatus,minReplicas:properties.template.scale.minReplicas,ingressFqdn:properties.configuration.ingress.fqdn}",
+          "{provisioningState:properties.provisioningState,runningStatus:properties.runningStatus,minReplicas:properties.template.scale.minReplicas}",
           "-o", "json",
         ]);
       } catch {

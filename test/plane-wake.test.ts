@@ -5,6 +5,7 @@ import { test } from "node:test";
 
 import {
   classifyPlaneState,
+  createAzurePlaneWakeDeps,
   ensureExplicitPlaneReady,
   ensurePlaneReady,
   planeStateLine,
@@ -94,7 +95,7 @@ test("plane-wake: an asleep plane is woken, then attached after the bounded poll
   const deps: PlaneWakeDeps = {
     probe: async () => (awake ? { version: "2.0.10" } : undefined),
     azSession: async () => true,
-    show: async () => facts({ minReplicas: 0, ingressFqdn: "plane.example.net" }),
+    show: async () => facts({ minReplicas: 0 }),
     wake: async () => { awake = true; },
     sleep: async () => undefined,
   };
@@ -161,9 +162,9 @@ test("plane-wake: the target resolves from both env vars, fails closed on a part
 test("plane-wake: parses the az query JSON and rejects a non-object", () => {
   assert.deepEqual(
     parsePlaneResourceFacts(JSON.stringify({
-      provisioningState: "Succeeded", runningStatus: "Running", minReplicas: 0, ingressFqdn: "plane.example.net",
+      provisioningState: "Succeeded", runningStatus: "Running", minReplicas: 0,
     })),
-    { exists: true, provisioningState: "Succeeded", runningStatus: "Running", minReplicas: 0, ingressFqdn: "plane.example.net" },
+    { exists: true, provisioningState: "Succeeded", runningStatus: "Running", minReplicas: 0 },
   );
   // A null leaf (az's missing-query rendering) stays absent, not a bogus value.
   assert.deepEqual(parsePlaneResourceFacts(JSON.stringify({ provisioningState: "Succeeded", runningStatus: null })), {
@@ -223,6 +224,55 @@ test("plane-wake: the configured lane runs the injected wake path", async () => 
   );
   assert.equal(outcome.state.kind, "ready");
   assert.equal(woke, true, "the configured lane actually attempted the wake");
+});
+
+test("plane-wake: the az-backed deps build the exact show query and wake argv (no shell)", async () => {
+  const calls: string[][] = [];
+  const deps = createAzurePlaneWakeDeps({
+    target: { resourceGroup: "rg-work", app: "plane-app" },
+    gatewayUrl: "https://plane.example.net",
+    auth: "Basic abc",
+    azExec: async (args) => {
+      calls.push([...args]);
+      if (args[0] === "account") return "sub-id\n";
+      return JSON.stringify({ provisioningState: "Succeeded", runningStatus: "Unknown", minReplicas: 0 });
+    },
+  });
+  assert.equal(await deps.azSession(), true);
+  assert.equal((await deps.show())?.minReplicas, 0);
+  await deps.wake();
+  // The session gate.
+  assert.deepEqual(calls[0], ["account", "show", "--query", "id", "-o", "tsv"]);
+  // The show query names the resource group + app and requests the four facts.
+  assert.deepEqual(calls[1]?.slice(0, 4), ["containerapp", "show", "--name", "plane-app"]);
+  assert.equal(calls[1]?.includes("--resource-group"), true);
+  assert.equal(calls[1]?.includes("rg-work"), true);
+  assert.match(calls[1]?.[calls[1].indexOf("--query") + 1] ?? "", /provisioningState.*runningStatus.*minReplicas/);
+  // The wake is exactly `containerapp update --min-replicas 1`, no shell.
+  assert.deepEqual(calls[2], [
+    "containerapp", "update", "--name", "plane-app", "--resource-group", "rg-work", "--min-replicas", "1",
+  ]);
+});
+
+test("plane-wake: an az session check that throws is false, never a wake", async () => {
+  const notLoggedIn = createAzurePlaneWakeDeps({
+    target: { resourceGroup: "rg", app: "app" },
+    gatewayUrl: "https://x",
+    auth: "Basic x",
+    azExec: async (args) => {
+      if (args[0] === "account") throw new Error("ERROR: not logged in");
+      return "{}";
+    },
+  });
+  assert.equal(await notLoggedIn.azSession(), false);
+  // A failed show (non-zero exit) yields no facts -> the classifier reads broken.
+  const failing = createAzurePlaneWakeDeps({
+    target: { resourceGroup: "rg", app: "app" },
+    gatewayUrl: "https://x",
+    auth: "Basic x",
+    azExec: async () => { throw new Error("resource not found"); },
+  });
+  assert.equal(await failing.show(), undefined);
 });
 
 test("plane-wake: main() wires the explicit lane through plane-awareness (anti-drift pin)", () => {

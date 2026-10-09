@@ -53,21 +53,22 @@ instance value. The instance supplies the values, exactly as it supplies
 
 #### Verification (measured, this session)
 
-- `node --import tsx --test test/plane-wake.test.ts` → 15/15.
+- `node --import tsx --test test/plane-wake.test.ts` → 17/17.
 - Wider focused set (`plane-wake` + `plane-supervisor` +
   `opencode-server-launcher` + `workflow-launcher` + `kernel-purity` +
-  `text-hygiene`) → 64/64.
+  `text-hygiene`) → 66/66.
 - `npm run typecheck` → exit 0. `npm run lint` → exit 0.
 - Added to `package.json` `test:ci`; the curated set goes 52 to 53 suites
   (`docs/CI.md`).
 
 #### Residuals (recorded, not claimed)
 
-- **No live `az` verification.** The `az`-backed deps and the real
-  `containerapp update` are pinned by construction (the wake call shape) and by
-  the injected-dep tests, not executed against Azure here. The C1 live probe
-  is task 3.1 (🛰, `WORKFLOW_AZURE_PLANE_PROBE=1`). No "the plane wakes in
-  Azure" claim is made.
+- **No live `az` verification.** The real `containerapp show`/`update`
+  invocations are not executed against Azure here; the `az` argv shape (the
+  show query, the exact `containerapp update --min-replicas 1` wake) is pinned
+  by an injected-`azExec` test, and the classification is pinned by the
+  injected-dep tests. The C1 live probe is task 3.1 (🛰,
+  `WORKFLOW_AZURE_PLANE_PROBE=1`). No "the plane wakes in Azure" claim is made.
 - **The wake PATCH is `--min-replicas 1`, not a full revision/ingress
   repair.** By design: `broken` states (revision error, ingress gone) are
   reported, not blindly re-driven (spec: "do not attempt a wake that cannot
