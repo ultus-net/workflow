@@ -160,7 +160,7 @@ async function handle(
   const supplied = decodeBasic(request.headers.authorization);
   const expected = `${options.tuiUsername ?? "opencode"}:${options.tuiPassword}`;
   if (supplied === undefined || !equalConstantTime(supplied, expected)) {
-    sendJson(response, 401, { error: "unauthorized" });
+    sendUnauthorized(response);
     return;
   }
   const rawPathname = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
@@ -393,6 +393,26 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
   response.writeHead(status, { "content-type": "application/json" });
   response.end(JSON.stringify(body));
 }
+
+/**
+ * The client-auth 401. A browser only shows its Basic-auth credential prompt
+ * when the response carries `WWW-Authenticate`, so the gateway MUST send the
+ * challenge or the web UI is unreachable from a browser (it renders the bare
+ * JSON error instead). The realm string is byte-identical to stock
+ * `opencode serve` (measured: `Basic realm="Secure Area"`) so the gateway stays
+ * a faithful front door for the browser lane, not just preemptive API clients.
+ */
+function sendUnauthorized(response: ServerResponse): void {
+  if (response.headersSent) return;
+  response.writeHead(401, {
+    "content-type": "application/json",
+    "www-authenticate": OPENCODE_BASIC_CHALLENGE,
+  });
+  response.end(JSON.stringify({ error: "unauthorized" }));
+}
+
+/** The Basic-auth realm stock `opencode serve` advertises; pinned for fidelity. */
+const OPENCODE_BASIC_CHALLENGE = 'Basic realm="Secure Area"';
 
 function closeServer(server: HttpServer): Promise<void> {
   return new Promise((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
