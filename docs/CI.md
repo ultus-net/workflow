@@ -181,6 +181,18 @@ passed, not that "the tests passed".
   BEFORE any clone or run, the git token riding an env-scoped extraheader (the
   P1 review fix: never argv, never on disk), `redactSecret`, and an unmapped
   model env var refusing keyless. The set goes 51 to 52 suites.
+  **2026-10-09 (same day) — gate the launcher plane-awareness:** the C1
+  plane-wake module (`src/integrations/plane-wake.ts`) plus the
+  `opencode-attach` explicit-lane wiring are added offline: `plane-wake` pins
+  the classification table (reachability wins, the `az` session gates the wake,
+  scale-to-zero is the one wakeable state and outranks a stopped running
+  status), **no-az never polls (never hangs)**, a ready plane never touches
+  `az`, the wake-then-attach path, a wake that never becomes healthy resolving
+  `broken` (not thrown), a throwing resource read as `broken` (never asleep),
+  the fail-closed partial ACA env pair, the `az` JSON parse, the honest state
+  lines, the `az` argv shape (the show query + the exact `containerapp update
+  --min-replicas 1`), and a `main()` source-artifact pin. The set goes 52 to 53
+  suites.
 - `release-gate.yml`: deferred per decision 2.
 - Branch protection: the operator flips the required-checks toggle in GitHub
   settings to name `gate` and `evidence` (CI defines the check names; the

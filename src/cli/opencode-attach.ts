@@ -13,6 +13,7 @@ import {
   readOpencodeServerDiscovery,
   type OpencodeServerDiscovery,
 } from "../integrations/opencode-server-discovery.js";
+import { ensureExplicitPlaneReady, planeStateLine } from "../integrations/plane-wake.js";
 
 /**
  * W071 — the stock-TUI launcher.
@@ -41,6 +42,11 @@ const USAGE = [
   "  --workspace <dir>  workspace the client attaches to (default: cwd; alias: --dir)",
   "  --no-autostart     never start the server daemon; fail when discovery is absent",
   "  --help             print this help",
+  "",
+  "C1 plane lane (remote gateway): set WORKFLOW_OPENCODE_GATEWAY_URL +",
+  "  WORKFLOW_OPENCODE_GATEWAY_PASSWORD. The launcher probes health and wakes a",
+  "  scaled-to-zero plane when WORKFLOW_PLANE_ACA_RESOURCE_GROUP +",
+  "  WORKFLOW_PLANE_ACA_APP are set (an az cli session is required).",
 ].join("\n");
 
 export function parseAttachArgs(argv: readonly string[]): OpencodeAttachArgs {
@@ -252,12 +258,25 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   // C1 plane lane: an explicit operator-exported gateway takes precedence over
   // discovery. No autostart, no discovery read — the plane is a remote surface.
   const explicit = resolveExplicitGateway(process.env);
-  const discovery = explicit === undefined
-    ? await ensureDiscovery({ workspace, stateHome, autostart: args.autostart })
-    : { ...explicit, workspace };
-  if (discovery === undefined) {
+  let connection: { gatewayUrl: string; tuiUsername: string; tuiPassword: string; workspace: string } | undefined;
+  if (explicit === undefined) {
+    connection = await ensureDiscovery({ workspace, stateHome, autostart: args.autostart });
+  } else {
+    // Task 2b plane-awareness: classify (ready/asleep/broken/no-az) and wake a
+    // proven-asleep plane before attaching. Anything but ready fails closed with
+    // the honest state line rather than attaching to nothing.
+    const outcome = await ensureExplicitPlaneReady(explicit, process.env, {
+      report: (line) => process.stderr.write(`${line}\n`),
+    });
+    if (outcome.state.kind !== "ready") {
+      throw new Error(planeStateLine(outcome.state));
+    }
+    connection = { ...explicit, workspace };
+  }
+  if (connection === undefined) {
     throw new Error("Workflow OpenCode server is unavailable; start it with `workflow-opencode-server` or check the upstream key/containment prerequisites");
   }
+  const discovery = connection;
   const binary = process.env.WORKFLOW_OPENCODE_BIN ?? globalOpencodeBinary();
   if (binary === undefined) {
     throw new Error("No OpenCode client available: install the opencode CLI globally or set WORKFLOW_OPENCODE_BIN");
