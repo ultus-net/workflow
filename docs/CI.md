@@ -155,6 +155,18 @@ passed, not that "the tests passed".
   and bakes no instance value; the `control-plane-dockerfile` suite grows 6 to
   9 tests (plane CMD present + hub CMD gone, `USER node` + created/chowned
   state root, instance-values-never-baked). No new suite, so the set stays 48.
+  **2026-10-09 (same day) — gate the Azure job dispatch seam:** the hub-side dispatch
+  module (`src/integrations/azure-jobs-schema.ts` + `azure-jobs-dispatch.ts` +
+  the shared `azure-token.ts` credential chain extracted from `key-vault.ts`)
+  is added offline: `azure-jobs-schema` pins the fail-closed structural
+  validation (unknown specVersion, absent/empty declaredEvidence, the refused
+  `enforced` posture, ref-names-never-values), `azure-jobs-dispatch` pins the
+  env classification (opt-in + missing/invalid vars named), the
+  validate-before-wire rule, the Queue REST wire shape (Bearer +
+  x-ms-version + x-ms-date, the base64 QueueMessage XML), the oversized
+  blob-ref path, and the transport-fault throw, and `azure-jobs-hub-route`
+  pins the `POST /dispatch/azure-job` token class + 404/400/5xx semantics.
+  The set goes 48 to 51 suites.
 - `release-gate.yml`: deferred per decision 2.
 - Branch protection: the operator flips the required-checks toggle in GitHub
   settings to name `gate` and `evidence` (CI defines the check names; the

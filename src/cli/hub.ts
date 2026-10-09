@@ -29,6 +29,7 @@ import { createScheduleRegistry } from "../integrations/schedule-registry.js";
 import { createProjectRegistry } from "../integrations/project-registry.js";
 import { createSelfImprovementRegistry } from "../integrations/self-improvement-registry.js";
 import { createEgressPolicyRevisionStore } from "../integrations/egress-policy-revisions.js";
+import { azureJobsDispatchFromEnv, createAzureJobsDispatch } from "../integrations/azure-jobs-dispatch.js";
 import { loadEgressPolicyFile } from "../integrations/egress-policy-file.js";
 import { credentialBindingFingerprint, upstreamCredentialBinding } from "../integrations/egress-binding.js";
 import type { CredentialEndpoint } from "../integrations/credentials.js";
@@ -157,6 +158,24 @@ const egressApprovals = createEgressPolicyRevisionStore({
     providerFingerprint: egressProviderFingerprint(),
   }),
 });
+// C1 deploy plan §2.c (D1/D3): the Azure job-dispatch client, classified from
+// env at startup. Off (no WORKFLOW_AZURE_JOBS=1) → undefined (capability
+// withheld); on but missing/malformed → this throws here, fail-closed (never a
+// silently guardless dispatch lane). The queue/account URLs carry no secret.
+const azureJobsDispatchEnv = azureJobsDispatchFromEnv(process.env);
+if (azureJobsDispatchEnv.kind === "unconfigured" && (process.env.WORKFLOW_AZURE_JOBS ?? "").trim() === "1") {
+  throw new Error(
+    `azure job dispatch requires ${azureJobsDispatchEnv.missing.join(", ")} (WORKFLOW_AZURE_JOBS=1)`,
+  );
+}
+const azureJobsDispatch =
+  azureJobsDispatchEnv.kind === "configured"
+    ? createAzureJobsDispatch({
+        queueUrl: azureJobsDispatchEnv.queueUrl,
+        accountUrl: azureJobsDispatchEnv.accountUrl,
+        evidenceContainer: azureJobsDispatchEnv.evidenceContainer,
+      })
+    : undefined;
 // W184: the per-turn W180 payload policy, read FRESH at each runtime composition
 // so a revision merged by the operator is consulted by the next turn's proxy.
 // Absent rules (no file, no revisions) leaves the tier dark.
@@ -606,6 +625,11 @@ try {
     // serves /egress/pending and /egress/answer and the proxy denial sink parks
     // redacted pending rules.
     egressApprovals,
+    // C1 deploy plan §2.c (D1/D3): the Azure job-dispatch enqueue closure.
+    // Opt-in via WORKFLOW_AZURE_JOBS=1; when on, a missing/malformed queue
+    // declaration throws here at startup (fail-closed, never best-effort).
+    // When off, the capability is withheld and the route 404s.
+    ...(azureJobsDispatch === undefined ? {} : { dispatchAzureJob: azureJobsDispatch.enqueue }),
     schedulerFactory,
     schedules: scheduleRegistry,
     projects: projectRegistry,
