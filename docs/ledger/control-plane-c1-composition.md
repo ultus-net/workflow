@@ -197,3 +197,36 @@ deployed until C1 lands. No work-specific values entered this repo.
 `src/cli/entrypoint.ts`; `test/control-plane-dockerfile.test.ts`;
 `test/cli-entrypoint.test.ts`; `docs/PARKED_AND_LIMITATIONS.md`;
 `docs/ledger/w149-publish-digest.md`; the 2026-09-25 and 2026-09-26 specs.
+
+---
+
+### Supersession (2026-10-09, task 3 of the C1 deploy plan): option A adopted; the C1 gap is closed
+
+**This section supersedes the "not a deployable C1 plane" conclusion above; the
+earlier record is left as written (append-only).**
+
+The operator adopted **option A (`SupervisorContainment`, realized as the
+`workflow-plane` process supervisor + the delegated `container-boundary`
+containment backend)**; the decision is recorded in
+`docs/ledger/control-plane-c1-deploy-plan.md` Appendix B (D1-D6) and the
+implementation in Appendix C.
+
+- The former `images/control-plane/Dockerfile` "honest C1 gap" header is
+  superseded by a dated note in place: `CMD ["workflow-plane"]` starts the hub
+  **and** the OpenCode server daemon (contained `opencode serve` + authority
+  broker + gateway), with the gateway bound to the ingress front door
+  (`0.0.0.0:4096`).
+- The reference-container objection (bubblewrap cannot create a nested
+  namespace inside a pod) is answered by the delegated backend
+  (`src/containment/container-boundary.ts`), selected by the INSTANCE via
+  `WORKFLOW_CONTAINMENT_BACKEND=container-boundary`; the pod is the boundary.
+- `USER node` (D6) and a pre-created node-owned `/home/node/.workflow` state
+  root; the Azure Files state root (`WORKFLOW_OPENCODE_SERVER_HOME`) stays an
+  instance value, never baked.
+
+**Residual that remains open at this point:** the in-container loopback probe
+result is recorded in `docs/ledger/control-plane-c1-deploy-plan.md` Appendix C
+(build green; 401 / 200 `/api/info` / SSE `text/event-stream` inside a pod); the
+live ACA probe (plan task 3.1) remains the measurement that upgrades any
+pod-side status line. Until 3.1 runs, the image is pod-loopback-verified, not
+ingress-verified, and no `enforced` label is claimed for deployed pods.

@@ -149,6 +149,12 @@ passed, not that "the tests passed".
   carried to the child, and the gateway's explicit bind + 401 split. The
   non-loopback attach lane (`resolveExplicitGateway`) is pinned in
   `opencode-server-launcher`. The set goes 47 to 48 suites.
+  **2026-10-09 (same day) — the C1 image becomes the plane:** the
+  control-plane Dockerfile `CMD` moves from the hub-only entry to
+  `workflow-plane`, gains `USER node` and a pre-created node-owned state root,
+  and bakes no instance value; the `control-plane-dockerfile` suite grows 6 to
+  9 tests (plane CMD present + hub CMD gone, `USER node` + created/chowned
+  state root, instance-values-never-baked). No new suite, so the set stays 48.
 - `release-gate.yml`: deferred per decision 2.
 - Branch protection: the operator flips the required-checks toggle in GitHub
   settings to name `gate` and `evidence` (CI defines the check names; the

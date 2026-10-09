@@ -79,13 +79,52 @@ test("Dockerfile: the toolbox build runs with CI=true (ERR_PNPM_ABORTED_REMOVE_M
 });
 
 test("Dockerfile: the package's own bins are linked onto PATH (workflow-hub CMD regression)", () => {
-  // `npm ci` does not link the root package's bins, so `CMD ["workflow-hub"]`
-  // failed with `Cannot find module '/workspace/workflow-hub'` — measured
-  // 2026-10-09. `npm link` links the root package's bins into the global
-  // prefix after the tree is final.
+  // `npm ci` does not link the root package's bins, so the former
+  // `CMD ["workflow-hub"]` failed with `Cannot find module
+  // '/workspace/workflow-hub'` — measured 2026-10-09. `npm link` links the
+  // root package's bins into the global prefix after the tree is final.
   const body = instructionLines(dockerfile).join("\n");
   assert.ok(body.includes("RUN npm link --ignore-scripts"), "the root package's bins must be linked");
-  assert.ok(dockerfile.includes('CMD ["workflow-hub"]'), "the hub is the long-running entry");
+});
+
+test("Dockerfile: the C1 plane is the long-running entry (CMD workflow-plane)", () => {
+  // Task 3 (2026-10-09): the single-process hub entry is superseded by the C1
+  // plane supervisor, which composes hub + OpenCode server daemon + gateway and
+  // binds the gateway to 4096. See docs/ledger/control-plane-c1-deploy-plan.md.
+  assert.ok(dockerfile.includes('CMD ["workflow-plane"]'), "the plane supervisor is the long-running entry");
+  assert.ok(!dockerfile.includes('CMD ["workflow-hub"]'), "the superseded hub-only CMD must be gone");
+});
+
+test("Dockerfile: the plane runs as the unprivileged node user with a writable state root (D6)", () => {
+  // D6: USER node, never root at runtime. The default state root (~/.workflow)
+  // is pre-created and node-owned so the daemon can write discovery.
+  const lines = instructionLines(dockerfile);
+  assert.ok(lines.includes("USER node"), "the image must run as the node user");
+  assert.ok(
+    lines.some((line) => /^RUN mkdir -p \/home\/node\/\.workflow\b/.test(line)),
+    "the node user's state root must be pre-created",
+  );
+  assert.ok(
+    lines.some((line) => /chown -R node:node \/home\/node/.test(line)),
+    "the state root must be node-owned",
+  );
+});
+
+test("Dockerfile: the named instance env values are never baked into the image (spec section 5)", () => {
+  // spec section 5: the image carries no instance values. The state root is set
+  // by the INSTANCE (WORKFLOW_OPENCODE_SERVER_HOME = the Azure Files mount),
+  // never baked; and the containment backend is an instance-supplied env var,
+  // not an image default (the image must not silently claim container-boundary
+  // on a bare host).
+  const envLines = instructionLines(dockerfile).filter((line) => line.startsWith("ENV "));
+  assert.ok(
+    !envLines.some((line) => line.includes("WORKFLOW_OPENCODE_SERVER_HOME")),
+    "the state root is an instance value and must not be baked",
+  );
+  assert.ok(
+    !envLines.some((line) => line.includes("WORKFLOW_CONTAINMENT_BACKEND")),
+    "the containment backend is instance-supplied, never an image default",
+  );
 });
 
 test(".dockerignore: nested node_modules are excluded (context hygiene)", () => {

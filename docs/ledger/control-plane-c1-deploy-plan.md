@@ -374,7 +374,7 @@ naming convention only).
 | 1 | Container-boundary backend + type discriminator + selection gate | `src/containment/container-boundary.ts` (new), `contracts.ts`, `platform.ts` | `test/container-boundary.test.ts` (new): refuses outside container env, rejects `proxied`/`mediated`/`read-write-no-delete`, `spawn` reports `boundaryKind` | `npm run lint`, `npm run typecheck`, `node --import tsx --test test/container-boundary.test.ts` |
 | 2 | Plane supervisor + gateway fixed-bind + stable client cred. **Acceptance amended 2026-10-09 (DONE):** hub-bind option DROPPED (hub stays loopback; spec §10 needs one container, not one process) and §2.a "in-process hub" landed as a process supervisor — see Appendix C. | `src/cli/plane.ts` (new), `src/cli/plane-config.ts` (new), `src/integrations/opencode-server-gateway.ts`, `src/cli/opencode-attach.ts` (non-loopback explicit URL lane), `package.json` bin, `README.md` | `test/plane-supervisor.test.ts` (new: config fail-closed, supervisor reap/exit-code, env split, gateway fixed bind + 401 + `/api/info` proxy); existing `opencode-server-*` tests green; `test/cli-entrypoint.test.ts` + `test/install-surface-docs.test.ts` green | same trio + focused tests |
 | 2b | Launcher plane-awareness (decided, spec §10:230-246, D-rides-C1): health probe → ready/asleep/broken/no-az classify; auto-wake via `az` PATCH; honest state lines | `src/cli/opencode-attach.ts` + new `src/integrations/plane-wake.ts` | `test/plane-wake.test.ts` (new: classification table, no-az never hangs) | focused tests |
-| 3 | Image CMD/USER/ENV; podman in-container loopback probe (gateway 401 → /api/info → SSE frame locally) | `images/control-plane/Dockerfile`, `.dockerignore`, `test/control-plane-dockerfile.test.ts` | podman build green; `podman run` + curl from inside: 401 without auth, 200 `/api/info`, SSE text/event-stream | measured, recorded in this ledger as a dated supersession of the C1-gap note |
+| 3 | Image CMD/USER/ENV; podman in-container loopback probe (gateway 401 → /api/info → SSE frame locally). **DONE 2026-10-09** — see Appendix C. | `images/control-plane/Dockerfile`, `.dockerignore`, `test/control-plane-dockerfile.test.ts` | podman build green; `podman run` + curl from inside: 401 without auth, 200 `/api/info`, SSE text/event-stream | measured, recorded in this ledger as a dated supersession of the C1-gap note |
 | 3.1 🛰 | **C1 live probe** through ACA ingress: 401, `/api/info`, SSE keepalive past 240 s idle window (the C0 `--idle` gate, mirrored), gateway route-class matrix, broker SSE subscription live, `boundaryKind === "container-boundary"` in discovery, client/upstream cred split over the wire | new `test/c1-plane-probe.test.ts` (env gate `WORKFLOW_AZURE_PLANE_PROBE=1`) | probe exit 0; verdict table in `docs/HOST_ADAPTERS.md` discipline; C1 status Partial (advisory) | deploy-by-the-instance; recorded dated |
 | 4 | Dispatch seam: schema + validation + REST enqueue client + hub route/nav seam | `src/integrations/azure-jobs-dispatch.ts`,`azure-jobs-schema.ts` (new), hub route addition in `src/integrations/hub-http.ts` | `test/azure-jobs-schema.test.ts` + `test/azure-jobs-dispatch.test.ts` (new): validation matrix, fail-closed env, no-SDK REST shape | focused tests |
 | 5 | Worker image + entry script + corpus fingerprint generation | `images/worker/Dockerfile` + `images/worker/run.mjs` (new) | podman build green; `podman run` against a fake queue (hermetic test): corpus mismatch refuses | `test/worker-image.test.ts` (new pin) |
@@ -662,3 +662,51 @@ option was **not** needed (dropped to reduce surface).
   gateway route class (D5 reversal) and the launcher plane-awareness classify +
   auto-wake are **task 2b / a follow-up**, not done here — the supervisor
   currently starts the hub + daemon only. Recorded as a residual, not claimed.
+
+### Task 3 — image CMD/USER/ENV + in-container loopback probe (DONE 2026-10-09)
+
+- `images/control-plane/Dockerfile`: `CMD ["workflow-plane"]` (the superseded
+  hub-only CMD and its "honest C1 gap" header replaced by a dated supersession
+  note pointing at the delegated backend); `USER node` (D6); a pre-created,
+  node-owned `/home/node/.workflow`. No instance value is baked: neither
+  `WORKFLOW_OPENCODE_SERVER_HOME` nor `WORKFLOW_CONTAINMENT_BACKEND` is an image
+  `ENV` (both are instance-supplied), pinned by test.
+- `test/control-plane-dockerfile.test.ts`: the former `CMD ["workflow-hub"]`
+  pin is replaced by four pins (plane CMD + hub CMD gone; `USER node` +
+  created/chowned state root; instance-values-never-baked; bin-link retained).
+  Suite 6 → 9 tests.
+- `docs/ledger/control-plane-c1-composition.md`: dated supersession section
+  (option A adopted; the earlier "not a deployable C1 plane" conclusion left in
+  place per append-only).
+- **Build (measured, podman 5.8.4):**
+  `podman build -f images/control-plane/Dockerfile -t workflow-cp:c1 .` →
+  **green**, `4ada5dce17873770ac157a0d38540cb524ee89d7b3d27856b9848267224603e3`.
+- **In-container loopback probe (measured)** — `podman run --rm -d -p
+  4096:4096` with env `WORKFLOW_PLANE=1`,
+  `WORKFLOW_CONTAINMENT_BACKEND=container-boundary`,
+  `WORKFLOW_PLANE_CLIENT_PASSWORD=…`, `WORKFLOW_PLANE_WORKSPACE=/workspace`,
+  and `WORKFLOW_UPSTREAM_KEY=dummy` (REQUIRED: the runtime fails closed without
+  one at `src/integrations/opencode-server-runtime.ts:186` via
+  `loadUpstreamApiKey`, `src/integrations/upstream-key.ts:57-64`; the value is a
+  placeholder because the probe exercises the server surface, not a model call,
+  and it was passed on the command line, never baked — the image carries no key):
+  - plane log: `gateway on 0.0.0.0:4096`; `USER node` (state root
+    `/home/node/.workflow`).
+  - unauthenticated `GET /api/info` → **401**.
+  - authenticated `GET /api/info` → **200**,
+    `{"version":"2.0.10","pid":55,…}`.
+  - `GET /api/event` → **200**, `content-type: text/event-stream`; the stream
+    delivered `server.connected`, `: heartbeat`, and the
+    `: workflow-keepalive` frame within 20 s.
+  - discovery `/home/node/.workflow/opencode-server/ws-*.json` written by the
+    `node` user.
+  - Note: with a placeholder key the authority's event subscription can report
+    `event stream lost` and shut the surface down on a later model call; the
+    probe reads the surface within its first seconds, which is why the four
+    checks above passed. This is recorded so the probe is not read as a
+    long-idle survival claim.
+- **Still open (task 3.1, 🛰 live):** the ACA-ingress probe (SSE past the 240 s
+  idle window, the gateway route-class matrix, `boundaryKind` in discovery over
+  the wire). The local probe proves the in-container loopback path, not the
+  deployed ingress path. No `enforced` label is claimed for pods until P2 (task
+  8).

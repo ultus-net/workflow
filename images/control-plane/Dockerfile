@@ -1,9 +1,11 @@
 # Control-plane image (W149, 2026-09-26; first LOCAL build + fixes 2026-10-09):
 # packages the Workflow toolchain and a VENDORED stock opencode. Honest status:
-# the image now BUILDS (verified with podman, 2026-10-09) and the CMD resolves;
-# the C-track's C1 milestone (2026-09-25 spec) in-container composition
-# (hub + gateway + broker + served opencode) is NOT yet composed — see the
-# C1 gap note at the CMD below and docs/ledger/control-plane-c1-composition.md.
+# the image BUILDS (verified with podman, 2026-10-09) and the C1 in-container
+# composition is now composed — the CMD at the bottom of this file is the
+# `workflow-plane` supervisor (hub + OpenCode server daemon + gateway, with the
+# pod as the containment boundary). See the dated supersession note there and
+# docs/ledger/control-plane-c1-deploy-plan.md (task 3) +
+# docs/ledger/control-plane-c1-composition.md.
 # It carries no work-specific values — the instance seeds from it (spec §5).
 #
 # Vendoring discipline (mirrors infra/c0/image/Dockerfile): the qualified
@@ -90,23 +92,25 @@ ENV PATH="/app/node_modules/.bin:${PATH}"
 WORKDIR /workspace
 EXPOSE 4096
 
-# The long-running entry is the hub daemon (the authority every surface
-# resolves). HONEST C1 GAP (2026-10-09): this single-process image is NOT the
-# full C1 plane. C1 (2026-09-25 spec §8/§10) composes hub + opencode-server
-# daemon + gateway + broker + a CONTAINED `opencode serve` in one container,
-# with the gateway as the single ingress front door on 4096. That composition
-# is not implemented here and was not implementable in the reference
-# container: `createOpencodeServerRuntime` launches `opencode serve` through
-# `launchContainedAcpAgent`, which REQUIRES an `enforced` containment boundary
-# (`src/adapters/acp-contained-agent.ts:63`), and bubblewrap cannot create the
-# namespaces inside the container (measured: `bwrap: Creating new namespace
-# failed: Operation not permitted`, even with `bubblewrap` installed). No
-# same-process single-port supervisor over {hub, gateway, serve} exists in the
-# repo. See docs/ledger/control-plane-c1-composition.md for the decision,
-# evidence, and the two candidate implementations (SupervisorContainment vs a
-# two-replica / two-container split) for the operator. This image is therefore
-# a QUALIFIED PARTIAL artifact: the hub authority runs (on an EPHEMERAL loopback
-# port from the discovery file — it does NOT serve 4096), and NOTHING answers on
-# 4096 yet. It is NOT a deployable C1 plane, and csh-dev must not deploy it as
-# one.
-CMD ["workflow-hub"]
+# C1 plane (SUPERSESSION 2026-10-09, task 3 of
+# docs/ledger/control-plane-c1-deploy-plan.md): the former "honest C1 gap"
+# header is closed. This image now runs `workflow-plane`, the supervisor that
+# starts the hub authority AND the OpenCode server daemon (contained
+# `opencode serve` + authority broker + gateway) and binds the gateway to the
+# ingress front door. The reference-container objection (bubblewrap cannot
+# create namespaces inside a pod) is answered by the DELEGATED
+# container-boundary backend (`src/containment/container-boundary.ts`): the
+# pod IS the boundary, and the runtime selects it via the instance-supplied
+# `WORKFLOW_CONTAINMENT_BACKEND=container-boundary` (never baked here).
+#
+# The instance sets the state root to the Azure Files mount
+# (`WORKFLOW_OPENCODE_SERVER_HOME`); it is NEVER baked here (spec §5: no
+# instance values in the open image). The default (~/.workflow) is pre-created
+# for `USER node` so the daemon can write discovery without a root-owned dir.
+RUN mkdir -p /home/node/.workflow && chown -R node:node /home/node /workspace
+
+# D6: run as the unprivileged `node` user (the base image provides it); no
+# process needs root at runtime.
+USER node
+
+CMD ["workflow-plane"]
