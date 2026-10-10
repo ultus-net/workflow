@@ -193,6 +193,27 @@ test("the enforcement-posture check reads the host config honestly and never edi
   assert.match(clean.detail, /raw host launches are unguarded by design/, "the honest residual stays stated");
 });
 
+test("the installer confines to requested kinds (kinds filter)", (t) => {
+  const { root, home, workspace } = makeFleetFixture(t, [
+    { id: "agent:probe", kind: "agent", file: "probe.md", body: "agent body\n" },
+    { id: "command:probe", kind: "command", file: "probe.md", body: "command body\n" },
+    { id: "doc:probe", kind: "doc", file: "probe.md", body: "doc body\n" },
+  ]);
+  const options = { root, home, workspace, kinds: ["agent", "command"] as const };
+  assert.deepEqual(
+    compareFleet(options).map((status) => status.entry.kind),
+    ["agent", "command"],
+    "compare reports only the requested kinds",
+  );
+  installFleet(options);
+  const agentTarget = join(home, ".config", "opencode", "agents", "probe.md");
+  const commandTarget = join(home, ".config", "opencode", "commands", "probe.md");
+  const docTarget = join(workspace, "docs", "agents", "probe.md");
+  assert.ok(existsSync(agentTarget), "requested agent kind installs");
+  assert.ok(existsSync(commandTarget), "requested command kind installs");
+  assert.ok(!existsSync(docTarget), "the excluded doc kind is never written");
+});
+
 test("the default posture check reads the real home and states the recorded posture", () => {
   const check = checkGuardPosture({ home: homedir() });
   assert.ok(check.detail.length > 0);

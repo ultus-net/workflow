@@ -230,3 +230,68 @@ result is recorded in `docs/ledger/control-plane-c1-deploy-plan.md` Appendix C
 live ACA probe (plan task 3.1) remains the measurement that upgrades any
 pod-side status line. Until 3.1 runs, the image is pod-loopback-verified, not
 ingress-verified, and no `enforced` label is claimed for deployed pods.
+
+---
+
+### Supersession + fix (2026-10-10): the vendored fleet is installed at deploy time
+
+**Root cause (measured).** The plane advertised only the OPENCODE STOCK agents
+and commands. `/api/agent` on the live plane listed exactly `build, general,
+explore, compaction, title, summary, plan` and `/api/command` only `init,
+review`; the composed config document was empty (`.../config/opencode/opencode.json`
+document `null`). The custom fleet (`decompose`/`executor`/`retrospective`/
+`reviewer` + `/decompose` `/retro` `/review-diff` `/rsi-loop`) never loaded.
+
+Why: the fleet is vendored under `assets/opencode-fleet/` (W086, `manifest.json`,
+15 entries) and deployed by the operator-invoked `workflow install fleet`
+(`src/cli/install.ts:16` → `installFleet`), which writes agents/commands into
+`~/.config/opencode/{agents,commands}`. The plane, though, runs `opencode
+serve` with `XDG_CONFIG_HOME=<stateDir>/config`
+(`src/integrations/opencode-server-runtime.ts:160,181-183`), and OpenCode reads
+its global config from `Global.Path.config = xdgConfig/opencode`
+(`opencode-src packages/core/src/global.ts:13,26,64`), scanning
+`{agent,agents}`/`{command,commands}` there
+(`packages/opencode/src/config/agent.ts:13`, `command.ts:15`). That isolated
+config dir received only the hub-written `opencode.json` — nothing ever
+installed the fleet into it. `installFleet` was referenced only by the CLI
+(`install.ts`, `doctor.ts`), never by the plane supervisor
+(`src/cli/plane.ts`) or the OpenCode runtime.
+
+**Fix.** Both hub-owned OpenCode lanes now install the vendored fleet into the
+config dir they compose, at launch, from the in-repo assets:
+
+- `src/integrations/fleet-payload.ts` — new shared, exported
+  `installFleetIntoOpencodeConfig(configDir)` (agents/commands only,
+  `force: true`; the config dir is hub-owned and regenerated, so no operator
+  edits to preserve). Both lanes call this ONE definition.
+- `src/integrations/opencode-server-runtime.ts` — calls it right after the
+  `opencode.json` write; injectable via `options.installFleetImpl` (tests).
+- `src/integrations/acp-runtime.ts` — calls the same helper after the ACP lane's
+  config write, for the local TUI and the in-plane hub reviewer runtime.
+
+`src/integrations/fleet-payload.ts` also gained a `kinds` filter so the
+config-dir install never touches the workspace-owned docs bundle
+(`<workspace>/docs/agents`, install-if-missing, repo-owned living files).
+Fail-closed: a malformed manifest throws and refuses the runtime.
+
+**Verification (this session):**
+
+- `node --import tsx --test test/install-doctor.test.ts` → 11/11 (new
+  `kinds` filter test).
+- `node --import tsx --test test/opencode-server-runtime.test.ts` → 5/5,
+  including a launch test that asserts `agents/reviewer.md` and
+  `commands/review-diff.md` land in `<stateDir>/config/opencode/` and logs
+  `[fleet] installed 8 vendored agent/command file(s)`.
+- `node --import tsx --test test/acp-runtime-args.test.ts
+  test/install-surface-docs.test.ts test/opencode-server-runtime-downgrade.test.ts`
+  → 32/32 across the focused set after the shared-helper refactor.
+- `npm run lint` exit 0; `npm run typecheck` exit 0.
+
+**Residual:** the fix is unit-verified (config dir populated). The live proof —
+`/api/agent` on `code.ultus.net` returning the fleet agent names after the
+next image deploy — remains the measurement that closes this on the plane.
+
+**Refs:** `src/integrations/opencode-server-runtime.ts`;
+`src/integrations/acp-runtime.ts`; `src/integrations/fleet-payload.ts`;
+`test/opencode-server-runtime.test.ts`; `test/install-doctor.test.ts`;
+`assets/opencode-fleet/`; `opencode-src packages/core/src/global.ts`.

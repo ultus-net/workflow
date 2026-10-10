@@ -36,6 +36,7 @@ import { METERED_PLACEHOLDER_KEY, type EgressDenialEvent, type ModelUsageMetrics
 import type { CredentialEndpoint } from "./credentials.js";
 import { createEgressRuntimeFeed } from "./egress-audit-client.js";
 import { egressPostureFromEnv, egressRuntimeContext } from "./runtime-context.js";
+import { installFleetIntoOpencodeConfig } from "./fleet-payload.js";
 import type { TaskUsageSummary } from "./task-usage.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
 import { loadOpenModelKeys } from "./open-model-keys.js";
@@ -436,6 +437,17 @@ async function createOpencodeRuntime(
       JSON.stringify(opencodeConfig),
       { encoding: "utf8", mode: 0o600 },
     );
+    // Deploy the vendored fleet (agents + slash commands) into this runtime's
+    // hub-owned config dir. The contained agent reads `$XDG_CONFIG_HOME/opencode`
+    // (set to `configDir` on the launch env below), which is isolated from the
+    // operator's `~/.config/opencode`, so without this install the custom fleet
+    // never loads on any hub-owned OpenCode lane (root-cause fix, 2026-10-10;
+    // the same gap closed for the server lane in opencode-server-runtime.ts).
+    // Agents/commands only — the docs bundle is workspace-owned. Fail-closed: a
+    // malformed manifest throws and refuses the runtime.
+    const fleetResults = installFleetIntoOpencodeConfig(configDir);
+    const fleetInstalled = fleetResults.filter((result) => result.action === "written" || result.action === "forced").length;
+    console.log(`[fleet] installed ${fleetInstalled} vendored agent/command file(s) into ${join(configDir, "opencode")}`);
     const resume = resumeFrom ?? process.env.WORKFLOW_ACP_RESUME;
     const driver = await AcpSessionDriver.contained({
       containment: new LinuxBubblewrapContainment(),

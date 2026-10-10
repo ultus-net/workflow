@@ -13,6 +13,7 @@ import { connectorReadablePaths, provisionToolboxSkill, resolveToolboxCatalog, s
 import { createModelUsageProxy, METERED_PLACEHOLDER_KEY, syntheticFailoverProxyOptions, type AutoLatestProxyOptions, type EgressDenialEvent, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy, type ProxyPayloadPolicy, type SyntheticFailoverProxyOptions } from "./model-usage-proxy.js";
 import type { CredentialEndpoint } from "./credentials.js";
 import { globalOpencodeBinary, meteredOpencodeConfig, OPENCODE_V2_METERED_ENV_KEY, resolveOpencodeLaunch } from "./opencode-agent-config.js";
+import { installFleetIntoOpencodeConfig, type FleetInstallResult } from "./fleet-payload.js";
 import { probeOpencodeHealth } from "./opencode-health.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
 import { budgetDowngradeFromEnv, sessionBudgetFromEnv, type BudgetDowngradeRuntime } from "./session-budget.js";
@@ -93,6 +94,11 @@ export interface OpencodeServerRuntimeOptions {
   readonly resolveBinary?: (() => { readonly executable: string }) | undefined;
   /** Injectable proxy factory (tests). */
   readonly createProxy?: ((input: OpencodeServerProxyInput) => Promise<ModelUsageProxy>) | undefined;
+  /**
+   * Injectable fleet-install seam (tests). Defaults to {@link installVendoredFleet},
+   * which deploys the vendored agents/commands into the hub-owned config dir.
+   */
+  readonly installFleetImpl?: ((configDir: string) => readonly FleetInstallResult[]) | undefined;
   /** W184: gate-2 credential binding (W179) threaded into the proxy; absent leaves gate 2 inactive. */
   readonly credentialEndpoints?: readonly CredentialEndpoint[] | undefined;
   /**
@@ -170,6 +176,35 @@ export function opencodeServerLaunchEnvironment(input: {
 export function parseListeningUrl(stdout: string): string | undefined {
   const match = /listening on (https?:\/\/\S+)/.exec(stdout);
   return match?.[1];
+}
+
+/**
+ * Deploys the vendored OpenCode fleet (agents + slash commands) into the
+ * hub-owned config dir at runtime, so the plane's `opencode serve` — which runs
+ * under the isolated `XDG_CONFIG_HOME=<stateDir>/config` (never the operator's
+ * `~/.config/opencode`) — actually loads them.
+ *
+ * Root cause this closes (measured 2026-10-10): the fleet is vendored under
+ * `assets/opencode-fleet/` and installed by the operator-invoked `workflow
+ * install fleet` into `~/.config/opencode/{agents,commands}`, but the plane
+ * writes only `opencode.json` into `<stateDir>/config/opencode/` and never
+ * installs the fleet there. OpenCode scans `{agent,agents}` and
+ * `{command,commands}` under `$XDG_CONFIG_HOME/opencode` (ConfigPaths
+ * `Global.Path.config = xdgConfig/opencode`), so with the fleet absent the
+ * plane advertised only stock agents (`/api/agent`) and commands
+ * (`/api/command`). Installing the payload at launch restores the custom
+ * config the operator depends on.
+ *
+ * Only the agent/command kinds install here: the docs bundle is a repo-owned
+ * living set under the WORKSPACE (`<workspace>/docs/agents`), never written
+ * into the config dir. `force` is deliberately true — the config dir is
+ * hub-owned and regenerated per workspace, so a stale/mismatched copy from an
+ * earlier plane revision is overwritten rather than skipped (the installer's
+ * refuse-to-clobber protects operator edits on the host, which do not exist
+ * here). Fail-closed: a malformed manifest throws and refuses the runtime.
+ */
+export function installVendoredFleet(configDir: string): readonly FleetInstallResult[] {
+  return installFleetIntoOpencodeConfig(configDir);
 }
 
 export async function createOpencodeServerRuntime(
@@ -278,6 +313,15 @@ export async function createOpencodeServerRuntime(
       })),
       { encoding: "utf8", mode: 0o600 },
     );
+    // Deploy the vendored fleet into the hub-owned config dir so the contained
+    // `opencode serve` loads the custom agents/commands (root-cause fix,
+    // 2026-10-10: the config dir is isolated from the operator's
+    // `~/.config/opencode`, so nothing else installs them). Fail-closed: a
+    // malformed manifest throws and refuses the runtime.
+    const fleetInstall = options.installFleetImpl ?? installVendoredFleet;
+    const fleetResults = fleetInstall(configDir);
+    const fleetInstalled = fleetResults.filter((result) => result.action === "written" || result.action === "forced").length;
+    console.log(`[fleet] installed ${fleetInstalled} vendored agent/command file(s) into ${join(configDir, "opencode")}`);
 
     const port = options.port ?? (await freeLoopbackPort());
     const password = randomBytes(24).toString("hex");

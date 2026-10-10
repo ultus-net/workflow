@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -13,9 +13,11 @@ import {
   OPENCODE_V2_METERED_PROVIDER_ID,
 } from "../src/integrations/opencode-agent-config.js";
 import { opencodeMajorVersion } from "../src/integrations/acp-runtime.js";
+import { loadFleetManifest } from "../src/integrations/fleet-payload.js";
 import type { ModelUsageProxy } from "../src/integrations/model-usage-proxy.js";
 import {
   createOpencodeServerRuntime,
+  installVendoredFleet,
   opencodeServerArgs,
   opencodeServerStateDir,
   opencodeServerWorkspaceTag,
@@ -47,6 +49,30 @@ test("W071 runtime: state dir and serve args", () => {
 test("W071 runtime: parseListeningUrl extracts the bound URL", () => {
   assert.equal(parseListeningUrl("opencode server listening on http://127.0.0.1:4123\n"), "http://127.0.0.1:4123");
   assert.equal(parseListeningUrl("nothing here"), undefined);
+});
+
+test("runtime: installVendoredFleet deploys the vendored agents/commands into the hub-owned config dir (never docs)", () => {
+  const configDir = mkdtempSync(join(tmpdir(), "wf-fleet-cfg-"));
+  try {
+    const results = installVendoredFleet(configDir);
+    const manifest = loadFleetManifest();
+    const agents = manifest.entries.filter((entry) => entry.kind === "agent");
+    const commands = manifest.entries.filter((entry) => entry.kind === "command");
+    assert.ok(agents.length >= 4, "the vendored fleet carries its agents");
+    assert.ok(commands.length >= 4, "the vendored fleet carries its commands");
+    assert.equal(results.length, agents.length + commands.length, "only agent/command kinds install");
+    for (const entry of [...agents, ...commands]) {
+      const flat = entry.kind === "agent" ? "agents" : "commands";
+      assert.ok(
+        existsSync(join(configDir, "opencode", flat, entry.file)),
+        `${entry.id} landed under the OpenCode config dir`,
+      );
+    }
+    // The docs bundle is workspace-owned and must never land in the config dir.
+    assert.ok(!existsSync(join(configDir, "opencode", "docs")), "docs are never written into the config dir");
+  } finally {
+    rmSync(configDir, { recursive: true, force: true });
+  }
 });
 
 test("W071 runtime: launches through an injected boundary and writes the pinned ask ruleset", { skip: binary === undefined, timeout: 60_000 }, async (t) => {
@@ -95,6 +121,17 @@ test("W071 runtime: launches through an injected boundary and writes the pinned 
     providers?: Record<string, unknown>;
   };
   assert.deepEqual(config.permission, { edit: "ask", bash: "ask", task: "ask", skill: "deny" });
+  // Deploy-time fleet install: the vendored agents/commands land in the
+  // isolated hub-owned config dir (the plane's `opencode serve` reads
+  // `$XDG_CONFIG_HOME/opencode`, which is this dir — not the operator's home).
+  assert.ok(
+    existsSync(join(runtime.stateDir, "config", "opencode", "agents", "reviewer.md")),
+    "the vendored reviewer agent is installed into the hub-owned config dir",
+  );
+  assert.ok(
+    existsSync(join(runtime.stateDir, "config", "opencode", "commands", "review-diff.md")),
+    "the vendored review-diff command is installed into the hub-owned config dir",
+  );
   // Version-aware (mirrors the ACP lane, PR #427): v1 keeps the historical
   // provider/npm/options shape; v2 emits providers/package|settings reusing the
   // built-in `openrouter` provider, because a config-defined custom provider is
