@@ -8,12 +8,13 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { launchContainedAcpAgent } from "../adapters/acp-contained-agent.js";
 import type { ProcessContainment } from "../containment/contracts.js";
 import { LinuxBubblewrapContainment } from "../containment/linux-bwrap.js";
-import { opencodeMajorVersion, resolveSkillsMount, resolveRuntimeMeteredLane } from "./acp-runtime.js";
-import { connectorReadablePaths, provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts } from "./toolbox-catalog.js";
+import { ensureSkillsMount, opencodeMajorVersion, resolveSkillsMount, resolveRuntimeMeteredLane } from "./acp-runtime.js";
+import { connectorReadablePaths, provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts, toolboxCatalogMounts } from "./toolbox-catalog.js";
 import { createModelUsageProxy, METERED_PLACEHOLDER_KEY, syntheticFailoverProxyOptions, type AutoLatestProxyOptions, type EgressDenialEvent, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy, type ProxyPayloadPolicy, type SyntheticFailoverProxyOptions } from "./model-usage-proxy.js";
 import type { CredentialEndpoint } from "./credentials.js";
 import { globalOpencodeBinary, meteredOpencodeConfig, OPENCODE_V2_METERED_ENV_KEY, resolveOpencodeLaunch } from "./opencode-agent-config.js";
 import { installFleetIntoOpencodeConfig, type FleetInstallResult } from "./fleet-payload.js";
+import { enabledMcpServers, type WorkflowSettings } from "./workflow-settings.js";
 import { probeOpencodeHealth } from "./opencode-health.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
 import { budgetDowngradeFromEnv, sessionBudgetFromEnv, type BudgetDowngradeRuntime } from "./session-budget.js";
@@ -99,6 +100,26 @@ export interface OpencodeServerRuntimeOptions {
    * which deploys the vendored agents/commands into the hub-owned config dir.
    */
   readonly installFleetImpl?: ((configDir: string) => readonly FleetInstallResult[]) | undefined;
+  /**
+   * Operator settings document, projected into the hub-written server config.
+   * The plane lane has no operator settings file of its own, so the supervisor
+   * resolves it from the state-home workspace and passes it here. Threads the
+   * operator-enabled MCP servers (`enabledMcpServers`) into the config exactly
+   * as the ACP lane does (`acp-runtime.ts` `meteredOpencodeConfig(... mcpServers
+   * ...)`); absent leaves the config byte-identical to before this option.
+   */
+  readonly settings?: WorkflowSettings | undefined;
+  /**
+   * Mount EVERY built vendored toolbox server (control-plane spec §11,
+   * 2026-09-25: the whole `mcp-toolbox/` ships in the plane image and the
+   * hub-written config wires the servers over loopback inside the container).
+   * The plane lane has no operator settings doc, so it declares the full built
+   * catalog rather than only the skill-delivery floor. Operator-disabled names
+   * still win (`skillConnectorsDisabled`), and skills-mcp arrives through the
+   * delivery mount. Absent (the default) keeps the historical declared floor —
+   * byte-identical to before this option.
+   */
+  readonly mountFullToolbox?: boolean | undefined;
   /** W184: gate-2 credential binding (W179) threaded into the proxy; absent leaves gate 2 inactive. */
   readonly credentialEndpoints?: readonly CredentialEndpoint[] | undefined;
   /**
@@ -263,24 +284,40 @@ export async function createOpencodeServerRuntime(
 
   let child: ChildProcessWithoutNullStreams | undefined;
   try {
-    const skillsMount = resolveSkillsMount();
+    // The plane lane ensures the skills store exists (creating the hub-owned
+    // `~/.agents/skills` when absent) so the delivery mount resolves at deploy
+    // time; the ACP/ambient lane keeps the strict "mount only when the operator
+    // already provisioned a directory" posture.
+    const skillsMount = options.mountFullToolbox === true ? ensureSkillsMount() : resolveSkillsMount();
     // W080 mount half: provision the workflow-toolbox skill into the hub-owned
-    // delivery store and compose the declared-connector mounts (the daemon has
-    // no operator settings doc; the declaration's built filter applies, and
-    // the delivery mount dedupes skills-mcp). Best-effort orientation: a
-    // failed provisioning degrades to no delivery, never a failed daemon.
+    // delivery store and compose the connector mounts. The plane lane declares
+    // the FULL built toolbox (spec §11: the whole `mcp-toolbox/` ships in the
+    // image and the hub-written config wires the servers over loopback inside
+    // the container); the ACP lane keeps the narrower declared floor. Both
+    // dedupe skills-mcp (the delivery mount owns it) and honor an explicit
+    // operator disable. Provisioning is best-effort orientation: a failed write
+    // degrades to no delivery, never a failed daemon.
+    //
+    // Default-lane parity: absent `mountFullToolbox` the connector set composes
+    // ONLY when the skills delivery mount resolved — exactly as before this
+    // option existed, so a non-plane daemon with no skills store stays
+    // byte-identical. The plane lane mounts its full catalog regardless of the
+    // store (it just ensured the store exists above).
     let skillConnectors: readonly { readonly name: string; readonly serverPath: string }[] = [];
-    if (skillsMount !== undefined) {
-      try {
-        const catalog = resolveToolboxCatalog();
-        provisionToolboxSkill(skillsMount.skillsDir, catalog);
-        skillConnectors = skillConnectorMounts(catalog, {
+    try {
+      const catalog = resolveToolboxCatalog();
+      if (skillsMount !== undefined) provisionToolboxSkill(skillsMount.skillsDir, catalog);
+      if (options.mountFullToolbox === true || skillsMount !== undefined) {
+        const connectorOptions = {
           ...(options.skillConnectorsDisabled === undefined ? {} : { disabled: options.skillConnectorsDisabled }),
           alreadyMounted: ["skills-mcp"],
-        });
-      } catch (error) {
-        console.error(`workflow-toolbox skill delivery failed for the topology (continuing without it): ${error instanceof Error ? error.message : String(error)}`);
+        };
+        skillConnectors = options.mountFullToolbox === true
+          ? toolboxCatalogMounts(catalog, connectorOptions)
+          : skillConnectorMounts(catalog, connectorOptions);
       }
+    } catch (error) {
+      console.error(`workflow-toolbox skill delivery failed for the topology (continuing without it): ${error instanceof Error ? error.message : String(error)}`);
     }
     // Resolve the binary and its major version BEFORE writing the config, so
     // the written provider shape matches the binary that will read it. v1 keeps
@@ -310,6 +347,9 @@ export async function createOpencodeServerRuntime(
         ...(autoLatest === undefined ? {} : { autoLatest: { aliases: autoLatest.aliases } }),
         ...(skillsMount === undefined ? {} : { skills: skillsMount }),
         ...(skillConnectors.length === 0 ? {} : { skillConnectors }),
+        // Operator-enabled MCP servers from the settings doc (the same
+        // projection the ACP lane composes). Absent settings composes nothing.
+        ...(options.settings === undefined ? {} : { mcpServers: enabledMcpServers(options.settings) }),
       })),
       { encoding: "utf8", mode: 0o600 },
     );
@@ -326,26 +366,30 @@ export async function createOpencodeServerRuntime(
     const port = options.port ?? (await freeLoopbackPort());
     const password = randomBytes(24).toString("hex");
 
+    // The stdio entrypoints bound readable inside the boundary: the skills
+    // mount's own pnpm levels (when present) plus every mounted connector's
+    // two-level pnpm binds (dist + app node_modules + toolbox node_modules) —
+    // without these the server's spawned MCP child dies with
+    // ERR_MODULE_NOT_FOUND inside the boundary (the F1 lesson). The toolbox
+    // mounts bind regardless of the skills mount: the plane lane mounts the
+    // full catalog even when no operator skills dir exists.
+    const readablePaths: string[] = [];
+    if (skillsMount !== undefined) {
+      readablePaths.push(
+        dirname(skillsMount.serverScript),
+        resolve(dirname(skillsMount.serverScript), "..", "node_modules"),
+        resolve(dirname(skillsMount.serverScript), "..", "..", "..", "node_modules"),
+        skillsMount.skillsDir,
+      );
+    }
+    readablePaths.push(...connectorReadablePaths(skillConnectors.map((mount) => mount.serverPath)));
+
     child = launchContainedAcpAgent(container, {
       executable: opencode.executable,
       args: opencodeServerArgs(port),
       workspace,
       home,
-      ...(skillsMount === undefined
-        ? {}
-        : {
-            readablePaths: [
-              dirname(skillsMount.serverScript),
-              resolve(dirname(skillsMount.serverScript), "..", "node_modules"),
-              resolve(dirname(skillsMount.serverScript), "..", "..", "..", "node_modules"),
-              skillsMount.skillsDir,
-              // W080: the declared connectors' stdio entrypoints need the
-              // same two-level pnpm binds (dist + app node_modules +
-              // toolbox node_modules) or the server's spawned MCP child
-              // dies with ERR_MODULE_NOT_FOUND inside the boundary.
-              ...connectorReadablePaths(skillConnectors.map((mount) => mount.serverPath)),
-            ],
-          }),
+      ...(readablePaths.length === 0 ? {} : { readablePaths }),
       environment: opencodeServerLaunchEnvironment({ configDir, password, opencodeMajor }),
     });
 

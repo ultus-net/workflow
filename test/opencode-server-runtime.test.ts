@@ -167,3 +167,114 @@ test("W071 runtime: launches through an injected boundary and writes the pinned 
     assert.match((await info.json() as { version?: unknown }).version as string, /^\d/, "the v2 info payload must carry a version");
   }
 });
+
+test("W-c1 runtime: mountFullToolbox + settings wire the whole toolbox and operator MCP servers into the hub-written config", { skip: binary === undefined, timeout: 60_000 }, async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-run-ws-"));
+  const stateHome = mkdtempSync(join(tmpdir(), "wf-run-state-"));
+  t.after(() => { rmSync(workspace, { recursive: true, force: true }); rmSync(stateHome, { recursive: true, force: true }); });
+
+  const boundary: ProcessContainment = {
+    isolation: "enforced",
+    async execute() { throw new Error("not used"); },
+    spawn(request) {
+      return spawn(request.executable, [...request.args], {
+        ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+        env: { ...process.env, ...request.environment },
+      });
+    },
+  };
+  const proxy = {
+    url: "http://127.0.0.1:9/api/v1",
+    metrics: () => ({ requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0 }),
+    close: async () => undefined,
+  } as unknown as ModelUsageProxy;
+
+  const runtime = await createOpencodeServerRuntime({
+    workspace,
+    stateHome,
+    containment: boundary,
+    apiKey: "test-key-not-used",
+    createProxy: async () => proxy,
+    model: "openrouter/auto",
+    healthTimeoutMs: 30_000,
+    mountFullToolbox: true,
+    settings: {
+      version: 1,
+      agents: {},
+      mcpServers: [
+        { name: "operator-server", enabled: true, transport: "stdio", command: "node", args: ["/tmp/op.js"] },
+        { name: "disabled-server", enabled: false, transport: "stdio", command: "node" },
+      ],
+    },
+  });
+  t.after(() => runtime.dispose());
+
+  const config = JSON.parse(readFileSync(join(runtime.stateDir, "config", "opencode", "opencode.json"), "utf8")) as {
+    mcp?: Record<string, { command?: readonly string[]; type?: string }>;
+  };
+  const mcp = config.mcp ?? {};
+  // The full built toolbox is mounted (spec §11), not just the declared floor.
+  assert.equal(mcp["workflow-guard-mcp"]?.type, "local", "guard connector must be mounted");
+  assert.equal(mcp["git-intelligence-mcp"]?.type, "local", "the full toolbox must mount beyond the declared floor");
+  assert.equal(mcp["project-memory-mcp"]?.type, "local", "the full toolbox must mount beyond the declared floor");
+  // Operator-enabled servers ride the same config; disabled ones never do.
+  assert.deepEqual(mcp["operator-server"]?.command, ["node", "/tmp/op.js"]);
+  assert.equal(mcp["disabled-server"], undefined, "an operator-disabled server must never reach the config");
+});
+
+// NOTE: this test's discriminating power assumes the toolbox `dist` builds are
+// present (as they are in this repo after `npm run toolbox:build`/`toolbox:verify`,
+// which the sibling mountFullToolbox test also relies on). The negative
+// assertions would pass vacuously on an unbuilt tree; the positive sibling test
+// is what pins the builds are there.
+test("runtime: the default lane composes NO toolbox connectors when no skills store resolves (parity with before the option)", { skip: binary === undefined, timeout: 60_000 }, async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-run-ws-"));
+  const stateHome = mkdtempSync(join(tmpdir(), "wf-run-state-"));
+  const absentSkillsDir = join(mkdtempSync(join(tmpdir(), "wf-run-nostore-")), "does-not-exist");
+  const priorSkillsDir = process.env.SKILLS_MCP_DIR;
+  process.env.SKILLS_MCP_DIR = absentSkillsDir;
+  t.after(() => {
+    if (priorSkillsDir === undefined) delete process.env.SKILLS_MCP_DIR;
+    else process.env.SKILLS_MCP_DIR = priorSkillsDir;
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(stateHome, { recursive: true, force: true });
+  });
+
+  const boundary: ProcessContainment = {
+    isolation: "enforced",
+    async execute() { throw new Error("not used"); },
+    spawn(request) {
+      return spawn(request.executable, [...request.args], {
+        ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+        env: { ...process.env, ...request.environment },
+      });
+    },
+  };
+  const proxy = {
+    url: "http://127.0.0.1:9/api/v1",
+    metrics: () => ({ requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0 }),
+    close: async () => undefined,
+  } as unknown as ModelUsageProxy;
+
+  const runtime = await createOpencodeServerRuntime({
+    workspace,
+    stateHome,
+    containment: boundary,
+    apiKey: "test-key-not-used",
+    createProxy: async () => proxy,
+    model: "openrouter/auto",
+    healthTimeoutMs: 30_000,
+  });
+  t.after(() => runtime.dispose());
+
+  const config = JSON.parse(readFileSync(join(runtime.stateDir, "config", "opencode", "opencode.json"), "utf8")) as {
+    mcp?: Record<string, unknown>;
+    skills?: unknown;
+  };
+  const mcp = config.mcp ?? {};
+  // No skills store → no skills mount → no declared-floor connectors and no
+  // full-toolbox mounts: the pre-option behavior, pinned.
+  assert.equal(mcp["workflow-guard-mcp"], undefined, "the declared floor must not mount without a skills store on the default lane");
+  assert.equal(mcp["git-intelligence-mcp"], undefined, "the full toolbox must not mount on the default lane");
+  assert.equal(config.skills, undefined, "no skills mount is composed without a store");
+});

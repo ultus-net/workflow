@@ -980,6 +980,42 @@ export function resolveSkillsMount(): { readonly serverScript: string; readonly 
   });
 }
 
+/**
+ * Resolves the skills-mcp delivery mount, creating the operator skills
+ * directory when it is absent. `resolveSkillsMount` mounts only when the
+ * directory already exists; the plane lane launches on a fresh pod with no
+ * home store, so this helper makes `~/.agents/skills` present (the hub-owned
+ * delivery store, outside every agent workspace) before resolving. The store
+ * is then populated by `provisionToolboxSkill` (the generated
+ * `workflow-toolbox` skill) at the same launch; any operator corpus is supplied
+ * separately through the same directory. Resolution is unchanged and still
+ * fails closed when the skills server build is absent. Side effect noted: the
+ * directory is created before resolution, so an absent skills server build
+ * leaves an empty store behind (harmless — the next launch with a build
+ * populates it). IO is injectable for tests.
+ */
+export function ensureSkillsMount(options: {
+  readonly root?: string;
+  readonly home?: string;
+  readonly exists?: (path: string) => boolean;
+} = {}): { readonly serverScript: string; readonly skillsDir: string } | undefined {
+  const home = options.home ?? homedir();
+  const root = options.root ?? resolve(fileURLToPath(import.meta.url), "..", "..", "..");
+  const envSkillsDir = process.env.SKILLS_MCP_DIR;
+  const skillsDir = resolve(envSkillsDir?.trim() || join(home, ".agents", "skills"));
+  const exists = options.exists ?? existsSync;
+  if (!exists(skillsDir)) {
+    try {
+      mkdirSync(skillsDir, { recursive: true, mode: 0o700 });
+    } catch {
+      // A read-only home degrades to no delivery, exactly as the absent-dir
+      // resolver already behaves — never a launched-but-skillless claim.
+      return undefined;
+    }
+  }
+  return resolveSkillsMountFor({ root, envSkillsDir, home, ...(options.exists === undefined ? {} : { exists: options.exists }) });
+}
+
 export function resolveSkillsMountFor(options: {
   readonly root: string;
   readonly envSkillsDir: string | undefined;

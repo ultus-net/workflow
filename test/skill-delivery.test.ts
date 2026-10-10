@@ -13,6 +13,7 @@ import {
   resolveToolboxCatalog,
   skillConnectorMounts,
 } from "../src/integrations/toolbox-catalog.js";
+import { ensureSkillsMount } from "../src/integrations/acp-runtime.js";
 
 /**
  * W080 mount half (delivery decision 2026-09-21, file-provisioning framing):
@@ -100,4 +101,25 @@ test("a corrupt or stale delivered skill is repaired on the next provision", (t)
   const repaired = provisionToolboxSkill(skillsDir, catalog);
   assert.equal(repaired.written, true, "content drift is repaired, never left stale");
   assert.match(readFileSync(skillPath, "utf8"), /name: workflow-toolbox/);
+});
+
+test("ensureSkillsMount creates the hub-owned store when absent and fails closed without the server build", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "wf-skills-home-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  const skillsDir = join(home, ".agents", "skills");
+  const built = resolveToolboxCatalog({ exists: () => true })[0]!.serverPath;
+  const root = join(built, "..", "..", "..", "..", ".."); // mcp-toolbox/apps/<a>/dist/server.js -> package root
+
+  // Absent store: the helper creates it and resolves the mount (the plane
+  // seeds nothing but must still deliver skills at deploy time).
+  assert.equal(existsSync(skillsDir), false);
+  const mount = ensureSkillsMount({ root, home });
+  assert.notEqual(mount, undefined, "the mount resolves once the store exists");
+  assert.equal(mount!.skillsDir, skillsDir);
+  assert.equal(existsSync(skillsDir), true, "the store is created, not merely probed");
+
+  // No skills-mcp build: fail closed, never a launched-but-skillless claim.
+  const unbuiltRoot = mkdtempSync(join(tmpdir(), "wf-skills-nobuild-"));
+  t.after(() => rmSync(unbuiltRoot, { recursive: true, force: true }));
+  assert.equal(ensureSkillsMount({ root: unbuiltRoot, home }), undefined);
 });
