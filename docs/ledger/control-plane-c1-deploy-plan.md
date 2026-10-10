@@ -853,3 +853,27 @@ never executed.
 - **Not live-verified:** neither probe has run against a real ACA plane or a
   real job fleet. The C1 ceiling stays Partial (advisory); the job fleet stays
   Planned. The first live run of each gate is the measurement.
+
+**2026-10-10 — client-password floor relaxed 16 → 8 (supersession note).**
+The plane's `resolvePlaneConfig` floor is lowered from 16 to 8 characters
+(`src/cli/plane-config.ts`, now the named `MIN_CLIENT_PASSWORD_LENGTH` constant;
+usage text in `src/cli/plane.ts` derives from the same constant). Rationale: the
+client password is a stable operator-chosen credential, not a machine-generated
+secret, so the floor is a truncation guard, not a strength policy — the previous
+16-char floor rejected valid short operator passphrases. The fail-closed posture
+is unchanged (absent/short still throws). Exercised by
+`test/plane-supervisor.test.ts` (accepts a password exactly at the floor,
+rejects one char below; the test derives both from the exported constant, so it
+pins the mechanism, and the value itself is the single-sourced constant). No
+prior ledger text named a numeric floor (it read "missing/short"), so nothing is
+superseded in place.
+
+**Accepted risk (operator decision).** On the C1 plane this client password is
+the only gate on the public `/api/*` lane: ACA ingress is external on port 4096
+and Easy Auth is excluded from `/api/*` so that lane keeps its own basic-auth
+401 (`docs/ledger/control-plane-c1-deploy-plan.md` §2.6; the instance plan
+records "do not leave the plane on public ingress with only basic auth"). An
+8-char floor therefore admits operator credentials with materially lower
+brute-force cost than a 16-char floor. This is an explicit operator tradeoff to
+permit a chosen short passphrase, bounded by the fact that the credential is
+operator-set (never defaulted or generated) and rotated via the secret store.

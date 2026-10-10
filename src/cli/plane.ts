@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 
 import { cliSibling } from "./launcher-args.js";
 import { isEntrypoint } from "./entrypoint.js";
-import { resolvePlaneConfig, type PlaneConfig } from "./plane-config.js";
+import { MIN_CLIENT_PASSWORD_LENGTH, resolvePlaneConfig, type PlaneConfig } from "./plane-config.js";
 
 /**
  * C1 plane supervisor (`workflow-plane`).
@@ -193,7 +193,7 @@ export function planeUsage(): string {
     "workflow-plane — the C1 control-plane supervisor (hub + OpenCode server gateway)",
     "",
     "Plane mode is explicit: set WORKFLOW_PLANE=1 and",
-    "  WORKFLOW_PLANE_CLIENT_PASSWORD  stable client credential (>= 16 chars)",
+    `  WORKFLOW_PLANE_CLIENT_PASSWORD  stable client credential (>= ${MIN_CLIENT_PASSWORD_LENGTH} chars)`,
     "  WORKFLOW_PLANE_WORKSPACE        absolute workspace path (default: cwd)",
     "  WORKFLOW_PLANE_GATEWAY_HOST     default 0.0.0.0",
     "  WORKFLOW_PLANE_GATEWAY_PORT     default 4096",
