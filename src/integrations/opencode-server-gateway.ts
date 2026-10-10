@@ -182,6 +182,22 @@ async function handle(
   upstreamAuth: string,
   options: OpencodeServerGatewayOptions,
 ): Promise<void> {
+  // CORS preflight pass-through. A genuine preflight (OPTIONS + Origin +
+  // Access-Control-Request-Method) is a credential-less transport negotiation:
+  // the WHATWG Fetch standard never attaches credentials to it. Stock
+  // `opencode serve` answers the preflight in CORS middleware AHEAD of auth
+  // (`packages/server/src/cors.ts`), so the gateway must do the same or it
+  // 401s the preflight and a browser client — e.g. the desktop renderer at
+  // origin `oc://renderer` — reports "could not connect". The preflight is
+  // forwarded to the upstream, which owns the CORS policy (allowed origins,
+  // methods, headers), and never to the hub-UI lane: that lane is same-origin
+  // by construction (its guard compares Origin to Host) so it needs no
+  // cross-origin preflight and stays strictly auth-gated.
+  const targetsHub = options.hubRoutes !== undefined && hostnameMatches(request, options.hubRoutes.hosts);
+  if (!targetsHub && isCorsPreflight(request)) {
+    forward(request, response, upstream, upstreamAuth, options);
+    return;
+  }
   const supplied = decodeBasic(request.headers.authorization);
   const expected = `${options.tuiUsername ?? "opencode"}:${options.tuiPassword}`;
   if (supplied === undefined || !equalConstantTime(supplied, expected)) {
@@ -250,6 +266,19 @@ function hostnameMatches(request: IncomingMessage, hosts: readonly string[]): bo
   if (raw === undefined) return false;
   const bare = raw.toLowerCase().replace(/:\d+$/, "");
   return hosts.some((host) => host.toLowerCase() === bare);
+}
+
+/**
+ * True for a genuine CORS preflight. The Fetch standard defines it precisely:
+ * `OPTIONS` carrying `Origin` and `Access-Control-Request-Method`. Requiring
+ * both headers keeps this narrow — a bare `OPTIONS` (no negotiation headers)
+ * is not a preflight and stays on the normal auth + route-class path, so an
+ * enforced gateway still fails a bare OPTIONS on a broker route closed.
+ */
+function isCorsPreflight(request: IncomingMessage): boolean {
+  if ((request.method ?? "").toUpperCase() !== "OPTIONS") return false;
+  if (request.headers.origin === undefined) return false;
+  return request.headers["access-control-request-method"] !== undefined;
 }
 
 /** Decodes percent-escapes so `/…/%72eply` cannot dodge the reply-route match. */

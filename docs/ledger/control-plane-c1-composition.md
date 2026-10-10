@@ -373,3 +373,43 @@ on the plane.
 `test/toolbox-catalog.test.ts`; `test/skill-delivery.test.ts`;
 `docs/superpowers/specs/2026-09-25-azure-container-jobs-remote-sandbox-design.md`
 §11.
+
+---
+
+### Live deploy + measurement (2026-10-11): v0.1.6 closes the fleet, toolbox, and skills gaps on the plane
+
+**Deployed.** v0.1.6 was cut at `f025a779` (main after PR #514 + #515), the
+qualified opencode asset attached to the release, `publish-image` run
+`38088290286` green, digest recorded
+`sha256:b035b231d767a75ab5093d4877dd905fed14e856c9ed3b9043d2f53981500678`.
+The csh-dev instance pinned that digest (AzDO PR #1157 to `main`; deploy run
+`3721` succeeded), revision `csh-dev-plane--0000013`, Running, min 1 / max 1.
+
+**Measured on `code.ultus.net` (the gaps this ledger recorded are now closed):**
+
+- Fleet agents load: `/api/agent` returns `build, general, explore, compaction,
+  title, summary, plan, decompose, executor, retrospective, reviewer` (the four
+  vendored agents are present, PR #514).
+- Fleet commands load: `/api/command` returns `init, review, decompose, retro,
+  review-diff, rsi-loop` (the four vendored commands).
+- The full toolbox is mounted and connected: `/api/mcp` reports all 16 vendored
+  servers `connected` (`workflow-guard-mcp`, `git-intelligence-mcp`,
+  `project-memory-mcp`, `skills-mcp`, ...), and `/api/config` carries the same 16
+  under `mcp.servers` (PR #515).
+- Skills delivery is armed: the config composes `skill: deny` (single delivery
+  path via `read_skill`) with `skills-mcp` mounted.
+
+**Custom-domain rebind (pre-existing, unfixed).** The redeploy re-PUT dropped
+`ingress.customDomains` to null (`infra/modules/plane.bicep` declares none);
+`code.ultus.net` and `hub.ultus.net` were re-bound `SniEnabled` with the
+`cf-origin-ultus` cert after deploy. Making the bindings declarative so a
+redeploy does not drop them is a recorded follow-up.
+
+**Still open (measured gap).** The Desktop "could not connect" root cause — a
+credential-less CORS preflight hitting the auth gate first (`OPTIONS /api/info`
+returns `401`, measured live) — is fixed in code (`isCorsPreflight` pass-through
+in `opencode-server-gateway.ts`) but NOT in v0.1.6; it ships in the next image.
+
+**Refs:** `docs/ledger/control-plane-c1-composition.md` (this entry);
+`src/integrations/opencode-server-gateway.ts`; the v0.1.6 release; the csh-dev
+pin (AzDO #1157).
