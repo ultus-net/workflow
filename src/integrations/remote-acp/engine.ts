@@ -349,10 +349,16 @@ export class HttpRemoteEngine implements RemoteEngine {
     reply: RemoteEngineReply;
     cwd: string;
   }): Promise<void> {
+    // Live v2 (pinned 2.0.10) requires the field `decision`, not `reply`:
+    // GET /openapi.json advertises requestBody `{ decision, message? }` with
+    // required:["decision"] and additionalProperties:false, and the in-binary
+    // client sends `{ decision }`. Sending `{ reply }` is a 400 (empty body),
+    // which leaves the mutating tool hung `running`. The user-facing name in
+    // this API stays `reply`; only the wire field maps to `decision`.
     await this.#json(
       "POST",
       `/api/session/${encodeURIComponent(input.sessionId)}/permission/${encodeURIComponent(input.requestId)}/reply`,
-      { cwd: input.cwd, body: { reply: input.reply } },
+      { cwd: input.cwd, body: { decision: input.reply } },
     );
   }
 

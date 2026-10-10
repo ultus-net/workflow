@@ -256,13 +256,61 @@ test("W071 gateway (broker mode): replies are intercepted and handed to the brok
   });
   t.after(() => void gateway.close());
 
+  // Live v2 clients send `{ decision }` (pinned 2.0.10 OpenAPI: required
+  // decision, additionalProperties:false). The broker must intercept it.
   const response = await fetch(gateway.url + "/api/session/sess1/permission/req1/reply?directory=/tmp", {
     method: "POST",
     headers: { authorization: basic("opencode", "tuipw"), "content-type": "application/json" },
-    body: JSON.stringify({ reply: "reject" }),
+    body: JSON.stringify({ decision: "reject" }),
   });
   assert.equal(response.status, 200);
   assert.deepEqual(seen, [{ sessionId: "sess1", requestId: "req1", reply: "reject" }]);
+  assert.equal(upstream.requests.some((entry) => entry.path.startsWith("/api/session")), false);
+});
+
+test("W071 gateway (broker mode): the legacy `reply` field is still intercepted", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const seen: OpencodePermissionReply[] = [];
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    onPermissionReply: (reply) => { seen.push(reply); },
+  });
+  t.after(() => void gateway.close());
+
+  const response = await fetch(gateway.url + "/api/session/sess1/permission/req1/reply", {
+    method: "POST",
+    headers: { authorization: basic("opencode", "tuipw"), "content-type": "application/json" },
+    body: JSON.stringify({ reply: "once" }),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(seen, [{ sessionId: "sess1", requestId: "req1", reply: "once" }]);
+  assert.equal(upstream.requests.some((entry) => entry.path.startsWith("/api/session")), false);
+});
+
+test("W071 gateway (broker mode): a body with neither decision nor reply fails closed", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const seen: OpencodePermissionReply[] = [];
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    onPermissionReply: (reply) => { seen.push(reply); },
+  });
+  t.after(() => void gateway.close());
+
+  const response = await fetch(gateway.url + "/api/session/sess1/permission/req1/reply", {
+    method: "POST",
+    headers: { authorization: basic("opencode", "tuipw"), "content-type": "application/json" },
+    body: JSON.stringify({ message: "no value" }),
+  });
+  assert.equal(response.status, 400);
+  assert.equal(seen.length, 0);
   assert.equal(upstream.requests.some((entry) => entry.path.startsWith("/api/session")), false);
 });
 

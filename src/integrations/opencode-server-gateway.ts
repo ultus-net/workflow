@@ -228,12 +228,17 @@ async function handlePermissionReply(
     sendJson(response, 400, { error: error instanceof Error ? error.message : "invalid permission reply" });
     return;
   }
-  if (!isRecord(body) || !isReplyValue(body.reply)) {
+  // Live v2 (pinned 2.0.10) clients send `{ decision, message? }` — the field
+  // is `decision`, not `reply` (see engine.replyPermission). Accept the legacy
+  // `reply` spelling too so the broker intercepts both generations, but require
+  // one valid value.
+  const decision = isRecord(body) ? (body.decision ?? body.reply) : undefined;
+  if (!isReplyValue(decision)) {
     sendJson(response, 400, { error: "invalid permission reply" });
     return;
   }
   try {
-    await hook({ sessionId, requestId, reply: body.reply });
+    await hook({ sessionId, requestId, reply: decision });
   } catch (error) {
     // A broker failure fails closed: the reply is not forwarded and the client
     // sees the failure rather than an implicit allow.

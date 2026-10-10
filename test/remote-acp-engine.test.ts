@@ -137,7 +137,8 @@ test("HttpRemoteEngine posts the prompt and the permission reply to the document
   assert.match(captured[0]!.url, /\/session\/ses_1\/message\?directory=%2Fw$/);
   assert.deepEqual(captured[0]!.body, { parts: [{ type: "text", text: "hello" }] });
   assert.match(captured[1]!.url, /\/api\/session\/ses_1\/permission\/per_1\/reply\?directory=%2Fw$/);
-  assert.deepEqual(captured[1]!.body, { reply: "reject" });
+  // Live v2 requires `decision` (not `reply`); see the pinned 2.0.10 OpenAPI.
+  assert.deepEqual(captured[1]!.body, { decision: "reject" });
 });
 
 test("HttpRemoteEngine events stream parses SSE event envelopes", async () => {
