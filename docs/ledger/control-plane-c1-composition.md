@@ -295,3 +295,81 @@ next image deploy — remains the measurement that closes this on the plane.
 `src/integrations/acp-runtime.ts`; `src/integrations/fleet-payload.ts`;
 `test/opencode-server-runtime.test.ts`; `test/install-doctor.test.ts`;
 `assets/opencode-fleet/`; `opencode-src packages/core/src/global.ts`.
+
+---
+
+### Supersession + fix (2026-10-11): the plane mounts the whole toolbox and delivers skills
+
+**Gap (measured, spec-vs-implementation).** The plane image ships the full
+`mcp-toolbox/` and specification §11 of
+`docs/superpowers/specs/2026-09-25-azure-container-jobs-remote-sandbox-design.md`
+("the full `mcp-toolbox/` ships inside the plane image … Hub-written metered
+config wires the servers over loopback inside the container") requires the
+hub-written config to carry them. Two paths did not reach the plane:
+
+- **Toolbox/MCP servers.** The plane lane's `createOpencodeServerRuntime`
+  composed only the skill-delivery floor (`workflow-guard-mcp` + `skills-mcp`;
+  `toolbox-catalog.ts` `declaredSkillConnectors`), and `OpencodeServerRuntimeOptions`
+  had NO `settings` field, so operator-declared MCP servers reached the ACP/TUI
+  lane (`acp-runtime.ts:428` `mcpServers: enabledMcpServers(options.settings)`)
+  but never the daemon. 14 of the 16 vendored servers were unreachable on the
+  plane.
+- **Skills.** `resolveSkillsMount()` mounts skills-mcp only when the operator's
+  `SKILLS_MCP_DIR` (default `~/.agents/skills`) already exists
+  (`acp-runtime.ts:963-985`). The image seeds no such directory, so on a fresh
+  pod the mount resolved `undefined` and no skills — including the hub's own
+  generated `workflow-toolbox` skill — were delivered.
+
+**Fix.**
+
+- `src/integrations/toolbox-catalog.ts` — new `toolboxCatalogMounts(catalog,
+  {disabled, alreadyMounted})`: the FULL built catalog as stdio mounts (built
+  entries only, operator-disabled wins, `alreadyMounted` dedupes skills-mcp).
+- `src/integrations/opencode-server-runtime.ts` — `OpencodeServerRuntimeOptions`
+  gains `settings` (projected via `enabledMcpServers` → `mcpServers`, exactly the
+  ACP lane's path) and `mountFullToolbox` (selects `toolboxCatalogMounts` over
+  the declared floor, and ensures the skills store exists via `ensureSkillsMount`).
+  The connector readable-path binds now compose independently of the skills
+  mount, so the full toolbox's stdio children survive the boundary even with no
+  operator skills dir.
+- `src/integrations/acp-runtime.ts` — new `ensureSkillsMount({root,home,exists})`:
+  creates the hub-owned `~/.agents/skills` when absent, then resolves the mount;
+  fails closed (undefined) when the skills server build is missing or the home
+  is read-only. The ACP/ambient lane keeps the strict `resolveSkillsMount`
+  posture.
+- `src/cli/opencode-server.ts` — plane mode passes `mountFullToolbox: true` and
+  `settings: loadSettings({ workspace })`. Non-plane mode is byte-identical.
+
+**Verification (this session):**
+
+- `node --import tsx --test test/opencode-server-runtime.test.ts` → 7/7, incl. (a)
+  a real `opencode serve` launch asserting the config's `mcp` map carries the
+  full toolbox (`workflow-guard-mcp`, `git-intelligence-mcp`,
+  `project-memory-mcp`), the operator-enabled server, and NOT the
+  operator-disabled one; and (b) a default-lane parity launch with
+  `SKILLS_MCP_DIR` pointed at a nonexistent path asserting NO connectors and NO
+  skills mount compose — pinning that a non-plane daemon without a skills store
+  stays byte-identical (the review-caught regression, fixed).
+- `node --import tsx --test test/toolbox-catalog.test.ts test/skill-delivery.test.ts`
+  → 11/11 (new `toolboxCatalogMounts` and `ensureSkillsMount` tests).
+- Focused set (runtime, runtime-downgrade, toolbox-catalog, skill-delivery,
+  install-doctor, plane-supervisor, acp-runtime-args, install-surface-docs)
+  → 61/61; `npm run typecheck` exit 0; `npm run lint` exit 0.
+
+**Residual:** unit-verified (config map + store). Two plane failure modes stay
+noted, not fixed here: (i) if the skills store cannot be created (read-only
+home), `skillsMount` stays undefined while `alreadyMounted: ["skills-mcp"]`
+still suppresses skills-mcp from the full-catalog mount, so skills-mcp mounts
+nowhere (pre-existing delivery-exclusion behavior); (ii) `ensureSkillsMount`
+creates the directory before resolving, so an absent skills server build leaves
+an empty store behind. The live proof — the plane's `/api/agent`/`/api/command`
+returning the fleet AND the composed MCP tool surface carrying the toolbox
+servers after the next image deploy — remains the measurement that closes this
+on the plane.
+
+**Refs:** `src/integrations/toolbox-catalog.ts`;
+`src/integrations/opencode-server-runtime.ts`; `src/integrations/acp-runtime.ts`;
+`src/cli/opencode-server.ts`; `test/opencode-server-runtime.test.ts`;
+`test/toolbox-catalog.test.ts`; `test/skill-delivery.test.ts`;
+`docs/superpowers/specs/2026-09-25-azure-container-jobs-remote-sandbox-design.md`
+§11.

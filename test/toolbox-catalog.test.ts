@@ -7,6 +7,7 @@ import {
   TOOLBOX_CATALOG,
   packageRoot,
   resolveToolboxCatalog,
+  toolboxCatalogMounts,
   toolboxServerPath,
   toolboxSkillBody,
 } from "../src/integrations/toolbox-catalog.js";
@@ -55,6 +56,28 @@ test("availability resolution uses the injected probe and keeps entries pure", (
   const absent = resolveToolboxCatalog({ exists: () => false });
   assert.equal(absent.every((entry) => entry.available === false), true);
   assert.equal(absent.every((entry) => entry.serverPath.endsWith(join("dist", "server.js"))), true);
+});
+
+test("toolboxCatalogMounts mounts the full built catalog minus disabled and already-mounted names", () => {
+  const built = resolveToolboxCatalog({ exists: () => true });
+
+  // Every built entry mounts except skills-mcp (the delivery mount owns it).
+  const all = toolboxCatalogMounts(built, { alreadyMounted: ["skills-mcp"] });
+  assert.equal(all.length, TOOLBOX_CATALOG.length - 1);
+  assert.ok(all.every((mount) => mount.name !== "skills-mcp"), "the delivery mount owns skills-mcp");
+  assert.ok(all.every((mount) => mount.serverPath.endsWith(join("dist", "server.js"))), "mounts point at built stdio entrypoints");
+  // This is the WHOLE catalog, not the declared floor — a strict superset.
+  assert.ok(all.some((mount) => mount.name === "git-intelligence-mcp"), "the full catalog mounts beyond the floor");
+  assert.ok(all.some((mount) => mount.name === "project-memory-mcp"), "the full catalog mounts beyond the floor");
+
+  // An operator disable always wins; an unbuilt entry never mounts.
+  const disabled = toolboxCatalogMounts(built, { disabled: ["git-intelligence-mcp"], alreadyMounted: ["skills-mcp"] });
+  assert.ok(disabled.every((mount) => mount.name !== "git-intelligence-mcp"), "an operator-disabled server never mounts");
+  const unbuilt = toolboxCatalogMounts(
+    built.map((entry) => entry.name === "project-memory-mcp" ? { ...entry, available: false } : entry),
+    { alreadyMounted: ["skills-mcp"] },
+  );
+  assert.ok(unbuilt.every((mount) => mount.name !== "project-memory-mcp"), "an unbuilt entry never mounts");
 });
 
 test("the W075 skill body is generated from the catalog and stays in lockstep with the corpus", () => {

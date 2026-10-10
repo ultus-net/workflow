@@ -221,6 +221,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       // W080 (the operator-disable precedence on this lane): connector names
       // the operator explicitly disabled never mount from the declaration.
       ...(disabledConnectors.length === 0 ? {} : { skillConnectorsDisabled: disabledConnectors }),
+      // C1 plane: the whole vendored toolbox ships in the image (spec §11,
+      // 2026-09-25) and the hub-written config wires the servers over loopback
+      // inside the container. The plane lane mounts the full built catalog
+      // (which also ensures the hub-owned skills store exists so the delivery
+      // mount resolves) and threads the operator settings doc — there is no
+      // settings file of its own in the pod, so it reads the workspace/state
+      // one. Absent plane mode both stay off and the daemon is byte-identical.
+      ...(plane === undefined ? {} : { mountFullToolbox: true, settings: loadSettings({ workspace }) }),
     });
   } catch (error) {
     await guard.close();

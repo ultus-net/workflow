@@ -236,6 +236,30 @@ export function skillConnectorMounts(
 }
 
 /**
+ * The FULL built toolbox catalog as stdio mounts — every catalog entry whose
+ * vendored entrypoint is built, minus names the operator explicitly disabled
+ * and minus `alreadyMounted` names (skills-mcp arrives through the delivery
+ * mount, never twice). The control-plane spec (§11, 2026-09-25) places the
+ * whole toolbox in the plane image and has the hub-written config wire the
+ * servers over loopback inside the container: this is that floor-to-ceiling
+ * mount for the plane lane, which has no operator settings doc of its own. The
+ * ACP/TUI lanes keep the narrower operator-driven composition
+ * (`skillConnectorMounts`). Entries still cross the same hub-written config and
+ * application/guard authorization as any other MCP server — scoping, never a
+ * bypass lane.
+ */
+export function toolboxCatalogMounts(
+  catalog: readonly ToolboxCatalogEntry[],
+  options: { disabled?: readonly string[]; alreadyMounted?: readonly string[] } = {},
+): readonly SkillConnectorMount[] {
+  const disabled = new Set(options.disabled ?? []);
+  const mounted = new Set(options.alreadyMounted ?? []);
+  return catalog
+    .filter((entry) => entry.available && !disabled.has(entry.name) && !mounted.has(entry.name))
+    .map((entry) => ({ name: entry.name, serverPath: entry.serverPath }));
+}
+
+/**
  * W080 delivery (file-provisioning framing, 2026-09-21): provision the
  * generated `workflow-toolbox` skill into the hub-owned delivery store —
  * `<skillsDir>/workflow-toolbox/SKILL.md`, the directory `skills-mcp` scans.
