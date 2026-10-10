@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-09",
+  "updated": "2026-10-10",
   "verdicts": [
     {
       "id": "acp-contained-egress-probe",
@@ -642,6 +642,19 @@
       "evidence": "docs/ledger/control-plane-c1-deploy-plan.md task 3.1; infra/c0/README.md idle-survival gate (mirrored); test/c1-plane-probe.test.ts header",
       "blocker": "needs the deployed C1 plane plus the client credential; the 240s no-event ingress-idle window has never been held live against the Workflow gateway",
       "note": "Idle arm of test/c1-plane-probe.test.ts, gated separately so the default probe run is not taxed by a 4-minute hold. Holds ONE /api/event subscription through the full 240s ingress idle window and fails only on a drop or a silent resume; the survival decision is the pure classifySseIdleHold in src/integrations/probe-verdicts.ts, re-derived by the register. Transport liveness only — never an enforcement claim."
+    },
+    {
+      "id": "c1-plane-broker",
+      "host": "Workflow C1 control plane (Azure Container Apps)",
+      "hostVersion": "unqualified",
+      "probe": "test/c1-plane-probe.test.ts",
+      "gate": "WORKFLOW_AZURE_PLANE_PROBE_BROKER",
+      "date": "2026-10-10",
+      "result": "pending",
+      "posture": "unqualified",
+      "evidence": "docs/OPENCODE_SERVER_AUTHORITY.md (2026-10-10 addendum, the live v2 envelope finding); docs/ledger/control-plane-c1-deploy-plan.md task 3.1; test/c1-plane-probe.test.ts header",
+      "blocker": "needs the deployed C1 plane plus the client credential AND a rebuilt image carrying the v2 envelope fix (branch fix/opencode-v2-event-envelope); a live mutating tool turn has never settled",
+      "note": "Broker arm of test/c1-plane-probe.test.ts, gated separately because it spends model tokens. Drives a real model turn requesting the shell tool, asserts the broker intercepts (a permission.asked for the session on the stream) and settles (the tool part leaves running for a terminal status). Pre-fix the v2 envelope mismatch made every ask unmappable and the tool hung at running forever. Advisory mediation only — never an enforcement-bypass claim."
     },
     {
       "id": "azure-jobs-p0",

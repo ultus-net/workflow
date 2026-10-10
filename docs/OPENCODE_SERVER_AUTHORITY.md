@@ -431,3 +431,69 @@ ingress-idle survival arm is a separate gate
 (`WORKFLOW_AZURE_PLANE_PROBE_IDLE=1`). Status: **PENDING (never run live)** —
 the instrument landing does not upgrade any claim here. A green earns only C1
 Partial (advisory); nothing in this probe is a pod-side `enforced` claim.
+
+## Addendum (2026-10-10, C1 live plane — the deferred v2 wire-shape probe, RUN: the envelope bug)
+
+**This is the M0.3 / §3 "live `permission.asked` wire shape" item — deferred
+for two years behind "needs a real model key" — actually run.** The C1 plane
+gave the topology a real Synthetic/OpenRouter lane and a real model turn, so
+the probe executed against a live `opencode serve` v2.0.10 through the public
+ingress. It surfaced a defect: **every mutating tool call hung forever.**
+
+**Observed (live, healthy plane, revision `csh-dev-plane--0000007`):**
+
+- A tool turn parked at `session.tool.called` with `executed: false` and
+  `state.status: "running"`, forever. Read-only answers passed; any `write`,
+  `shell`, or `edit` hung.
+- The broker logged, one line per tool turn, verbatim:
+  `[authority] deny unknown session=undefined delivered=false reason=unmappable
+  permission request (fail closed): invalid ACP permission event (upstream reply
+  failed: remote engine POST /api/session/undefined/permission/undefined/reply`
+- A captured `/api/event` frame (17 event types swept) showed the v2 envelope:
+  `{"id","type","location","data":{...},"durable":{...}}` — the payload rides
+  **`data`**, never `properties`.
+
+**Root cause (one bug, three consumers).** `parseEventPayload`
+(`src/integrations/remote-acp/engine.ts`) read `payload` then `properties`,
+never the v2 `data`. So `sessionID`/`id` landed `undefined`, every ask was
+"unmappable", the broker failed closed (correctly), and the `reject` reply went
+to `/api/session/undefined/permission/undefined/reply` — which also fails, so
+the tool never unblocks. Two more consumers shared the bug: the tool-activity
+observer (`opencode-server-authority.ts`) gated on `message.part.updated`, a
+type v2.0.10 does not emit (it emits the `session.tool.*` family), leaving
+`recordMutation` and the enforced-mode bypass alarm dead; and
+`consumeOpenCodeV2EventStream` (`opencode-v2-event-log.ts`) read `properties`,
+silently dropping every v2 event.
+
+**Fix (branch `fix/opencode-v2-event-envelope`, focused tests 116 green):**
+
+- `normalizeEventEnvelope` (`engine.ts`) maps v1 contract, v1 `payload` wrapper,
+  and the v2 `data` envelope to the one contract shape every consumer reads.
+- `isPermissionAsked` accepts both `permission.asked` (live v2) and
+  `permission.v2.asked` (the sibling the migration spec §2.3 recorded).
+- `permissionToolCallId` reads the v2 `source.id` (the same value the
+  `session.tool.*` events carry as `data.id`) as well as the v1 `tool.callID`,
+  so delivered-allow coverage correlates on v2.
+- The observer (`opencode-server-authority.ts`) normalizes both generations: the
+  v2 `session.tool.called`/`success` family (terminal = `success`) and the v1
+  `message.part.updated` shape; a v2 success now consumes coverage and records
+  the mutation, and an undecided v2 mutation alarms under `enforced`.
+- `consumeOpenCodeV2EventStream` reads `data`.
+- Live-wire-shaped fixtures: `test/remote-acp-engine.test.ts` (envelope),
+  `test/opencode-server-authority.test.ts` (data-wrapped ask answered; v2
+  success records; undecided v2 mutation alarms), `test/opencode-v2-event-log.test.ts`
+  (data-envelope journal).
+
+**Source grounding** (docs first, source by exception): the v2 docs
+(`GET /api/session/{sessionID}/permission/{requestID}` → `{ data: Request }`;
+`POST …/reply` { `reply` } → 204; Permissions page: `action`/`resource`/`effect`,
+`once`/`always`/`reject`) and `packages/core/src/permission.ts`
+(`Event.Asked` payload = `Permission.Request`), `packages/schema/src/session-event.ts`
+(`Tool.Called`/`Success`/`Failed`; deprecated `session.next.*` spellings)
+and `packages/app/src/context/server-session-v2-reducer.ts` (`event.data.id` is
+the tool callID) in the `anomalyco/opencode` fork the pinned binary is cut from.
+
+**Posture:** the *mapping* defect is fixed and pinned by tests, but the plane
+runs the old image; the live tool-turn verdict flips only after a rebuilt,
+digest-repinned release. No `enforced` claim is upgraded by any of this.
+

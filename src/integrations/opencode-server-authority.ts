@@ -3,7 +3,7 @@ import type { ProposedToolAction, ToolCapability } from "../adapters/host.js";
 import type { WorkflowApplication } from "../application/workflow.js";
 import { taskId, type TaskId } from "../kernel/contracts.js";
 import { guardInputFromToolCall, type WorkflowGuardProvider } from "./mcp-toolbox-guard.js";
-import { isPermissionAsked, type RemoteEngine, type RemoteEngineEvent, type RemoteEnginePermissionRequest } from "./remote-acp/engine.js";
+import { isPermissionAsked, permissionToolCallId, type RemoteEngine, type RemoteEngineEvent, type RemoteEnginePermissionRequest } from "./remote-acp/engine.js";
 import { permissionToolCall } from "./remote-acp/projection.js";
 
 /**
@@ -373,7 +373,7 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
   };
 
   function rememberAllowed(request: RemoteEnginePermissionRequest, subjects: readonly string[]): void {
-    const callId = typeof request.tool?.callID === "string" ? request.tool.callID : undefined;
+    const callId = permissionToolCallId(request);
     if (callId !== undefined) {
       allowedSubjectsByCallId.set(callId, subjects);
       return;
@@ -413,6 +413,71 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
   };
 
   /**
+   * v2 (live, 2.0.10) splits tool input from settlement: `session.tool.called`
+   * carries the input, the terminal `session.tool.success` carries the result.
+   * Capture the input at the `called` observation so the terminal event (which
+   * may not repeat it) can still name a read_skill delivery. Bounded to
+   * read_skill tools and consumed at their terminal event.
+   */
+  const skillInputsByCallId = new Map<string, unknown>();
+
+  interface ObservedToolActivity {
+    readonly sessionId: string;
+    readonly tool: string;
+    readonly callId: string | undefined;
+    /** `completed` at the terminal event, else `undefined` (in-flight). */
+    readonly status: "completed" | undefined;
+    readonly input: unknown;
+    readonly metadata: unknown;
+  }
+
+  /**
+   * Normalizes a tool-activity event from either wire generation into one shape.
+   *
+   *  - v2 (live, 2.0.10): the `session.tool.*` family — grounded in the v2 docs
+   *    and `packages/schema/src/session-event.ts` (`Tool.Called` / `Tool.Success`
+   *    / `Tool.Failed`, `data` payload). Terminal = `session.tool.success`
+   *    (completed); `failed` and the in-flight events are non-terminal.
+   *  - v1/ACP: `message.part.updated` with a `part` of `type: "tool"`; terminal =
+   *    `state.status === "completed"`.
+   *
+   * Returns `undefined` for anything that is not tool activity, so the caller
+   * fails closed on shapes it does not recognize.
+   */
+  const observeToolActivity = (event: RemoteEngineEvent): ObservedToolActivity | undefined => {
+    const type = event.type;
+    const properties = event.properties as Record<string, unknown>;
+    if (type.startsWith("session.tool.")) {
+      const sessionId = typeof properties.sessionID === "string" ? properties.sessionID : undefined;
+      // V2 emits the tool name as `tool` in the schema; the live 2.0.10 wire
+      // carried it as `name`. Accept either.
+      const tool = typeof properties.tool === "string" ? properties.tool
+        : typeof properties.name === "string" ? properties.name : undefined;
+      if (sessionId === undefined || tool === undefined) return undefined;
+      // V2 schema names the id `callID`; the live wire carried it as `id`.
+      const callId = typeof properties.callID === "string" ? properties.callID
+        : typeof properties.id === "string" ? properties.id : undefined;
+      const status = type === "session.tool.success" ? "completed" : undefined;
+      return { sessionId, tool, callId, status, input: properties.input, metadata: properties.metadata };
+    }
+    if (type !== "message.part.updated") return undefined;
+    const part = isRecord(properties.part) ? properties.part : undefined;
+    if (part === undefined || part.type !== "tool") return undefined;
+    const tool = typeof part.tool === "string" ? part.tool
+      : typeof part.name === "string" ? part.name : undefined;
+    if (tool === undefined) return undefined;
+    // The part may carry its own session id; the pinned source prefers the
+    // part's id (review P2-1).
+    const sessionId = (typeof part.sessionID === "string" ? part.sessionID : undefined)
+      ?? (typeof properties.sessionID === "string" ? properties.sessionID : undefined);
+    if (sessionId === undefined) return undefined;
+    const callId = typeof part.callID === "string" ? part.callID : undefined;
+    const state = isRecord(part.state) ? part.state : undefined;
+    const completed = state?.status === "completed" ? "completed" : undefined;
+    return { sessionId, tool, callId, status: completed, input: state?.input, metadata: part.metadata };
+  };
+
+  /**
    * Tool-activity observer (M4):
    *  - a completed read_skill delivery journals the skill against the session
    *    task (the server-path onSkillRead equivalent — the precondition is
@@ -422,28 +487,22 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
    *  - in enforced posture, undecided mutating activity is a bypass alarm.
    */
   const observeToolPart = (event: RemoteEngineEvent): void => {
-    if (event.type !== "message.part.updated") return;
-    const properties: { readonly sessionID?: unknown; readonly part?: unknown } = event.properties;
-    const part = isRecord(properties.part) ? properties.part : undefined;
-    if (part === undefined || part.type !== "tool") return;
-    // V2 renamed the tool-part field `name` -> `tool`; v1-shaped parts
-    // (agent-reported, e.g. ACP) still carry the name in `name`.
-    const tool = typeof part.tool === "string" ? part.tool
-      : typeof part.name === "string" ? part.name : undefined;
-    if (tool === undefined) return;
-    // The part may carry its own session id; the pinned source prefers the
-    // part's id (review P2-1).
-    const sessionId = (typeof part.sessionID === "string" ? part.sessionID : undefined)
-      ?? (typeof properties.sessionID === "string" ? properties.sessionID : undefined);
-    if (sessionId === undefined) return;
-    const callId = typeof part.callID === "string" ? part.callID : undefined;
-    const status = isRecord(part.state) && typeof part.state.status === "string" ? part.state.status : undefined;
+    const activity = observeToolActivity(event);
+    if (activity === undefined) return;
+    const { sessionId, tool, callId, status, input, metadata } = activity;
     const sessionKey = `${sessionId}\u0000${tool}`;
 
     if (isReadSkillTool(tool)) {
+      // Capture the v2 input at the in-flight `called` observation; the terminal
+      // event may not repeat it.
+      if (status === undefined) {
+        if (callId !== undefined && input !== undefined) skillInputsByCallId.set(callId, input);
+        return;
+      }
       // Skill delivery (M4): journaled when the content actually arrived.
-      if (status !== "completed") return;
-      const skill = skillNameFrom(isRecord(part.state) ? part.state.input : undefined) ?? skillNameFrom(part.metadata);
+      const captured = callId === undefined ? undefined : skillInputsByCallId.get(callId);
+      if (callId !== undefined) skillInputsByCallId.delete(callId);
+      const skill = skillNameFrom(input ?? captured) ?? skillNameFrom(metadata);
       if (skill !== undefined) {
         try {
           options.application.recordSkillRead(skill, opencodeSessionTaskId(sessionId));
@@ -456,10 +515,9 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
 
     const capability = opencodePermissionCapability(tool);
     if (capability === undefined || capability === "read") return;
-    // One tool call emits multiple part updates (pending -> ... -> completed),
-    // so only the terminal observation is acted on (fix-verify N1): consuming
-    // coverage on an early update would false-fire the bypass alarm at the
-    // completed event and skip recordMutation. The completed event is the
+    // Only the terminal completion is acted on (fix-verify N1): consuming
+    // coverage on an in-flight observation would false-fire the bypass alarm at
+    // the completed event and skip recordMutation. The terminal event is the
     // single point where coverage is consumed and either the mutation is
     // recorded or (enforced, uncovered) the bypass alarm fires.
     if (status !== "completed") return;

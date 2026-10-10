@@ -494,6 +494,43 @@ export async function* sseData(
   }
 }
 
+/**
+ * Normalizes the observed OpenCode event envelopes into the contract shape
+ * `{ type, properties }`. Three generations are in the field:
+ *
+ *  - v1 (contract shape): `{ type, properties }`.
+ *  - v1 SSE wrapper: `{ payload: { type, properties } }` — the historical
+ *    `/global/event` spelling the transport tests pinned.
+ *  - v2 (live, opencode v2.0.10): `{ id, type, location, data, durable }` — the
+ *    payload rides **`data`**, never `properties`. Grounded in the v2 docs
+ *    (`GET /api/session/{sessionID}/permission/{requestID}` → `{ data: Request }`)
+ *    and `packages/core/src/permission.ts` (`Event.Asked` payload =
+ *    `Permission.Request`). The M0.3 "pin the exact wire type by probe" item
+ *    deferred this (it needed a real model turn); a live plane turn resolved it.
+ *
+ * Every consumer (the authority broker, the ACP projection, the event journal)
+ * reads ONLY the contract shape, so the mapping happens here, once. A record
+ * with no string `type` returns `undefined` so a caller fails closed on a
+ * malformed frame rather than the parser inventing an event.
+ */
+export function normalizeEventEnvelope(value: unknown): RemoteEngineEvent | undefined {
+  if (!isRecord(value)) return undefined;
+  // The historical `payload` wrapper may itself wrap a v2 `data` envelope, so
+  // unwrap it first, then resolve the properties source on the inner record.
+  const envelope = isRecord(value.payload) ? value.payload : value;
+  if (typeof envelope.type !== "string") return undefined;
+  const properties = isRecord(envelope.properties)
+    ? envelope.properties
+    : isRecord(envelope.data)
+      ? envelope.data
+      : isRecord(value.properties)
+        ? value.properties
+        : isRecord(value.data)
+          ? value.data
+          : {};
+  return { type: envelope.type, properties } as RemoteEngineEvent;
+}
+
 function parseEventPayload(data: string): RemoteEngineEvent | undefined {
   let parsed: unknown;
   try {
@@ -501,17 +538,41 @@ function parseEventPayload(data: string): RemoteEngineEvent | undefined {
   } catch {
     return undefined;
   }
-  const envelope = isRecord(parsed) && isRecord(parsed.payload) ? parsed.payload : parsed;
-  if (!isRecord(envelope) || typeof envelope.type !== "string") return undefined;
-  const properties = isRecord(envelope.properties) ? envelope.properties : {};
-  return { type: envelope.type, properties } as RemoteEngineEvent;
+  return normalizeEventEnvelope(parsed);
 }
 
-/** Narrows an engine event to a permission request. */
+/**
+ * Narrows an engine event to a permission request. Accepts both wire spellings
+ * the server generation may use: `permission.asked` (observed live on v2.0.10;
+ * `packages/core/src/permission.ts` `Event.Asked`) and `permission.v2.asked`
+ * (the sibling spelling the migration spec §2.3 recorded). Their payloads are
+ * the same `Permission.Request` shape, so one handler serves both.
+ */
 export function isPermissionAsked(
   event: RemoteEngineEvent,
 ): event is { readonly type: "permission.asked"; readonly properties: RemoteEnginePermissionRequest } {
-  return event.type === "permission.asked";
+  return event.type === "permission.asked" || event.type === "permission.v2.asked";
+}
+
+/**
+ * The tool-call id a permission request is about. The broker keys delivered-allow
+ * coverage on it so completion observation can match the tool activity back to
+ * its decision. Two wire shapes carry it:
+ *
+ *  - v1/ACP: `request.tool.callID` (the contract field).
+ *  - v2 (live, 2.0.10): `request.source.id` — grounded in the v2 docs
+ *    (`Permission.Source = { type: "tool", messageID, id }`) and the live
+ *    permission event. This is the SAME value the `session.tool.*` events carry
+ *    as `data.id`, so coverage correlations hold on v2.
+ *
+ * Returns `undefined` when neither is present; the broker falls back to a
+ * session+tool coverage key, so a missing callID still covers exactly one ask.
+ */
+export function permissionToolCallId(request: RemoteEnginePermissionRequest): string | undefined {
+  if (typeof request.tool?.callID === "string" && request.tool.callID.length > 0) return request.tool.callID;
+  const source = (request as { readonly source?: unknown }).source;
+  if (isRecord(source) && typeof source.id === "string" && source.id.length > 0) return source.id;
+  return undefined;
 }
 
 function parseSession(value: unknown): RemoteSession | undefined {
