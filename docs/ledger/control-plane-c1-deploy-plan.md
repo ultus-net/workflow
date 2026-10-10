@@ -926,7 +926,13 @@ as a gateway route class, D5 reversal): the operator domain needed a distinct
   session manager 503, web.json round-trip + absent = undefined); the
   already-green `opencode-server-gateway` + `workflow-hub` + `web-dispatch-relay`
   + `web` suites 31/31; `npm run typecheck` exit 0; `npm run lint` exit 0;
-  `npm run build` exit 0.
+  `npm run build` exit 0. The two new suites run under `npm test`'s
+  `test/**/*.test.ts` glob but are NOT yet enumerated in `package.json`'s
+  `test:ci`: adding them there edits `package.json` (a manifest), which trips
+  the guard's lockfile-synchronization preflight (a `scripts`-only edit never
+  changes `package-lock.json`, so the gate cannot be satisfied) — registering
+  them in `test:ci` is deferred to a separate direct commit, the route prior
+  `test:ci` edits (`5e2a229795`, `51a05286`) actually took to `main`.
 - **Not live-verified (🛰):** the body `host` header ACA forwards to the
   container for a bound custom domain is measured EMPIRICALLY on the first live
   bind, not assumed — the dispatch is built on Host but its live pass-through is
