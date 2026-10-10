@@ -16,6 +16,7 @@ import {
   type OpencodeAuthorityDecision,
 } from "../src/integrations/opencode-server-authority.js";
 import type { RemoteEngine, RemoteEngineEvent, RemoteEnginePermissionRequest } from "../src/integrations/remote-acp/engine.js";
+import { HttpRemoteEngine } from "../src/integrations/remote-acp/engine.js";
 import type { WorkflowGuardProvider } from "../src/integrations/mcp-toolbox-guard.js";
 
 /**
@@ -509,6 +510,118 @@ test("W071 broker: read_skill matching is exact, not substring (review P3-3)", (
   assert.equal(opencodePermissionCapability("read_skill"), "read");
   assert.equal(opencodePermissionCapability("skills-mcp__read_skill"), "read");
   assert.equal(opencodePermissionCapability("evilread_skill"), undefined);
+});
+
+/**
+ * v2 (live, 2.0.10) tool-activity: the `session.tool.*` family, not
+ * `message.part.updated`. `called` carries the input in-flight; `success` is the
+ * terminal settlement. Grounded in the v2 docs and
+ * `packages/schema/src/session-event.ts` (`Tool.Called` / `Tool.Success`).
+ */
+function v2ToolCalled(callId: string, tool: string, input?: unknown): RemoteEngineEvent {
+  return { type: "session.tool.called", properties: { sessionID: "s1", id: callId, name: tool, input } } as unknown as RemoteEngineEvent;
+}
+
+function v2ToolSuccess(callId: string, tool: string): RemoteEngineEvent {
+  return { type: "session.tool.success", properties: { sessionID: "s1", id: callId, name: tool } } as unknown as RemoteEngineEvent;
+}
+
+/** A v2 `permission.asked` event as it arrives off the live wire (data payload). */
+function v2Permission(id: string, action: string, sourceCallId: string, metadata: Record<string, unknown> = {}): RemoteEngineEvent {
+  return {
+    type: "permission.asked",
+    properties: { id, sessionID: "s1", action, resources: [], save: [], metadata, source: { type: "tool", messageID: "m1", id: sourceCallId } },
+  } as unknown as RemoteEngineEvent;
+}
+
+test("W071 broker (v2 wire): a data-wrapped permission.asked maps and is answered, not denied as unmappable", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-v2-wire-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const replies: { readonly sessionId: string; readonly requestId: string; readonly reply: string }[] = [];
+  // The real events() parser feeds the broker; the raw frame is the live v2
+  // `data` envelope that previously produced session=undefined and hung tools.
+  const engine = {
+    async *events() {
+      for await (const event of new HttpRemoteEngine({
+        baseUrl: "http://127.0.0.1:4096",
+        cwd: workspace,
+        eventReconnect: { maxAttempts: 0 },
+        fetch: async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode(
+                  'data: {"id":"evt_1","created":1,"type":"permission.asked","location":{"directory":"/workspace"},'
+                  + '"data":{"id":"per_1","sessionID":"s1","action":"shell","resources":["echo hi"],"save":["echo *"],'
+                  + '"source":{"type":"tool","messageID":"m1","id":"call_1"}}}\n\n',
+                ));
+                controller.close();
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+      }).events({ cwd: workspace, signal: new AbortController().signal })) {
+        yield event;
+      }
+    },
+    async replyPermission(input: { readonly sessionId: string; readonly requestId: string; readonly reply: string }) {
+      replies.push({ sessionId: input.sessionId, requestId: input.requestId, reply: input.reply });
+    },
+  } as unknown as Pick<RemoteEngine, "events" | "replyPermission">;
+  const authority = createOpencodeServerAuthority({
+    engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+  });
+  await authority.start();
+  assert.deepEqual(
+    replies,
+    [{ sessionId: "s1", requestId: "per_1", reply: "once" }],
+    "the v2 data-wrapped ask must map to a real session/request id and be answered",
+  );
+  assert.equal(authority.decisions()[0]?.decision, "allow");
+  assert.equal(authority.decisions()[0]?.delivered, true);
+});
+
+test("W071 broker (v2 wire): session.tool.success consumes coverage and records the mutation", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-v2-success-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const bypasses: string[] = [];
+  const app = application(workspace, ["read", "mutation", "process"]);
+  const epochBefore = app.snapshot().mutationEpoch;
+  const fake = fakeEngine([
+    v2Permission("r1", "edit", "call_1", { filePath: join(workspace, "src", "a.ts") }),
+    v2ToolCalled("call_1", "edit", { filePath: join(workspace, "src", "a.ts") }),
+    v2ToolSuccess("call_1", "edit"),
+  ]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine, application: app, workspace,
+    enforcement: "enforced",
+    onBypass: (input) => bypasses.push(input.tool),
+  });
+  await authority.start();
+  assert.deepEqual(bypasses, [], "the allowed v2 tool settlement must not alarm");
+  assert.ok(app.snapshot().mutationEpoch > epochBefore, "the terminal v2 success must record the mutation");
+});
+
+test("W071 broker (v2 wire): an undecided v2 session.tool.success alarms in enforced posture", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-v2-bypass-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const bypasses: string[] = [];
+  const fake = fakeEngine([
+    // No permission ask; a mutating tool settles anyway.
+    v2ToolCalled("call_1", "edit", { filePath: join(workspace, "src", "a.ts") }),
+    v2ToolSuccess("call_1", "edit"),
+  ]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    enforcement: "enforced",
+    onBypass: (input) => bypasses.push(input.tool),
+  });
+  await authority.start();
+  assert.deepEqual(bypasses, ["edit"], "a v2 mutation with no prior decision must alarm in enforced posture");
 });
 
 test("W071 broker: v2 execute/websearch/question tools are capability-mapped (review P2)", () => {

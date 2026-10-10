@@ -237,3 +237,128 @@ test("C1 live probe (idle arm): the event stream survives the full 240s ingress 
     clearTimeout(hardStop);
   }
 });
+
+/**
+ * Broker arm (gated `WORKFLOW_AZURE_PLANE_PROBE_BROKER=1`): drives a REAL model
+ * turn that requests a mutating tool (shell) and asserts the authority broker
+ * mediates it — the model-key probe the docs deferred (`OPENCODE_SERVER_AUTHORITY.md`,
+ * `OPENCODE_REMOTE_ACP_SPEC.md` §10). It spends model tokens, so it holds its own
+ * gate, like the idle arm.
+ *
+ * Evidence, measured over the wire:
+ *  - the broker INTERCEPTS: a `permission.asked` for the session appears on the
+ *    event stream (the ask rule fired, the broker subscribed).
+ *  - the broker SETTLES: the tool part's state leaves `running` for a terminal
+ *    status (the reply reached upstream). Pre-fix the v2 envelope mismatch made
+ *    every ask unmappable and the tool hung at `running` forever — the exact
+ *    defect this arm exists to catch.
+ *
+ * Honest scope: this is an ADVISORY mediation claim (the broker answered), not
+ * an enforcement-bypass claim. It does not upgrade any `enforced` label.
+ */
+const runBrokerArm = process.env.WORKFLOW_AZURE_PLANE_PROBE_BROKER === "1";
+
+interface V2ToolState {
+  readonly status?: string;
+}
+
+test("C1 live probe (broker arm): a mutating tool turn is intercepted and settles", { skip: !runBrokerArm, timeout: 180_000 }, async (t) => {
+  const target = resolveTarget();
+  const controller = new AbortController();
+  t.after(() => controller.abort());
+
+  // Subscribe before prompting so the permission ask is observed.
+  const stream = await fetch(`${target.base}/api/event`, {
+    headers: { authorization: target.auth, accept: "text/event-stream" },
+    signal: controller.signal,
+  });
+  assert.equal(stream.status, 200, "the broker arm needs an open event stream");
+  assert.notEqual(stream.body, null);
+  const reader = stream.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const seen: { readonly type: string; readonly sessionID?: string }[] = [];
+  void (async () => {
+    try {
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        let index = buffer.indexOf("\n\n");
+        while (index >= 0) {
+          const frame = buffer.slice(0, index);
+          buffer = buffer.slice(index + 2);
+          const data = frame.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+          if (data.length > 0) {
+            try {
+              const parsed = JSON.parse(data) as { type?: unknown; data?: { sessionID?: unknown } };
+              if (typeof parsed.type === "string") {
+                seen.push({ type: parsed.type, ...(typeof parsed.data?.sessionID === "string" ? { sessionID: parsed.data.sessionID } : {}) });
+              }
+            } catch {
+              // A keepalive comment / non-JSON frame is ignored, never a failure.
+            }
+          }
+          index = buffer.indexOf("\n\n");
+        }
+      }
+    } catch {
+      // Abort at the end of the arm is the normal exit.
+    }
+  })();
+
+  const created = await request(target, "/api/session", {
+    method: "POST",
+    headers: { authorization: target.auth, "content-type": "application/json" },
+    body: "{}",
+  });
+  assert.equal(created.status, 200, "session create must succeed through the gateway");
+  const sessionId = ((await created.json()) as { data?: { id?: string } }).data?.id;
+  assert.ok(sessionId !== undefined && sessionId !== "", "the session create must return data.id");
+
+  const prompted = await request(target, `/api/session/${sessionId}/prompt`, {
+    method: "POST",
+    headers: { authorization: target.auth, "content-type": "application/json" },
+    body: JSON.stringify({ text: "Use the shell tool to run exactly: echo C1_BROKER_PROBE" }),
+  });
+  assert.equal(prompted.status, 200, "the prompt must be accepted through the gateway");
+
+  // Poll the session messages until the shell tool part settles (or the bound).
+  const toolState = (messages: unknown): V2ToolState | undefined => {
+    const data = (messages as { data?: unknown }).data;
+    if (!Array.isArray(data)) return undefined;
+    for (const message of data) {
+      const content = (message as { content?: unknown }).content;
+      if (!Array.isArray(content)) continue;
+      for (const part of content) {
+        const record = part as { type?: unknown; name?: unknown; state?: unknown };
+        if (record.type !== "tool" || record.name !== "shell") continue;
+        const state = record.state as { status?: unknown } | undefined;
+        if (state !== undefined && typeof state.status === "string") return { status: state.status };
+      }
+    }
+    return undefined;
+  };
+
+  let settled: V2ToolState | undefined;
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    const messages = await request(target, `/api/session/${sessionId}/message`, { headers: { authorization: target.auth } });
+    if (messages.status === 200) {
+      settled = toolState(await messages.json());
+      if (settled !== undefined && settled.status !== "running") break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  controller.abort();
+
+  assert.ok(
+    seen.some((event) => event.type === "permission.asked" && event.sessionID === sessionId),
+    "the broker must intercept the mutating tool: a permission.asked for the session must appear on the event stream",
+  );
+  assert.ok(
+    settled !== undefined && settled.status !== "running",
+    `the mutating tool must settle (got state '${settled?.status ?? "none"}'); a hang at 'running' means the broker reply never landed`,
+  );
+});
+

@@ -45,3 +45,22 @@ test("v2 SSE consumer parses event frames and deduplicates replay", async () => 
   // The second frame is a replay with the same payload id; it is not appended.
   assert.equal(log.entries().length, 1);
 });
+
+test("v2 SSE consumer reads the live `data` envelope (payload under data, not properties)", async () => {
+  // The live plane (2.0.10) wraps the payload under `data`; before the fix the
+  // session id never resolved and every event was silently dropped.
+  const body = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(
+        'data: {"id":"evt_1","created":1,"type":"session.tool.called","location":{"directory":"/workspace"},'
+        + '"data":{"sessionID":"ses-9","assistantMessageID":"m1","id":"call_1","name":"read"}}\n\n',
+      ));
+      controller.close();
+    },
+  });
+  const response = new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+  const log = new OpenCodeV2EventLog();
+  assert.equal(await consumeOpenCodeV2EventStream(response, log, () => "2026-09-20T00:00:00Z"), 1);
+  assert.equal(log.entries()[0]?.sessionId, "ses-9");
+  assert.equal(log.entries()[0]?.type, "session.tool.called");
+});

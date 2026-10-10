@@ -83,9 +83,16 @@ export async function consumeOpenCodeV2EventStream(
       try { payload = JSON.parse(data) as unknown; } catch { continue; }
       if (typeof payload !== "object" || payload === null) continue;
       const record = payload as Record<string, unknown>;
-      const properties = typeof record.properties === "object" && record.properties !== null ? record.properties as Record<string, unknown> : record;
+      // Resolve the properties source across the observed generations: v2 rides
+      // `data` (live, 2.0.10), v1 the contract `properties`, and the historical
+      // SSE wrapper nests under `payload`. Without the `data` case the journal
+      // silently drops every v2 event (session id never resolves).
+      const nested = typeof record.payload === "object" && record.payload !== null ? record.payload as Record<string, unknown> : record;
+      const properties = typeof nested.properties === "object" && nested.properties !== null ? nested.properties as Record<string, unknown>
+        : typeof nested.data === "object" && nested.data !== null ? nested.data as Record<string, unknown>
+          : nested;
       const sessionId = typeof properties.sessionID === "string" ? properties.sessionID : typeof properties.sessionId === "string" ? properties.sessionId : undefined;
-      const type = typeof record.type === "string" ? record.type : undefined;
+      const type = typeof nested.type === "string" ? nested.type : typeof record.type === "string" ? record.type : undefined;
       if (sessionId === undefined || type === undefined) continue;
       const entry = log.append({
         ...(typeof record.id === "string" ? { id: record.id } : streamId === undefined ? {} : { id: streamId }),

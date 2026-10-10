@@ -7,8 +7,12 @@ import {
   EVENT_RECONNECT_MAX_BACKOFF_MS,
   HttpRemoteEngine,
   eventReconnectBackoffMs,
+  isPermissionAsked,
+  normalizeEventEnvelope,
+  permissionToolCallId,
   sseData,
   type RemoteEngineEvent,
+  type RemoteEnginePermissionRequest,
 } from "../src/integrations/remote-acp/engine.js";
 
 const encoder = new TextEncoder();
@@ -158,6 +162,55 @@ test("HttpRemoteEngine events stream parses SSE event envelopes", async () => {
   for await (const event of engine.events({ cwd: "/w", signal: new AbortController().signal })) events.push(event);
   assert.equal(events.length, 1);
   assert.equal(events[0]!.type, "session.status");
+});
+
+test("normalizeEventEnvelope reads the v2 `data` envelope (live 2.0.10)", () => {
+  // The live plane wraps the payload under `data`, never `properties`. This is
+  // the shape that made every permission request unmappable (sessionID/id
+  // undefined) and hung every mutating tool on the C1 plane. Reconstructed
+  // from a captured `/api/event` frame; the field set is recorded in the
+  // docs/OPENCODE_SERVER_AUTHORITY.md addendum. The raw frame is not committed.
+  const event = normalizeEventEnvelope({
+    id: "evt_x",
+    created: 1,
+    type: "permission.asked",
+    location: { directory: "/workspace" },
+    data: { id: "per_1", sessionID: "ses_1", action: "shell", resources: ["echo hi"], source: { type: "tool", id: "call_1" } },
+  });
+  assert.equal(event?.type, "permission.asked");
+  assert.equal((event?.properties as RemoteEnginePermissionRequest).sessionID, "ses_1");
+  assert.equal((event?.properties as RemoteEnginePermissionRequest).id, "per_1");
+});
+
+test("normalizeEventEnvelope still reads the v1 contract and payload-wrapper shapes", () => {
+  const contract = normalizeEventEnvelope({ type: "session.status", properties: { sessionID: "s" } });
+  assert.deepEqual(contract, { type: "session.status", properties: { sessionID: "s" } });
+  const wrapped = normalizeEventEnvelope({ payload: { type: "session.status", properties: { sessionID: "s" } } });
+  assert.deepEqual(wrapped, { type: "session.status", properties: { sessionID: "s" } });
+  // A frame with no string type is not an event; the caller fails closed.
+  assert.equal(normalizeEventEnvelope({ data: { sessionID: "s" } }), undefined);
+  assert.equal(normalizeEventEnvelope("nope"), undefined);
+});
+
+test("isPermissionAsked accepts both v2 wire spellings", () => {
+  assert.equal(isPermissionAsked({ type: "permission.asked", properties: {} }), true);
+  assert.equal(isPermissionAsked({ type: "permission.v2.asked", properties: {} }), true);
+  assert.equal(isPermissionAsked({ type: "session.status", properties: {} }), false);
+});
+
+test("permissionToolCallId reads the v2 source.id and the v1 tool.callID", () => {
+  // v2 (live): the tool-call id rides `source.id`, matching `session.tool.*` `data.id`.
+  assert.equal(
+    permissionToolCallId({ id: "per_1", sessionID: "s", action: "edit", resources: [], source: { type: "tool", id: "call_1" } } as unknown as RemoteEnginePermissionRequest),
+    "call_1",
+  );
+  // v1/ACP: the contract `tool.callID` wins when present.
+  assert.equal(
+    permissionToolCallId({ id: "per_1", sessionID: "s", action: "edit", resources: [], tool: { callID: "call_2" } }),
+    "call_2",
+  );
+  // Neither present: no call id (the broker falls back to session+tool).
+  assert.equal(permissionToolCallId({ id: "per_1", sessionID: "s", action: "edit", resources: [] }), undefined);
 });
 
 /**
