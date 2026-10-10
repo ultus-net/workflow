@@ -40,6 +40,19 @@ async function stubUpstream(): Promise<StubServer> {
   let busyTick = 0;
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     requests.push({ method: request.method ?? "", path: request.url ?? "" });
+    // Mirrors stock `opencode serve`: it answers a CORS preflight in middleware
+    // AHEAD of auth (`packages/server/src/cors.ts`), echoing the request Origin.
+    // Placed before the credential check on purpose — a preflight carries none.
+    if (request.method === "OPTIONS" && request.headers["access-control-request-method"] !== undefined) {
+      response.writeHead(204, {
+        "access-control-allow-origin": request.headers.origin ?? "*",
+        "access-control-allow-methods": "GET, HEAD, PUT, PATCH, POST, DELETE",
+        "access-control-allow-headers": request.headers["access-control-request-headers"] ?? "",
+        "access-control-max-age": "86400",
+      });
+      response.end();
+      return;
+    }
     const auth = (request.headers.authorization ?? "").match(/^Basic\s+(.+)$/);
     const creds = auth === null ? undefined : Buffer.from(auth[1]!, "base64").toString("utf8");
     if (creds !== UPSTREAM_CREDENTIAL) {
@@ -208,6 +221,135 @@ test("W071 gateway: unauthenticated and wrong-password clients are rejected", as
   const denied = await fetch(gateway.url + "/health");
   assert.equal(denied.headers.get("www-authenticate"), 'Basic realm="Secure Area"');
 });
+
+/**
+ * CORS preflight pass-through. A browser client (the desktop renderer runs at
+ * origin `oc://renderer`) sends a credential-less OPTIONS before every fetch.
+ * The gateway must forward it to the upstream's CORS middleware ahead of its
+ * auth gate, exactly as stock `opencode serve` does; otherwise the preflight
+ * 401s and the client reports "could not connect" (measured in the desktop's
+ * own renderer.log against the live plane). Auth for the actual request that
+ * follows remains intact, and the preflight never reaches the hub-UI lane.
+ */
+test("W071 gateway: a genuine CORS preflight passes through without credentials and reaches the upstream", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+  });
+  t.after(() => void gateway.close());
+
+  const preflight = await fetch(gateway.url + "/api/info", {
+    method: "OPTIONS",
+    headers: {
+      origin: "oc://renderer",
+      "access-control-request-method": "GET",
+      "access-control-request-headers": "authorization",
+    },
+  });
+  // The upstream owns the CORS policy; the gateway forwards its verdict rather
+  // than fabricating headers, so a browser gets an allow-origin it can trust.
+  assert.equal(preflight.status, 204, "a preflight must not be rejected by the auth gate");
+  assert.equal(preflight.headers.get("access-control-allow-origin"), "oc://renderer");
+  assert.equal(
+    upstream.requests.some((entry) => entry.method === "OPTIONS" && entry.path === "/api/info"),
+    true,
+    "the preflight must reach the upstream's CORS middleware",
+  );
+});
+
+test("W071 gateway: a bare OPTIONS is not a preflight and stays on the auth path", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+  });
+  t.after(() => void gateway.close());
+
+  // No Origin / Access-Control-Request-Method: not a Fetch preflight, so the
+  // credential gate applies as normal and nothing reaches the upstream.
+  const bare = await fetch(gateway.url + "/api/info", { method: "OPTIONS" });
+  assert.equal(bare.status, 401);
+  assert.equal(bare.headers.get("www-authenticate"), 'Basic realm="Secure Area"');
+  assert.equal(upstream.requests.some((entry) => entry.method === "OPTIONS"), false);
+});
+
+test("W071 gateway (enforced): a preflight on a broker route is still forwarded to CORS, never answered by the hub", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    enforced: true,
+    onPermissionReply: () => undefined,
+  });
+  t.after(() => void gateway.close());
+
+  // The preflight is a transport negotiation, not an invocation of the reply
+  // route: a browser must be able to learn whether its POST is allowed. It is
+  // forwarded to the upstream CORS middleware (which never runs the handler)
+  // and must NOT be answered by the gateway with a broker decision.
+  const preflight = await fetch(gateway.url + "/api/session/s/permission/r/reply", {
+    method: "OPTIONS",
+    headers: {
+      origin: "oc://renderer",
+      "access-control-request-method": "POST",
+    },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("access-control-allow-origin"), "oc://renderer");
+});
+
+test("W071 gateway: a hub-lane preflight is not passed through the OpenCode CORS path", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const hub = await stubUpstream();
+  t.after(() => void hub.close());
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    hubRoutes: { hosts: ["hub.example.test"], target: () => hub.url },
+  });
+  t.after(() => void gateway.close());
+
+  // The hub lane is same-origin by construction, so it needs no cross-origin
+  // preflight and stays strictly auth-gated: an unauthenticated preflight on
+  // the hub Host must not be dispatched to the hub UI. `fetch` (undici) refuses
+  // a caller-supplied Host header, so speak HTTP directly to set it.
+  const { status, allowOrigin } = await rawRequest(`${gateway.url}/`, {
+    method: "OPTIONS",
+    host: "hub.example.test",
+    origin: "oc://renderer",
+    "access-control-request-method": "GET",
+  });
+  assert.equal(status, 401);
+  assert.equal(allowOrigin, undefined, "no CORS verdict may be fabricated on the hub lane");
+  assert.equal(hub.requests.length, 0, "the hub lane must never receive a preflight");
+});
+
+function rawRequest(
+  target: string,
+  headers: Record<string, string>,
+): Promise<{ status: number; allowOrigin: string | undefined }> {
+  return new Promise((resolve) => {
+    const request = httpRequest(target, { method: "OPTIONS", headers }, (response) => {
+      response.resume();
+      resolve({ status: response.statusCode ?? 0, allowOrigin: response.headers["access-control-allow-origin"] });
+    });
+    request.on("error", () => resolve({ status: 0, allowOrigin: undefined }));
+    request.end();
+  });
+}
 
 test("W071 gateway: the TUI password reaches the upstream, and gzipped JSON survives", async (t) => {
   const upstream = await stubUpstream();
