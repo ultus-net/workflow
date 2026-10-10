@@ -499,3 +499,45 @@ the tool callID) in the `anomalyco/opencode` fork the pinned binary is cut from.
 runs the old image; the live tool-turn verdict flips only after a rebuilt,
 digest-repinned release. No `enforced` claim is upgraded by any of this.
 
+**2026-10-10 — the sibling wire defect (reply body field), found on the live
+plane after the envelope fix deployed (branch `fix/opencode-v2-permission-decision`,
+cut from `main`@8ae5f9b1 which carries the envelope fix):** with the envelope
+defect fixed, the broker arm got much further — `session=ses_…` and `id=per_…`
+now resolve, the decision logs `allow shell` — but `delivered=false` with
+`upstream reply failed: remote engine POST …/permission/…/reply failed (400)` and
+the mutating tool stayed `running`. Root cause: the pinned v2 (2.0.10) reply body
+field is **`decision`**, not `reply`.
+
+Live proof (the running plane's own OpenAPI): `GET /openapi.json` advertises
+`POST /api/session/{sessionID}/permission/{requestID}/reply` requestBody
+`{ properties: { decision: Permission.Reply, message?: string }, required:
+["decision"], additionalProperties: false }`. Sending `{ reply }` is a 400 with an
+empty body — `additionalProperties:false` rejects the unknown key and `decision`
+is required. The pinned binary agrees: the in-binary server endpoint is
+`so("session.permission.reply","/api/session/:sessionID/permission/:requestID/reply",
+{ …, payload: o({ decision: CS, message: … }) … })`, its handler maps
+`reply: s.payload.decision`, and its client lib posts `body: { decision, message }`.
+The route spelling in the spec table above is correct; only the body field name was
+wrong.
+
+**Fix (two consumers):**
+
+- `HttpRemoteEngine.replyPermission` (`engine.ts`) posts `{ decision: input.reply }`.
+  The in-process API name stays `reply`; only the wire field maps to `decision`.
+- The gateway's inbound parser (`opencode-server-gateway.ts`
+  `handlePermissionReply`) reads `body.decision ?? body.reply`, so a live v2 TUI
+  reply is intercepted (and the legacy spelling tolerated); a body with neither is
+  a 400, never forwarded.
+
+**Tests:** `test/remote-acp-engine.test.ts` asserts the outbound body is
+`{ decision }`; `test/opencode-server-gateway.test.ts` asserts a `{ decision }`
+reply is intercepted, a legacy `{ reply }` reply is intercepted, and a body with
+neither fails closed 400. Focused sweep green; no existing assertion weakened.
+
+**Residual (off the plane's broker path):** the engine's non-broker REST helpers
+and `opencode-session.ts` still carry v1 spellings (recorded above). The
+`docs/OPENCODE_REMOTE_ACP_SPEC.md` table line for `…/reply` still shows the v2
+*docs* `{ reply }` shape, which the pinned binary contradicts; that table is left
+as the captured doc citation and this section records the measured binary/OpenAPI
+contract.
+

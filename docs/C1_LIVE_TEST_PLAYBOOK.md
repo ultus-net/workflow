@@ -144,3 +144,14 @@ stream and the logs.
   is an undeclared residual, not a regression of this fix. The `engine.ts`
   comment "every consumer reads ONLY the contract shape" holds for the consumers
   that go through `HttpRemoteEngine.events`; this driver does not.
+
+**2026-10-10 — broker-arm addendum (the reply body field).** After the envelope
+fix deployed (`v0.1.3`), the broker arm advanced to `allow shell` with resolved
+ids but still failed: `delivered=false`, `upstream reply failed … (400)`, tool
+`running`. The pinned v2 (2.0.10) reply body field is `decision`, not `reply`
+(proven by the plane's own `GET /openapi.json`: `required:["decision"]`,
+`additionalProperties:false`). Fixed on `fix/opencode-v2-permission-decision`;
+full detail and the two-consumer fix are in `docs/OPENCODE_SERVER_AUTHORITY.md`
+("2026-10-10 — the sibling wire defect"). The broker arm flips green only after a
+rebuilt, digest-repinned release carries this fix; the arm proves **advisory
+mediation**, never an enforcement bypass.
