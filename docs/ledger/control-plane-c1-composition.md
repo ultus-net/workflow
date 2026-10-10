@@ -413,3 +413,60 @@ in `opencode-server-gateway.ts`) but NOT in v0.1.6; it ships in the next image.
 **Refs:** `docs/ledger/control-plane-c1-composition.md` (this entry);
 `src/integrations/opencode-server-gateway.ts`; the v0.1.6 release; the csh-dev
 pin (AzDO #1157).
+
+---
+
+### Live deploy + measurement (2026-10-11, later): v0.1.7 closes the CORS gap; the Desktop can connect
+
+**Deployed.** v0.1.7 was cut at `f97b6ae6` (main after PR #516), the qualified
+opencode asset attached, `publish-image` run `38090203162` green, digest
+`sha256:27fd0b262a2d001144ba23872d8119449e47768fb3ea112cce9ddeb86679a1ab`.
+The csh-dev instance pinned it (AzDO PR #1158 to `main`; deploy run succeeded),
+revision `csh-dev-plane--0000014`.
+
+**Rollout collision (measured, remedy recorded).** On the redeploy the new
+revision 14 crash-looped: `opencode serve exited before becoming healthy (1)`
+with empty stderr, `[fleet] installed 0 vendored agent/command file(s)`, then
+`[plane] opencode-server exited — shutting the plane down`, 6 restarts,
+`ActivationFailed`. Revision 13 (v0.1.6) stayed Healthy at weight 0 throughout,
+sharing the same Azure Files state home (`WORKFLOW_OPENCODE_SERVER_HOME`). The
+image was verified CORRECT off-plane: the gateway fix is present in
+`/app/dist/integrations/opencode-server-gateway.js`, and a clean in-image
+`workflow-opencode-server` launch installs `8` fleet files and binds
+`http://127.0.0.1:4096`. Root cause: concurrent revisions sharing one
+over-mounted persistent state home; the new revision's `opencode serve` cannot
+start while the old revision's server holds that state. **Remedy that worked:**
+`az containerapp revision deactivate` revision 13, then `az containerapp
+revision restart` revision 14; the fresh replica came up Running/Healthy at
+weight 100 with `0` restarts.
+
+**Measured on `code.ultus.net` after the fresh replica (the CORS gap is now
+closed; the prior entry's "ships in the next image" is discharged):**
+
+- CORS preflight passes: `OPTIONS /api/info` with `Origin: oc://renderer` +
+  `Access-Control-Request-Method: GET` returns `204` with
+  `access-control-allow-origin: oc://renderer` and
+  `access-control-allow-headers: authorization` (both via `code.ultus.net` and
+  the raw ACA FQDN; Cloudflare passes the preflight through). A bare `OPTIONS`
+  (no negotiation headers) still returns `401` with `www-authenticate`, so only
+  a genuine preflight is passed through.
+- The post-preflight request works: authenticated `GET /api/info` with `Origin:
+  oc://renderer` returns `200` with `access-control-allow-origin: oc://renderer`.
+- The hub lane is untouched: `hub.ultus.net` with auth returns `200` (hub UI
+  HTML + CSP), unauthenticated returns `401`.
+- Fleet and toolbox survive the redeploy: `/api/agent` returns the fleet
+  (`decompose, executor, retrospective, reviewer` among the stock set),
+  `/api/command` returns the fleet commands, and `/api/mcp` reports `16`
+  servers. (A probe issued in the first seconds after a fresh replica returns
+  an empty list — server warmup; the settled probe carries the full surface.)
+
+**Custom-domain rebind (pre-existing, unfixed).** The redeploy re-PUT again
+dropped `ingress.customDomains` to null; `code.ultus.net` and `hub.ultus.net`
+were re-bound `SniEnabled` with the `cf-origin-ultus` cert. Making the bindings
+declarative remains a recorded follow-up, now joined by the per-revision
+state-home isolation follow-up (same shared-state class as the PID-based
+`acquireInstanceLock` defect).
+
+**Refs:** `src/integrations/opencode-server-gateway.ts`; the v0.1.7 release; the
+csh-dev pin (AzDO #1158); `src/integrations/opencode-server-runtime.ts` (state
+dir); `images/control-plane/Dockerfile`.
