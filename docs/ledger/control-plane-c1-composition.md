@@ -433,12 +433,13 @@ sharing the same Azure Files state home (`WORKFLOW_OPENCODE_SERVER_HOME`). The
 image was verified CORRECT off-plane: the gateway fix is present in
 `/app/dist/integrations/opencode-server-gateway.js`, and a clean in-image
 `workflow-opencode-server` launch installs `8` fleet files and binds
-`http://127.0.0.1:4096`. Root cause: concurrent revisions sharing one
-over-mounted persistent state home; the new revision's `opencode serve` cannot
-start while the old revision's server holds that state. **Remedy that worked:**
-`az containerapp revision deactivate` revision 13, then `az containerapp
-revision restart` revision 14; the fresh replica came up Running/Healthy at
-weight 100 with `0` restarts.
+`http://127.0.0.1:4096`. **Inferred cause (not isolated):** concurrent revisions
+sharing one over-mounted persistent state home, so the new revision's `opencode
+serve` cannot start while the old revision's server holds that state. Empty
+stderr means the mechanism is inferred from the correlation plus the remedy, not
+directly observed. **Remedy that worked:** `az containerapp revision deactivate`
+revision 13, then `az containerapp revision restart` revision 14; the fresh
+replica came up Running/Healthy at weight 100 with `0` restarts.
 
 **Measured on `code.ultus.net` after the fresh replica (the CORS gap is now
 closed; the prior entry's "ships in the next image" is discharged):**
@@ -464,8 +465,9 @@ closed; the prior entry's "ships in the next image" is discharged):**
 dropped `ingress.customDomains` to null; `code.ultus.net` and `hub.ultus.net`
 were re-bound `SniEnabled` with the `cf-origin-ultus` cert. Making the bindings
 declarative remains a recorded follow-up, now joined by the per-revision
-state-home isolation follow-up (same shared-state class as the PID-based
-`acquireInstanceLock` defect).
+state-home isolation follow-up (plausibly the same shared-state class as the
+PID-based `acquireInstanceLock` defect; that equivalence is an inference, not a
+measurement).
 
 **Refs:** `src/integrations/opencode-server-gateway.ts`; the v0.1.7 release; the
 csh-dev pin (AzDO #1158); `src/integrations/opencode-server-runtime.ts` (state
