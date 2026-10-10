@@ -63,6 +63,29 @@ test("resolvePlaneConfig defaults to the C0 front door (0.0.0.0:4096)", () => {
   assert.equal(config.gatewayHost, PLANE_GATEWAY_HOST);
   assert.equal(config.gatewayPort, PLANE_GATEWAY_PORT);
   assert.equal(config.workspace, "/workspace");
+  // D5: absent → no hub route class (the ingress stays OpenCode-only).
+  assert.deepEqual(config.hubHostnames, []);
+});
+
+test("resolvePlaneConfig parses the hub hostname list and fails closed on a malformed entry", () => {
+  const config = resolvePlaneConfig(
+    { WORKFLOW_PLANE: "1", WORKFLOW_PLANE_CLIENT_PASSWORD: "0123456789abcdef", WORKFLOW_PLANE_HUB_HOSTNAMES: "hub.ultus.net, ops.example.com" },
+    "/workspace",
+  );
+  assert.deepEqual(config.hubHostnames, ["hub.ultus.net", "ops.example.com"]);
+  // A scheme, path, whitespace, or empty entry is a security-boundary typo.
+  for (const bad of ["https://hub.ultus.net", "hub.ultus.net/path", "hub ultus.net", ",", "hub.ultus.net,"]) {
+    assert.throws(
+      () => resolvePlaneConfig({ WORKFLOW_PLANE: "1", WORKFLOW_PLANE_CLIENT_PASSWORD: "0123456789abcdef", WORKFLOW_PLANE_HUB_HOSTNAMES: bad }, "/workspace"),
+      /WORKFLOW_PLANE_HUB_HOSTNAMES/,
+      `expected ${JSON.stringify(bad)} to fail closed`,
+    );
+  }
+  // An empty/whitespace value means "no hub route class", not an error.
+  assert.deepEqual(
+    resolvePlaneConfig({ WORKFLOW_PLANE: "1", WORKFLOW_PLANE_CLIENT_PASSWORD: "0123456789abcdef", WORKFLOW_PLANE_HUB_HOSTNAMES: "  " }, "/workspace").hubHostnames,
+    [],
+  );
 });
 
 // ---- plane supervisor wiring ----------------------------------------------
@@ -90,6 +113,7 @@ test("planeEnv carries the opt-in, the bind, and the stable credential to the da
     WORKFLOW_PLANE_GATEWAY_HOST: "0.0.0.0",
     WORKFLOW_PLANE_GATEWAY_PORT: "5000",
     WORKFLOW_PLANE_CLIENT_PASSWORD: "0123456789abcdef",
+    WORKFLOW_PLANE_HUB_HOSTNAMES: "",
   });
 });
 

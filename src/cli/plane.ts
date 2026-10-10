@@ -66,6 +66,10 @@ export function planeEnv(config: PlaneConfig): Record<string, string> {
     WORKFLOW_PLANE_GATEWAY_HOST: config.gatewayHost,
     WORKFLOW_PLANE_GATEWAY_PORT: String(config.gatewayPort),
     WORKFLOW_PLANE_CLIENT_PASSWORD: config.clientPassword,
+    // D5: the hub hostnames the daemon's gateway dispatches to the hub UI lane.
+    // Always written (even empty) so the child's view of the opt-in is total:
+    // a present-but-empty value means "no hub route class", not "inherit".
+    WORKFLOW_PLANE_HUB_HOSTNAMES: config.hubHostnames.join(","),
   };
 }
 
@@ -79,6 +83,7 @@ export const PLANE_ENV_KEYS = [
   "WORKFLOW_PLANE_GATEWAY_HOST",
   "WORKFLOW_PLANE_GATEWAY_PORT",
   "WORKFLOW_PLANE_CLIENT_PASSWORD",
+  "WORKFLOW_PLANE_HUB_HOSTNAMES",
 ] as const;
 
 /**
@@ -197,6 +202,7 @@ export function planeUsage(): string {
     "  WORKFLOW_PLANE_WORKSPACE        absolute workspace path (default: cwd)",
     "  WORKFLOW_PLANE_GATEWAY_HOST     default 0.0.0.0",
     "  WORKFLOW_PLANE_GATEWAY_PORT     default 4096",
+    "  WORKFLOW_PLANE_HUB_HOSTNAMES    comma-separated Host names served by the hub UI lane (default: none)",
     "",
     "Options:",
     "  --help    print this help",
