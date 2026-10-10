@@ -51,6 +51,8 @@ import {
 } from "../integrations/self-improvement-agent.js";
 import { createAuthorityGate } from "../integrations/self-improvement-loop.js";
 import { createWorkflowHub, type WorkflowHubSchedulerHandles } from "../integrations/workflow-hub.js";
+import { hubWebDiscoveryPath, removeHubWebDiscovery, writeHubWebDiscovery } from "../integrations/hub-web-discovery.js";
+import type { WorkflowWebService } from "./web-service.js";
 import { PermissionBroker } from "../ui/permission-broker.js";
 import { taskId, type TaskId } from "../kernel/contracts.js";
 import { TaskGraph } from "../kernel/task-graph.js";
@@ -681,6 +683,27 @@ try {
 console.log(`Workflow hub listening at ${hub.url}`);
 console.log(`Discovery file: ${hub.discoveryPath}`);
 
+// C1 hub endpoint (D5): when the instance opts in, start the Workflow hub
+// operator UI IN THIS process against the hub's own canonical `application`
+// (the single-writer composition — never a second WorkflowApplication) and
+// publish its loopback endpoint beside the bridge discovery so the gateway's
+// hub route class can resolve it. Fail closed: a hub that advertises the UI
+// opt-in but cannot serve it must not come up half-alive (the gateway would
+// 503 the lane anyway, but the operator asked for the lane).
+let webUi: WorkflowWebService | undefined;
+if (process.env.WORKFLOW_HUB_WEB === "1") {
+  try {
+    const { startHubWebUi } = await import("./web-service.js");
+    webUi = await startHubWebUi(application, { workspace });
+    writeHubWebDiscovery(hub.discoveryPath, webUi.url);
+    console.log(`Workflow hub UI listening at ${webUi.url} (published to ${hubWebDiscoveryPath(hub.discoveryPath)})`);
+  } catch (error) {
+    await hub.close();
+    await guard.close();
+    throw error;
+  }
+}
+
 await new Promise<void>((resolveShutdown) => {
   // Idempotent teardown (launcher-loop LESS-0001): a process-group signal —
   // a terminal Ctrl+C, a terminal close/SSH hangup as SIGHUP, or a systemd
@@ -700,5 +723,12 @@ await new Promise<void>((resolveShutdown) => {
   process.on("SIGTERM", shutdown);
   process.on("SIGHUP", shutdown);
 });
+if (webUi !== undefined) {
+  // Close the UI BEFORE the hub bridge: the UI proxies canonical reads/writes
+  // to the bridge, so tearing the bridge down first would leave the UI briefly
+  // answering "hub unavailable" before it, too, stops.
+  await webUi.close();
+}
 await hub.close();
+if (webUi !== undefined) removeHubWebDiscovery(hub.discoveryPath);
 await guard.close();

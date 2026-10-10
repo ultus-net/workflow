@@ -16,6 +16,14 @@ export interface PlaneConfig {
   readonly gatewayPort: number;
   /** Stable client-facing credential injected by the instance (Key Vault). */
   readonly clientPassword: string;
+  /**
+   * C1 hub endpoint (D5): the Host names that select the hub operator UI lane
+   * at the gateway. Instance-supplied (never hardcoded — the domain is a
+   * per-instance value out of the open repo). Empty (the default) means NO hub
+   * route class: the ingress stays OpenCode-only, byte-identical to the C1
+   * plane before the hub UI existed.
+   */
+  readonly hubHostnames: readonly string[];
 }
 
 /** The default single front-door bind (the C0-qualified ingress port). */
@@ -56,5 +64,30 @@ export function resolvePlaneConfig(env: NodeJS.ProcessEnv, fallbackWorkspace: st
     // the whole point is a value the operator's client can be configured with.
     throw new Error(`workflow-plane requires WORKFLOW_PLANE_CLIENT_PASSWORD (>= ${MIN_CLIENT_PASSWORD_LENGTH} chars) from the instance secret store`);
   }
-  return { workspace, gatewayHost, gatewayPort, clientPassword };
+  const hubHostnames = parseHubHostnames(env.WORKFLOW_PLANE_HUB_HOSTNAMES);
+  return { workspace, gatewayHost, gatewayPort, clientPassword, hubHostnames };
+}
+
+/**
+ * Parse the comma-separated hub host list. A malformed entry (a scheme, a
+ * path, whitespace, an empty item) fails closed — a host list is a security
+ * boundary (it decides which names reach the hub UI lane), so a typo must not
+ * silently produce a partially-wrong dispatch table. Absent/empty means no hub
+ * route class.
+ */
+export function parseHubHostnames(raw: string | undefined): readonly string[] {
+  if (raw === undefined) return [];
+  const trimmed = raw.trim();
+  if (trimmed === "") return [];
+  const entries = trimmed.split(",").map((entry) => entry.trim());
+  for (const entry of entries) {
+    // Labels are `[a-z0-9-]` bounded by alphanumerics; the FINAL label must
+    // start with a letter, which rejects a bare IPv4 literal (`1.2.3.4`) — a
+    // host list is a security boundary, and an IP literal is never a name a
+    // custom-domain bind produces.
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z][a-z0-9-]*[a-z0-9]$/.test(entry)) {
+      throw new Error(`WORKFLOW_PLANE_HUB_HOSTNAMES entry must be a bare DNS hostname (got ${JSON.stringify(entry)})`);
+    }
+  }
+  return entries;
 }

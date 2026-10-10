@@ -39,3 +39,36 @@ export function readHubCredentials(override?: string): { url: string; token: str
     return undefined;
   }
 }
+
+/**
+ * The hub operator Web UI's loopback endpoint, published BESIDE
+ * `discovery.json` as `hub/web.json` when the hub runs with the UI enabled
+ * (`WORKFLOW_HUB_WEB=1`). The gateway's hub-UI route class resolves the hub UI
+ * lane through this — the same fail-closed read discipline as
+ * `readHubCredentials` (missing/malformed answers `undefined`, so an absent hub
+ * UI lane is a withheld capability, never a fabricated target). The file
+ * carries no secret: the loopback UI is reached only through the gateway, which
+ * has already enforced the client credential before dispatching here.
+ */
+export function readHubWebEndpoint(override?: string): string | undefined {
+  const path = join(hubDiscoveryDirectory(override), "hub", "web.json");
+  if (!existsSync(path)) return undefined;
+  try {
+    const value: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (
+      typeof value !== "object" || value === null ||
+      typeof (value as Record<string, unknown>).endpoint !== "string"
+    ) {
+      return undefined;
+    }
+    const endpoint = (value as { endpoint: string }).endpoint;
+    // Shape-validate to a loopback http origin. A corrupt/hostile web.json must
+    // answer `undefined` (→ the gateway's 503 withheld lane), NOT a string that
+    // makes the forwarded `new URL(endpoint)` throw into a 500: the read is the
+    // fail-closed seam, so a malformed endpoint is withheld here.
+    if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(endpoint)) return undefined;
+    return endpoint;
+  } catch {
+    return undefined;
+  }
+}

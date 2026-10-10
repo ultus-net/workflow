@@ -65,6 +65,31 @@ export interface OpencodeServerGatewayOptions {
    */
   readonly host?: string | undefined;
   readonly port?: number | undefined;
+  /**
+   * C1 hub endpoint (D5): the Host-header dispatch table that layers the
+   * Workflow hub operator UI onto the SAME app as the OpenCode surface. A
+   * request whose `Host` (case-insensitive, port-stripped) matches a key is
+   * proxied to that loopback target; every other Host — the app's default
+   * `*.azurecontainerapps.io` FQDN, `code.ultus.net`, an unbound/spoofed name —
+   * falls through to the OpenCode upstream exactly as before. Absent (the
+   * pre-C1 default) means NO dispatch: byte-identical pass-through, the only
+   * ingress being OpenCode. The values are loopback URLs and are re-resolved
+   * per request by `routes` so a hub restart (new ephemeral UI port) is picked
+   * up without restarting the gateway.
+   */
+  readonly hubRoutes?: OpencodeServerGatewayHubRoutes | undefined;
+}
+
+/**
+ * The hub route class (D5): `hosts` is the exact-match Host set that selects
+ * the hub UI lane, `target` resolves the loopback hub-UI endpoint at request
+ * time (fail closed — `undefined` means the lane is withheld, a 503, never a
+ * pass-through to OpenCode). Comparison is host-without-port and
+ * case-insensitive, matching how `Host` headers are compared everywhere else.
+ */
+export interface OpencodeServerGatewayHubRoutes {
+  readonly hosts: readonly string[];
+  readonly target: () => string | undefined;
 }
 
 /**
@@ -163,6 +188,23 @@ async function handle(
     sendUnauthorized(response);
     return;
   }
+  // C1 hub route class (D5): a Host targeted at the hub UI lane is proxied to
+  // the hub UI's loopback endpoint — never to the OpenCode upstream. The client
+  // Host is PRESERVED so the UI's same-origin mutation guard (web.ts compares
+  // `Origin` to `Host`) still holds. Fail closed: when this Host is dispatched
+  // but the hub UI endpoint cannot be resolved (no hub UI running, a
+  // stale/missing web.json), the lane is WITHHELD (503) rather than silently
+  // falling through to OpenCode — the coding surface must never answer on the
+  // hub's name.
+  if (options.hubRoutes !== undefined && hostnameMatches(request, options.hubRoutes.hosts)) {
+    const target = options.hubRoutes.target();
+    if (target === undefined) {
+      sendJson(response, 503, { error: "hub UI unavailable" });
+      return;
+    }
+    forward(request, response, new URL(target), undefined, options, { preserveHost: true });
+    return;
+  }
   const rawPathname = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
   const pathname = decodedPathname(rawPathname);
   const method = request.method ?? "";
@@ -195,6 +237,19 @@ async function handle(
     return;
   }
   forward(request, response, upstream, upstreamAuth, options);
+}
+
+/**
+ * True when the request's `Host` (port-stripped, case-insensitive) is in
+ * `hosts`. `Host` is untrusted client input; an absent header never matches, so
+ * a dispatch-configured gateway still routes a header-less probe to OpenCode
+ * (the pre-C1 default) rather than to the hub lane.
+ */
+function hostnameMatches(request: IncomingMessage, hosts: readonly string[]): boolean {
+  const raw = request.headers.host;
+  if (raw === undefined) return false;
+  const bare = raw.toLowerCase().replace(/:\d+$/, "");
+  return hosts.some((host) => host.toLowerCase() === bare);
 }
 
 /** Decodes percent-escapes so `/…/%72eply` cannot dodge the reply-route match. */
@@ -252,8 +307,14 @@ function forward(
   request: IncomingMessage,
   response: ServerResponse,
   upstream: URL,
-  upstreamAuth: string,
+  upstreamAuth: string | undefined,
   options: OpencodeServerGatewayOptions,
+  /** `preserveHost` keeps the CLIENT's Host header (the hub-UI lane needs it:
+   *  its same-origin mutation guard compares `Origin` to `Host`); when false the
+   *  target's own Host is sent (the OpenCode lane). An absent `upstreamAuth`
+   *  strips the client's Authorization rather than injecting one (the hub-UI
+   *  loopback is reached only through the gateway's already-passed auth). */
+  policy: { readonly preserveHost: boolean } = { preserveHost: false },
 ): void {
   const incoming = new URL(request.url ?? "/", "http://gateway.invalid");
   const target = new URL(upstream.toString());
@@ -263,10 +324,22 @@ function forward(
   for (const [key, value] of Object.entries(request.headers)) {
     const lower = key.toLowerCase();
     if (value === undefined || lower === "authorization" || lower === "host" || HOP_BY_HOP.has(lower)) continue;
+    // On the hub-UI lane, strip client-supplied forwarding headers: the UI's
+    // same-origin mutation guard trusts Origin/Host, but it is still an
+    // untrusted-input surface, so a client's `X-Forwarded-*`/`Forwarded` must
+    // never reach it as if the proxy had set them.
+    if (policy.preserveHost && (lower === "forwarded" || lower.startsWith("x-forwarded-"))) continue;
     headers[key] = value;
   }
-  headers["authorization"] = upstreamAuth;
-  headers["host"] = upstream.host;
+  if (upstreamAuth !== undefined) headers["authorization"] = upstreamAuth;
+  // Node's http request sets Host from the target URL unless overridden: to
+  // preserve the client's Host we must set it back explicitly, not just skip
+  // the line.
+  if (policy.preserveHost) {
+    if (request.headers.host !== undefined) headers["host"] = request.headers.host;
+  } else {
+    headers["host"] = upstream.host;
+  }
 
   const proxied = httpRequest(target, { method: request.method ?? "GET", headers }, (upstreamResponse) => {
     const responseHeaders: Record<string, string | string[]> = {};

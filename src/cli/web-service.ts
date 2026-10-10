@@ -30,6 +30,54 @@ export interface StartWorkflowWebOptions {
 }
 
 /**
+ * C1 hub endpoint (D5): start the Workflow hub operator UI INSIDE the hub
+ * process against the hub's own canonical `WorkflowApplication`. This is the
+ * single-writer composition — the very point the D5 review fixed: the UI must
+ * NOT build a second `WorkflowApplication`/`TaskGraph` (the standalone
+ * `startWorkflowWeb` does, as the demo surface the `workflow` launcher serves).
+ * Every canonical mutation already proxies to the hub bridge via the discovery
+ * file; the only local-authority reads are `application.snapshot()` and
+ * `application.workspaceRoot`, which must be the hub's own instance.
+ *
+ * The hub UI is the MANAGEMENT/scheduling surface (settings, schedules, runs),
+ * not the interactive coding surface (that is the vendor OpenCode UI at the
+ * `code` host, D5's settled primary). So this composes NO session manager: the
+ * session routes answer their honest "session management unavailable" state,
+ * and no ACP runtime launches inside the authority process.
+ */
+export async function startHubWebUi(
+  application: WorkflowApplication,
+  options: StartWorkflowWebOptions = {},
+): Promise<WorkflowWebService> {
+  const workspace = options.workspace ?? application.workspaceRoot ?? process.cwd();
+  const webapp = await buildWebappBundle();
+  // No session manager (the management-only posture above). The hub discovery
+  // dir rides the hub's own env so the UI's schedule/RSI/project relays reach
+  // the bridge; absent means the same fail-closed "hub unavailable" degrade.
+  const server = createWorkflowWebServer(application, undefined, webapp, {
+    workspace,
+    ...(process.env.WORKFLOW_HUB_DIR === undefined ? {} : { hubDiscoveryDir: process.env.WORKFLOW_HUB_DIR }),
+  });
+  const port = options.port ?? Number(process.env.WORKFLOW_HUB_WEB_PORT ?? 0);
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => resolve());
+  });
+  const address = server.address() as AddressInfo | string | null;
+  const actualPort = typeof address === "object" && address !== null ? address.port : port;
+  let closed = false;
+  return {
+    url: `http://127.0.0.1:${actualPort}`,
+    port: actualPort,
+    async close(): Promise<void> {
+      if (closed) return;
+      closed = true;
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+}
+
+/**
  * Start the Workflow browser operator UI: the same application boundary every
  * surface consumes, with the per-session manager defaulting to OpenCode in ACP
  * mode (`DEFAULT_WEB_AGENT`). This is the surface the `workflow` launcher

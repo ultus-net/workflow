@@ -13,6 +13,7 @@ import {
 } from "../integrations/opencode-server-authority.js";
 import { createOpencodeServerBudget } from "../integrations/opencode-server-budget.js";
 import { createOpencodeServerGateway, newTuiPassword } from "../integrations/opencode-server-gateway.js";
+import { readHubWebEndpoint } from "../integrations/hub-discovery.js";
 import {
   opencodeServerDiscoveryPath,
   removeOpencodeServerDiscovery,
@@ -330,6 +331,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       onPermissionReply: (reply) => authority.handleOperatorReply(reply),
       enforced: enforcement === "enforced",
       ...(plane === undefined ? {} : { host: plane.gatewayHost, port: plane.gatewayPort }),
+      // D5: layer the hub operator UI onto the same app as a Host-dispatched
+      // route class. The host list is instance-supplied; the target is
+      // re-resolved from the hub's own `web.json` per request (fail closed to
+      // 503 when the hub UI is absent). Absent hosts → no dispatch table, so the
+      // ingress stays OpenCode-only (byte-identical to pre-D5).
+      ...(plane === undefined || plane.hubHostnames.length === 0
+        ? {}
+        : { hubRoutes: { hosts: plane.hubHostnames, target: () => readHubWebEndpoint() } }),
     });
   } catch (error) {
     await authority.stop();

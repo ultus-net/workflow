@@ -877,3 +877,67 @@ records "do not leave the plane on public ingress with only basic auth"). An
 brute-force cost than a 16-char floor. This is an explicit operator tradeoff to
 permit a chosen short passphrase, bounded by the fact that the credential is
 operator-set (never defaulted or generated) and rotated via the secret store.
+
+### Task 2c — hub UI as a gateway route class (D5 reversal) (DONE 2026-10-10)
+
+Closes the **"Still open in task 2's neighborhood"** residual above (the hub UI
+as a gateway route class, D5 reversal): the operator domain needed a distinct
+`hub.<domain>` endpoint separate from the OpenCode `code.<domain>` surface.
+
+- **Single-writer composition (the P0 the D5 review fixed).** The hub UI is
+  served INSIDE the hub process against the hub's OWN canonical
+  `WorkflowApplication` (`src/cli/hub.ts:81`) — never a second application. The
+  standalone `startWorkflowWeb` builds a demo `TaskGraph` (`src/cli/web-service.ts:40`),
+  which in-plane would be a second writer; `startHubWebUi`
+  (`src/cli/web-service.ts`) instead takes the hub's application and composes NO
+  session manager — the hub UI is the management/scheduling surface (settings,
+  schedules, runs), not the interactive coding surface (the vendor OpenCode UI at
+  `code`, D5's settled primary). The only local-authority reads are
+  `application.snapshot()` and `application.workspaceRoot`; every canonical
+  mutation already proxies to the hub bridge via the discovery file.
+- **Opt-in + publication.** `WORKFLOW_HUB_WEB=1` starts the UI on a loopback
+  port inside the hub and publishes it as `hub/web.json` (0o600, atomic,
+  `src/integrations/hub-web-discovery.ts`) BESIDE `hub/discovery.json`; the file
+  carries no secret (reached only through the gateway). Absent → no UI (and no
+  `web.json`), byte-identical to the pre-D5 hub. The `discovery.json` field set
+  is unchanged, so `test/e2e-hub.test.ts:129-133` still holds.
+- **Gateway Host-dispatch.** `src/integrations/opencode-server-gateway.ts` gains
+  an optional `hubRoutes` table: a request whose `Host` (port-stripped,
+  case-insensitive) is in the set is proxied to the hub UI loopback target with
+  the client `Host` PRESERVED (the UI's same-origin mutation guard compares
+  `Origin` to `Host`; `web.ts:1471-1476`). Every other Host (the default
+  `*.azurecontainerapps.io` FQDN, `code.<domain>`, an unbound/spoofed name, an
+  absent header) is byte-identical pass-through to OpenCode. Fail closed: a
+  dispatched hub Host whose target cannot be resolved (no UI running,
+  stale/missing `web.json`) answers **503** — it NEVER falls through to OpenCode
+  on the hub's name. Auth precedes dispatch, so the client credential still
+  gates the hub lane.
+- **Instance-supplied hostnames (one-way rule kept).** The host list rides
+  `WORKFLOW_PLANE_HUB_HOSTNAMES` (comma-separated), parsed fail-closed in
+  `src/cli/plane-config.ts:parseHubHostnames` (a scheme/path/whitespace/empty
+  entry throws; absent/empty = no route class). No domain literal enters the open
+  repo; the code names only the env VARIABLE.
+- **Evidence (measured, local):** `node --import tsx --test
+  test/hub-endpoint-dispatch.test.ts test/hub-web-service.test.ts
+  test/plane-supervisor.test.ts` → 29/29 (dispatch: hub-host proxy +
+  Host-preserved + no injected upstream credential, port/case match, coding +
+  header-less pass-through, 503 fail-closed, auth-precedes-dispatch, no-table
+  pass-through; composition: served snapshot is the PASSED application's, no
+  session manager 503, web.json round-trip + absent = undefined); the
+  already-green `opencode-server-gateway` + `workflow-hub` + `web-dispatch-relay`
+  + `web` suites 31/31; `npm run typecheck` exit 0; `npm run lint` exit 0;
+  `npm run build` exit 0. The two new suites run under `npm test`'s
+  `test/**/*.test.ts` glob but are NOT yet enumerated in `package.json`'s
+  `test:ci`: adding them there edits `package.json` (a manifest), which trips
+  the guard's lockfile-synchronization preflight (a `scripts`-only edit never
+  changes `package-lock.json`, so the gate cannot be satisfied) — registering
+  them in `test:ci` is deferred to a separate direct commit, the route prior
+  `test:ci` edits (`5e2a229795`, `51a05286`) actually took to `main`.
+- **Not live-verified (🛰):** the body `host` header ACA forwards to the
+  container for a bound custom domain is measured EMPIRICALLY on the first live
+  bind, not assumed — the dispatch is built on Host but its live pass-through is
+  the measurement (the ACA docs describe Envoy host/SNI routing and
+  `X-Forwarded-Host` only as a separate-proxy concern; no wire claim is made
+  until the `hub.<domain>` bind is probed). The `hub` hostname was NOT bound in
+  this change (path 2: wire first, bind after).
+
