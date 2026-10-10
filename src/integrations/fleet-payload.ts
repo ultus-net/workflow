@@ -66,6 +66,17 @@ export interface FleetOptions {
   readonly configDir?: string;
   /** Workspace whose repo docs receive the docs bundle (defaults to cwd). */
   readonly workspace?: string;
+  /**
+   * Restrict install/compare to these kinds (default: every kind). The plane
+   * runtime installs only the agent/command config surface into its hub-owned
+   * config dir and never the workspace docs, so it passes `["agent", "command"]`.
+   */
+  readonly kinds?: readonly FleetKind[];
+}
+
+/** Manifest entries narrowed to the requested kinds (all kinds when absent). */
+function selectedEntries(manifest: FleetManifest, kinds: readonly FleetKind[] | undefined): readonly FleetEntry[] {
+  return kinds === undefined ? manifest.entries : manifest.entries.filter((entry) => kinds.includes(entry.kind));
 }
 
 const KINDS: readonly FleetKind[] = ["agent", "command", "doc"];
@@ -124,7 +135,7 @@ export function loadFleetManifest(options: Pick<FleetOptions, "root"> = {}): Fle
 /** Compares every vendored entry against the installed tree: current / missing / differs. */
 export function compareFleet(options: FleetOptions = {}): readonly FleetStatus[] {
   const manifest = loadFleetManifest(options);
-  return manifest.entries.map((entry) => {
+  return selectedEntries(manifest, options.kinds).map((entry) => {
     const target = fleetTarget(entry, options);
     let state: FleetEntryState;
     try {
@@ -144,6 +155,19 @@ export function fleetCopyCommand(status: FleetStatus, options: Pick<FleetOptions
 }
 
 /**
+ * The hub-owned OpenCode config-dir installer: deploys the vendored AGENTS and
+ * COMMANDS (never the workspace-owned docs bundle) into `$XDG_CONFIG_HOME/opencode`,
+ * overwriting a stale copy (the config dir is hub-owned and regenerated, so there
+ * are no operator edits to preserve). `configDir` is the XDG_CONFIG_HOME root the
+ * lane launches `opencode` with; the fleet lands at `join(configDir, "opencode",
+ * {agents,commands})`, exactly where OpenCode scans. Shared by the server runtime
+ * and the ACP runtime so both lanes install identically from one tested definition.
+ */
+export function installFleetIntoOpencodeConfig(configDir: string): readonly FleetInstallResult[] {
+  return installFleet({ configDir: join(configDir, "opencode"), kinds: ["agent", "command"], force: true });
+}
+
+/**
  * Deploys the fleet. Agents/commands refuse to clobber a locally-modified
  * install unless `force` is set; docs are install-if-missing only (never
  * overwritten, force or not). Writes are atomic (temp file + rename) and
@@ -151,7 +175,7 @@ export function fleetCopyCommand(status: FleetStatus, options: Pick<FleetOptions
  */
 export function installFleet(options: FleetOptions & { readonly force?: boolean } = {}): readonly FleetInstallResult[] {
   const manifest = loadFleetManifest(options);
-  return manifest.entries.map((entry) => {
+  return selectedEntries(manifest, options.kinds).map((entry) => {
     const target = fleetTarget(entry, options);
     let installedHash: string | undefined;
     try {
