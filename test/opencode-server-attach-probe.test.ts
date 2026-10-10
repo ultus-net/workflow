@@ -151,19 +151,22 @@ test("W071 live (v2 spellings): runtime + gateway authority split against real o
   });
   assert.ok(/text\/event-stream/.test(stream.headers.get("content-type") ?? ""), "gateway must pass through SSE");
 
-  // Authority split.
+  // Authority split. Live v2 requires the body field `decision` (pinned 2.0.10
+  // OpenAPI: required decision, additionalProperties:false); a `{ reply }` body
+  // is a 400, which would let the hub-reach assertion below pass for the wrong
+  // reason.
   const replyPath = "/api/session/sess1/permission/req1/reply";
   const direct = await fetch(`${runtime.url}${replyPath}`, {
     method: "POST",
     headers: { ...tuiHeaders, "content-type": "application/json" },
-    body: JSON.stringify({ reply: "reject" }),
+    body: JSON.stringify({ decision: "reject" }),
   });
   assert.equal(direct.status, 401, "a gateway-only credential must never authorize upstream");
 
   const brokerReply = await fetch(`${gateway.url}${replyPath}`, {
     method: "POST",
     headers: { ...tuiHeaders, "content-type": "application/json" },
-    body: JSON.stringify({ reply: "reject" }),
+    body: JSON.stringify({ decision: "reject" }),
   });
   assert.equal(brokerReply.status, 200);
   assert.deepEqual(intercepted, [{ sessionId: "sess1", requestId: "req1", reply: "reject" }]);
@@ -171,10 +174,14 @@ test("W071 live (v2 spellings): runtime + gateway authority split against real o
   const hubReply = await fetch(`${runtime.url}${replyPath}`, {
     method: "POST",
     headers: { ...upstreamHeaders, "content-type": "application/json" },
-    body: JSON.stringify({ reply: "reject" }),
+    body: JSON.stringify({ decision: "reject" }),
   });
+  // The hub credential reaches the real route; the body must be ACCEPTED (a
+  // 400 would mean a wrong wire shape passed this gate for the wrong reason).
+  // The request names a synthetic session/permission, so the server answers 404.
   assert.notEqual(hubReply.status, 401);
   assert.notEqual(hubReply.status, 403);
+  assert.notEqual(hubReply.status, 400, "the hub reply body must be an accepted v2 shape");
 
   // M2: the authority broker subscribes to the real server's SSE through the
   // production engine and stays subscribed (no model key here, so no live
