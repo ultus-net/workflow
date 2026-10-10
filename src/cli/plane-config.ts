@@ -23,6 +23,15 @@ export const PLANE_GATEWAY_HOST = "0.0.0.0";
 export const PLANE_GATEWAY_PORT = 4096;
 
 /**
+ * Minimum length of the injected client password. A floor (not a strength
+ * policy) guards against a truncated/empty secret while still allowing an
+ * operator-chosen short credential: the password is a stable value the
+ * operator configures their client with, not a machine-generated one, so a
+ * longer floor would only reject valid operator choices.
+ */
+export const MIN_CLIENT_PASSWORD_LENGTH = 8;
+
+/**
  * Resolves plane mode from the environment. Throws (fail closed) on any
  * missing or malformed required value — never degrades to a loopback default,
  * which would silently leave ingress with no listener on 4096.
@@ -42,10 +51,10 @@ export function resolvePlaneConfig(env: NodeJS.ProcessEnv, fallbackWorkspace: st
     throw new Error(`WORKFLOW_PLANE_GATEWAY_PORT must be an integer in 1..65535 (got ${JSON.stringify(rawPort)})`);
   }
   const clientPassword = env.WORKFLOW_PLANE_CLIENT_PASSWORD;
-  if (clientPassword === undefined || clientPassword.length < 16) {
+  if (clientPassword === undefined || clientPassword.length < MIN_CLIENT_PASSWORD_LENGTH) {
     // A short/absent password is a misconfiguration, not a degrade-to-random:
     // the whole point is a value the operator's client can be configured with.
-    throw new Error("workflow-plane requires WORKFLOW_PLANE_CLIENT_PASSWORD (>= 16 chars) from the instance secret store");
+    throw new Error(`workflow-plane requires WORKFLOW_PLANE_CLIENT_PASSWORD (>= ${MIN_CLIENT_PASSWORD_LENGTH} chars) from the instance secret store`);
   }
   return { workspace, gatewayHost, gatewayPort, clientPassword };
 }

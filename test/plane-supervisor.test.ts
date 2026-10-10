@@ -4,6 +4,7 @@ import test from "node:test";
 
 import { createOpencodeServerGateway } from "../src/integrations/opencode-server-gateway.js";
 import {
+  MIN_CLIENT_PASSWORD_LENGTH,
   PLANE_GATEWAY_HOST,
   PLANE_GATEWAY_PORT,
   resolvePlaneConfig,
@@ -23,6 +24,22 @@ test("resolvePlaneConfig requires a stable client password (no random-per-roll)"
   );
   assert.throws(
     () => resolvePlaneConfig({ WORKFLOW_PLANE: "1", WORKFLOW_PLANE_CLIENT_PASSWORD: "short" }, "/w"),
+    /WORKFLOW_PLANE_CLIENT_PASSWORD/,
+  );
+});
+
+test("resolvePlaneConfig accepts a short operator password at the floor", () => {
+  // The floor is a truncation guard, not a strength policy: an operator-chosen
+  // credential exactly at the floor resolves (e.g. an 11-char passphrase), and
+  // anything one char below it fails closed.
+  const atFloor = "a".repeat(MIN_CLIENT_PASSWORD_LENGTH);
+  const config = resolvePlaneConfig(
+    { WORKFLOW_PLANE: "1", WORKFLOW_PLANE_CLIENT_PASSWORD: atFloor },
+    "/w",
+  );
+  assert.equal(config.clientPassword, atFloor);
+  assert.throws(
+    () => resolvePlaneConfig({ WORKFLOW_PLANE: "1", WORKFLOW_PLANE_CLIENT_PASSWORD: atFloor.slice(1) }, "/w"),
     /WORKFLOW_PLANE_CLIENT_PASSWORD/,
   );
 });
