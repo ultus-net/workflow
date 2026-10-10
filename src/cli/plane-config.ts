@@ -81,7 +81,11 @@ export function parseHubHostnames(raw: string | undefined): readonly string[] {
   if (trimmed === "") return [];
   const entries = trimmed.split(",").map((entry) => entry.trim());
   for (const entry of entries) {
-    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(entry)) {
+    // Labels are `[a-z0-9-]` bounded by alphanumerics; the FINAL label must
+    // start with a letter, which rejects a bare IPv4 literal (`1.2.3.4`) — a
+    // host list is a security boundary, and an IP literal is never a name a
+    // custom-domain bind produces.
+    if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*\.[a-z][a-z0-9-]*[a-z0-9]$/.test(entry)) {
       throw new Error(`WORKFLOW_PLANE_HUB_HOSTNAMES entry must be a bare DNS hostname (got ${JSON.stringify(entry)})`);
     }
   }

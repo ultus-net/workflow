@@ -73,8 +73,9 @@ test("resolvePlaneConfig parses the hub hostname list and fails closed on a malf
     "/workspace",
   );
   assert.deepEqual(config.hubHostnames, ["hub.ultus.net", "ops.example.com"]);
-  // A scheme, path, whitespace, or empty entry is a security-boundary typo.
-  for (const bad of ["https://hub.ultus.net", "hub.ultus.net/path", "hub ultus.net", ",", "hub.ultus.net,"]) {
+  // A scheme, path, whitespace, empty entry, or an IP literal is a
+  // security-boundary typo.
+  for (const bad of ["https://hub.ultus.net", "hub.ultus.net/path", "hub ultus.net", ",", "hub.ultus.net,", "1.2.3.4", "hub.ultus.net."]) {
     assert.throws(
       () => resolvePlaneConfig({ WORKFLOW_PLANE: "1", WORKFLOW_PLANE_CLIENT_PASSWORD: "0123456789abcdef", WORKFLOW_PLANE_HUB_HOSTNAMES: bad }, "/workspace"),
       /WORKFLOW_PLANE_HUB_HOSTNAMES/,

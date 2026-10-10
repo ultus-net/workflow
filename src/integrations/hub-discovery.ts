@@ -61,7 +61,13 @@ export function readHubWebEndpoint(override?: string): string | undefined {
     ) {
       return undefined;
     }
-    return (value as { endpoint: string }).endpoint;
+    const endpoint = (value as { endpoint: string }).endpoint;
+    // Shape-validate to a loopback http origin. A corrupt/hostile web.json must
+    // answer `undefined` (→ the gateway's 503 withheld lane), NOT a string that
+    // makes the forwarded `new URL(endpoint)` throw into a 500: the read is the
+    // fail-closed seam, so a malformed endpoint is withheld here.
+    if (!/^http:\/\/127\.0\.0\.1:\d+$/.test(endpoint)) return undefined;
+    return endpoint;
   } catch {
     return undefined;
   }

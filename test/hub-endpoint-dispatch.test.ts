@@ -24,14 +24,14 @@ const AUTH = `Basic ${Buffer.from("opencode:0123456789abcdef").toString("base64"
 
 interface Stub {
   readonly url: string;
-  readonly seen: { path: string; host: string | undefined; authorization: string | undefined }[];
+  readonly seen: { path: string; host: string | undefined; authorization: string | undefined; headers: IncomingMessage["headers"] }[];
   close(): Promise<void>;
 }
 
 async function stub(payload: unknown): Promise<Stub> {
-  const seen: { path: string; host: string | undefined; authorization: string | undefined }[] = [];
+  const seen: { path: string; host: string | undefined; authorization: string | undefined; headers: IncomingMessage["headers"] }[] = [];
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
-    seen.push({ path: request.url ?? "", host: request.headers.host, authorization: request.headers.authorization });
+    seen.push({ path: request.url ?? "", host: request.headers.host, authorization: request.headers.authorization, headers: request.headers });
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(payload));
   });
@@ -201,5 +201,55 @@ test("no hubRoutes means no dispatch table (byte-identical OpenCode-only pass-th
   } finally {
     await gateway.close();
     await opencode.close();
+  }
+});
+
+test("the hub lane strips client-supplied forwarding headers (defense in depth)", async () => {
+  const opencode = await stub({ surface: "opencode" });
+  const hubUi = await stub({ surface: "hub" });
+  const gateway = await createOpencodeServerGateway({
+    upstream: opencode.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "0123456789abcdef",
+    host: "127.0.0.1",
+    port: 0,
+    hubRoutes: { hosts: ["hub.ultus.net"], target: () => hubUi.url },
+  });
+  try {
+    const url = new URL(gateway.url);
+    const result = await new Promise<{ status: number; host: string | undefined }>((resolve, reject) => {
+      const request = httpRequest(
+        {
+          hostname: url.hostname,
+          port: url.port,
+          path: "/",
+          method: "GET",
+          headers: {
+            authorization: AUTH,
+            host: "hub.ultus.net",
+            "x-forwarded-host": "evil.example.com",
+            "x-forwarded-for": "10.0.0.9",
+            forwarded: "host=evil.example.com",
+          },
+        },
+        (response) => {
+          response.resume();
+          response.on("end", () => resolve({ status: response.statusCode ?? 0, host: hubUi.seen[0]?.host }));
+        },
+      );
+      request.on("error", reject);
+      request.end();
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.host, "hub.ultus.net", "the original Host reaches the UI; the client's X-Forwarded-* do not");
+    const forwardedHeaders = hubUi.seen[0]!.headers;
+    assert.equal(forwardedHeaders.forwarded, undefined);
+    assert.equal(forwardedHeaders["x-forwarded-host"], undefined);
+    assert.equal(forwardedHeaders["x-forwarded-for"], undefined);
+  } finally {
+    await gateway.close();
+    await opencode.close();
+    await hubUi.close();
   }
 });

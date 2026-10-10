@@ -51,7 +51,7 @@ import {
 } from "../integrations/self-improvement-agent.js";
 import { createAuthorityGate } from "../integrations/self-improvement-loop.js";
 import { createWorkflowHub, type WorkflowHubSchedulerHandles } from "../integrations/workflow-hub.js";
-import { removeHubWebDiscovery, writeHubWebDiscovery } from "../integrations/hub-web-discovery.js";
+import { hubWebDiscoveryPath, removeHubWebDiscovery, writeHubWebDiscovery } from "../integrations/hub-web-discovery.js";
 import type { WorkflowWebService } from "./web-service.js";
 import { PermissionBroker } from "../ui/permission-broker.js";
 import { taskId, type TaskId } from "../kernel/contracts.js";
@@ -696,7 +696,7 @@ if (process.env.WORKFLOW_HUB_WEB === "1") {
     const { startHubWebUi } = await import("./web-service.js");
     webUi = await startHubWebUi(application, { workspace });
     writeHubWebDiscovery(hub.discoveryPath, webUi.url);
-    console.log(`Workflow hub UI listening at ${webUi.url} (published to ${hub.discoveryPath.replace(/discovery\.json$/, "web.json")})`);
+    console.log(`Workflow hub UI listening at ${webUi.url} (published to ${hubWebDiscoveryPath(hub.discoveryPath)})`);
   } catch (error) {
     await hub.close();
     await guard.close();
@@ -723,9 +723,12 @@ await new Promise<void>((resolveShutdown) => {
   process.on("SIGTERM", shutdown);
   process.on("SIGHUP", shutdown);
 });
-await hub.close();
 if (webUi !== undefined) {
+  // Close the UI BEFORE the hub bridge: the UI proxies canonical reads/writes
+  // to the bridge, so tearing the bridge down first would leave the UI briefly
+  // answering "hub unavailable" before it, too, stops.
   await webUi.close();
-  removeHubWebDiscovery(hub.discoveryPath);
 }
+await hub.close();
+if (webUi !== undefined) removeHubWebDiscovery(hub.discoveryPath);
 await guard.close();

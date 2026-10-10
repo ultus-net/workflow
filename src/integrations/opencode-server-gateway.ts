@@ -324,6 +324,11 @@ function forward(
   for (const [key, value] of Object.entries(request.headers)) {
     const lower = key.toLowerCase();
     if (value === undefined || lower === "authorization" || lower === "host" || HOP_BY_HOP.has(lower)) continue;
+    // On the hub-UI lane, strip client-supplied forwarding headers: the UI's
+    // same-origin mutation guard trusts Origin/Host, but it is still an
+    // untrusted-input surface, so a client's `X-Forwarded-*`/`Forwarded` must
+    // never reach it as if the proxy had set them.
+    if (policy.preserveHost && (lower === "forwarded" || lower.startsWith("x-forwarded-"))) continue;
     headers[key] = value;
   }
   if (upstreamAuth !== undefined) headers["authorization"] = upstreamAuth;

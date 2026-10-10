@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -79,6 +79,26 @@ test("the hub web discovery round-trips and fails closed when absent", () => {
     assert.ok(existsSync(hubWebDiscoveryPath(hubDiscovery)));
     removeHubWebDiscovery(hubDiscovery);
     assert.equal(readHubWebEndpoint(dir), undefined, "removed → undefined again");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("readHubWebEndpoint withholds a corrupt or non-loopback endpoint (fail closed, never a forwarded 500)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-hubweb-bad-"));
+  try {
+    const webPath = join(dir, "hub", "web.json");
+    mkdirSync(join(dir, "hub"), { recursive: true });
+    for (const bad of [
+      JSON.stringify({ protocol: 1, endpoint: "not-a-url" }),
+      JSON.stringify({ protocol: 1, endpoint: "http://10.0.0.5:1234" }),
+      JSON.stringify({ protocol: 1, endpoint: "https://127.0.0.1:1234" }),
+      JSON.stringify({ protocol: 1 }), // no endpoint
+      "not json",
+    ]) {
+      writeFileSync(webPath, bad);
+      assert.equal(readHubWebEndpoint(dir), undefined, `expected ${bad} to be withheld`);
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
