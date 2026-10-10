@@ -440,7 +440,8 @@ gave the topology a real Synthetic/OpenRouter lane and a real model turn, so
 the probe executed against a live `opencode serve` v2.0.10 through the public
 ingress. It surfaced a defect: **every mutating tool call hung forever.**
 
-**Observed (live, healthy plane, revision `csh-dev-plane--0000007`):**
+**Observed (live, healthy plane — the revision id is an instance value and is
+withheld from this open repo):**
 
 - A tool turn parked at `session.tool.called` with `executed: false` and
   `state.status: "running"`, forever. Read-only answers passed; any `write`,
@@ -465,7 +466,8 @@ type v2.0.10 does not emit (it emits the `session.tool.*` family), leaving
 `consumeOpenCodeV2EventStream` (`opencode-v2-event-log.ts`) read `properties`,
 silently dropping every v2 event.
 
-**Fix (branch `fix/opencode-v2-event-envelope`, focused tests 116 green):**
+**Fix (branch `fix/opencode-v2-event-envelope`; the three envelope-focused files
+total 64 tests green, the full focused sweep 202 pass / 8 gated skips):**
 
 - `normalizeEventEnvelope` (`engine.ts`) maps v1 contract, v1 `payload` wrapper,
   and the v2 `data` envelope to the one contract shape every consumer reads.

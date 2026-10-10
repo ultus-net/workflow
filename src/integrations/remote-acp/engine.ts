@@ -508,10 +508,12 @@ export async function* sseData(
  *    `Permission.Request`). The M0.3 "pin the exact wire type by probe" item
  *    deferred this (it needed a real model turn); a live plane turn resolved it.
  *
- * Every consumer (the authority broker, the ACP projection, the event journal)
- * reads ONLY the contract shape, so the mapping happens here, once. A record
- * with no string `type` returns `undefined` so a caller fails closed on a
- * malformed frame rather than the parser inventing an event.
+ * Every consumer that reads the HTTP engine's stream (the authority broker, the
+ * ACP projection, the event journal) reads ONLY the contract shape, so the
+ * mapping happens here, once. (A separate driver, `opencode-session.ts`, has its
+ * own client and does not route through this parser — see the playbook's honest
+ * residuals.) A record with no string `type` returns `undefined` so a caller
+ * fails closed on a malformed frame rather than the parser inventing an event.
  */
 export function normalizeEventEnvelope(value: unknown): RemoteEngineEvent | undefined {
   if (!isRecord(value)) return undefined;

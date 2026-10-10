@@ -136,3 +136,11 @@ stream and the logs.
   still use v1 path spellings (`/session`, `/config`) that v2 serves under
   `/api/...`. They are off the plane's broker path; the ACP-bridge session-load
   lane is the surface that would exercise them. Flagged, not fixed here.
+- `src/integrations/opencode-session.ts` (`OpenCodeSessionDriver.#translate`,
+  `:79`) reads `value?.properties` only, and its stream is raw JSON from
+  `createOpenCodeSessionClient`/`sseFrames` (`opencode-client.ts:44`) that never
+  calls `normalizeEventEnvelope`. A v2 `data` frame drops there too. Pre-existing
+  and off the plane's broker path (the driver also uses v1 REST spellings), so it
+  is an undeclared residual, not a regression of this fix. The `engine.ts`
+  comment "every consumer reads ONLY the contract shape" holds for the consumers
+  that go through `HttpRemoteEngine.events`; this driver does not.

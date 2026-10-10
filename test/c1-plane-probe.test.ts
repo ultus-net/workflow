@@ -260,7 +260,6 @@ const runBrokerArm = process.env.WORKFLOW_AZURE_PLANE_PROBE_BROKER === "1";
 
 interface V2ToolState {
   readonly status?: string;
-  readonly executed?: boolean;
 }
 
 test("C1 live probe (broker arm): a mutating tool turn is intercepted and settles", { skip: !runBrokerArm, timeout: 180_000 }, async (t) => {

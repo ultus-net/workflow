@@ -167,8 +167,9 @@ test("HttpRemoteEngine events stream parses SSE event envelopes", async () => {
 test("normalizeEventEnvelope reads the v2 `data` envelope (live 2.0.10)", () => {
   // The live plane wraps the payload under `data`, never `properties`. This is
   // the shape that made every permission request unmappable (sessionID/id
-  // undefined) and hung every mutating tool on the C1 plane. Pinned verbatim
-  // from a captured `/api/event` frame.
+  // undefined) and hung every mutating tool on the C1 plane. Reconstructed
+  // from a captured `/api/event` frame; the field set is recorded in the
+  // docs/OPENCODE_SERVER_AUTHORITY.md addendum. The raw frame is not committed.
   const event = normalizeEventEnvelope({
     id: "evt_x",
     created: 1,
