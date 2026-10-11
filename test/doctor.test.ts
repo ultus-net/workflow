@@ -11,6 +11,7 @@ import {
   checkAgentCredentials,
   checkProbeVerdicts,
   checkContainment,
+  checkUpstreamKeyExposure,
   renderDoctorReport,
 } from "../src/cli/doctor.js";
 import { opencodeServerDiscoveryPath } from "../src/integrations/opencode-server-discovery.js";
@@ -213,4 +214,26 @@ test("doctor: the report renders icons, fixes, and never truncates a failure", (
   assert.match(report, / {6}fix: start it/);
   assert.match(report, /✗ c: broken/);
   assert.match(report, / {6}fix: fix it/);
+});
+
+test("doctor (C1 F2): a uid-shared plane upstream key in the process environment fails, and the value is never printed", () => {
+  const clean = checkUpstreamKeyExposure({} as NodeJS.ProcessEnv);
+  assert.equal(clean.status, "pass");
+
+  // Off the plane the env is the operator's own process — a documented source,
+  // not a uid-shared leak.
+  const offPlane = checkUpstreamKeyExposure({ WORKFLOW_UPSTREAM_KEY: "sk-or-v1-supersecretvalue" } as NodeJS.ProcessEnv);
+  assert.equal(offPlane.status, "pass");
+  assert.match(offPlane.detail, /not a uid-shared plane/);
+
+  // On the plane (WORKFLOW_PLANE=1) the same env is readable by any same-uid
+  // agent tool process — a fail with the seam fix and the rotation action.
+  const leaked = checkUpstreamKeyExposure({ WORKFLOW_PLANE: "1", WORKFLOW_UPSTREAM_KEY: "sk-or-v1-supersecretvalue" } as NodeJS.ProcessEnv);
+  assert.equal(leaked.status, "fail");
+  assert.match(leaked.detail, /WORKFLOW_UPSTREAM_KEY/);
+  assert.match(leaked.detail, /\/proc\/<pid>\/environ/);
+  assert.match(leaked.fix ?? "", /rotate it/);
+  // The check must never echo the secret it is warning about.
+  assert.doesNotMatch(leaked.detail, /supersecretvalue/);
+  assert.doesNotMatch(leaked.fix ?? "", /supersecretvalue/);
 });
