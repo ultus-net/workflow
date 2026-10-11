@@ -717,3 +717,83 @@ operator actions, and the previously-exposed key should be rotated.
 `src/integrations/opencode-v2-route-class.ts`;
 `src/integrations/opencode-server-discovery.ts`; `src/cli/doctor.ts`;
 `src/cli/opencode-server.ts`.
+
+### Hub per-revision state isolation (2026-10-11) — the v0.1.8 rollout deadlock
+
+**Source:** the live v0.1.8 deploy. Branch `fix/c1-hub-per-revision-state`
+(based on `origin/main` @ `ba4620ba`). Append-only; supersedes nothing above.
+
+**Measurement.** The plane deployed v0.1.8 (digest `sha256:9d37dcb5…`) and the
+new revision `csh-dev-plane--0000015` came up `ActivationFailed` with
+`Error: Workflow hub is already running (pid 13)`. Traffic stayed pinned to the
+ready `--0000014` while `--0000015` could not boot. Manual resume: deactivate
+`--0000014`, restart `--0000015`; it settled `Healthy` /
+`RunningAtMaxScale`, `latestReadyRevisionName=--0000015`, `/api/info` → 401
+unauth, logs `[authority] mutation budget: 100 …`.
+
+**Root cause.** The daemon state home was already revision-scoped
+(`WORKFLOW_PLANE_REVISION` → `opencodeServerStateHome`), but the HUB was not.
+The hub's instance lock is `join(discoveryDir, "hub", "lock")`
+(`src/integrations/workflow-hub.ts` `acquireInstanceLock`), and `discoveryDir`
+defaulted to `~/.workflow` — unscoped. In ACA Single-revision mode the old
+revision is deactivated only AFTER the new one is ready, so during a roll two
+revisions share the `plane-state` Azure Files mount and contend on ONE lock.
+The new hub cannot acquire the lock the old revision still holds → the new
+revision fails to start → the old one never releases (the observed deadlock).
+
+**Fix.** Scope the WHOLE hub state directory — bridge discovery, `web.json`, the
+instance lock, and every hub-owned state file below — to the revision identity.
+Identity (`planeRevisionIdentity`) resolves the instance's
+`WORKFLOW_PLANE_REVISION` first, then the ACA-injected `CONTAINER_APP_REVISION`;
+absent both the path is byte-identical to the pre-revision root. Readers resolve
+the SAME revision-scoped directory the hub wrote: `hubDiscoveryDirectory`
+defaults to the ambient identity, and `readHubWebEndpoint`, `hub-client`
+(`resolveWorkflowHub`), `rsi`, and `doctor` thread it.
+
+**Trade-off (operator-accepted).** Hub state no longer carries across revisions
+— the cost of never sharing a lock. Each per-file override
+(`WORKFLOW_HUB_EGRESS_REVISIONS`, `WORKFLOW_HUB_PROVENANCE`,
+`WORKFLOW_HUB_SCHEDULES`, `WORKFLOW_HUB_PROJECTS`) still wins, but defaults to
+the revision-scoped directory: a path override that separated the FILE but not
+the lock would reintroduce the deadlock.
+
+**Evidence:** `test/hub-per-revision-state.test.ts` (resolver precedence, the
+per-revision lock separation, the no-identity byte-identity, the reader
+resolving the hub's actual `web.json`); `test/hub-lifecycle.test.ts`,
+`test/hub-client.test.ts`, `test/doctor.test.ts`,
+`test/plane-supervisor.test.ts`, `test/opencode-server-discovery.test.ts`
+(51 pass); `npm run typecheck` and `npm run lint` exit 0.
+
+**Pre-activation blockers found while auditing F1/F2/F3 on the live plane.**
+Recorded here because they gate the deferred env activation, not the hub fix:
+
+- **F2 cannot activate with an exposed key.** The seam
+  (`loadUpstreamApiKeyFromSecretStore`) reads the vault secret named
+  `workflow-upstream-key` (`UPSTREAM_KEY_SECRET_NAME`); the vault currently
+  holds `upstream-key` (a different name). Seeding `upstream-key` would not be
+  read. And the key must be ROTATED at OpenRouter first — an operator action,
+  re-seeding the old value is forbidden. Until then `WORKFLOW_UPSTREAM_KEY_FROM`
+  stays unset and F2 is deferred.
+- **F1 `enforced` fails closed on this v2 image (code defect, not config).**
+  `enforced` runs `assertAskRuleset(await engine.config(...))`
+  (`src/cli/opencode-server.ts:309-316`). `engine.config()` reads the v1 bare
+  `/config` (`src/integrations/remote-acp/engine.ts:330-333`), but the pinned
+  v2.0.10 serves that path as the web-UI HTML catch-all — the JSON API moved
+  under `/api/*` (the same reason `health()` tries `/api/info` first). So
+  `config()` returns `undefined` (or throws invalid-JSON), and `assertAskRuleset`
+  throws `ruleset not pinned to ask for: edit, bash, task (enforced posture fails
+  closed)`. Additionally the v2 effective config reports `permissions` as an
+  array of `{action,resource,effect}` (actions `edit`/`shell`/`subagent`), while
+  the assertion reads the v1 `permission` map with keys `edit`/`bash`/`task`.
+  Enabling `enforced` before this is reconciled would take the new revision
+  down. `enforced` has never been live-run on v2 (matches the withheld C1
+  claim).
+- **F3 is safe but still needs a revision roll**, and every env change creates a
+  revision that (pre-this-fix) re-deadlocks on the shared hub lock. Sequence the
+  env activation AFTER this hub fix is released and deployed.
+
+**Honest limits.** This is a fix + unit pins + a composition ledger note; the
+release/deploy of it is operator-run, and the live deadlock was reproduced once
+and resumed manually, not under an automated harness. The F1 ruleset-assertion
+defect is diagnosed from source + the live `/config` and `/api/config` shapes,
+not yet from an enforced live boot (which is the thing it would break).
