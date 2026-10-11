@@ -127,6 +127,16 @@ export interface RemoteEngine {
     readonly requestId: string;
     readonly reply: RemoteEngineReply;
     readonly cwd: string;
+    /**
+     * Feedback carried to the model on a `reject`. The live v2 reply route's
+     * request body is `{ decision, message? }`, and on `reject` a present
+     * `message` becomes a `CorrectedError` surfaced to the model ("The user
+     * rejected ... with the following feedback: …") rather than an opaque
+     * decline. The broker uses this to TELL the agent why a mutation was
+     * denied (e.g. the mutation budget is exhausted), so the agent can adapt
+     * instead of stalling. Ignored by the wire on non-reject replies.
+     */
+    readonly message?: string | undefined;
   }): Promise<void>;
   /**
    * The server event subscription. An implementation reconnects a dropped
@@ -348,6 +358,7 @@ export class HttpRemoteEngine implements RemoteEngine {
     requestId: string;
     reply: RemoteEngineReply;
     cwd: string;
+    message?: string;
   }): Promise<void> {
     // Live v2 (pinned 2.0.10) requires the field `decision`, not `reply`:
     // GET /openapi.json advertises requestBody `{ decision, message? }` with
@@ -355,10 +366,13 @@ export class HttpRemoteEngine implements RemoteEngine {
     // client sends `{ decision }`. Sending `{ reply }` is a 400 (empty body),
     // which leaves the mutating tool hung `running`. The user-facing name in
     // this API stays `reply`; only the wire field maps to `decision`.
+    // `message` carries broker feedback to the model on a reject (see the
+    // interface doc); it is only meaningful on `reject` and omitted otherwise
+    // so an allow body stays `{ decision: "once" }` byte-for-byte.
     await this.#json(
       "POST",
       `/api/session/${encodeURIComponent(input.sessionId)}/permission/${encodeURIComponent(input.requestId)}/reply`,
-      { cwd: input.cwd, body: { decision: input.reply } },
+      { cwd: input.cwd, body: { decision: input.reply, ...(input.message === undefined ? {} : { message: input.message }) } },
     );
   }
 

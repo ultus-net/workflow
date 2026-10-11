@@ -541,3 +541,129 @@ and `opencode-session.ts` still carry v1 spellings (recorded above). The
 as the captured doc citation and this section records the measured binary/OpenAPI
 contract.
 
+## Addendum (2026-10-11, C1 live plane — the systemic-denial fault, diagnosed)
+
+A live agent session inside the deployed plane reported the broker "began
+denying every tool call — including benign read-only `ls`/`grep` inside the
+authorized workspace — and finally denying even read/grep/glob", surfaced in the
+UI as "The user declined this tool call". Ground truth from the container console
+log (`az containerapp logs show … --container plane`), one line per decision:
+
+```text
+[auth] deny shell reason=session ses_ed75ecb8fffeTgcPcBxOLlwtNI and its descendants exhausted the mutation budget
+```
+
+**Not the circuit breaker, not a guard ask.** No `POLICY_CIRCUIT_BREAKER` line
+appeared, and no `guard ask …` line appeared. The reason is
+`MUTATION_BUDGET_EXHAUSTED` (`src/application/workflow.ts:290`,
+`src/application/mutation-budget.ts`).
+
+**Root cause.** `MutationBudget` (default cap 100) is parent-owned and consumed
+by every ALLOWED mutation. OpenCode classifies `bash`/`shell` as the `process`
+capability, so **any shell command is a mutation** — including benign `ls`/`grep`
+run through the shell. After ~100 allowed shell actions the root session's
+counter hits its cap and every later MUTATION is denied for the life of the
+session. The denials were not sticky onto `read`/`glob`/`grep` (those are
+`read`-capability and never reach the budget gate), but two confusions made the
+session read as fully dead:
+
+1. A cloud of 200+ `[auth] deny (operator reply)` lines — these are the client's
+   own replies noted in auto-resolve mode (policy already answered upstream),
+   journaled as `deny`. They are cosmetic, not policy denials.
+2. The UI rendered every one of those as "the user declined this tool call".
+
+**Fix (branch `fix/c1-authority-denial-and-live-test-hardening`):**
+
+- The deny reason now carries `consumed/max` and names the reset seam
+  (`WorkflowApplication.resetMutationBudget`, new; the `MutationBudget` already
+  had `clear`). The budget is and stays a bounded, fail-closed policy: it refills
+  only via an explicit operator/session reset or a new root session, never
+  implicitly.
+- The noted operator reply is journaled as `observe`, a new non-answer value in
+  `OpencodeAuthorityDecision`, so no surface renders it as a decline.
+- **New observability route** `GET /api/workflow/authority`: the gateway answers
+  it from the broker journal (recent decisions + the gateway's OWN route-matrix
+  posture), never forwards it upstream. An agent/operator can read a systemic
+  denial over the wire without `az containerapp logs`. `OpenCodeV2RouteClass`
+  gains `workflow-inspection` with disposition `workflow` (GET) / `deny` (other
+  verbs).
+
+**Tests.** `test/application-policy-failure-tracker.test.ts` — the bound is named
+and reversible, and a denied mutation does NOT deny a subsequent unrelated read
+(where the reported fault said it did). `test/opencode-server-authority.test.ts`
+— a noted reply is `observe`, not `deny`. `test/opencode-v2-route-class.test.ts`
++ `test/opencode-server-gateway.test.ts` — the inspection route class, the served
+payload (posture + reasons), the never-forward guarantee, and the 403/401 paths.
+
+**Residual.** On the plane the delivered image must carry this branch before the
+route exists. The read route returns the last 200 decisions and the gateway
+posture only; it is not a durable audit log (the process-local journal resets on
+daemon restart).
+
+## Addendum (2026-10-11, follow-up — talking to the agent, the configurable cap, and the Key Vault key source)
+
+The fault fix above made the exhaustion OBSERVABLE (log, journal, read route) and
+reversible (reset seam). This addendum lands the three follow-ups the fault
+exposed. All are on `fix/c1-authority-denial-and-live-test-hardening`.
+
+**1. In-band feedback — tell the agent, do not just log.** The decisive gap: had
+the exhaustion been communicated to the model, it could have adapted. The live v2
+reply route's body is `{ decision, message? }`, and on `reject` a present
+`message` becomes a `CorrectedError({ feedback })` the model sees ("The user
+rejected permission ... with the following feedback: …"). So the broker's
+`deliver` now attaches `rejectionFeedback(decision)` as `message` on every
+`reject` that carries a reason (`src/integrations/opencode-server-authority.ts`);
+a rejection reads `Workflow denied 'edit': session <id> ... exhausted the
+mutation budget (100/100 consumed); an operator/session reset (resetMutationBudget)
+is required ...`. Allows stay `{ decision: "once" }` (no message). An operator or
+timeout reject with no reason carries no message. Bounded to 200 chars like the
+log/journal. Source-anchored on the pinned v2 (`packages/core/src/permission.ts`
+reply → `CorrectedError`; `packages/schema/src/v1/permission.ts ReplyBody`).
+
+**2. The mutation cap is operator-configurable.** `WORKFLOW_MUTATION_BUDGET`
+parses through `mutationBudgetFromEnv` (fail-closed: a non-positive-integer value
+throws rather than degrading to an arbitrary cap; unset keeps the honest default
+100). `WorkflowApplication` takes it as a trailing ctor arg (the daemon wires it;
+tests pin small caps). The daemon logs the effective cap at startup. This is the
+lever the operator pulls when a legitimate long session needs more than the
+default; it is not an auto-refill.
+
+**3. The upstream key can come from the secret store (F2 durable).** The prior
+F2 fix only flagged the uid-shared env in `workflow doctor`. Now
+`loadUpstreamApiKeyFromSecretStore` (with `WORKFLOW_UPSTREAM_KEY_FROM=azure-kv`)
+resolves the key from the W156 `SecretStore` (Key Vault via managed identity)
+instead of a container env. The seam is AUTHORITATIVE, not a fallback: when
+`WORKFLOW_UPSTREAM_KEY_FROM` is set the store is the only source, so a lingering
+uid-shared env/file key does NOT win (that would silently defeat the fix). A
+named-but-absent vault secret THROWS fail-closed (never a silent fallback to a
+uid-shared env); an unknown backend throws at parse. `FROM` also selects the
+store backend (the daemon overrides `WORKFLOW_SECRET_STORE` for the resolution).
+The daemon wires it before
+`createOpencodeServerRuntime`; absent the seam the path is byte-identical.
+The doctor gained `checkDaemonUpstreamKeyExposure`: it reads the DAEMON's own
+`/proc/<pid>/environ` (via the discovery pid) and reports presence only — the
+durable check, replacing the previous proxy that inspected the doctor's own env.
+
+**Tests.** `test/remote-acp-engine.test.ts` — `message` rides a reject and is
+absent on an allow. `test/opencode-server-authority.test.ts` — every
+reason-bearing reject carries in-band feedback. `test/opencode-server-budget-
+enforcement.test.ts` — the crossed-budget reject tells the agent why while the
+read passes. `test/mutation-budget.test.ts` — the env cap parses, defaults, and
+fails closed. `test/application-policy-failure-tracker.test.ts` — an explicit
+cap binds exactly. `test/upstream-key.test.ts` — the secret-store source, the
+absent-secret fail-closed, and the unknown-backend fail-closed.
+`test/doctor.test.ts` — the environ parse is value-blind and the bogus-pid read
+is an honest "cannot measure".
+
+**Residual (dated).** (a) The in-band `message` is source-anchored but not
+live-probe-verified on a real model turn — the v2 PERMISSION probe that emits a
+real `permission.asked` still needs a model key; until then the feedback is
+advisory, not proven surfaced. (b) `checkDaemonUpstreamKeyExposure` reads
+`/proc/<pid>/environ`, which a same-uid process can read but a *different* uid
+cannot — an unreadable environ is reported as "cannot measure" (pass), never a
+false fail; the check is a diagnostic aid, not an authorization gate. (c) The
+configurable cap and the secret-store source are operator/deploy actions: the
+plane must set `WORKFLOW_UPSTREAM_KEY_FROM=azure-kv` (and store the secret) and
+stop riding `WORKFLOW_UPSTREAM_KEY` as a container env, or the exposure persists.
+
+

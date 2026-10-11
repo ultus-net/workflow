@@ -214,6 +214,20 @@ credential materialization stays memory-only through the existing
 azure-kv seam (`src/integrations/key-vault.ts`). Documented, not hidden,
 in §6.
 
+> **Dated correction (2026-10-11, the C1 live-plane hardening F2).** The
+> "model key is never in any env/argv" fact is true of the CONTAINED
+> `opencode serve` (it receives a placeholder), but the DAEMON process was
+> shipped `WORKFLOW_UPSTREAM_KEY` as a container env (a `secretRef`), and the
+> daemon runs as the same uid (1000) as agent tool processes — so the real key
+> was readable at `/proc/<pid>/environ` by any shell the agent ran. That is not
+> memory-only in the uid-shared sense the sentence implies. `workflow doctor`
+> now fails such an environment (`checkUpstreamKeyExposure`), the durable fix is
+> the file/secret-store source (`src/integrations/upstream-key.ts`), and the
+> previously-exposed key should be rotated. The uid-shared `/proc` exposure of
+> any pod process remains bounded only by the pod boundary (residual 1 in the
+> 2026-10-11 `THREAT_MODEL.md` entry). The KV materialization line above is
+> unchanged and remains memory-only.
+
 **Optional hardening (recommended, cheap):** `USER node` in the plane image +
 0600 state dirs; narrows intra-pod read damage. Tracked as a check in task 2,
 operator decides vs `root` (D6).

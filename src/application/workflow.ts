@@ -25,7 +25,7 @@ import { mutationGate, verifyingGate, type CheckpointLedger } from "../pedagogy/
 import { PolicyFailureTracker } from "./policy-failure-tracker.js";
 import { FileClaimLedger } from "./file-claim-ledger.js";
 import { runStepCompletionAdmission, type StepTestEvaluator } from "./admission-gate.js";
-import { MutationBudget } from "./mutation-budget.js";
+import { DEFAULT_MUTATION_BUDGET, MutationBudget } from "./mutation-budget.js";
 
 export interface WorkflowTaskProjection {
   readonly id: TaskId;
@@ -63,7 +63,7 @@ export class WorkflowApplication {
   readonly #skillReads = new Map<string, TaskId>();
   readonly #policyFailures = new PolicyFailureTracker();
   readonly #fileClaims = new FileClaimLedger();
-  readonly #mutationBudget = new MutationBudget();
+  readonly #mutationBudget: MutationBudget;
   // W072 I-9: the optional `tests` rung. Absent by default (the rung is
   // skipped); a composition wires it with `setStepTestEvaluator`. It performs
   // no IO itself and runs only after every cheaper rung passed.
@@ -77,10 +77,17 @@ export class WorkflowApplication {
     readonly workspaceRoot?: string,
     codingSessionCorrelation?: string,
     executionLog?: readonly ExecutionLogEntry[],
+    /**
+     * Per-root mutation cap. Defaults to {@link DEFAULT_MUTATION_BUDGET}; a
+     * deployment wires `mutationBudgetFromEnv()` here (fail-closed parse). An
+     * explicit argument wins over the default, so tests can pin a small cap.
+     */
+    mutationBudgetMax: number = DEFAULT_MUTATION_BUDGET,
   ) {
     if (workspaceRoot !== undefined && !isAbsolute(workspaceRoot)) {
       throw new TypeError("workspace root must be an absolute path");
     }
+    this.#mutationBudget = new MutationBudget(mutationBudgetMax);
     this.#graph = graph;
     this.#capabilities = new Set(allowedCapabilities);
     this.#history.push(...history);
@@ -129,6 +136,28 @@ export class WorkflowApplication {
 
   mutationBudgetRemaining(sessionId: string): number {
     return this.#mutationBudget.remaining(sessionId);
+  }
+
+  /** The configured per-root mutation cap (diagnostics; never a decision input). */
+  mutationBudgetMax(): number {
+    return this.#mutationBudget.max;
+  }
+
+  /**
+   * Explicit reset for the parent-owned mutation budget. An exhausted budget is
+   * otherwise sticky for the life of the session (the observed C1 fault: after a
+   * burst of allowed shell mutations the root's budget hit its cap and every
+   * further MUTATION was denied for the rest of the session — including benign
+   * shell `ls`/`grep`, which are `process`-class and therefore count as
+   * mutations, though a read-capability tool like `read`/`glob`/`grep` does
+   * not). This is the documented operator/session reset path: it clears the
+   * whole root hierarchy (root and its registered descendants share one
+   * counter) and is the ONLY way a budget refills short of a new root session.
+   * It never runs implicitly — an authorization outcome must not silently
+   * un-block a bounded policy.
+   */
+  resetMutationBudget(sessionId: string): void {
+    this.#mutationBudget.clear(sessionId);
   }
 
   /**
@@ -288,7 +317,14 @@ export class WorkflowApplication {
       }
     }
     if (!this.#mutationBudget.consume(action.sessionId)) {
-      return { kind: "deny", code: "MUTATION_BUDGET_EXHAUSTED", reason: `session ${action.sessionId} and its descendants exhausted the mutation budget` };
+      return {
+        kind: "deny",
+        code: "MUTATION_BUDGET_EXHAUSTED",
+        reason:
+          `session ${action.sessionId} and its descendants exhausted the mutation budget ` +
+          `(${this.#mutationBudget.count(action.sessionId)}/${this.#mutationBudget.max} consumed); ` +
+          `an operator/session reset (resetMutationBudget) is required before further mutations`,
+      };
     }
     return { kind: "allow" };
   }

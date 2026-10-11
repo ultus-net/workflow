@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
+import type { SecretStore } from "./credentials.js";
+
 import { SYNTHETIC_KEY_ENV, SYNTHETIC_KEY_FILE, syntheticAuthKeyFromAuth } from "./synthetic-provider.js";
 
 /**
@@ -109,4 +111,60 @@ export function loadUpstreamApiKey(env: NodeJS.ProcessEnv = process.env, home: s
     );
   }
   return apiKey;
+}
+
+/**
+ * The vault secret NAME the azure-kv secret store is read for the upstream key.
+ * Instance-facing naming convention only (the vault value is per-instance); the
+ * default matches the env/file key name so the operator has one mental model.
+ */
+export const UPSTREAM_KEY_SECRET_NAME = "workflow-upstream-key";
+
+// The recognized `WORKFLOW_UPSTREAM_KEY_FROM` backends. `azure-kv` is the
+// deployed-plane Key Vault store; `keyring` is the local D-Bus keyring. Kept as
+// a closed set so a typo fails closed rather than silently selecting nothing.
+const UPSTREAM_KEY_BACKENDS = ["azure-kv", "keyring"] as const;
+
+/**
+ * C1 F2 durable fix: resolve the upstream key from the configured
+ * {@link SecretStore} (Azure Key Vault in the deployed plane) instead of a
+ * uid-shared process environment. The secret-store source participates only
+ * when explicitly requested by `WORKFLOW_UPSTREAM_KEY_FROM=<backend>`; an
+ * unconfigured surface stays byte-identical ({@link loadUpstreamApiKey}: env,
+ * then file).
+ *
+ * The seam is AUTHORITATIVE, not a fallback: when `from` is set the store is
+ * the ONLY source. An env/file key does NOT short-circuit it — otherwise a
+ * lingering uid-shared `WORKFLOW_UPSTREAM_KEY` would silently win and defeat
+ * the F2 fix the seam exists to land. Fail-closed: `from` is a recognized
+ * backend but the secret is absent → throw (never fall back to a uid-shared
+ * env); an unknown backend → throw at parse. The value is never logged.
+ * `storeFor` is injected so the parse/source is testable without a live vault.
+ */
+export function loadUpstreamApiKeyFromSecretStore(options: {
+  readonly env?: NodeJS.ProcessEnv | undefined;
+  /** Resolves the named backend; the injected seam (defaults to ambient selection). */
+  readonly storeFor: (backend: string) => SecretStore;
+}): Promise<string> {
+  const env = options.env ?? process.env;
+  const from = (env.WORKFLOW_UPSTREAM_KEY_FROM ?? "").trim();
+  if (from === "") return Promise.resolve(loadUpstreamApiKey(env));
+  if (!(UPSTREAM_KEY_BACKENDS as readonly string[]).includes(from)) {
+    return Promise.reject(
+      new TypeError(`WORKFLOW_UPSTREAM_KEY_FROM '${from}' is not a known backend (expected "azure-kv" or "keyring")`),
+    );
+  }
+  // The store is authoritative when the seam is set. A missing secret throws
+  // rather than degrading to a uid-shared environment (the exact leak the seam
+  // exists to close).
+  return options.storeFor(from).get(UPSTREAM_KEY_SECRET_NAME).then((value) => {
+    const trimmed = (value ?? "").trim();
+    if (trimmed.length === 0) {
+      throw new Error(
+        `the ${from} secret store has no '${UPSTREAM_KEY_SECRET_NAME}' secret (WORKFLOW_UPSTREAM_KEY_FROM=${from}); ` +
+          "store the upstream key there or unset the FROM seam to use env/file",
+      );
+    }
+    return trimmed;
+  });
 }

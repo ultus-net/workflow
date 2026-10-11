@@ -32,6 +32,19 @@ export interface OpencodeServerDiscovery {
    * plan §2.b/§4 task 3.1).
    */
   readonly boundaryKind?: BoundaryKind;
+  /**
+   * C1 F1: the GATEWAY's own route-matrix posture (`advisory`/`enforced`),
+   * resolved from `WORKFLOW_OPENCODE_ENFORCEMENT` at daemon startup. This is a
+   * DISTINCT axis from any `enforced` label the hub's authority
+   * (`WorkflowApplication` host capability / `authoritativePreMutation`) reports
+   * on the snapshot: that one names the hub broker answering pre-mutation, this
+   * one names whether the gateway intercepts non-forward routes. They must
+   * never be conflated (the C1 F1 fault: a 404 on `POST /api/config` — advisory
+   * route matrix — sat beside a snapshot `enforcementLevel: "enforced"` — hub
+   * authority axis). Absent on the ambient loopback daemon (no plane posture to
+   * report), so a pre-F1 discovery file stays valid.
+   */
+  readonly gatewayPosture?: "advisory" | "enforced";
 }
 
 /**
@@ -110,6 +123,7 @@ export function readOpencodeServerDiscovery(path: string): OpencodeServerDiscove
       tuiPassword: value.tuiPassword,
       ...(typeof value.version === "string" ? { version: value.version } : {}),
       ...(value.boundaryKind === "bwrap" || value.boundaryKind === "container-boundary" ? { boundaryKind: value.boundaryKind } : {}),
+      ...(value.gatewayPosture === "advisory" || value.gatewayPosture === "enforced" ? { gatewayPosture: value.gatewayPosture } : {}),
     };
   } catch {
     return undefined;

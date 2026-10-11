@@ -11,6 +11,9 @@ import {
   checkAgentCredentials,
   checkProbeVerdicts,
   checkContainment,
+  checkUpstreamKeyExposure,
+  readProcessUpstreamKeyExposure,
+  parseUpstreamKeysFromEnviron,
   renderDoctorReport,
 } from "../src/cli/doctor.js";
 import { opencodeServerDiscoveryPath } from "../src/integrations/opencode-server-discovery.js";
@@ -213,4 +216,61 @@ test("doctor: the report renders icons, fixes, and never truncates a failure", (
   assert.match(report, / {6}fix: start it/);
   assert.match(report, /✗ c: broken/);
   assert.match(report, / {6}fix: fix it/);
+});
+
+test("doctor (C1 F2): a uid-shared plane upstream key in the process environment fails, and the value is never printed", () => {
+  const clean = checkUpstreamKeyExposure({} as NodeJS.ProcessEnv);
+  assert.equal(clean.status, "pass");
+
+  // Off the plane the env is the operator's own process — a documented source,
+  // not a uid-shared leak.
+  const offPlane = checkUpstreamKeyExposure({ WORKFLOW_UPSTREAM_KEY: "sk-or-v1-supersecretvalue" } as NodeJS.ProcessEnv);
+  assert.equal(offPlane.status, "pass");
+  assert.match(offPlane.detail, /not a uid-shared plane/);
+
+  // On the plane (WORKFLOW_PLANE=1) the same env is readable by any same-uid
+  // agent tool process — a fail with the seam fix and the rotation action.
+  const leaked = checkUpstreamKeyExposure({ WORKFLOW_PLANE: "1", WORKFLOW_UPSTREAM_KEY: "sk-or-v1-supersecretvalue" } as NodeJS.ProcessEnv);
+  assert.equal(leaked.status, "fail");
+  assert.match(leaked.detail, /WORKFLOW_UPSTREAM_KEY/);
+  assert.match(leaked.detail, /\/proc\/<pid>\/environ/);
+  assert.match(leaked.fix ?? "", /rotate it/);
+  // The check must never echo the secret it is warning about.
+  assert.doesNotMatch(leaked.detail, /supersecretvalue/);
+  assert.doesNotMatch(leaked.fix ?? "", /supersecretvalue/);
+});
+
+test("doctor (C1 F2 durable): the daemon /proc environ scan reports presence only, never the value", () => {
+  // Reading the CURRENT process's own environ is a real /proc read (Linux) and
+  // exercises the NUL-separated parse end to end. Assert against ground truth
+  // from this process's own env rather than assuming it is keyless (a keyed CI
+  // or operator shell would otherwise make this brittle).
+  const expected = ["WORKFLOW_UPSTREAM_KEY", "CLINE_API_KEY"].filter(
+    (key) => (process.env[key] ?? "").trim().length > 0,
+  );
+  const scanned = readProcessUpstreamKeyExposure(process.pid);
+  // On Linux the read succeeds; off-Linux it is an honest `undefined`
+  // ("cannot measure"). Only assert the exact set when /proc is available.
+  if (process.platform === "linux") {
+    assert.deepEqual(scanned, expected.length > 0 ? expected : undefined);
+    // The scan returns NAMES only, so a value can never be echoed.
+    assert.doesNotMatch((scanned ?? []).join(","), /=/);
+  }
+
+  // A bogus pid (unreadable environ) is an honest "cannot measure", never a fail.
+  assert.equal(readProcessUpstreamKeyExposure(0), undefined);
+  assert.equal(readProcessUpstreamKeyExposure(-1), undefined);
+});
+
+test("doctor (C1 F2 durable): the environ parser reports key NAMES only", () => {
+  // The NUL-separated block a real /proc/<pid>/environ carries.
+  const block = ["PATH=/usr/bin", "WORKFLOW_UPSTREAM_KEY=sk-or-v1-donotprint", "CLINE_API_KEY=legacy-donotprint", "HOME=/root"].join("\0");
+  const found = parseUpstreamKeysFromEnviron(block);
+  assert.deepEqual(found, ["WORKFLOW_UPSTREAM_KEY", "CLINE_API_KEY"]);
+  // The parse returns names, so a value can never be echoed by a caller.
+  assert.doesNotMatch(found.join(","), /donotprint/);
+  // A block with no upstream key names yields nothing.
+  assert.equal(parseUpstreamKeysFromEnviron("PATH=/usr/bin\0HOME=/root"), undefined);
+  // A blank value still counts as PRESENCE (a uid-shared env holds the key).
+  assert.deepEqual(parseUpstreamKeysFromEnviron("WORKFLOW_UPSTREAM_KEY="), ["WORKFLOW_UPSTREAM_KEY"]);
 });

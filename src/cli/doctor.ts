@@ -52,6 +52,12 @@ export interface DoctorOptions {
   readonly fetchImpl?: typeof fetch | undefined;
   /** W086 test seam: the package root holding `assets/opencode-fleet` (defaults to this install). */
   readonly root?: string | undefined;
+  /**
+   * C1 F2 test seam: the environment inspected for a uid-shared upstream-key
+   * leak. Defaults to `process.env`; a scoped value lets the check be pinned
+   * without touching the operator's real environment.
+   */
+  readonly env?: NodeJS.ProcessEnv | undefined;
 }
 
 const PASS = "✓";
@@ -343,6 +349,8 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<readonly D
   const checks: DoctorCheck[] = [];
   checks.push(checkSettingsDocs(options));
   checks.push(...checkAgentCredentials());
+  checks.push(checkUpstreamKeyExposure(options.env ?? process.env));
+  checks.push(checkDaemonUpstreamKeyExposure(options));
   checks.push(await checkHub(options));
   checks.push(await checkTopologyGateway(options));
   checks.push(checkContainment());
@@ -350,6 +358,130 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<readonly D
   checks.push(checkFleetPayload(options));
   checks.push(checkGuardPosture(options));
   return checks;
+}
+
+/**
+ * C1 F2: fail when the real upstream key rides a uid-shared process
+ * environment. In the plane, `opencode-server` and every agent tool process run
+ * as the same uid (1000), so a `WORKFLOW_UPSTREAM_KEY`/`CLINE_API_KEY` in the
+ * process environment is readable at `/proc/<pid>/environ` by any shell the
+ * agent runs — defeating the placeholder discipline (the agent's own env only
+ * gets the placeholder). The value itself is NEVER printed; the check reports
+ * only presence, so a doctor run cannot leak the secret it is warning about.
+ * Note: this is a plain env check, so it is meaningful on the plane (where the
+ * uid boundary is shared) and informational locally (where the ambient key
+ * file is the intended source). The durable fix is the file/secret-store seam
+ * (`upstream-key.ts`), never a uid-shared env.
+ */
+export function checkUpstreamKeyExposure(env: NodeJS.ProcessEnv): DoctorCheck {
+  const name = "upstream key exposure";
+  const present = ["WORKFLOW_UPSTREAM_KEY", "CLINE_API_KEY"].filter(
+    (key) => (env[key] ?? "").trim().length > 0,
+  );
+  // Off the plane, the env is a documented key source and the process is the
+  // operator's own; env presence is not a leak. The exposure is specific to the
+  // plane's uid-shared pod (agent tool processes run as the same uid as the
+  // daemon), so only plane mode (WORKFLOW_PLANE=1) converts presence to a fail.
+  if (present.length === 0) {
+    return { name, status: "pass", detail: "no upstream key in the process environment (file/secret-store seam or unset)" };
+  }
+  if ((env.WORKFLOW_PLANE ?? "").trim() !== "1") {
+    return {
+      name,
+      status: "pass",
+      detail: `upstream key in the process environment (${present.join(", ")}) — the operator's own process, not a uid-shared plane; file/secret-store seam preferred`,
+    };
+  }
+  return {
+    name,
+    status: "fail",
+    detail:
+      `upstream key present in the uid-shared plane process environment (${present.join(", ")}) — readable at /proc/<pid>/environ by any same-uid agent tool process`,
+    fix:
+      "source the key through the file/secret-store seam (WORKFLOW_UPSTREAM_KEY unset; ~/.config/workflow/upstream-key or WORKFLOW_UPSTREAM_KEY_FROM=azure-kv) so it never enters a uid-shared environment; if the real key rode this env, rotate it",
+  };
+}
+
+/**
+ * C1 F2 durable fix: the DOCTOR normally inspects its OWN `process.env`, but the
+ * exposure it warns about is the DAEMON's (`workflow-opencode-server`) uid-shared
+ * environment, readable at `/proc/<pid>/environ`. This scans the discovery file
+ * for the daemon pid and reads its environ directly, so the check measures the
+ * real surface rather than a proxy. It complements {@link checkUpstreamKeyExposure}
+ * (which still guards the doctor's own process). Presence only — a value is
+ * never read past the key name, so the check cannot leak what it warns about.
+ * Returns undefined when there is no daemon discovery, no readable environ, or
+ * the key is absent (nothing to flag).
+ */
+export function checkDaemonUpstreamKeyExposure(options: DoctorOptions = {}): DoctorCheck {
+  const name = "daemon upstream key exposure";
+  const workspace = options.workspace ?? process.cwd();
+  const stateHome = opencodeServerStateHome(
+    process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(options.home ?? homedir(), ".workflow", "opencode-server"),
+    process.env[WORKFLOW_PLANE_REVISION_ENV],
+  );
+  const discovery = readOpencodeServerDiscovery(opencodeServerDiscoveryPath(stateHome, workspace));
+  if (discovery === undefined) {
+    return {
+      name,
+      status: "pass",
+      detail: "no topology daemon for this workspace — nothing to scan (start `workflow tui`/the hub to run one)",
+    };
+  }
+  const exposure = readProcessUpstreamKeyExposure(discovery.pid);
+  if (exposure === undefined) {
+    return {
+      name,
+      status: "pass",
+      detail: `daemon pid ${discovery.pid} environment not readable or carries no upstream key (file/secret-store seam)`,
+    };
+  }
+  if ((process.env.WORKFLOW_PLANE ?? "").trim() !== "1") {
+    return {
+      name,
+      status: "pass",
+      detail: `daemon pid ${discovery.pid} carries ${exposure.join(", ")} in its environment — not a uid-shared plane; file/secret-store seam preferred`,
+    };
+  }
+  return {
+    name,
+    status: "fail",
+    detail:
+      `daemon pid ${discovery.pid} carries ${exposure.join(", ")} in its environment — readable at /proc/${discovery.pid}/environ by any same-uid agent tool process`,
+    fix:
+      "source the key through the file/secret-store seam (WORKFLOW_UPSTREAM_KEY unset; WORKFLOW_UPSTREAM_KEY_FROM=azure-kv) and restart the daemon so the key never enters a uid-shared environment; if the real key rode this env, rotate it",
+  };
+}
+
+/**
+ * Reads `/proc/<pid>/environ` and reports which upstream-key names are PRESENT.
+ * Returns undefined when the file is unreadable (a different uid, or non-Linux),
+ * so an unreadable map is an honest "cannot measure" rather than a false pass
+ * or fail. Only names are returned; the split-difference is never logged.
+ */
+export function readProcessUpstreamKeyExposure(pid: number): readonly string[] | undefined {
+  if (!Number.isInteger(pid) || pid <= 0) return undefined;
+  let raw: string;
+  try {
+    // The env block is NUL-separated and may be re-read as slurped text; a
+    // partial read (the process rewrote its env concurrently) still parses.
+    raw = readFileSync(`/proc/${pid}/environ`, "utf8");
+  } catch {
+    return undefined;
+  }
+  return parseUpstreamKeysFromEnviron(raw);
+}
+
+/** The pure environ parse: which upstream-key NAMES are present (value-blind). */
+export function parseUpstreamKeysFromEnviron(raw: string): readonly string[] | undefined {
+  const keys = new Set<string>();
+  for (const entry of raw.split("\0")) {
+    const eq = entry.indexOf("=");
+    if (eq <= 0) continue;
+    const key = entry.slice(0, eq);
+    if (key === "WORKFLOW_UPSTREAM_KEY" || key === "CLINE_API_KEY") keys.add(key);
+  }
+  return keys.size > 0 ? [...keys] : undefined;
 }
 
 export function renderDoctorReport(checks: readonly DoctorCheck[]): string {

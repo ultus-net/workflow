@@ -1,10 +1,16 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import {
   opencodeServerDiscoveryPath,
   opencodeServerStateHome,
+  readOpencodeServerDiscovery,
+  writeOpencodeServerDiscovery,
   WORKFLOW_PLANE_REVISION_ENV,
+  type OpencodeServerDiscovery,
 } from "../src/integrations/opencode-server-discovery.js";
 
 /**
@@ -65,4 +71,31 @@ test("opencodeServerStateHome scopes the discovery path consistently with the st
 
 test("the revision env var name follows the WORKFLOW_PLANE_* convention", () => {
   assert.equal(WORKFLOW_PLANE_REVISION_ENV, "WORKFLOW_PLANE_REVISION");
+});
+
+test("discovery round-trips the distinct gateway posture and rejects an unknown value (C1 F1)", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-discovery-posture-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const path = join(dir, "discovery.json");
+  const base: OpencodeServerDiscovery = {
+    protocol: 1,
+    pid: 1234,
+    workspace: "/workspace",
+    gatewayUrl: "http://127.0.0.1:4096",
+    tuiUsername: "opencode",
+    tuiPassword: "pw",
+  };
+  writeOpencodeServerDiscovery(path, { ...base, gatewayPosture: "enforced" });
+  assert.equal(readOpencodeServerDiscovery(path)?.gatewayPosture, "enforced");
+
+  // An unrecognized posture is dropped (never surfaced as a claim), leaving the
+  // rest of the discovery record intact.
+  writeFileSync(path, JSON.stringify({ ...base, gatewayPosture: "maybe" }));
+  const read = readOpencodeServerDiscovery(path);
+  assert.equal(read?.gatewayPosture, undefined);
+  assert.equal(read?.gatewayUrl, base.gatewayUrl);
+
+  // The pre-F1 shape (no posture) stays valid.
+  writeFileSync(path, JSON.stringify(base));
+  assert.equal(readOpencodeServerDiscovery(path)?.gatewayPosture, undefined);
 });

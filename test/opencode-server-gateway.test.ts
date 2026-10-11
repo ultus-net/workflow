@@ -500,6 +500,47 @@ test("W071 gateway (advisory mode): without a broker hook, replies pass through 
   assert.equal(upstream.requests.some((entry) => entry.path.startsWith("/api/session")), true);
 });
 
+test("W071 gateway (C1): the workflow authority inspection read is served from the broker journal, never forwarded", async (t) => {
+  const upstream = await stubUpstream();
+  t.after(() => void upstream.close());
+  const gateway = await createOpencodeServerGateway({
+    upstream: upstream.url,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    authorityJournal: () => ({
+      gatewayPosture: "advisory",
+      decisions: [{ tool: "shell", decision: "deny", reason: "session s and its descendants exhausted the mutation budget" }],
+    }),
+  });
+  t.after(() => void gateway.close());
+
+  const ok = await fetch(gateway.url + "/api/workflow/authority", {
+    headers: { authorization: basic("opencode", "tuipw") },
+  });
+  assert.equal(ok.status, 200);
+  const body = await ok.json() as { gatewayPosture: string; decisions: unknown[] };
+  // The posture is the GATEWAY's route-matrix axis, distinct from the hub's
+  // authority axis (C1 F1 conflation fix).
+  assert.equal(body.gatewayPosture, "advisory");
+  assert.match(JSON.stringify(body.decisions), /exhausted the mutation budget/);
+  // The route does not exist on stock OpenCode: it must never reach upstream.
+  assert.equal(upstream.requests.some((entry) => entry.path.startsWith("/api/workflow")), false);
+
+  // A write verb on the Workflow-owned route fails closed.
+  const write = await fetch(gateway.url + "/api/workflow/authority", {
+    method: "POST",
+    headers: { authorization: basic("opencode", "tuipw"), "content-type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  assert.equal(write.status, 403);
+  assert.equal(upstream.requests.some((entry) => entry.path.startsWith("/api/workflow")), false);
+
+  // Unauthenticated stays rejected.
+  const anon = await fetch(gateway.url + "/api/workflow/authority");
+  assert.equal(anon.status, 401);
+});
+
 test("W071 gateway: percent-encoded reply routes cannot dodge interception (review P1-2)", async (t) => {
   const upstream = await stubUpstream();
   t.after(() => void upstream.close());

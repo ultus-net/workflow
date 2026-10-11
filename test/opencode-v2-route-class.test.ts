@@ -96,6 +96,12 @@ const cases: readonly {
   { name: "a POST on the app shell is not a read and fails closed", method: "POST", path: "/", routeClass: "unknown", disposition: "deny" },
   { name: "a root-level file outside the allowlist is not implicit app-shell", method: "GET", path: "/random.js", routeClass: "unknown", disposition: "deny" },
   { name: "a dot segment through an asset path fails closed", method: "GET", path: "/_assets/../config", routeClass: "unknown", disposition: "deny" },
+  // C1 observability: Workflow's own authority-inspection read. GET is answered
+  // by Workflow (never forwarded upstream — the route is not on stock OpenCode);
+  // any other verb fails closed.
+  { name: "the workflow authority inspection read is answered by Workflow", method: "GET", path: "/api/workflow/authority", routeClass: "workflow-inspection", disposition: "workflow" },
+  { name: "a write on the workflow authority route fails closed", method: "POST", path: "/api/workflow/authority", routeClass: "workflow-inspection", disposition: "deny" },
+  { name: "a delete on the workflow authority route fails closed", method: "DELETE", path: "/api/workflow/authority", routeClass: "workflow-inspection", disposition: "deny" },
 ];
 
 for (const entry of cases) {

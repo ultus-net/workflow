@@ -21,6 +21,7 @@ export type OpenCodeV2RouteClass =
   | "mcp-config-mutation"
   | "pty"
   | "app-shell"
+  | "workflow-inspection"
   | "unknown";
 
 /**
@@ -28,10 +29,12 @@ export type OpenCodeV2RouteClass =
  * - `forward` — proxy to the upstream under the hub credential.
  * - `broker`  — Workflow's broker owns the decision; never forward the client
  *               reply upstream as a client credential.
+ * - `workflow` — Workflow answers the request itself (its own inspection
+ *               surface); never forwarded upstream, under any method.
  * - `deny`    — refuse the client outright (fail closed). The operation must
  *               cross Workflow authorization through a qualified path instead.
  */
-export type OpenCodeV2RouteDisposition = "forward" | "broker" | "deny";
+export type OpenCodeV2RouteDisposition = "forward" | "broker" | "workflow" | "deny";
 
 export interface OpenCodeV2RouteQualification {
   readonly routeClass: OpenCodeV2RouteClass;
@@ -41,6 +44,15 @@ export interface OpenCodeV2RouteQualification {
 /** The broker-owned permission reply route. Shared with the gateway. */
 export const OPENCODE_V2_PERMISSION_REPLY_ROUTE =
   /^\/api\/session\/([^/]+)\/permission\/([^/]+)\/reply$/;
+
+/**
+ * The Workflow-owned authority-inspection read route (C1 observability). It does
+ * not exist on the stock OpenCode server: the gateway answers it from its own
+ * broker journal, so an operator/agent can read WHY a systemic session denial
+ * happened without `az containerapp logs`. GET is the Workflow-read
+ * disposition; any other verb fails closed (a mutation method on it denies).
+ */
+export const OPENCODE_V2_WORKFLOW_AUTHORITY_ROUTE = "/api/workflow/authority";
 
 const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -178,6 +190,14 @@ export function qualifyOpenCodeV2Route(
   // it must never be forwarded under the hub credential regardless of method.
   if (OPENCODE_V2_PERMISSION_REPLY_ROUTE.test(path)) {
     return { routeClass: "permission-authority", disposition: "broker" };
+  }
+  // The Workflow authority-inspection read is answered BY Workflow for GET
+  // (the gateway serves its broker journal); any other verb fails closed. It is
+  // never forwarded upstream — the route does not exist on stock OpenCode.
+  if (path === OPENCODE_V2_WORKFLOW_AUTHORITY_ROUTE) {
+    return normalized === "GET"
+      ? { routeClass: "workflow-inspection", disposition: "workflow" }
+      : { routeClass: "workflow-inspection", disposition: "deny" };
   }
   if (READ_METHODS.has(normalized)) {
     // The stock v2 web UI's static surface (W074a, deliberate §2.5 row): the

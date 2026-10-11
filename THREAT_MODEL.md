@@ -367,3 +367,108 @@ container-boundary backend (plan task 1) and the worker image (task 5).
    (task 7) are UNRUN, so no live posture is claimed for the fleet; the
    interception story for a dispatched job is deliberately evidence + the
    human merge gate, not enforcement (spec §6).
+
+## 2026-10-11 — C1 live-plane hardening (authority denial fault + F1/F2/F3)
+
+A live agent session running inside the deployed plane surfaced a systemic
+authorization fault and three configuration gaps. Diagnosis came from the
+container console log (`az containerapp logs show … --container plane`), whose
+deny line is ground truth: the session was `ses_ed75ecb8fffeTgcPcBxOLlwtNI` and
+the exact reason was
+
+```text
+[auth] deny shell reason=session ses_ed75ecb8fffeTgcPcBxOLlwtNI and its descendants exhausted the mutation budget
+```
+
+i.e. **`MUTATION_BUDGET_EXHAUSTED`** — the parent-owned `MutationBudget`
+(default cap 100) counts every ALLOWED `process`-capability action (any shell
+command, including a benign `ls`/`grep` run through the shell), and once the
+root's cap is consumed every further MUTATION is denied for the life of the
+session. It is NOT the policy circuit breaker (no `POLICY_CIRCUIT_BREAKER` line
+appeared) and NOT a guard ask-in-auto-resolve (no `guard ask …` line appeared).
+
+1. **Mutation-budget exhaustion is sticky and was invisible off-log (C1 fault).**
+   What is claimed now: the deny reason carries the `consumed/max` bound and
+   names the reset seam (`resetMutationBudget`), it is queryable over the wire at
+   the Workflow-owned read route `GET /api/workflow/authority` (served by the
+   gateway from the broker journal, never forwarded upstream), and a denied
+   mutation provably does not deny a subsequent unrelated READ in the same
+   session (`read`/`glob`/`grep` are `read`-capability and never consume the
+   budget). What is NOT claimed: any automatic refill — the budget stays a
+   bounded, fail-closed policy that refills only via an explicit operator/session
+   reset or a new root session. Two contributory observability confusions are
+   fixed: the cosmetic "operator reply observed in auto-resolve mode" records are
+   now journaled as `observe`, not `deny` (they were 200+ records that read like
+   mass "the user declined this tool call"), and the gateway's route-matrix
+   posture is now a distinct reported axis from the hub's authority axis (F1).
+
+2. **The gateway posture and the hub authority axis were conflated (F1).** The
+   plane shipped with `WORKFLOW_OPENCODE_ENFORCEMENT` unset, so the gateway ran
+   the ADVISORY route matrix (a non-forward route returned 404, not the enforced
+   403), while the hub snapshot reported `enforcementLevel: "enforced"` from its
+   OWN authority host-capability axis. These are two different claims. The
+   gateway posture is now carried in the discovery record (`gatewayPosture`) and
+   in the authority-journal payload, distinct from the hub's snapshot axis.
+   What is NOT claimed: that either axis is the intra-pod enforcement boundary —
+   the `enforced` label still means only "pre-mutation interception by the hub
+   broker", never an OS boundary (residual 1 above).
+
+3. **A real upstream key rode a uid-shared process environment (F2).** The plane
+   injected `WORKFLOW_UPSTREAM_KEY` as a container env (a `secretRef`), and
+   `opencode-server` runs as the same uid (1000) as agent tool processes, so any
+   shell the agent runs can read the key at `/proc/<pid>/environ` — defeating
+   the placeholder discipline. The C1 docs' "memory-only" claim was never true of
+   a container env injected into a uid-shared process. What is implemented: the
+   doctor now fails (`checkUpstreamKeyExposure`) when the key is present in the
+   process environment and names the file/secret-store seam and the rotation
+   action, printing presence only (never the value). What is NOT claimed: that
+   the deployment has been switched to the file seam — that is an operator
+   action, and the previously-exposed key should be treated as compromised and
+   rotated. The uid-shared `/proc` exposure of any pod process remains residual 1.
+
+4. **Session-budget caps were unset (F3).** `WORKFLOW_SESSION_BUDGET_*` were
+   absent, so the budget/downgrade lanes could not be exercised. The crossing
+   path (env caps → watcher → broker deny, malformed-value fail-closed) is now
+   pinned; wiring explicit caps into the instance remains an operator action and
+   is NOT claimed done here.
+
+None of this changes any `advisory`/`enforced` posture: the live PERMISSION/RULE
+probes remain the gate for any `enforced` pod label.
+
+### 2026-10-11 follow-up — talking to the agent, the configurable cap, the Key Vault source
+
+Three follow-ups landed on the same branch, each narrowing one of the gaps above.
+They change no posture claim; they are appended as dated dispositions.
+
+1. **The denial is now communicated to the agent, not only logged (the decisive
+   gap).** Had the exhaustion been told to the model it could have adapted. The
+   broker now attaches the deny reason as the v2 reply `message`, which the server
+   turns into a `CorrectedError` the model sees ("The user rejected permission …
+   with the following feedback: …"). So a rejected mutation reads `Workflow denied
+   'edit': session … exhausted the mutation budget (100/100 consumed); an
+   operator/session reset (resetMutationBudget) is required …`. Bounded 200 chars;
+   allows carry no message. What is NOT claimed: the in-band message is
+   source-anchored on the pinned v2 but NOT live-probe-verified on a real model
+   turn (the v2 PERMISSION probe still needs a model key), so it is advisory until
+   that probe runs.
+
+2. **The mutation cap is operator-configurable (`WORKFLOW_MUTATION_BUDGET`).** The
+   parse is fail-closed (a non-positive-integer throws; unset keeps the default
+   100), wired through `WorkflowApplication`'s constructor. This is the operator
+   lever for a legitimately long session; it is explicitly NOT an auto-refill, and
+   the budget remains a bounded fail-closed policy.
+
+3. **The upstream key can be sourced from the secret store (F2 durable).**
+   `WORKFLOW_UPSTREAM_KEY_FROM=azure-kv` resolves the key from the W156
+   `SecretStore` (Key Vault via managed identity) instead of a container env;
+   the seam is authoritative, so a lingering env/file key does NOT win, a
+   named-but-absent vault secret throws
+   fail-closed, and an unknown backend throws at parse. The doctor gained a
+   durable check (`checkDaemonUpstreamKeyExposure`) that reads the DAEMON's own
+   `/proc/<pid>/environ` and reports presence only, replacing the previous proxy
+   that inspected the doctor's own environment. What is NOT claimed: the
+   deployment has been switched — `WORKFLOW_UPSTREAM_KEY` unset plus the secret
+   stored in the vault and the seam set is still an operator action, and the
+   previously-exposed key should be rotated. An unreadable environ is reported as
+   "cannot measure" (pass), never a false fail — it is a diagnostic aid, not a
+   gate.

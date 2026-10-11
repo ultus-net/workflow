@@ -7,8 +7,10 @@ import test from "node:test";
 import {
   UPSTREAM_KEY_ENV,
   LEGACY_UPSTREAM_KEY_ENV,
+  UPSTREAM_KEY_SECRET_NAME,
   legacyUpstreamKeyFilePath,
   loadUpstreamApiKey,
+  loadUpstreamApiKeyFromSecretStore,
   readUpstreamKeyFile,
   readWorkflowKeyFile,
   syntheticKeyPresent,
@@ -17,6 +19,7 @@ import {
   upstreamKeyPresent,
 } from "../src/integrations/upstream-key.js";
 import { SYNTHETIC_KEY_FILE, SYNTHETIC_KEY_ENV } from "../src/integrations/synthetic-provider.js";
+import type { SecretStore } from "../src/integrations/credentials.js";
 
 function withHome(files: { canonical?: string; legacy?: string }): { home: string; cleanup: () => void } {
   const home = mkdtempSync(join(tmpdir(), "wf-upstream-key-"));
@@ -112,4 +115,84 @@ test("syntheticKeyPresent resolves env, then the auth-store key, then the key fi
   } finally {
     withFile.cleanup();
   }
+});
+
+/** A minimal in-memory SecretStore double (the azure-kv port). */
+function fakeStore(secrets: Record<string, string>): SecretStore {
+  return {
+    has: async (id) => secrets[id] !== undefined,
+    get: async (id) => secrets[id],
+    put: async () => undefined,
+    delete: async () => undefined,
+  };
+}
+
+test("C1 F2: the upstream key can be sourced from a secret store, and a named-but-absent secret fails closed", async () => {
+  // Unset seam: byte-identical to loadUpstreamApiKey (env, then file).
+  const home = withHome({});
+  try {
+    const fromEnv = await loadUpstreamApiKeyFromSecretStore({
+      env: { [UPSTREAM_KEY_ENV]: "env-key" } as NodeJS.ProcessEnv,
+      storeFor: () => { throw new Error("store must not be consulted when the seam is unset"); },
+    });
+    assert.equal(fromEnv, "env-key");
+  } finally {
+    home.cleanup();
+  }
+
+  // An explicit store source resolves the vault secret.
+  const vault = withHome({});
+  try {
+    const resolved = await loadUpstreamApiKeyFromSecretStore({
+      env: { WORKFLOW_UPSTREAM_KEY_FROM: "azure-kv" } as NodeJS.ProcessEnv,
+      storeFor: (backend) => {
+        assert.equal(backend, "azure-kv");
+        return fakeStore({ [UPSTREAM_KEY_SECRET_NAME]: "vault-key" });
+      },
+    });
+    assert.equal(resolved, "vault-key");
+  } finally {
+    vault.cleanup();
+  }
+
+  // The seam is AUTHORITATIVE, not a fallback: with it set, a lingering
+  // uid-shared env/file key must NOT win (that would silently defeat the F2
+  // fix). The store is consulted even when the env carries a key.
+  const authoritative = withHome({ canonical: "file-key" });
+  try {
+    const resolved = await loadUpstreamApiKeyFromSecretStore({
+      env: {
+        WORKFLOW_UPSTREAM_KEY_FROM: "azure-kv",
+        [UPSTREAM_KEY_ENV]: "env-key",
+      } as NodeJS.ProcessEnv,
+      storeFor: () => fakeStore({ [UPSTREAM_KEY_SECRET_NAME]: "vault-key" }),
+    });
+    assert.equal(resolved, "vault-key", "the vault is the source, not the env/file");
+  } finally {
+    authoritative.cleanup();
+  }
+
+  // Explicit store source, empty vault: fail closed (never a silent fall back
+  // to a uid-shared environment), even when an env key is present.
+  const emptyVault = withHome({});
+  try {
+    await assert.rejects(
+      loadUpstreamApiKeyFromSecretStore({
+        env: { WORKFLOW_UPSTREAM_KEY_FROM: "azure-kv", [UPSTREAM_KEY_ENV]: "env-key" } as NodeJS.ProcessEnv,
+        storeFor: () => fakeStore({}),
+      }),
+      /no 'workflow-upstream-key' secret/,
+    );
+  } finally {
+    emptyVault.cleanup();
+  }
+
+  // An unknown backend fails closed at parse.
+  await assert.rejects(
+    loadUpstreamApiKeyFromSecretStore({
+      env: { WORKFLOW_UPSTREAM_KEY_FROM: "vault-typo" } as NodeJS.ProcessEnv,
+      storeFor: () => fakeStore({}),
+    }),
+    /not a known backend/,
+  );
 });
