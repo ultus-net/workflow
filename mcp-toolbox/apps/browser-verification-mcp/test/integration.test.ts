@@ -11,13 +11,13 @@ import { pageHash } from "../src/evidence.js";
 import { createBrowserModel, startFakeCdpServer } from "./helpers/fake-cdp.mjs";
 
 /**
- * Cross-product integration: verification-accountability-mcp invokes the real
+ * Cross-product integration: accountability-mcp invokes the real
  * browser-verification-mcp server as its configured browser authority (both
  * from source via tsx), which drives a mock CDP target. This proves the
  * evidence contract between the two products, not just a stubbed authority.
  */
 
-const accountabilityServer = join(process.cwd(), "..", "verification-accountability-mcp", "src", "server.ts");
+const accountabilityServer = join(process.cwd(), "..", "accountability-mcp", "src", "server.ts");
 
 test("verification-accountability admits browser evidence produced by the real browser product", async (t) => {
   const fake = await startFakeCdpServer(createBrowserModel({ url: "https://app.test/", title: "Fixture" }));

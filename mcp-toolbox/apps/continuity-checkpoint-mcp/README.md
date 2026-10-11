@@ -22,9 +22,11 @@ composer does not persist state, resolve review debt, execute tests, choose a
 task, or automatically inject context into an agent session. Those remain the
 responsibility of primitive products or host lifecycle integrations.
 
-The primitive servers remain independently runnable peers. Commands default to
-`review-accountability-mcp`, `verification-accountability-mcp`,
-`project-context-mcp`, and `project-memory-mcp` on `PATH`. Override them with
+The primitive servers remain independently runnable peers. The `REVIEW` and
+`VERIFICATION` commands both default to `accountability-mcp` (the merged
+server, which serves both `list_reviews` and `list_verifications`), while
+`CONTEXT` and `MEMORY` default to `project-context-mcp` and
+`project-memory-mcp` on `PATH`. Override them with
 `CONTINUITY_CHECKPOINT_REVIEW_COMMAND`, `CONTINUITY_CHECKPOINT_VERIFICATION_COMMAND`,
 `CONTINUITY_CHECKPOINT_CONTEXT_COMMAND`, and `CONTINUITY_CHECKPOINT_MEMORY_COMMAND`.
 Corresponding `_ARGS` variables accept JSON arrays of command arguments.

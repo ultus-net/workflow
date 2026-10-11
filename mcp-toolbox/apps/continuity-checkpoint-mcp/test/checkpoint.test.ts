@@ -28,14 +28,14 @@ test("preserves source payload provenance and source order when budget is suffic
   const result = await recoverContinuity(
     { workspaceRoot: "/work", memoryQuery: "decision", maxChars: 1000, sourceLimit: 8 },
     port({
-      review: { openFollowUps: [{ id: "f1", provenance: { origin: "review-accountability-mcp/record_review" } }] },
+      review: { openFollowUps: [{ id: "f1", provenance: { origin: "accountability-mcp/record_review" } }] },
       verification: { observations: [{ id: "v1", evidenceClass: "observation" }] },
       context: { candidates: [{ path: "TODO.md", trust: "untrusted_repository_content" }] },
       memory: { records: [{ id: "m1", evidenceClass: "assertion" }] },
     }),
   );
   assert.deepEqual(result.sourceOrder, ["review", "verification", "project_context", "project_memory"]);
-  assert.match(result.context, /review-accountability-mcp\/record_review/);
+  assert.match(result.context, /accountability-mcp\/record_review/);
   assert.match(result.context, /"evidenceClass":"observation"/);
   assert.match(result.context, /"trust":"untrusted_repository_content"/);
   assert.match(result.context, /"evidenceClass":"assertion"/);

@@ -9,7 +9,7 @@ import type { Profile } from "./bounds.js";
  * stamp over its canonical body. The stamp is a structure/provenance check,
  * not a truth check and not a signature: page content is untrusted input, and
  * the record is only as trustworthy as the browser/CDP connection that
- * produced it. The shape is what `verification-accountability-mcp` admits as
+ * produced it. The shape is what `accountability-mcp` admits as
  * external evidence (source/observed-by, subject, outcome).
  */
 
@@ -153,7 +153,7 @@ export function verifyEvidenceHash(record: BrowserEvidenceRecord): boolean {
   return hash === record.hash;
 }
 
-/** Subset consumed as external evidence by verification-accountability-mcp. */
+/** Subset consumed as external evidence by accountability-mcp. */
 export function browserEvidenceSummary(record: BrowserEvidenceRecord): {
   capability: string;
   evidenceId: string;

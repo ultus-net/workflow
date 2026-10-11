@@ -26,8 +26,8 @@ class PrimitiveClient {
 }
 
 export function createContinuityPort(): ContinuityPort & { close(): Promise<void> } {
-  const review = client("REVIEW", "review-accountability-mcp");
-  const verification = client("VERIFICATION", "verification-accountability-mcp");
+  const review = client("REVIEW", "accountability-mcp");
+  const verification = client("VERIFICATION", "accountability-mcp");
   const context = client("CONTEXT", "project-context-mcp");
   const memory = client("MEMORY", "project-memory-mcp");
   return {
