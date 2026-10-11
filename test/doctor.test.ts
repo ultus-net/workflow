@@ -12,6 +12,8 @@ import {
   checkProbeVerdicts,
   checkContainment,
   checkUpstreamKeyExposure,
+  readProcessUpstreamKeyExposure,
+  parseUpstreamKeysFromEnviron,
   renderDoctorReport,
 } from "../src/cli/doctor.js";
 import { opencodeServerDiscoveryPath } from "../src/integrations/opencode-server-discovery.js";
@@ -236,4 +238,28 @@ test("doctor (C1 F2): a uid-shared plane upstream key in the process environment
   // The check must never echo the secret it is warning about.
   assert.doesNotMatch(leaked.detail, /supersecretvalue/);
   assert.doesNotMatch(leaked.fix ?? "", /supersecretvalue/);
+});
+
+test("doctor (C1 F2 durable): the daemon /proc environ scan reports presence only, never the value", () => {
+  // Reading the CURRENT process's own environ is a real /proc read (Linux) and
+  // exercises the NUL-separated parse end to end. The current process has no
+  // upstream key in its env here, so the scan finds nothing.
+  assert.equal(readProcessUpstreamKeyExposure(process.pid), undefined, "no upstream key in this process environment");
+
+  // A bogus pid (unreadable environ) is an honest "cannot measure", never a fail.
+  assert.equal(readProcessUpstreamKeyExposure(0), undefined);
+  assert.equal(readProcessUpstreamKeyExposure(-1), undefined);
+});
+
+test("doctor (C1 F2 durable): the environ parser reports key NAMES only", () => {
+  // The NUL-separated block a real /proc/<pid>/environ carries.
+  const block = ["PATH=/usr/bin", "WORKFLOW_UPSTREAM_KEY=sk-or-v1-donotprint", "CLINE_API_KEY=legacy-donotprint", "HOME=/root"].join("\0");
+  const found = parseUpstreamKeysFromEnviron(block);
+  assert.deepEqual(found, ["WORKFLOW_UPSTREAM_KEY", "CLINE_API_KEY"]);
+  // The parse returns names, so a value can never be echoed by a caller.
+  assert.doesNotMatch(found.join(","), /donotprint/);
+  // A block with no upstream key names yields nothing.
+  assert.equal(parseUpstreamKeysFromEnviron("PATH=/usr/bin\0HOME=/root"), undefined);
+  // A blank value still counts as PRESENCE (a uid-shared env holds the key).
+  assert.deepEqual(parseUpstreamKeysFromEnviron("WORKFLOW_UPSTREAM_KEY="), ["WORKFLOW_UPSTREAM_KEY"]);
 });
