@@ -72,7 +72,7 @@ export const FEATURE_SURVEY: readonly FeatureSurvey[] = [
     sdkEvidence:
       "experimental/tasks: ToolTaskHandler, TaskStore, InMemoryTaskStore, server.experimental.tasks.registerToolTask, tasks/get|list|cancel and notifications/tasks/status.",
     toolboxDisposition:
-      "Adopted for one long-running lifecycle tool in verification-accountability-mcp; progress is visible through task status and existing logging notifications.",
+      "Adopted for one long-running lifecycle tool in accountability-mcp; progress is visible through task status and existing logging notifications.",
   },
   {
     id: "mrtr",

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import {
@@ -13,6 +13,7 @@ import {
   type EgressReachInput,
   type EgressRejectInput,
 } from "../src/integrations/egress-audit-client.js";
+import { EGRESS_TOKEN_CLASSES } from "../src/integrations/egress-ledger.js";
 import type { EgressObservation } from "../src/integrations/model-usage-proxy.js";
 
 const reach: EgressObservation = {
@@ -49,14 +50,12 @@ test("W181 A5: the mapper forwards reaches and rejects to their distinct ledger 
   assert.equal(egressReachInput(reject), undefined);
 });
 
-test("W181 A5: the proxy token-class vocabulary matches the egress-audit-mcp ledger's, pinned at the package boundary", () => {
-  // src/ must not import mcp-toolbox/, so the two closed sets are redeclared;
-  // this source-level pin fails the moment they drift.
-  const ledgerSource = readFileSync(resolve("mcp-toolbox/apps/egress-audit-mcp/src/egress-ledger.ts"), "utf8");
-  const match = /EGRESS_TOKEN_CLASSES\s*=\s*\[([^\]]*)\]/.exec(ledgerSource);
-  assert.ok(match, "the ledger's EGRESS_TOKEN_CLASSES declaration must be findable");
-  const ledgerClasses = [...match[1]!.matchAll(/"([^"]+)"/g)].map((entry) => entry[1]).sort();
-  assert.deepEqual(ledgerClasses, [...EGRESS_LEDGER_TOKEN_CLASSES].sort(), "the bridge copy must equal the ledger's token-class set");
+test("W181 A5: the bridge re-exports the ledger's token-class set (single declaration, cannot drift)", () => {
+  // The ledger is now in-process, so the bridge no longer mirrors a second
+  // declaration: it re-exports the ledger's own list. This pin fails if the
+  // ledger's closed set changes without the bridge following.
+  assert.equal(EGRESS_LEDGER_TOKEN_CLASSES, EGRESS_TOKEN_CLASSES);
+  assert.deepEqual([...EGRESS_LEDGER_TOKEN_CLASSES].sort(), ["absent", "foreign", "session-placeholder", "unknown"]);
 });
 
 test("W181 A5: the feed serializes appends, preserves order, and routes reach and reject distinctly", async () => {
@@ -126,14 +125,9 @@ test("W181 A5: an appender failure is swallowed by default (the audit sink is ad
   assert.match(String(errors[0]), /ledger refused/);
 });
 
-test("W181 A5: the appender writes a reach into the built egress-audit-mcp ledger", async (context) => {
-  const serverScript = resolve("mcp-toolbox/apps/egress-audit-mcp/dist/server.js");
-  if (!existsSync(serverScript)) {
-    context.skip("egress-audit-mcp is not built (run: pnpm --dir mcp-toolbox/apps/egress-audit-mcp run build)");
-    return;
-  }
+test("W181 A5: the appender writes reaches and rejects into the in-process ledger document", async () => {
   const dataDir = mkdtempSync(join(tmpdir(), "egress-bridge-"));
-  const appender = await createEgressAuditAppender({ serverScript, dataDir });
+  const appender = await createEgressAuditAppender({ dataDir });
   try {
     await appender.appendReach({
       domain: "api.example.com",
@@ -172,4 +166,18 @@ test("W181 A5: the appender writes a reach into the built egress-audit-mcp ledge
   } finally {
     rmSync(dataDir, { recursive: true, force: true });
   }
+});
+
+test("W181 A5: the runtime feed is inert without its env gate and in-process when set", async () => {
+  const { createEgressRuntimeFeed } = await import("../src/integrations/egress-audit-client.js");
+  assert.equal(await createEgressRuntimeFeed({ env: {} }), undefined, "off by default");
+  const dataDir = mkdtempSync(join(tmpdir(), "egress-feed-"));
+  const feed = await createEgressRuntimeFeed({ env: { WORKFLOW_EGRESS_AUDIT_FEED: "1" }, dataDir });
+  assert.ok(feed, "gated on, the in-process feed is available");
+  feed!.onEgressObservation(reach);
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 30));
+  await feed!.close();
+  const ledger = JSON.parse(readFileSync(join(dataDir, "egress-audit-ledger.json"), "utf8")) as { entries: unknown[] };
+  assert.equal(ledger.entries.length, 1);
+  rmSync(dataDir, { recursive: true, force: true });
 });

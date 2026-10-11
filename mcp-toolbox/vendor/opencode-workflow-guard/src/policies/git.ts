@@ -1,0 +1,512 @@
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import type { GitInvocation } from "../lib/types.ts";
+import {
+	getWorkspaceRoot,
+	getProjectConfig,
+} from "../lib/state.ts";
+import {
+	unwrapShellWords,
+	splitShellSegments,
+} from "../lib/shell.ts";
+
+export const PROTECTED_BRANCHES = new Set(["main", "master"]);
+
+export const PUSH_TO_MAIN_RE =
+	/\bgit\s+push\b[^|;&]*(?:^|\s)\+?[\w./-]*:(?:main|master)(?![\w./-])|\bgit\s+push\b[^|;&]*(?:\s|\/)(?:main|master)(?![\w./-])/;
+
+export function hasUnsafeGitAlias(command: string): boolean {
+	return splitShellSegments(command).some((segment) => {
+		const words = unwrapShellWords(segment);
+		const gitIndex = words.findIndex((word, index) =>
+			word === "git" && words.slice(0, index).every((prefix) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(prefix)),
+		);
+		if (gitIndex < 0) return false;
+		const args = words.slice(gitIndex + 1);
+		return args.some((arg, index) =>
+			/^-calias\./i.test(arg) ||
+			/^--config-env=alias\./i.test(arg) ||
+			((arg === "-c" || arg === "--config-env") && /^alias\./i.test(args[index + 1] ?? "")),
+		);
+	});
+}
+
+export const GIT_BRANCH_CREATE_RE =
+	/\bgit\s+(?:checkout\s+-b|switch\s+(?:-c|--create))\b/;
+
+const GIT_DIR_OPTION_TAKES_VALUE = new Set([
+	"-C",
+	"--git-dir",
+	"--work-tree",
+	"-c",
+	"--config-env",
+	"--namespace",
+]);
+const GIT_DIR_OPTION_PREFIXED =
+	/^(--git-dir=|--work-tree=|--namespace=|-c\S|--config-env=)/;
+const GIT_GLOBAL_BOOLEAN_OPTIONS = new Set([
+	"--version",
+	"--help",
+	"--no-pager",
+	"-p",
+	"--paginate",
+	"--bare",
+	"--literal-pathspecs",
+	"--glob-pathspecs",
+	"--noglob-pathspecs",
+	"--icase-pathspecs",
+	"--no-optional-locks",
+	"--exec-path",
+]);
+
+const GIT_ENV_DIR_RE =
+	/(?:^|\s)(?:env\s+(?:-\S+\s+)*)?(?:GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR)=(?:"([^"]*)"|'([^']*)'|(\S+))/;
+
+export function parseGitInvocation(command: string): GitInvocation | undefined {
+	const root = getWorkspaceRoot();
+	const tokens = unwrapShellWords(command);
+	if (tokens[0] !== "git") return undefined;
+	let i = 1;
+	let repoDir = root;
+	let sawDirOption = false;
+
+	const envDirMatch = command.match(GIT_ENV_DIR_RE);
+	if (envDirMatch) {
+		const envVal = envDirMatch[1] ?? envDirMatch[2] ?? envDirMatch[3];
+		if (envVal) {
+			repoDir = resolve(root, envVal);
+			sawDirOption = true;
+		}
+	}
+
+	while (i < tokens.length) {
+		const tok = tokens[i]!;
+		if (GIT_DIR_OPTION_TAKES_VALUE.has(tok)) {
+			const value = tokens[i + 1];
+			if (value === undefined) return { repoDir, rest: "" };
+			if (tok === "-C" || tok === "--git-dir" || tok === "--work-tree") {
+				repoDir = resolve(root, value);
+				sawDirOption = true;
+			}
+			i += 2;
+			continue;
+		}
+		if (GIT_DIR_OPTION_PREFIXED.test(tok)) {
+			if (tok.startsWith("--git-dir=")) {
+				repoDir = resolve(root, tok.slice("--git-dir=".length));
+				sawDirOption = true;
+			} else if (tok.startsWith("--work-tree=")) {
+				repoDir = resolve(root, tok.slice("--work-tree=".length));
+				sawDirOption = true;
+			}
+			i += 1;
+			continue;
+		}
+		if (GIT_GLOBAL_BOOLEAN_OPTIONS.has(tok)) {
+			i += 1;
+			continue;
+		}
+		break;
+	}
+	if (!sawDirOption) repoDir = root;
+	return { repoDir, rest: tokens.slice(i).join(" ") };
+}
+
+export function normalizeGitCommands(command: string): string {
+	return splitShellSegments(command)
+		.map((segment) => {
+			const parsed = parseGitInvocation(segment);
+			return parsed ? `git ${parsed.rest}` : segment;
+		})
+		.join(" ; ");
+}
+
+export const GIT_WRITE_RE =
+	/\bgit\s+(add|rm|mv|commit|merge|rebase|cherry-pick|revert|stash\s+pop|apply|am|restore|reset|update-ref|filter-branch)\b|\bgit\s+tag\s+(?!--?list\b|-l\b)(?:[^|;&]*\s)?(?:-d\b|--delete\b)|\bgit\s+checkout\s+(?!-b\b)|\bgit\s+branch\s+(?:[^|;&]*\s)?-[dDM]\b/;
+
+export function currentGitBranch(root: string): string | undefined {
+	const result = spawnSync("git", ["branch", "--show-current"], {
+		cwd: root,
+		encoding: "utf8",
+		timeout: 10_000,
+	});
+	if (result.status === 0 && result.stdout.trim()) {
+		return result.stdout.trim();
+	}
+	try {
+		const head = readFileSync(resolve(root, ".git", "HEAD"), "utf8").trim();
+		const match = head.match(/^ref:\s+refs\/heads\/(\S+)/);
+		if (match) return match[1];
+	} catch {}
+	if (result.status === 0) return "";
+	return undefined;
+}
+
+export function getProtectedBranches(root: string): Set<string> {
+	const cfg = getProjectConfig(root);
+	const customBranches = Array.isArray(cfg.protectedBranches)
+		? cfg.protectedBranches
+		: [];
+	return new Set([...PROTECTED_BRANCHES, ...customBranches]);
+}
+
+/** True when `branch` is protected for the repository at `root`. */
+export function isProtectedBranchName(branch: string, root: string): boolean {
+	if (!branch) return false;
+	return getProtectedBranches(root).has(branch);
+}
+
+function escapeRegExp(text: string): string {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Returns the protected branch a `git push` command targets as its destination,
+ * if any. Covers bare refspecs (`git push origin <branch>`) and colon forms
+ * (`git push origin HEAD:<branch>`, `:<branch>` deletion, `+<branch>` forced),
+ * for every protected branch - built-in and configured - of the repository.
+ */
+export function pushedProtectedBranchIn(pushCommand: string, root: string): string | undefined {
+	for (const branch of getProtectedBranches(root)) {
+		const escaped = escapeRegExp(branch);
+		const re = new RegExp(
+			`(?:^|\\s)\\+?[\\w./-]*:${escaped}(?![\\w./-])` +
+				`|(?:\\s|\\/)${escaped}(?![\\w./-])`,
+		);
+		if (re.test(pushCommand)) return branch;
+	}
+	return undefined;
+}
+
+/**
+ * True when a `git push` command pushes a tag refspec: an explicit
+ * `refs/tags/<name>` destination, or a short name that resolves to an
+ * existing tag in the repository at `root`. Publishing a tag is a release
+ * operation, not a branch mutation, so callers exempt it from the
+ * protected-branch and merged-branch push rules (#134). Deletion refspecs
+ * (`:refs/tags/<name>`, `git push --delete`, `-d`) return false so tag
+ * deletions stay blocked.
+ */
+export function tagRefspecIn(pushCommand: string, root: string): boolean {
+	if (/\s--delete\b|\s-d(?:\b|$)/.test(pushCommand)) return false;
+	for (const segment of splitShellSegments(pushCommand)) {
+		const parsed = parseGitInvocation(segment);
+		if (!parsed || !/\bpush\b/.test(parsed.rest)) continue;
+		const tokens = parsed.rest.split(/\s+/).slice(1);
+		let remoteSeen = false;
+		for (const rawToken of tokens) {
+			if (rawToken.startsWith("-")) continue;
+			if (!remoteSeen) {
+				remoteSeen = true;
+				continue;
+			}
+			const token = rawToken.replace(/^\+/, "");
+			if (!token) continue;
+			if (token.startsWith(":")) continue; // deletion refspec: empty source
+			if (token.includes(":")) {
+				if (token.includes(":refs/tags/")) return true; // <src>:refs/tags/<name>
+				continue;
+			}
+			if (token.startsWith("refs/tags/")) return true; // explicit tag refspec
+			const probe = spawnSync("git", ["show-ref", "--verify", "--quiet", `refs/tags/${token}`], {
+				cwd: root,
+				encoding: "utf8",
+				timeout: 10_000,
+			});
+			if (probe.status === 0) return true;
+		}
+	}
+	return false;
+}
+
+export function onProtectedBranch(root: string): boolean {
+	return isProtectedBranchName(currentGitBranch(root) ?? "", root);
+}
+
+export function branchGuardReason(): string {
+	return (
+		"Blocked: the workspace is on a protected branch. " +
+		"Create a feature branch first - e.g. " +
+		"`git switch -c feat/description` - and make all changes there, " +
+		"then open a PR. Direct changes on protected branches are not allowed."
+	);
+}
+
+export function isBranchAlreadyMergedOrClosed(
+	root: string,
+	branch: string,
+	checkRemotePrs = true,
+): { merged: boolean; reason?: string } {
+	if (!branch || PROTECTED_BRANCHES.has(branch)) {
+		return { merged: false };
+	}
+
+	for (const base of ["origin/HEAD", "origin/main", "origin/master", "main", "master"]) {
+		const check = spawnSync("git", ["merge-base", "--is-ancestor", branch, base], {
+			cwd: root,
+			encoding: "utf8",
+			timeout: 5_000,
+		});
+		if (check.status === 0) {
+			const unmerged = spawnSync("git", ["rev-list", `${base}..${branch}`, "--count"], {
+				cwd: root,
+				encoding: "utf8",
+				timeout: 5_000,
+			});
+			if (unmerged.status === 0 && unmerged.stdout.trim() === "0") {
+				return {
+					merged: true,
+					reason: `Branch '${branch}' is already merged into '${base}'. Create a fresh feature branch for new changes.`,
+				};
+			}
+		}
+	}
+	if (!checkRemotePrs) return { merged: false };
+
+	try {
+		const ghRes = spawnSync(
+			"gh",
+			["pr", "list", "--head", branch, "--state", "all", "--json", "number,state,title", "--limit", "1"],
+			{ cwd: root, encoding: "utf8", timeout: 8_000 },
+		);
+		if (ghRes.status === 0 && ghRes.stdout.trim()) {
+			const prs = JSON.parse(ghRes.stdout.trim());
+			if (Array.isArray(prs) && prs.length > 0) {
+				const pr = prs[0];
+				if (pr && (pr.state === "MERGED" || pr.state === "CLOSED")) {
+					return {
+						merged: true,
+						reason: `Branch '${branch}' is associated with an already ${pr.state.toLowerCase()} GitHub PR (#${pr.number}: ${pr.title ?? ""}). Create a fresh feature branch for new changes.`,
+					};
+				}
+			}
+		}
+	} catch {}
+
+	try {
+		const azRes = spawnSync(
+			"az",
+			["repos", "pr", "list", "--source-branch", branch, "--status", "all", "--query", "[0].{id:pullRequestId, status:status, title:title}", "-o", "json"],
+			{ cwd: root, encoding: "utf8", timeout: 8_000 },
+		);
+		if (azRes.status === 0 && azRes.stdout.trim()) {
+			const pr = JSON.parse(azRes.stdout.trim());
+			if (pr && typeof pr === "object" && (pr.status === "completed" || pr.status === "abandoned")) {
+				return {
+					merged: true,
+					reason: `Branch '${branch}' is associated with an already ${pr.status} Azure DevOps PR (#${pr.id}: ${pr.title ?? ""}). Create a fresh feature branch for new changes.`,
+				};
+			}
+		}
+	} catch {}
+
+	return { merged: false };
+}
+
+export function checkMergeConflicts(root: string): {
+	hasConflicts: boolean;
+	baseBranch?: string;
+	reason?: string;
+} {
+	const candidates = ["origin/HEAD", "origin/main", "origin/master", "main", "master"];
+	for (const base of candidates) {
+		const mergeBaseRes = spawnSync("git", ["merge-base", "HEAD", base], {
+			cwd: root,
+			encoding: "utf8",
+			timeout: 5_000,
+		});
+		if (mergeBaseRes.status !== 0 || !mergeBaseRes.stdout.trim()) continue;
+		const mergeBase = mergeBaseRes.stdout.trim();
+
+		const treeRes = spawnSync("git", ["merge-tree", mergeBase, "HEAD", base], {
+			cwd: root,
+			encoding: "utf8",
+			timeout: 10_000,
+		});
+		if (treeRes.status === 0 && treeRes.stdout.includes("<<<<<<<")) {
+			return {
+				hasConflicts: true,
+				baseBranch: base,
+				reason: `Branch has merge conflicts with base branch '${base}'. Rebase or merge '${base}' to resolve all conflicts before opening a PR or handing off.`,
+			};
+		}
+	}
+	return { hasConflicts: false };
+}
+
+const BRANCH_CREATION_VALUELESS_FLAGS = new Set([
+	"-f",
+	"--force",
+	"--discard-changes",
+	"-m",
+	"--merge",
+	"-q",
+	"--quiet",
+	"--no-track",
+]);
+
+// Shell redirections never determine the branch start point. Exact tokens
+// cover separated operators (`2> /dev/null`); the attached pattern covers
+// operators fused with their target (`2>/dev/null`, `2>&1`, `&>/dev/null`).
+// Valid refs cannot contain `<` or `>`, so no start point can be mistaken
+// for a redirection token.
+const BRANCH_REDIRECTION_OPERATORS = new Set([
+	"<",
+	">",
+	"<<",
+	">>",
+	"<<<",
+	"<&",
+	">&",
+	"&>",
+	"&>>",
+]);
+const BRANCH_REDIRECTION_ATTACHED_RE = /^(?:&|\d{1,2})?(?:>>|>|<<<|<<|>&|<&|<)[^<>]*$/;
+
+// Classifies the optional start-point operand of an already-matched branch
+// creation invocation (`git switch -c|--create` / `git checkout -b`). Returns
+// the explicit start point when present, `{ start: undefined }` when the
+// invocation creates a branch from the current HEAD, and `undefined` when the
+// shape cannot be confidently classified — the caller must then fail closed to
+// the HEAD-based staleness check. Indeterminate tokens (variables, quotes,
+// unknown or value-taking flags) are never classified.
+export function branchCreationStartPoint(rest: string): { start?: string } | undefined {
+	const tokens = rest.split(/\s+/).filter(Boolean);
+	let sawCreate = false;
+	let named = false;
+	for (let i = 0; i < tokens.length; i++) {
+		const token = tokens[i]!;
+		if (BRANCH_REDIRECTION_OPERATORS.has(token) || /^\d{1,2}(?:>>|>|<<<|<<|>&|<&|<)$/.test(token)) {
+			// Separated redirection: its target word follows and is equally
+			// irrelevant to the start point.
+			i += 1;
+			continue;
+		}
+		if (BRANCH_REDIRECTION_ATTACHED_RE.test(token)) continue;
+		const indeterminate = /[$`"']/.test(token);
+		if (!sawCreate) {
+			if (token === "switch" || token === "checkout") continue;
+			if (token === "-c" || token === "--create" || token === "-b") {
+				sawCreate = true;
+				continue;
+			}
+			if (token.startsWith("--create=")) {
+				sawCreate = true;
+				named = true;
+				continue;
+			}
+			if (!token.startsWith("--") && token.length > 2 && (token.startsWith("-c") || token.startsWith("-b"))) {
+				sawCreate = true;
+				named = true;
+				continue;
+			}
+			if (token.startsWith("-")) {
+				if (BRANCH_CREATION_VALUELESS_FLAGS.has(token)) continue;
+				return undefined;
+			}
+			return undefined;
+		}
+		if (!named) {
+			if (token.startsWith("-")) {
+				if (BRANCH_CREATION_VALUELESS_FLAGS.has(token)) continue;
+				return undefined;
+			}
+			if (indeterminate) return undefined;
+			named = true;
+			continue;
+		}
+		if (token.startsWith("-")) {
+			if (BRANCH_CREATION_VALUELESS_FLAGS.has(token)) continue;
+			return undefined;
+		}
+		if (indeterminate) return undefined;
+		return { start: token };
+	}
+	return sawCreate ? { start: undefined } : undefined;
+}
+
+// A branch created from an explicit start point that already contains the
+// remote default is fresh by construction, so the current branch's staleness
+// is irrelevant for it; every provided start point must resolve and contain
+// the base, and any missing start point keeps the HEAD-based check. Start
+// points that cannot be resolved fail closed. Block reasons name what was
+// actually checked and remedies that work under the guard.
+function evaluateBranchCreationStarts(
+	root: string,
+	base: string,
+	startPoints: ReadonlyArray<string>,
+): { isBehind: true; baseRef: string; reason: string } | undefined {
+	for (const startPoint of startPoints) {
+		const resolved = spawnSync("git", ["rev-parse", "--verify", "--quiet", startPoint], {
+			cwd: root,
+			encoding: "utf8",
+			timeout: 5_000,
+		});
+		if (resolved.status !== 0 || !resolved.stdout.trim()) {
+			return {
+				isBehind: true,
+				baseRef: base,
+				reason: `the explicit start point '${startPoint}' could not be resolved as a commit, so freshness cannot be classified (fail closed). Use a literal branch name or ref as the start point.`,
+			};
+		}
+		const startSha = resolved.stdout.trim();
+		const contains = spawnSync("git", ["merge-base", "--is-ancestor", base, startSha], {
+			cwd: root,
+			encoding: "utf8",
+			timeout: 5_000,
+		});
+		if (contains.status !== 0) {
+			const behind = spawnSync("git", ["rev-list", `${startSha}..${base}`, "--count"], {
+				cwd: root,
+				encoding: "utf8",
+				timeout: 5_000,
+			});
+			const behindCount = parseInt((behind.stdout ?? "").trim(), 10);
+			return {
+				isBehind: true,
+				baseRef: base,
+				reason: `the explicit start point '${startPoint}' is ${isNaN(behindCount) ? "" : `${behindCount} `}commit(s) behind ${base}. Create the branch from ${base}, or from any ref that contains it, instead.`,
+			};
+		}
+	}
+	return undefined;
+}
+
+export function checkBranchBaseIsUpToDate(
+	root: string,
+	startPoints?: ReadonlyArray<string | undefined>,
+): {
+	isBehind: boolean;
+	count?: number;
+	baseRef?: string;
+	reason?: string;
+} {
+	const classified = startPoints && startPoints.length > 0 ? startPoints : undefined;
+	for (const base of ["origin/HEAD", "origin/main", "origin/master"]) {
+		const res = spawnSync("git", ["rev-list", `HEAD..${base}`, "--count"], {
+			cwd: root,
+			encoding: "utf8",
+			timeout: 5_000,
+		});
+		if (res.status !== 0 || !res.stdout.trim()) continue;
+		const count = parseInt(res.stdout.trim(), 10);
+		if (isNaN(count)) continue;
+		const explicit = (classified ?? []).filter((startPoint): startPoint is string => startPoint !== undefined);
+		if (explicit.length > 0) {
+			const startBlock = evaluateBranchCreationStarts(root, base, explicit);
+			if (startBlock) return startBlock;
+		}
+		if (count > 0 && (!classified || classified.some((startPoint) => startPoint === undefined))) {
+			const branch = currentGitBranch(root) || "detached HEAD";
+			return {
+				isBehind: true,
+				count,
+				baseRef: base,
+				reason: `current branch '${branch}' is ${count} commit(s) behind remote default (${base}), so a branch created from it starts stale. Update this branch first (git rebase ${base} or git merge --ff-only ${base}), or create the new branch from ${base} directly.`,
+			};
+		}
+		return { isBehind: false };
+	}
+	return { isBehind: false };
+}

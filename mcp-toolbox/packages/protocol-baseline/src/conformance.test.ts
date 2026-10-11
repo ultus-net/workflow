@@ -14,13 +14,13 @@ test("every toolbox product passes the MCP 2026-07-28 conformance smoke", async 
     .join(" | ");
   assert.equal(failures.length, 0, detail);
   const summary = conformanceSummary(reports);
-  assert.equal(summary.apps, 16);
+  assert.equal(summary.apps, 14);
   assert.equal(summary.failed.length, 0);
 });
 
 test("the conformance smoke asserts the tasks extension on the task product", async () => {
   const reports = await runConformance(root);
-  const taskReport = reports.find((report) => report.app === "verification-accountability-mcp");
+  const taskReport = reports.find((report) => report.app === "accountability-mcp");
   assert.ok(taskReport);
   const names = taskReport.checks.map((check) => check.name);
   assert.ok(names.includes("tasks_extension"));

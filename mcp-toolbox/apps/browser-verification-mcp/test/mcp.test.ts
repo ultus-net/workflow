@@ -25,7 +25,7 @@ test("black-box server exposes model-visible guidance and a bounded verification
   assert.deepEqual(names, ["navigate", "snapshot_accessibility", "perform_action", "take_screenshot", "run_assertion", "run_verification", "list_evidence", "get_evidence"]);
   assert.ok(tools.every((tool) => tool.outputSchema));
   const verification = tools.find((tool) => tool.name === "run_verification");
-  assert.match(verification?.description ?? "", /verification-accountability-mcp/);
+  assert.match(verification?.description ?? "", /accountability-mcp/);
   assert.match(verification?.description ?? "", /untrusted input/);
   const debug = await connectedClient({ BROWSER_VERIFICATION_CDP_URL: fake.url, BROWSER_VERIFICATION_PROFILE: "debug" });
   t.after(async () => { await debug.close(); });

@@ -26,6 +26,7 @@ const vendoredApps = [
   resolve(here, "..", "..", "..", "apps", "skills-mcp", "src", "vendor", "result-bounds.ts"),
   resolve(here, "..", "..", "..", "apps", "browser-verification-mcp", "src", "vendor", "result-bounds.ts"),
   resolve(here, "..", "..", "..", "apps", "workflow-task-mcp", "src", "vendor", "result-bounds.ts"),
+  resolve(here, "..", "..", "..", "apps", "project-memory-mcp", "src", "vendor", "result-bounds.ts"),
 ];
 
 test("vendored result-bounds copies match the canonical source", () => {

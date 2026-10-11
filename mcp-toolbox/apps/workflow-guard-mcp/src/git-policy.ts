@@ -33,8 +33,8 @@ function normalizedGitSegments(command: string): string[] {
 }
 
 export interface GitPolicyContext {
-  currentBranch?: string;
-  protectedBranches?: string[];
+  currentBranch?: string | undefined;
+  protectedBranches?: string[] | undefined;
 }
 
 export function protectedBranchesIn(context: GitPolicyContext): Set<string> {

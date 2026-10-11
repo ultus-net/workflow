@@ -11,6 +11,7 @@ import { join, resolve } from "node:path";
 
 export type MemoryKind = "fact" | "decision" | "constraint" | "lesson";
 export type MemoryWriterAuthority = "operator" | "agent" | "external-evidence";
+export type MemoryOrigin = "project-memory-mcp/record_memory" | "project-memory-mcp/import_memory";
 
 /** Launch-time provenance stamp (W054): the server refuses unstamped writes. */
 export interface MemoryStampConfig {
@@ -25,6 +26,8 @@ export interface MemoryRecord {
   readonly content: string;
   readonly paths: readonly string[];
   readonly createdAt: number;
+  readonly supersedes?: string;
+  readonly supersededAt?: number;
   readonly status: "current" | "superseded";
   readonly evidenceClass: "assertion";
   readonly freshness: "fresh" | "stale";
@@ -38,9 +41,25 @@ export interface MemoryRecord {
   };
 }
 
+export interface MemoryImportResult {
+  readonly imported: number;
+  readonly skipped: number;
+  readonly rejected: number;
+  readonly path: string;
+}
+
+export interface MemoryExportResult {
+  readonly exported: number;
+  readonly path: string;
+}
+
 export interface ProjectMemory {
   recall(query: string, limit: number): Promise<readonly MemoryRecord[]>;
   record(kind: MemoryKind, content: string, paths?: readonly string[]): Promise<void>;
+  /** Import the repo-local portable JSONL into the local index (idempotent per id). */
+  import(path?: string): Promise<MemoryImportResult>;
+  /** Export current records (all, or the given ids) to the repo-local portable JSONL. */
+  export(ids?: readonly string[], path?: string): Promise<MemoryExportResult>;
   close(): Promise<void>;
 }
 
@@ -80,6 +99,16 @@ export function createProjectMemoryClient(options: {
       },
       async record(kind: MemoryKind, content: string, paths: readonly string[] = []): Promise<void> {
         await call("record_memory", { workspaceRoot: options.workspaceRoot, kind, content, paths: [...paths] });
+      },
+      async import(path?: string): Promise<MemoryImportResult> {
+        const result = await call("import_memory", { workspaceRoot: options.workspaceRoot, ...(path === undefined ? {} : { path }) }) as { import?: MemoryImportResult };
+        if (result.import === undefined) throw new Error("project-memory import_memory returned no import result.");
+        return result.import;
+      },
+      async export(ids: readonly string[] = [], path?: string): Promise<MemoryExportResult> {
+        const result = await call("export_memory", { workspaceRoot: options.workspaceRoot, ids: [...ids], ...(path === undefined ? {} : { path }) }) as { export?: MemoryExportResult };
+        if (result.export === undefined) throw new Error("project-memory export_memory returned no export result.");
+        return result.export;
       },
       async close(): Promise<void> {
         await client.close();

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { ProjectMemoryStore, type MemoryStampConfig } from "../src/project-memory.js";
+import { DEFAULT_RETENTION_DAYS, DAY_MS, ProjectMemoryStore, resolveRetentionWindowMs, type MemoryStampConfig } from "../src/project-memory.js";
 
 const STAMP: MemoryStampConfig = { writer: "test-harness", authority: "agent", originSurface: "test:memory" };
 
@@ -183,4 +183,114 @@ test("fails closed when a store holds an unstamped legacy or forged record", asy
 
   await assert.rejects(store.search({ workspaceRoot: root, query: "stamp", limit: 8 }), /store/i);
   await assert.rejects(store.record({ workspaceRoot: root, kind: "fact", content: "cannot append", paths: [] }), /store/i);
+});
+
+test("resolves the retention window from the environment with a bounded default", () => {
+  assert.equal(resolveRetentionWindowMs({}), DEFAULT_RETENTION_DAYS * DAY_MS);
+  assert.equal(resolveRetentionWindowMs({ PROJECT_MEMORY_RETENTION_DAYS: "30" }), 30 * DAY_MS);
+  // Zero, negative, and malformed values fall back to the default, never to
+  // "keep forever": retention always has a floor.
+  assert.equal(resolveRetentionWindowMs({ PROJECT_MEMORY_RETENTION_DAYS: "0" }), DEFAULT_RETENTION_DAYS * DAY_MS);
+  assert.equal(resolveRetentionWindowMs({ PROJECT_MEMORY_RETENTION_DAYS: "-5" }), DEFAULT_RETENTION_DAYS * DAY_MS);
+  assert.equal(resolveRetentionWindowMs({ PROJECT_MEMORY_RETENTION_DAYS: "soon" }), DEFAULT_RETENTION_DAYS * DAY_MS);
+});
+
+test("prunes superseded records past the retention window while keeping current ones", async (t) => {
+  const { root, dataRoot } = await fixture();
+  t.after(async () => Promise.all([rm(root, { recursive: true, force: true }), rm(dataRoot, { recursive: true, force: true })]));
+  const canonical = await realpath(root);
+  const file = join(dataRoot, `${createHash("sha256").update(canonical).digest("hex")}.json`);
+  const stamp = { origin: "project-memory-mcp/record_memory", writer: STAMP.writer, authority: STAMP.authority, originSurface: STAMP.originSurface, stampedAt: 1 };
+  const now = Date.now();
+  const stale = now - 100 * DAY_MS;
+  const recent = now - 1 * DAY_MS;
+  await mkdir(dataRoot, { recursive: true });
+  await writeFile(file, JSON.stringify({ version: 1, workspace: canonical, records: [
+    { id: "expired", kind: "fact", content: "old and superseded", paths: [], createdAt: stale, status: "superseded", supersededAt: stale, evidenceClass: "assertion", provenance: stamp },
+    { id: "recent", kind: "fact", content: "recently superseded", paths: [], createdAt: recent, status: "superseded", supersededAt: recent, evidenceClass: "assertion", provenance: stamp },
+    { id: "current", kind: "fact", content: "still current knowledge", paths: [], createdAt: stale, status: "current", evidenceClass: "assertion", provenance: stamp },
+  ] }), { mode: 0o600 });
+
+  const store = new ProjectMemoryStore(dataRoot, STAMP);
+  const searched = await store.search({ workspaceRoot: root, query: "knowledge", limit: 8 });
+  assert.deepEqual(searched.records.map((record) => record.id), ["current"]);
+
+  const persisted = JSON.parse(await readFile(file, "utf8")) as { records: Array<{ id: string }> };
+  assert.deepEqual(persisted.records.map((record) => record.id).sort(), ["current", "recent"]);
+});
+
+test("a shortened retention window prunes on the next mutation", async (t) => {
+  const { root, dataRoot } = await fixture();
+  t.after(async () => Promise.all([rm(root, { recursive: true, force: true }), rm(dataRoot, { recursive: true, force: true })]));
+  const store = new ProjectMemoryStore(dataRoot, STAMP, 1 * DAY_MS);
+  const original = await store.record({ workspaceRoot: root, kind: "decision", content: "use alpha", paths: [] });
+  await store.record({ workspaceRoot: root, kind: "decision", content: "use beta", paths: [], supersedes: original.id });
+
+  // Backdate the supersession past the 1-day window, then mutate to trigger
+  // retention and confirm the superseded record is gone.
+  const canonical = await realpath(root);
+  const file = join(dataRoot, `${createHash("sha256").update(canonical).digest("hex")}.json`);
+  const document = JSON.parse(await readFile(file, "utf8")) as { records: Array<{ id: string; supersededAt?: number }> };
+  for (const record of document.records) record.supersededAt = Date.now() - 3 * DAY_MS;
+  await writeFile(file, JSON.stringify(document), { mode: 0o600 });
+
+  await store.record({ workspaceRoot: root, kind: "fact", content: "unrelated trigger", paths: [] });
+  const persisted = JSON.parse(await readFile(file, "utf8")) as { records: Array<{ status: string }> };
+  assert.equal(persisted.records.some((record) => record.status === "superseded"), false);
+});
+
+test("exports current records to the portable JSONL and re-imports them by id", async (t) => {
+  const { root, dataRoot, store } = await fixture();
+  const destination = await mkdtemp(join(tmpdir(), "project-memory-import-"));
+  t.after(async () => Promise.all([rm(root, { recursive: true, force: true }), rm(dataRoot, { recursive: true, force: true }), rm(destination, { recursive: true, force: true })]));
+
+  const record = await store.record({ workspaceRoot: root, kind: "constraint", content: "stay local by default", paths: ["src/a.ts"] });
+  const exported = await store.export({ workspaceRoot: root });
+  assert.equal(exported.exported, 1);
+  assert.equal(exported.path, join(await realpath(root), ".opencode", "memory", "project-memory.jsonl"));
+  const lines = (await readFile(exported.path, "utf8")).trim().split("\n");
+  assert.deepEqual(JSON.parse(lines[0]!) as Record<string, unknown>, { id: record.id, kind: "constraint", content: "stay local by default", paths: ["src/a.ts"] });
+
+  // A second workspace imports the portable file into its own index.
+  const importer = new ProjectMemoryStore(destination, STAMP);
+  const imported = await importer.import({ workspaceRoot: root });
+  assert.deepEqual(imported, { imported: 1, skipped: 0, rejected: 0, path: exported.path });
+  const found = await importer.search({ workspaceRoot: root, query: "local", limit: 8 });
+  assert.equal(found.records[0]?.id, record.id);
+  assert.equal(found.records[0]?.provenance.origin, "project-memory-mcp/import_memory");
+
+  // Re-import is idempotent: the id already exists, so it is skipped.
+  assert.deepEqual(await importer.import({ workspaceRoot: root }), { imported: 0, skipped: 1, rejected: 0, path: exported.path });
+});
+
+test("import rejects secret-shaped, malformed, and workspace-escaping lines", async (t) => {
+  const { root, dataRoot, store } = await fixture();
+  t.after(async () => Promise.all([rm(root, { recursive: true, force: true }), rm(dataRoot, { recursive: true, force: true })]));
+  const portable = join(root, ".opencode", "memory", "project-memory.jsonl");
+  await mkdir(join(root, ".opencode", "memory"), { recursive: true });
+  const secret = `ghp_${"a".repeat(36)}`;
+  await writeFile(portable, [
+    JSON.stringify({ id: "ok", kind: "fact", content: "clean import", paths: [] }),
+    JSON.stringify({ id: "secret", kind: "fact", content: `token ${secret}`, paths: [] }),
+    "not-json",
+    JSON.stringify({ id: "bad-path", kind: "fact", content: "escape", paths: ["../outside"] }),
+    JSON.stringify({ id: "bad-kind", kind: "rumor", content: "invalid kind", paths: [] }),
+  ].join("\n") + "\n", { mode: 0o600 });
+
+  const result = await store.import({ workspaceRoot: root });
+  assert.deepEqual(result, { imported: 1, skipped: 0, rejected: 4, path: portable });
+  const found = await store.search({ workspaceRoot: root, query: "import", limit: 8 });
+  assert.deepEqual(found.records.map((record) => record.id), ["ok"]);
+});
+
+test("export and import refuse portable paths outside the workspace", async (t) => {
+  const { root, dataRoot, store } = await fixture();
+  const outside = await mkdtemp(join(tmpdir(), "project-memory-outside-"));
+  t.after(async () => Promise.all([rm(root, { recursive: true, force: true }), rm(outside, { recursive: true, force: true }), rm(dataRoot, { recursive: true, force: true })]));
+
+  await store.record({ workspaceRoot: root, kind: "fact", content: "safe content", paths: [] });
+  await assert.rejects(store.export({ workspaceRoot: root, path: "../escape.jsonl" }), /inside the workspace/i);
+  await assert.rejects(store.export({ workspaceRoot: root, path: join(outside, "escape.jsonl") }), /inside the workspace/i);
+  await assert.rejects(store.import({ workspaceRoot: root, path: "../escape.jsonl" }), /inside the workspace/i);
+  await assert.rejects(store.import({ workspaceRoot: root, path: join(outside, "portable.jsonl") }), /inside the workspace/i);
 });

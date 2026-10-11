@@ -12,7 +12,6 @@ import { boardProviderFromEnv, createBoardReadCache, fetchBoardTask, fetchIssueC
 import { createProviderReadLedger, fetchIssueDetail, recordProviderReads } from "../integrations/issue-detail.js";
 import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
-import { createCredentialBroker } from "../integrations/credentials.js";
 import { resolveSecretStore } from "../integrations/secret-store.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 import { hubPromptGuidanceFromEnv } from "../integrations/prompt-guidance.js";
@@ -111,11 +110,13 @@ const teamTaskVerificationCommand = process.env.WORKFLOW_TEAM_TASK_VERIFY_COMMAN
   ? "true"
   : (teamTaskVerifyEnv && teamTaskVerifyEnv.length > 0 ? teamTaskVerifyEnv : undefined);
 
-// Credential custody (control-plane credentials pass): the guard receives its
-// stdio-env credentials through the broker — secret:// references only, never
-// values in this process's config.
+// Credential custody (control-plane credentials pass): credential definitions
+// feed the egress provider fingerprint and the gate-2 proxy binding below.
+// The guard no longer receives stdio-env credentials — C2 runs the guard IN
+// PROCESS, so there is no child environment to inject into (the vendored app's
+// agent-facing mount is a separate, credential-free policy tool; see
+// src/integrations/mcp-toolbox-guard.ts).
 const credentialDefinitions = loadCredentialDefinitions();
-const credentialBroker = createCredentialBroker(resolveSecretStore(), credentialDefinitions);
 // Board-PAT custody (provider-token.ts): when WORKFLOW_BOARD_TOKEN_FROM names a
 // secret-store backend, the board PATs are sourced from it (authoritative) and
 // scrubbed from the process environment the provider classifiers read, so the
@@ -145,21 +146,11 @@ try {
     }; the board is unconfigured (fail-closed — never falls back to the ambient env)`,
   );
 }
-const guardBindings = credentialDefinitions.flatMap((definition) =>
-  definition.allowedConsumers.includes("mcp:workflow-guard")
-    ? definition.allowedPurposes.flatMap((purpose) => purpose.startsWith("stdio-env:")
-      ? [{ variable: purpose.slice("stdio-env:".length), reference: `secret://${definition.id}` }]
-      : [])
-    : [],
-);
 // Plan Task G2: the guard dispatcher is part of the enforcement stack, not an
-// optional extra. If it cannot start, the hub refuses to run — a silently
-// guardless authority would issue permissive decisions no operator asked for.
-// "No hub, no mutations" stays true by failing the hub itself closed. The
-// credential composition rides along; a broker failure is a startup failure.
+// optional extra. C2 makes it in-process — composition cannot fail on a spawn,
+// so a silently guardless authority is impossible by construction. The guard
+// carries the W091 promotion rule and the W090 workspace-facts enrichment.
 const guard = await createDefaultToolboxGuardProvider({
-  credentialBroker,
-  credentialBindings: guardBindings,
   workspace,
 });
 

@@ -263,9 +263,9 @@ must reach its provider), so:
    placeholder discipline (it sends `authorization: Bearer workflow-metered`),
    but no vendor key was available in this environment, so the live verdict
    remains unrun. The token-binding behavior is covered by loopback tests.
-4. Function-class classification by `egress-audit-mcp` is a heuristic over
+4. Function-class classification by the egress ledger is a heuristic over
    reported reaches; it is advisory evidence and never enforcement (see the
-   product README's trust boundaries).
+   ledger's trust-boundary note and the product README).
 
 ## 7. Follow-ups (partially landed; remaining work stated)
 
@@ -275,19 +275,19 @@ must reach its provider), so:
   (`reject`), carrying the bare destination hostname, a path-derived function
   class, and the token class. `src/integrations/egress-audit-client.ts` maps
   each shape onto the ledger's `AppendReachInput` / `AppendRejectInput` and
-  appends it over MCP (the `project-memory.ts` client pattern; `src/` does not
-  import across the `mcp-toolbox/` package boundary). Rejections land in a
+  appends it directly to the in-process ledger (`src/integrations/egress-ledger.ts`
+  — dated 2026-10-11: the ledger moved in-process, replacing the earlier stdio
+  MCP append over the `mcp-toolbox/` package boundary). Rejections land in a
   separate `rejects` store (a rejection reached no destination, so it carries no
   anomaly flags) with the refusing `policy` tag. The OpenCode runtime composes
-  the feed behind `WORKFLOW_EGRESS_AUDIT_FEED=1` and only when the vendored
-  ledger build is present; the ledger stays advisory/read-only evidence and
-  never blocks. HONEST WIRING BOUNDARY: (1) the feed is **opt-in** — OFF by
-  default, so a production run needs the operator to set the env flag; (2) the
-  Cline and goose runtime sites are not wired (the W181 issue scopes the OpenCode
-  lane); (3) the feed observes what the proxy already decided — it is evidence,
-  not a gate. No secret, placeholder value, path, or query string is persisted:
-  the seam carries a bare hostname, a bounded function-class label, a closed
-  token class, and a bounded policy tag only.
+  the feed behind `WORKFLOW_EGRESS_AUDIT_FEED=1`; the ledger stays
+  advisory/read-only evidence and never blocks. HONEST WIRING BOUNDARY: (1) the
+  feed is **opt-in** — OFF by default, so a production run needs the operator to
+  set the env flag; (2) the Cline and goose runtime sites are not wired (the W181
+  issue scopes the OpenCode lane); (3) the feed observes what the proxy already
+  decided — it is evidence, not a gate. No secret, placeholder value, path, or
+  query string is persisted: the seam carries a bare hostname, a bounded
+  function-class label, a closed token class, and a bounded policy tag only.
 - **W180 (A3/A4, 2026-10-02): payload-level egress policy extension point and
   the size-ceiling stage.** `payloadPolicy` (`ProxyPayloadPolicy`) is the C3
   extension point, dark by default; the proxy rejects an oversize request body

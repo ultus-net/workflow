@@ -24,13 +24,25 @@
       "description": "Proactively search current project memory when starting related work or before making assumptions about prior decisions and constraints. Results are bounded agent assertions, not proof.",
       "readOnly": true,
       "taskSupport": "forbidden"
+    },
+    {
+      "name": "export_memory",
+      "description": "Explicitly promote selected durable project-memory records to the human-readable repo-local .opencode/memory/project-memory.jsonl file. Call when durable knowledge should be committed and shared with the team; omit ids to snapshot all current records. Secret-shaped content is never written out.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "import_memory",
+      "description": "Import the repo-local .opencode/memory/project-memory.jsonl file into this project's local working-memory index. Call to synchronize local project memory with shared repository records; already-present records are skipped and secret-shaped or malformed lines are rejected.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
     }
   ],
   "discovery": {
     "strategy": "host-side-progressive",
     "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
-    "fullCatalogBytes": 4051,
-    "toolIndexBytes": 596
+    "fullCatalogBytes": 6487,
+    "toolIndexBytes": 1333
   },
   "generatedBy": "@agent-tools/protocol-baseline",
   "surveyedAt": "2026-09-19"

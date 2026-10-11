@@ -159,6 +159,16 @@ export async function createOpencodeServerGuard(workspace: string) {
   return createDefaultToolboxGuardProvider({ workspace });
 }
 
+/**
+ * O-4 (resolved at C2, 2026-10-11): whether the plane lane mounts the FULL
+ * vendored toolbox catalog or the narrow declared floor. The default is the
+ * floor; `WORKFLOW_PLANE_FULL_TOOLBOX=1` restores the C1 full mount. Pure so
+ * the decision is pinned by test.
+ */
+export function planeMountsFullToolbox(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.WORKFLOW_PLANE_FULL_TOOLBOX === "1";
+}
+
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
   const args = parseDaemonArgs(argv);
   // W129: the help contract — print and exit before the guard composition or
@@ -260,14 +270,25 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       // W080 (the operator-disable precedence on this lane): connector names
       // the operator explicitly disabled never mount from the declaration.
       ...(disabledConnectors.length === 0 ? {} : { skillConnectorsDisabled: disabledConnectors }),
-      // C1 plane: the whole vendored toolbox ships in the image (spec §11,
-      // 2026-09-25) and the hub-written config wires the servers over loopback
-      // inside the container. The plane lane mounts the full built catalog
-      // (which also ensures the hub-owned skills store exists so the delivery
-      // mount resolves) and threads the operator settings doc — there is no
-      // settings file of its own in the pod, so it reads the workspace/state
-      // one. Absent plane mode both stay off and the daemon is byte-identical.
-      ...(plane === undefined ? {} : { mountFullToolbox: true, settings: loadSettings({ workspace }) }),
+      // C1 plane: the hub-written config wires the vendored toolbox servers
+      // over loopback inside the container. C2 resolves O-4: the FULL-catalog
+      // mount is now OPT-IN (default OFF) — it widens the agent's tool surface
+      // well beyond the narrow declared floor every other lane composes, so it
+      // is a deliberate deploy-time choice. Set WORKFLOW_PLANE_FULL_TOOLBOX=1
+      // to restore it. With it OFF the plane lane composes the SAME narrow
+      // declared floor as every other lane (the delivery mount, which also
+      // provisions the hub-owned skills store); the guard dispatcher is
+      // in-process since C2, so the mounted guard is the agent-facing tool,
+      // never the enforcement seat. The settings doc still rides either way
+      // (the pod has no settings file of its own, so it reads the
+      // workspace/state one). Absent plane mode both stay off and the daemon
+      // is byte-identical.
+      ...(plane === undefined
+        ? {}
+        : {
+          mountFullToolbox: planeMountsFullToolbox(),
+          settings: loadSettings({ workspace }),
+        }),
       // C1 plane: the LSP wire. On v2 an absent `lsp` key disables every
       // language server, so the plane sets an image-backed TypeScript server
       // (`planeLspConfig()`) and the runtime pins `OPENCODE_DISABLE_LSP_DOWNLOAD`

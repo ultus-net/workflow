@@ -31,10 +31,10 @@ after(async () => {
   await Promise.all([rm(workspace, { recursive: true, force: true }), rm(dataRoot, { recursive: true, force: true })]);
 });
 
-test("compiled server exposes bounded record and search schemas", async () => {
+test("compiled server exposes bounded record, search, export, and import schemas", async () => {
   assert.deepEqual(client.getServerVersion(), { name: "project-memory-mcp", version: "0.1.0" });
   const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(({ name }) => name), ["record_memory", "search_memory"]);
+  assert.deepEqual(tools.map(({ name }) => name), ["record_memory", "search_memory", "export_memory", "import_memory"]);
   assert.equal(tools[0]?.annotations?.readOnlyHint, false);
   assert.equal(tools[1]?.annotations?.readOnlyHint, true);
   assert.ok(tools.every((tool) => tool.outputSchema));
@@ -42,6 +42,8 @@ test("compiled server exposes bounded record and search schemas", async () => {
   assert.match(tools[0]?.description ?? "", /do not record transient tool output or speculation/);
   assert.match(tools[1]?.description ?? "", /Proactively search current project memory/);
   assert.match(tools[1]?.description ?? "", /assertions, not proof/);
+  assert.match(tools[2]?.description ?? "", /\.opencode\/memory\/project-memory\.jsonl/);
+  assert.match(tools[3]?.description ?? "", /\.opencode\/memory\/project-memory\.jsonl/);
   assert.equal((await client.callTool({ name: "record_memory", arguments: { workspaceRoot: workspace, kind: "rumor", content: "invalid" } })).isError, true);
   assert.equal((await client.callTool({ name: "search_memory", arguments: { workspaceRoot: workspace, query: "x", limit: 21 } })).isError, true);
 });
@@ -77,6 +79,23 @@ test("a server launched without a provenance stamp refuses writes loudly", async
   const refused = await bare.callTool({ name: "record_memory", arguments: { workspaceRoot: workspace, kind: "fact", content: "unstamped write" } });
   assert.equal(refused.isError, true);
   assert.match(JSON.stringify(refused.content), /provenance stamp/i);
+});
+
+test("export then import round-trips through the portable JSONL", async (t) => {
+  const written = await client.callTool({ name: "record_memory", arguments: { workspaceRoot: workspace, kind: "lesson", content: "portable round trip knowledge" } });
+  const id = (written.structuredContent as { record: { id: string } }).record.id;
+
+  const exported = await client.callTool({ name: "export_memory", arguments: { workspaceRoot: workspace, ids: [id] } });
+  assert.equal(exported.isError, undefined);
+  const exportResult = exported.structuredContent as { export: { exported: number; path: string } };
+  assert.equal(exportResult.export.exported, 1);
+  assert.ok(exportResult.export.path.endsWith(".opencode/memory/project-memory.jsonl"));
+
+  const reimported = await client.callTool({ name: "import_memory", arguments: { workspaceRoot: workspace } });
+  assert.equal(reimported.isError, undefined);
+  // The record already exists locally, so a re-import is a no-op skip.
+  assert.deepEqual((reimported.structuredContent as { import: unknown }).import, { imported: 0, skipped: 1, rejected: 0, path: exportResult.export.path });
+  t.after(() => rm(join(workspace, ".opencode"), { recursive: true, force: true }));
 });
 
 test("emits MCP log and progress notifications for tool calls", async () => {

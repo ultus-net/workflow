@@ -1,0 +1,96 @@
+{
+  "note": "Disposition of every vendored upstream policy (src/policies/*.ts) in the two operative layers. The vendored tree is the PROVENANCE corpus of record; the operative enforcement surface is the app port (mcp-toolbox/apps/workflow-guard-mcp/src), and the hub/seat in-process copy (src/integrations/guard-policy) is byte-identical to the app port's portable modules (pinned by test/guard-policy-drift.test.ts). The vendored tree is NOT statically linked; no control binds it to the port except this inventory (test/guard-policy-corpus-coverage.test.ts), so a vendored policy that is not listed here fails that test.",
+  "dispositions": [
+    "ported",
+    "partial",
+    "host-owned",
+    "out-of-scope"
+  ],
+  "policies": {
+    "boundary.ts": {
+      "disposition": "ported",
+      "modules": ["boundary-policy.ts", "path-policy.ts"],
+      "note": "Workspace-boundary and shell-mutation confinement; the guard-tamper classification lives in boundary-policy.ts."
+    },
+    "changelog.ts": {
+      "disposition": "partial",
+      "modules": ["pr-policy.ts"],
+      "missing": "Only the PR-body literal-newline-escape check is ported; branch-changelog-change and lockfile-sync preflight are host-owned (they need changed-path and manifest facts the guard API does not carry)."
+    },
+    "completion.ts": {
+      "disposition": "out-of-scope",
+      "modules": [],
+      "note": "Upstream self-describes completion claims as observability, not gating; the hub/kernel owns task completion."
+    },
+    "continuation.ts": {
+      "disposition": "out-of-scope",
+      "modules": [],
+      "note": "Session-continuation / Ralph orchestration is host lifecycle, outside guard_check."
+    },
+    "destructive.ts": {
+      "disposition": "partial",
+      "modules": ["shell-policy.ts"],
+      "missing": "SECURITY-RELEVANT: the destructive-command PATTERNS are ported into shell-policy.ts, but upstream's liveMutationIn scan over WRITTEN file content (extractEditContent + liveMutationIn on a file_write payload) is NOT ported. A script body that contains a live destructive command is not denied at the file_write lane."
+    },
+    "docs.ts": {
+      "disposition": "host-owned",
+      "modules": [],
+      "note": "Documentation-required preflight needs the documentation policy flag and changed paths; the hub owns it."
+    },
+    "file-claims.ts": {
+      "disposition": "host-owned",
+      "modules": [],
+      "note": "File-claim concurrency is re-implemented in the hub (src/application/workflow.ts FileClaimLedger), not in the portable guard."
+    },
+    "git.ts": {
+      "disposition": "partial",
+      "modules": ["git-policy.ts"],
+      "missing": "Protected-branch and pointer-write parsing is ported (git-policy.ts superset of the tracker gate); repo-discovery, base-staleness, merged-branch, and merge-conflict checks need remote/repo facts and are host-owned."
+    },
+    "interpreter.ts": {
+      "disposition": "partial",
+      "modules": ["interpreter-policy.ts"],
+      "missing": "SECURITY-RELEVANT: interpreter payload inspection is ported, but upstream's outsideWritePathInPayload (inline interpreter script writing OUTSIDE the workspace root) and secretPathInPayload (inline interpreter reading a secret file) are NOT ported."
+    },
+    "mcp.ts": {
+      "disposition": "ported",
+      "modules": ["mcp-policy.ts"],
+      "note": "Live MCP mutation-tool classification."
+    },
+    "planning.ts": {
+      "disposition": "out-of-scope",
+      "modules": [],
+      "note": "Read-only planning-source discovery; no enforcement."
+    },
+    "post-edit-validation.ts": {
+      "disposition": "host-owned",
+      "modules": [],
+      "note": "Post-edit validator execution needs the host's configured commands; the hub owns it."
+    },
+    "secrets.ts": {
+      "disposition": "partial",
+      "modules": ["path-policy.ts"],
+      "missing": "SECURITY-RELEVANT: secret-content detection (secretIn) and symlink-aware secret PATHS are ported, but upstream's secret-file READ denial lane (secretFileReadIn for shell reads of .env/secret files, and the read/read_file tool seat) is NOT ported; the port has no read action."
+    },
+    "shell-safety.ts": {
+      "disposition": "ported",
+      "modules": ["shell-policy.ts"],
+      "note": "Package hygiene, interactive-TTY detection, and shell normalization."
+    },
+    "stale-write.ts": {
+      "disposition": "host-owned",
+      "modules": [],
+      "note": "Stale-write fingerprints are owned by the hub kernel (src/application/workflow.ts matchesCurrent)."
+    },
+    "tamper.ts": {
+      "disposition": "ported",
+      "modules": ["boundary-policy.ts", "path-policy.ts"],
+      "note": "Guard-config/host-config tamper classification by runtime-consumption facts (liveConfigPaths), fail-closed on absent facts."
+    },
+    "todo.ts": {
+      "disposition": "host-owned",
+      "modules": [],
+      "note": "Todo lifecycle and mutation budgets are owned by the hub kernel's task state; the portable guard has no todo gate."
+    }
+  }
+}

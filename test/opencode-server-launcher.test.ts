@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 
-import { createOpencodeServerGuard } from "../src/cli/opencode-server.js";
+import { createOpencodeServerGuard, planeMountsFullToolbox } from "../src/cli/opencode-server.js";
 import { ensureToolboxGuardBuilt } from "./fixtures/compiled-dist.js";
 
 import {
@@ -262,4 +262,17 @@ test("W094: main() actually wires the guard into the authority (live-artifact an
   assert.match(daemonSource, /createOpencodeServerAuthority\(\{[^}]*\n\s*guard,\n/, "main must pass the guard into the authority options");
   assert.match(daemonSource, /await guard\.close\(\);/, "the guard must be reaped on teardown");
   assert.match(daemonSource, /await guard\.close\(\);\s*\n\s*throw error;/, "failure paths must reap the guard before rethrowing");
+});
+
+test("O-4: the plane full-toolbox mount defaults OFF and is restored only by WORKFLOW_PLANE_FULL_TOOLBOX=1", () => {
+  // C2 resolves the O-4 open flag: the plane lane no longer mounts the whole
+  // vendored catalog by default — it composes the narrow declared floor like
+  // every other lane, and the full mount is an explicit deploy-time opt-in.
+  assert.equal(planeMountsFullToolbox({}), false, "the full mount must default off");
+  assert.equal(planeMountsFullToolbox({ WORKFLOW_PLANE_FULL_TOOLBOX: "0" }), false);
+  assert.equal(planeMountsFullToolbox({ WORKFLOW_PLANE_FULL_TOOLBOX: "true" }), false, "only the exact '1' opt-in restores it");
+  assert.equal(planeMountsFullToolbox({ WORKFLOW_PLANE_FULL_TOOLBOX: "1" }), true);
+  // The decision must be WIRED into the daemon composition, not merely defined.
+  const daemonSource = readFileSync(resolve(process.cwd(), "src", "cli", "opencode-server.ts"), "utf8");
+  assert.match(daemonSource, /mountFullToolbox: planeMountsFullToolbox\(\)/, "main must wire the O-4 decision into the runtime options");
 });

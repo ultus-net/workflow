@@ -16,24 +16,22 @@ export interface AppDescriptor {
 }
 
 export const APPS: readonly AppDescriptor[] = [
+  {
+    id: "accountability-mcp",
+    contentOnlyTools: [],
+    taskTool: "run_verification_async",
+  },
   { id: "browser-verification-mcp", contentOnlyTools: [] },
   { id: "change-intelligence-mcp", contentOnlyTools: [] },
   { id: "ci-intelligence-mcp", contentOnlyTools: [] },
   { id: "code-intelligence-mcp", contentOnlyTools: [] },
   { id: "continuity-checkpoint-mcp", contentOnlyTools: [] },
-  { id: "egress-audit-mcp", contentOnlyTools: [] },
   { id: "git-intelligence-mcp", contentOnlyTools: [] },
   { id: "learning-mcp", contentOnlyTools: [] },
   { id: "project-context-mcp", contentOnlyTools: [] },
   { id: "project-memory-mcp", contentOnlyTools: [] },
-  { id: "review-accountability-mcp", contentOnlyTools: [] },
   { id: "skills-mcp", contentOnlyTools: [] },
   { id: "test-intelligence-mcp", contentOnlyTools: [] },
-  {
-    id: "verification-accountability-mcp",
-    contentOnlyTools: [],
-    taskTool: "run_verification_async",
-  },
   { id: "workflow-guard-mcp", contentOnlyTools: ["guard_check", "guard_status"] },
   { id: "workflow-task-mcp", contentOnlyTools: [] },
 ];

@@ -1,0 +1,61 @@
+{
+  "name": "opencode-workflow-guard",
+  "version": "1.15.5",
+  "description": "Deterministic workflow and safety policy enforcement for OpenCode",
+  "license": "MIT",
+  "type": "module",
+  "main": "src/workflow-guard.ts",
+  "bin": {
+    "opencode-workflow-guard": "./bin/opencode-workflow-guard.mjs"
+  },
+  "exports": {
+    ".": "./src/workflow-guard.ts",
+    "./server": "./src/workflow-guard.ts",
+    "./tui": "./src/workflow-guard-ui.ts"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ultus-net/opencode-workflow-guard.git"
+  },
+  "files": [
+    "bin/",
+    "docs/",
+    "src/",
+    "test/",
+    "tsconfig.json",
+    "README.md",
+    "LICENSE",
+    "ACKNOWLEDGEMENTS.md"
+  ],
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "guard",
+    "workflow"
+  ],
+  "scripts": {
+    "test": "node test/run-test.mjs",
+    "test:install": "node test/test-e2e.mts",
+    "test:all": "npm run typecheck && npm test && npm run test:install",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc --noEmit -p tsconfig.json",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "prepublishOnly": "npm run typecheck"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "latest",
+    "@opencode/plugin": "latest",
+    "@opentui/solid": "latest",
+    "jsonc-parser": "latest",
+    "@opencode/ai": "latest"
+  },
+  "devDependencies": {
+    "@changesets/cli": "latest",
+    "@types/node": "latest",
+    "typescript": "latest"
+  }
+}

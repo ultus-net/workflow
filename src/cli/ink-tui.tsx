@@ -45,7 +45,7 @@ const workspace = resolveTuiWorkspace(process.argv.slice(2), process.cwd());
 // Advisory: open review follow-ups (P2/P3 debt from adversarial reviews),
 // shown in the Activity panel. A missing server is an unconsultable ledger, so
 // the panel says so instead of rendering silence as "0 open".
-const reviewServer = resolve(fileURLToPath(import.meta.url), "../../../mcp-toolbox/apps/review-accountability-mcp/dist/server.js");
+const reviewServer = resolve(fileURLToPath(import.meta.url), "../../../mcp-toolbox/apps/accountability-mcp/dist/server.js");
 const followUpsClient = existsSync(reviewServer)
   ? await createReviewFollowUpsClient({ serverScript: reviewServer, workspaceRoot: workspace }).catch(() => undefined)
   : undefined;

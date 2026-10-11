@@ -5,51 +5,29 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-
 import { normalizeMcpEvidence, type McpCapability, type McpProvider } from "../adapters/mcp.js";
 import type { Evidence } from "../kernel/contracts.js";
-import { materializeMcpEnvironment, type McpCredentialBinding } from "./credential-mcp.js";
-import type { CredentialBroker } from "./credentials.js";
+import { checkPolicy, type GuardCheckInput, type GuardDecision } from "./guard-policy/index.js";
 
 /**
- * First-class integration with the vendored workflow-guard-mcp server
- * (`mcp-toolbox/apps/workflow-guard-mcp`). MCP remains capability and
- * observation plumbing; Workflow's kernel owns task state.
+ * C2 (mcp-toolbox → control-plane conversion): the guard policy core runs
+ * IN-PROCESS from `src/integrations/guard-policy/` (a drift-guarded,
+ * byte-identical copy of the vendored app's policy source — the OPERATIVE
+ * port). The enforcement seat no longer spawns a `workflow-guard-mcp` child,
+ * handshakes over stdio, or executes a possibly-stale `dist` — the SAME
+ * `checkPolicy` the vendored app runs is statically linked here. The port is a
+ * SUBSET of the vendored upstream corpus
+ * (`mcp-toolbox/vendor/opencode-workflow-guard/`): three upstream enforcement
+ * lanes are absent (secret-file read denial, destructive-content-on-write,
+ * inline-interpreter workspace-escape/secret-read), recorded in the vendor's
+ * `COVERAGE.json` and pinned by `test/guard-policy-corpus-coverage.test.ts`.
+ * MCP remains capability and observation plumbing; Workflow's kernel owns task
+ * state. The vendored app is still built and mounted as an agent-facing MCP
+ * tool (see `toolboxCatalogMounts`); its dist-freshness helpers below stay in
+ * use for that mount.
  */
 
-export interface GuardCheckInput {
-  action: "shell" | "file_write" | "git" | "network" | "mcp";
-  command?: string;
-  path?: string;
-  workspaceRoot?: string;
-  /**
-   * Host-supplied absolute paths of the LIVE control plane (W087 tier fact):
-   * runtime config, auth, the guard's own install. When present, the vendored
-   * guard classifies guard-tamper by runtime consumption instead of filename
-   * segments.
-   */
-  liveConfigPaths?: string[];
-  content?: string;
-  patchText?: string;
-  currentBranch?: string;
-  protectedBranches?: string[];
-  trustedRole?: string;
-  toolName?: string;
-  failureCount?: number;
-}
-
-export interface GuardDecision {
-  decision: "allow" | "deny" | "ask";
-  policy: string;
-  reason: string;
-  /** W121 (G4, the F6 residual): the concrete surface the rule matched —
-   * the offending path/command/toolName, threaded from the vendored
-   * guard's structuredContent. Absent when the rule keyed on no concrete
-   * surface — never fabricated. */
-  matched?: string;
-}
+export type { GuardCheckInput, GuardDecision } from "./guard-policy/index.js";
 
 export interface GuardStatus {
   mode: string;
@@ -63,92 +41,83 @@ export interface WorkflowGuardProvider extends McpProvider {
   close(): Promise<void>;
 }
 
+/**
+ * The full status payload the vendored app's `guard_status` returns,
+ * reproduced verbatim so the in-process seat and the mounted MCP tool answer
+ * identically (the mounted app streams it as a text content block; see
+ * `mcp-toolbox/apps/workflow-guard-mcp/src/server.ts`). The public
+ * `GuardStatus` type stays the minimal pre-C2 shape — no in-process consumer
+ * reads the advisory fields — but the object carries all of them.
+ */
+const GUARD_STATUS = {
+  mode: "policy-advisor",
+  enforcement: "host-dependent",
+  executesActions: false,
+  preconditions: {
+    // W084 (upstream cd2448e evaluation): the vendored policy has no todo
+    // gate, and hosts without a todo tool (OpenCode v2 removed native
+    // todowrite) can never satisfy one — the advisory text must not claim a
+    // precondition the policy does not enforce and the host cannot provide.
+    modifications: "Keep an active task or step in the host's tracking surface where one exists (todo/task tools); where the host has none (e.g. OpenCode v2 removed native todowrite), track steps through the host's available ledger instead. Edits on main/master are blocked, and the files you will change must be read in the current session.",
+    finalization: "Marking every task completed triggers the finalization gate - fresh verification evidence (test run) is required after the last mutation, and protected-branch/conflict checks apply.",
+  },
+  circuitBreaker: {
+    threshold: 2,
+    guidance: "Repeated failures detected in this session. Stop attempting alternative workarounds or shell laundering. Address the required step above directly.",
+  },
+  recommendedActions: [
+    "Before modifying files, ensure an active task exists, work on a feature branch, and read the existing files you will change.",
+    "After the final mutation, run fresh verification before marking all work complete.",
+    "Before finalizing or handing off changed work, inspect current review and verification accountability when those MCP products are available.",
+    "If a policy denies an action, satisfy the stated precondition directly instead of trying alternate command forms.",
+  ],
+};
+
 export async function createWorkflowGuardMcpProvider(options: {
-  serverPath: string;
-  credentialBroker?: CredentialBroker;
-  credentialBindings?: readonly McpCredentialBinding[];
   workspace?: string;
   /** W090: facts supplier enriching workspace-carrying guarded calls. Defaults to `createGuardFactsResolver()`. */
   facts?: GuardFactsResolver;
-}): Promise<WorkflowGuardProvider> {
-  const env = options.credentialBindings === undefined || options.credentialBindings.length === 0
-    ? undefined
-    : await materializeMcpEnvironment(requiredBroker(options.credentialBroker), {
-      consumer: "mcp:workflow-guard",
-      workspace: options.workspace ?? process.cwd(),
-      bindings: options.credentialBindings,
-    });
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [options.serverPath],
-    ...(env === undefined ? {} : { env }),
-    stderr: "pipe",
-  });
-  const client = new Client({ name: "workflow", version: "0.0.0" });
+} = {}): Promise<WorkflowGuardProvider> {
   const factsResolver = options.facts ?? createGuardFactsResolver();
-  await client.connect(transport);
+  const capabilities: readonly McpCapability[] = [{ name: "guard_check" }, { name: "guard_status" }];
 
-  const tools = await client.listTools();
-  const names = tools.tools.map((tool) => tool.name);
-  if (!names.includes("guard_check")) {
-    await client.close();
-    throw new Error("workflow-guard-mcp did not expose guard_check");
-  }
+  const guardStatus = async (): Promise<GuardStatus> => GUARD_STATUS;
+
+  const guardCheck = async (input: GuardCheckInput): Promise<GuardDecision> => {
+    // Enrichment is strictly input-workspace-driven: the four
+    // workspace-carrying seats set `workspaceRoot`, so facts describe the
+    // workspace the call is actually about. Calls without a workspace (the
+    // containment seat — its sandbox is the boundary) enrich nothing; an
+    // `options.workspace` fallback here would bind branch facts to the hub
+    // root while executing in a per-call cwd — a false deny/allow vector.
+    let checked = input;
+    if (input.workspaceRoot !== undefined && (input.action === "shell" || input.action === "git" || input.action === "file_write") && (input.currentBranch === undefined || input.protectedBranches === undefined || input.liveConfigPaths === undefined)) {
+      const facts = await factsResolver(input.workspaceRoot);
+      checked = {
+        ...input,
+        ...(input.currentBranch === undefined && facts.currentBranch !== undefined ? { currentBranch: facts.currentBranch } : {}),
+        ...(input.protectedBranches === undefined && facts.protectedBranches !== undefined ? { protectedBranches: [...facts.protectedBranches] } : {}),
+        ...(input.liveConfigPaths === undefined && facts.liveConfigPaths !== undefined ? { liveConfigPaths: [...facts.liveConfigPaths] } : {}),
+      };
+    }
+    return checkPolicy(checked);
+  };
 
   return {
     async capabilities(): Promise<readonly McpCapability[]> {
-      return names.map((name) => ({ name }));
+      return capabilities;
     },
     async invoke(capability: string, input: unknown): Promise<unknown> {
-      const result = await client.callTool({ name: capability, arguments: input as Record<string, unknown> | undefined });
-      return result.structuredContent ?? result.content;
+      if (capability === "guard_check") return guardCheck((input ?? {}) as GuardCheckInput);
+      if (capability === "guard_status") return guardStatus();
+      throw new Error(`workflow-guard provider has no capability '${capability}'`);
     },
-    async guardCheck(input: GuardCheckInput): Promise<GuardDecision> {
-      // Enrichment is strictly input-workspace-driven: the four
-      // workspace-carrying seats set `workspaceRoot`, so facts describe the
-      // workspace the call is actually about. Calls without a workspace (the
-      // containment seat — its sandbox is the boundary) enrich nothing; a
-      // `options.workspace` fallback here would bind branch facts to the hub
-      // root while executing in a per-call cwd — a false deny/allow vector.
-      let checked = input;
-      if (input.workspaceRoot !== undefined && (input.action === "shell" || input.action === "git" || input.action === "file_write") && (input.currentBranch === undefined || input.protectedBranches === undefined || input.liveConfigPaths === undefined)) {
-        const facts = await factsResolver(input.workspaceRoot);
-        checked = {
-          ...input,
-          ...(input.currentBranch === undefined && facts.currentBranch !== undefined ? { currentBranch: facts.currentBranch } : {}),
-          ...(input.protectedBranches === undefined && facts.protectedBranches !== undefined ? { protectedBranches: [...facts.protectedBranches] } : {}),
-          ...(input.liveConfigPaths === undefined && facts.liveConfigPaths !== undefined ? { liveConfigPaths: [...facts.liveConfigPaths] } : {}),
-        };
-      }
-      const result = await client.callTool({ name: "guard_check", arguments: checked as unknown as Record<string, unknown> });
-      const structured = result.structuredContent;
-      if (typeof structured === "object" && structured !== null) {
-        const value = structured as Record<string, unknown>;
-        if (typeof value.decision === "string" && typeof value.policy === "string" && typeof value.reason === "string") {
-          return value as unknown as GuardDecision;
-        }
-      }
-      throw new Error("guard_check returned no structured decision");
-    },
-    async guardStatus(): Promise<GuardStatus> {
-      const result = await client.callTool({ name: "guard_status", arguments: {} });
-      const text = result.content;
-      if (Array.isArray(text) && text.length > 0) {
-        const first = text[0] as { type: string; text?: string };
-        if (typeof first.text === "string") {
-          const parsed = JSON.parse(first.text) as GuardStatus;
-          return parsed;
-        }
-      }
-      throw new Error("guard_status returned no status payload");
-    },
-    close: () => client.close(),
+    guardCheck,
+    guardStatus,
+    // In-process: there is no child to reap. Kept so callers' teardown stays
+    // uniform.
+    close: async () => {},
   };
-}
-
-function requiredBroker(broker: CredentialBroker | undefined): CredentialBroker {
-  if (broker === undefined) throw new Error("credential broker required for MCP credential bindings");
-  return broker;
 }
 
 /** Resolves the vendored workflow-guard-mcp server entrypoint, building first if needed. */
@@ -225,11 +194,9 @@ export function guardDistIsStale(root: string): boolean {
 }
 
 export function createDefaultToolboxGuardProvider(options: {
-  credentialBroker?: CredentialBroker;
-  credentialBindings?: readonly McpCredentialBinding[];
   workspace?: string;
 } = {}): Promise<WorkflowGuardProvider> {
-  return createWorkflowGuardMcpProvider({ serverPath: defaultToolboxGuardServerPath(), ...options });
+  return createWorkflowGuardMcpProvider(options);
 }
 
 export function guardPolicyEvidence(decision: GuardDecision, mutationEpoch: number): Evidence {

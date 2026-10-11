@@ -42,10 +42,8 @@ export const TOOLBOX_CATALOG: readonly ToolboxApp[] = [
   { name: "ci-intelligence-mcp", description: "Bounded read-only CI run and job intelligence for coding agents over MCP." },
   { name: "change-intelligence-mcp", description: "Composed local change assessment for coding agents over MCP." },
   { name: "browser-verification-mcp", description: "Bounded, evidence-producing browser verification over CDP for coding agents." },
-  { name: "verification-accountability-mcp", description: "Durable bounded verification observations and freshness synthesis over MCP." },
-  { name: "review-accountability-mcp", description: "Subject-bound review attestations and durable follow-up debt over MCP." },
+  { name: "accountability-mcp", description: "Subject-bound review attestations plus authority-backed verification observations over MCP." },
   { name: "continuity-checkpoint-mcp", description: "Bounded read-only continuity recovery for coding agents over MCP." },
-  { name: "egress-audit-mcp", description: "Append-only, bounded egress-reach ledger with anomaly flags for coding agents over MCP." },
   { name: "learning-mcp", description: "Adaptive pedagogy engine (learner profile, stage progression, intervention budgeting, Socratic checkpoints) over MCP." },
   { name: "workflow-task-mcp", description: "The canonical Workflow step ledger over MCP: define, start, complete, and cancel evidence-bound task steps." },
 ];

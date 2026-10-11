@@ -1,0 +1,101 @@
+import { realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { homedir } from "node:os";
+
+const SAFE_ENV_FIXTURE_RE = /\.env\.(example|sample|template|dist|schema)(\.[\w-]+)*$/i;
+
+function isSecretName(path: string): boolean {
+  const base = basename(path).toLowerCase();
+  const full = path.toLowerCase().replaceAll("\\", "/");
+  if (SAFE_ENV_FIXTURE_RE.test(base)) return false;
+  return /^\.env(?:\.|$)/i.test(base)
+    || /^(id_rsa|id_dsa|id_ecdsa|id_ed25519)(?:\.|$)/i.test(base)
+    || /\.(pem|key|pkcs12|pfx|p12)$/i.test(base)
+    || /kubeconfig/i.test(base)
+    || full.includes("/.kube/config")
+    || /^(service[-_]?account|client[-_]?secret).*\.json$/i.test(base)
+    || /credentials\.json$/i.test(base)
+    || full.includes("/.aws/credentials")
+    || full.includes("/.docker/config.json")
+    || base === ".netrc"
+    || base === ".git-credentials";
+}
+
+function realPathWithMissingTail(path: string): string | undefined {
+  let ancestor = path;
+  while (true) {
+    try {
+      return resolve(realpathSync(ancestor), relative(ancestor, path));
+    } catch {
+      const parent = dirname(ancestor);
+      if (parent === ancestor) return undefined;
+      ancestor = parent;
+    }
+  }
+}
+
+export function checkProtectedPath(path: string, workspaceRoot?: string): string | undefined {
+  const lexical = workspaceRoot && !isAbsolute(path) ? resolve(workspaceRoot, path) : path;
+  const candidates = [lexical];
+  const real = workspaceRoot || isAbsolute(path) ? realPathWithMissingTail(lexical) : undefined;
+  if (real && real !== lexical) candidates.push(real);
+  // W097: the user's real home is user space, not system space. On ostree
+  // hosts /home is a symlink to /var/home, so every home-anchored path
+  // realpaths under /var and the naive prefix rule denied every write —
+  // including workspace-relative file_writes whose lexical candidate
+  // resolves into the home mount. Home-covered candidates still fire the
+  // .ssh and secret-name rules (credentials live in the home); they only
+  // escape the /etc//usr//var system-space prefixes.
+  const home = homedir();
+  const realHome = realPathWithMissingTail(home) ?? home;
+  const isUnderRealHome = (candidate: string): boolean => {
+    const rel = relative(realHome, candidate);
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  };
+  // W097 fix (2026-09-26, first CI run): foreign-home slices are protected
+  // on ANY host. The original rule leaned on the ostree /home -> /var/home
+  // symlink (the realpath candidate fired /var); on a conventional host
+  // (HOME=/home/<user>, no symlink) a foreign /home/<other> path matched
+  // nothing and the W097 denial silently became a MISSING allow. /home and
+  // /root now join the system-space prefixes: user-slice roots whose paths
+  // are denied unless the path is the CURRENT user's home space.
+  //
+  // "Current user's home space" is the CANONICAL form's home membership, not
+  // a per-spelling one: on ostree the legitimate spelling /home/<self>/x has
+  // a lexical candidate outside /var/home/<self> but a real candidate inside
+  // it, so per-candidate logic would newly deny it (a false positive). A
+  // symlink INSIDE the home pointing into system space still fails: its real
+  // candidate is outside the home, so neither candidate is exempt.
+  const realUnderHome = real !== undefined && isUnderRealHome(real.replaceAll("\\", "/"));
+  for (const candidate of candidates) {
+    const normalized = candidate.replaceAll("\\", "/");
+    const inUserHome = realUnderHome || isUnderRealHome(normalized);
+    if (!inUserHome && (/^\/etc(?:\/|$)/.test(normalized) || /^\/usr(?:\/|$)/.test(normalized) || /^\/var(?:\/|$)/.test(normalized) || /^\/home(?:\/|$)/.test(normalized) || /^\/root(?:\/|$)/.test(normalized))) return "protected system or credential path";
+    if (/(?:^|\/)\.ssh(?:\/|$)/.test(normalized)) return "protected system or credential path";
+    if (isSecretName(candidate)) return "secret credential path";
+  }
+  return undefined;
+}
+
+export function checkSecretPath(path: string, workspaceRoot?: string): boolean {
+  const lexical = workspaceRoot && !isAbsolute(path) ? resolve(workspaceRoot, path) : path;
+  if (isSecretName(lexical)) return true;
+  const real = workspaceRoot || isAbsolute(path) ? realPathWithMissingTail(lexical) : undefined;
+  return real ? isSecretName(real) : false;
+}
+
+const secretPatterns: Array<{ re: RegExp; reason: string }> = [
+  { re: /-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----/, reason: "private key material" },
+  { re: /\bAKIA[0-9A-Z]{16}\b/, reason: "AWS access key ID" },
+  { re: /\bASIA[0-9A-Z]{16}\b/, reason: "AWS temporary session credential" },
+  { re: /\bghp_[A-Za-z0-9]{36}\b/, reason: "GitHub personal access token" },
+  { re: /\bgithub_pat_[A-Za-z0-9_]{82}\b/, reason: "GitHub fine-grained PAT" },
+  { re: /\bsk-[A-Za-z0-9]{20,}\b/, reason: "OpenAI-style API key" },
+  { re: /\bAIza[0-9A-Za-z_-]{35}\b/, reason: "Google API key" },
+  { re: /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/, reason: "Slack token" },
+  { re: /(?:^|\s)(?:AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|OPENAI_API_KEY|ANTHROPIC_API_KEY|OPENAI_KEY)\s*=\s*\S+/, reason: "credential assignment" },
+];
+
+export function secretIn(content: string): string | undefined {
+  return secretPatterns.find(({ re }) => re.test(content))?.reason;
+}

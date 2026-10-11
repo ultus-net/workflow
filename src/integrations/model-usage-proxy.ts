@@ -148,7 +148,7 @@ const MESSAGES_LANE_LABEL_LIMIT = 64;
    * bound the OLDEST event drops so a long-lived proxy never grows unbounded
    * (the same bounded-journal posture as the messages-lane labels above). 128 is
    * a deliberately small window: the journal is a live sample for the audit
-   * bridge, not the durable ledger (that is `egress-audit-mcp`'s job).
+   * bridge, not the durable ledger (that is the in-process egress ledger's job).
    */
 const EGRESS_OBSERVATION_LIMIT = 128;
 
@@ -156,7 +156,7 @@ const EGRESS_OBSERVATION_LIMIT = 128;
  * W181 (A5): a bounded, path-shape-derived function class for the observation
  * seam. The URL's query string is never read into the result — only the path
  * suffix selects a label — so nothing query-shaped can reach the ledger. The
- * labels mirror the `egress-audit-mcp` suggested classes.
+ * labels mirror the egress ledger's suggested classes.
  */
 function classifyEgressFunctionClass(method: string | undefined, url: string | undefined): string {
   if (typeof url !== "string") return "unknown";
@@ -288,21 +288,19 @@ export interface MessagesLaneLabels {
 /**
  * W181 (A5, NVIDIA adoption): the proxy's egress observation vocabulary.
  *
- * This is the wire shape the `egress-audit-mcp` ledger consumes
- * (`mcp-toolbox/apps/egress-audit-mcp/src/egress-ledger.ts`): a destination,
+ * This is the wire shape the egress ledger consumes
+ * (`src/integrations/egress-ledger.ts`): a destination,
  * the function class reached on it, and the token class that carried it, plus
  * the anomaly-relevant facts. It is OBSERVATION ONLY — emitting one never
  * blocks, delays, or rewrites a request; the proxy's pass-through posture is
  * unchanged. `destination` is a bare hostname (never a URL, path, or query),
  * and no secret, placeholder value, or query string crosses this seam.
  *
- * The token classes are a structural copy of the ledger's closed set. They are
- * redeclared here (not imported) to respect the package boundary: `src/` must
- * not import from `mcp-toolbox/` (a separate pnpm package), so the ledger's
- * `EgressTokenClass` cannot be the shared type. The bridge
- * (`src/integrations/egress-audit-client.ts`) is the one place that maps this
- * shape onto the ledger's `AppendReachInput`, and its test pins the two
- * vocabularies together.
+ * The token classes mirror the ledger's closed set. They stay declared here
+ * (not imported from the ledger) so the proxy has no dependency on the ledger
+ * module: the bridge (`src/integrations/egress-audit-client.ts`) is the one
+ * place that maps this shape onto the ledger's `AppendReachInput`, and its test
+ * pins the two vocabularies together.
  */
 export type EgressTokenClass = "session-placeholder" | "absent" | "foreign" | "unknown";
 

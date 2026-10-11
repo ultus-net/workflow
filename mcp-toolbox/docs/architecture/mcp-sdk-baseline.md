@@ -91,7 +91,7 @@ SDK 1.30.0 **does not provide**: `server/discover`, TTL fields on list
 results, a SEP-2322 MRTR envelope, or Enterprise-Managed Authorization
 (ID-JAG). These are recorded as gaps and deliberately not hand-rolled.
 
-The toolbox adopts Tasks for `verification-accountability-mcp`'s
+The toolbox adopts Tasks for `accountability-mcp`'s
 `run_verification_async`, declares one result shape per tool through the
 `@agent-tools/protocol-baseline` conformance smoke, and ships generated
 `.well-known/server-card.json` cards for every product. The prior baseline's
