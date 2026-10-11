@@ -36,7 +36,7 @@ import { METERED_PLACEHOLDER_KEY, type EgressDenialEvent, type ModelUsageMetrics
 import type { CredentialEndpoint } from "./credentials.js";
 import { createEgressRuntimeFeed } from "./egress-audit-client.js";
 import { egressPostureFromEnv, egressRuntimeContext } from "./runtime-context.js";
-import { installFleetIntoOpencodeConfig } from "./fleet-payload.js";
+import { installFleetIntoOpencodeConfig, type FleetInstallResult } from "./fleet-payload.js";
 import type { TaskUsageSummary } from "./task-usage.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
 import { loadOpenModelKeys } from "./open-model-keys.js";
@@ -109,6 +109,18 @@ export function opencodeAcpArgs(majorVersion: number | undefined): readonly stri
   return majorVersion !== undefined && majorVersion < 2 ? ["acp", "--pure"] : ["acp"];
 }
 
+/**
+ * Deploys the vendored OpenCode fleet (agents + slash commands) into a
+ * hub-owned ACP config dir. Agents/commands only — the docs bundle is
+ * workspace-owned. Fail-closed: a malformed manifest throws and refuses the
+ * runtime. This is the ACP lane's named fleet-install seam, mirrored by the
+ * server lane's `installVendoredFleet` (`opencode-server-runtime.ts`); both
+ * call the same `installFleetIntoOpencodeConfig` payload definition.
+ */
+export function installAcpVendoredFleet(configDir: string): readonly FleetInstallResult[] {
+  return installFleetIntoOpencodeConfig(configDir);
+}
+
 const opencodeMajorCache = new Map<string, Promise<number | undefined>>();
 
 /** Probe the opencode binary's major version once per executable path. */
@@ -176,6 +188,15 @@ export interface AcpRuntimeOptions {
    * this runtime composes. Empty/absent (the default) leaves gate 2 inactive.
    */
   readonly credentialEndpoints?: readonly CredentialEndpoint[] | undefined;
+  /**
+   * Injectable fleet-install seam (tests). Defaults to
+   * {@link installAcpVendoredFleet}, which deploys the vendored agents/commands
+   * into the hub-owned config dir. Mirrors the server lane's `installFleetImpl`
+   * (`opencode-server-runtime.ts`) so both hub-owned lanes install from one
+   * tested definition AND are testable identically (review follow-up 34a0ff8e:
+   * the ACP lane previously called the payload function inline with no seam).
+   */
+  readonly installFleetImpl?: ((configDir: string) => readonly FleetInstallResult[]) | undefined;
 }
 
 export async function createConfiguredAcpRuntime(
@@ -445,7 +466,8 @@ async function createOpencodeRuntime(
     // the same gap closed for the server lane in opencode-server-runtime.ts).
     // Agents/commands only — the docs bundle is workspace-owned. Fail-closed: a
     // malformed manifest throws and refuses the runtime.
-    const fleetResults = installFleetIntoOpencodeConfig(configDir);
+    const fleetInstall = options.installFleetImpl ?? installAcpVendoredFleet;
+    const fleetResults = fleetInstall(configDir);
     const fleetInstalled = fleetResults.filter((result) => result.action === "written" || result.action === "forced").length;
     console.log(`[fleet] installed ${fleetInstalled} vendored agent/command file(s) into ${join(configDir, "opencode")}`);
     const resume = resumeFrom ?? process.env.WORKFLOW_ACP_RESUME;

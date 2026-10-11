@@ -472,3 +472,65 @@ measurement).
 **Refs:** `src/integrations/opencode-server-gateway.ts`; the v0.1.7 release; the
 csh-dev pin (AzDO #1158); `src/integrations/opencode-server-runtime.ts` (state
 dir); `images/control-plane/Dockerfile`.
+
+### Plane LSP wire + ACP fleet-install seam (2026-10-11)
+
+**Source:** the operator "LSP wire" directive and review follow-up
+`34a0ff8e` (the ACP lane installed the vendored fleet inline with no seam).
+Append-only; supersedes nothing above.
+
+#### LSP: the gap and the wire
+
+opencode v2 disables **every** language server when the config `lsp` key is
+absent (`packages/opencode/src/lsp/lsp.ts`: `if (!cfg.lsp) "all LSPs are
+disabled"`). The plane's hub-written config
+(`src/integrations/opencode-agent-config.ts` `meteredOpencodeConfig`) omitted
+the key, so the deployed plane had no LSP at all. Even with the key set, the
+built-in `typescript` server resolves `typescript-language-server` from
+opencode's own npm cache (`Npm.which`) and `tsserver.js` from the WORKSPACE's
+`node_modules` (`Module.resolve`) — neither exists offline in a fresh pod.
+
+The wire (three coordinated parts):
+
+- **Config** — `meteredOpencodeConfig` gains an `lsp` option, emitted verbatim
+  when supplied and absent otherwise (byte-identical default). The plane CLI
+  (`src/cli/opencode-server.ts`, plane mode only) passes
+  `planeLspConfig()` (`src/integrations/plane-lsp.ts`): a `typescript` entry
+  that OVERRIDES the built-in (same id ⇒ keeps the built-in's `root`
+  resolution) with an explicit command pointing at the image-baked server and
+  an `initialization.tsserver.path` pinned to the image's `tsserver.js`, so it
+  starts even when the opened workspace has no TypeScript installed.
+- **Image** — `images/control-plane/Dockerfile` installs pinned
+  `typescript@5.9.3` + `typescript-language-server@6.0.2` into the
+  `/usr/local` global prefix (on the default pod/bwrap PATH, bound under
+  `/usr`); the build runs `typescript-language-server --version` to fail
+  closed. The config's path constants and the Dockerfile lines are pinned to
+  each other by `test/plane-lsp.test.ts`.
+- **Launch env** — when LSP is composed the contained launch pins
+  `OPENCODE_DISABLE_LSP_DOWNLOAD=1` (`src/effect/runtime-flags.ts`), so an
+  unprovisioned built-in an operator's file type happens to match fails
+  closed to "unavailable" instead of fetching from the network mid-session.
+
+**Evidence (local, this revision):** typecheck + lint exit 0;
+`test/plane-lsp.test.ts` 5/5; `test/opencode-server-runtime.test.ts` 7/7 — the
+launch test drives the real pinned opencode (v2.0.10) through the injected
+boundary WITH `lsp: planeLspConfig()` composed, and the server reaches healthy,
+proving the pinned binary accepts the block (a bad shape hard-fails startup)
+and the block survives into `opencode.json`. Honest limit: the LIVE end-to-end
+proof (a real file touch producing a diagnostic over `code.ultus.net`) is a
+deploy-gated follow-up — this entry claims config/runtime/acceptance, not a
+live LSP session.
+
+#### ACP fleet-install seam (review follow-up `34a0ff8e`)
+
+The ACP lane called `installFleetIntoOpencodeConfig` inline with no injectable
+seam (`acp-runtime.ts`). It now composes through a named export
+`installAcpVendoredFleet` (mirroring the server lane's `installVendoredFleet`)
+and an `AcpRuntimeOptions.installFleetImpl` seam. `test/acp-runtime-agent.test.ts`
+now asserts the ACP seam installs the same agent/command set as the server
+lane (never docs). Evidence: `test/acp-runtime-agent.test.ts` 15/15.
+
+**Refs:** `src/integrations/plane-lsp.ts`; `src/integrations/opencode-agent-config.ts`;
+`src/integrations/opencode-server-runtime.ts`; `src/cli/opencode-server.ts`;
+`src/integrations/acp-runtime.ts`; `images/control-plane/Dockerfile`;
+`packages/opencode/src/lsp/lsp.ts` (v2.0.10).

@@ -88,6 +88,24 @@ RUN chmod 0755 /usr/local/bin/opencode \
 # after `npm prune` so the linked dist is the final tree.
 RUN npm link --ignore-scripts
 
+# Plane LSP provisioning (the "LSP wire"). opencode v2 disables EVERY language
+# server when its `lsp` config key is absent
+# (packages/opencode/src/lsp/lsp.ts: `if (!cfg.lsp) "all LSPs are disabled"`),
+# and the plane's built-in `typescript` server resolves
+# `typescript-language-server` from opencode's own npm cache and `tsserver.js`
+# from the WORKSPACE's node_modules — neither exists offline in a fresh pod.
+# The plane config therefore OVERRIDES the built-in `typescript` entry with an
+# explicit command pointing at these baked, sha-pinned versions
+# (src/integrations/plane-lsp.ts), and the launch env pins
+# OPENCODE_DISABLE_LSP_DOWNLOAD=1 so an unprovisioned built-in fails closed
+# instead of fetching from the network mid-session. The npm global prefix of
+# node:22-bookworm-slim is /usr/local, so the bin lands on the default
+# bwrap/pod PATH and the module resolves. Versions are pinned to match
+# package.json's `typescript` (^5.9.3) and the language server's stable line;
+# test/plane-lsp.test.ts pins the paths against these lines.
+RUN npm install -g typescript@5.9.3 typescript-language-server@6.0.2 \
+ && typescript-language-server --version
+
 ENV PATH="/app/node_modules/.bin:${PATH}"
 WORKDIR /workspace
 EXPOSE 4096

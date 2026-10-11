@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { acpAgentKind, openrouterAuthKeyFromAuth, resolveRuntimeMeteredLane, resolveSkillsMountFor } from "../src/integrations/acp-runtime.js";
+import { acpAgentKind, installAcpVendoredFleet, openrouterAuthKeyFromAuth, resolveRuntimeMeteredLane, resolveSkillsMountFor } from "../src/integrations/acp-runtime.js";
+import { installVendoredFleet } from "../src/integrations/opencode-server-runtime.js";
+import { loadFleetManifest } from "../src/integrations/fleet-payload.js";
 import { METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
 import { OPENROUTER_UPSTREAM, SYNTHETIC_UPSTREAM } from "../src/integrations/synthetic-provider.js";
 import {
@@ -250,4 +252,45 @@ test("resolveRuntimeMeteredLane: no resolvable key keeps the OpenRouter single-u
     assert.equal(lane.apiKey, "or-key");
     assert.equal(lane.failover, undefined, "the failover seam is absent without the pair");
   });
+});
+
+// ── The ACP fleet-install seam (review follow-up 34a0ff8e) ──────────────────
+
+test("ACP lane fleet seam installs the vendored agents/commands exactly as the server lane does", () => {
+  // The ACP lane previously called the payload function inline with no seam;
+  // the named export is the seam and must deploy the SAME set (agents +
+  // commands, never docs) the server lane's installVendoredFleet does.
+  const configDir = mkdtempSync(join(tmpdir(), "wf-acp-fleet-cfg-"));
+  try {
+    const acp = installAcpVendoredFleet(configDir);
+    const manifest = loadFleetManifest();
+    const agents = manifest.entries.filter((entry) => entry.kind === "agent");
+    const commands = manifest.entries.filter((entry) => entry.kind === "command");
+    assert.ok(agents.length >= 4, "the vendored fleet carries its agents");
+    assert.ok(commands.length >= 4, "the vendored fleet carries its commands");
+    assert.equal(acp.length, agents.length + commands.length, "only agent/command kinds install");
+    for (const entry of [...agents, ...commands]) {
+      const flat = entry.kind === "agent" ? "agents" : "commands";
+      assert.ok(
+        existsSync(join(configDir, "opencode", flat, entry.file)),
+        `${entry.id} landed under the ACP config dir`,
+      );
+    }
+    assert.ok(!existsSync(join(configDir, "opencode", "docs")), "docs are never written into the config dir");
+    // The server lane's seam is the same tested definition — the two lanes
+    // install byte-identically.
+    const serverDir = mkdtempSync(join(tmpdir(), "wf-server-fleet-cfg-"));
+    try {
+      const server = installVendoredFleet(serverDir);
+      assert.deepEqual(
+        acp.map((result) => result.entry.id),
+        server.map((result) => result.entry.id),
+        "both hub-owned lanes install the same entries",
+      );
+    } finally {
+      rmSync(serverDir, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(configDir, { recursive: true, force: true });
+  }
 });
