@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import { hostCapabilities, type ToolCapability } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
+import { mutationBudgetFromEnv } from "../application/mutation-budget.js";
 import { TaskGraph } from "../kernel/task-graph.js";
 import {
   assertAskRuleset,
@@ -22,6 +23,8 @@ import {
   writeOpencodeServerDiscovery,
 } from "../integrations/opencode-server-discovery.js";
 import { createOpencodeServerRuntime } from "../integrations/opencode-server-runtime.js";
+import { loadUpstreamApiKeyFromSecretStore } from "../integrations/upstream-key.js";
+import { resolveSecretStore } from "../integrations/secret-store.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
 import { upstreamCredentialBinding } from "../integrations/egress-binding.js";
 import { loadEgressPolicyFile } from "../integrations/egress-policy-file.js";
@@ -206,6 +209,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const payloadPolicy = egressPolicy === undefined || egressPolicy.rules.length === 0
     ? undefined
     : { egressPolicy };
+  // C1 F2 durable fix: when `WORKFLOW_UPSTREAM_KEY_FROM` names a secret store
+  // (the deployed plane points it at azure-kv), the upstream key is sourced from
+  // Key Vault rather than a uid-shared env. Fail-closed on a named-but-absent
+  // secret. Absent the seam the resolution is the exact synchronous env/file
+  // path, so an unconfigured daemon is byte-identical.
+  const upstreamApiKey = process.env.WORKFLOW_UPSTREAM_KEY_FROM === undefined
+    ? undefined
+    : await loadUpstreamApiKeyFromSecretStore({ storeFor: () => resolveSecretStore() });
   // W094 (review P3-3): every failure path after composition reaps the guard
   // explicitly — the hub precedent closes its guard on composition failure,
   // and "the child self-reaps on EOF" is inferred semantics, not a mandate.
@@ -221,6 +232,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       ...(plane === undefined ? {} : { containment: selectedContainment }),
       ...(credentialEndpoints.length === 0 ? {} : { credentialEndpoints }),
       ...(payloadPolicy === undefined ? {} : { payloadPolicy }),
+      ...(upstreamApiKey === undefined ? {} : { apiKey: upstreamApiKey }),
       // W082: the daemon carries the operator's autoCompact preference into the
       // hub-written server config (same trigger the ACP lane composes). A
       // settings read failure must not block the daemon — the trigger is
@@ -259,6 +271,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     [],
     new Set<ToolCapability>(["read", "mutation", "process"]),
     workspace,
+    undefined,
+    undefined,
+    // W-hardening: the per-root mutation cap is operator-configurable
+    // (`WORKFLOW_MUTATION_BUDGET`, fail-closed) — the observed C1 fault was a
+    // 100-cap that a burst of `process`-class shell mutations exhausted for the
+    // rest of the session. The denial now also rides the permission reply as
+    // feedback (opencode-server-authority `rejectionFeedback`).
+    mutationBudgetFromEnv(process.env),
   );
   const engine = new HttpRemoteEngine({
     baseUrl: runtime.url,
@@ -277,6 +297,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     }
   }
   console.log(`[authority] mode=${mode} enforcement=${enforcement} workspace=${workspace}`);
+  console.log(`[authority] mutation budget: ${application.mutationBudgetMax()} allowed mutations per root session (WORKFLOW_MUTATION_BUDGET)`);
   // Session budget (M4): the W045 caps, adapted to the server path. Crossing a
   // cap aborts active turns and the broker denies every later mutation.
   const budget = sessionBudgetFromEnv();

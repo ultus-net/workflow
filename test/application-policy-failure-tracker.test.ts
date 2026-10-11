@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { PolicyFailureTracker } from "../src/application/policy-failure-tracker.js";
 import { WorkflowApplication } from "../src/application/workflow.js";
-import { hostCapabilities } from "../src/application/host.js";
+import { hostCapabilities, type ToolCapability } from "../src/application/host.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 
@@ -40,6 +40,26 @@ test("WorkflowApplication enforces a parent-owned mutation budget for descendant
   const blocked = application.authorize({ ...action, sessionId: "parent" });
   assert.equal(blocked.kind, "deny");
   if (blocked.kind === "deny") assert.equal(blocked.code, "MUTATION_BUDGET_EXHAUSTED");
+});
+
+test("WorkflowApplication honors an explicit mutation cap (the configurable seam)", () => {
+  // The trailing ctor arg is the deployment seam `mutationBudgetFromEnv` feeds;
+  // a small cap must bind exactly, so an operator-raised budget is reachable
+  // through composition rather than only by editing a constant.
+  const application = new WorkflowApplication(
+    new TaskGraph([task]),
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+    [],
+    new Set<ToolCapability>(["read", "mutation", "process"]),
+    undefined,
+    undefined,
+    undefined,
+    2,
+  );
+  assert.equal(application.mutationBudgetMax(), 2);
+  assert.equal(application.authorize(action).kind, "allow");
+  assert.equal(application.authorize(action).kind, "allow");
+  assert.equal(application.authorize(action).kind, "deny", "the third mutation crosses the explicit cap of 2");
 });
 
 test("mutation-budget exhaustion is bound and reversible via the documented reset (C1 fault)", () => {

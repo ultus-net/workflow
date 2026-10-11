@@ -25,7 +25,7 @@ import { mutationGate, verifyingGate, type CheckpointLedger } from "../pedagogy/
 import { PolicyFailureTracker } from "./policy-failure-tracker.js";
 import { FileClaimLedger } from "./file-claim-ledger.js";
 import { runStepCompletionAdmission, type StepTestEvaluator } from "./admission-gate.js";
-import { MutationBudget } from "./mutation-budget.js";
+import { DEFAULT_MUTATION_BUDGET, MutationBudget } from "./mutation-budget.js";
 
 export interface WorkflowTaskProjection {
   readonly id: TaskId;
@@ -63,7 +63,7 @@ export class WorkflowApplication {
   readonly #skillReads = new Map<string, TaskId>();
   readonly #policyFailures = new PolicyFailureTracker();
   readonly #fileClaims = new FileClaimLedger();
-  readonly #mutationBudget = new MutationBudget();
+  readonly #mutationBudget: MutationBudget;
   // W072 I-9: the optional `tests` rung. Absent by default (the rung is
   // skipped); a composition wires it with `setStepTestEvaluator`. It performs
   // no IO itself and runs only after every cheaper rung passed.
@@ -77,10 +77,17 @@ export class WorkflowApplication {
     readonly workspaceRoot?: string,
     codingSessionCorrelation?: string,
     executionLog?: readonly ExecutionLogEntry[],
+    /**
+     * Per-root mutation cap. Defaults to {@link DEFAULT_MUTATION_BUDGET}; a
+     * deployment wires `mutationBudgetFromEnv()` here (fail-closed parse). An
+     * explicit argument wins over the default, so tests can pin a small cap.
+     */
+    mutationBudgetMax: number = DEFAULT_MUTATION_BUDGET,
   ) {
     if (workspaceRoot !== undefined && !isAbsolute(workspaceRoot)) {
       throw new TypeError("workspace root must be an absolute path");
     }
+    this.#mutationBudget = new MutationBudget(mutationBudgetMax);
     this.#graph = graph;
     this.#capabilities = new Set(allowedCapabilities);
     this.#history.push(...history);
