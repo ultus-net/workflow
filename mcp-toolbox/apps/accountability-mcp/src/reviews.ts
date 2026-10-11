@@ -15,7 +15,7 @@ export interface FollowUp extends Finding {
 export interface ReviewAttestation {
   id: string; reviewer: string; verdict: "approved" | "changes_requested"; subject: Subject;
   blockingSeverities: Severity[]; findings: Finding[]; createdAt: number; evidenceClass: "attestation";
-  provenance: { origin: "review-accountability-mcp/record_review"; workspace: string };
+  provenance: { origin: "accountability-mcp/record_review"; workspace: string };
   freshness: "fresh" | "stale" | "unknown"; followUps: FollowUp[];
 }
 export interface RecordReviewInput {
@@ -31,6 +31,24 @@ interface StoreDocument { version: 1; workspace: string; reviews: StoredReview[]
 const MAX_REVIEWS = 500;
 const MAX_FINDINGS = 20;
 const MAX_STORE_BYTES = 5 * 1024 * 1024;
+const DEFAULT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * The age dimension of the durable-store retention policy. On top of the
+ * entry bound (500 reviews) and the byte bound (5 MiB) this store prunes
+ * records older than the configured window on every write, so a store that is
+ * written forever cannot grow without bound. The window defaults to 90 days
+ * and is overridable with `ACCOUNTABILITY_RETENTION_DAYS` (a positive integer
+ * number of days). An unset, non-integer, or non-positive value falls back to
+ * the default. This is the retention window the README documents.
+ */
+export function retentionWindowMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.ACCOUNTABILITY_RETENTION_DAYS;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_MAX_AGE_MS;
+  const days = Number(raw);
+  if (!Number.isInteger(days) || days <= 0) return DEFAULT_MAX_AGE_MS;
+  return days * 24 * 60 * 60 * 1000;
+}
 const SECRET_PATTERNS = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
   /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/,
@@ -111,7 +129,13 @@ async function validatePath(workspace: string, path: string): Promise<string> {
 
 export class ReviewStore {
   private readonly writes = new Map<string, Promise<void>>();
-  constructor(private readonly dataRoot: string) {}
+  constructor(private readonly dataRoot: string, private readonly maxAgeMs: number = retentionWindowMs()) {}
+  private prune(document: StoreDocument, now: number): void {
+    const cutoff = now - this.maxAgeMs;
+    document.reviews = document.reviews.filter((review) => review.createdAt >= cutoff);
+    const live = new Set(document.reviews.map((review) => review.id));
+    document.followUps = document.followUps.filter((followUp) => followUp.createdAt >= cutoff && live.has(followUp.reviewId));
+  }
   private pathFor(workspace: string): string { return join(this.dataRoot, `${createHash("sha256").update(workspace).digest("hex")}.json`); }
   private async load(workspace: string): Promise<StoreDocument> {
     try {
@@ -145,6 +169,7 @@ export class ReviewStore {
     const write = previous.catch(() => undefined).then(async () => {
       abortIfNeeded(signal);
       const document = await this.load(workspace);
+      this.prune(document, Date.now());
       result = await operation(document);
       await this.persist(workspace, document, signal);
     });
@@ -173,7 +198,7 @@ export class ReviewStore {
       const review: StoredReview = { id: randomUUID(), reviewer, verdict: input.verdict, subject, blockingSeverities: [...input.blockingSeverities], findings, createdAt, evidenceClass: "attestation" };
       const followUps = findings.filter((finding) => finding.severity === "P2" || finding.severity === "P3").map((finding) => ({ ...finding, id: randomUUID(), reviewId: review.id, status: "open" as const, createdAt }));
       document.reviews.push(review); document.followUps.push(...followUps);
-      return { ...review, provenance: { origin: "review-accountability-mcp/record_review" as const, workspace }, freshness: "unknown" as const, followUps };
+      return { ...review, provenance: { origin: "accountability-mcp/record_review" as const, workspace }, freshness: "unknown" as const, followUps };
     }, signal);
   }
   async listReviews(input: ListReviewsInput, signal?: AbortSignal): Promise<{ reviews: ReviewAttestation[]; openFollowUps: FollowUp[]; truncated: boolean; followUpsTruncated: boolean }> {
@@ -186,7 +211,7 @@ export class ReviewStore {
     const current = input.currentSubject ? validateSubject(input.currentSubject, workspace) : undefined;
     const document = await this.load(workspace);
     const ordered = [...document.reviews].sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
-    const selected = ordered.slice(0, limit).map((review) => ({ ...review, provenance: { origin: "review-accountability-mcp/record_review" as const, workspace }, freshness: freshness(review.subject, current), followUps: document.followUps.filter((item) => item.reviewId === review.id) }));
+    const selected = ordered.slice(0, limit).map((review) => ({ ...review, provenance: { origin: "accountability-mcp/record_review" as const, workspace }, freshness: freshness(review.subject, current), followUps: document.followUps.filter((item) => item.reviewId === review.id) }));
     const openFollowUps = document.followUps.filter((item) => item.status === "open");
     return { reviews: selected, openFollowUps: openFollowUps.slice(0, followUpLimit), truncated: ordered.length > limit, followUpsTruncated: openFollowUps.length > followUpLimit };
   }
@@ -206,7 +231,7 @@ export class ReviewStore {
 
 export function defaultDataRoot(env: NodeJS.ProcessEnv = process.env): string {
   if (env.REVIEW_ACCOUNTABILITY_DATA_DIR) return resolve(env.REVIEW_ACCOUNTABILITY_DATA_DIR);
-  if (env.XDG_DATA_HOME) return join(resolve(env.XDG_DATA_HOME), "review-accountability-mcp");
+  if (env.XDG_DATA_HOME) return join(resolve(env.XDG_DATA_HOME), "accountability-mcp");
   if (!env.HOME) throw new Error("HOME is required when no review accountability data directory is configured.");
-  return join(resolve(env.HOME), ".local", "share", "review-accountability-mcp");
+  return join(resolve(env.HOME), ".local", "share", "accountability-mcp");
 }

@@ -2,10 +2,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 /**
- * Thin Workflow-side client for the review-accountability MCP server. Powers
- * the Activity panel's "review follow-ups" section: durable P2/P3 findings
- * from adversarial reviews, visible until resolved. Advisory: a ledger that
- * could not be consulted reads as unavailable, never as an empty one.
+ * Thin Workflow-side client for the accountability MCP server's review half.
+ * Powers the Activity panel's "review follow-ups" section: durable P2/P3
+ * findings from adversarial reviews, visible until resolved. Advisory: a ledger
+ * that could not be consulted reads as unavailable, never as an empty one.
  */
 
 export interface ReviewFollowUp {
