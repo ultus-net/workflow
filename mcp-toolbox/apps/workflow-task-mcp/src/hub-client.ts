@@ -28,9 +28,41 @@ export interface HubCredentials {
   readonly token: string;
 }
 
-/** The discovery directory (the parent of the `hub/` subdirectory). */
-export function hubDiscoveryDirectory(override?: string): string {
-  return override ?? process.env.WORKFLOW_HUB_DIR ?? resolve(homedir(), ".workflow");
+/**
+ * The revision identity the hub scoped its state to, mirrored from
+ * `src/integrations/opencode-server-discovery.ts` `planeRevisionIdentity`. The
+ * instance's explicit `WORKFLOW_PLANE_REVISION` wins; otherwise the
+ * Azure-Container-Apps-injected `CONTAINER_APP_REVISION`. Undefined outside a
+ * revision-scoped deploy, so a local hub keeps its exact prior path.
+ */
+export function planeRevisionIdentity(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const explicit = env.WORKFLOW_PLANE_REVISION?.trim();
+  if (explicit !== undefined && explicit !== "") return explicit;
+  const containerApp = env.CONTAINER_APP_REVISION?.trim();
+  return containerApp === undefined || containerApp === "" ? undefined : containerApp;
+}
+
+/** One filesystem-safe segment, mirrored from `opencodeServerStateHome`'s rule, so
+ * the reader resolves the SAME directory the hub wrote. */
+function revisionSegment(revision: string): string {
+  return revision
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "")
+    .slice(0, 64);
+}
+
+/** The discovery directory (the parent of the `hub/` subdirectory). When a
+ * revision identity is present (explicit arg, else ambient), the base is scoped
+ * to that revision — the C1 per-revision hub state isolation — so this in-plane
+ * reader resolves the SAME revision-scoped directory the hub wrote under. */
+export function hubDiscoveryDirectory(override?: string, revision?: string): string {
+  const base = override ?? process.env.WORKFLOW_HUB_DIR ?? resolve(homedir(), ".workflow");
+  const identity = (revision ?? planeRevisionIdentity())?.trim();
+  if (identity === undefined || identity === "") return base;
+  const segment = revisionSegment(identity);
+  if (segment === "") return base;
+  return join(base, segment);
 }
 
 /**

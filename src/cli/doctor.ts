@@ -14,9 +14,9 @@ import {
 import {
   opencodeServerDiscoveryPath,
   opencodeServerStateHome,
+  planeRevisionIdentity,
   probeOpencodeServerGateway,
   readOpencodeServerDiscovery,
-  WORKFLOW_PLANE_REVISION_ENV,
 } from "../integrations/opencode-server-discovery.js";
 import { listWebAgents } from "../ui/web-agents.js";
 import { normalizeSettings, settingsPaths } from "../integrations/workflow-settings.js";
@@ -119,7 +119,7 @@ export function checkAgentCredentials(): readonly DoctorCheck[] {
  * operator's real home. */
 export async function checkHub(options: DoctorOptions = {}): Promise<DoctorCheck> {
   const name = "hub daemon";
-  const discovery = readHubDiscovery(resolveHubDiscoveryPath(join(options.home ?? homedir(), ".workflow")));
+  const discovery = readHubDiscovery(resolveHubDiscoveryPath(opencodeServerStateHome(join(options.home ?? homedir(), ".workflow"), planeRevisionIdentity())));
   if (discovery === undefined) {
     return {
       name,
@@ -150,7 +150,7 @@ export async function checkTopologyGateway(options: DoctorOptions = {}): Promise
   // operator's real home.
   const stateHome = opencodeServerStateHome(
     process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(options.home ?? homedir(), ".workflow", "opencode-server"),
-    process.env[WORKFLOW_PLANE_REVISION_ENV],
+    planeRevisionIdentity(),
   );
   const discovery = readOpencodeServerDiscovery(opencodeServerDiscoveryPath(stateHome, workspace));
   if (discovery === undefined) {
@@ -418,7 +418,7 @@ export function checkDaemonUpstreamKeyExposure(options: DoctorOptions = {}): Doc
   const workspace = options.workspace ?? process.cwd();
   const stateHome = opencodeServerStateHome(
     process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(options.home ?? homedir(), ".workflow", "opencode-server"),
-    process.env[WORKFLOW_PLANE_REVISION_ENV],
+    planeRevisionIdentity(),
   );
   const discovery = readOpencodeServerDiscovery(opencodeServerDiscoveryPath(stateHome, workspace));
   if (discovery === undefined) {

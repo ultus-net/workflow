@@ -51,6 +51,7 @@ import {
 } from "../integrations/self-improvement-agent.js";
 import { createAuthorityGate } from "../integrations/self-improvement-loop.js";
 import { createWorkflowHub, type WorkflowHubSchedulerHandles } from "../integrations/workflow-hub.js";
+import { opencodeServerStateHome, planeRevisionIdentity } from "../integrations/opencode-server-discovery.js";
 import { hubWebDiscoveryPath, removeHubWebDiscovery, writeHubWebDiscovery } from "../integrations/hub-web-discovery.js";
 import type { WorkflowWebService } from "./web-service.js";
 import { PermissionBroker } from "../ui/permission-broker.js";
@@ -66,7 +67,8 @@ import { TaskGraph } from "../kernel/task-graph.js";
 // ANY argv; resolve help and exit before the first composition statement.
 if (process.argv.slice(2).some((argument) => argument === "--help" || argument === "-h")) {
   console.log("workflow-hub — the Workflow authority daemon (one hub, one journal)");
-  console.log("  state: ~/.workflow (env: WORKFLOW_HUB_PROVENANCE, WORKFLOW_HUB_SCHEDULES, WORKFLOW_HUB_PROJECTS)");
+  console.log("  state: ~/.workflow (per-revision when CONTAINER_APP_REVISION/WORKFLOW_PLANE_REVISION is set)");
+  console.log("  env: WORKFLOW_HUB_DIR, WORKFLOW_HUB_PROVENANCE, WORKFLOW_HUB_SCHEDULES, WORKFLOW_HUB_PROJECTS");
   console.log("  --help  print this help");
   process.exit(0);
 }
@@ -89,6 +91,20 @@ const application = new WorkflowApplication(
 );
 
 const requestLogPath = process.env.WORKFLOW_HUB_REQUEST_LOG;
+// C1: scope the WHOLE hub state directory (bridge discovery, web.json, the
+// instance lock, and every hub-owned state file below) to the revision
+// identity, so two Container App revisions sharing one Azure Files mount never
+// contend on one lock — the v0.1.8 rollout deadlock (`Workflow hub is already
+// running (pid 13)`) where the new revision could not acquire the lock the old
+// revision still held. Identity from the instance's WORKFLOW_PLANE_REVISION or
+// the ACA-injected CONTAINER_APP_REVISION; absent it, byte-identical to the
+// pre-revision root. The instance lock lives under hubStateDir and is NOT
+// overridable, so the per-file overrides below (which only redirect individual
+// state FILES) can never reintroduce the shared-lock deadlock.
+const planeRevision = planeRevisionIdentity(process.env);
+const hubStateDir = opencodeServerStateHome(process.env.WORKFLOW_HUB_DIR ?? join(homedir(), ".workflow"), planeRevision);
+const hubStatePath = (override: string | undefined, name: string): string =>
+  override ?? join(hubStateDir, name);
 const teamTaskVerifyEnv = process.env.WORKFLOW_TEAM_TASK_VERIFY_COMMAND?.trim();
 const teamTaskVerificationCommand = process.env.WORKFLOW_TEAM_TASK_VERIFY_COMMAND === undefined
   ? "true"
@@ -148,7 +164,7 @@ const permissionBroker = new PermissionBroker();
 const egressUpstream = process.env.WORKFLOW_ACP_UPSTREAM ?? "https://openrouter.ai";
 const egressBaselinePolicy: EgressPolicy = loadEgressPolicyFile() ?? { version: 0, rules: [] };
 const egressGeneration = process.env.WORKFLOW_EGRESS_GENERATION?.trim() || "default";
-const egressRevisionsPath = process.env.WORKFLOW_HUB_EGRESS_REVISIONS ?? join(homedir(), ".workflow", "egress-revisions.json");
+const egressRevisionsPath = hubStatePath(process.env.WORKFLOW_HUB_EGRESS_REVISIONS, "egress-revisions.json");
 // A value-free provider digest: the credential bindings + the upstream host.
 // Resolved from the definitions loaded at hub start, so a credential-file
 // change invalidates a stale park across a hub restart, not in-process (the
@@ -261,7 +277,7 @@ const containedShell = (writableWorkspace: boolean) => (command: string, cwd: st
 // W177: ONE store instance shared by the writer (the reviewer factory) and
 // the reader (the audit lane the /snapshot audit block relays) — the reader
 // sees exactly what the reviews append, never a second binding of the path.
-const reviewProvenancePath = process.env.WORKFLOW_HUB_PROVENANCE ?? join(homedir(), ".workflow", "review-provenance.jsonl");
+const reviewProvenancePath = hubStatePath(process.env.WORKFLOW_HUB_PROVENANCE, "review-provenance.jsonl");
 const reviewProvenanceStore = createJsonReviewProvenanceStore(reviewProvenancePath);
 
 const reviewerFactory = createReviewerFactory({
@@ -349,12 +365,12 @@ const testRunner = teamTaskVerificationCommand !== undefined && teamTaskVerifica
 // lives under the data dir (WORKFLOW_HUB_SCHEDULES overrides the path) and is
 // owned by the live schedule registry, so operator edits take effect without a
 // hub restart. An absent or empty table means no scheduled runs.
-const schedulesPath = process.env.WORKFLOW_HUB_SCHEDULES ?? join(homedir(), ".workflow", "scheduler.json");
+const schedulesPath = hubStatePath(process.env.WORKFLOW_HUB_SCHEDULES, "scheduler.json");
 const scheduleRegistry = createScheduleRegistry({ path: schedulesPath });
 // W164: the project container's persisted table — the same seat as the
 // schedule table (WORKFLOW_HUB_PROJECTS overrides the path). An absent or
 // empty table means no projects; the routes still answer.
-const projectsPath = process.env.WORKFLOW_HUB_PROJECTS ?? join(homedir(), ".workflow", "projects.json");
+const projectsPath = hubStatePath(process.env.WORKFLOW_HUB_PROJECTS, "projects.json");
 const projectRegistry = createProjectRegistry({ path: projectsPath });
 // Plan Task G5 + W077 wiring: the hub composes scheduled prompts, so the
 // orientation block (W077 — static, versioned, no interpolation; the agent
@@ -609,6 +625,7 @@ try {
   hub = await createWorkflowHub(application, {
     graph,
     guard,
+    discoveryDir: hubStateDir,
     ...(teamTaskVerificationCommand === undefined ? {} : { teamTaskVerificationCommand }),
     ...(testRunner === undefined ? {} : { testRunner }),
     // W158: the bounded evidence-content store — the hub exposes the

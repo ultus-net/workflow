@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolveHubDiscoveryPath } from "../integrations/workflow-hub.js";
+import { opencodeServerStateHome, planeRevisionIdentity } from "../integrations/opencode-server-discovery.js";
 
 /**
  * Launcher-side hub client. Resolves the global Workflow hub through its
@@ -166,7 +167,7 @@ async function waitForHub(discoveryPath: string, deadline: number, poll: number)
 export async function resolveWorkflowHub(
   options: WorkflowHubResolveOptions = {},
 ): Promise<ResolvedHub> {
-  const dir = options.discoveryDir ?? resolve(homedir(), ".workflow");
+  const dir = opencodeServerStateHome(options.discoveryDir ?? resolve(homedir(), ".workflow"), planeRevisionIdentity());
   const discoveryPath = resolveHubDiscoveryPath(dir);
   const poll = options.pollIntervalMs ?? 250;
   const timeoutMs = resolveTimeout(options.timeoutMs);

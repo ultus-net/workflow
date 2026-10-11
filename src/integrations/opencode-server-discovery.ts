@@ -60,6 +60,30 @@ export interface OpencodeServerDiscovery {
 export const WORKFLOW_PLANE_REVISION_ENV = "WORKFLOW_PLANE_REVISION";
 
 /**
+ * C1: the Azure Container Apps built-in var carrying the revision name
+ * (`<app>--0000015`). ACA injects it into every replica, so the hub can scope
+ * its state to the revision WITHOUT the instance wiring an explicit
+ * `WORKFLOW_PLANE_REVISION`. An explicit `WORKFLOW_PLANE_REVISION` still wins
+ * when both are present (the instance override has the last word). Echoed from
+ * the ACA apps environment-variables contract.
+ */
+export const WORKFLOW_CONTAINER_APP_REVISION_ENV = "CONTAINER_APP_REVISION";
+
+/**
+ * C1: the revision identity both supervised children scope their state to.
+ * Prefers the explicit instance value ({@link WORKFLOW_PLANE_REVISION_ENV}),
+ * then the ACA-injected ({@link WORKFLOW_CONTAINER_APP_REVISION_ENV}). Undefined
+ * outside a revision-scoped deploy, so the ambient daemon and a pre-revision
+ * deployment keep their exact prior path.
+ */
+export function planeRevisionIdentity(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const explicit = env[WORKFLOW_PLANE_REVISION_ENV]?.trim();
+  if (explicit !== undefined && explicit !== "") return explicit;
+  const containerApp = env[WORKFLOW_CONTAINER_APP_REVISION_ENV]?.trim();
+  return containerApp === undefined || containerApp === "" ? undefined : containerApp;
+}
+
+/**
  * Scopes the daemon state home to a revision identity by appending a single
  * revision subpath — ONLY when a non-empty identity is supplied. Absent or
  * whitespace-only input returns `base` byte-for-byte, so the ambient daemon and

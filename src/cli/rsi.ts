@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 
 import { isEntrypoint } from "./entrypoint.js";
 import { resolveHubDiscoveryPath } from "../integrations/workflow-hub.js";
+import { opencodeServerStateHome, planeRevisionIdentity } from "../integrations/opencode-server-discovery.js";
 import type { SelfImprovementSpec } from "../integrations/self-improvement-registry.js";
 import { readHubDiscovery, type ResolvedHub } from "./hub-client.js";
 
@@ -56,9 +57,12 @@ export function parseRsiArgs(argv: readonly string[], env: NodeJS.ProcessEnv = p
       flags.set(key, true);
     }
   }
-  const discoveryDir = typeof flags.get("discovery-dir") === "string"
-    ? (flags.get("discovery-dir") as string)
-    : env.WORKFLOW_HUB_DIR ?? resolve(homedir(), ".workflow");
+  const discoveryDir = opencodeServerStateHome(
+    typeof flags.get("discovery-dir") === "string"
+      ? (flags.get("discovery-dir") as string)
+      : env.WORKFLOW_HUB_DIR ?? resolve(homedir(), ".workflow"),
+    planeRevisionIdentity(env),
+  );
   // W129: the help contract — --help/-h resolve to help ANYWHERE in the argv
   // (the round-1 review's P2: `status --help` / `start … --help` otherwise
   // fell through to hub resolution — and `start` is the most consequential

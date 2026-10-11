@@ -9,6 +9,7 @@ import {
   callStepRoute,
   hubDiscoveryDirectory,
   HubStepError,
+  planeRevisionIdentity,
   readHubCredentials,
   resolveHubCredentials,
   STEP_ROUTES,
@@ -155,6 +156,25 @@ test("readHubCredentials mirrors the discovery file shape and is fail-closed on 
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("hubDiscoveryDirectory mirrors the hub's per-revision scoping (reader resolves the revision dir)", () => {
+  const base = "/mnt/plane-state/.workflow";
+  // Explicit revision wins and matches the hub's sanitization.
+  assert.equal(hubDiscoveryDirectory(base, "csh-dev-plane--0000015"), join(base, "csh-dev-plane--0000015"));
+  assert.notEqual(hubDiscoveryDirectory(base, "csh-dev-plane--0000014"), hubDiscoveryDirectory(base, "csh-dev-plane--0000015"));
+  // Ambient identity is used when no explicit revision is passed (the in-plane case).
+  const previous = process.env.CONTAINER_APP_REVISION;
+  try {
+    process.env.CONTAINER_APP_REVISION = "csh-dev-plane--0000015";
+    assert.equal(hubDiscoveryDirectory(base), join(base, "csh-dev-plane--0000015"));
+    assert.equal(planeRevisionIdentity(), "csh-dev-plane--0000015");
+  } finally {
+    if (previous === undefined) delete process.env.CONTAINER_APP_REVISION;
+    else process.env.CONTAINER_APP_REVISION = previous;
+  }
+  // No identity: byte-identical to the pre-revision root.
+  assert.equal(hubDiscoveryDirectory(base), base);
 });
 
 test("STEP_ROUTES is the closed set the server drives", () => {
