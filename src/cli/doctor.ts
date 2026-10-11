@@ -350,6 +350,7 @@ export async function runDoctor(options: DoctorOptions = {}): Promise<readonly D
   checks.push(checkSettingsDocs(options));
   checks.push(...checkAgentCredentials());
   checks.push(checkUpstreamKeyExposure(options.env ?? process.env));
+  checks.push(checkBoardTokenExposure(options.env ?? process.env));
   checks.push(checkDaemonUpstreamKeyExposure(options));
   checks.push(await checkHub(options));
   checks.push(await checkTopologyGateway(options));
@@ -399,6 +400,41 @@ export function checkUpstreamKeyExposure(env: NodeJS.ProcessEnv): DoctorCheck {
       `upstream key present in the uid-shared plane process environment (${present.join(", ")}) — readable at /proc/<pid>/environ by any same-uid agent tool process`,
     fix:
       "source the key through the file/secret-store seam (WORKFLOW_UPSTREAM_KEY unset; ~/.config/workflow/upstream-key or WORKFLOW_UPSTREAM_KEY_FROM=azure-kv) so it never enters a uid-shared environment; if the real key rode this env, rotate it",
+  };
+}
+
+/**
+ * The board-PAT custody check (provider-token.ts). The board provider tokens
+ * (`WORKFLOW_GITHUB_TOKEN` / `WORKFLOW_AZURE_DEVOPS_TOKEN`) are the same
+ * uid-shared leak class as the upstream key: on the plane the hub and every
+ * agent tool process share one uid, so a PAT in the process environment is
+ * readable at `/proc/<pid>/environ`. The durable custody seam is
+ * `WORKFLOW_BOARD_TOKEN_FROM=<backend>` (the secret store is the only source
+ * and the ambient token vars are scrubbed). Presence only; the value is never
+ * read past the name.
+ */
+export function checkBoardTokenExposure(env: NodeJS.ProcessEnv): DoctorCheck {
+  const name = "board provider token exposure";
+  const present = ["WORKFLOW_GITHUB_TOKEN", "WORKFLOW_AZURE_DEVOPS_TOKEN"].filter(
+    (key) => (env[key] ?? "").trim().length > 0,
+  );
+  if (present.length === 0) {
+    return { name, status: "pass", detail: "no board provider token in the process environment (secret-store seam or unset)" };
+  }
+  if ((env.WORKFLOW_PLANE ?? "").trim() !== "1") {
+    return {
+      name,
+      status: "pass",
+      detail: `board provider token in the process environment (${present.join(", ")}) — the operator's own process, not a uid-shared plane; secret-store seam preferred`,
+    };
+  }
+  return {
+    name,
+    status: "fail",
+    detail:
+      `board provider token present in the uid-shared plane process environment (${present.join(", ")}) — readable at /proc/<pid>/environ by any same-uid agent tool process`,
+    fix:
+      "source the board token through the secret-store seam (unset the token variable; WORKFLOW_BOARD_TOKEN_FROM=azure-kv with secrets 'workflow-github-token'/'workflow-azure-devops-token') so it never enters a uid-shared environment; if the real PAT rode this env, rotate it",
   };
 }
 

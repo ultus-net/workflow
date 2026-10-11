@@ -12,6 +12,7 @@ import {
   checkProbeVerdicts,
   checkContainment,
   checkUpstreamKeyExposure,
+  checkBoardTokenExposure,
   readProcessUpstreamKeyExposure,
   parseUpstreamKeysFromEnviron,
   renderDoctorReport,
@@ -235,6 +236,32 @@ test("doctor (C1 F2): a uid-shared plane upstream key in the process environment
   assert.match(leaked.detail, /WORKFLOW_UPSTREAM_KEY/);
   assert.match(leaked.detail, /\/proc\/<pid>\/environ/);
   assert.match(leaked.fix ?? "", /rotate it/);
+  // The check must never echo the secret it is warning about.
+  assert.doesNotMatch(leaked.detail, /supersecretvalue/);
+  assert.doesNotMatch(leaked.fix ?? "", /supersecretvalue/);
+});
+
+test("doctor (custody): a uid-shared plane board token in the process environment fails, and the value is never printed", () => {
+  const clean = checkBoardTokenExposure({} as NodeJS.ProcessEnv);
+  assert.equal(clean.status, "pass");
+
+  // Off the plane the env is the operator's own process — a documented source,
+  // not a uid-shared leak.
+  const offPlane = checkBoardTokenExposure({ WORKFLOW_GITHUB_TOKEN: "ghp_supersecretvalue" } as NodeJS.ProcessEnv);
+  assert.equal(offPlane.status, "pass");
+  assert.match(offPlane.detail, /not a uid-shared plane/);
+
+  // On the plane the same env is readable by any same-uid agent tool process.
+  const leaked = checkBoardTokenExposure({
+    WORKFLOW_PLANE: "1",
+    WORKFLOW_GITHUB_TOKEN: "ghp_supersecretvalue",
+    WORKFLOW_AZURE_DEVOPS_TOKEN: "ado_supersecretvalue",
+  } as NodeJS.ProcessEnv);
+  assert.equal(leaked.status, "fail");
+  assert.match(leaked.detail, /WORKFLOW_GITHUB_TOKEN/);
+  assert.match(leaked.detail, /WORKFLOW_AZURE_DEVOPS_TOKEN/);
+  assert.match(leaked.detail, /\/proc\/<pid>\/environ/);
+  assert.match(leaked.fix ?? "", /WORKFLOW_BOARD_TOKEN_FROM=azure-kv/);
   // The check must never echo the secret it is warning about.
   assert.doesNotMatch(leaked.detail, /supersecretvalue/);
   assert.doesNotMatch(leaked.fix ?? "", /supersecretvalue/);
