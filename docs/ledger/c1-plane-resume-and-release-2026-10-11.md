@@ -42,8 +42,35 @@ blocked or misread.
 | `WORKFLOW_UPSTREAM_KEY` | may be set | must be UNSET when `..._FROM=azure-kv` | the seam is authoritative, not a fallback (review P2) |
 | `WORKFLOW_SECRET_STORE` | `keyring` | `azure-kv` for a real vault | `resolveSecretStore`, `src/integrations/secret-store.ts` |
 | `WORKFLOW_KEYVAULT_NAME` / `_URI` | unset | names the vault when `azure-kv` | `secret-store.ts` `azure-kv` arm |
-| `WORKFLOW_SESSION_BUDGET_*` | unset | wire explicit turn/token caps | plane/session budget env |
+| `WORKFLOW_SESSION_BUDGET_INPUT_TOKENS` | unset | cap input tokens per session | `sessionBudgetFromEnv`, `src/integrations/session-budget.ts:48-64` |
+| `WORKFLOW_SESSION_BUDGET_OUTPUT_TOKENS` | unset | cap output tokens | same |
+| `WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS` | unset | cap total tokens | same |
+| `WORKFLOW_SESSION_BUDGET_COST_USD` | unset | cap spend (USD) | same |
+| `WORKFLOW_BUDGET_DOWNGRADE_MODEL` / `_FRACTION` | unset | warn/downgrade before the abort cap | `budgetDowngradeFromEnv`, `session-budget.ts:160` |
 | `WORKFLOW_PLANE_REVISION` | unset | per-revision state-home isolation | `opencodeServerStateHome`, `opencode-server-discovery.ts:73-91` |
+
+**Session-budget recommendation (decision, 2026-10-11).** No new plane cap is
+needed. "Make the session budget configurable" is satisfied by the existing
+W045 caps, wired as `WORKFLOW_SESSION_BUDGET_*`:
+
+- The mechanism already exists and is fail-closed: `sessionBudgetFromEnv`
+  (`session-budget.ts:48-64`) parses the four axes and throws on a malformed
+  value; unset on all axes yields no local guard.
+- Crossing a cap aborts in-flight turns and denies later mutations, and is
+  operator-visible (`opencode-server.ts:319-333`).
+- It is already per-session overridable: a web override replaces the env cap per
+  axis (`mergeSessionBudget`, `session-budget.ts:96-114`; `describeBudgetMechanism`
+  names the EFFECTIVE caps, never the env's).
+- The backstop when unset is the OpenRouter per-key credit limit on the metering
+  proxy's upstream key (`session-budget.ts:79`). That is the same key F2 moves
+  into Key Vault, so "unset" is not "unenforced" once F2 lands.
+
+Action: set explicit caps on the plane revision. Recommend a conservative
+`WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS` and `WORKFLOW_SESSION_BUDGET_COST_USD`
+as the two axes that bound a runaway session, with
+`WORKFLOW_BUDGET_DOWNGRADE_FRACTION` to warn before the abort. Setting a second,
+independent plane-level cap would duplicate this guard and split the effective
+cap across two mechanisms, so it is not recommended.
 
 **Trap to state in the handoff:** F1 is NOT unblocked by the merge. Without
 `WORKFLOW_OPENCODE_ENFORCEMENT=enforced` the gateway stays advisory and
@@ -190,7 +217,8 @@ FQDNs, secrets) stay in the work repo; none enter the open repo.
    permission probes pass — honest-claims gate), `WORKFLOW_MUTATION_BUDGET`,
    `WORKFLOW_UPSTREAM_KEY_FROM=azure-kv` with the vault secret stored and
    `WORKFLOW_UPSTREAM_KEY` unset, `WORKFLOW_SECRET_STORE=azure-kv` +
-   `WORKFLOW_KEYVAULT_NAME`, `WORKFLOW_SESSION_BUDGET_*`,
+   `WORKFLOW_KEYVAULT_NAME`, `WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS` +
+   `WORKFLOW_SESSION_BUDGET_COST_USD` (+ `WORKFLOW_BUDGET_DOWNGRADE_FRACTION`),
    `WORKFLOW_OPENCODE_SERVER_HOME` = the Files mount path, and
    `WORKFLOW_PLANE_REVISION` = the ACA revision value.
 3. Run the pipeline. It runs `bash verify-pin.sh` against the digest from the
