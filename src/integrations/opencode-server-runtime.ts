@@ -12,7 +12,8 @@ import { ensureSkillsMount, opencodeMajorVersion, resolveSkillsMount, resolveRun
 import { connectorReadablePaths, provisionToolboxSkill, resolveToolboxCatalog, skillConnectorMounts, toolboxCatalogMounts } from "./toolbox-catalog.js";
 import { createModelUsageProxy, METERED_PLACEHOLDER_KEY, syntheticFailoverProxyOptions, type AutoLatestProxyOptions, type EgressDenialEvent, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy, type ProxyPayloadPolicy, type SyntheticFailoverProxyOptions } from "./model-usage-proxy.js";
 import type { CredentialEndpoint } from "./credentials.js";
-import { globalOpencodeBinary, meteredOpencodeConfig, OPENCODE_V2_METERED_ENV_KEY, resolveOpencodeLaunch } from "./opencode-agent-config.js";
+import { globalOpencodeBinary, meteredOpencodeConfig, OPENCODE_V2_METERED_ENV_KEY, resolveOpencodeLaunch, type OpencodeLspServer } from "./opencode-agent-config.js";
+import { PLANE_LSP_DEFAULT_PATH, PLANE_LSP_DISABLE_DOWNLOAD_ENV } from "./plane-lsp.js";
 import { installFleetIntoOpencodeConfig, type FleetInstallResult } from "./fleet-payload.js";
 import { enabledMcpServers, type WorkflowSettings } from "./workflow-settings.js";
 import { probeOpencodeHealth } from "./opencode-health.js";
@@ -120,6 +121,16 @@ export interface OpencodeServerRuntimeOptions {
    * byte-identical to before this option.
    */
   readonly mountFullToolbox?: boolean | undefined;
+  /**
+   * LSP enablement composed into the hub-written config (opencode v2 `lsp`
+   * key). The plane lane passes the image-backed TypeScript server
+   * (`plane-lsp.ts` `planeLspConfig()`), because an absent key disables every
+   * language server on v2. When set, the contained launch env also carries
+   * {@link PLANE_LSP_DISABLE_DOWNLOAD_ENV} so no unprovisioned built-in fetches
+   * from the network mid-session (fail-closed to the baked server). Absent
+   * leaves the config and the env byte-identical to before this option existed.
+   */
+  readonly lsp?: Readonly<Record<string, OpencodeLspServer>> | undefined;
   /** W184: gate-2 credential binding (W179) threaded into the proxy; absent leaves gate 2 inactive. */
   readonly credentialEndpoints?: readonly CredentialEndpoint[] | undefined;
   /**
@@ -181,12 +192,27 @@ export function opencodeServerLaunchEnvironment(input: {
   readonly configDir: string;
   readonly password: string;
   readonly opencodeMajor?: number | undefined;
+  /**
+   * When true, LSP is composed in the config, so the launch also pins
+   * {@link PLANE_LSP_DISABLE_DOWNLOAD_ENV} (no on-demand fetches) AND sets an
+   * explicit PATH. The contained launch passes an env block with no PATH (the
+   * container-boundary backend forwards it verbatim; bwrap clears then sets its
+   * own), and the baked `typescript-language-server` is a
+   * `#!/usr/bin/env node` script — without a PATH the shebang cannot find
+   * `node`, so the override would spawn-fail. {@link PLANE_LSP_DEFAULT_PATH}
+   * carries the image's `/usr/local/bin` (node + the server) and the system
+   * bins.
+   */
+  readonly lsp?: boolean | undefined;
 }): Record<string, string> {
   return {
     XDG_CONFIG_HOME: input.configDir,
     OPENCODE_SERVER_PASSWORD: input.password,
     OPENCODE_SERVER_USERNAME: DEFAULT_USERNAME,
     OPENCODE_TELEMETRY: "off",
+    ...(input.lsp === true
+      ? { [PLANE_LSP_DISABLE_DOWNLOAD_ENV]: "1", PATH: PLANE_LSP_DEFAULT_PATH }
+      : {}),
     ...(input.opencodeMajor !== undefined && input.opencodeMajor >= 2
       ? { [OPENCODE_V2_METERED_ENV_KEY]: METERED_PLACEHOLDER_KEY }
       : {}),
@@ -347,6 +373,10 @@ export async function createOpencodeServerRuntime(
         ...(autoLatest === undefined ? {} : { autoLatest: { aliases: autoLatest.aliases } }),
         ...(skillsMount === undefined ? {} : { skills: skillsMount }),
         ...(skillConnectors.length === 0 ? {} : { skillConnectors }),
+        // LSP: composed only when the caller supplies it (the plane lane passes
+        // the image-backed TypeScript server); absent leaves the config
+        // byte-identical. On v2 an absent `lsp` key disables every server.
+        ...(options.lsp === undefined ? {} : { lsp: options.lsp }),
         // Operator-enabled MCP servers from the settings doc (the same
         // projection the ACP lane composes). Absent settings composes nothing.
         ...(options.settings === undefined ? {} : { mcpServers: enabledMcpServers(options.settings) }),
@@ -390,7 +420,7 @@ export async function createOpencodeServerRuntime(
       workspace,
       home,
       ...(readablePaths.length === 0 ? {} : { readablePaths }),
-      environment: opencodeServerLaunchEnvironment({ configDir, password, opencodeMajor }),
+      environment: opencodeServerLaunchEnvironment({ configDir, password, opencodeMajor, ...(options.lsp === undefined ? {} : { lsp: true }) }),
     });
 
     const { url, version } = await waitForServer({

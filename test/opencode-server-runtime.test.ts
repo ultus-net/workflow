@@ -13,6 +13,7 @@ import {
   OPENCODE_V2_METERED_PROVIDER_ID,
 } from "../src/integrations/opencode-agent-config.js";
 import { opencodeMajorVersion } from "../src/integrations/acp-runtime.js";
+import { planeLspConfig } from "../src/integrations/plane-lsp.js";
 import { loadFleetManifest } from "../src/integrations/fleet-payload.js";
 import type { ModelUsageProxy } from "../src/integrations/model-usage-proxy.js";
 import {
@@ -106,6 +107,10 @@ test("W071 runtime: launches through an injected boundary and writes the pinned 
     createProxy: async () => proxy,
     model: "openrouter/auto",
     healthTimeoutMs: 30_000,
+    // The plane LSP wire: the config composes the image-backed TypeScript
+    // server. This launch proves the pinned opencode accepts the block (a bad
+    // `lsp` shape hard-fails startup), and the assertion below pins the write.
+    lsp: planeLspConfig(),
   });
   t.after(() => runtime.dispose());
 
@@ -119,8 +124,12 @@ test("W071 runtime: launches through an injected boundary and writes the pinned 
     model?: string;
     provider?: Record<string, unknown>;
     providers?: Record<string, unknown>;
+    lsp?: Record<string, { command?: readonly string[] }>;
   };
   assert.deepEqual(config.permission, { edit: "ask", bash: "ask", task: "ask", skill: "deny" });
+  // LSP wire: the composed `lsp` block survives into the config opencode read
+  // (and the daemon accepted it — the server reached healthy above).
+  assert.deepEqual(config.lsp, planeLspConfig(), "the lsp block must ride the hub-written config");
   // Deploy-time fleet install: the vendored agents/commands land in the
   // isolated hub-owned config dir (the plane's `opencode serve` reads
   // `$XDG_CONFIG_HOME/opencode`, which is this dir — not the operator's home).

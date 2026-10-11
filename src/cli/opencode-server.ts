@@ -24,6 +24,7 @@ import { loadCredentialDefinitions } from "../integrations/credential-config.js"
 import { upstreamCredentialBinding } from "../integrations/egress-binding.js";
 import { loadEgressPolicyFile } from "../integrations/egress-policy-file.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
+import { planeLspConfig } from "../integrations/plane-lsp.js";
 import { createSessionCompactionMonitor } from "../integrations/opencode-server-monitor.js";
 import { HttpRemoteEngine } from "../integrations/remote-acp/engine.js";
 import { loadSettings } from "../integrations/workflow-settings.js";
@@ -229,6 +230,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       // settings file of its own in the pod, so it reads the workspace/state
       // one. Absent plane mode both stay off and the daemon is byte-identical.
       ...(plane === undefined ? {} : { mountFullToolbox: true, settings: loadSettings({ workspace }) }),
+      // C1 plane: the LSP wire. On v2 an absent `lsp` key disables every
+      // language server, so the plane sets an image-backed TypeScript server
+      // (`planeLspConfig()`) and the runtime pins `OPENCODE_DISABLE_LSP_DOWNLOAD`
+      // — the baked server resolves offline; unprovisioned built-ins fail closed
+      // rather than fetch. Absent plane mode the config is byte-identical.
+      ...(plane === undefined ? {} : { lsp: planeLspConfig() }),
     });
   } catch (error) {
     await guard.close();

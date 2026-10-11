@@ -156,6 +156,21 @@ export interface MeteredVendorProvider {
   readonly v2ProviderId?: string;
 }
 
+/**
+ * A config-defined LSP server entry (opencode v2 `ConfigLSP.Server`): a
+ * `command` argv plus optional `extensions`/`env`/`initialization`. A truthy
+ * `lsp` map emits these under the config `lsp` key; a named entry whose id
+ * matches a built-in (`typescript`) overrides that built-in's spawn while
+ * keeping its root resolution (`packages/opencode/src/lsp/lsp.ts`):
+ * `servers[name] = { ...existing, id, root: existing?.root ?? …, spawn: custom }`.
+ */
+export interface OpencodeLspServer {
+  readonly command: readonly string[];
+  readonly extensions?: readonly string[] | undefined;
+  readonly env?: Readonly<Record<string, string>> | undefined;
+  readonly initialization?: Readonly<Record<string, unknown>> | undefined;
+}
+
 export interface MeteredOpencodeConfigOptions {
   readonly proxyUrl: string;
   readonly model?: string | undefined;
@@ -225,6 +240,16 @@ export interface MeteredOpencodeConfigOptions {
    * leaves the config byte-identical to before this option existed.
    */
   readonly instructions?: readonly string[] | undefined;
+  /**
+   * LSP enablement (opencode v2 `ConfigLSP.Info`): the value emitted under the
+   * config `lsp` key. On v2 an ABSENT key disables every language server
+   * (`packages/opencode/src/lsp/lsp.ts`: `if (!cfg.lsp) "all LSPs are
+   * disabled"`), so a lane that wants LSP must set this. `true` enables the
+   * built-ins; a record enables the built-ins AND applies per-server entries
+   * (built-in overrides or custom servers). Absent leaves the config
+   * byte-identical to before this option existed.
+   */
+  readonly lsp?: boolean | Readonly<Record<string, OpencodeLspServer | { readonly disabled: true }>> | undefined;
 }
 
 export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Record<string, unknown> {
@@ -361,6 +386,11 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
     // operator opted in — absent means the runtime's ambient compaction
     // defaults apply, exactly as before this option existed.
     ...(options.autoCompact === true ? { compaction: { auto: true } } : {}),
+    // LSP enablement: only composed when a lane supplies a value — absent
+    // leaves the config byte-identical to before this option existed. On v2 an
+    // absent `lsp` key disables every language server, so the plane lane (which
+    // ships the TypeScript server in its image) is the value's source.
+    ...(options.lsp === undefined ? {} : { lsp: options.lsp }),
     ...(Object.keys(mcp).length === 0 ? {} : { mcp }),
   };
 }
