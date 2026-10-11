@@ -32,7 +32,7 @@ class PrimitiveClient {
   constructor(private readonly command: string, private readonly args: string[], private readonly env?: Record<string, string>) {}
   async call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     if (!this.client) {
-      this.client = new Client({ name: "verification-accountability-mcp", version: "0.1.0" });
+      this.client = new Client({ name: "accountability-mcp", version: "0.1.0" });
       await this.client.connect(new StdioClientTransport({ command: this.command, args: this.args, stderr: "pipe", ...(this.env ? { env: this.env } : {}) }));
     }
     const result = await this.client.callTool({ name, arguments: args }, undefined, { signal });
@@ -49,12 +49,20 @@ function parseArgs(name: string): string[] {
   catch { throw new Error(`${name} must be a JSON array of strings.`); }
 }
 
+/** The merged server's own env-var name, falling back to the historical verification name. */
+function envVar(suffix: string): string | undefined {
+  return process.env[`ACCOUNTABILITY_${suffix}`] ?? process.env[`VERIFICATION_ACCOUNTABILITY_${suffix}`];
+}
+function envArgs(suffix: string): string[] {
+  return process.env[`ACCOUNTABILITY_${suffix}`] === undefined ? parseArgs(`VERIFICATION_ACCOUNTABILITY_${suffix}`) : parseArgs(`ACCOUNTABILITY_${suffix}`);
+}
+
 export function createAuthorityPorts(): VerificationAuthorities & { close(): Promise<void> } {
-  const tests = new PrimitiveClient(process.env.VERIFICATION_ACCOUNTABILITY_TEST_COMMAND ?? "test-intelligence-mcp", parseArgs("VERIFICATION_ACCOUNTABILITY_TEST_ARGS"));
+  const tests = new PrimitiveClient(envVar("TEST_COMMAND") ?? "test-intelligence-mcp", envArgs("TEST_ARGS"));
   const ciEnv = Object.fromEntries(["CI_GITHUB_REPOSITORY", "CI_GITHUB_TOKEN", "CI_GITHUB_API_URL"].flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]!]]));
-  const ci = new PrimitiveClient(process.env.VERIFICATION_ACCOUNTABILITY_CI_COMMAND ?? "ci-intelligence-mcp", parseArgs("VERIFICATION_ACCOUNTABILITY_CI_ARGS"), ciEnv);
+  const ci = new PrimitiveClient(envVar("CI_COMMAND") ?? "ci-intelligence-mcp", envArgs("CI_ARGS"), ciEnv);
   const browserEnv = Object.fromEntries(["BROWSER_VERIFICATION_CDP_URL", "BROWSER_VERIFICATION_CHROME_PATH", "BROWSER_VERIFICATION_CHROME_ARGS", "BROWSER_VERIFICATION_ALLOWED_ORIGINS", "BROWSER_VERIFICATION_PROFILE", "BROWSER_VERIFICATION_NAVIGATION_TIMEOUT_MS", "BROWSER_VERIFICATION_COMMAND_TIMEOUT_MS"].flatMap((name) => process.env[name] === undefined ? [] : [[name, process.env[name]!]]));
-  const browser = new PrimitiveClient(process.env.VERIFICATION_ACCOUNTABILITY_BROWSER_COMMAND ?? "browser-verification-mcp", parseArgs("VERIFICATION_ACCOUNTABILITY_BROWSER_ARGS"), browserEnv);
+  const browser = new PrimitiveClient(envVar("BROWSER_COMMAND") ?? "browser-verification-mcp", envArgs("BROWSER_ARGS"), browserEnv);
   return {
     runTests: async (input, signal) => testResult.parse(await tests.call("run_tests", input, signal)),
     listCiRuns: async (input, signal) => ciResult.parse(await ci.call("list_ci_runs", input, signal)),

@@ -16,6 +16,11 @@ export interface AppDescriptor {
 }
 
 export const APPS: readonly AppDescriptor[] = [
+  {
+    id: "accountability-mcp",
+    contentOnlyTools: [],
+    taskTool: "run_verification_async",
+  },
   { id: "browser-verification-mcp", contentOnlyTools: [] },
   { id: "change-intelligence-mcp", contentOnlyTools: [] },
   { id: "ci-intelligence-mcp", contentOnlyTools: [] },
@@ -25,14 +30,8 @@ export const APPS: readonly AppDescriptor[] = [
   { id: "learning-mcp", contentOnlyTools: [] },
   { id: "project-context-mcp", contentOnlyTools: [] },
   { id: "project-memory-mcp", contentOnlyTools: [] },
-  { id: "review-accountability-mcp", contentOnlyTools: [] },
   { id: "skills-mcp", contentOnlyTools: [] },
   { id: "test-intelligence-mcp", contentOnlyTools: [] },
-  {
-    id: "verification-accountability-mcp",
-    contentOnlyTools: [],
-    taskTool: "run_verification_async",
-  },
   { id: "workflow-guard-mcp", contentOnlyTools: ["guard_check", "guard_status"] },
   { id: "workflow-task-mcp", contentOnlyTools: [] },
 ];

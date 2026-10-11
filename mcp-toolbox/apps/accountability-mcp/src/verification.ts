@@ -70,6 +70,24 @@ interface StoreDocument { version: 1; workspace: string; observations: StoredObs
 
 const MAX_OBSERVATIONS = 500;
 const MAX_STORE_BYTES = 5 * 1024 * 1024;
+const DEFAULT_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * The age dimension of the durable-store retention policy. On top of the
+ * entry bound (500 observations) and the byte bound (5 MiB) this store prunes
+ * observations older than the configured window on every write, so a store
+ * that is written forever cannot grow without bound. The window defaults to
+ * 90 days and is overridable with `ACCOUNTABILITY_RETENTION_DAYS` (a positive
+ * integer number of days). An unset, non-integer, or non-positive value falls
+ * back to the default. This is the retention window the README documents.
+ */
+export function retentionWindowMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.ACCOUNTABILITY_RETENTION_DAYS;
+  if (raw === undefined || raw.trim() === "") return DEFAULT_MAX_AGE_MS;
+  const days = Number(raw);
+  if (!Number.isInteger(days) || days <= 0) return DEFAULT_MAX_AGE_MS;
+  return days * 24 * 60 * 60 * 1000;
+}
 const SECRET_PATTERNS = [/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i, /\bgh[pousr]_[A-Za-z0-9_]{20,}\b/, /\bsk-[A-Za-z0-9_-]{20,}\b/, /\bAKIA[0-9A-Z]{16}\b/];
 
 function abortIfNeeded(signal?: AbortSignal): void { if (signal?.aborted) throw new Error("Verification accountability operation cancelled."); }
@@ -163,7 +181,11 @@ function validStoredObservation(value: unknown, workspace: string): value is Sto
 
 export class VerificationStore {
   private readonly writes = new Map<string, Promise<void>>();
-  constructor(private readonly dataRoot: string, private readonly authorities: VerificationAuthorities) {}
+  constructor(private readonly dataRoot: string, private readonly authorities: VerificationAuthorities, private readonly maxAgeMs: number = retentionWindowMs()) {}
+  private prune(document: StoreDocument, now: number): void {
+    const cutoff = now - this.maxAgeMs;
+    document.observations = document.observations.filter((observation) => observation.recordedAt >= cutoff);
+  }
   private pathFor(workspace: string): string { return join(this.dataRoot, `${createHash("sha256").update(workspace).digest("hex")}.json`); }
   private async load(workspace: string): Promise<StoreDocument> {
     try {
@@ -186,7 +208,7 @@ export class VerificationStore {
   }
   private async mutate<T>(workspace: string, operation: (document: StoreDocument) => T, signal?: AbortSignal): Promise<T> {
     let result!: T; const previous = this.writes.get(workspace) ?? Promise.resolve();
-    const write = previous.catch(() => undefined).then(async () => { abortIfNeeded(signal); const document = await this.load(workspace); result = operation(document); await this.persist(workspace, document, signal); });
+    const write = previous.catch(() => undefined).then(async () => { abortIfNeeded(signal); const document = await this.load(workspace); this.prune(document, Date.now()); result = operation(document); await this.persist(workspace, document, signal); });
     this.writes.set(workspace, write); try { await write; return result; } finally { if (this.writes.get(workspace) === write) this.writes.delete(workspace); }
   }
   async recordVerification(input: RecordVerificationInput, signal?: AbortSignal): Promise<VerificationObservation> {
@@ -245,7 +267,7 @@ export class VerificationStore {
 
 export function defaultDataRoot(env: NodeJS.ProcessEnv = process.env): string {
   if (env.VERIFICATION_ACCOUNTABILITY_DATA_DIR) return resolve(env.VERIFICATION_ACCOUNTABILITY_DATA_DIR);
-  if (env.XDG_DATA_HOME) return join(resolve(env.XDG_DATA_HOME), "verification-accountability-mcp");
+  if (env.XDG_DATA_HOME) return join(resolve(env.XDG_DATA_HOME), "accountability-mcp");
   if (!env.HOME) throw new Error("HOME is required when no verification accountability data directory is configured.");
-  return join(resolve(env.HOME), ".local", "share", "verification-accountability-mcp");
+  return join(resolve(env.HOME), ".local", "share", "accountability-mcp");
 }

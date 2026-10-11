@@ -14,7 +14,7 @@ import {
   type OpenReviewFollowUps,
 } from "../src/integrations/review-followups.js";
 
-const serverScript = resolve("mcp-toolbox/apps/review-accountability-mcp/dist/server.js");
+const serverScript = resolve("mcp-toolbox/apps/accountability-mcp/dist/server.js");
 
 /** A follow-up exactly as the ledger's own schema mints it. */
 const storedFollowUp = {

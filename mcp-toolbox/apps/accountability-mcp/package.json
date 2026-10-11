@@ -1,10 +1,10 @@
 {
-  "name": "verification-accountability-mcp",
+  "name": "accountability-mcp",
   "version": "0.1.0",
-  "description": "Durable bounded verification observations and freshness synthesis over MCP.",
+  "description": "Subject-bound review attestations plus authority-backed verification observations over MCP.",
   "type": "module",
   "bin": {
-    "verification-accountability-mcp": "./dist/server.js"
+    "accountability-mcp": "./dist/server.js"
   },
   "files": [
     "dist/",

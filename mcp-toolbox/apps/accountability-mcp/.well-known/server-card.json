@@ -1,9 +1,9 @@
 {
   "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
   "schemaVersion": "1",
-  "name": "verification-accountability-mcp",
+  "name": "accountability-mcp",
   "version": "0.1.0",
-  "description": "Durable bounded verification observations and freshness synthesis over MCP.",
+  "description": "Subject-bound review attestations plus authority-backed verification observations over MCP.",
   "protocolVersion": "2026-07-28",
   "transport": "stdio",
   "capabilities": {
@@ -22,6 +22,24 @@
     }
   },
   "tools": [
+    {
+      "name": "record_review",
+      "description": "Call after an actual secondary review to persist its bounded attestation against an explicit content-sensitive subject; P2/P3 findings become durable follow-ups. This tool records a review but does not perform one.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "list_reviews",
+      "description": "Proactively call before finalizing or handing off changed work to recover review state and unresolved follow-up debt. Lists bounded review attestations; freshness is unknown unless a comparable current subject is supplied.",
+      "readOnly": true,
+      "taskSupport": "forbidden"
+    },
+    {
+      "name": "resolve_followup",
+      "description": "Call after the underlying P2/P3 issue has been fixed and verified to resolve its durable follow-up without rewriting the originating review attestation.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    },
     {
       "name": "record_verification",
       "description": "Call when a new verification observation is required for changed work. Obtains bounded results directly from Test, CI, or Browser Verification and persists the observation; caller-supplied result claims are not accepted. Local test content freshness remains unknown. Browser observations preserve the page identity the browser tool observed (its hash-stamped evidence id and observed-at time), never a caller-asserted page state.",
@@ -44,8 +62,8 @@
   "discovery": {
     "strategy": "host-side-progressive",
     "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
-    "fullCatalogBytes": 16177,
-    "toolIndexBytes": 1372
+    "fullCatalogBytes": 26532,
+    "toolIndexBytes": 2216
   },
   "generatedBy": "@agent-tools/protocol-baseline",
   "surveyedAt": "2026-09-19"
