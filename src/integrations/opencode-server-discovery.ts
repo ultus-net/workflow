@@ -34,6 +34,50 @@ export interface OpencodeServerDiscovery {
   readonly boundaryKind?: BoundaryKind;
 }
 
+/**
+ * C1 per-revision state-home isolation (follow-up recorded in
+ * docs/ledger/control-plane-c1-composition.md, the v0.1.7 rollout collision).
+ * Multiple Container App revisions can share the Azure Files mount at the
+ * fixed `WORKFLOW_OPENCODE_SERVER_HOME`, so a fresh revision would otherwise
+ * reuse — and clobber — the prior revision's discovery file and OpenCode DB.
+ * The instance supplies its revision identity in this env var (an instance
+ * value, never baked into the image); the deploy side wires the ACA revision
+ * value.
+ */
+export const WORKFLOW_PLANE_REVISION_ENV = "WORKFLOW_PLANE_REVISION";
+
+/**
+ * Scopes the daemon state home to a revision identity by appending a single
+ * revision subpath — ONLY when a non-empty identity is supplied. Absent or
+ * whitespace-only input returns `base` byte-for-byte, so the ambient daemon and
+ * every pre-revision deployment keep the exact path they had before.
+ *
+ * The tag is sanitized to one filesystem-safe segment: a malformed identity
+ * that carries no safe characters fails closed rather than silently sharing the
+ * base path. The sibling PID-based lock/lease defect (a separate task) is not
+ * addressed here — this only makes the STATE HOME path revision-aware.
+ */
+export function opencodeServerStateHome(base: string, revision?: string): string {
+  const identity = revision?.trim();
+  if (identity === undefined || identity === "") return base;
+  const segment = revisionSegment(identity);
+  if (segment === "") {
+    throw new TypeError(`revision identity ${JSON.stringify(revision)} has no filesystem-safe characters`);
+  }
+  return join(base, segment);
+}
+
+/** One path segment from a revision name: lowercase alphanumerics plus `. _ -`,
+ * every other run collapses to a hyphen, and edge separators are trimmed so the
+ * segment can never be `.`, `..`, or absolute. */
+function revisionSegment(revision: string): string {
+  return revision
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, "-")
+    .replace(/^[.-]+|[.-]+$/g, "")
+    .slice(0, 64);
+}
+
 export function opencodeServerDiscoveryDir(home: string = homedir()): string {
   return resolve(home, ".workflow", "opencode-server");
 }

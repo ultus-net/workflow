@@ -9,6 +9,7 @@ import type { WorkflowApplication } from "../application/workflow.js";
 import type { WorkflowCodingSession } from "../application/coding-session.js";
 import { createOpenRouterAnalytics, usageTimeRange, type OpenRouterAnalytics } from "../integrations/openrouter-analytics.js";
 import { compactSession, fetchLiveMcp, fetchSessionStats } from "../integrations/opencode-live-state.js";
+import { opencodeServerStateHome, WORKFLOW_PLANE_REVISION_ENV } from "../integrations/opencode-server-discovery.js";
 import { readHubCredentials } from "../integrations/hub-discovery.js";
 import { nextCronMatch, type ScheduleDefinition } from "../integrations/hub-scheduler.js";
 import type { ProjectRecord, ProjectStatus } from "../integrations/project-registry.js";
@@ -1138,7 +1139,7 @@ export function createWorkflowWebServer(
     // expose. A read, not a mutation: no cross-origin gate needed, and the
     // honest "unavailable" states are values, never fabricated connections.
     if (request.method === "GET" && pathname === "/api/settings/mcp/live") {
-      const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
+      const stateHome = opencodeServerStateHome(process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server"), process.env[WORKFLOW_PLANE_REVISION_ENV]);
       const live = await fetchLiveMcp({ workspace: options?.workspace ?? process.cwd(), stateHome });
       return json(response, 200, live);
     }
@@ -1146,7 +1147,7 @@ export function createWorkflowWebServer(
     // aggregate through the enforced gateway, honest reasons when the
     // topology is not running. Read-only.
     if (request.method === "GET" && pathname === "/api/usage/sessions/live") {
-      const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
+      const stateHome = opencodeServerStateHome(process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server"), process.env[WORKFLOW_PLANE_REVISION_ENV]);
       const live = await fetchSessionStats({ workspace: options?.workspace ?? process.cwd(), stateHome });
       return json(response, 200, live);
     }
@@ -1175,7 +1176,7 @@ export function createWorkflowWebServer(
         if (agentSessionId === undefined) {
           return json(response, 409, { error: "that session has no agent session yet — send a message first, then compact" });
         }
-        const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server");
+        const stateHome = opencodeServerStateHome(process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(homedir(), ".workflow", "opencode-server"), process.env[WORKFLOW_PLANE_REVISION_ENV]);
         const result = await compactSession({ workspace: options?.workspace ?? process.cwd(), stateHome, sessionId: agentSessionId });
         // A gateway-walk unavailability (no daemon, not loopback, did not
         // answer) maps to 503 like the sibling unavailable reads; every other
