@@ -18,8 +18,8 @@ import { readHubWebEndpoint } from "../integrations/hub-discovery.js";
 import {
   opencodeServerDiscoveryPath,
   opencodeServerStateHome,
+  planeRevisionIdentity,
   removeOpencodeServerDiscovery,
-  WORKFLOW_PLANE_REVISION_ENV,
   writeOpencodeServerDiscovery,
 } from "../integrations/opencode-server-discovery.js";
 import { createOpencodeServerRuntime } from "../integrations/opencode-server-runtime.js";
@@ -183,13 +183,15 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   // posture; a guardless authority issues permissive decisions no operator
   // asked for).
   const guard = await createOpencodeServerGuard(workspace);
-  // C1: the state root honors WORKFLOW_OPENCODE_SERVER_HOME, and — when the
-  // instance supplies a revision identity — is scoped to that revision so
+  // C1: the state root honors WORKFLOW_OPENCODE_SERVER_HOME, and — when a
+  // revision identity is present (the instance's WORKFLOW_PLANE_REVISION, or
+  // the ACA-injected CONTAINER_APP_REVISION) — is scoped to that revision so
   // concurrent Container App revisions sharing one Azure Files mount never
   // share a discovery file or OpenCode DB (the v0.1.7 rollout collision).
   // Absent the identity the path is byte-identical to the pre-revision root.
   const baseStateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? resolve(homedir(), ".workflow", "opencode-server");
-  const stateHome = opencodeServerStateHome(baseStateHome, process.env[WORKFLOW_PLANE_REVISION_ENV]);
+  const planeRevision = planeRevisionIdentity(process.env);
+  const stateHome = opencodeServerStateHome(baseStateHome, planeRevision);
   const discoveryPath = opencodeServerDiscoveryPath(stateHome, workspace);
   const mode = authorityModeFromEnv(process.env);
   const enforcement = enforcementFromEnv(process.env);
@@ -398,7 +400,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       // ingress stays OpenCode-only (byte-identical to pre-D5).
       ...(plane === undefined || plane.hubHostnames.length === 0
         ? {}
-        : { hubRoutes: { hosts: plane.hubHostnames, target: () => readHubWebEndpoint() } }),
+        : { hubRoutes: { hosts: plane.hubHostnames, target: () => readHubWebEndpoint(undefined, planeRevision) } }),
       // C1 observability: expose the broker's recent decisions + the GATEWAY's
       // own posture at a Workflow-owned read route, so a systemic denial (e.g.
       // the mutation-budget fault) is diagnosable over the wire without reading

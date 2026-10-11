@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { opencodeServerStateHome, planeRevisionIdentity } from "./opencode-server-discovery.js";
+
 /**
  * The one discovery read the loopback surfaces share (extracted from the web
  * service's `hubCredentials`, which used this exact path). A process-separated
@@ -11,9 +13,20 @@ import { join, resolve } from "node:path";
  * `undefined` and the caller records nothing rather than fabricating a hub.
  */
 
-/** The hub discovery directory (the parent of the `hub/` subdirectory). */
-export function hubDiscoveryDirectory(override?: string): string {
-  return override ?? process.env.WORKFLOW_HUB_DIR ?? resolve(homedir(), ".workflow");
+/**
+ * The hub discovery directory (the parent of the `hub/` subdirectory). When a
+ * revision identity is supplied the base is scoped to that revision (the C1
+ * per-revision state isolation), so a caller reading the hub's `discovery.json`
+ * or `web.json` resolves the SAME revision-scoped directory the hub wrote.
+ * Absent the identity the path is byte-identical to the pre-revision root.
+ */
+export function hubDiscoveryDirectory(override?: string, revision?: string): string {
+  const base = override ?? process.env.WORKFLOW_HUB_DIR ?? resolve(homedir(), ".workflow");
+  // Default the revision to the ambient identity so every reader (the hub UI's
+  // hubCredentials, the gateway's web.json target, the surface-usage client)
+  // resolves the SAME revision-scoped directory the hub wrote — without each
+  // caller having to thread the identity. An explicit revision still wins.
+  return opencodeServerStateHome(base, revision ?? planeRevisionIdentity());
 }
 
 /**
@@ -50,8 +63,8 @@ export function readHubCredentials(override?: string): { url: string; token: str
  * carries no secret: the loopback UI is reached only through the gateway, which
  * has already enforced the client credential before dispatching here.
  */
-export function readHubWebEndpoint(override?: string): string | undefined {
-  const path = join(hubDiscoveryDirectory(override), "hub", "web.json");
+export function readHubWebEndpoint(override?: string, revision?: string): string | undefined {
+  const path = join(hubDiscoveryDirectory(override, revision), "hub", "web.json");
   if (!existsSync(path)) return undefined;
   try {
     const value: unknown = JSON.parse(readFileSync(path, "utf8"));
