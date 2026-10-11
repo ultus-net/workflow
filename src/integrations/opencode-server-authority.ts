@@ -310,12 +310,20 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
   };
 
   const deliver = async (decision: OpencodeAuthorityDecision): Promise<boolean> => {
+    // In-band feedback: a reject carries the reason to the model as
+    // `message`, so a systemic denial (the observed C1 fault: the mutation
+    // budget exhausted) tells the agent WHY and how to recover, rather than
+    // stalling it behind an opaque decline. Only the first 200 chars ride the
+    // wire (the reason can name a path/command); the journal keeps the full
+    // reason, bounded there too.
+    const message = decision.reply === "reject" ? rejectionFeedback(decision) : undefined;
     try {
       await options.engine.replyPermission({
         sessionId: decision.sessionId,
         requestId: decision.requestId,
         reply: decision.reply,
         cwd: options.workspace,
+        ...(message === undefined ? {} : { message }),
       });
       record({ ...decision, delivered: true });
       return true;
@@ -623,6 +631,18 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
       return journal;
     },
   };
+}
+
+/**
+ * The Feedback the model sees on a rejected permission (v2 turns a reject with
+ * a `message` into `CorrectedError({ feedback })`). Framed as a denial reason
+ * so the agent can adapt rather than stall; bounded to 200 chars like the
+ * journal/log (a reason can name a path or command). Returns undefined when
+ * there is no reason to carry, so a bare reject stays byte-identical.
+ */
+function rejectionFeedback(decision: OpencodeAuthorityDecision): string | undefined {
+  if (decision.reason === undefined || decision.reason.trim() === "") return undefined;
+  return `Workflow denied '${decision.tool}': ${decision.reason}`.slice(0, 200);
 }
 
 function permissionToolName(request: RemoteEnginePermissionRequest): string {

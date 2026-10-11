@@ -141,6 +141,34 @@ test("HttpRemoteEngine posts the prompt and the permission reply to the document
   assert.deepEqual(captured[1]!.body, { decision: "reject" });
 });
 
+test("HttpRemoteEngine carries reject feedback as `message` (and omits it on allow)", async () => {
+  const captured: { body: unknown }[] = [];
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    fetch: async (_url, init) => {
+      captured.push({ body: init?.body === undefined ? undefined : JSON.parse(String(init.body)) });
+      return new Response(null, { status: 204 });
+    },
+  });
+  // A reject with feedback: v2 turns `message` into a CorrectedError surfaced
+  // to the model, so the agent learns WHY it was denied.
+  await engine.replyPermission({
+    sessionId: "ses_1",
+    requestId: "per_1",
+    reply: "reject",
+    cwd: "/w",
+    message: "Workflow denied 'edit': mutation budget exhausted",
+  });
+  assert.deepEqual(captured[0]!.body, {
+    decision: "reject",
+    message: "Workflow denied 'edit': mutation budget exhausted",
+  });
+  // An allow stays `{ decision: "once" }` — no empty message field on the wire.
+  await engine.replyPermission({ sessionId: "ses_1", requestId: "per_2", reply: "once", cwd: "/w" });
+  assert.deepEqual(captured[1]!.body, { decision: "once" });
+});
+
 test("HttpRemoteEngine events stream parses SSE event envelopes", async () => {
   const engine = new HttpRemoteEngine({
     baseUrl: "http://127.0.0.1:4096",

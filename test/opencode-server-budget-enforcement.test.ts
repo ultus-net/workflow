@@ -68,13 +68,15 @@ test("C1 F3: explicit env caps parse; crossing them aborts and denies further mu
     new Set(["read", "mutation", "process"]),
     workspace,
   );
-  const replies: string[] = [];
+  const replies: { readonly requestId: string; readonly reply: string; readonly message?: string }[] = [];
   const engine: Pick<RemoteEngine, "events" | "replyPermission"> = {
     async *events() {
       yield permission("r1", "edit", { filePath: join(workspace, "a.ts") });
       yield permission("r2", "grep", {});
     },
-    async replyPermission(input) { replies.push(`${input.requestId}:${input.reply}`); },
+    async replyPermission(input) {
+      replies.push({ requestId: input.requestId, reply: input.reply, ...(input.message === undefined ? {} : { message: input.message }) });
+    },
   };
   const authority = createOpencodeServerAuthority({
     engine,
@@ -87,7 +89,11 @@ test("C1 F3: explicit env caps parse; crossing them aborts and denies further mu
   assert.equal(mutation?.decision, "deny");
   assert.match(mutation?.reason ?? "", /session budget violated/);
   assert.equal(read?.decision, "allow", "a read is not a mutation; a crossed budget must not block it");
-  assert.deepEqual(replies, ["r1:reject", "r2:once"]);
+  assert.deepEqual(replies.map((r) => `${r.requestId}:${r.reply}`), ["r1:reject", "r2:once"]);
+  // In-band communication: the rejected mutation TELLS the agent why, so it can
+  // adapt instead of stalling (the observed C1 fault's fix).
+  assert.match(replies[0]?.message ?? "", /Workflow denied 'edit': session budget violated/);
+  assert.equal(replies[1]?.message, undefined, "an allow carries no feedback");
 });
 
 test("C1 F3: a malformed cap fails closed (never a silent unenforced session)", () => {

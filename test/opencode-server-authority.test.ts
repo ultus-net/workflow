@@ -30,11 +30,11 @@ import type { WorkflowGuardProvider } from "../src/integrations/mcp-toolbox-guar
 
 interface FakeEngine {
   readonly engine: Pick<RemoteEngine, "events" | "replyPermission">;
-  readonly replies: { readonly sessionId: string; readonly requestId: string; readonly reply: string }[];
+  readonly replies: { readonly sessionId: string; readonly requestId: string; readonly reply: string; readonly message?: string }[];
 }
 
 function fakeEngine(events: readonly RemoteEngineEvent[], mode: "complete" | "throw" = "complete"): FakeEngine {
-  const replies: { sessionId: string; requestId: string; reply: string }[] = [];
+  const replies: { sessionId: string; requestId: string; reply: string; message?: string }[] = [];
   return {
     replies,
     engine: {
@@ -43,10 +43,21 @@ function fakeEngine(events: readonly RemoteEngineEvent[], mode: "complete" | "th
         if (mode === "throw") throw new Error("SSE stream lost");
       },
       async replyPermission(input) {
-        replies.push({ sessionId: input.sessionId, requestId: input.requestId, reply: input.reply });
+        replies.push({
+          sessionId: input.sessionId,
+          requestId: input.requestId,
+          reply: input.reply,
+          ...(input.message === undefined ? {} : { message: input.message }),
+        });
       },
     },
   };
+}
+
+/** A reject is expected to carry in-band feedback (the denial reason). */
+function expectsRejectFeedback(replies: readonly { readonly message?: string }[]): void {
+  assert.equal(replies.length, 1);
+  assert.ok((replies[0]!.message ?? "").length > 0, "a rejected permission must carry in-band feedback for the agent");
 }
 
 function permission(id: string, action: string, metadata: Record<string, unknown>, callId?: string): RemoteEngineEvent {
@@ -111,7 +122,8 @@ test("W071 broker: a withheld capability is denied pre-mutation", async (t) => {
     workspace,
   });
   await authority.start();
-  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  assert.deepEqual(fake.replies.map((r) => ({ sessionId: r.sessionId, requestId: r.requestId, reply: r.reply })), [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  expectsRejectFeedback(fake.replies);
   const decision = authority.decisions()[0]!;
   assert.equal(decision.decision, "deny");
   assert.equal(decision.capability, "network");
@@ -155,7 +167,8 @@ test("W071 broker: unmappable safety metadata fails closed", async (t) => {
     workspace,
   });
   await authority.start();
-  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  assert.deepEqual(fake.replies.map((r) => ({ sessionId: r.sessionId, requestId: r.requestId, reply: r.reply })), [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  expectsRejectFeedback(fake.replies);
   assert.equal(authority.decisions()[0]?.decision, "deny");
   assert.match(authority.decisions()[0]?.reason ?? "", /unmappable permission request/);
 });
@@ -226,7 +239,7 @@ test("W071 broker (ask-me): the operator can only tighten a policy-allowed ask",
   await new Promise((resolveWait) => setTimeout(resolveWait, 10));
   await authority.handleOperatorReply({ sessionId: "s1", requestId: "r1", reply: "reject" });
   await running;
-  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  assert.deepEqual(fake.replies.map((r) => ({ sessionId: r.sessionId, requestId: r.requestId, reply: r.reply })), [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
 });
 
 test("W071 broker (ask-me): a policy deny is answered immediately, never held", async (t) => {
@@ -241,7 +254,8 @@ test("W071 broker (ask-me): a policy deny is answered immediately, never held", 
   });
   await authority.start();
   assert.equal(authority.pendingOperatorReplies, 0);
-  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  assert.deepEqual(fake.replies.map((r) => ({ sessionId: r.sessionId, requestId: r.requestId, reply: r.reply })), [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  expectsRejectFeedback(fake.replies);
 });
 
 test("W071 broker (ask-me): an unanswered ask times out to reject (fail closed)", async (t) => {
@@ -256,7 +270,7 @@ test("W071 broker (ask-me): an unanswered ask times out to reject (fail closed)"
     operatorReplyTimeoutMs: 20,
   });
   await authority.start();
-  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  assert.deepEqual(fake.replies.map((r) => ({ sessionId: r.sessionId, requestId: r.requestId, reply: r.reply })), [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
 });
 
 test("W071 broker (enforced): the bypass alarm fires for a mutating tool with no decision", async (t) => {
@@ -688,7 +702,7 @@ test("W092 broker (ask-me): the operator can reject a guard ask (tighten)", asyn
   assert.equal(authority.pendingOperatorReplies, 1, "the guard ask must be held for the operator");
   await authority.handleOperatorReply({ sessionId: "s1", requestId: "r1", reply: "reject" });
   await running;
-  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  assert.deepEqual(fake.replies.map((r) => ({ sessionId: r.sessionId, requestId: r.requestId, reply: r.reply })), [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
 });
 
 test("W092 broker (ask-me): an unanswered guard ask times out to reject (fail closed)", async (t) => {
@@ -708,7 +722,7 @@ test("W092 broker (ask-me): an unanswered guard ask times out to reject (fail cl
   assert.equal(authority.pendingOperatorReplies, 1, "the guard ask must be held before the timeout");
   await new Promise((resolveWait) => setTimeout(resolveWait, 60));
   await running;
-  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  assert.deepEqual(fake.replies.map((r) => ({ sessionId: r.sessionId, requestId: r.requestId, reply: r.reply })), [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
 });
 
 test("W092 broker (auto-resolve): a guard ask fails closed to deny (no operator attached)", async (t) => {
@@ -723,7 +737,8 @@ test("W092 broker (auto-resolve): a guard ask fails closed to deny (no operator 
   });
   await authority.start();
   assert.equal(authority.pendingOperatorReplies, 0);
-  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  assert.deepEqual(fake.replies.map((r) => ({ sessionId: r.sessionId, requestId: r.requestId, reply: r.reply })), [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  expectsRejectFeedback(fake.replies);
   assert.equal(authority.decisions()[0]?.decision, "deny");
   assert.match(authority.decisions()[0]?.reason ?? "", /auto-resolve/);
 });
@@ -741,6 +756,7 @@ test("W092 broker: a guard deny is answered immediately, never held", async (t) 
   });
   await authority.start();
   assert.equal(authority.pendingOperatorReplies, 0);
-  assert.deepEqual(fake.replies, [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  assert.deepEqual(fake.replies.map((r) => ({ sessionId: r.sessionId, requestId: r.requestId, reply: r.reply })), [{ sessionId: "s1", requestId: "r1", reply: "reject" }]);
+  expectsRejectFeedback(fake.replies);
   assert.match(authority.decisions()[0]?.reason ?? "", /guard-tamper/);
 });
