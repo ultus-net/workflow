@@ -29,16 +29,40 @@ port) and the `opencode-workflow-guard` npm plugin (being end-of-lifed).
 
 ## What this decides
 
-- The **policy corpus of record is this tree**, not the mcp-toolbox port and not
-  the plugin. The guard conversion (plan step C2) extracts the
-  framework-independent policy core from here into `src/integrations/guard-policy/`.
-- The vendored `src/lib/*` host-adapter modules (state, sqlite, project-memory,
-  review, learning, v2-plugin) are **not** all portable: they carry the plugin's
-  OpenCode-host and sqlite session-state concerns. Port only the
-  framework-independent policy functions; leave host-coupled modules out unless a
-  specific rule needs them.
+- This tree is the **provenance corpus of record** — the pinned upstream source
+  the guard policy derives from. It is **not** the operative enforcement surface.
+- The **operative guard** is the app port
+  (`mcp-toolbox/apps/workflow-guard-mcp/src/`), and the hub/seat in-process copy
+  (`src/integrations/guard-policy/`) is byte-identical to the port's ten
+  portable policy modules, pinned by `test/guard-policy-drift.test.ts`. The
+  vendored tree is **not** statically linked at runtime.
+- The port is a **subset** of this corpus (the plugin's `src/lib/*` host-adapter
+  modules — state, sqlite, project-memory, review, learning, v2-plugin — carry
+  OpenCode-host and sqlite session-state concerns and are not portable). The
+  per-policy disposition is recorded in `COVERAGE.json` and pinned by
+  `test/guard-policy-corpus-coverage.test.ts`.
+- **Honest gap (not a guarantee).** Three upstream enforcement lanes are
+  **absent** from the port: secret-file **read** denial (`secretFileReadIn` in
+  the shell lane and the read-tool seat), the destructive-command scan over
+  **written file content** (`extractEditContent` + `liveMutationIn` on a
+  `file_write` payload), and the inline-interpreter **workspace-escape /
+  secret-read** lanes (`outsideWritePathInPayload`, `secretPathInPayload`). They
+  are defense-in-depth (execution is still gated by the shell lane and
+  containment), and each is recorded in `COVERAGE.json` and pinned absent by the
+  coverage test. Porting one is a deliberate change that updates the inventory,
+  this file, and the security-assurance case together.
 
 ## Drift control
 
 - Record the pinned commit here on every re-vendor.
-- A future drift test should assert the vendored tree matches the pinned ref.
+- **Corpus ↔ port coverage:** `test/guard-policy-corpus-coverage.test.ts` pins
+  every vendored `src/policies/*.ts` to a `COVERAGE.json` disposition, checks
+  each named module exists in the port, and pins the three security-relevant
+  absent lanes above as absent — so a vendored policy cannot be added, removed,
+  or ported without updating the recorded disposition. This replaces the
+  earlier "a future drift test should..." placeholder.
+- Byte-parity of the operative copy is pinned separately at the **port ↔
+  in-process** boundary by `test/guard-policy-drift.test.ts`.
+- Re-vendoring (`git archive` from the pinned ref) is verified by re-running the
+  two tests above; a full byte-diff of this tree against the upstream ref is not
+  automated here (the upstream checkout is outside the confined workspace).

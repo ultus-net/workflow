@@ -18,6 +18,14 @@ policy as a Workflow `McpProvider`:
   (`test/guard-policy-drift.test.ts`), so the seat calls the SAME `checkPolicy`
   the vendored app runs, with no subprocess, stdio handshake, or stale-dist
   class. It exposes `capabilities()`, `guardCheck(input)`, and `guardStatus()`.
+  The operative guard is a **subset** of the vendored upstream corpus (the
+  provenance tree under `mcp-toolbox/vendor/opencode-workflow-guard/`): three
+  upstream enforcement lanes are absent (secret-file read denial, the
+  destructive scan over written content, and inline-interpreter
+  workspace-escape/secret-read). The per-policy disposition is recorded in the
+  vendor's `COVERAGE.json` and pinned by
+  `test/guard-policy-corpus-coverage.test.ts` — read it before claiming full
+  upstream parity.
 - `guardPolicyEvidence(decision, mutationEpoch)` normalizes an
   `allow`/`deny`/`ask` decision into evidence with subject
   `policy:<policy-id>` — `allow` records `passed`, anything else `failed`.

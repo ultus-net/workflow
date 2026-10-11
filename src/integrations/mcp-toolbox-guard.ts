@@ -12,13 +12,19 @@ import { checkPolicy, type GuardCheckInput, type GuardDecision } from "./guard-p
 /**
  * C2 (mcp-toolbox → control-plane conversion): the guard policy core runs
  * IN-PROCESS from `src/integrations/guard-policy/` (a drift-guarded,
- * byte-identical copy of the vendored app's policy source). The enforcement
- * seat no longer spawns a `workflow-guard-mcp` child, handshakes over stdio,
- * or executes a possibly-stale `dist` — the SAME `checkPolicy` the vendored
- * app runs is statically linked here. MCP remains capability and observation
- * plumbing; Workflow's kernel owns task state. The vendored app is still built
- * and mounted as an agent-facing MCP tool (see `toolboxCatalogMounts`); its
- * dist-freshness helpers below stay in use for that mount.
+ * byte-identical copy of the vendored app's policy source — the OPERATIVE
+ * port). The enforcement seat no longer spawns a `workflow-guard-mcp` child,
+ * handshakes over stdio, or executes a possibly-stale `dist` — the SAME
+ * `checkPolicy` the vendored app runs is statically linked here. The port is a
+ * SUBSET of the vendored upstream corpus
+ * (`mcp-toolbox/vendor/opencode-workflow-guard/`): three upstream enforcement
+ * lanes are absent (secret-file read denial, destructive-content-on-write,
+ * inline-interpreter workspace-escape/secret-read), recorded in the vendor's
+ * `COVERAGE.json` and pinned by `test/guard-policy-corpus-coverage.test.ts`.
+ * MCP remains capability and observation plumbing; Workflow's kernel owns task
+ * state. The vendored app is still built and mounted as an agent-facing MCP
+ * tool (see `toolboxCatalogMounts`); its dist-freshness helpers below stay in
+ * use for that mount.
  */
 
 export type { GuardCheckInput, GuardDecision } from "./guard-policy/index.js";
