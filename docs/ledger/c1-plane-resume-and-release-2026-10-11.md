@@ -42,8 +42,35 @@ blocked or misread.
 | `WORKFLOW_UPSTREAM_KEY` | may be set | must be UNSET when `..._FROM=azure-kv` | the seam is authoritative, not a fallback (review P2) |
 | `WORKFLOW_SECRET_STORE` | `keyring` | `azure-kv` for a real vault | `resolveSecretStore`, `src/integrations/secret-store.ts` |
 | `WORKFLOW_KEYVAULT_NAME` / `_URI` | unset | names the vault when `azure-kv` | `secret-store.ts` `azure-kv` arm |
-| `WORKFLOW_SESSION_BUDGET_*` | unset | wire explicit turn/token caps | plane/session budget env |
+| `WORKFLOW_SESSION_BUDGET_INPUT_TOKENS` | unset | cap input tokens per session | `sessionBudgetFromEnv`, `src/integrations/session-budget.ts:48-64` |
+| `WORKFLOW_SESSION_BUDGET_OUTPUT_TOKENS` | unset | cap output tokens | same |
+| `WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS` | unset | cap total tokens | same |
+| `WORKFLOW_SESSION_BUDGET_COST_USD` | unset | cap spend (USD) | same |
+| `WORKFLOW_BUDGET_DOWNGRADE_MODEL` / `_FRACTION` | unset | warn/downgrade before the abort cap | `budgetDowngradeFromEnv`, `session-budget.ts:160` |
 | `WORKFLOW_PLANE_REVISION` | unset | per-revision state-home isolation | `opencodeServerStateHome`, `opencode-server-discovery.ts:73-91` |
+
+**Session-budget recommendation (decision, 2026-10-11).** No new plane cap is
+needed. "Make the session budget configurable" is satisfied by the existing
+W045 caps, wired as `WORKFLOW_SESSION_BUDGET_*`:
+
+- The mechanism already exists and is fail-closed: `sessionBudgetFromEnv`
+  (`session-budget.ts:48-64`) parses the four axes and throws on a malformed
+  value; unset on all axes yields no local guard.
+- Crossing a cap aborts in-flight turns and denies later mutations, and is
+  operator-visible (`opencode-server.ts:319-333`).
+- It is already per-session overridable: a web override replaces the env cap per
+  axis (`mergeSessionBudget`, `session-budget.ts:96-114`; `describeBudgetMechanism`
+  names the EFFECTIVE caps, never the env's).
+- The backstop when unset is the OpenRouter per-key credit limit on the metering
+  proxy's upstream key (`session-budget.ts:79`). That is the same key F2 moves
+  into Key Vault, so "unset" is not "unenforced" once F2 lands.
+
+Action: set explicit caps on the plane revision. Recommend a conservative
+`WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS` and `WORKFLOW_SESSION_BUDGET_COST_USD`
+as the two axes that bound a runaway session, with
+`WORKFLOW_BUDGET_DOWNGRADE_FRACTION` to warn before the abort. Setting a second,
+independent plane-level cap would duplicate this guard and split the effective
+cap across two mechanisms, so it is not recommended.
 
 **Trap to state in the handoff:** F1 is NOT unblocked by the merge. Without
 `WORKFLOW_OPENCODE_ENFORCEMENT=enforced` the gateway stays advisory and
@@ -175,8 +202,39 @@ attached to the release; `.pr-body-*` files are operator-only.
 3. Capture the digest recorded at the SAME tag from the SAME run: exactly one
    `sha256:<64hex>` line in `image-digest.txt`.
 
-Guard blocks `gh release create` / workflow dispatch; the operator runs these
-from a plain shell (mechanics in `c1-operator-runbook-2026-10-09.md` §B-§C).
+### 4.1 v0.1.8 CUT (done, 2026-10-11)
+
+- Release `v0.1.8` created against `main`, tag →
+  `ba4620ba15cae5ff0505adf0d77840da48a42081` (the docs-merge tip; carries the
+  PR #522 fixes and the resume runbook).
+- Assets attached: `opencode`
+  (`sha256:c2fe3b18be9e67222d136c818512e3a07213d86ffd5d9176919965d08ac9b9db`),
+  `opencode.sha256`, `image-digest.txt`.
+- Published via `gh workflow run publish-image.yml -f tag=v0.1.8`
+  (run `38115826319`, success). The tag-push run `38115786784` failed closed by
+  design: it fired at `git tag` time, before the `opencode` asset was attached,
+  so `gh release download opencode` had nothing to fetch. The dispatch run after
+  the asset upload is the publish. Due to this ordering the workflow ran once
+  and left no stuck check on the release tag.
+- **Digest to deploy:**
+  `ghcr.io/ultus-net/workflow@sha256:9d37dcb52f8fc78b68bc2ee31d77e2206a2026679504d1abf5bf0a72e3ab9239`
+  (authoritative, from the dispatch run + release body). Note the pre-existing
+  untracked `image-digest.txt` in a checkout is NOT the current digest; download
+  it from the `v0.1.8` release.
+- Tags are immutable: the failed push-triggered run on `v0.1.8` is historical
+  and cannot be cleared without rewriting the ref. The successful dispatch run
+  is the verification of record. Order the operands next time (create release,
+  attach asset, THEN push the tag) so the push-triggered run also passes.
+
+The cut-failure log line on the tag-push run was the workflow's own fail-closed
+guard: `the tagged release must carry the qualified opencode binary as an asset
+(attach it to the release; it is not publicly fetchable)`.
+
+The release + dispatch ran end-to-end this session (the guard allowed
+`gh release create` and `gh workflow run`; only `gh pr create` was blocked by
+the `package.json`/lockfile false-positive). Prefer a plain shell so a guard
+policy change cannot interrupt the sequence mid-way; mechanics in
+`c1-operator-runbook-2026-10-09.md` §B-§C.
 
 ## 5. Deploy via the AzDO repo (instance-side, operator-only)
 
@@ -190,7 +248,8 @@ FQDNs, secrets) stay in the work repo; none enter the open repo.
    permission probes pass — honest-claims gate), `WORKFLOW_MUTATION_BUDGET`,
    `WORKFLOW_UPSTREAM_KEY_FROM=azure-kv` with the vault secret stored and
    `WORKFLOW_UPSTREAM_KEY` unset, `WORKFLOW_SECRET_STORE=azure-kv` +
-   `WORKFLOW_KEYVAULT_NAME`, `WORKFLOW_SESSION_BUDGET_*`,
+   `WORKFLOW_KEYVAULT_NAME`, `WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS` +
+   `WORKFLOW_SESSION_BUDGET_COST_USD` (+ `WORKFLOW_BUDGET_DOWNGRADE_FRACTION`),
    `WORKFLOW_OPENCODE_SERVER_HOME` = the Files mount path, and
    `WORKFLOW_PLANE_REVISION` = the ACA revision value.
 3. Run the pipeline. It runs `bash verify-pin.sh` against the digest from the
@@ -198,6 +257,48 @@ FQDNs, secrets) stay in the work repo; none enter the open repo.
 4. Residual instance gaps before a full end-to-end deploy (deploy plan §3):
    worker job module, queue + evidence blob container, storage/ACR RBAC, Easy
    Auth. Confirm which are landed before claiming the deploy complete.
+
+### 5.1 v0.1.8 deploy (values + the F2 bundling caution)
+
+The instance repo is `dev.azure.com/Jacobsens/AzureAppDev/_git/csh-dev`. The
+guard confines agent mutations to the `Workflow` workspace, so the instance-repo
+edits below are operator-run (the agent can read the repo, not write it).
+
+Two files pin the release; both must move together or the pipeline's
+`verify-pin.sh` step fails closed:
+
+- `pipelines/azure-pipelines.yml`: `planeImage` and `planeExpectationUrl`.
+- `infra/params/dev.bicepparam`: `planeImage` (the pipeline's
+  `--parameters planeImage="$(planeImage)"` overrides it at deploy, so the
+  param file is documentation + local-deploy parity; keep them equal).
+
+Values:
+
+```
+planeImage:          ghcr.io/ultus-net/workflow@sha256:9d37dcb52f8fc78b68bc2ee31d77e2206a2026679504d1abf5bf0a72e3ab9239
+planeExpectationUrl: https://github.com/ultus-net/workflow/releases/download/v0.1.8/image-digest.txt
+```
+
+The image is publicly pullable (anonymous GHCR token 200; both the digest and
+the `v0.1.8` tag resolve; the manifest's `docker-content-digest` equals the
+expectation), so no ACR credential is needed for the pull.
+
+**F2 bundling caution (do not set `WORKFLOW_UPSTREAM_KEY_FROM` in this deploy).**
+`infra/modules/plane.bicep` still carries
+`{ name: 'WORKFLOW_UPSTREAM_KEY', secretRef: upstreamKeySecretName }` and has no
+`WORKFLOW_UPSTREAM_KEY_FROM` env. The image pin deploy therefore leaves the
+azure-kv seam INACTIVE and the existing secretRef supplies the key — correct, and
+it does not trip the fail-closed path. Moving the key into Key Vault is a
+SEPARATE revision that, in one change: (a) stores the vault secret, (b) adds
+`WORKFLOW_UPSTREAM_KEY_FROM=azure-kv`, and (c) REMOVES the `WORKFLOW_UPSTREAM_KEY`
+secretRef env. Setting FROM while the secretRef lingers is a no-op (the seam is
+authoritative) and setting it with no vault secret fails the daemon closed.
+
+The `.bicepparam` file is also stale relative to the runbook: it lacks the
+session-budget, mutation-budget, and `WORKFLOW_PLANE_REVISION` env. Add those in
+the same instance change that exercises lanes 1-3, and note that
+`.bicepparam` values that the pipeline does not override are the source of truth
+for `az deployment group create`.
 
 ## 6. Honest residuals (dated, append-only)
 
