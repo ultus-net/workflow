@@ -150,13 +150,48 @@ export function ensureOpencodeSessionTask(application: WorkflowApplication, sess
  * every pinned mutating class. A permissive ruleset bypasses interception, so
  * an enforced surface refuses to start rather than claim enforcement over a
  * permissive engine. Call with `engine.config()` output at daemon startup.
+ *
+ * Accepts both wire shapes the pinned generations resolve to:
+ *  - v1: `permission: { edit, bash, task }` string map.
+ *  - v2: `permissions: [{ action, resource, effect }]` array, where the
+ *    server renamed two classes (`bash` -> `shell`, `task` -> `subagent`).
+ * Either shape pins all three classes to `ask` or the assertion fails closed.
  */
 export function assertAskRuleset(config: Record<string, unknown> | undefined): void {
-  const permission = config !== undefined && isRecord(config.permission) ? config.permission : undefined;
-  const unpinned = ["edit", "bash", "task"].filter((key) => permission?.[key] !== "ask");
+  const unpinned = ["edit", "bash", "task"].filter((cls) => effectivePermissionEffect(config, cls) !== "ask");
   if (unpinned.length > 0) {
     throw new Error(`ruleset not pinned to ask for: ${unpinned.join(", ")} (enforced posture fails closed)`);
   }
+}
+
+/** The v2 permission action that names the same mutating class as each v1 key. */
+const V2_ACTION_FOR_CLASS: Record<string, string> = { edit: "edit", bash: "shell", task: "subagent" };
+
+/**
+ * The effective `ask`/`allow`/`deny` effect for one pinned class, from either
+ * config shape. A class pinned by several v2 entries is only pinned when every
+ * entry asks (a broader `allow` entry would reopen the class); an absent class
+ * resolves to `undefined`, which the caller treats as unpinned (fail closed).
+ */
+function effectivePermissionEffect(config: Record<string, unknown> | undefined, cls: string): unknown {
+  if (config === undefined) return undefined;
+  if (isRecord(config.permission)) {
+    const entry = config.permission[cls];
+    if (typeof entry === "string") return entry;
+    // v1 also accepts a pattern map; only the catch-all `*` pins the class.
+    if (isRecord(entry)) return entry["*"];
+  }
+  if (Array.isArray(config.permissions)) {
+    const action = V2_ACTION_FOR_CLASS[cls];
+    const effects = config.permissions.flatMap((entry) => {
+      if (!isRecord(entry) || entry.action !== action) return [];
+      if (entry.resource !== undefined && entry.resource !== "*") return [];
+      return [entry.effect];
+    });
+    if (effects.length === 0) return undefined;
+    return effects.every((effect) => effect === "ask") ? "ask" : effects[0];
+  }
+  return undefined;
 }
 
 export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOptions): OpencodeServerAuthority {
