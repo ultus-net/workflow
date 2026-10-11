@@ -533,6 +533,25 @@ real file touch producing a diagnostic over `code.ultus.net`) is a
 deploy-gated follow-up — this entry claims config/runtime/acceptance, not a
 live LSP session.
 
+#### LSP live probe (2026-10-11) — deploy-gated, verdict pending
+
+`test/plane-lsp-live-probe.test.ts` (gate `WORKFLOW_AZURE_PLANE_LSP_PROBE=1`,
+reusing `WORKFLOW_AZURE_PLANE_URL` / `WORKFLOW_AZURE_PLANE_CLIENT_PASSWORD`)
+is the live acceptance instrument for the wire above. Through ACA ingress it
+asserts the plane is healthy (`GET /api/info` 200) and that `GET /api/lsp` —
+the only token-free HTTP LSP route in opencode v2 (`getLsp` -> `LSP.status()`,
+returning `LSP.Status[] = {id, name, root, status: "connected" | "error"}`) —
+is reachable through the gateway and well-formed (HTTP 200 + a JSON array). It
+does **not** fail on an empty array: opencode answers `[]` until an LSP client
+is spawned, and a client is spawned only by a file touch in a token-spending
+write/edit turn. When a `typescript` entry is present it must read
+`"connected"`. Register rows `c1-plane-lsp` and `c1-plane-lsp-diagnostic`
+(`docs/PROBE_VERDICTS.json`), both `pending`/`unqualified`. The live
+**diagnostic** verdict (a real file touch producing a diagnostic) stays pending
+an operator run with a model key: the diagnostic arm is gated separately
+(`WORKFLOW_AZURE_PLANE_LSP_DIAGNOSTIC=1`) and is an honest documented `skip`
+that asserts nothing, so no live LSP session is claimed here yet.
+
 #### ACP fleet-install seam (review follow-up `34a0ff8e`)
 
 The ACP lane called `installFleetIntoOpencodeConfig` inline with no injectable
