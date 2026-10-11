@@ -662,3 +662,58 @@ is a stated residual. The `foreign`-host branch prevents the destructive
 cross-host case.
 
 **Refs:** `src/integrations/workflow-hub.ts`; `test/hub-lifecycle.test.ts`.
+
+## 2026-10-11 — the systemic-denial fault + the F1/F2/F3 hardening (append-only)
+
+**Source:** a live agent session inside the deployed plane (its own tool calls
+went through the broker under test). Ground truth is the container console log's
+deny line, quoted in full in `docs/OPENCODE_SERVER_AUTHORITY.md`'s 2026-10-11
+addendum and `THREAT_MODEL.md`'s dated residual.
+
+**Fault.** `MUTATION_BUDGET_EXHAUSTED` — the parent-owned `MutationBudget`
+(default cap 100) counts every ALLOWED `process`-capability action, and a shell
+`ls`/`grep` is `process`, so ~100 allowed shell commands exhausted the root
+session and denied every later mutation for its life. Not the circuit breaker,
+not a guard ask (neither line appeared). Two observability confusions: the noted
+client replies were journaled as `deny` (200+ cosmetic "declines"), and the UI
+rendered each as "the user declined this tool call".
+
+**Fix (branch `fix/c1-authority-denial-and-live-test-hardening`).**
+
+- The deny reason carries `consumed/max` and names the new
+  `WorkflowApplication.resetMutationBudget` seam; the budget stays bounded and
+  fail-closed (explicit reset or a new root session only).
+- The noted operator reply journals as `observe` (new `OpencodeAuthorityDecision`
+  value), never `deny`.
+- New Workflow-owned read route `GET /api/workflow/authority`, served by the
+  gateway from the broker journal (never forwarded upstream); `workflow-inspection`
+  route class (`workflow` GET / `deny` other verbs).
+- F1: the gateway route-matrix posture is now a distinct reported axis
+  (`gatewayPosture` in the discovery record and the authority-journal payload),
+  never conflated with the hub's authority axis. F2: `workflow doctor` fails when
+  the upstream key is in the process environment (`checkUpstreamKeyExposure`,
+  prints presence only) and names the file/secret-store seam + rotation. F3: the
+  env-caps → watcher → broker deny crossing (and malformed fail-closed) is pinned.
+
+**Evidence:** `test/application-policy-failure-tracker.test.ts` (bound named +
+reversible; a denied mutation does not deny a subsequent read),
+`test/opencode-server-authority.test.ts` (observe ≠ deny),
+`test/opencode-v2-route-class.test.ts` + `test/opencode-server-gateway.test.ts`
+(route class, served payload, never-forward, 403/401),
+`test/doctor.test.ts` (F2 exposure, value never printed),
+`test/opencode-server-state-home.test.ts` (gatewayPosture round-trip),
+`test/opencode-server-budget-enforcement.test.ts` (F3 crossing + fail-closed);
+`npm run typecheck` and `npm run lint` exit 0.
+
+**Honest limits.** The `enforced` label still means only hub-broker pre-mutation
+interception, never an intra-pod OS boundary. The plane must be redeployed on
+this branch for the read route to exist. F2/F3 are diagnosis + seam + tests; the
+deployment switch to the file key source and the explicit budget caps are
+operator actions, and the previously-exposed key should be rotated.
+
+**Refs:** `src/application/mutation-budget.ts`; `src/application/workflow.ts`;
+`src/integrations/opencode-server-authority.ts`;
+`src/integrations/opencode-server-gateway.ts`;
+`src/integrations/opencode-v2-route-class.ts`;
+`src/integrations/opencode-server-discovery.ts`; `src/cli/doctor.ts`;
+`src/cli/opencode-server.ts`.
