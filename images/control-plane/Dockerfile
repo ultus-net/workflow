@@ -99,8 +99,10 @@ RUN npm link --ignore-scripts
 # (src/integrations/plane-lsp.ts), and the launch env pins
 # OPENCODE_DISABLE_LSP_DOWNLOAD=1 so an unprovisioned built-in fails closed
 # instead of fetching from the network mid-session. The npm global prefix of
-# node:22-bookworm-slim is /usr/local, so the bin lands on the default
-# bwrap/pod PATH and the module resolves. Versions are pinned to match
+# node:22-bookworm-slim is /usr/local, so the bin lands under /usr/local/bin;
+# because the contained launch forwards an env block with no ambient PATH, the
+# runtime SETS PATH (plane-lsp.ts PLANE_LSP_DEFAULT_PATH) so the server's
+# `#!/usr/bin/env node` shebang resolves. Versions are pinned to match
 # package.json's `typescript` (^5.9.3) and the language server's stable line;
 # test/plane-lsp.test.ts pins the paths against these lines.
 RUN npm install -g typescript@5.9.3 typescript-language-server@6.0.2 \

@@ -51,6 +51,17 @@ export const PLANE_LSP_DISABLE_DOWNLOAD_ENV = "OPENCODE_DISABLE_LSP_DOWNLOAD";
 export const PLANE_LSP_DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin";
 
 /**
+ * The file extensions the TypeScript server is consulted for. Declared
+ * explicitly rather than inherited from the built-in `typescript` entry so the
+ * override does not depend on opencode's merge for the file-type gate — it
+ * mirrors the built-in's set (`packages/opencode/src/lsp/server.ts`
+ * `Typescript.extensions`).
+ */
+export const PLANE_LSP_TYPESCRIPT_EXTENSIONS: readonly string[] = [
+  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts",
+];
+
+/**
  * The plane's `lsp` config block. A truthy value enables opencode's built-ins;
  * the `typescript` entry then overrides that built-in to spawn the baked,
  * offline server. Any other built-in stays enabled at its runtime default and
@@ -61,6 +72,7 @@ export function planeLspConfig(): Record<string, OpencodeLspServer> {
   return {
     typescript: {
       command: [PLANE_LSP_TYPESCRIPT_SERVER_BIN, "--stdio"],
+      extensions: [...PLANE_LSP_TYPESCRIPT_EXTENSIONS],
       initialization: { tsserver: { path: PLANE_LSP_TSSERVER_PATH } },
     },
   };

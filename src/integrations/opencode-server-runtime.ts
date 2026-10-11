@@ -13,7 +13,7 @@ import { connectorReadablePaths, provisionToolboxSkill, resolveToolboxCatalog, s
 import { createModelUsageProxy, METERED_PLACEHOLDER_KEY, syntheticFailoverProxyOptions, type AutoLatestProxyOptions, type EgressDenialEvent, type EgressObservation, type ModelUsageMetrics, type ModelUsageProxy, type ProxyPayloadPolicy, type SyntheticFailoverProxyOptions } from "./model-usage-proxy.js";
 import type { CredentialEndpoint } from "./credentials.js";
 import { globalOpencodeBinary, meteredOpencodeConfig, OPENCODE_V2_METERED_ENV_KEY, resolveOpencodeLaunch, type OpencodeLspServer } from "./opencode-agent-config.js";
-import { PLANE_LSP_DISABLE_DOWNLOAD_ENV } from "./plane-lsp.js";
+import { PLANE_LSP_DEFAULT_PATH, PLANE_LSP_DISABLE_DOWNLOAD_ENV } from "./plane-lsp.js";
 import { installFleetIntoOpencodeConfig, type FleetInstallResult } from "./fleet-payload.js";
 import { enabledMcpServers, type WorkflowSettings } from "./workflow-settings.js";
 import { probeOpencodeHealth } from "./opencode-health.js";
@@ -194,9 +194,14 @@ export function opencodeServerLaunchEnvironment(input: {
   readonly opencodeMajor?: number | undefined;
   /**
    * When true, LSP is composed in the config, so the launch also pins
-   * {@link PLANE_LSP_DISABLE_DOWNLOAD_ENV} — the plane bakes exactly one
-   * language server, and forbidding on-demand downloads keeps an unprovisioned
-   * built-in from fetching from the network mid-session (fail-closed).
+   * {@link PLANE_LSP_DISABLE_DOWNLOAD_ENV} (no on-demand fetches) AND sets an
+   * explicit PATH. The contained launch passes an env block with no PATH (the
+   * container-boundary backend forwards it verbatim; bwrap clears then sets its
+   * own), and the baked `typescript-language-server` is a
+   * `#!/usr/bin/env node` script — without a PATH the shebang cannot find
+   * `node`, so the override would spawn-fail. {@link PLANE_LSP_DEFAULT_PATH}
+   * carries the image's `/usr/local/bin` (node + the server) and the system
+   * bins.
    */
   readonly lsp?: boolean | undefined;
 }): Record<string, string> {
@@ -205,7 +210,9 @@ export function opencodeServerLaunchEnvironment(input: {
     OPENCODE_SERVER_PASSWORD: input.password,
     OPENCODE_SERVER_USERNAME: DEFAULT_USERNAME,
     OPENCODE_TELEMETRY: "off",
-    ...(input.lsp === true ? { [PLANE_LSP_DISABLE_DOWNLOAD_ENV]: "1" } : {}),
+    ...(input.lsp === true
+      ? { [PLANE_LSP_DISABLE_DOWNLOAD_ENV]: "1", PATH: PLANE_LSP_DEFAULT_PATH }
+      : {}),
     ...(input.opencodeMajor !== undefined && input.opencodeMajor >= 2
       ? { [OPENCODE_V2_METERED_ENV_KEY]: METERED_PLACEHOLDER_KEY }
       : {}),

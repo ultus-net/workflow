@@ -309,10 +309,12 @@ environment also includes a language server. opencode v2 disables every LSP
 when its config `lsp` key is absent, so the hub-written plane config now sets
 the key with an image-backed TypeScript server (the plane image installs
 pinned `typescript` + `typescript-language-server`), and the launch pins
-`OPENCODE_DISABLE_LSP_DOWNLOAD=1` so unprovisioned built-ins fail closed rather
-than fetch. This is the same image-carries-tooling pattern §11 applies to the
-MCP toolbox. Details: `docs/ledger/control-plane-c1-composition.md` (plane LSP
-wire, 2026-10-11); code `src/integrations/plane-lsp.ts`.
+`OPENCODE_DISABLE_LSP_DOWNLOAD=1` (no runtime fetches) plus an explicit `PATH`
+(the baked server's `#!/usr/bin/env node` shebang needs `node` resolvable, and
+the contained launch forwards an env block with no ambient PATH). This is the
+same image-carries-tooling pattern §11 applies to the MCP toolbox. Details:
+`docs/ledger/control-plane-c1-composition.md` (plane LSP wire, 2026-10-11);
+code `src/integrations/plane-lsp.ts`.
 
 ## 12. Open questions (requirements, not resolutions)
 

@@ -502,22 +502,34 @@ The wire (three coordinated parts):
   starts even when the opened workspace has no TypeScript installed.
 - **Image** — `images/control-plane/Dockerfile` installs pinned
   `typescript@5.9.3` + `typescript-language-server@6.0.2` into the
-  `/usr/local` global prefix (on the default pod/bwrap PATH, bound under
-  `/usr`); the build runs `typescript-language-server --version` to fail
-  closed. The config's path constants and the Dockerfile lines are pinned to
-  each other by `test/plane-lsp.test.ts`.
+  `/usr/local` global prefix (bound under `/usr`); the build runs
+  `typescript-language-server --version` to fail closed. The config's path
+  constants and the Dockerfile lines are pinned to each other by
+  `test/plane-lsp.test.ts`.
 - **Launch env** — when LSP is composed the contained launch pins
-  `OPENCODE_DISABLE_LSP_DOWNLOAD=1` (`src/effect/runtime-flags.ts`), so an
+  `OPENCODE_DISABLE_LSP_DOWNLOAD=1` (opencode source
+  `packages/opencode/src/effect/runtime-flags.ts`:
+  `disableLspDownload: bool("OPENCODE_DISABLE_LSP_DOWNLOAD")`), so an
   unprovisioned built-in an operator's file type happens to match fails
   closed to "unavailable" instead of fetching from the network mid-session.
+  The launch also sets `PATH` (`PLANE_LSP_DEFAULT_PATH`) because the contained
+  launch forwards an env block with no ambient PATH and the baked server is a
+  `#!/usr/bin/env node` script — without PATH the shebang cannot find `node`
+  (measured locally: `env -i <bin> --version` fails with "node: No such file",
+  `env -i node <cli.mjs> --version` succeeds).
 
 **Evidence (local, this revision):** typecheck + lint exit 0;
 `test/plane-lsp.test.ts` 5/5; `test/opencode-server-runtime.test.ts` 7/7 — the
 launch test drives the real pinned opencode (v2.0.10) through the injected
 boundary WITH `lsp: planeLspConfig()` composed, and the server reaches healthy,
 proving the pinned binary accepts the block (a bad shape hard-fails startup)
-and the block survives into `opencode.json`. Honest limit: the LIVE end-to-end
-proof (a real file touch producing a diagnostic over `code.ultus.net`) is a
+and the block survives into `opencode.json`. The override's merge semantics are
+read directly from the pinned opencode source
+`packages/opencode/src/lsp/lsp.ts` (`servers[name] = { ...existing, id, root:
+existing?.root ?? …, extensions: item.extensions ?? existing?.extensions ?? [],
+spawn: custom }`); the config declares `extensions` explicitly so the file-type
+gate does not depend on the merge. Honest limit: the LIVE end-to-end proof (a
+real file touch producing a diagnostic over `code.ultus.net`) is a
 deploy-gated follow-up — this entry claims config/runtime/acceptance, not a
 live LSP session.
 
