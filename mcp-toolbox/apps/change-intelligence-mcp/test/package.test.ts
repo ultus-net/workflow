@@ -33,7 +33,9 @@ test("packed npm artifact installs independently and launches without primitive 
       dependencies?: Record<string, string>;
     };
     assert.deepEqual(installed.bin, { "change-intelligence-mcp": "./dist/server.js" });
-    assert.deepEqual(Object.keys(installed.dependencies ?? {}).sort(), ["@modelcontextprotocol/sdk", "zod"]);
+    // The shared scaffolding ships as a bundled workspace dependency, so the
+    // packed artifact stays self-contained (see bundleDependencies).
+    assert.deepEqual(Object.keys(installed.dependencies ?? {}).sort(), ["@agent-tools/mcp-server-kit", "@modelcontextprotocol/sdk", "zod"]);
     const binary = join(consumer, "node_modules", ".bin", "change-intelligence-mcp");
     accessSync(binary, constants.X_OK);
 

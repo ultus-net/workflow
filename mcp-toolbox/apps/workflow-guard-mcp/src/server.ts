@@ -1,35 +1,20 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
+import { createLoggingServer, installToolStreaming } from "@agent-tools/mcp-server-kit";
+
 import { checkPolicy } from "./policy.js";
 
-const server = new McpServer(
+const server = createLoggingServer(
   { name: "workflow-guard-mcp", version: "0.1.0" },
-  { capabilities: { logging: {} } },
 );
 
-// Stream leveled MCP log notifications (and progress when the caller supplies
-// a progressToken) for every tool call, so hosts surfacing MCP logging see
-// server activity in the session stream. Same pattern as project-memory-mcp.
-type ToolExtra = {
-  _meta?: { progressToken?: string | number };
-  sendNotification: (notification: unknown) => Promise<void>;
-};
-const registerTool = server.registerTool.bind(server);
-server.registerTool = ((name: string, config: unknown, handler: (input: never, extra: ToolExtra) => Promise<unknown>) =>
-  registerTool(name as never, config as never, (async (input: never, extra: ToolExtra) => {
-    const progressToken = extra._meta?.progressToken;
-    const progress = async (message: string, value: number) => {
-      if (progressToken === undefined) return;
-      await extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress: value, total: 2, message } } as never);
-    };
-    await progress("start", 0);
-    const result = await handler(input, extra);
-    await progress("done", 2);
-    return result;
-  }) as never)) as typeof server.registerTool;
+// Stream progress notifications (when the caller supplies a progressToken) for
+// every tool call. The shared scaffolding lives in @agent-tools/mcp-server-kit;
+// workflow-guard-mcp streams progress only (the per-tool verdict log is sent by
+// the handler itself).
+installToolStreaming(server);
 
 server.registerTool(
   "guard_check",

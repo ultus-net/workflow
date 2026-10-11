@@ -18,51 +18,24 @@
  * outside the hub's authorized routes.
  */
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+
+import { createLoggingServer, installToolStreaming } from "@agent-tools/mcp-server-kit";
 
 import { boundToolResultText } from "./vendor/result-bounds.js";
 import { callStepRoute, type StepRoute } from "./hub-client.js";
 
-const server = new McpServer(
+const server = createLoggingServer(
   { name: "workflow-task-mcp", version: "0.1.0" },
-  { capabilities: { logging: {} } },
 );
 
 // Stream leveled MCP log notifications (and progress when the caller supplies a
-// progressToken) for every tool call. See learning-mcp for the pattern. A tool
-// refusal is THROWN (the SDK converts it to `isError`), so a declared
-// outputSchema is only ever validated against a real hub success.
-type ToolExtra = {
-  _meta?: { progressToken?: string | number };
-  signal?: AbortSignal;
-  sendNotification: (notification: unknown) => Promise<void>;
-};
-const registerTool = server.registerTool.bind(server);
-server.registerTool = ((name: string, config: unknown, handler: (input: never, extra: ToolExtra) => Promise<unknown>) =>
-  registerTool(name as never, config as never, (async (input: never, extra: ToolExtra) => {
-    const progressToken = extra._meta?.progressToken;
-    const progress = async (message: string, value: number) => {
-      if (progressToken === undefined) return;
-      await extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress: value, total: 2, message } } as never);
-    };
-    await server.server.sendLoggingMessage({ level: "debug", logger: "workflow-task-mcp", data: { tool: name, phase: "start" } });
-    await progress("start", 0);
-    try {
-      const result = await handler(input, extra);
-      await server.server.sendLoggingMessage({ level: "info", logger: "workflow-task-mcp", data: { tool: name, phase: "done" } });
-      await progress("done", 2);
-      return boundToolResultText(result);
-    } catch (error) {
-      await server.server.sendLoggingMessage({
-        level: "error",
-        logger: "workflow-task-mcp",
-        data: { tool: name, phase: "error", message: error instanceof Error ? error.message : String(error) },
-      });
-      throw error;
-    }
-  }) as never)) as typeof server.registerTool;
+// progressToken) for every tool call, and bound the model-visible text of every
+// result. The scaffolding lives in @agent-tools/mcp-server-kit. A tool refusal
+// is THROWN (the SDK converts it to `isError`), so a declared outputSchema is
+// only ever validated against a real hub success.
+installToolStreaming(server, { logger: "workflow-task-mcp", transform: boundToolResultText });
 
 // ── Wire shapes (the hub's `/steps/*` projections, mirrored structurally) ──
 const evidenceAuthority = z.enum(["environment", "host", "mcp", "reviewer"]);

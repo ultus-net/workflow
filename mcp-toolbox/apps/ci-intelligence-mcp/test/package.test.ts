@@ -31,7 +31,7 @@ test("packed npm artifact installs independently and launches its MCP binary", a
     execFileSync("npm", ["install", "--ignore-scripts", join(temp, filename)], { cwd: consumer, stdio: "ignore" });
     const installed = JSON.parse(readFileSync(join(consumer, "node_modules", "ci-intelligence-mcp", "package.json"), "utf8")) as { bin?: Record<string, string>; dependencies?: Record<string, string> };
     assert.deepEqual(installed.bin, { "ci-intelligence-mcp": "./dist/server.js" });
-    assert.deepEqual(Object.keys(installed.dependencies ?? {}).sort(), ["@modelcontextprotocol/sdk", "zod"]);
+    assert.deepEqual(Object.keys(installed.dependencies ?? {}).sort(), ["@agent-tools/mcp-server-kit", "@modelcontextprotocol/sdk", "zod"]);
     const binary = join(consumer, "node_modules", ".bin", "ci-intelligence-mcp");
     accessSync(binary, constants.X_OK);
     const client = new Client({ name: "ci-intelligence-package-test", version: "1.0.0" });
