@@ -319,6 +319,36 @@ test("W071 broker: assertAskRuleset fails closed on a permissive ruleset", () =>
   assert.throws(() => assertAskRuleset(undefined), /not pinned to ask/);
 });
 
+test("W071 broker: assertAskRuleset accepts the v2 permissions array", () => {
+  const v2 = (entries: readonly { action: string; resource?: string; effect: string }[]): Record<string, unknown> => ({ permissions: entries });
+  // The live v2.0.10 resolution of `permission: {edit,bash,task: ask}` renames
+  // bash->shell and task->subagent.
+  assert.doesNotThrow(() => assertAskRuleset(v2([
+    { action: "edit", resource: "*", effect: "ask" },
+    { action: "shell", resource: "*", effect: "ask" },
+    { action: "subagent", resource: "*", effect: "ask" },
+    { action: "skill", resource: "*", effect: "deny" },
+  ])));
+  // A class left permissive in the v2 spelling fails closed.
+  assert.throws(() => assertAskRuleset(v2([
+    { action: "edit", resource: "*", effect: "ask" },
+    { action: "shell", resource: "*", effect: "allow" },
+    { action: "subagent", resource: "*", effect: "ask" },
+  ])), /not pinned to ask for: bash/);
+  // The renamed classes must be present, not merely the v1 spellings.
+  assert.throws(() => assertAskRuleset(v2([
+    { action: "edit", resource: "*", effect: "ask" },
+    { action: "bash", resource: "*", effect: "ask" },
+    { action: "task", resource: "*", effect: "ask" },
+  ])), /not pinned to ask for: bash, task/);
+  // A broader non-`*` resource does not pin the class.
+  assert.throws(() => assertAskRuleset(v2([
+    { action: "edit", resource: "*", effect: "ask" },
+    { action: "shell", resource: "src/**", effect: "ask" },
+    { action: "subagent", resource: "*", effect: "ask" },
+  ])), /not pinned to ask for: bash/);
+});
+
 test("W071 broker: session task correlation is stable and additive", () => {
   const workspace = mkdtempSync(join(tmpdir(), "wf-broker-task-"));
   try {

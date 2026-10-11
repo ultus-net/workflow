@@ -524,3 +524,45 @@ test("HttpRemoteEngine reads the effective config", async () => {
   });
   assert.deepEqual(await engine.config({ cwd: "/w" }), { permission: { edit: "ask" } });
 });
+
+test("HttpRemoteEngine unwraps the v2 /api/config document list", async () => {
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    fetch: async (url) => {
+      const path = new URL(String(url)).pathname;
+      // v2 answers the JSON document list on /api/config and the web-UI HTML
+      // catch-all on the v1 spelling.
+      if (path === "/api/config") {
+        return new Response(JSON.stringify([
+          { type: "document", path: "/w/opencode.json", info: { permissions: [{ action: "edit", resource: "*", effect: "ask" }] } },
+          { type: "directory", path: "/w" },
+        ]), { status: 200 });
+      }
+      return new Response("<html></html>", { status: 200, headers: { "content-type": "text/html" } });
+    },
+  });
+  assert.deepEqual(await engine.config({ cwd: "/w" }), { permissions: [{ action: "edit", resource: "*", effect: "ask" }] });
+});
+
+test("HttpRemoteEngine falls back to the v1 /config spelling", async () => {
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    fetch: async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === "/api/config") return new Response("not found", { status: 404 });
+      return new Response(JSON.stringify({ permission: { edit: "ask" } }), { status: 200 });
+    },
+  });
+  assert.deepEqual(await engine.config({ cwd: "/w" }), { permission: { edit: "ask" } });
+});
+
+test("HttpRemoteEngine rejects a wrong credential on config", async () => {
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    fetch: async () => new Response("denied", { status: 401 }),
+  });
+  await assert.rejects(() => engine.config({ cwd: "/w" }), /401/);
+});

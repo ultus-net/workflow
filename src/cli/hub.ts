@@ -7,10 +7,12 @@ import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createEvidenceContentStore } from "../integrations/evidence-content-store.js";
 import { fetchBoardTasksFromEnv } from "../integrations/azure-devops-provider.js";
+import { providerEnvWithStoredTokens, PROVIDER_TOKEN_ENV_NAMES } from "../integrations/provider-token.js";
 import { boardProviderFromEnv, createBoardReadCache, fetchBoardTask, fetchIssueCrossReferences, fetchWorkProductState } from "../integrations/task-provider.js";
 import { createProviderReadLedger, fetchIssueDetail, recordProviderReads } from "../integrations/issue-detail.js";
 import { shellExecutorFor } from "../integrations/run-controller.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
+import { resolveSecretStore } from "../integrations/secret-store.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 import { hubPromptGuidanceFromEnv } from "../integrations/prompt-guidance.js";
 import { createReviewerFactory, createRunTestRunner, reviewerRunTaskId } from "../integrations/hub-run-gates.js";
@@ -115,6 +117,35 @@ const teamTaskVerificationCommand = process.env.WORKFLOW_TEAM_TASK_VERIFY_COMMAN
 // agent-facing mount is a separate, credential-free policy tool; see
 // src/integrations/mcp-toolbox-guard.ts).
 const credentialDefinitions = loadCredentialDefinitions();
+// Board-PAT custody (provider-token.ts): when WORKFLOW_BOARD_TOKEN_FROM names a
+// secret-store backend, the board PATs are sourced from it (authoritative) and
+// scrubbed from the process environment the provider classifiers read, so the
+// tokens never ride a uid-shared environment the agent can read at
+// /proc/<pid>/environ. Unset, boardEnv is process.env byte-identical.
+//
+// A set-but-unusable seam (unknown backend, or a store that cannot serve the
+// secret) must NOT take down the hub: the board is a READ-ONLY projection and
+// the hub is the mutation authority, so a board misconfiguration degrading the
+// authority would be disproportionate. Instead the tokens are scrubbed and no
+// substitute is applied, so the board reports an honest "unconfigured" state
+// naming the missing token variables — and the failure is logged. Never degrade
+// to the ambient uid-shared env (that is the exact leak the seam closes).
+let boardEnv = process.env;
+try {
+  boardEnv = await providerEnvWithStoredTokens({
+    env: process.env,
+    storeFor: (backend) => resolveSecretStore({ ...process.env, WORKFLOW_SECRET_STORE: backend }),
+  });
+} catch (error: unknown) {
+  const scrubbed: NodeJS.ProcessEnv = { ...process.env };
+  for (const name of Object.values(PROVIDER_TOKEN_ENV_NAMES)) delete scrubbed[name];
+  boardEnv = scrubbed;
+  console.error(
+    `[hub] board provider token seam (WORKFLOW_BOARD_TOKEN_FROM) failed: ${
+      error instanceof Error ? error.message : String(error)
+    }; the board is unconfigured (fail-closed — never falls back to the ambient env)`,
+  );
+}
 // Plan Task G2: the guard dispatcher is part of the enforcement stack, not an
 // optional extra. C2 makes it in-process — composition cannot fail on a spawn,
 // so a silently guardless authority is impossible by construction. The guard
@@ -635,18 +666,18 @@ try {
     // still serves the routes; the payloads name the missing declaration and
     // the ledger records nothing (the ambiguity error's verbatim reason rides
     // the pill tooltip — no pill fabricates freshness).
-    readBoardTasks: recordProviderReads(providerReadLedger, () => fetchBoardTasksFromEnv(process.env, fetch, boardReadCache)),
-    delegateBoardTask: recordProviderReads(providerReadLedger, (issue: number) => fetchBoardTask(boardProviderFromEnv(process.env), issue)),
+    readBoardTasks: recordProviderReads(providerReadLedger, () => fetchBoardTasksFromEnv(boardEnv, fetch, boardReadCache)),
+    delegateBoardTask: recordProviderReads(providerReadLedger, (issue: number) => fetchBoardTask(boardProviderFromEnv(boardEnv), issue)),
     // W165: the board's pull-request-state read closure — the same env-classified
     // provider, one bounded read per linked reference. It stays UNwrapped: its
     // own `as of` fact carries its freshness on the payload, and the liveness
     // ledger describes the BOARD reads the pills render beside.
-    readWorkProductState: (issue: number) => fetchWorkProductState(boardProviderFromEnv(process.env), issue),
+    readWorkProductState: (issue: number) => fetchWorkProductState(boardProviderFromEnv(boardEnv), issue),
     // W171: the provider-owned discovery read — the linked issue's timeline
     // cross-references ride the SAME ledger (a discovery read is a provider
     // read; the pills stay truthful).
-    discoverIssueCrossReferences: recordProviderReads(providerReadLedger, (issue: number) => fetchIssueCrossReferences(boardProviderFromEnv(process.env), issue)),
-    readIssueDetail: recordProviderReads(providerReadLedger, (issue: number) => fetchIssueDetail(boardProviderFromEnv(process.env), issue)),
+    discoverIssueCrossReferences: recordProviderReads(providerReadLedger, (issue: number) => fetchIssueCrossReferences(boardProviderFromEnv(boardEnv), issue)),
+    readIssueDetail: recordProviderReads(providerReadLedger, (issue: number) => fetchIssueDetail(boardProviderFromEnv(boardEnv), issue)),
     providerReadState: () => providerReadLedger.current(),
     // W177: the audit lane's provenance reader — the same shared store the
     // reviewer factory journals through.
