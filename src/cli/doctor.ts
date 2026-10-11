@@ -13,8 +13,10 @@ import {
 } from "../integrations/fleet-payload.js";
 import {
   opencodeServerDiscoveryPath,
+  opencodeServerStateHome,
   probeOpencodeServerGateway,
   readOpencodeServerDiscovery,
+  WORKFLOW_PLANE_REVISION_ENV,
 } from "../integrations/opencode-server-discovery.js";
 import { listWebAgents } from "../ui/web-agents.js";
 import { normalizeSettings, settingsPaths } from "../integrations/workflow-settings.js";
@@ -140,7 +142,10 @@ export async function checkTopologyGateway(options: DoctorOptions = {}): Promise
   // DoctorOptions.home scopes the discovery read like the settings/fleet/
   // posture/hub checks do, so scoped (test/embedded) runs never read the
   // operator's real home.
-  const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(options.home ?? homedir(), ".workflow", "opencode-server");
+  const stateHome = opencodeServerStateHome(
+    process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? join(options.home ?? homedir(), ".workflow", "opencode-server"),
+    process.env[WORKFLOW_PLANE_REVISION_ENV],
+  );
   const discovery = readOpencodeServerDiscovery(opencodeServerDiscoveryPath(stateHome, workspace));
   if (discovery === undefined) {
     return {

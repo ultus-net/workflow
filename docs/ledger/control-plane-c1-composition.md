@@ -533,6 +533,25 @@ real file touch producing a diagnostic over `code.ultus.net`) is a
 deploy-gated follow-up — this entry claims config/runtime/acceptance, not a
 live LSP session.
 
+#### LSP live probe (2026-10-11) — deploy-gated, verdict pending
+
+`test/plane-lsp-live-probe.test.ts` (gate `WORKFLOW_AZURE_PLANE_LSP_PROBE=1`,
+reusing `WORKFLOW_AZURE_PLANE_URL` / `WORKFLOW_AZURE_PLANE_CLIENT_PASSWORD`)
+is the live acceptance instrument for the wire above. Through ACA ingress it
+asserts the plane is healthy (`GET /api/info` 200) and that `GET /api/lsp` —
+the only token-free HTTP LSP route in opencode v2 (`getLsp` -> `LSP.status()`,
+returning `LSP.Status[] = {id, name, root, status: "connected" | "error"}`) —
+is reachable through the gateway and well-formed (HTTP 200 + a JSON array). It
+does **not** fail on an empty array: opencode answers `[]` until an LSP client
+is spawned, and a client is spawned only by a file touch in a token-spending
+write/edit turn. When a `typescript` entry is present it must read
+`"connected"`. Register rows `c1-plane-lsp` and `c1-plane-lsp-diagnostic`
+(`docs/PROBE_VERDICTS.json`), both `pending`/`unqualified`. The live
+**diagnostic** verdict (a real file touch producing a diagnostic) stays pending
+an operator run with a model key: the diagnostic arm is gated separately
+(`WORKFLOW_AZURE_PLANE_LSP_DIAGNOSTIC=1`) and is an honest documented `skip`
+that asserts nothing, so no live LSP session is claimed here yet.
+
 #### ACP fleet-install seam (review follow-up `34a0ff8e`)
 
 The ACP lane called `installFleetIntoOpencodeConfig` inline with no injectable
@@ -546,3 +565,100 @@ lane (never docs). Evidence: `test/acp-runtime-agent.test.ts` 15/15.
 `src/integrations/opencode-server-runtime.ts`; `src/cli/opencode-server.ts`;
 `src/integrations/acp-runtime.ts`; `images/control-plane/Dockerfile`;
 `packages/opencode/src/lsp/lsp.ts` (v2.0.10).
+
+### Per-revision state-home isolation (2026-10-11)
+
+**Source:** the recorded follow-up in the v0.1.7 entry above ("Custom-domain
+rebind" section, the per-revision state-home isolation follow-up). Append-only;
+supersedes nothing.
+
+A redeploy/rollout can leave the previous Container App revision and the new
+one sharing the SAME fixed state root — `WORKFLOW_OPENCODE_SERVER_HOME`
+resolves one path on one Azure Files mount — so a fresh revision could pick up
+(and clobber) the prior revision's discovery file and OpenCode DB.
+
+The wire:
+
+- **Env contract** — the instance supplies its revision identity in
+  `WORKFLOW_PLANE_REVISION` (`WORKFLOW_PLANE_REVISION_ENV` in
+  `src/integrations/opencode-server-discovery.ts`; an instance value, never
+  baked into the image). Absent, empty, or whitespace-only, the state home is
+  **byte-identical** to the pre-revision root — the ambient daemon and every
+  pre-revision deployment keep the exact path they had.
+- **Helper** — `opencodeServerStateHome(base, revision?)` appends one
+  filesystem-safe segment (lowercased, unsafe runs collapse to `-`, edge
+  separators trimmed, capped at 64 chars) only when a non-empty identity is
+  supplied. An identity that sanitizes to nothing **throws** rather than
+  silently sharing the base path (fail closed). The segment can never be `.`,
+  `..`, or absolute.
+- **Call sites** — the daemon (`src/cli/opencode-server.ts`) scopes both its
+  discovery file and its OpenCode DB (`stateDir` runs off `stateHome`); the
+  in-pod hub-UI live reads (`src/ui/web.ts`: `/api/settings/mcp/live`,
+  `/api/usage/sessions/live`, `/api/sessions/compact`) scope the same way so
+  they read the revision's own state, not another revision's; and every other
+  discovery reader resolves through the same helper so a scoped writer and an
+  unscoped reader can never disagree — `src/cli/opencode-attach.ts`,
+  `src/cli/web-launch.ts`, and `src/cli/doctor.ts` (the last preserves its
+  `DoctorOptions.home` scoping under the helper).
+
+**Evidence:** `test/opencode-server-state-home.test.ts` 6/6 (byte-identical
+default; isolated suffix; sanitization/traversal-safety; fail-closed on
+unsanitizable input; discovery-path consistency; env-name convention);
+`test/opencode-server-launcher.test.ts` + `test/plane-supervisor.test.ts` +
+`test/opencode-live-state.test.ts` 37/37; `npm run typecheck` and
+`npm run lint` exit 0. (`test/opencode-server-runtime.test.ts` has one failure
+that pre-exists on the base branch — a toolbox-build fixture dependency,
+reproduced with this diff stashed — not caused by this change.)
+
+**Honest limit / deploy follow-up:** the csh-dev side must set
+`WORKFLOW_PLANE_REVISION` (the ACA revision name, e.g.
+`csh-dev-plane--0000014`) on both the `workflow-opencode-server` daemon and the
+hub processes (it is inherited, not scrubbed, so the hub UI's live reads see
+it). Until that wire-up is verified live, the isolation is config/runtime-
+acceptance only; the ledger follow-up is not closed.
+
+**Refs:** `src/integrations/opencode-server-discovery.ts`;
+`src/cli/opencode-server.ts`; `src/ui/web.ts`;
+`test/opencode-server-state-home.test.ts`.
+
+### Hub instance-lock lease (2026-10-11)
+
+**Source:** the recorded v0.1.7 follow-up, "the PID-based acquireInstanceLock
+defect" (the custom-domain rebind section). Append-only; supersedes nothing.
+
+`acquireInstanceLock` (`src/integrations/workflow-hub.ts`) trusted
+`process.kill(pid, 0)` alone: a live process that had inherited a dead hub's
+RECYCLED pid read as "the hub is running". The lock now writes a lease record
+(`owner.json`: `{pid, startTime, host, token}`, written temp-file + rename so a
+reader never sees a partial record) and is LIVE only when the recorded owner is
+a live process on THIS host whose `/proc/<pid>/stat` start time (field 22, a
+constant per process even across pid reuse within a boot) still matches.
+
+The decision is deliberately tri-state so a lock is never destroyed while it
+might be held:
+
+- `live` — same host, owner alive, identity matches → refuse to start
+  (unchanged `"already running"` message).
+- `foreign` — the record names ANOTHER host. Liveness cannot be verified from
+  here, so the lock is treated as live and NOT reclaimed: a shared Azure Files
+  mount (the multi-revision scenario) must not let one host delete a live
+  hub's lock. Cross-host reclaim is manual.
+- `dead` — same host, owner gone or pid recycled → the lock is stale, reclaimed.
+
+A lock whose record is not yet readable (a sibling that won the `mkdir` race
+but has not renamed its record into place) is retried briefly before being
+reclaimed, and the pre-lease bare-`pid` format is still honored while its
+same-host owner lives, so migration never steals a running hub's lock.
+
+**Evidence:** `test/hub-lifecycle.test.ts` 9/9 — second-hub-refused,
+recycled-pid reclaimed, **foreign-host lock NOT reclaimed (fail closed)**,
+**legacy live-`pid` lock honored**, stale-across-restart reclaimed, and
+release-on-close; `npm run typecheck` and `npm run lint` exit 0.
+
+**Honest limit:** `/proc` is Linux-specific; on a host without it
+`processStartTime` returns `""` and a same-host lock is read as `dead`
+(reclaimable). CI and the deployed plane are Linux, so this is acceptable but
+is a stated residual. The `foreign`-host branch prevents the destructive
+cross-host case.
+
+**Refs:** `src/integrations/workflow-hub.ts`; `test/hub-lifecycle.test.ts`.

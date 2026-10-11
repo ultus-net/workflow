@@ -16,7 +16,9 @@ import { createOpencodeServerGateway, newTuiPassword } from "../integrations/ope
 import { readHubWebEndpoint } from "../integrations/hub-discovery.js";
 import {
   opencodeServerDiscoveryPath,
+  opencodeServerStateHome,
   removeOpencodeServerDiscovery,
+  WORKFLOW_PLANE_REVISION_ENV,
   writeOpencodeServerDiscovery,
 } from "../integrations/opencode-server-discovery.js";
 import { createOpencodeServerRuntime } from "../integrations/opencode-server-runtime.js";
@@ -178,7 +180,13 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   // posture; a guardless authority issues permissive decisions no operator
   // asked for).
   const guard = await createOpencodeServerGuard(workspace);
-  const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? resolve(homedir(), ".workflow", "opencode-server");
+  // C1: the state root honors WORKFLOW_OPENCODE_SERVER_HOME, and — when the
+  // instance supplies a revision identity — is scoped to that revision so
+  // concurrent Container App revisions sharing one Azure Files mount never
+  // share a discovery file or OpenCode DB (the v0.1.7 rollout collision).
+  // Absent the identity the path is byte-identical to the pre-revision root.
+  const baseStateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? resolve(homedir(), ".workflow", "opencode-server");
+  const stateHome = opencodeServerStateHome(baseStateHome, process.env[WORKFLOW_PLANE_REVISION_ENV]);
   const discoveryPath = opencodeServerDiscoveryPath(stateHome, workspace);
   const mode = authorityModeFromEnv(process.env);
   const enforcement = enforcementFromEnv(process.env);

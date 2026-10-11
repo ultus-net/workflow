@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { isEntrypoint } from "./entrypoint.js";
 import { ensureDiscovery } from "./opencode-attach.js";
 import { openBrowser } from "./open-browser.js";
+import { opencodeServerStateHome, WORKFLOW_PLANE_REVISION_ENV } from "../integrations/opencode-server-discovery.js";
 import { resolveTuiWorkspace } from "./tui-args.js";
 import { startWorkflowWeb } from "./web-service.js";
 
@@ -109,7 +110,10 @@ export async function runWebLaunch(argv: readonly string[]): Promise<WebLaunchHa
   // The stock web UI tab: only when the server topology is already running
   // for this workspace; `WORKFLOW_OPENCODE_STOCK_TAB=0` suppresses it.
   if (process.env.WORKFLOW_OPENCODE_STOCK_TAB !== "0") {
-    const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? resolve(homedir(), ".workflow", "opencode-server");
+    const stateHome = opencodeServerStateHome(
+      process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? resolve(homedir(), ".workflow", "opencode-server"),
+      process.env[WORKFLOW_PLANE_REVISION_ENV],
+    );
     await openStockWebTab({ workspace, stateHome });
   }
 
