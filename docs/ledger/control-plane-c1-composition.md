@@ -595,7 +595,11 @@ The wire:
   discovery file and its OpenCode DB (`stateDir` runs off `stateHome`); the
   in-pod hub-UI live reads (`src/ui/web.ts`: `/api/settings/mcp/live`,
   `/api/usage/sessions/live`, `/api/sessions/compact`) scope the same way so
-  they read the revision's own state, not another revision's.
+  they read the revision's own state, not another revision's; and every other
+  discovery reader resolves through the same helper so a scoped writer and an
+  unscoped reader can never disagree — `src/cli/opencode-attach.ts`,
+  `src/cli/web-launch.ts`, and `src/cli/doctor.ts` (the last preserves its
+  `DoctorOptions.home` scoping under the helper).
 
 **Evidence:** `test/opencode-server-state-home.test.ts` 6/6 (byte-identical
 default; isolated suffix; sanitization/traversal-safety; fail-closed on
@@ -616,3 +620,45 @@ acceptance only; the ledger follow-up is not closed.
 **Refs:** `src/integrations/opencode-server-discovery.ts`;
 `src/cli/opencode-server.ts`; `src/ui/web.ts`;
 `test/opencode-server-state-home.test.ts`.
+
+### Hub instance-lock lease (2026-10-11)
+
+**Source:** the recorded v0.1.7 follow-up, "the PID-based acquireInstanceLock
+defect" (the custom-domain rebind section). Append-only; supersedes nothing.
+
+`acquireInstanceLock` (`src/integrations/workflow-hub.ts`) trusted
+`process.kill(pid, 0)` alone: a live process that had inherited a dead hub's
+RECYCLED pid read as "the hub is running". The lock now writes a lease record
+(`owner.json`: `{pid, startTime, host, token}`, written temp-file + rename so a
+reader never sees a partial record) and is LIVE only when the recorded owner is
+a live process on THIS host whose `/proc/<pid>/stat` start time (field 22, a
+constant per process even across pid reuse within a boot) still matches.
+
+The decision is deliberately tri-state so a lock is never destroyed while it
+might be held:
+
+- `live` — same host, owner alive, identity matches → refuse to start
+  (unchanged `"already running"` message).
+- `foreign` — the record names ANOTHER host. Liveness cannot be verified from
+  here, so the lock is treated as live and NOT reclaimed: a shared Azure Files
+  mount (the multi-revision scenario) must not let one host delete a live
+  hub's lock. Cross-host reclaim is manual.
+- `dead` — same host, owner gone or pid recycled → the lock is stale, reclaimed.
+
+A lock whose record is not yet readable (a sibling that won the `mkdir` race
+but has not renamed its record into place) is retried briefly before being
+reclaimed, and the pre-lease bare-`pid` format is still honored while its
+same-host owner lives, so migration never steals a running hub's lock.
+
+**Evidence:** `test/hub-lifecycle.test.ts` 9/9 — second-hub-refused,
+recycled-pid reclaimed, **foreign-host lock NOT reclaimed (fail closed)**,
+**legacy live-`pid` lock honored**, stale-across-restart reclaimed, and
+release-on-close; `npm run typecheck` and `npm run lint` exit 0.
+
+**Honest limit:** `/proc` is Linux-specific; on a host without it
+`processStartTime` returns `""` and a same-host lock is read as `dead`
+(reclaimable). CI and the deployed plane are Linux, so this is acceptable but
+is a stated residual. The `foreign`-host branch prevents the destructive
+cross-host case.
+
+**Refs:** `src/integrations/workflow-hub.ts`; `test/hub-lifecycle.test.ts`.

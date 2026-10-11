@@ -102,6 +102,35 @@ test("a recycled pid whose lease identity does not match is reclaimed", async (t
   assert.equal(hub.url, discovery(dir).endpoint);
 });
 
+test("a lock whose owner is on another host is NOT reclaimed (fail closed)", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-life-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // A record naming a different host: liveness cannot be verified from here,
+  // so the lock must be treated as live rather than deleted out from under a
+  // hub on a shared mount (the multi-revision scenario). Our own pid keeps the
+  // record otherwise well-formed.
+  const lockDir = join(dir, "hub", "lock");
+  mkdirSync(lockDir, { recursive: true });
+  writeFileSync(
+    join(lockDir, "owner.json"),
+    JSON.stringify({ pid: process.pid, startTime: "1", host: "some-other-host", token: "foreign" }),
+  );
+
+  await assert.rejects(() => createWorkflowHub(application(), { discoveryDir: dir }), /already running/);
+});
+
+test("a legacy pid-file lock whose owner is alive on this host is honored", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-life-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // The pre-lease format (bare `pid`) with a live same-host owner: honored, so
+  // migration never steals a running hub's lock.
+  const lockDir = join(dir, "hub", "lock");
+  mkdirSync(lockDir, { recursive: true });
+  writeFileSync(join(lockDir, "pid"), String(process.pid));
+
+  await assert.rejects(() => createWorkflowHub(application(), { discoveryDir: dir }), /already running/);
+});
+
 test("closing the hub releases the instance lock", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "wf-hub-life-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));

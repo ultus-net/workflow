@@ -9,8 +9,10 @@ import { isEntrypoint } from "./entrypoint.js";
 import { globalOpencodeBinary } from "../integrations/opencode-agent-config.js";
 import {
   opencodeServerDiscoveryPath,
+  opencodeServerStateHome,
   probeOpencodeServerGateway,
   readOpencodeServerDiscovery,
+  WORKFLOW_PLANE_REVISION_ENV,
   type OpencodeServerDiscovery,
 } from "../integrations/opencode-server-discovery.js";
 import { ensureExplicitPlaneReady, planeStateLine } from "../integrations/plane-wake.js";
@@ -254,7 +256,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     return;
   }
   const workspace = resolve(args.workspace);
-  const stateHome = process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? resolve(homedir(), ".workflow", "opencode-server");
+  const stateHome = opencodeServerStateHome(
+    process.env.WORKFLOW_OPENCODE_SERVER_HOME ?? resolve(homedir(), ".workflow", "opencode-server"),
+    process.env[WORKFLOW_PLANE_REVISION_ENV],
+  );
   // C1 plane lane: an explicit operator-exported gateway takes precedence over
   // discovery. No autostart, no discovery read — the plane is a remote surface.
   const explicit = resolveExplicitGateway(process.env);
