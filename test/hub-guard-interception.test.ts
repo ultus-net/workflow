@@ -9,7 +9,7 @@ import { TaskGraph } from "../src/kernel/task-graph.js";
 import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createWorkflowHub, resolveHubDiscoveryPath } from "../src/integrations/workflow-hub.js";
-import { defaultToolboxGuardServerPath, createWorkflowGuardMcpProvider } from "../src/integrations/mcp-toolbox-guard.js";
+import { createWorkflowGuardMcpProvider } from "../src/integrations/mcp-toolbox-guard.js";
 
 const tasks: WorkflowTask[] = [{ id: taskId("interactive"), title: "interactive", state: "READY", dependencies: [], requiredEvidence: [] }];
 
@@ -41,7 +41,7 @@ test("Workflow hub with guard intercepts destructive commands in the contained s
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
 
-  const guard = await createWorkflowGuardMcpProvider({ serverPath: defaultToolboxGuardServerPath() });
+  const guard = await createWorkflowGuardMcpProvider();
   t.after(() => guard.close());
 
   const hub = await createWorkflowHub(application, { discoveryDir: dir, graph, guard });

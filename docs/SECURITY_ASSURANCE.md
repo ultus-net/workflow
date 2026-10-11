@@ -210,17 +210,17 @@ UIs consume the application API only; browser surfaces are loopback, origin-guar
 
 ## S10 — Guard corpus and credential custody
 
-The vendored guard corpus stays alive hub-side; credentials are a separate custody boundary with no reveal operation.
+The vendored guard corpus stays alive hub-side and runs in-process; credentials are a separate custody boundary with no reveal operation.
 
 | Claim | Implementation | Verification |
 | --- | --- | --- |
-| The hub intercepts destructive commands in the contained shell | `src/integrations/mcp-toolbox-guard.ts:130` | test/hub-guard-interception.test.ts#"Workflow hub with guard intercepts destructive commands in the contained shell" |
-| The hub refuses to start guardless — the startup awaits the guard provider, and a guard that cannot start fails the hub itself rather than running permissive | `src/cli/hub.ts:69` | test/hub-guardless-startup.test.ts#"the guard provider composition fails closed when the guard server cannot start" |
-| The guard child receives only explicitly brokered credential environment bindings | `src/integrations/mcp-toolbox-guard.ts:57` | test/credential-mcp.test.ts#"MCP environment contains only explicitly brokered credential bindings" |
+| The hub intercepts destructive commands in the contained shell | `src/integrations/mcp-toolbox-guard.ts` | test/hub-guard-interception.test.ts#"Workflow hub with guard intercepts destructive commands in the contained shell" |
+| The hub's guard is in-process: the vendored policy core is statically linked, so a guardless hub is impossible by construction (no spawn, no stdio handshake, no stale-dist class) | `src/integrations/mcp-toolbox-guard.ts` | test/mcp-toolbox-guard.test.ts#"C2: the guard provider answers in-process without spawning a child" |
+| The in-process guard-policy copy stays byte-identical to the vendored app source, so the seat and the mounted tool decide identically | `src/integrations/guard-policy/index.ts` | test/guard-policy-drift.test.ts#"the in-process guard-policy copy contains exactly the portable modules" |
 | The broker materializes a secret only for an allowed consumer and workspace | `src/integrations/credentials.ts` | test/credentials.test.ts#"credential broker materializes a secret only for an allowed consumer and workspace" |
 | Credential metadata never exposes stored secret material; secrets travel on stdin, never command arguments | `src/integrations/credentials.ts` | test/secret-service.test.ts#"Secret Service writes secret material on stdin rather than command arguments" |
 | The broker and secret lookups fail closed when a referenced secret is absent or the backend is down | `src/integrations/credentials.ts` | test/credentials.test.ts#"credential broker fails closed when a referenced secret is absent or reference is invalid" |
-| The shell-safety/secret/protected-path corpus stays executable in the vendored toolbox (evasion, laundering, aliasing, ANSI-C, pagers, interpreter payloads — `mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts`), reachable via `npm run toolbox:verify` | `mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts` | test/mcp-toolbox-guard.test.ts#"workflow-guard-mcp provider discovers and invokes guard_check over stdio" |
+| The shell-safety/secret/protected-path corpus stays executable in the vendored toolbox (evasion, laundering, aliasing, ANSI-C, pagers, interpreter payloads — `mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts`), reachable via `npm run toolbox:verify` | `mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts` | test/mcp-toolbox-guard.test.ts#"C2: the guard provider answers in-process without spawning a child" |
 
 ## S11 — Scheduler
 

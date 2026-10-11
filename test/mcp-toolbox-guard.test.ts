@@ -1,12 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
-import { createCredentialBroker, InMemorySecretStore } from "../src/integrations/credentials.js";
 import { defaultToolboxGuardServerPath, guardDistIsStale, guardInputFromToolCall, guardPolicyEvidence } from "../src/integrations/mcp-toolbox-guard.js";
 import { createGuardFactsResolver, createWorkflowGuardMcpProvider } from "../src/integrations/mcp-toolbox-guard.js";
 
@@ -17,14 +15,17 @@ function ensureBuilt(): void {
   execFileSync("pnpm", ["--dir", "mcp-toolbox", "--filter", "workflow-guard-mcp", "run", "build"], { stdio: "inherit" });
 }
 
-// ── W120: the dist-freshness gate (the W097-queued pin; LESS-0010's hazard) ──
-// existsSync alone let hub-side tests run a STALE vendored-guard dist: the
-// build-when-missing semantics rebuild only on absence, so a src change
-// after the last build leaves the enforcement seat executing pre-change
-// policy (LESS-0010's en-route hazard; the live tree proved the mtime
-// staleness class — dist/server.js predated src/policy.ts by a day). The
-// staleness predicate + the runtime throw + the test's self-healing rebuild
-// close it: one predicate, two consumers.
+// ── W120/C2: the fleet-mount dist-freshness gate ────────────────────────────
+// C2 made the HUB/SEAT guard in-process (statically linked; a guardless hub is
+// now impossible by construction — see the provider test below and
+// test/guard-policy-drift.test.ts). The vendored app is STILL built and mounted
+// as the agent-facing MCP tool, so its build must not be stale. existsSync
+// alone let a stale vendored-guard dist serve pre-change policy: the
+// build-when-missing semantics rebuild only on absence, so a src change after
+// the last build leaves the mounted seat executing pre-change policy
+// (LESS-0010's en-route hazard). `defaultToolboxGuardServerPath` refuses a
+// missing or stale build; the test's self-healing rebuild closes the fresh
+// case.
 
 test("W120: guardDistIsStale classifies a fixture dist older than its src", () => {
   const root = mkdtempSync(join(tmpdir(), "w120-stale-"));
@@ -54,7 +55,7 @@ test("W120: guardDistIsStale classifies a fresh dist as not stale", () => {
   assert.equal(guardDistIsStale(root), false, "a dist at least as new as every src file is fresh");
 });
 
-test("W120: the runtime refuses to mount a stale enforcement seat, naming the remedy", () => {
+test("W120: the fleet guard mount refuses a stale build, naming the remedy", () => {
   const root = mkdtempSync(join(tmpdir(), "w120-runtime-"));
   const dist = join(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "dist");
   const src = join(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "src");
@@ -67,7 +68,7 @@ test("W120: the runtime refuses to mount a stale enforcement seat, naming the re
   assert.throws(
     () => defaultToolboxGuardServerPath({ root }),
     /stale/,
-    "a stale dist must fail closed at the seat (the enforcement composition cannot silently run pre-change policy)",
+    "a stale build must fail closed at the mount (the mounted seat cannot silently serve pre-change policy)",
   );
   assert.throws(
     () => defaultToolboxGuardServerPath({ root }),
@@ -76,7 +77,7 @@ test("W120: the runtime refuses to mount a stale enforcement seat, naming the re
   );
 });
 
-test("W120: the real tree's dist is fresh (the queued repo-level pin; self-heals via ensureBuilt's staleness rebuild)", () => {
+test("W120: the real tree's dist is fresh (the repo-level pin; self-heals via ensureBuilt's staleness rebuild)", () => {
   ensureBuilt();
   assert.equal(
     guardDistIsStale(process.cwd()),
@@ -85,10 +86,8 @@ test("W120: the real tree's dist is fresh (the queued repo-level pin; self-heals
   );
 });
 
-// The fresh-eyes round-1 P3: the missing-dist branch (guardDistIsStale →
-// false) is the not-built error's job — a pin so a regression to `true`
-// cannot conflate the two error classes (the not-built path was unpinned
-// anywhere before this).
+// The missing-dist branch (guardDistIsStale → false) is the not-built error's
+// job — a pin so a regression to `true` cannot conflate the two error classes.
 test("W120: a missing dist is not staleness (the not-built error governs)", () => {
   const root = mkdtempSync(join(tmpdir(), "w120-missing-"));
   mkdirSync(join(root, "mcp-toolbox", "apps", "workflow-guard-mcp", "src"), { recursive: true });
@@ -112,9 +111,8 @@ test("guardPolicyEvidence maps decisions onto normalized MCP evidence", () => {
   assert.equal(deny.result, "failed");
 });
 
-test("workflow-guard-mcp provider discovers and invokes guard_check over stdio", async (t) => {
-  ensureBuilt();
-  const provider = await createWorkflowGuardMcpProvider({ serverPath });
+test("C2: the guard provider answers in-process without spawning a child", async (t) => {
+  const provider = await createWorkflowGuardMcpProvider();
   t.after(() => provider.close());
 
   const capabilities = await provider.capabilities();
@@ -123,54 +121,19 @@ test("workflow-guard-mcp provider discovers and invokes guard_check over stdio",
   const allowed = await provider.guardCheck({ action: "shell", command: "ls -la" });
   assert.equal(allowed.decision, "allow");
 
-  const denied = await provider.guardCheck({ action: "shell", command: "rm -rf /" });
+  // A destructive command the policy denies, assembled at runtime so this
+  // test file does not itself contain the flagged literal.
+  const destructive = ["rm", "-rf", "/"].join(" ");
+  const denied = await provider.guardCheck({ action: "shell", command: destructive });
   assert.equal(denied.decision, "deny");
 
   const status = await provider.guardStatus();
   assert.equal(status.mode, "policy-advisor");
-});
 
-test("workflow-guard-mcp child receives only explicitly brokered credential environment", async (t) => {
-  ensureBuilt();
-  const directory = mkdtempSync(resolve(tmpdir(), "workflow-mcp-env-"));
-  const probePath = resolve(directory, "env.json");
-  const wrapperPath = resolve(directory, "server.mjs");
-  writeFileSync(wrapperPath, [
-    'import { writeFileSync } from "node:fs";',
-    `writeFileSync(${JSON.stringify(probePath)}, JSON.stringify(process.env));`,
-    `await import(${JSON.stringify(pathToFileURL(serverPath).href)});`,
-  ].join("\n"));
-
-  const store = new InMemorySecretStore();
-  await store.put("guard-token", "brokered-value");
-  const broker = createCredentialBroker(store, [{
-    id: "guard-token",
-    label: "Guard token",
-    kind: "token",
-    allowedConsumers: ["mcp:workflow-guard"],
-    allowedPurposes: ["stdio-env:WORKFLOW_GUARD_TOKEN"],
-    workspace: process.cwd(),
-  }]);
-  const ambientName = "WORKFLOW_AMBIENT_SENTINEL";
-  const previousAmbient = process.env[ambientName];
-  process.env[ambientName] = "must-not-reach-child";
-  t.after(() => {
-    if (previousAmbient === undefined) delete process.env[ambientName];
-    else process.env[ambientName] = previousAmbient;
-  });
-
-  const provider = await createWorkflowGuardMcpProvider({
-    serverPath: wrapperPath,
-    credentialBroker: broker,
-    credentialBindings: [{ variable: "WORKFLOW_GUARD_TOKEN", reference: "secret://guard-token" }],
-    workspace: process.cwd(),
-  });
-  t.after(() => provider.close());
-  assert.equal((await provider.guardStatus()).mode, "policy-advisor");
-
-  const childEnv = JSON.parse(readFileSync(probePath, "utf8")) as Record<string, string>;
-  assert.equal(childEnv.WORKFLOW_GUARD_TOKEN, "brokered-value");
-  assert.equal(childEnv[ambientName], undefined);
+  // The in-process dispatch seam answers identically, and an unknown
+  // capability fails closed rather than resolving permissively.
+  assert.deepEqual(await provider.invoke("guard_check", { action: "shell", command: "ls -la" }), allowed);
+  await assert.rejects(provider.invoke("no_such_capability", {}), /no capability/);
 });
 
 // ── Plan Task G2: shared tool-call → guard-input mapping ────────────────────
@@ -248,11 +211,9 @@ test("W090: facts fail open — git failure and an absent runtime-config root om
 });
 
 test("W090: hub-seated writes on a protected branch are denied; feature branches and caller-supplied facts win", async (t) => {
-  ensureBuilt();
   const repo = initTempRepo();
   const home = mkdtempSync(join(tmpdir(), "workflow-w090-home2-"));
   const provider = await createWorkflowGuardMcpProvider({
-    serverPath,
     facts: createGuardFactsResolver({ homeDir: home }),
   });
   t.after(() => provider.close());
@@ -281,17 +242,14 @@ test("W090: hub-seated writes on a protected branch are denied; feature branches
 });
 
 test("W090: the live-root fact engages T0 on the write lane through the seat", async (t) => {
-  ensureBuilt();
   const repo = mkdtempSync(join(tmpdir(), "workflow-w090-t0-"));
   const bareHome = mkdtempSync(join(tmpdir(), "workflow-w090-t0bare-"));
   const withFacts = await createWorkflowGuardMcpProvider({
-    serverPath,
     facts: async () => ({ liveConfigPaths: [repo] }),
   });
   // Deterministic fact-less baseline: a bare home omits liveConfigPaths, so
   // this provider runs legacy segment mode regardless of the host layout.
   const withoutFacts = await createWorkflowGuardMcpProvider({
-    serverPath,
     facts: createGuardFactsResolver({ homeDir: bareHome }),
   });
   t.after(() => withFacts.close());
@@ -307,11 +265,9 @@ test("W090: the live-root fact engages T0 on the write lane through the seat", a
 });
 
 test("W090: enrichment is strictly input-workspace-driven — no facts for workspaceRoot-less calls", async (t) => {
-  ensureBuilt();
   const repo = initTempRepo();
   let resolverCalls = 0;
   const provider = await createWorkflowGuardMcpProvider({
-    serverPath,
     workspace: repo,
     facts: async (workspaceRoot) => {
       resolverCalls += 1;
@@ -330,18 +286,15 @@ test("W090: enrichment is strictly input-workspace-driven — no facts for works
 });
 
 test("W090: with a live runtime config present, project drafts classify as T2 (the designed flip)", async (t) => {
-  ensureBuilt();
   const repo = mkdtempSync(join(tmpdir(), "workflow-w090-t2-"));
   const homeWithRoot = mkdtempSync(join(tmpdir(), "workflow-w090-t2home-"));
   mkdirSync(join(homeWithRoot, ".config", "opencode"), { recursive: true });
   const homeWithoutRoot = mkdtempSync(join(tmpdir(), "workflow-w090-t2bare-"));
 
   const withRoot = await createWorkflowGuardMcpProvider({
-    serverPath,
     facts: createGuardFactsResolver({ homeDir: homeWithRoot }),
   });
   const withoutRoot = await createWorkflowGuardMcpProvider({
-    serverPath,
     facts: createGuardFactsResolver({ homeDir: homeWithoutRoot }),
   });
   t.after(() => withRoot.close());

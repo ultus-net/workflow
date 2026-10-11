@@ -1,0 +1,882 @@
+import { basename } from "node:path";
+import { decodeShellEscapes, isShFamilyInterpreter, shellWords, splitShellSegments, unwrapShellWords, unwrapWords, unwrapWordsWithPrefix } from "./shell.js";
+
+// Ported from upstream opencode-workflow-guard (#134/#135, W084): `git tag`
+// publish flows are release operations, not branch mutations — only tag
+// DELETION (-d/--delete) stays flagged as a git write.
+//
+// W101 (docs/BRANCH_EXIT_POLICY_2026-09-23.md §4): the checkout clause
+// exempts -B in addition to -b — the force-create/reset form is TARGET-gated
+// (below), not spelling-gated, unifying it with `switch -C` (the position's
+// one deliberate with-facts loosening, recorded in the parity log). The
+// switch clause joins for the fact-gated detach/discard classes only
+// (mirroring rows 5 and 7's checkout treatments): switch -C/-c stay OUT of
+// the spelling lane so the target gate decides and the sanctioned
+// feature-target force-create keeps its W099-pinned allow.
+const gitWriteRe = /\bgit\s+(?:add|rm|mv|commit|merge|rebase|cherry-pick|revert|stash\s+pop|apply|am|restore|reset|update-ref|filter-branch)\b|\bgit\s+tag\s+(?!--?list\b|-l\b)(?:[^|;&]*\s)?(?:-d\b|--delete\b)|\bgit\s+checkout\s+(?!-b\b|-B\b)|\bgit\s+switch\s+(?:-d\b|--detach\b|-f\b|--force(?!-create)\b|--discard-changes\b)|\bgit\s+branch\s+(?:[^|;&]*\s)?-[dDM]\b|\bgit\s+pull\b/;
+const gitValueOptions = new Set(["-C", "--git-dir", "--work-tree", "-c", "--config-env", "--namespace"]);
+const gitBooleanOptions = new Set(["--version", "--help", "--no-pager", "-p", "--paginate", "--bare", "--literal-pathspecs", "--glob-pathspecs", "--noglob-pathspecs", "--icase-pathspecs", "--no-optional-locks", "--exec-path"]);
+
+function normalizedGitSegments(command: string): string[] {
+  return splitShellSegments(command).flatMap((segment) => {
+    const words = unwrapShellWords(segment);
+    if (basename(words[0] ?? "") !== "git") return [];
+    let i = 1;
+    while (i < words.length) {
+      const option = words[i]!;
+      if (gitValueOptions.has(option)) { i += 2; continue; }
+      if (/^(?:--git-dir=|--work-tree=|--namespace=|-c\S|--config-env=)/.test(option) || gitBooleanOptions.has(option)) { i += 1; continue; }
+      break;
+    }
+    return [`git ${words.slice(i).join(" ")}`];
+  });
+}
+
+export interface GitPolicyContext {
+  currentBranch?: string | undefined;
+  protectedBranches?: string[] | undefined;
+}
+
+export function protectedBranchesIn(context: GitPolicyContext): Set<string> {
+  return new Set(["main", "master", ...(context.protectedBranches ?? [])]);
+}
+
+export function protectedBranchWriteReason(context: GitPolicyContext): string | undefined {
+  if (!context.currentBranch || !protectedBranchesIn(context).has(context.currentBranch)) return undefined;
+  return `Direct changes on protected branch '${context.currentBranch}' are not allowed. Create a feature branch first.`;
+}
+
+export function hasGitMutation(command: string, depth = 0): boolean {
+  if (depth >= 16) return true;
+  const normalized = normalizedGitSegments(command).join(" ; ");
+  // W101 (W100 §2.3 twin-matcher discipline): the branch class widens for the
+  // pointer family (-f/-m/-M/-C/-c and their long forms) and fetch gains a
+  // colon-refspec clause, in the SAME change as the target gate below.
+  // W103: symbolic-ref's write/delete forms are mutations — the gate and
+  // the twin widen together (§2.3); the precise classification is the
+  // target gate's job — the twin only carries the mutation signal for the
+  // read-only-role lane. The two-operand (write) match skips leading flags so the flagged
+  // one-operand reads (--short/-q) stay non-mutations (review round 1
+  // P2 — the first cut flagged them); the first operand position refuses
+  // a dash (otherwise the engine's zero-iteration backtrack would still
+  // match flag+operand); review round 2 P2: flags may also interleave
+  // BETWEEN the operands (git permutes options), so both operand
+  // positions carry their own flags group; --delete is matched
+  // explicitly (the flags group would swallow its single operand). The
+  // one-operand read is not a mutation.
+  const extras = /\bgit\s+branch\s+(?:[^|;&]*\s)?-(?:[dDfMCcm]|--force\b|--move\b|--copy\b|--delete\b)|\bgit\s+fetch\s+[^|;&]*:\S|\bgit\s+pull\b|\bgit\s+symbolic-ref\s+(?:-{1,2}[\w-]+\s+)*(?!-)\S+\s+(?:-{1,2}[\w-]+\s+)*(?!-)\S+|\bgit\s+symbolic-ref\s+(?:[^|;&]*\s)?--delete\b/;
+  if (gitWriteRe.test(normalized) || extras.test(normalized) || /\bgit\s+(?:switch|checkout)\b/.test(normalized)) return true;
+  // W102 review round 1 P3: the wrapper walk is SHARED (one detection
+  // implementation, not a verbatim copy) so the mutation matcher and the
+  // deny path cannot drift.
+  return wrapperCommands(command).some((inner) => hasGitMutation(inner, depth + 1));
+}
+
+function hasUnsafeGitAlias(command: string): boolean {
+  return splitShellSegments(command).some((segment) => {
+    const words = unwrapShellWords(segment);
+    const gitIndex = words.findIndex((word, index) => basename(word) === "git" && words.slice(0, index).every((prefix) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(prefix)));
+    if (gitIndex < 0) return false;
+    const args = words.slice(gitIndex + 1);
+    return args.some((arg, index) => /^-calias\./i.test(arg) || /^--config-env=alias\./i.test(arg) || ((arg === "-c" || arg === "--config-env") && /^alias\./i.test(args[index + 1] ?? "")));
+  });
+}
+
+// Ported from upstream opencode-workflow-guard (#134, W084): publishing a tag
+// is a release operation, not a branch mutation, so explicit tag refspecs are
+// exempt from the protected-branch push rules. Upstream's ordering is
+// load-bearing: a refspec containing a colon is tag-publish ONLY when its
+// DESTINATION is `:refs/tags/...` — checking the tag-shaped source first
+// would exempt `refs/tags/v1:main`, whose unqualified destination resolves to
+// the protected branch `refs/heads/main` (a real bypass, caught in review).
+// Deletion refspecs (`:refs/tags/<name>` — empty source) are never exempt.
+// Unlike upstream, the portable core does not execute `git show-ref` to probe
+// whether a short name resolves to an existing tag: short names stay under
+// the ordinary rule, and they only collide when the name equals a protected
+// branch, which is that rule's intended target.
+function tagPublishRefspecIn(refspec: string): boolean {
+  const token = refspec.replace(/^\+/, "");
+  if (token.length === 0 || token.startsWith(":")) return false;
+  if (token.includes(":")) return token.includes(":refs/tags/");
+  return token.startsWith("refs/tags/");
+}
+
+export function pushedProtectedBranchIn(command: string, protectedBranches: Set<string>, currentBranch?: string): string | "wildcard-refspec" | "unresolved-alias" | undefined {
+  for (const segment of splitShellSegments(command)) {
+    const normalized = normalizedGitSegments(segment)[0];
+    if (!normalized) continue;
+    const words = normalized.split(" ");
+    if (words[1] !== "push") continue;
+    // W101 review round 8 + W103: --mirror/--all pushes update and delete
+    // ALL remote refs including the protected ones — no refspec names
+    // them, so the per-refspec destination match cannot see them. The
+    // check is per SEGMENT, not per refspec: the pre-W103 placement
+    // inside the refspec loop never ran for a flag-driven push with no
+    // remote/refspec arguments (`git push --mirror`). Fail closed
+    // (recorded as SECURITY_ASSURANCE #24).
+    if (words.slice(2).some((word) => word === "--mirror" || word === "--all")) return "wildcard-refspec";
+    const args = words.slice(2).filter((word) => !word.startsWith("-"));
+    for (const refspec of args) {
+      // W084 tag-publish exemption first (tag globs stay release operations),
+      // then the W101 review P1 wildcard fail-closed: a branch-glob
+      // destination maps ALL heads including the protected ones and cannot
+      // be resolved to a concrete branch.
+      if (tagPublishRefspecIn(refspec)) continue;
+      if (refspec.includes("*")) return "wildcard-refspec";
+      // W101 review round 7: strip a leading + from a colon-less refspec —
+      // `git push origin +main` force-updates the protected remote branch
+      // exactly like its colon twin `+main:main` (pinned deny), and the
+      // un-stripped token defeated both the refs/heads/ strip and the
+      // protected-set lookup.
+      const destination = (refspec.includes(":") ? refspec.slice(refspec.lastIndexOf(":") + 1) : refspec).replace(/^\+/, "");
+      const normalizedDestination = destination.replace(/^refs\/heads\//, "");
+      if (protectedBranches.has(normalizedDestination)) return normalizedDestination;
+    }
+    // W103 (SECURITY_ASSURANCE #22's queued resolution): HEAD/@ refspecs
+    // and the default push (no refspec beyond the remote slot — git's
+    // grammar makes the first non-option argument the repository) resolve
+    // to the CURRENT branch; from a protected seat that is the protected
+    // remote branch. Resolve against the currentBranch fact (the same
+    // mechanism round 4 built for the one-arg rename source). A FACTLESS
+    // seat keeps the as-found allow: the destination is only knowable from
+    // the fact, so this is the documented W090 fail-open class (the
+    // round-8 bare-pull symmetry), not a fail-closed target — the gate
+    // adds denies, never loosens.
+    const flags = words.slice(2).filter((word) => word.startsWith("-"));
+    const refspecs = args.length >= 2 ? args.slice(1) : [];
+    // Review round 1 P2: a single non-option argument is the REMOTE only
+    // when no refspec-shaping flag precedes it — --delete/-d make it the
+    // deletion refspec (its destination is checked by the literal loop
+    // above), and --tags pushes no branch refs at all (executed dry-run:
+    // only tag refs fire — the W084 release lane). CORRECTED in review
+    // round 3 (P1, falsified by a git dry-run): --follow-tags is NOT
+    // tags-only — the man page has it push "all the refs that would be
+    // pushed without this option", so the DEFAULT PUSH fires and the
+    // default-push reading applies (the round-1/2 allow was a false
+    // premise; endorsed in the round-2 record without a grammar probe).
+    // The tags-only reading therefore requires --tags WITHOUT
+    // --follow-tags, which also models the combined shape. Review round
+    // 2 P1 (kept): the tags-only exclusion scopes to the DEFAULT-PUSH
+    // readings ONLY — an explicit HEAD/@ refspec beside tags flags is
+    // still a branch push and must resolve (the round-1 cut gated the
+    // whole disjunction behind !tagsOnly and re-opened the hole).
+    const refspecShaped = flags.some((word) => word === "--delete" || word === "-d");
+    const tagsOnly = flags.some((word) => word === "--tags") && !flags.some((word) => word === "--follow-tags");
+    const aliasPush = (args.length === 0 && !tagsOnly) || (args.length === 1 && !refspecShaped && !tagsOnly) || refspecs.some((refspec) => {
+      const token = refspec.replace(/^\+/, "");
+      return token === "HEAD" || token === "@";
+    });
+    // W108: the alias/default destination is only knowable from the
+    // currentBranch fact. With it, the classification is concrete (protected
+    // → deny; resolvable non-protected → keep scanning — a later segment may
+    // still name a protected destination). WITHOUT the fact, the shape is
+    // the W090 fail-open class for the GIT lane (the W103 as-found allow
+    // stays) — but the sentinel lets the SHELL lane apply its own
+    // conservative force-push stance to the same unresolvable shape instead
+    // of silently inheriting the git lane's allowance.
+    if (aliasPush) {
+      if (currentBranch === undefined) return "unresolved-alias";
+      const normalizedCurrent = normalizeBranchRef(currentBranch);
+      if (protectedBranches.has(normalizedCurrent)) return normalizedCurrent;
+    }
+  }
+  return undefined;
+}
+
+// ---- W101: the protected-target gate (docs/BRANCH_EXIT_POLICY_2026-09-23.md §4) ----
+// Classification by git SEMANTIC, not spelling. The pointer family —
+// force/rename/copy/delete (branch, checkout -B, switch -C), update-ref of a
+// refs/heads/ path, and fetch destination refspecs — is denied when the
+// PARSED TARGET belongs to the protected set, from ANY current branch,
+// against the always-on {main, master} base ∪ the caller's facts. Renames
+// check BOTH operands (the protected name may be the source or the
+// destination); the one-arg rename form targets the CURRENT branch, so it
+// requires the fact and fails closed without one. Any shape the parser cannot
+// resolve fails closed. Pure exits, creates, and feature-target flows are not
+// this gate's business; the current-branch-gated spelling lanes still apply
+// on top of the gate (e.g. the target-blind branch -d/-D/-M conservative deny
+// on a protected current branch is untouched).
+
+interface PointerInvocation {
+  targets: string[];
+  uncertain: boolean;
+  // The one-arg rename form writes BOTH names: its targets carry the
+  // DESTINATION operand and `needsCurrentBranch` marks the SOURCE (the
+  // current branch, renamed away) — the source requires the fact, and a
+  // factless seat fails closed.
+  needsCurrentBranch: boolean;
+}
+
+const branchValueOptions = new Set(["--format", "--sort", "--points-at"]);
+const switchCheckoutFlags = new Set(["-t", "--track", "--no-track", "-m", "--merge", "-g", "--guess", "--no-guess", "--orphan", "--overwrite-ignore", "--no-overwrite-ignore", "--overlay", "--no-overlay", "--ignore-other-worktrees", "--ignore-skip-worktree-bits", "--pathspec-file-nul", "--recurse-submodules", "--no-recurse-submodules", "-p", "--patch"]);
+const updateRefFlags = new Set(["--no-deref", "-z", "--worktree", "--strict"]);
+const fetchValueOptions = new Set(["--depth", "--deepen", "--shallow-since", "--shallow-exclude", "--negotiation-tip", "-j", "--jobs", "-o", "--server-option", "--upload-pack", "--submodule-prefix", "-s", "--strategy", "-X", "--strategy-option", "-S", "--gpg-sign"]);
+const fetchFlags = new Set(["-p", "--prune", "-n", "--no-tags", "-t", "--tags", "--all", "--multiple", "--dry-run", "--atomic", "--force", "--refetch", "-q", "--quiet", "-v", "--verbose", "--progress", "--ipv4", "--ipv6", "-4", "-6", "--auto-maintenance", "--auto-gc", "--write-fetch-head", "--no-write-fetch-head", "--unshallow", "--update-shallow", "--no-tags", "--rebase", "-r", "--autostash", "--ff", "--no-ff", "--ff-only", "--commit", "--no-commit", "--verify-signatures", "--no-verify", "--stat", "--no-stat", "--log", "--no-edit", "--edit", "--allow-unrelated-histories", "--squash", "--no-squash"]);
+// Pull shares the fetch walker (round 8): its integration-side options are
+// known flags or consumed values; --refmap stays vetoed (shared walk).
+// W101 review round 3: --refmap is the one fetch value option whose value is
+// itself a refspec (the prune mapping) — `--refmap=refs/heads/gone:refs/
+// heads/main` with --prune deletes the mapped local branch — so it is
+// deliberately NOT a consumed value: both spellings fall into the uncertain
+// bucket and fail closed (deliberately absent from fetchValueOptions).
+
+function normalizeBranchRef(token: string): string {
+  return token.replace(/^refs\/heads\//, "");
+}
+
+interface WordWalk {
+  operands: string[];
+  uncertain: boolean;
+  endOpts: boolean;
+}
+
+// Shared operand walk: words[0]="git", words[1]=subcommand; skip equals-forms
+// and known value/flag options, collect operands, and mark unrecognized
+// option shapes uncertain (fail closed under parse uncertainty).
+function walkWords(
+  words: string[],
+  onShortChar: (ch: string) => boolean, // true = known flag char
+  onLong: (word: string) => "flag" | "value" | "unknown",
+  shortValueChars?: Set<string>, // short chars whose NEXT token is their value
+): WordWalk {
+  const operands: string[] = [];
+  let uncertain = false;
+  let endOpts = false;
+  for (let i = 2; i < words.length; i++) {
+    const word = words[i]!;
+    if (endOpts) { operands.push(word); continue; }
+    if (word === "--") { endOpts = true; continue; }
+    if (word.startsWith("--")) {
+      if (/^--[\w.-]+=/.test(word)) continue;
+      const verdict = onLong(word);
+      // W101 review P0: a space-form value option consumes its value token —
+      // otherwise the value becomes the first operand and shifts the target
+      // selection (e.g. `branch -f --points-at HEAD main <sha>` phantom-
+      // allowing a protected pointer move).
+      if (verdict === "value") { i += 1; continue; }
+      if (verdict === "unknown") uncertain = true;
+      continue;
+    }
+    if (word.startsWith("-") && word.length > 1) {
+      let consumesNext = false;
+      for (const ch of word.slice(1)) {
+        if (shortValueChars?.has(ch)) { consumesNext = true; continue; }
+        if (!onShortChar(ch)) uncertain = true;
+      }
+      // A bundled short-value form consumes the following word; a value
+      // fused into the token (`-j2`) still marks the token unknown (the
+      // value chars are not flag chars) and fails closed.
+      if (consumesNext && i + 1 < words.length) i += 1;
+      continue;
+    }
+    operands.push(word);
+  }
+  return { operands, uncertain, endOpts };
+}
+
+function parseBranch(words: string[]): PointerInvocation | undefined {
+  let renameish = false, copyish = false, targetish = false, deleteish = false, known = false;
+  const walk = walkWords(
+    words,
+    (ch) => {
+      if (ch === "d" || ch === "D" || ch === "f") { targetish = true; known = true; if (ch !== "f") deleteish = true; return true; }
+      if (ch === "m" || ch === "M") { renameish = true; known = true; return true; }
+      if (ch === "c" || ch === "C") { copyish = true; known = true; return true; }
+      // List/config flags: never pointer forms, always safe to skip.
+      if (ch === "u" || ch === "a" || ch === "r" || ch === "l" || ch === "v" || ch === "i" || ch === "q") return true;
+      return false;
+    },
+    (word) => {
+      if (branchValueOptions.has(word)) return "value";
+      if (word === "--force" || word === "--delete") { targetish = true; known = true; if (word === "--delete") deleteish = true; return "flag"; }
+      if (word === "--move") { renameish = true; known = true; return "flag"; }
+      if (word === "--copy") { copyish = true; known = true; return "flag"; }
+      if (word === "--set-upstream-to" || word === "--edit-description" || word === "--show-current" || word === "--list" || word === "--omit-empty" || word === "--ignore-case" || word === "--create-reflog" || word === "--no-abbrev" || word === "--track" || word === "--no-track" || word === "--recurse-submodules" || word === "--color" || word === "--column" || word === "--abbrev" || word === "--quiet" || word === "--verbose" || word === "--all" || word === "--remotes") return "flag";
+      return "unknown";
+    },
+  );
+  if (!known) return undefined;
+  // W101 review round 6 watch-item: conflicting branch modes (a bundled
+  // -dc or -md) cannot be classified — delete is variadic while copy/
+  // rename shape their targets differently — so a bundle carrying modes
+  // from different families fails closed (real git rejects the
+  // combination; the conservative direction costs nothing valid).
+  if (deleteish && (renameish || copyish)) return { targets: [], uncertain: true, needsCurrentBranch: false };
+  if (renameish && copyish) return { targets: [], uncertain: true, needsCurrentBranch: false };
+  if (walk.uncertain || walk.operands.length === 0) return { targets: [], uncertain: true, needsCurrentBranch: false };
+  if (renameish) {
+    // Rows 11-13: the protected name may be the SOURCE or the DESTINATION.
+    // The two-arg form checks both operands; the ONE-ARG form renames the
+    // current branch to the operand, so BOTH names are written — the
+    // destination operand force-overwrites a protected branch when it names
+    // one (review round 4: `git branch -M main` from a feature branch
+    // destroys refs/heads/main), and the source needs the currentBranch
+    // fact (factless fails closed, row 12).
+    if (walk.operands.length === 1) return { targets: walk.operands, uncertain: false, needsCurrentBranch: true };
+    if (walk.operands.length === 2) return { targets: walk.operands, uncertain: false, needsCurrentBranch: false };
+    return { targets: [], uncertain: true, needsCurrentBranch: false };
+  }
+  if (copyish) {
+    // Copy writes the DESTINATION (last operand); the source is read.
+    return { targets: [walk.operands[walk.operands.length - 1]!], uncertain: false, needsCurrentBranch: false };
+  }
+  if (deleteish) {
+    // Review round 5: delete is VARIADIC in git (`git branch -D <name>…`
+    // deletes every named branch), so every operand is a written target —
+    // the first-operand-only rule would let `git branch -D feat2 main`
+    // destroy the protected branch that is named second.
+    return { targets: walk.operands, uncertain: false, needsCurrentBranch: false };
+  }
+  // Force-set: the first operand is the target branch; the second, when
+  // present, is a start-point (read-only).
+  return { targets: [walk.operands[0]!], uncertain: false, needsCurrentBranch: false };
+}
+
+// checkout/switch: only the FORCE-CREATE/RESET form is target-gated; their
+// detach/discard/create classes stay with the spelling lanes (fact-gated, per
+// the position's class split — a detach target is a sha, never a protected
+// ref, so the target gate cannot classify it).
+function parseForceCreate(words: string[], forceShort: string): PointerInvocation | undefined {
+  let force = false, createSeen = false;
+  const walk = walkWords(
+    words,
+    (ch) => {
+      if (ch === forceShort) { force = true; return true; }
+      if (words[1] === "switch" && ch === "c") { createSeen = true; return true; }
+      if (words[1] === "checkout" && ch === "b") { createSeen = true; return true; }
+      return "bdfmtpg".includes(ch);
+    },
+    (word) => {
+      if (switchCheckoutFlags.has(word) || word === "--force" || word === "--discard-changes" || word === "--detach") return "flag";
+      if (word === "--create") { createSeen = true; return "flag"; }
+      if (word === "--force-create") { force = true; return "flag"; }
+      if (words[1] === "checkout" && word === "--orphan") return "flag";
+      return "unknown";
+    },
+  );
+  // The create and force-create modes are mutually exclusive in real git;
+  // a command carrying both cannot be classified (review round 2
+  // watch-item: last-wins semantics would let `-c x -C main` slip the
+  // target check past the created branch).
+  if (force && createSeen) return { targets: [], uncertain: true, needsCurrentBranch: false };
+  if (!force) return undefined;
+  if (walk.uncertain || walk.endOpts || walk.operands.length === 0) return { targets: [], uncertain: true, needsCurrentBranch: false };
+  return { targets: [walk.operands[0]!], uncertain: false, needsCurrentBranch: false };
+}
+
+function parseUpdateRef(words: string[], symbolicRef = false): PointerInvocation | undefined {
+  const walk = walkWords(
+    words,
+    (ch) => ch === "d" || ch === "z" || (symbolicRef && ch === "q"),
+    (word) => (updateRefFlags.has(word) || (symbolicRef && (word === "--short" || word === "--quiet")) ? "flag" : "unknown"),
+  );
+  // --stdin is deliberately NOT a known flag: refspecs read from stdin cannot
+  // be classified, so it falls into the uncertain bucket and fails closed.
+  if (walk.uncertain) return { targets: [], uncertain: true, needsCurrentBranch: false };
+  if (walk.operands.length === 0) return undefined;
+  const branchRef = /^refs\/heads\/(.+)$/.exec(walk.operands[0]!);
+  // HEAD and refs/heads-sibling forms keep their existing-lane semantics:
+  // on the protected branch the spelling lane denies every update-ref;
+  // elsewhere HEAD updates the CURRENT branch (own-branch, allow). For
+  // symbolic-ref the HEAD-form repoint stays the deliberate row-25
+  // exit-class allow (this first-operand check is what preserves it).
+  if (!branchRef) return undefined;
+  // W103 residual #21: symbolic-ref's ONE-operand form is a READ (it
+  // prints the referent) — only the two-operand form repoints the name.
+  // update-ref keeps its existing shape: a bare refs/heads/ operand there
+  // is always a write target (real git requires -d or a new value).
+  if (symbolicRef && walk.operands.length < 2) return undefined;
+  // W103: the symbolic-ref write form writes BOTH names — the repointed
+  // name (operand 0) and the referent it is aimed at (operand 1): a
+  // symref aimed AT a protected branch routes later commits through the
+  // protected ref (the rename lane's both-operands principle, rows 11-13).
+  // update-ref's second operand is a VALUE (a sha snapshot), not a live
+  // pointer, so it stays unchecked.
+  const targets = symbolicRef ? [branchRef[1]!, walk.operands[1]!] : [branchRef[1]!];
+  return { targets, uncertain: false, needsCurrentBranch: false };
+}
+
+function parseFetch(words: string[]): PointerInvocation | undefined {
+  // W101 review round 3: --refmap (either spelling) is a hidden refspec —
+  // its value is the prune mapping, and with --prune a mapped absent source
+  // DELETES the mapped local destination. Fail closed before any parsing
+  // (the equals-form skip in the shared walk would otherwise never surface
+  // it).
+  if (words.some((word) => word.startsWith("--refmap"))) return { targets: [], uncertain: true, needsCurrentBranch: false };
+  const walk = walkWords(
+    words,
+    (ch) => "vqtnp46r".includes(ch),
+    (word) => {
+      if (fetchFlags.has(word)) return "flag";
+      if (fetchValueOptions.has(word)) return "value";
+      return "unknown";
+    },
+    new Set(["j", "o", "s", "S", "X"]), // -j/-o/-s/-S/-X consume a value
+  );
+  if (walk.uncertain) return { targets: [], uncertain: true, needsCurrentBranch: false };
+  // Fail-closed across EVERY colon-bearing operand (review round 2): a
+  // benign first refspec, a URL remote, or an option value must not shield
+  // a later `main:refs/heads/<protected>` refspec — git processes multiple
+  // refspecs in one fetch, so every destination is checked and the caller
+  // denies if ANY belongs to the protected set.
+  const destinations: string[] = [];
+  for (const refspec of walk.operands) {
+    const colon = refspec.lastIndexOf(":");
+    if (colon < 0) continue;
+    const destination = refspec.slice(colon + 1);
+    if (destination.length === 0) continue;
+    // Tag destinations are release operations, not branch pointer moves
+    // (the W084 shape); a wildcard BRANCH destination maps all heads
+    // including the protected ones and fails closed (review P1).
+    if (destination.startsWith("refs/tags/")) continue;
+    if (destination.includes("*")) return { targets: [], uncertain: true, needsCurrentBranch: false };
+    destinations.push(destination);
+  }
+  if (destinations.length === 0) return undefined;
+  return { targets: destinations, uncertain: false, needsCurrentBranch: false };
+}
+
+function checkPointerTarget(words: string[], protectedBranches: Set<string>, context: GitPolicyContext): { decision: "deny"; policy: string; reason: string; matched?: string } | undefined {
+  const pointerCommand = words.join(" ");
+  const sub = words[1];
+  let invocation: PointerInvocation | undefined;
+  if (sub === "branch") invocation = parseBranch(words);
+  else if (sub === "checkout" || sub === "switch") invocation = parseForceCreate(words, sub === "checkout" ? "B" : "C");
+  else if (sub === "update-ref" || sub === "symbolic-ref") invocation = parseUpdateRef(words, sub === "symbolic-ref");
+  else if (sub === "fetch" || sub === "pull") {
+    // W101 review round 8: pull runs git fetch with the same arguments —
+    // its colon refspecs are fetch refspecs writing local branches, so the
+    // pull spelling shares the fetch lane's destination sweep (and the
+    // --refmap veto). The merge half (into the current branch) is the
+    // gitWriteRe pull clause's current-branch-gated job.
+    invocation = parseFetch(words);
+  }
+  if (!invocation) return undefined;
+  if (invocation.uncertain) {
+    return { decision: "deny", policy: "protected-branch-write", reason: "Git pointer command could not be safely parsed; failing closed.", matched: pointerCommand };
+  }
+  if (invocation.needsCurrentBranch) {
+    // The one-arg rename writes BOTH names: the current branch (renamed
+    // away — the source needs the fact, row 12) and the destination operand
+    // (force-overwrites a protected branch when it names one — review
+    // round 4). A factless seat cannot classify the source and fails
+    // closed.
+    if (!context.currentBranch) {
+      return { decision: "deny", policy: "protected-branch-write", reason: "Branch rename targets the current branch, which was not supplied; failing closed.", matched: pointerCommand };
+    }
+    if (protectedBranches.has(normalizeBranchRef(context.currentBranch))) {
+      return { decision: "deny", policy: "protected-branch-write", reason: `Branch pointer writes on protected branch '${normalizeBranchRef(context.currentBranch)}' are not allowed.`, matched: normalizeBranchRef(context.currentBranch) };
+    }
+  }
+  for (const target of invocation.targets) {
+    if (protectedBranches.has(normalizeBranchRef(target))) {
+      return { decision: "deny", policy: "protected-branch-write", reason: `Branch pointer writes on protected branch '${normalizeBranchRef(target)}' are not allowed.`, matched: target };
+    }
+  }
+  return undefined;
+}
+
+// ---- P18 (c): direct `.git/` ref-adjacent write targets (2026-09-30) ----
+// The W101 gate above classifies the COMMAND spellings; the ref-adjacent
+// filesystem routes (SECURITY_ASSURANCE #21's still-open part, parked row
+// P18(c)) reach the SAME protected set through a written PATH. The classifier
+// is lexical and spelling-based — the same input the shell mutation extractor
+// and the file_write lane already surface. A path is this gate's business only
+// when it carries a `.git` path component; a `refs/heads/<branch>` tail
+// resolves to the branch NAME (the same target class as `git update-ref
+// refs/heads/<branch>`), while a ref-adjacent `.git` path with no resolvable
+// branch — `packed-refs`, `HEAD`, `logs`, the `refs/heads` directory, the git
+// dir itself — fails closed on parse uncertainty. Non-ref `.git` content
+// (objects, index, config, hooks, refs/tags) stays outside the branch-target
+// gate. The recorded BOUNDARY: a `.git` symlink hop whose write spelling
+// carries no `.git` component (the link target addressed directly), and a
+// gitfile (`.git` is a file naming its gitdir) — neither is resolvable from
+// the write spelling, so neither is classified here rather than pretended.
+//
+// P18 (d) (2026-09-30, issue #296): the INSPECTABLE env-spelled gitdir route.
+// A bare repo or a `GIT_DIR`-spelled directory carries no `.git` component, so
+// the lexical `.git` match below cannot see it — but when the command names
+// the gitdir through its environment (`GIT_DIR=…`, `GIT_COMMON_DIR=…`, or
+// `GIT_WORK_TREE=…`), a write under that directory IS ref-adjacent and is
+// classified by the same tail logic. The caller supplies the spellings; an
+// unresolved/globbed spelling cannot be matched (recorded boundary, never
+// pretended). The `.git` component match is case-insensitive so the `.GIT/`
+// variant (the same directory on a case-insensitive filesystem) is caught;
+// the branch tail stays case-sensitive (branch names are case-sensitive).
+export interface DirectRefWriteOptions {
+  /** Lexical gitdir spellings named by the command environment
+   * (`GIT_DIR=…`, `GIT_COMMON_DIR=…`, `GIT_WORK_TREE=…`). A written path under
+   * one of these is ref-adjacent even without a `.git` component. */
+  gitDirs?: readonly string[];
+  /** Symlink alias prefixes the command CREATES (`ln -s <ref-adjacent>
+   * <link>`). A write STRICTLY UNDER one is ref-adjacent through the same tail
+   * logic; the alias path itself is the link, not the gitdir, so it is not
+   * classified. */
+  gitDirAliases?: readonly string[];
+}
+
+export interface DirectRefWriteTarget {
+  /** The branch name the path writes, when the tail resolves. */
+  target?: string;
+  /** A ref-adjacent `.git` path whose branch target cannot be resolved. */
+  uncertain?: boolean;
+}
+
+const GIT_DIR_ASSIGNMENT_RE = /^(?:GIT_DIR|GIT_COMMON_DIR|GIT_WORK_TREE)=(.*)$/;
+
+// The gitdir spellings a shell command names explicitly. Two inspectable
+// routes:
+//
+// (1) The command ENVIRONMENT (`GIT_DIR=…`, `GIT_COMMON_DIR=…`,
+//     `GIT_WORK_TREE=…`). Scanned in command position only — the
+//     wrapper/assignment prefix the shell lane's `unwrapWords` consumes
+//     (`sudo`/`doas`/`command`/`nohup`/`nice`/`timeout`/`stdbuf`/`time`/`env`
+//     with their option words and bare args, plus ordinary and
+//     `export`-builtin assignments) — so argument data (`echo GIT_DIR=/x`) is
+//     not mistaken for a live assignment, but `sudo GIT_DIR=/x echo …` names
+//     the same gitdir as the unprefixed form. `export GIT_DIR=…; echo …` is
+//     covered because the export is the segment head of its own segment and
+//     the scan is whole-command. Reusing `unwrapWordsWithPrefix` keeps ONE
+//     wrapper vocabulary (the shell lane's) rather than a second list that
+//     could drift.
+//
+// (2) P18 (e): git's OWN command-option spelling (`--git-dir=<path>` /
+//     `--git-dir <path>` and the `--work-tree` twins) on a `git` invocation —
+//     the same explicit-gitdir route named as an option instead of in the
+//     environment. The surviving command word must be `git` (the
+//     wrapper/assignment prefix is already unwrapped, so `sudo git
+//     --git-dir=…` is covered); the option value is collected lexically and an
+//     unresolved/globbed value is dropped downstream by the classifier's own
+//     filter, exactly like an env assignment. `--work-tree` rides the same
+//     conservative lean the env route recorded.
+export function gitDirSpellingsIn(command: string): string[] {
+  const spellings: string[] = [];
+  for (const rawSegment of splitShellSegments(command)) {
+    let words = shellWords(decodeShellEscapes(rawSegment));
+    // `export` is a shell builtin, not a wrapper: drop it so the assignment it
+    // carries is read at command position, as before.
+    if (basename(words[0] ?? "") === "export") words = words.slice(1);
+    const { prefix, command: unwrapped } = unwrapWordsWithPrefix(words);
+    for (const word of prefix) {
+      const assignment = GIT_DIR_ASSIGNMENT_RE.exec(word);
+      if (assignment?.[1]) spellings.push(assignment[1]);
+    }
+    if (basename(unwrapped[0] ?? "") === "git") {
+      for (let i = 1; i < unwrapped.length; i++) {
+        const option = unwrapped[i]!;
+        const equals = /^--(?:git-dir|work-tree)=(.*)$/.exec(option);
+        if (equals?.[1]) { spellings.push(equals[1]); continue; }
+        if (option === "--git-dir" || option === "--work-tree") {
+          const value = unwrapped[i + 1];
+          if (value && !value.startsWith("-")) { spellings.push(value); i += 1; }
+        }
+      }
+    }
+  }
+  return spellings;
+}
+
+// P18 boundary refine (2026-09-30, issue #296): the `.git` SYMLINK HOP is
+// newly inspectable exactly when the command itself spells the hop's target.
+// `ln -s <target> <link>` creates a path that lexically aliases <target>; when
+// <target> is ref-adjacent (a `.git`-component ref path, or a directory named
+// by the command's gitdir spellings), a write under <link> reaches the same
+// refs, so <link> joins the alias prefix set and the shared tail logic
+// classifies it. The scan is a bounded fixpoint over the command's segments, so
+// a chained alias (`ln -s <gitdir> a; ln -s a b`) resolves too. A symlink whose
+// target is a pre-existing filesystem fact (never spelled in the command) stays
+// un-inspectable and RECORDED. Like the gitdir route, an unresolved/globbed
+// alias spelling is dropped, and the alias is only meaningful when the target
+// is ref-adjacent.
+const SYMLINK_FLAG_RE = /^-[a-zA-Z]*s[a-zA-Z]*$/;
+
+export function refSymlinkAliasSpellingsIn(command: string, gitDirs: readonly string[]): string[] {
+  const segments = splitShellSegments(command);
+  const known = [...gitDirs];
+  const aliases: string[] = [];
+  let changed = true;
+  for (let round = 0; changed && round < 16; round += 1) {
+    changed = false;
+    for (const segment of segments) {
+      for (const alias of symlinkAliasesInSegment(segment, known)) {
+        if (aliases.includes(alias)) continue;
+        aliases.push(alias);
+        known.push(alias);
+        changed = true;
+      }
+    }
+  }
+  return aliases;
+}
+
+function symlinkAliasesInSegment(segment: string, gitDirs: readonly string[]): string[] {
+  const words = unwrapWordsWithPrefix(shellWords(decodeShellEscapes(segment))).command;
+  if (basename(words[0] ?? "") !== "ln") return [];
+  let symbolic = false;
+  let targetDirectory: string | undefined;
+  const operands: string[] = [];
+  let stopOptions = false;
+  for (let i = 1; i < words.length; i += 1) {
+    const word = words[i]!;
+    if (!stopOptions && word === "--") { stopOptions = true; continue; }
+    if (!stopOptions && (word === "-t" || word === "--target-directory")) { targetDirectory = words[i + 1]; i += 1; continue; }
+    if (!stopOptions && /^-t.+/.test(word)) { targetDirectory = word.slice(2); continue; }
+    if (!stopOptions && word.startsWith("--target-directory=")) { targetDirectory = word.slice("--target-directory=".length); continue; }
+    if (!stopOptions && word.startsWith("-") && word !== "-") {
+      if (word === "--symbolic" || SYMLINK_FLAG_RE.test(word)) symbolic = true;
+      continue;
+    }
+    operands.push(word);
+  }
+  if (!symbolic || operands.length === 0) return [];
+  const refAdjacent = (spelling: string): boolean =>
+    directRefWriteTargetIn(spelling.replaceAll("\\", "/"), { gitDirs }) !== undefined;
+  const aliases: string[] = [];
+  if (targetDirectory !== undefined) {
+    const dir = targetDirectory.replace(/\/+$/, "");
+    for (const target of operands) {
+      const name = basename(target.replaceAll("\\", "/"));
+      if (name.length === 0 || !refAdjacent(target)) continue;
+      aliases.push(dir.length === 0 ? name : `${dir}/${name}`);
+    }
+    return aliases;
+  }
+  if (operands.length < 2) return [];
+  const link = operands[operands.length - 1]!;
+  const targets = operands.slice(0, -1);
+  for (const target of targets) {
+    if (!refAdjacent(target)) continue;
+    if (targets.length === 1) { aliases.push(link); continue; }
+    aliases.push(`${link.replace(/\/+$/, "")}/${basename(target.replaceAll("\\", "/"))}`);
+  }
+  return aliases;
+}
+
+// Lexically collapse `.`/`..` (both the `.git` and the gitdir routes) so a
+// traversal spelling cannot alias past the tail/prefix match; an escape above
+// the root is uncertain. The leading `/` is preserved so an absolute path and
+// a relative spelling of the same components do not collide.
+function collapseLexicalPath(value: string): string | undefined {
+  const absolute = value.startsWith("/");
+  const segments: string[] = [];
+  for (const raw of value.split("/")) {
+    if (raw === "" || raw === ".") continue;
+    if (raw === "..") {
+      if (segments.length === 0) return undefined;
+      segments.pop();
+      continue;
+    }
+    segments.push(raw);
+  }
+  return (absolute ? "/" : "") + segments.join("/");
+}
+
+// The shared tail classification: a `refs/heads/<branch>` tail resolves to the
+// branch name; a ref-adjacent tail with no resolvable branch fails closed;
+// refs/tags and non-ref content are not branch pointers.
+function refTailTarget(rest: string[]): DirectRefWriteTarget | undefined {
+  if (rest.length === 0) return { uncertain: true }; // the git dir itself
+  if (rest[0] === "refs") {
+    if (rest[1] === "heads") {
+      if (rest.length === 2) return { uncertain: true }; // the heads directory
+      return { target: rest.slice(2).join("/") };
+    }
+    if (rest.length === 1) return { uncertain: true }; // the refs directory
+    return undefined; // refs/tags, refs/remotes, ... are not branch pointers
+  }
+  if (rest[0] === "packed-refs" || rest[0] === "HEAD" || rest[0] === "logs") return { uncertain: true };
+  return undefined; // objects/index/config/hooks/... are not branch pointers
+}
+
+export function directRefWriteTargetIn(path: string, options: DirectRefWriteOptions = {}): DirectRefWriteTarget | undefined {
+  const normalized = path.replaceAll("\\", "/");
+  // Only a `.git` path component (case-insensitively — the `.GIT/` variant on
+  // a case-insensitive filesystem), a caller-supplied env-spelled gitdir, or a
+  // command-created symlink alias makes a path ref-adjacent (`x.github/` and
+  // `foo.git/` are not).
+  const hasGitComponent = /(?:^|\/)\.git(?:\/|$)/i.test(normalized);
+  const gitDirs = (options.gitDirs ?? [])
+    .map((gitDir) => gitDir.replaceAll("\\", "/"))
+    .filter((gitDir) => gitDir.length > 0 && !/[$*?]/.test(gitDir));
+  const gitDirAliases = (options.gitDirAliases ?? [])
+    .map((alias) => alias.replaceAll("\\", "/"))
+    .filter((alias) => alias.length > 0 && !/[$*?]/.test(alias));
+  if (!hasGitComponent && gitDirs.length === 0 && gitDirAliases.length === 0) return undefined;
+
+  if (hasGitComponent) {
+    // An unresolved expansion or a glob in a `.git` path cannot be classified.
+    if (/[$*?]/.test(normalized)) return { uncertain: true };
+    const collapsed = collapseLexicalPath(normalized);
+    if (collapsed === undefined) return { uncertain: true };
+    const segments = collapsed.split("/").filter((segment) => segment !== "");
+    const gitIndex = segments.map((segment) => segment.toLowerCase()).lastIndexOf(".git");
+    if (gitIndex < 0) return undefined;
+    return refTailTarget(segments.slice(gitIndex + 1));
+  }
+
+  // Environment-spelled gitdir route: a path under a named gitdir is
+  // ref-adjacent. An unresolved/globbed path fails closed only when its
+  // literal spelling is component-compatible with a known gitdir.
+  const unresolved = /[$*?]/.test(normalized);
+  for (const gitDir of gitDirs) {
+    const collapsedGitDir = collapseLexicalPath(gitDir);
+    if (collapsedGitDir === undefined || collapsedGitDir === "") continue;
+    if (unresolved) {
+      if (normalized === gitDir || normalized.startsWith(`${gitDir}/`)) return { uncertain: true };
+      continue;
+    }
+    const collapsed = collapseLexicalPath(normalized);
+    if (collapsed === undefined) return { uncertain: true };
+    if (collapsed === collapsedGitDir || collapsed.startsWith(`${collapsedGitDir}/`)) {
+      const rest = collapsed === collapsedGitDir ? [] : collapsed.slice(collapsedGitDir.length + 1).split("/");
+      return refTailTarget(rest);
+    }
+  }
+
+  // Symlink-alias route (P18 boundary refine): a write STRICTLY UNDER a
+  // command-created alias is ref-adjacent; the alias path itself is the link,
+  // not the gitdir, so an exact match is not classified.
+  for (const alias of gitDirAliases) {
+    const collapsedAlias = collapseLexicalPath(alias);
+    if (collapsedAlias === undefined || collapsedAlias === "") continue;
+    const prefix = `${collapsedAlias}/`;
+    if (unresolved) {
+      if (normalized.startsWith(prefix)) return { uncertain: true };
+      continue;
+    }
+    const collapsed = collapseLexicalPath(normalized);
+    if (collapsed === undefined) return { uncertain: true };
+    if (collapsed.startsWith(prefix)) {
+      return refTailTarget(collapsed.slice(prefix.length).split("/"));
+    }
+  }
+  return undefined;
+}
+
+export function wrapperCommands(command: string): string[] {
+  // The wrapper detection shared by BOTH matchers (hasGitMutation and the
+  // deny path — W102 review round 1 P3: one implementation, not a verbatim
+  // copy): sh-family interpreters exposing their command string via -c.
+  // `sh script.sh` is NOT a wrapper (script contents are unknowable — the
+  // file-scanner's territory). The fused -c form (`sh -c'git commit'` — no
+  // space between -c and the quote) is real shell getopt semantics: the
+  // remainder of the word IS the option-argument, and the tokenizer glues
+  // the quoted text into the word — the fused spelling is detected, not a
+  // bypass (W102 review round 1 P1). env/timeout/VAR= prefixes are consumed
+  // by unwrapShellWords, so prefixed wrappers ARE detected (the W101-era
+  // "env limitation" note was factually wrong — corrected by review round 1
+  // P2). busybox sh / exotic interpreter names REMAINED the honest edge
+  // (SUPERSEDED 2026-09-30, P18: the busybox applet composites join the
+  // detection below, and the P18(a) class closure replaces the enumerated
+  // sh-family regex with the single-sourced `isShFamilyInterpreter`
+  // predicate — any basename ending in `sh`).
+  return splitShellSegments(command).flatMap((segment) => {
+    let words = unwrapShellWords(segment);
+    // P18 (b) + P18 (a) class closure (2026-09-30): busybox composes the sh
+    // family through its applet form (`busybox sh -c '...'`, repeated
+    // busybox levels, and a wrapper applet in between — `busybox env sh -c`),
+    // so the applet args unwrap WORD-WISE (the same helper the shell lane
+    // uses — no string round trip, a quoted -c argument stays one word and
+    // its inner compound survives), each busybox level consuming one word
+    // (progress guaranteed). The family predicate itself is single-sourced
+    // in `shell.ts` (`isShFamilyInterpreter`): the pre-closure copy had
+    // already drifted across the four sites, and enumeration of an
+    // open-ended interpreter family (xsh, ash, mksh, csh, …) can never be
+    // complete — the principled `sh`-suffix rule closes the class.
+    while (/^busybox$/i.test(basename(words[0] ?? "")) && words.length > 1) {
+      words = unwrapWords(words.slice(1));
+    }
+    if (!isShFamilyInterpreter(basename(words[0] ?? ""))) return [];
+    for (let i = 1; i < words.length; i++) {
+      const word = words[i]!;
+      if (word === "--") return [];
+      if (!/^[+-]/.test(word)) return [];
+      // W102 review round 2: getopt does not stop at the word head — a
+      // bundle containing a `c` option consumes the REST of the word as
+      // -c's option-argument (`-ec'cmd'`, `-xc`…), and the spaced `-ec
+      // 'cmd'` and `-o <value> -c` forms were the same bypass. The
+      // generalized -Xc matcher is the same shape the boundary and shell
+      // lanes' findIndex flag-finders implement for the NEXT-word form
+      // (round 3 note: those precedents are non-capturing next-word
+      // finders — this walker additionally handles the fused form, which
+      // is why the sequential walk exists); after the c option, a
+      // non-empty remainder is the fused command and an empty remainder
+      // means the command is the next word.
+      // P18 (c): an `-c=`-shaped word (`zsh -c='git commit -m x'` — the
+      // EQUALS-expansion spelling) extracts `=git commit -m x`: the
+      // option-argument KEEPS its leading `=`, so the inner head is `=git`,
+      // not `git`, and the inner classification reads it as a non-git
+      // command — parser-consistent with sh/bash, where the spelling is
+      // rejected outright (verified live: `bash -c='echo hi'` → "invalid
+      // option"). zsh's default EQUALS expansion would execute the resolved
+      // path — the recorded runtime caveat (parked row P18 / the coverage
+      // log), not silently absorbed.
+      const cMatch = /^-[a-zA-Z]*c(.*)$/s.exec(word);
+      if (cMatch) {
+        const fused = cMatch[1]!.replace(/^['"]|['"]$/g, "");
+        return fused.length > 0 ? [fused] : (words[i + 1] ? [words[i + 1]!] : []);
+      }
+      // -o consumes its value — bundle-aware (W102 review round 3 B1): a
+      // bundle ENDING in o consumes the next word (`bash -euo pipefail -c
+      // '...'` — the walk died at the non-dash value word before reaching
+      // -c); a fused `-opipefail` is correctly NOT a value-consumer since o
+      // is not the last option char. For the sh-family, `-o <name>` is the
+      // value option in common use. W102 review round 4 (B2): -O is also a
+      // value option (bash shopt: `-O <shopt>` sets, `+O`/`+o` unset —
+      // captured red live: allow on main pre-fix), and the plus-family
+      // (`+O`, `+o`) is option-shaped too — bash's plus-options are the
+      // opposite-sense shopt set, so the walk must treat them as options,
+      // not positionals.
+      if (/^-[a-zA-Z]*[oO]$/.test(word) && words[i + 1]) i += 1;
+      if (/^\+[a-zA-Z]*[oO]$/.test(word) && words[i + 1]) i += 1;
+    }
+    return [];
+  });
+}
+
+export function checkGitPolicy(command: string, context: GitPolicyContext, depth = 0): { policy: string; decision: "deny"; reason: string; matched?: string } | undefined {
+  // W102 (residual #20's closure): depth-capped like hasGitMutation — at the
+  // cap the classification is unresolvable and fails closed.
+  if (depth >= 16) return { decision: "deny", policy: "protected-branch-write", reason: "Git command nesting depth exceeded; failing closed.", matched: command };
+  if (hasUnsafeGitAlias(command)) return { decision: "deny", policy: "unsafe-git-alias", reason: "Inline Git aliases can hide policy-relevant operations.", matched: command };
+  const protectedBranches = protectedBranchesIn(context);
+  const pushed = pushedProtectedBranchIn(command, protectedBranches, context.currentBranch);
+  if (pushed === "wildcard-refspec") {
+    return { decision: "deny", policy: "protected-branch-push", reason: "Push could not be resolved to concrete branch destinations (wildcard refspec, --mirror, or --all); failing closed.", matched: command };
+  }
+  if (pushed === "unresolved-alias") {
+    // W108: the factless alias/default push is the documented W090 fail-open
+    // class for this lane (the W103 pins keep their as-found allow) — the
+    // sentinel is consumed by the shell lane's destination-aware force-push
+    // rule, which applies its own conservative stance.
+  } else if (pushed) {
+    return { decision: "deny", policy: "protected-branch-push", reason: `Direct pushes to protected branch '${pushed}' are not allowed.`, matched: command };
+  }
+  // W101: the semantic target gate runs per segment BEFORE the
+  // current-branch-gated spelling lanes; deny-class ordering is preserved
+  // (alias and push keep their primacy), the gate's deny names the protected
+  // target, and the spelling lanes still catch everything the gate allows
+  // (e.g. the target-blind branch -d/-D/-M conservative deny on a protected
+  // current branch — W100 row 16).
+  for (const segment of splitShellSegments(command)) {
+    const normalized = normalizedGitSegments(segment)[0];
+    if (!normalized) continue;
+    const gate = checkPointerTarget(normalized.split(" "), protectedBranches, context);
+    if (gate) return gate;
+  }
+  const normalized = normalizedGitSegments(command).join(" ; ");
+  if (protectedBranchWriteReason(context) && gitWriteRe.test(normalized)) {
+    return { decision: "deny", policy: "protected-branch-write", reason: `Git mutations on protected branch '${context.currentBranch}' are not allowed.`, matched: command };
+  }
+  // W102: the wrapper recursion — the deny class must not be bypassable by
+  // wrapping. sh-family -c wrappers are transparent to the FULL git
+  // classification with the same seat facts (a wrapper executes in the same
+  // repository, so the currentBranch fact applies to the inner command).
+  // Direct-segment evidence keeps reason-attribution primacy; the recursion
+  // runs last.
+  for (const inner of wrapperCommands(command)) {
+    const verdict = checkGitPolicy(inner, context, depth + 1);
+    if (verdict) return verdict;
+  }
+  return undefined;
+}
