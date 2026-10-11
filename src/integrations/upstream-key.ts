@@ -120,40 +120,43 @@ export function loadUpstreamApiKey(env: NodeJS.ProcessEnv = process.env, home: s
  */
 export const UPSTREAM_KEY_SECRET_NAME = "workflow-upstream-key";
 
+// The recognized `WORKFLOW_UPSTREAM_KEY_FROM` backends. `azure-kv` is the
+// deployed-plane Key Vault store; `keyring` is the local D-Bus keyring. Kept as
+// a closed set so a typo fails closed rather than silently selecting nothing.
+const UPSTREAM_KEY_BACKENDS = ["azure-kv", "keyring"] as const;
+
 /**
  * C1 F2 durable fix: resolve the upstream key from the configured
  * {@link SecretStore} (Azure Key Vault in the deployed plane) instead of a
- * uid-shared process environment. Precedence mirrors {@link loadUpstreamApiKey}
- * but the secret-store source only participates when explicitly requested by
- * `WORKFLOW_UPSTREAM_KEY_FROM=<backend>` — an unconfigured surface stays
- * byte-identical (env, then file).
+ * uid-shared process environment. The secret-store source participates only
+ * when explicitly requested by `WORKFLOW_UPSTREAM_KEY_FROM=<backend>`; an
+ * unconfigured surface stays byte-identical ({@link loadUpstreamApiKey}: env,
+ * then file).
  *
- * Fail-closed: `from` is a recognized backend but the secret is absent → throw
- * (never fall back to a uid-shared env). An unknown backend → throw at parse.
- * The value is never logged. `storeFor` is injected so the parse/precedence is
- * testable without a live vault.
+ * The seam is AUTHORITATIVE, not a fallback: when `from` is set the store is
+ * the ONLY source. An env/file key does NOT short-circuit it — otherwise a
+ * lingering uid-shared `WORKFLOW_UPSTREAM_KEY` would silently win and defeat
+ * the F2 fix the seam exists to land. Fail-closed: `from` is a recognized
+ * backend but the secret is absent → throw (never fall back to a uid-shared
+ * env); an unknown backend → throw at parse. The value is never logged.
+ * `storeFor` is injected so the parse/source is testable without a live vault.
  */
 export function loadUpstreamApiKeyFromSecretStore(options: {
   readonly env?: NodeJS.ProcessEnv | undefined;
-  readonly home?: string | undefined;
-  /** Resolves the secret store; the injected seam (defaults to the ambient selection). */
+  /** Resolves the named backend; the injected seam (defaults to ambient selection). */
   readonly storeFor: (backend: string) => SecretStore;
 }): Promise<string> {
   const env = options.env ?? process.env;
-  const home = options.home ?? homedir();
   const from = (env.WORKFLOW_UPSTREAM_KEY_FROM ?? "").trim();
-  if (from === "") return Promise.resolve(loadUpstreamApiKey(env, home));
-  if (from !== "azure-kv" && from !== "keyring") {
+  if (from === "") return Promise.resolve(loadUpstreamApiKey(env));
+  if (!(UPSTREAM_KEY_BACKENDS as readonly string[]).includes(from)) {
     return Promise.reject(
       new TypeError(`WORKFLOW_UPSTREAM_KEY_FROM '${from}' is not a known backend (expected "azure-kv" or "keyring")`),
     );
   }
-  // Explicit request: the secret store is the SOURCE. A provider/env key still
-  // short-circuits (env-presence is an explicit operator value, and the store
-  // may legitimately be empty in a local keyring posture), but a missing vault
-  // secret throws rather than degrading to a uid-shared environment.
-  const direct = upstreamKeyFromEnv(env) ?? readUpstreamKeyFile(home);
-  if (direct !== undefined) return Promise.resolve(direct);
+  // The store is authoritative when the seam is set. A missing secret throws
+  // rather than degrading to a uid-shared environment (the exact leak the seam
+  // exists to close).
   return options.storeFor(from).get(UPSTREAM_KEY_SECRET_NAME).then((value) => {
     const trimmed = (value ?? "").trim();
     if (trimmed.length === 0) {

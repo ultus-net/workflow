@@ -632,10 +632,13 @@ default; it is not an auto-refill.
 F2 fix only flagged the uid-shared env in `workflow doctor`. Now
 `loadUpstreamApiKeyFromSecretStore` (with `WORKFLOW_UPSTREAM_KEY_FROM=azure-kv`)
 resolves the key from the W156 `SecretStore` (Key Vault via managed identity)
-instead of a container env. Precedence: an explicit env/file key still wins (it
-is an operator value, and the keyring persona can be empty); a named-but-absent
-vault secret THROWS fail-closed (never a silent fallback to a uid-shared env);
-an unknown backend throws at parse. The daemon wires it before
+instead of a container env. The seam is AUTHORITATIVE, not a fallback: when
+`WORKFLOW_UPSTREAM_KEY_FROM` is set the store is the only source, so a lingering
+uid-shared env/file key does NOT win (that would silently defeat the fix). A
+named-but-absent vault secret THROWS fail-closed (never a silent fallback to a
+uid-shared env); an unknown backend throws at parse. `FROM` also selects the
+store backend (the daemon overrides `WORKFLOW_SECRET_STORE` for the resolution).
+The daemon wires it before
 `createOpencodeServerRuntime`; absent the seam the path is byte-identical.
 The doctor gained `checkDaemonUpstreamKeyExposure`: it reads the DAEMON's own
 `/proc/<pid>/environ` (via the discovery pid) and reports presence only — the

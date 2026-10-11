@@ -133,7 +133,6 @@ test("C1 F2: the upstream key can be sourced from a secret store, and a named-bu
   try {
     const fromEnv = await loadUpstreamApiKeyFromSecretStore({
       env: { [UPSTREAM_KEY_ENV]: "env-key" } as NodeJS.ProcessEnv,
-      home: home.home,
       storeFor: () => { throw new Error("store must not be consulted when the seam is unset"); },
     });
     assert.equal(fromEnv, "env-key");
@@ -141,12 +140,11 @@ test("C1 F2: the upstream key can be sourced from a secret store, and a named-bu
     home.cleanup();
   }
 
-  // An explicit store source with no env/file resolves the vault secret.
+  // An explicit store source resolves the vault secret.
   const vault = withHome({});
   try {
     const resolved = await loadUpstreamApiKeyFromSecretStore({
       env: { WORKFLOW_UPSTREAM_KEY_FROM: "azure-kv" } as NodeJS.ProcessEnv,
-      home: vault.home,
       storeFor: (backend) => {
         assert.equal(backend, "azure-kv");
         return fakeStore({ [UPSTREAM_KEY_SECRET_NAME]: "vault-key" });
@@ -157,14 +155,30 @@ test("C1 F2: the upstream key can be sourced from a secret store, and a named-bu
     vault.cleanup();
   }
 
-  // Explicit store source, empty vault, no env/file: fail closed (never a
-  // silent fall back to a uid-shared environment).
+  // The seam is AUTHORITATIVE, not a fallback: with it set, a lingering
+  // uid-shared env/file key must NOT win (that would silently defeat the F2
+  // fix). The store is consulted even when the env carries a key.
+  const authoritative = withHome({ canonical: "file-key" });
+  try {
+    const resolved = await loadUpstreamApiKeyFromSecretStore({
+      env: {
+        WORKFLOW_UPSTREAM_KEY_FROM: "azure-kv",
+        [UPSTREAM_KEY_ENV]: "env-key",
+      } as NodeJS.ProcessEnv,
+      storeFor: () => fakeStore({ [UPSTREAM_KEY_SECRET_NAME]: "vault-key" }),
+    });
+    assert.equal(resolved, "vault-key", "the vault is the source, not the env/file");
+  } finally {
+    authoritative.cleanup();
+  }
+
+  // Explicit store source, empty vault: fail closed (never a silent fall back
+  // to a uid-shared environment), even when an env key is present.
   const emptyVault = withHome({});
   try {
     await assert.rejects(
       loadUpstreamApiKeyFromSecretStore({
-        env: { WORKFLOW_UPSTREAM_KEY_FROM: "azure-kv" } as NodeJS.ProcessEnv,
-        home: emptyVault.home,
+        env: { WORKFLOW_UPSTREAM_KEY_FROM: "azure-kv", [UPSTREAM_KEY_ENV]: "env-key" } as NodeJS.ProcessEnv,
         storeFor: () => fakeStore({}),
       }),
       /no 'workflow-upstream-key' secret/,

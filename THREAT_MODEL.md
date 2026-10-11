@@ -461,7 +461,8 @@ They change no posture claim; they are appended as dated dispositions.
 3. **The upstream key can be sourced from the secret store (F2 durable).**
    `WORKFLOW_UPSTREAM_KEY_FROM=azure-kv` resolves the key from the W156
    `SecretStore` (Key Vault via managed identity) instead of a container env;
-   an explicit env/file key still wins, a named-but-absent vault secret throws
+   the seam is authoritative, so a lingering env/file key does NOT win, a
+   named-but-absent vault secret throws
    fail-closed, and an unknown backend throws at parse. The doctor gained a
    durable check (`checkDaemonUpstreamKeyExposure`) that reads the DAEMON's own
    `/proc/<pid>/environ` and reports presence only, replacing the previous proxy

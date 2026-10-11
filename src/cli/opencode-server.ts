@@ -216,7 +216,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   // path, so an unconfigured daemon is byte-identical.
   const upstreamApiKey = process.env.WORKFLOW_UPSTREAM_KEY_FROM === undefined
     ? undefined
-    : await loadUpstreamApiKeyFromSecretStore({ storeFor: () => resolveSecretStore() });
+    // `FROM` selects the store backend, so override WORKFLOW_SECRET_STORE for
+    // the resolution rather than coupling to whatever the ambient env set.
+    : await loadUpstreamApiKeyFromSecretStore({
+        storeFor: (backend) => resolveSecretStore({ ...process.env, WORKFLOW_SECRET_STORE: backend }),
+      });
   // W094 (review P3-3): every failure path after composition reaps the guard
   // explicitly — the hub precedent closes its guard on composition failure,
   // and "the child self-reaps on EOF" is inferred semantics, not a mandate.
