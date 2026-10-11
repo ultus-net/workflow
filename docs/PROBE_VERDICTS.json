@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated": "2026-10-10",
+  "updated": "2026-10-11",
   "verdicts": [
     {
       "id": "acp-contained-egress-probe",
@@ -668,6 +668,32 @@
       "evidence": "docs/ledger/control-plane-c1-deploy-plan.md task 6; test/azure-jobs-probe.test.ts header",
       "blocker": "needs the live queue + storage account, the worker image deployed, a throwaway git repo, the model + git push Key Vault refs, and the deployed corpus fingerprint; the e2e has never run live",
       "note": "P0 e2e (deploy plan §4 task 6): one dispatch message -> job pod pulls it -> stock opencode run -> branch+PR + evidence blob, and the hub's validateDispatch reads the blob back as covered under the dispatched corpus fingerprint. Drives the REAL production dispatch/record/ingest seam, not a parallel copy. A green earns the P-track Partial status; pods stay advisory until the P2 model-key probe (task 8). Interception story is evidence + the human merge gate (spec §6:126-128)."
+    },
+    {
+      "id": "c1-plane-lsp",
+      "host": "Workflow C1 control plane (Azure Container Apps)",
+      "hostVersion": "unqualified",
+      "probe": "test/plane-lsp-live-probe.test.ts",
+      "gate": "WORKFLOW_AZURE_PLANE_LSP_PROBE",
+      "date": "2026-10-11",
+      "result": "pending",
+      "posture": "unqualified",
+      "evidence": "docs/ledger/control-plane-c1-composition.md Plane LSP wire section; test/plane-lsp-live-probe.test.ts header",
+      "blocker": "needs a deployed C1 plane behind ACA ingress plus the client credential; the LSP wire has never been measured live",
+      "note": "Live LSP-wire probe for the plane LSP composition (docs/ledger/control-plane-c1-composition.md). Asserts the plane is healthy (GET /api/info 200) and that GET /api/lsp is reachable through the gateway and well-formed (HTTP 200 + a JSON array of LSP.Status). It does NOT fail on an empty array: opencode v2 answers [] until an LSP client is spawned, and a client is spawned only by a file touch in a token-spending write/edit turn. When a typescript entry is present its status must be 'connected'. Real diagnostic delivery is not claimable here (it needs a model key) — see the c1-plane-lsp-diagnostic row."
+    },
+    {
+      "id": "c1-plane-lsp-diagnostic",
+      "host": "Workflow C1 control plane (Azure Container Apps)",
+      "hostVersion": "unqualified",
+      "probe": "test/plane-lsp-live-probe.test.ts",
+      "gate": "WORKFLOW_AZURE_PLANE_LSP_DIAGNOSTIC",
+      "date": "2026-10-11",
+      "result": "pending",
+      "posture": "unqualified",
+      "evidence": "docs/ledger/control-plane-c1-composition.md Plane LSP wire section; test/plane-lsp-live-probe.test.ts header",
+      "blocker": "needs a deployed C1 plane, the client credential, AND a model key to spend a write/edit tool turn that produces a diagnostic",
+      "note": "Diagnostic arm of test/plane-lsp-live-probe.test.ts, gated separately because a real diagnostic requires a token-spending tool turn (write/edit -> touchFile -> diagnostics embedded in the tool output) the token-free probe cannot drive. The arm currently asserts nothing and reports an honest node:test skip, so this stays pending rather than a fake pass; it exists so the model-key dependency is recorded, never faked. A live diagnostic verdict is pending an operator run with a model key."
     }
   ]
 }
