@@ -328,8 +328,29 @@ export class HttpRemoteEngine implements RemoteEngine {
   }
 
   async config(input: { cwd: string }): Promise<Record<string, unknown> | undefined> {
-    const body = await this.#json("GET", "/config", { cwd: input.cwd });
-    return isRecord(body) ? body : undefined;
+    // v2 moved the JSON API under `/api/*`; the bare `/config` is v1 and v2
+    // serves its web-UI HTML catch-all there (a 200 that must never parse as a
+    // config). Try the documented v2 route first, then the v1 spelling, and
+    // accept only a body that actually carries a config — the v2 document list
+    // is unwrapped to its merged `info` (see {@link configRecordFromBody}). A
+    // 401/403 rejects: a wrong credential must surface, never degrade to
+    // "no config" and a silently skipped ruleset check.
+    for (const path of ["/api/config", "/config"] as const) {
+      let response: Response;
+      try {
+        response = await this.#fetch(this.#url(path, input.cwd), { method: "GET", headers: this.#headers() });
+      } catch {
+        continue;
+      }
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(`remote engine GET ${path} failed (${response.status})`);
+      }
+      if (!response.ok) continue;
+      const body: unknown = await response.json().catch(() => undefined);
+      const record = configRecordFromBody(body);
+      if (record !== undefined) return record;
+    }
+    return undefined;
   }
 
   async prompt(input: RemotePromptInput): Promise<void> {
@@ -629,4 +650,28 @@ function asArray(value: unknown): readonly unknown[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Normalizes either config wire shape to one effective-config record.
+ *
+ *  - v1: `/config` answers the config object directly.
+ *  - v2: `/api/config` answers an array of config documents
+ *    (`{ type, path, info }`, one entry per source, plus `type: "directory"`
+ *    markers that carry no `info`). The effective config is the merge of the
+ *    `info` records in document order (a later document overrides an earlier
+ *    one), which is the same precedence the server resolves.
+ *
+ * Returns `undefined` when the body is neither shape, so the caller can fall
+ * through to the other route (e.g. the v2 HTML catch-all on the v1 spelling).
+ */
+export function configRecordFromBody(body: unknown): Record<string, unknown> | undefined {
+  if (isRecord(body)) return body.permission !== undefined || body.permissions !== undefined ? body : undefined;
+  if (!Array.isArray(body)) return undefined;
+  let merged: Record<string, unknown> | undefined;
+  for (const entry of body) {
+    if (!isRecord(entry) || !isRecord(entry.info)) continue;
+    merged = { ...(merged ?? {}), ...entry.info };
+  }
+  return merged;
 }
