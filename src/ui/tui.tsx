@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useApp, useInput, useStdout } from "ink";
+import { Box, Text, useApp, useInput, useStdout, useWindowSize } from "ink";
 
 import type { CodingSessionEvent, CodingSessionState } from "../application/coding-session.js";
 import type { OpenReviewFollowUps } from "../integrations/review-followups.js";
@@ -168,6 +168,9 @@ export function WorkflowTui({
 }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
+  // ink 8 types the standard stream as a bare WritableStream (no `rows`), so
+  // terminal height comes from useWindowSize(), which ink 7 and 8 both expose.
+  const windowSize = useWindowSize();
   const [snapshot, setSnapshot] = useState<WorkflowSnapshot>(() => application.snapshot());
   const [gates, setGates] = useState<HubGateObservability | undefined>(() => gateObservability?.());
   // Live ledger read. A boot-time snapshot presented as live state is the
@@ -692,7 +695,7 @@ export function WorkflowTui({
   const followUpsUnavailable = followUps?.available === false;
   const showActivityPanel = activeSession !== undefined || openReviewFollowUps || followUpsUnavailable || gates !== undefined;
   const composerRows = activeSession === undefined ? 0 : composerBackground === undefined ? 5 : 3;
-  const transcriptRows = Math.max(4, (stdout.rows ?? 24) - chromeRows(showWorkflow, composerRows) - panelRows(snapshot, showActivityPanel));
+  const transcriptRows = Math.max(4, windowSize.rows - chromeRows(showWorkflow, composerRows) - panelRows(snapshot, showActivityPanel));
   const end = Math.max(0, transcript.length - scrollOffset);
   const visibleTranscript = transcript.slice(Math.max(0, end - transcriptRows), end);
   const taskSummary = summarizeTasks(snapshot);
