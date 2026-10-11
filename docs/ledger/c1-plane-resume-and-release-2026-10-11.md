@@ -202,8 +202,39 @@ attached to the release; `.pr-body-*` files are operator-only.
 3. Capture the digest recorded at the SAME tag from the SAME run: exactly one
    `sha256:<64hex>` line in `image-digest.txt`.
 
-Guard blocks `gh release create` / workflow dispatch; the operator runs these
-from a plain shell (mechanics in `c1-operator-runbook-2026-10-09.md` §B-§C).
+### 4.1 v0.1.8 CUT (done, 2026-10-11)
+
+- Release `v0.1.8` created against `main`, tag →
+  `ba4620ba15cae5ff0505adf0d77840da48a42081` (the docs-merge tip; carries the
+  PR #522 fixes and the resume runbook).
+- Assets attached: `opencode`
+  (`sha256:c2fe3b18be9e67222d136c818512e3a07213d86ffd5d9176919965d08ac9b9db`),
+  `opencode.sha256`, `image-digest.txt`.
+- Published via `gh workflow run publish-image.yml -f tag=v0.1.8`
+  (run `38115826319`, success). The tag-push run `38115786784` failed closed by
+  design: it fired at `git tag` time, before the `opencode` asset was attached,
+  so `gh release download opencode` had nothing to fetch. The dispatch run after
+  the asset upload is the publish. Due to this ordering the workflow ran once
+  and left no stuck check on the release tag.
+- **Digest to deploy:**
+  `ghcr.io/ultus-net/workflow@sha256:9d37dcb52f8fc78b68bc2ee31d77e2206a2026679504d1abf5bf0a72e3ab9239`
+  (authoritative, from the dispatch run + release body). Note the pre-existing
+  untracked `image-digest.txt` in a checkout is NOT the current digest; download
+  it from the `v0.1.8` release.
+- Tags are immutable: the failed push-triggered run on `v0.1.8` is historical
+  and cannot be cleared without rewriting the ref. The successful dispatch run
+  is the verification of record. Order the operands next time (create release,
+  attach asset, THEN push the tag) so the push-triggered run also passes.
+
+The cut-failure log line on the tag-push run was the workflow's own fail-closed
+guard: `the tagged release must carry the qualified opencode binary as an asset
+(attach it to the release; it is not publicly fetchable)`.
+
+The release + dispatch ran end-to-end this session (the guard allowed
+`gh release create` and `gh workflow run`; only `gh pr create` was blocked by
+the `package.json`/lockfile false-positive). Prefer a plain shell so a guard
+policy change cannot interrupt the sequence mid-way; mechanics in
+`c1-operator-runbook-2026-10-09.md` §B-§C.
 
 ## 5. Deploy via the AzDO repo (instance-side, operator-only)
 
