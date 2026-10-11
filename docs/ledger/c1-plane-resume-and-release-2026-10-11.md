@@ -258,6 +258,48 @@ FQDNs, secrets) stay in the work repo; none enter the open repo.
    worker job module, queue + evidence blob container, storage/ACR RBAC, Easy
    Auth. Confirm which are landed before claiming the deploy complete.
 
+### 5.1 v0.1.8 deploy (values + the F2 bundling caution)
+
+The instance repo is `dev.azure.com/Jacobsens/AzureAppDev/_git/csh-dev`. The
+guard confines agent mutations to the `Workflow` workspace, so the instance-repo
+edits below are operator-run (the agent can read the repo, not write it).
+
+Two files pin the release; both must move together or the pipeline's
+`verify-pin.sh` step fails closed:
+
+- `pipelines/azure-pipelines.yml`: `planeImage` and `planeExpectationUrl`.
+- `infra/params/dev.bicepparam`: `planeImage` (the pipeline's
+  `--parameters planeImage="$(planeImage)"` overrides it at deploy, so the
+  param file is documentation + local-deploy parity; keep them equal).
+
+Values:
+
+```
+planeImage:          ghcr.io/ultus-net/workflow@sha256:9d37dcb52f8fc78b68bc2ee31d77e2206a2026679504d1abf5bf0a72e3ab9239
+planeExpectationUrl: https://github.com/ultus-net/workflow/releases/download/v0.1.8/image-digest.txt
+```
+
+The image is publicly pullable (anonymous GHCR token 200; both the digest and
+the `v0.1.8` tag resolve; the manifest's `docker-content-digest` equals the
+expectation), so no ACR credential is needed for the pull.
+
+**F2 bundling caution (do not set `WORKFLOW_UPSTREAM_KEY_FROM` in this deploy).**
+`infra/modules/plane.bicep` still carries
+`{ name: 'WORKFLOW_UPSTREAM_KEY', secretRef: upstreamKeySecretName }` and has no
+`WORKFLOW_UPSTREAM_KEY_FROM` env. The image pin deploy therefore leaves the
+azure-kv seam INACTIVE and the existing secretRef supplies the key — correct, and
+it does not trip the fail-closed path. Moving the key into Key Vault is a
+SEPARATE revision that, in one change: (a) stores the vault secret, (b) adds
+`WORKFLOW_UPSTREAM_KEY_FROM=azure-kv`, and (c) REMOVES the `WORKFLOW_UPSTREAM_KEY`
+secretRef env. Setting FROM while the secretRef lingers is a no-op (the seam is
+authoritative) and setting it with no vault secret fails the daemon closed.
+
+The `.bicepparam` file is also stale relative to the runbook: it lacks the
+session-budget, mutation-budget, and `WORKFLOW_PLANE_REVISION` env. Add those in
+the same instance change that exercises lanes 1-3, and note that
+`.bicepparam` values that the pipeline does not override are the source of truth
+for `az deployment group create`.
+
 ## 6. Honest residuals (dated, append-only)
 
 - The in-band deny `message` is source-anchored on pinned OpenCode v2, not yet
