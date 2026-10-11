@@ -39,7 +39,14 @@ export interface OpencodeAuthorityDecision {
   readonly tool: string;
   readonly capability?: ToolCapability | undefined;
   readonly subjects: readonly string[];
-  readonly decision: "allow" | "deny";
+  /**
+   * `allow`/`deny` are the broker's own policy answers. `observe` is a
+   * NON-answer: a client (operator) reply noted in auto-resolve mode, where the
+   * policy already answered upstream. It is journaled for observability only and
+   * must never be rendered as "the user declined this tool call" (the observed
+   * C1 confusion: 200+ cosmetic `observe` records read like mass denials).
+   */
+  readonly decision: "allow" | "deny" | "observe";
   readonly reply: "once" | "reject";
   readonly reason?: string | undefined;
   readonly observedAt: number;
@@ -603,7 +610,10 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
         requestId: reply.requestId,
         tool: "(operator reply)",
         subjects: [],
-        decision: "deny",
+        // A noted client reply is NOT a policy denial: the upstream answer was
+        // already delivered by policy. Journaled as `observe` so no surface
+        // renders it as "the user declined this tool call" (C1 fault).
+        decision: "observe",
         reply: reply.reply === "reject" ? "reject" : "once",
         reason: "operator reply observed in auto-resolve mode; the upstream answer is policy-driven",
         observedAt: now(),

@@ -362,6 +362,16 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       ...(plane === undefined || plane.hubHostnames.length === 0
         ? {}
         : { hubRoutes: { hosts: plane.hubHostnames, target: () => readHubWebEndpoint() } }),
+      // C1 observability: expose the broker's recent decisions + the GATEWAY's
+      // own posture at a Workflow-owned read route, so a systemic denial (e.g.
+      // the mutation-budget fault) is diagnosable over the wire without reading
+      // container logs. This posture is the route-matrix axis, distinct from the
+      // hub's authority axis (which reports the WorkflowApplication host
+      // capability); the two must never be conflated (C1 F1).
+      authorityJournal: () => ({
+        gatewayPosture: enforcement,
+        decisions: authority.decisions().slice(-200),
+      }),
     });
   } catch (error) {
     await authority.stop();

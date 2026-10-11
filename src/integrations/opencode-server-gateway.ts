@@ -4,6 +4,7 @@ import type { IncomingMessage, Server as HttpServer, ServerResponse } from "node
 
 import {
   OPENCODE_V2_PERMISSION_REPLY_ROUTE,
+  OPENCODE_V2_WORKFLOW_AUTHORITY_ROUTE,
   qualifyOpenCodeV2Route,
 } from "./opencode-v2-route-class.js";
 
@@ -78,6 +79,23 @@ export interface OpencodeServerGatewayOptions {
    * up without restarting the gateway.
    */
   readonly hubRoutes?: OpencodeServerGatewayHubRoutes | undefined;
+  /**
+   * C1 observability: the Workflow authority-inspection read, served by the
+   * gateway at {@link OPENCODE_V2_WORKFLOW_AUTHORITY_ROUTE} for GET. Returns the
+   * broker's recent decisions + its own route-matrix posture, so a systemic
+   * session denial is diagnosable without reading container logs. Read-only;
+   * the gateway never forwards this route upstream. Absent → the route is not
+   * served (a pre-C1/ambient gateway stays byte-identical: the route then fails
+   * closed as an unknown read).
+   */
+  readonly authorityJournal?: (() => WorkflowAuthorityJournal) | undefined;
+}
+
+/** The read-only payload of the Workflow authority-inspection route. */
+export interface WorkflowAuthorityJournal {
+  /** The GATEWAY's own route-matrix posture — NOT the hub's authority axis. */
+  readonly gatewayPosture: "advisory" | "enforced";
+  readonly decisions: readonly unknown[];
 }
 
 /**
@@ -224,6 +242,19 @@ async function handle(
   const rawPathname = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
   const pathname = decodedPathname(rawPathname);
   const method = request.method ?? "";
+  // The Workflow-owned authority-inspection read: answered by the gateway from
+  // its own broker journal, never forwarded upstream (the route does not exist
+  // on stock OpenCode). A non-GET verb on it fails closed. Absent the journal
+  // hook, the route stays unserved and falls through to the class matrix as an
+  // unknown read (fail closed).
+  if (pathname === OPENCODE_V2_WORKFLOW_AUTHORITY_ROUTE && options.authorityJournal !== undefined) {
+    if (method.toUpperCase() !== "GET") {
+      sendJson(response, 403, { error: `route class not qualified for direct access: workflow-inspection` });
+      return;
+    }
+    sendJson(response, 200, options.authorityJournal());
+    return;
+  }
   const qualification = qualifyOpenCodeV2Route(method, pathname);
   options.observedRequest?.(pathname);
   const reply = method === "POST" ? OPENCODE_V2_PERMISSION_REPLY_ROUTE.exec(pathname) : null;

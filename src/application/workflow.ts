@@ -131,6 +131,28 @@ export class WorkflowApplication {
     return this.#mutationBudget.remaining(sessionId);
   }
 
+  /** The configured per-root mutation cap (diagnostics; never a decision input). */
+  mutationBudgetMax(): number {
+    return this.#mutationBudget.max;
+  }
+
+  /**
+   * Explicit reset for the parent-owned mutation budget. An exhausted budget is
+   * otherwise sticky for the life of the session (the observed C1 fault: after a
+   * burst of allowed shell mutations the root's budget hit its cap and every
+   * further MUTATION was denied for the rest of the session — including benign
+   * shell `ls`/`grep`, which are `process`-class and therefore count as
+   * mutations, though a read-capability tool like `read`/`glob`/`grep` does
+   * not). This is the documented operator/session reset path: it clears the
+   * whole root hierarchy (root and its registered descendants share one
+   * counter) and is the ONLY way a budget refills short of a new root session.
+   * It never runs implicitly — an authorization outcome must not silently
+   * un-block a bounded policy.
+   */
+  resetMutationBudget(sessionId: string): void {
+    this.#mutationBudget.clear(sessionId);
+  }
+
   /**
    * Runtime capability reconfiguration for operator surfaces. Toggling a
    * capability off denies every gated action that needs it from that point
@@ -288,7 +310,14 @@ export class WorkflowApplication {
       }
     }
     if (!this.#mutationBudget.consume(action.sessionId)) {
-      return { kind: "deny", code: "MUTATION_BUDGET_EXHAUSTED", reason: `session ${action.sessionId} and its descendants exhausted the mutation budget` };
+      return {
+        kind: "deny",
+        code: "MUTATION_BUDGET_EXHAUSTED",
+        reason:
+          `session ${action.sessionId} and its descendants exhausted the mutation budget ` +
+          `(${this.#mutationBudget.count(action.sessionId)}/${this.#mutationBudget.max} consumed); ` +
+          `an operator/session reset (resetMutationBudget) is required before further mutations`,
+      };
     }
     return { kind: "allow" };
   }

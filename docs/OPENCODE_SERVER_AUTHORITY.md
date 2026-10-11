@@ -541,3 +541,62 @@ and `opencode-session.ts` still carry v1 spellings (recorded above). The
 as the captured doc citation and this section records the measured binary/OpenAPI
 contract.
 
+## Addendum (2026-10-11, C1 live plane — the systemic-denial fault, diagnosed)
+
+A live agent session inside the deployed plane reported the broker "began
+denying every tool call — including benign read-only `ls`/`grep` inside the
+authorized workspace — and finally denying even read/grep/glob", surfaced in the
+UI as "The user declined this tool call". Ground truth from the container console
+log (`az containerapp logs show … --container plane`), one line per decision:
+
+```text
+[auth] deny shell reason=session ses_ed75ecb8fffeTgcPcBxOLlwtNI and its descendants exhausted the mutation budget
+```
+
+**Not the circuit breaker, not a guard ask.** No `POLICY_CIRCUIT_BREAKER` line
+appeared, and no `guard ask …` line appeared. The reason is
+`MUTATION_BUDGET_EXHAUSTED` (`src/application/workflow.ts:290`,
+`src/application/mutation-budget.ts`).
+
+**Root cause.** `MutationBudget` (default cap 100) is parent-owned and consumed
+by every ALLOWED mutation. OpenCode classifies `bash`/`shell` as the `process`
+capability, so **any shell command is a mutation** — including benign `ls`/`grep`
+run through the shell. After ~100 allowed shell actions the root session's
+counter hits its cap and every later MUTATION is denied for the life of the
+session. The denials were not sticky onto `read`/`glob`/`grep` (those are
+`read`-capability and never reach the budget gate), but two confusions made the
+session read as fully dead:
+
+1. A cloud of 200+ `[auth] deny (operator reply)` lines — these are the client's
+   own replies noted in auto-resolve mode (policy already answered upstream),
+   journaled as `deny`. They are cosmetic, not policy denials.
+2. The UI rendered every one of those as "the user declined this tool call".
+
+**Fix (branch `fix/c1-authority-denial-and-live-test-hardening`):**
+
+- The deny reason now carries `consumed/max` and names the reset seam
+  (`WorkflowApplication.resetMutationBudget`, new; the `MutationBudget` already
+  had `clear`). The budget is and stays a bounded, fail-closed policy: it refills
+  only via an explicit operator/session reset or a new root session, never
+  implicitly.
+- The noted operator reply is journaled as `observe`, a new non-answer value in
+  `OpencodeAuthorityDecision`, so no surface renders it as a decline.
+- **New observability route** `GET /api/workflow/authority`: the gateway answers
+  it from the broker journal (recent decisions + the gateway's OWN route-matrix
+  posture), never forwards it upstream. An agent/operator can read a systemic
+  denial over the wire without `az containerapp logs`. `OpenCodeV2RouteClass`
+  gains `workflow-inspection` with disposition `workflow` (GET) / `deny` (other
+  verbs).
+
+**Tests.** `test/application-policy-failure-tracker.test.ts` — the bound is named
+and reversible, and a denied mutation does NOT deny a subsequent unrelated read
+(where the reported fault said it did). `test/opencode-server-authority.test.ts`
+— a noted reply is `observe`, not `deny`. `test/opencode-v2-route-class.test.ts`
++ `test/opencode-server-gateway.test.ts` — the inspection route class, the served
+payload (posture + reasons), the never-forward guarantee, and the 403/401 paths.
+
+**Residual.** On the plane the delivered image must carry this branch before the
+route exists. The read route returns the last 200 decisions and the gateway
+posture only; it is not a durable audit log (the process-local journal resets on
+daemon restart).
+

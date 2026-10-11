@@ -33,6 +33,8 @@ export class MutationBudget {
     return true;
   }
 
+  /** The configured cap for the root budget (diagnostics). */
+  get max(): number { return this.#max; }
   count(sessionId: string): number { return this.#counts.get(this.root(sessionId)) ?? 0; }
   remaining(sessionId: string): number { return Math.max(0, this.#max - this.count(sessionId)); }
   clear(sessionId: string): void { this.#counts.delete(this.root(sessionId)); }

@@ -175,7 +175,7 @@ test("W071 broker: SSE loss marks authority lost", async (t) => {
   assert.equal(authority.decisions().length, 1);
 });
 
-test("W071 broker: operator replies are journaled as observation in auto-resolve mode", async (t) => {
+test("W071 broker: operator replies are journaled as observation (not a deny) in auto-resolve mode", async (t) => {
   const workspace = mkdtempSync(join(tmpdir(), "wf-broker-op-"));
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
   const journaled: OpencodeAuthorityDecision[] = [];
@@ -189,6 +189,9 @@ test("W071 broker: operator replies are journaled as observation in auto-resolve
   await authority.handleOperatorReply({ sessionId: "s1", requestId: "r9", reply: "once" });
   assert.equal(journaled.length, 1);
   assert.match(journaled[0]?.reason ?? "", /auto-resolve mode/);
+  // C1 fault: a noted client reply is an OBSERVATION, never a policy deny —
+  // otherwise 200+ cosmetic records render as "the user declined this tool call".
+  assert.equal(journaled[0]?.decision, "observe");
 });
 
 test("W071 broker (ask-me): a policy-allowed ask waits for operator intent and is answered once", async (t) => {
