@@ -370,7 +370,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       // capability); the two must never be conflated (C1 F1).
       authorityJournal: () => ({
         gatewayPosture: enforcement,
-        decisions: authority.decisions().slice(-200),
+        // Bound the reason length like the console log does (review P3h): a
+        // reason can carry path/command fragments, and the wire payload needs no
+        // more than the log. Subjects stay (the reader is the same operator whose
+        // workspace those paths name); no credential ever rides a decision.
+        decisions: authority.decisions().slice(-200).map((decision) => ({
+          ...decision,
+          ...(decision.reason === undefined ? {} : { reason: decision.reason.slice(0, 200) }),
+        })),
       }),
     });
   } catch (error) {
