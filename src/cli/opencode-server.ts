@@ -392,6 +392,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     // discovery consumer can discriminate the pod boundary from local bwrap.
     // Absent on the ambient lane (selectedContainment is undefined there).
     ...(selectedContainment?.boundaryKind === undefined ? {} : { boundaryKind: selectedContainment.boundaryKind }),
+    // C1 F1: the GATEWAY's own posture (route matrix), distinct from the hub's
+    // authority axis. Always recorded when in plane mode; absent on the ambient
+    // loopback daemon, whose posture is not a deploy claim.
+    ...(plane === undefined ? {} : { gatewayPosture: enforcement }),
   });
   console.log(`Workflow OpenCode server gateway at ${gateway.url} for ${workspace}`);
   console.log(`Discovery file: ${discoveryPath}`);
