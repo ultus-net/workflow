@@ -213,14 +213,26 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   // (the deployed plane points it at azure-kv), the upstream key is sourced from
   // Key Vault rather than a uid-shared env. Fail-closed on a named-but-absent
   // secret. Absent the seam the resolution is the exact synchronous env/file
-  // path, so an unconfigured daemon is byte-identical.
-  const upstreamApiKey = process.env.WORKFLOW_UPSTREAM_KEY_FROM === undefined
-    ? undefined
-    // `FROM` selects the store backend, so override WORKFLOW_SECRET_STORE for
-    // the resolution rather than coupling to whatever the ambient env set.
-    : await loadUpstreamApiKeyFromSecretStore({
-        storeFor: (backend) => resolveSecretStore({ ...process.env, WORKFLOW_SECRET_STORE: backend }),
-      });
+  // path, so an unconfigured daemon is byte-identical. The resolution runs
+  // BEFORE the runtime composition, so it must reap the composed guard itself
+  // on a fail-closed throw (W094: every failure path after composition reaps
+  // the guard explicitly) — otherwise a named-but-absent secret would orphan
+  // the guard process.
+  let upstreamApiKey: string | undefined;
+  try {
+    // Blank/whitespace `FROM` is "unset" (the resolver trims it too), so the
+    // gate matches the resolver's own semantics.
+    upstreamApiKey = (process.env.WORKFLOW_UPSTREAM_KEY_FROM ?? "").trim() === ""
+      ? undefined
+      // `FROM` selects the store backend, so override WORKFLOW_SECRET_STORE for
+      // the resolution rather than coupling to whatever the ambient env set.
+      : await loadUpstreamApiKeyFromSecretStore({
+          storeFor: (backend) => resolveSecretStore({ ...process.env, WORKFLOW_SECRET_STORE: backend }),
+        });
+  } catch (error) {
+    await guard.close();
+    throw error;
+  }
   // W094 (review P3-3): every failure path after composition reaps the guard
   // explicitly — the hub precedent closes its guard on composition failure,
   // and "the child self-reaps on EOF" is inferred semantics, not a mandate.

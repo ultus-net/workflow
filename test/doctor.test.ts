@@ -242,9 +242,20 @@ test("doctor (C1 F2): a uid-shared plane upstream key in the process environment
 
 test("doctor (C1 F2 durable): the daemon /proc environ scan reports presence only, never the value", () => {
   // Reading the CURRENT process's own environ is a real /proc read (Linux) and
-  // exercises the NUL-separated parse end to end. The current process has no
-  // upstream key in its env here, so the scan finds nothing.
-  assert.equal(readProcessUpstreamKeyExposure(process.pid), undefined, "no upstream key in this process environment");
+  // exercises the NUL-separated parse end to end. Assert against ground truth
+  // from this process's own env rather than assuming it is keyless (a keyed CI
+  // or operator shell would otherwise make this brittle).
+  const expected = ["WORKFLOW_UPSTREAM_KEY", "CLINE_API_KEY"].filter(
+    (key) => (process.env[key] ?? "").trim().length > 0,
+  );
+  const scanned = readProcessUpstreamKeyExposure(process.pid);
+  // On Linux the read succeeds; off-Linux it is an honest `undefined`
+  // ("cannot measure"). Only assert the exact set when /proc is available.
+  if (process.platform === "linux") {
+    assert.deepEqual(scanned, expected.length > 0 ? expected : undefined);
+    // The scan returns NAMES only, so a value can never be echoed.
+    assert.doesNotMatch((scanned ?? []).join(","), /=/);
+  }
 
   // A bogus pid (unreadable environ) is an honest "cannot measure", never a fail.
   assert.equal(readProcessUpstreamKeyExposure(0), undefined);
