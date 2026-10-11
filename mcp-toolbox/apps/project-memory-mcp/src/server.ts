@@ -3,7 +3,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { defaultDataRoot, isMemoryStampConfig, MEMORY_KINDS, MEMORY_WRITER_AUTHORITIES, ProjectMemoryStore, type MemoryStampConfig } from "./project-memory.js";
+import { defaultDataRoot, isMemoryStampConfig, MEMORY_KINDS, MEMORY_ORIGINS, MEMORY_WRITER_AUTHORITIES, ProjectMemoryStore, resolveRetentionWindowMs, type MemoryStampConfig } from "./project-memory.js";
+import { boundToolResultText } from "./vendor/result-bounds.js";
 
 const server = new McpServer(
   { name: "project-memory-mcp", version: "0.1.0" },
@@ -31,20 +32,22 @@ server.registerTool = ((name: string, config: unknown, handler: (input: never, e
       const result = await handler(input, extra);
       await server.server.sendLoggingMessage({ level: "info", logger: "project-memory-mcp", data: { tool: name, phase: "done" } });
       await progress("done", 2);
-      return result;
+      return boundToolResultText(result);
     } catch (error) {
       await server.server.sendLoggingMessage({ level: "error", logger: "project-memory-mcp", data: { tool: name, phase: "error", message: error instanceof Error ? error.message : String(error) } });
       throw error;
     }
   }) as never)) as typeof server.registerTool;
-const store = new ProjectMemoryStore(defaultDataRoot(), stampFromEnv(process.env));
+const store = new ProjectMemoryStore(defaultDataRoot(), stampFromEnv(process.env), resolveRetentionWindowMs(process.env));
 const memoryKind = z.enum(MEMORY_KINDS);
+const memoryOrigin = z.enum(MEMORY_ORIGINS);
 const memoryRecord = z.object({
   id: z.string(), kind: memoryKind, content: z.string(), paths: z.array(z.string()), createdAt: z.number(),
-  supersedes: z.string().optional(), status: z.enum(["current", "superseded"]), evidenceClass: z.literal("assertion"),
+  supersedes: z.string().optional(), supersededAt: z.number().optional(), status: z.enum(["current", "superseded"]),
+  evidenceClass: z.literal("assertion"),
   freshness: z.enum(["fresh", "stale"]),
   provenance: z.object({
-    origin: z.literal("project-memory-mcp/record_memory"), workspace: z.string(),
+    origin: memoryOrigin, workspace: z.string(),
     writer: z.string(), authority: z.enum(MEMORY_WRITER_AUTHORITIES), originSurface: z.string(), stampedAt: z.number(),
   }),
 });
@@ -97,6 +100,39 @@ server.registerTool(
   async (input, extra) => {
     const result = await store.search(input, extra.signal);
     const structuredContent = { records: result.records, truncated: result.truncated };
+    return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };
+  },
+);
+
+server.registerTool(
+  "export_memory",
+  {
+    description: "Explicitly promote selected durable project-memory records to the human-readable repo-local .opencode/memory/project-memory.jsonl file. Call when durable knowledge should be committed and shared with the team; omit ids to snapshot all current records. Secret-shaped content is never written out.",
+    inputSchema: {
+      workspaceRoot: z.string().min(1).max(4096), ids: z.array(z.string().min(1).max(200)).max(100).default([]),
+      path: z.string().min(1).max(500).optional(),
+    },
+    outputSchema: { export: z.object({ exported: z.number().int().nonnegative(), path: z.string() }) },
+    annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async (input, extra) => {
+    const result = await store.export(input, extra.signal);
+    const structuredContent = { export: result };
+    return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };
+  },
+);
+
+server.registerTool(
+  "import_memory",
+  {
+    description: "Import the repo-local .opencode/memory/project-memory.jsonl file into this project's local working-memory index. Call to synchronize local project memory with shared repository records; already-present records are skipped and secret-shaped or malformed lines are rejected.",
+    inputSchema: { workspaceRoot: z.string().min(1).max(4096), path: z.string().min(1).max(500).optional() },
+    outputSchema: { import: z.object({ imported: z.number().int().nonnegative(), skipped: z.number().int().nonnegative(), rejected: z.number().int().nonnegative(), path: z.string() }) },
+    annotations: { readOnlyHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  async (input, extra) => {
+    const result = await store.import(input, extra.signal);
+    const structuredContent = { import: result };
     return { content: [{ type: "text", text: JSON.stringify(structuredContent) }], structuredContent };
   },
 );
