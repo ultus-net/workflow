@@ -107,12 +107,13 @@ from fingerprinted provenance, never from stale approvals
   `docs/OPENCODE_QUALIFICATION.md`, `docs/GOOSE_RESEARCH.md`) get dated
   supersession notes; history is never silently rewritten.
 - **Residual risks stay stated** — `docs/SECURITY_ASSURANCE.md` keeps its
-  residual risks on record (26 as of the W115 answer-route entry,
+  residual risks on record (27 as of the C2 corpus↔port provenance entry
+  #27, 2026-10-12; previously 26 as of the W115 answer-route entry,
   2026-09-24; previously 25 as of the W106-era homedir-trust entry,
   2026-09-23; #26's answer-route approvability gate landed 2026-09-30 as a
-  dated disposition note — the count stays 26 because stated entries keep
-  their number with dated dispositions, not because the risk is open), and
-  its checker pins the honesty statements.
+  dated disposition note — stated entries keep their number with dated
+  dispositions, not because the risk is open), and its checker pins the
+  honesty statements.
 - Probe-gated, never date-gated: an agent version bump without a re-run of
   its probes caps that surface `advisory`.
 
