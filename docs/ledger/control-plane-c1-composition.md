@@ -339,6 +339,12 @@ hub-written config to carry them. Two paths did not reach the plane:
   posture.
 - `src/cli/opencode-server.ts` — plane mode passes `mountFullToolbox: true` and
   `settings: loadSettings({ workspace })`. Non-plane mode is byte-identical.
+  **Superseded 2026-10-11 (C2, O-4):** the full mount is no longer the plane
+  default — plane mode passes `mountFullToolbox: planeMountsFullToolbox()`,
+  which is OFF unless `WORKFLOW_PLANE_FULL_TOOLBOX=1`. The plane lane composes
+  the narrow declared floor like every other lane. Pin:
+  `test/opencode-server-launcher.test.ts#"O-4: the plane full-toolbox mount
+  defaults OFF and is restored only by WORKFLOW_PLANE_FULL_TOOLBOX=1"`.
 
 **Verification (this session):**
 
