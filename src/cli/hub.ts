@@ -98,9 +98,9 @@ const requestLogPath = process.env.WORKFLOW_HUB_REQUEST_LOG;
 // running (pid 13)`) where the new revision could not acquire the lock the old
 // revision still held. Identity from the instance's WORKFLOW_PLANE_REVISION or
 // the ACA-injected CONTAINER_APP_REVISION; absent it, byte-identical to the
-// pre-revision root. Each per-file override below still wins, but defaults to
-// the revision-scoped directory: a path override that separated the FILE but
-// not the lock would reintroduce the deadlock.
+// pre-revision root. The instance lock lives under hubStateDir and is NOT
+// overridable, so the per-file overrides below (which only redirect individual
+// state FILES) can never reintroduce the shared-lock deadlock.
 const planeRevision = planeRevisionIdentity(process.env);
 const hubStateDir = opencodeServerStateHome(process.env.WORKFLOW_HUB_DIR ?? join(homedir(), ".workflow"), planeRevision);
 const hubStatePath = (override: string | undefined, name: string): string =>

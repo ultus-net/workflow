@@ -753,16 +753,32 @@ defaults to the ambient identity, and `readHubWebEndpoint`, `hub-client`
 **Trade-off (operator-accepted).** Hub state no longer carries across revisions
 — the cost of never sharing a lock. Each per-file override
 (`WORKFLOW_HUB_EGRESS_REVISIONS`, `WORKFLOW_HUB_PROVENANCE`,
-`WORKFLOW_HUB_SCHEDULES`, `WORKFLOW_HUB_PROJECTS`) still wins, but defaults to
-the revision-scoped directory: a path override that separated the FILE but not
-the lock would reintroduce the deadlock.
+`WORKFLOW_HUB_SCHEDULES`, `WORKFLOW_HUB_PROJECTS`) still wins but only redirects
+an individual state FILE; the instance lock lives under the revision-scoped
+`hubStateDir` and is not overridable, so those overrides cannot reintroduce the
+deadlock.
 
 **Evidence:** `test/hub-per-revision-state.test.ts` (resolver precedence, the
 per-revision lock separation, the no-identity byte-identity, the reader
 resolving the hub's actual `web.json`); `test/hub-lifecycle.test.ts`,
 `test/hub-client.test.ts`, `test/doctor.test.ts`,
-`test/plane-supervisor.test.ts`, `test/opencode-server-discovery.test.ts`
-(51 pass); `npm run typecheck` and `npm run lint` exit 0.
+`test/plane-supervisor.test.ts`, `test/opencode-server-discovery.test.ts`,
+`test/opencode-server-state-home.test.ts` (63 pass);
+`mcp-toolbox/apps/workflow-task-mcp/test/hub-client.test.ts` (the in-plane
+task-ledger MCP mirror resolves the revision-scoped hub dir; 7 pass);
+`npm run typecheck` and `npm run lint` exit 0.
+
+**Review-caught regression (fixed before merge).** The first cut scoped the
+writer and the CLI readers but left three readers on the explicit var alone
+(`src/ui/web.ts`, `src/cli/web-launch.ts`, `src/cli/opencode-attach.ts`) and the
+in-plane `workflow-task-mcp` mirror (`mcp-toolbox/apps/workflow-task-mcp/src/hub-client.ts`)
+unscoped. On an ACA pod where only `CONTAINER_APP_REVISION` is injected (the
+exact case the new helper exists to cover) those readers would have resolved the
+UNscoped directory while the daemon wrote the scoped one — the same
+reader/writer split the fix set out to close, on the opencode-server lane and
+the step-ledger MCP. All readers now route through `planeRevisionIdentity`, and
+the mirror gained the same resolver + a pin. A fresh-context reviewer found the
+split; it is recorded here because the class recurs.
 
 **Pre-activation blockers found while auditing F1/F2/F3 on the live plane.**
 Recorded here because they gate the deferred env activation, not the hub fix:
