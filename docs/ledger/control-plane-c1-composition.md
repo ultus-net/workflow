@@ -546,3 +546,54 @@ lane (never docs). Evidence: `test/acp-runtime-agent.test.ts` 15/15.
 `src/integrations/opencode-server-runtime.ts`; `src/cli/opencode-server.ts`;
 `src/integrations/acp-runtime.ts`; `images/control-plane/Dockerfile`;
 `packages/opencode/src/lsp/lsp.ts` (v2.0.10).
+
+### Per-revision state-home isolation (2026-10-11)
+
+**Source:** the recorded follow-up in the v0.1.7 entry above ("Custom-domain
+rebind" section, the per-revision state-home isolation follow-up). Append-only;
+supersedes nothing.
+
+A redeploy/rollout can leave the previous Container App revision and the new
+one sharing the SAME fixed state root — `WORKFLOW_OPENCODE_SERVER_HOME`
+resolves one path on one Azure Files mount — so a fresh revision could pick up
+(and clobber) the prior revision's discovery file and OpenCode DB.
+
+The wire:
+
+- **Env contract** — the instance supplies its revision identity in
+  `WORKFLOW_PLANE_REVISION` (`WORKFLOW_PLANE_REVISION_ENV` in
+  `src/integrations/opencode-server-discovery.ts`; an instance value, never
+  baked into the image). Absent, empty, or whitespace-only, the state home is
+  **byte-identical** to the pre-revision root — the ambient daemon and every
+  pre-revision deployment keep the exact path they had.
+- **Helper** — `opencodeServerStateHome(base, revision?)` appends one
+  filesystem-safe segment (lowercased, unsafe runs collapse to `-`, edge
+  separators trimmed, capped at 64 chars) only when a non-empty identity is
+  supplied. An identity that sanitizes to nothing **throws** rather than
+  silently sharing the base path (fail closed). The segment can never be `.`,
+  `..`, or absolute.
+- **Call sites** — the daemon (`src/cli/opencode-server.ts`) scopes both its
+  discovery file and its OpenCode DB (`stateDir` runs off `stateHome`); the
+  in-pod hub-UI live reads (`src/ui/web.ts`: `/api/settings/mcp/live`,
+  `/api/usage/sessions/live`, `/api/sessions/compact`) scope the same way so
+  they read the revision's own state, not another revision's.
+
+**Evidence:** `test/opencode-server-state-home.test.ts` 6/6 (byte-identical
+default; isolated suffix; sanitization/traversal-safety; fail-closed on
+unsanitizable input; discovery-path consistency; env-name convention);
+`test/opencode-server-launcher.test.ts` + `test/plane-supervisor.test.ts` +
+`test/opencode-live-state.test.ts` 37/37; `npm run typecheck` and
+`npm run lint` exit 0. (`test/opencode-server-runtime.test.ts` has one failure
+that pre-exists on the base branch — a toolbox-build fixture dependency,
+reproduced with this diff stashed — not caused by this change.)
+
+**Honest limit / deploy follow-up:** the csh-dev side must set
+`WORKFLOW_PLANE_REVISION` (the ACA revision name, e.g.
+`csh-dev-plane--0000014`) on both the `workflow-opencode-server` daemon and the
+hub processes (it is inherited, not scrubbed, so the hub UI's live reads see
+it). Until that wire-up is verified live, the isolation is config/runtime-
+acceptance only; the ledger follow-up is not closed.
+
+**Refs:** `src/integrations/opencode-server-discovery.ts`;
+`src/cli/opencode-server.ts`; `src/ui/web.ts`;
+`test/opencode-server-state-home.test.ts`.
