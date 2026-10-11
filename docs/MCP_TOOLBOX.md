@@ -9,22 +9,29 @@ are retired once this repository is up and running.
 
 ## First-class guard integration
 
-`src/integrations/mcp-toolbox-guard.ts` exposes the vendored
-workflow-guard-mcp server as a Workflow `McpProvider`:
+`src/integrations/mcp-toolbox-guard.ts` exposes the vendored workflow-guard
+policy as a Workflow `McpProvider`:
 
-- `createWorkflowGuardMcpProvider({ serverPath })` spawns the built server
-  over stdio and exposes `capabilities()`, `guardCheck(input)`, and
-  `guardStatus()`.
+- `createWorkflowGuardMcpProvider()` runs the vendored policy core
+  **in-process** (C2, 2026-10-11) — the ten portable policy modules are copied
+  byte-identically into `src/integrations/guard-policy/` under a drift guard
+  (`test/guard-policy-drift.test.ts`), so the seat calls the SAME `checkPolicy`
+  the vendored app runs, with no subprocess, stdio handshake, or stale-dist
+  class. It exposes `capabilities()`, `guardCheck(input)`, and `guardStatus()`.
 - `guardPolicyEvidence(decision, mutationEpoch)` normalizes an
   `allow`/`deny`/`ask` decision into evidence with subject
   `policy:<policy-id>` — `allow` records `passed`, anything else `failed`.
+
+The vendored `mcp-toolbox/apps/workflow-guard-mcp` app still builds and mounts
+as the agent-facing MCP tool (its build-freshness gate stays in force); the
+in-process copy is the hub/seat enforcement path.
 
 The guard remains advisory for hosts that merely call it as a tool; Workflow's
 kernel owns task state and evidence freshness regardless. In this repository
 the hub is the wired host (plan Task G2): the `/bash` contained-shell route, the ACP
 permission resolver, and the OpenCode plugin all deny on guard policy and
-fail closed on guard errors, and the hub daemon refuses to start without a
-working guard provider.
+fail closed on guard errors. Since the guard is in-process (C2), a hub cannot
+come up without it — a guardless hub is impossible by construction.
 
 ## Rationale
 
