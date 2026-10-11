@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { EgressAuditLedger, normalizeDomain } from "../src/egress-ledger.js";
+import { EgressAuditLedger, normalizeDomain } from "../src/integrations/egress-ledger.js";
 
 function withLedger<T>(fn: (ledger: EgressAuditLedger, dir: string) => Promise<T>, options?: { maxEntries?: number }): Promise<T> {
   const dir = mkdtempSync(join(tmpdir(), "egress-audit-"));
@@ -20,7 +20,7 @@ test("append records a reach and query returns it newest-first", async () => {
     const { reaches, truncated } = await ledger.query({});
     assert.equal(truncated, false);
     assert.deepEqual(reaches.map((reach) => reach.id), [second.id, first.id]);
-    assert.equal(reaches[0]?.recordedAt >= 0, true);
+    assert.equal((reaches[0]?.recordedAt ?? -1) >= 0, true);
   });
 });
 

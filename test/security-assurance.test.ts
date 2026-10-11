@@ -188,7 +188,7 @@ test("the FEATURES.md toolbox server count matches the vendored app corpus", () 
   // source of truth (test/toolbox-catalog.test.ts proves the settings catalog
   // covers exactly the apps on disk), so every advertised count must equal the
   // app directories; both drifted to 15 after egress-audit-mcp (W181) took the
-  // corpus to 16.
+  // corpus to 16, and back to 15 when egress-audit moved in-process (2026-10-11).
   const features = readFileSync(join(repoRoot, "docs", "FEATURES.md"), "utf8");
   const appsDir = join(repoRoot, "mcp-toolbox", "apps");
   const onDisk = readdirSync(appsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).length;

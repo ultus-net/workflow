@@ -45,7 +45,6 @@ export const TOOLBOX_CATALOG: readonly ToolboxApp[] = [
   { name: "verification-accountability-mcp", description: "Durable bounded verification observations and freshness synthesis over MCP." },
   { name: "review-accountability-mcp", description: "Subject-bound review attestations and durable follow-up debt over MCP." },
   { name: "continuity-checkpoint-mcp", description: "Bounded read-only continuity recovery for coding agents over MCP." },
-  { name: "egress-audit-mcp", description: "Append-only, bounded egress-reach ledger with anomaly flags for coding agents over MCP." },
   { name: "learning-mcp", description: "Adaptive pedagogy engine (learner profile, stage progression, intervention budgeting, Socratic checkpoints) over MCP." },
   { name: "workflow-task-mcp", description: "The canonical Workflow step ledger over MCP: define, start, complete, and cancel evidence-bound task steps." },
 ];

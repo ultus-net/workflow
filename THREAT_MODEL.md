@@ -153,9 +153,12 @@ inventory and the full bypass note are in
    origin-form path on the upstream origin; the grant is function-broad even
    though the code only constructs chat-completion and model-catalog paths.
 5. **`egress-audit-mcp` is advisory evidence.** It records reaches reported to
-   it (`append_egress_reach`) and computes anomaly flags; it cannot block,
-   never enforces, and is not yet wired to proxy events automatically. Its
-   coverage is therefore whatever callers feed it.
+   it (`append_egress_reach`) and computes anomaly flags; it cannot block and
+   never enforces (dated correction 2026-10-11: the ledger now IS auto-fed from
+   the metering proxy, behind the opt-in `WORKFLOW_EGRESS_AUDIT_FEED=1` gate —
+   the earlier "not yet wired" statement is superseded; the ledger moved
+   in-process to `src/integrations/egress-ledger.ts`). Its coverage is still
+   whatever the proxy observes, so it remains evidence, never authority.
 6. **No live vendor verification was run.** Token binding is verified by
    loopback tests; the env-gated `test/open-model-probe.test.ts`
    (`WORKFLOW_OPEN_MODEL_LIVE=1` plus a vendor key) exercises the same

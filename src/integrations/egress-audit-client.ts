@@ -1,25 +1,21 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { existsSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
 import type { EgressObservation, EgressTokenClass } from "./model-usage-proxy.js";
+import { defaultDataRoot, EgressAuditLedger, EGRESS_TOKEN_CLASSES } from "./egress-ledger.js";
 
 /**
  * W181 (A5, NVIDIA adoption): the honest seam between the metering proxy's
- * egress observation stream and the `egress-audit-mcp` ledger.
+ * egress observation stream and the egress-audit ledger.
  *
- * WHY A BRIDGE AND NOT AN IMPORT. The ledger lives in `mcp-toolbox/apps/`
- * (a separate pnpm package, `tsconfig` rootDir `src`); `src/` must not import
- * across that boundary. So the proxy emits the structurally-owned
- * `EgressObservation` (see `model-usage-proxy.ts`), and this module maps that
- * shape onto the ledger's `AppendReachInput` and delivers it over MCP — the
- * same client pattern `src/integrations/project-memory.ts` uses. The mapping
- * test pins the proxy's token-class vocabulary to the ledger's.
+ * IN-PROCESS (2026-10-11, feat/mcp-to-integrations). This seam used to spawn the
+ * vendored `egress-audit-mcp` server over stdio and map the proxy's
+ * structurally-owned `EgressObservation` onto the ledger's append calls across a
+ * package boundary. The ledger core now lives in
+ * `src/integrations/egress-ledger.ts` (moved verbatim), so the same mapping
+ * calls the ledger directly — no child process, no `StdioClientTransport`, no
+ * package-boundary structural copy. The token-class set is imported from the
+ * ledger rather than mirrored, so the two can no longer drift.
  *
  * The ledger stays ADVISORY / READ-ONLY EVIDENCE: the appender only ever calls
- * `append_egress_reach`; it cannot query-and-block, cannot change proxy
+ * `append`/`appendReject`; it cannot query-and-block, cannot change proxy
  * behavior, and a ledger failure is swallowed (an audit sink that could fail a
  * model request would turn observability into enforcement).
  *
@@ -29,12 +25,7 @@ import type { EgressObservation, EgressTokenClass } from "./model-usage-proxy.js
  * emitting surface; nothing request-derived crosses.
  */
 
-/**
- * Structural copy of the ledger's `AppendReachInput`
- * (`mcp-toolbox/apps/egress-audit-mcp/src/egress-ledger.ts`). Redeclared, not
- * imported, for the package-boundary reason above; the mapping test asserts the
- * `EgressTokenClass` sets are identical.
- */
+/** Structural copy of the ledger's `AppendReachInput`. */
 export interface EgressReachInput {
   readonly domain: string;
   readonly functionClass: string;
@@ -53,8 +44,12 @@ export interface EgressRejectInput {
   readonly observedAt?: number;
 }
 
-/** The ledger token-class set, mirrored for the boundary parity test. */
-export const EGRESS_LEDGER_TOKEN_CLASSES = ["session-placeholder", "absent", "foreign", "unknown"] as const;
+/**
+ * The ledger's token-class set, re-exported from the single declaration in
+ * `egress-ledger.ts`. Kept as an export because the W181 parity test names it;
+ * it is now the ledger's own list (same module), not a redeclared mirror.
+ */
+export const EGRESS_LEDGER_TOKEN_CLASSES = EGRESS_TOKEN_CLASSES;
 
 /** The emitting surface label recorded on every appended event. */
 export const EGRESS_PROXY_SOURCE = "model-usage-proxy";
@@ -87,7 +82,7 @@ export function egressRejectInput(observation: EgressObservation, source: string
   };
 }
 
-/** The MCP ledger calls the feed actually makes (one append per event). */
+/** The ledger calls the feed actually makes (one append per event). */
 export interface EgressReachAppender {
   appendReach(input: EgressReachInput): Promise<void>;
   appendReject(input: EgressRejectInput): Promise<void>;
@@ -95,42 +90,32 @@ export interface EgressReachAppender {
 }
 
 export interface EgressAuditAppenderOptions {
-  readonly serverScript: string;
+  /** Directory the ledger document is written to. Defaults to `defaultDataRoot`. */
   readonly dataDir?: string;
 }
 
 /**
- * The Workflow-side client for `egress-audit-mcp`. Mirrors
- * `createProjectMemoryClient`: a stdio MCP client is established eagerly and
- * the returned appender issues one `append_egress_reach` per call. The server's
- * own append-only/bounded semantics decide acceptance; a full ledger refuses
- * the append (that rejection surfaces to the feed, which logs and drops).
+ * The Workflow-side appender for the egress-audit ledger. Establishes the
+ * in-process ledger eagerly and returns an appender issuing one append per
+ * call. The ledger's own append-only/bounded semantics decide acceptance; a
+ * full ledger refuses the append (that rejection surfaces to the feed, which
+ * logs and drops).
  */
-export function createEgressAuditAppender(options: EgressAuditAppenderOptions): Promise<EgressReachAppender> {
-  const client = new Client({ name: "workflow-egress-bridge", version: "1.0.0" });
-  const env: Record<string, string> = options.dataDir === undefined ? {} : { EGRESS_AUDIT_DATA_DIR: options.dataDir };
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: [options.serverScript],
-    stderr: "pipe",
-    ...(Object.keys(env).length === 0 ? {} : { env }),
-  });
-
-  const ready = client.connect(transport).then(() => ({
+export function createEgressAuditAppender(options: EgressAuditAppenderOptions = {}): Promise<EgressReachAppender> {
+  const ledger = new EgressAuditLedger(options.dataDir ?? defaultDataRoot());
+  return Promise.resolve({
     async appendReach(input: EgressReachInput): Promise<void> {
-      const result = await client.callTool({ name: "append_egress_reach", arguments: { ...input } });
-      if (result.isError) throw new Error(`egress-audit append_egress_reach failed: ${JSON.stringify(result.content)}`);
+      const { source, ...rest } = input;
+      await ledger.append({ ...rest, source });
     },
     async appendReject(input: EgressRejectInput): Promise<void> {
-      const result = await client.callTool({ name: "append_egress_reject", arguments: { ...input } });
-      if (result.isError) throw new Error(`egress-audit append_egress_reject failed: ${JSON.stringify(result.content)}`);
+      const { source, ...rest } = input;
+      await ledger.appendReject({ ...rest, source });
     },
     async close(): Promise<void> {
-      await client.close();
+      // No child process or handle to release (in-process ledger).
     },
-  } satisfies EgressReachAppender));
-
-  return ready;
+  });
 }
 
 export interface EgressAuditFeedOptions {
@@ -176,44 +161,28 @@ export function createEgressAuditFeed(options: EgressAuditFeedOptions): (observa
   };
 }
 
-/** The vendored `egress-audit-mcp` stdio entrypoint under a package/checkout root. */
-export function egressAuditServerScript(root: string): string {
-  return resolve(root, "mcp-toolbox", "apps", "egress-audit-mcp", "dist", "server.js");
-}
-
-/** Package root: two levels up from this module (src|dist/integrations → root). */
-export function egressAuditPackageRoot(importUrl: string = import.meta.url): string {
-  return resolve(dirname(fileURLToPath(importUrl)), "..", "..");
-}
-
 export interface EgressRuntimeFeed {
   readonly onEgressObservation: (observation: EgressObservation) => void;
   close(): Promise<void>;
 }
 
 /**
- * Production composition for the OpenCode runtime: when the vendored
- * `egress-audit-mcp` build is present, open the MCP appender and return the
- * proxy callback plus a closer. ABSENT build → `undefined`, so the runtime
- * composes exactly as before (no phantom sink). Env-gated OFF by default so the
- * behavior change is an explicit, reviewable operator choice; a build or
- * connect failure degrades to observation-off with a visible log rather than
- * failing the session.
+ * Production composition for the OpenCode runtime: open the in-process ledger
+ * appender and return the proxy callback plus a closer. Env-gated OFF by
+ * default (`WORKFLOW_EGRESS_AUDIT_FEED=1`) so the behavior change is an explicit,
+ * reviewable operator choice; a construction failure degrades to
+ * observation-off with a visible log rather than failing the session. Because
+ * the ledger is in-process there is no vendored build to probe, so the gate is
+ * the only condition.
  */
 export async function createEgressRuntimeFeed(options: {
-  readonly root: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly dataDir?: string;
-}): Promise<EgressRuntimeFeed | undefined> {
+} = {}): Promise<EgressRuntimeFeed | undefined> {
   const env = options.env ?? process.env;
   if (env.WORKFLOW_EGRESS_AUDIT_FEED?.trim() !== "1") return undefined;
-  const serverScript = egressAuditServerScript(options.root);
-  if (!existsSync(serverScript)) return undefined;
   try {
-    const appender = await createEgressAuditAppender({
-      serverScript,
-      ...(options.dataDir === undefined ? {} : { dataDir: options.dataDir }),
-    });
+    const appender = await createEgressAuditAppender(options.dataDir === undefined ? {} : { dataDir: options.dataDir });
     return {
       onEgressObservation: createEgressAuditFeed({ appender }),
       close: () => appender.close(),

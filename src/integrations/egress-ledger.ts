@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 /**
- * W052 slice 3: `egress-audit-mcp` ledger core.
+ * W052 slice 3: egress-audit ledger core — now an IN-PROCESS integration.
  *
  * An append-only, bounded ledger of egress reaches: which destination domain
  * was reached, under which function class, and with which token class, with
@@ -15,6 +15,13 @@ import { join, resolve } from "node:path";
  *
  * Append-only by construction: entries are only ever added; a full or oversized
  * ledger refuses new appends rather than rotating or deleting history.
+ *
+ * PROVENANCE (2026-10-11, feat/mcp-to-integrations): moved verbatim out of the
+ * vendored `mcp-toolbox/apps/egress-audit-mcp` server (whose stdio shell was
+ * deleted) so the metering proxy appends without spawning a child process. The
+ * data root and on-disk document shape are unchanged, so an existing
+ * `egress-audit-ledger.json` loads without migration. The portable MCP product
+ * remains for foreign hosts; this is the in-repo control-plane copy.
  */
 
 export const EGRESS_TOKEN_CLASSES = ["session-placeholder", "absent", "foreign", "unknown"] as const;
@@ -222,7 +229,7 @@ export class EgressAuditLedger {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, entries: [] };
       if (error instanceof Error && error.message.includes("size limit")) throw error;
-      throw new Error("Egress audit ledger is malformed or unreadable.");
+      throw new Error("Egress audit ledger is malformed or unreadable.", { cause: error });
     }
   }
 

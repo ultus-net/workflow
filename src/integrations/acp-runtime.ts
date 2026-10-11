@@ -314,10 +314,9 @@ async function createOpencodeRuntime(
   // below keeps the W118 body-rewrite lane. The Cline/goose runtime sites
   // stay unwired (the W118 wiring breadth remains queued).
   // W181 (A5): the egress observation feed rides the same proxy. Env-gated
-  // (WORKFLOW_EGRESS_AUDIT_FEED=1) and absent when the vendored ledger build
-  // is missing, so the default composition is unchanged.
-  const runtimeRoot = resolve(fileURLToPath(import.meta.url), "..", "..", "..");
-  const egressFeed = await createEgressRuntimeFeed({ root: runtimeRoot });
+  // (WORKFLOW_EGRESS_AUDIT_FEED=1). The ledger is in-process now, so there is no
+  // vendored build to probe — the default composition stays unchanged.
+  const egressFeed = await createEgressRuntimeFeed();
   let proxy: ModelUsageProxy;
   try {
     proxy = await createModelUsageProxy({

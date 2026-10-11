@@ -1310,7 +1310,7 @@ test("P9 D: under the opt-in an unparseable messages body fails closed with the 
 // ── W181 (A5, NVIDIA adoption): the egress observation seam ──────────────────
 //
 // The proxy emits a reach on every forwarded request and a reject at the
-// credential boundary, with the fields the `egress-audit-mcp` ledger needs
+// credential boundary, with the fields the egress ledger needs
 // (destination, function class, token class, anomaly-relevant facts). The seam
 // is OBSERVATION ONLY: it never blocks, delays, or rewrites, and no secret,
 // placeholder value, path, or query string crosses it — only a bare hostname,

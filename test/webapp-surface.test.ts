@@ -208,7 +208,7 @@ test("the connectors section lists vendored apps with availability and add contr
       catalog: [
         { name: "skills-mcp", description: "Skills delivery.", transport: "stdio", serverPath: "/x/dist/server.js", available: true },
         { name: "git-intelligence-mcp", description: "Git intelligence.", transport: "stdio", serverPath: "/x/dist/server.js", available: true },
-        { name: "egress-audit-mcp", description: "Egress audit.", transport: "stdio", serverPath: "/x/dist/server.js", available: false },
+        { name: "ci-intelligence-mcp", description: "CI intelligence.", transport: "stdio", serverPath: "/x/dist/server.js", available: false },
       ],
       scope: "global",
       workspaceOverlay: false,
