@@ -1,0 +1,256 @@
+export interface TodoItem {
+	content?: unknown;
+	status?: unknown;
+}
+
+export interface TodoSdkClient {
+	app?: {
+		log?: (opts: { body: { service: string; level: "debug" | "info" | "warn" | "error"; message: string } }) => Promise<unknown>;
+	};
+	session?: {
+		todo?: (opts: { path: { id: string } }) => Promise<{ data?: unknown }>;
+		/**
+		 * The returned record's `data.time.idle` (ms epoch, server-recorded
+		 * when a session's turn ends; absent/zero while mid-turn) is the
+		 * stale-claim staleness boundary in src/policies/file-claims.ts. The
+		 * field is assumption-typed because the minimal SDK surface here does
+		 * not declare it; a missing, zero, or non-numeric value fails closed.
+		 */
+		get?: (opts: { path: { id: string } }) => Promise<{ data?: { parentID?: unknown; title?: unknown; time?: { idle?: unknown } } }>;
+		promptAsync?: (opts: {
+			path: { id: string };
+			body: { messageID?: string; parts: Array<{ type: "text"; text: string; synthetic?: boolean }> };
+		}) => Promise<unknown>;
+	};
+	tui?: {
+		showToast?: (opts: { body: { title?: string; message: string; variant?: string } }) => Promise<unknown>;
+	};
+	lsp?: {
+		status?: () => Promise<{ data?: unknown }>;
+	};
+}
+
+export interface ProjectConfig {
+	profile?: "interactive" | "autonomous";
+	protectedBranches?: string[];
+	verifyCommand?: string;
+	verifyTimeoutMs?: number;
+	postEditValidators?: Array<{
+		pattern: string;
+		command: string;
+		timeoutMs?: number;
+	}>;
+	requireReview?: boolean;
+	/**
+	 * Opt-in strict mode for secondary reviews: when true, record_review
+	 * rejects approvals recorded by the root session itself, so a passing
+	 * verdict must come from a subagent session with a parent. Unset or false
+	 * keeps the documented relay flow where any session may record a verdict
+	 * that is then bound to the reviewed content.
+	 */
+	requireSubagentReview?: boolean;
+	requireDocumentation?: boolean;
+	/**
+	 * Absolute paths of the LIVE control plane (runtime `~/.config/opencode`,
+	 * the guard's own install). When set, config-path protection classifies by
+	 * runtime consumption instead of filename segments: only targets under a
+	 * live root are protected, while versioned drafts (project `.opencode/`,
+	 * dotfiles `.config/opencode`, worktrees) are not. Unset keeps the legacy
+	 * fail-closed segment matching.
+	 */
+	liveControlPlanePaths?: string[];
+	recoveryCheckpoints?: boolean;
+	projectMemory?: boolean;
+	learning?: boolean;
+	titleSettleWorkaround?: boolean;
+	ralphMode?: boolean;
+	ralphMaxIterations?: number;
+	maxSubagentMutations?: number;
+	maxLearningInterventions?: number;
+}
+
+export type PolicyDecisionStatus = "allowed" | "blocked" | "needs_approval" | "verification_failed";
+
+export interface PolicyDecision {
+	status: PolicyDecisionStatus;
+	code: string;
+	policy?: string;
+	message: string;
+	details?: Record<string, unknown>;
+}
+
+export interface VerifyResult {
+	passed: boolean;
+	command: string;
+	output: string;
+	timestamp: number;
+	durationMs?: number;
+	commitHash?: string;
+	gitStatus?: string;
+	workspaceRoot?: string;
+	worktreeFingerprint?: string;
+}
+
+export interface ReviewResult {
+	passed: boolean;
+	reviewer: string;
+	summary: string;
+	timestamp: number;
+	targetSessionID?: string;
+	workspace?: string;
+	commitHash?: string;
+	gitStatus?: string;
+	worktreeFingerprint?: string;
+}
+
+export type EvidenceConfidence = "deterministic_observation" | "attestation" | "derived_state" | "agent_assertion";
+
+export interface EvidenceRecord {
+	id: string;
+	kind: "verification" | "review" | "tool_outcome" | "policy_evaluation" | "lifecycle_state" | "agent_assertion";
+	confidence: EvidenceConfidence;
+	observedAt: number;
+	subject: {
+		workspace?: string;
+		commitHash?: string;
+		worktreeFingerprint?: string;
+		sessionID?: string;
+		callID?: string;
+		actor?: string;
+	};
+	source: Record<string, unknown>;
+}
+
+export type EvidenceSubject = EvidenceRecord["subject"];
+
+export interface AuditEntry {
+	ts: string;
+	sessionID?: string;
+	callID?: string;
+	tool: string;
+	decision: "allow" | "block";
+	policyDecision?: PolicyDecision;
+	phase?: "decision" | "outcome" | "event";
+	durationMs?: number;
+	reason?: string;
+	input?: unknown;
+	evidence?: {
+		mutation?: boolean;
+		targetPath?: string;
+		/** Owner of a released stale file claim (stale_claim_takeover audits). */
+		claimOwnerSessionID?: string;
+		verification?: {
+			command: string;
+			passed: boolean;
+			fresh: boolean;
+			durationMs?: number;
+		};
+		allowLive?: boolean;
+		reviewVerdict?: "approved" | "changes_requested" | "rejected";
+		evidenceId?: string;
+		reviewer?: string;
+		reviewTimestamp?: number;
+		binding?: {
+			workspace?: string;
+			commitHash?: string;
+			worktreeFingerprint?: string;
+			recorderSessionID?: string;
+			recorderRole?: "root" | "subagent";
+			targetSessionID?: string;
+		};
+	};
+}
+
+export interface GitInvocation {
+	repoDir: string;
+	rest: string;
+}
+
+export interface ShellMutation {
+	kind: "redirect" | "command";
+	target?: string;
+	what: string;
+}
+
+export type LearningStage = "exposed" | "developing" | "demonstrated" | "independent" | "critique";
+export type LearningEvidenceKind = LearningStage | "needs-reinforcement";
+export type LearningOpportunityType = "design" | "debugging" | "new-concept";
+
+export interface LearningEvidence {
+	concept: string;
+	kind: LearningEvidenceKind;
+	summary: string;
+	timestamp: number;
+	sessionID?: string;
+	project?: string;
+}
+
+export interface LearnerConcept {
+	stage: LearningStage;
+	lastObservedAt: number;
+	evidence: LearningEvidence[];
+}
+
+export interface LearnerProfile {
+	version: 1;
+	concepts: Record<string, LearnerConcept>;
+}
+
+export interface LearningOpportunity {
+	type: LearningOpportunityType;
+	concept: string;
+	relevance: number;
+	consequence: number;
+}
+
+export type ProjectMemoryKind = "fact" | "decision" | "constraint" | "lesson";
+export type ProjectMemorySource = "user" | "file" | "git" | "tool" | "agent" | "portable";
+
+export interface ProjectMemoryRecord {
+	id: string;
+	projectId: string;
+	kind: ProjectMemoryKind;
+	content: string;
+	source: ProjectMemorySource;
+	createdAt: number;
+	sessionID?: string;
+	commit?: string;
+	paths: string[];
+	supersedes?: string;
+	status: "current" | "superseded";
+}
+
+export interface ProjectMemoryInput {
+	kind: ProjectMemoryKind;
+	content: string;
+	source: ProjectMemorySource;
+	sessionID?: string;
+	commit?: string;
+	paths?: string[];
+	supersedes?: string;
+}
+
+export type ReviewFollowupSeverity = "P2" | "P3";
+
+export interface ReviewFollowup {
+	id: string;
+	projectId: string;
+	severity: ReviewFollowupSeverity;
+	summary: string;
+	reviewer: string;
+	createdAt: number;
+	resolvedAt?: number;
+	sessionID?: string;
+	commit?: string;
+	paths: string[];
+	status: "open" | "resolved";
+}
+
+export interface ReviewFollowupInput {
+	severity: ReviewFollowupSeverity;
+	summary: string;
+	reviewer: string;
+	sessionID?: string;
+	commit?: string;
+	paths?: string[];
+}
