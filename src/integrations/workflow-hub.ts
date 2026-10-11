@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { homedir, hostname } from "node:os";
 import { randomBytes } from "node:crypto";
 
 import type { WorkflowApplication } from "../application/workflow.js";
@@ -335,32 +335,98 @@ export async function createWorkflowHub(
 }
 
 /**
+ * The lease identity written into the lock directory. `pid` alone cannot tell
+ * a live hub from an unrelated process that inherited a recycled pid, so the
+ * record also carries the owner's process start time and a random token.
+ * A lock is only live when every field still matches a live owner process.
+ */
+interface InstanceLockRecord {
+  pid: number;
+  /** The owner's `/proc/<pid>/stat` start time (clock ticks since boot). */
+  startTime: string;
+  host: string;
+  token: string;
+}
+
+/**
  * Single-instance guard: the lock directory is created atomically (mkdir is
- * atomic on POSIX) and holds the owning pid. A live pid means another hub is
- * running; a dead pid means a crashed hub and the lock is reclaimed.
+ * atomic on POSIX) and holds a lease record. A record whose owner is still
+ * alive and whose start time and token match means another hub is running; a
+ * dead owner, a mismatched identity, or an unreadable record is a crashed (or
+ * corrupt) hub and the lock is reclaimed.
  */
 function acquireInstanceLock(lockDir: string): void {
   mkdirSync(dirname(lockDir), { recursive: true });
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       mkdirSync(lockDir);
-      writeFileSync(join(lockDir, "pid"), String(process.pid), { encoding: "utf8", mode: 0o600 });
+      const record: InstanceLockRecord = {
+        pid: process.pid,
+        startTime: processStartTime(process.pid),
+        host: hostname(),
+        token: randomBytes(16).toString("hex"),
+      };
+      writeFileSync(join(lockDir, "owner.json"), JSON.stringify(record), { encoding: "utf8", mode: 0o600 });
       return;
     } catch {
-      // Lock exists: inspect the owning pid.
+      // Lock exists: inspect the recorded lease.
     }
-    let pid = Number.NaN;
-    try {
-      pid = Number(readFileSync(join(lockDir, "pid"), "utf8").trim());
-    } catch {
-      // Unreadable lock: treat as stale.
+    const record = readInstanceLockRecord(lockDir);
+    if (record !== undefined && lockOwnerAlive(record)) {
+      throw new Error(`Workflow hub is already running (pid ${record.pid})`);
     }
-    if (Number.isInteger(pid) && pid > 0 && processAlive(pid)) {
-      throw new Error(`Workflow hub is already running (pid ${pid})`);
-    }
+    // Dead owner, mismatched identity, or unreadable/corrupt record: fail
+    // closed to reclaim — never silently ignore the lock.
     rmSync(lockDir, { recursive: true, force: true });
   }
   throw new Error("Workflow hub instance lock could not be acquired");
+}
+
+/** Reads the lease record, returning undefined for an unreadable/corrupt lock. */
+function readInstanceLockRecord(lockDir: string): InstanceLockRecord | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(join(lockDir, "owner.json"), "utf8"));
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) return undefined;
+  const { pid, startTime, host, token } = parsed as Record<string, unknown>;
+  if (
+    typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0 ||
+    typeof startTime !== "string" || typeof host !== "string" || typeof token !== "string" ||
+    startTime === "" || token === ""
+  ) {
+    return undefined;
+  }
+  return { pid, startTime, host, token };
+}
+
+/** A lease is live only when a live owner's process identity still matches. */
+function lockOwnerAlive(record: InstanceLockRecord): boolean {
+  if (record.host !== hostname()) return false;
+  if (!processAlive(record.pid)) return false;
+  const startTime = processStartTime(record.pid);
+  return startTime !== "" && startTime === record.startTime;
+}
+
+/**
+ * The process's start time from `/proc/<pid>/stat` (field 22): a constant per
+ * process that differs even after a pid is recycled within one boot. Returns
+ * "" when the process is gone or `/proc` is unavailable (non-Linux, fail
+ * closed to the caller).
+ */
+function processStartTime(pid: number): string {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    // The comm field (2) is parenthesized and may contain spaces or parens;
+    // fields after the final ")" are space-delimited, so start time (field 22)
+    // is the 20th field of the tail.
+    const tail = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    return tail[19] ?? "";
+  } catch {
+    return "";
+  }
 }
 
 function processAlive(pid: number): boolean {

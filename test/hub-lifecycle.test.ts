@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
+import { spawn } from "node:child_process";
 
 import { WorkflowApplication } from "../src/application/workflow.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
@@ -72,6 +73,29 @@ test("a stale lock from a dead process is reclaimed", async (t) => {
   mkdirSync(lockDir, { recursive: true });
   // pid 4194303 is above the default Linux pid_max and cannot be alive.
   writeFileSync(join(lockDir, "pid"), "4194303");
+
+  const hub = await createWorkflowHub(application(), { discoveryDir: dir });
+  t.after(() => hub.close());
+  assert.equal(hub.url, discovery(dir).endpoint);
+});
+
+test("a recycled pid whose lease identity does not match is reclaimed", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "wf-hub-life-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  // Spawn a live, unrelated process and write a lock record naming its pid but
+  // a foreign start time — the shape of a dead hub's recycled pid.
+  const unrelated = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  t.after(() => unrelated.kill("SIGKILL"));
+  await new Promise<void>((resolve) => unrelated.once("spawn", () => resolve()));
+  const livePid = unrelated.pid;
+  assert.ok(livePid !== undefined && livePid > 0, "unrelated process has a pid");
+
+  const lockDir = join(dir, "hub", "lock");
+  mkdirSync(lockDir, { recursive: true });
+  writeFileSync(
+    join(lockDir, "owner.json"),
+    JSON.stringify({ pid: livePid, startTime: "999999", host: hostname(), token: "recycled" }),
+  );
 
   const hub = await createWorkflowHub(application(), { discoveryDir: dir });
   t.after(() => hub.close());
