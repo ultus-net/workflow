@@ -38,7 +38,7 @@ test("packed npm artifact installs independently and launches its MCP binary", a
       dependencies?: Record<string, string>;
     };
     assert.deepEqual(installedPackage.bin, { "git-intelligence-mcp": "./dist/server.js" });
-    assert.deepEqual(Object.keys(installedPackage.dependencies ?? {}).sort(), ["@modelcontextprotocol/sdk", "zod"]);
+    assert.deepEqual(Object.keys(installedPackage.dependencies ?? {}).sort(), ["@agent-tools/mcp-server-kit", "@modelcontextprotocol/sdk", "zod"]);
     const binary = join(consumer, "node_modules", ".bin", "git-intelligence-mcp");
     accessSync(binary, constants.X_OK);
 

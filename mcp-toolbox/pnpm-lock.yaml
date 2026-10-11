@@ -10,6 +10,9 @@ importers:
 
   apps/accountability-mcp:
     dependencies:
+      '@agent-tools/mcp-server-kit':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server-kit
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.0(zod@3.25.76)
@@ -29,6 +32,9 @@ importers:
 
   apps/browser-verification-mcp:
     dependencies:
+      '@agent-tools/mcp-server-kit':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server-kit
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.0(zod@3.25.76)
@@ -48,6 +54,9 @@ importers:
 
   apps/change-intelligence-mcp:
     dependencies:
+      '@agent-tools/mcp-server-kit':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server-kit
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.0(zod@3.25.76)
@@ -67,6 +76,9 @@ importers:
 
   apps/ci-intelligence-mcp:
     dependencies:
+      '@agent-tools/mcp-server-kit':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server-kit
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.0(zod@3.25.76)
@@ -86,6 +98,9 @@ importers:
 
   apps/code-intelligence-mcp:
     dependencies:
+      '@agent-tools/mcp-server-kit':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server-kit
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.0(zod@3.25.76)
@@ -105,6 +120,9 @@ importers:
 
   apps/continuity-checkpoint-mcp:
     dependencies:
+      '@agent-tools/mcp-server-kit':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server-kit
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.0(zod@3.25.76)
@@ -124,6 +142,9 @@ importers:
 
   apps/git-intelligence-mcp:
     dependencies:
+      '@agent-tools/mcp-server-kit':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server-kit
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.0(zod@3.25.76)
@@ -162,6 +183,9 @@ importers:
 
   apps/project-context-mcp:
     dependencies:
+      '@agent-tools/mcp-server-kit':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server-kit
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.0(zod@3.25.76)
@@ -181,6 +205,9 @@ importers:
 
   apps/project-memory-mcp:
     dependencies:
+      '@agent-tools/mcp-server-kit':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server-kit
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.0(zod@3.25.76)
@@ -200,6 +227,9 @@ importers:
 
   apps/skills-mcp:
     dependencies:
+      '@agent-tools/mcp-server-kit':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server-kit
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.0(zod@3.25.76)
@@ -219,6 +249,9 @@ importers:
 
   apps/test-intelligence-mcp:
     dependencies:
+      '@agent-tools/mcp-server-kit':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server-kit
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.0(zod@3.25.76)
@@ -238,6 +271,9 @@ importers:
 
   apps/workflow-guard-mcp:
     dependencies:
+      '@agent-tools/mcp-server-kit':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server-kit
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.0(zod@3.25.76)
@@ -257,6 +293,9 @@ importers:
 
   apps/workflow-task-mcp:
     dependencies:
+      '@agent-tools/mcp-server-kit':
+        specifier: workspace:*
+        version: link:../../packages/mcp-server-kit
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.30.0(zod@3.25.76)
@@ -273,6 +312,21 @@ importers:
       typescript:
         specifier: ^5.9.0
         version: 5.9.3
+
+  packages/mcp-server-kit:
+    devDependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.30.0(zod@3.25.76)
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.1
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+      zod:
+        specifier: ^3.25.0
+        version: 3.25.76
 
   packages/protocol-baseline:
     dependencies:

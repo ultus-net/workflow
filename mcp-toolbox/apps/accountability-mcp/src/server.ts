@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { InMemoryTaskStore } from "@modelcontextprotocol/sdk/experimental/tasks/stores/in-memory.js";
 import { z } from "zod";
+
+import { createLoggingServer, installToolStreaming } from "@agent-tools/mcp-server-kit";
 
 import { createAuthorityPorts } from "./authority-ports.js";
 import { defaultDataRoot as reviewDataRoot, ReviewStore, SEVERITIES } from "./reviews.js";
@@ -14,7 +15,7 @@ import { defaultDataRoot as verificationDataRoot, VerificationStore, type Record
 // data-root defaults change. Each subsystem keeps its own durable store under
 // its own data root (see reviews.ts / verification.ts `defaultDataRoot`), so
 // neither product's existing records are lost or merged into the other.
-const server = new McpServer(
+const server = createLoggingServer(
   { name: "accountability-mcp", version: "0.1.0" },
   {
     capabilities: {
@@ -27,31 +28,9 @@ const server = new McpServer(
 
 // Stream leveled MCP log notifications (and progress when the caller supplies
 // a progressToken) for every tool call, so hosts surfacing MCP logging see
-// server activity in the session stream. See learning-mcp for the pattern.
-type ToolExtra = {
-  _meta?: { progressToken?: string | number };
-  sendNotification: (notification: unknown) => Promise<void>;
-};
-const registerTool = server.registerTool.bind(server);
-server.registerTool = ((name: string, config: unknown, handler: (input: never, extra: ToolExtra) => Promise<unknown>) =>
-  registerTool(name as never, config as never, (async (input: never, extra: ToolExtra) => {
-    const progressToken = extra._meta?.progressToken;
-    const progress = async (message: string, value: number) => {
-      if (progressToken === undefined) return;
-      await extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress: value, total: 2, message } } as never);
-    };
-    await server.server.sendLoggingMessage({ level: "debug", logger: "accountability-mcp", data: { tool: name, phase: "start" } });
-    await progress("start", 0);
-    try {
-      const result = await handler(input, extra);
-      await server.server.sendLoggingMessage({ level: "info", logger: "accountability-mcp", data: { tool: name, phase: "done" } });
-      await progress("done", 2);
-      return result;
-    } catch (error) {
-      await server.server.sendLoggingMessage({ level: "error", logger: "accountability-mcp", data: { tool: name, phase: "error", message: error instanceof Error ? error.message : String(error) } });
-      throw error;
-    }
-  }) as never)) as typeof server.registerTool;
+// server activity in the session stream. The scaffolding lives in
+// @agent-tools/mcp-server-kit.
+installToolStreaming(server, { logger: "accountability-mcp" });
 
 // --- Review accountability subsystem (formerly review-accountability-mcp) ---
 const reviewStore = new ReviewStore(reviewDataRoot());

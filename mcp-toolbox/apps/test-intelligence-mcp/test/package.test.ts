@@ -38,6 +38,7 @@ test("packed npm artifact installs independently and launches its MCP binary", a
     };
     assert.deepEqual(installedPackage.bin, { "test-intelligence-mcp": "./dist/server.js" });
     assert.ok(installedPackage.dependencies?.tsx, "tsx must ship as a runtime dependency for the Node adapter");
+    assert.ok(installedPackage.dependencies?.["@agent-tools/mcp-server-kit"], "the shared scaffolding ships as a bundled workspace dependency");
     const binary = join(consumer, "node_modules", ".bin", "test-intelligence-mcp");
     accessSync(binary, constants.X_OK);
 

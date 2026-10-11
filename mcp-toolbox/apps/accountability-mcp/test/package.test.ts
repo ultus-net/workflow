@@ -51,7 +51,7 @@ test("packed npm artifact independently records and retrieves review accountabil
     execFileSync("npm", ["install", "--ignore-scripts", join(temp, filename)], { cwd: consumer, stdio: "ignore" });
     const installed = JSON.parse(readFileSync(join(consumer, "node_modules", "accountability-mcp", "package.json"), "utf8")) as { bin?: Record<string, string>; dependencies?: Record<string, string> };
     assert.deepEqual(installed.bin, { "accountability-mcp": "./dist/server.js" });
-    assert.deepEqual(Object.keys(installed.dependencies ?? {}).sort(), ["@modelcontextprotocol/sdk", "zod"]);
+    assert.deepEqual(Object.keys(installed.dependencies ?? {}).sort(), ["@agent-tools/mcp-server-kit", "@modelcontextprotocol/sdk", "zod"]);
     const binary = join(consumer, "node_modules", ".bin", "accountability-mcp");
     accessSync(binary, constants.X_OK);
     const client = new Client({ name: "accountability-package-producer", version: "1.0.0" });

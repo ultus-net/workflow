@@ -1,0 +1,28 @@
+{
+  "name": "@agent-tools/mcp-server-kit",
+  "description": "Shared MCP server scaffolding: a logging-capable McpServer factory and the leveled log + progress tool-registration wrapper every toolbox app repeats.",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "pnpm run build && node --test dist/*.test.js",
+    "verify": "pnpm run typecheck && pnpm run test"
+  },
+  "engines": { "node": ">=22" },
+  "license": "MIT",
+  "peerDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@types/node": "^22.0.0",
+    "typescript": "^5.9.0",
+    "zod": "^3.25.0"
+  }
+}

@@ -32,7 +32,7 @@ test("packed npm artifact runs the browser-verification binary against a CDP end
     execFileSync("npm", ["install", "--ignore-scripts", join(temp, filename)], { cwd: consumer, stdio: "ignore" });
     const installed = JSON.parse(readFileSync(join(consumer, "node_modules", "browser-verification-mcp", "package.json"), "utf8")) as { bin?: Record<string, string>; dependencies?: Record<string, string> };
     assert.deepEqual(installed.bin, { "browser-verification-mcp": "./dist/server.js" });
-    assert.deepEqual(Object.keys(installed.dependencies ?? {}).sort(), ["@modelcontextprotocol/sdk", "zod"]);
+    assert.deepEqual(Object.keys(installed.dependencies ?? {}).sort(), ["@agent-tools/mcp-server-kit", "@modelcontextprotocol/sdk", "zod"]);
     const binary = join(consumer, "node_modules", ".bin", "browser-verification-mcp");
     accessSync(binary, constants.X_OK);
     const client = new Client({ name: "browser-verification-package-consumer", version: "1.0.0" });

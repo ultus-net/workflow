@@ -23,9 +23,13 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@agent-tools/mcp-server-kit": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.25.0"
   },
+  "bundleDependencies": [
+    "@agent-tools/mcp-server-kit"
+  ],
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.20.0",

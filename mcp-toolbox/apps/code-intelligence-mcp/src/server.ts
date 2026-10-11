@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { isAbsolute } from "node:path";
 
-import { boundToolResultText } from "./vendor/result-bounds.js";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { createLoggingServer, installToolStreaming } from "@agent-tools/mcp-server-kit";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
 import { TypeScriptLanguageService } from "./typescript-language-service.js";
+import { boundToolResultText } from "./vendor/result-bounds.js";
 
 const locationSchema = {
   file: z.string(),
@@ -16,40 +16,15 @@ const locationSchema = {
   endColumn: z.number().int().positive(),
 };
 
-const server = new McpServer(
+const server = createLoggingServer(
   { name: "code-intelligence-mcp", version: "0.1.0" },
-  { capabilities: { logging: {} } },
 );
 
 // Stream leveled MCP log notifications (and progress when the caller supplies
-// a progressToken) for every tool call, so hosts surfacing MCP logging see
-// server activity in the session stream. See learning-mcp for the pattern.
-type ToolExtra = {
-  _meta?: { progressToken?: string | number };
-  sendNotification: (notification: unknown) => Promise<void>;
-};
-const registerTool = server.registerTool.bind(server);
-server.registerTool = ((name: string, config: unknown, handler: (input: never, extra: ToolExtra) => Promise<unknown>) =>
-  registerTool(name as never, config as never, (async (input: never, extra: ToolExtra) => {
-    const progressToken = extra._meta?.progressToken;
-    const progress = async (message: string, value: number) => {
-      if (progressToken === undefined) return;
-      await extra.sendNotification({ method: "notifications/progress", params: { progressToken, progress: value, total: 2, message } } as never);
-    };
-    await server.server.sendLoggingMessage({ level: "debug", logger: "code-intelligence-mcp", data: { tool: name, phase: "start" } });
-    await progress("start", 0);
-    try {
-      const result = await handler(input, extra);
-      await server.server.sendLoggingMessage({ level: "info", logger: "code-intelligence-mcp", data: { tool: name, phase: "done" } });
-      await progress("done", 2);
-      // Plan Task E1: bound every tool result's model-visible text (48k
-      // middle-cut parity) so any MCP host inherits the token economy.
-      return boundToolResultText(result);
-    } catch (error) {
-      await server.server.sendLoggingMessage({ level: "error", logger: "code-intelligence-mcp", data: { tool: name, phase: "error", message: error instanceof Error ? error.message : String(error) } });
-      throw error;
-    }
-  }) as never)) as typeof server.registerTool;
+// a progressToken) for every tool call. The scaffolding lives in
+// @agent-tools/mcp-server-kit; every result is bounded (48k middle-cut parity).
+installToolStreaming(server, { logger: "code-intelligence-mcp", transform: boundToolResultText });
+
 const languageService = new TypeScriptLanguageService();
 const workspaceRootSchema = z.string().min(1).refine(isAbsolute, "workspaceRoot must be absolute");
 const fileSchema = z.string().min(1).refine(
