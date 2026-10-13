@@ -535,6 +535,59 @@ test("W071 broker: an UNDELIVERED allow never covers later activity (fix-verify 
   assert.equal(app.snapshot().mutationEpoch, epochBefore);
 });
 
+test("W071 broker: a 404 reply (v2 reject cascade) is journaled as already-resolved, not a transport loss", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-404-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const engine = {
+    async *events() {
+      // Two asks in one session: the live v2 wire raises one per pending tool.
+      yield permission("r1", "edit", { filePath: join(workspace, "src", "a.ts") }, "c1");
+      yield permission("r2", "edit", { filePath: join(workspace, "src", "b.ts") }, "c2");
+    },
+    async replyPermission(input: { readonly requestId: string; readonly reply: string }) {
+      // The first reject drains siblings on v2, so the second reply 404s.
+      if (input.requestId === "r2") {
+        throw new Error("remote engine POST /api/session/s1/permission/r2/reply failed (404): ");
+      }
+    },
+  } as unknown as Pick<RemoteEngine, "events" | "replyPermission">;
+  const authority = createOpencodeServerAuthority({
+    engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+  });
+  await authority.start();
+  const second = authority.decisions().find((d) => d.requestId === "r2");
+  assert.equal(second?.delivered, false);
+  assert.match(second?.reason ?? "", /already resolved upstream/);
+  assert.doesNotMatch(second?.reason ?? "", /upstream reply failed/);
+});
+
+test("W071 broker: a non-resolution error that merely mentions 404 in its body is NOT relabeled", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-404body-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const engine = {
+    async *events() {
+      yield permission("r1", "edit", { filePath: join(workspace, "src", "a.ts") }, "c1");
+    },
+    async replyPermission() {
+      // A 500 whose appended body happens to contain "404": the structured
+      // status is 500, so this is a genuine transport failure, not a resolution.
+      throw new Error("remote engine POST /x failed (500): internal error near line 404");
+    },
+  } as unknown as Pick<RemoteEngine, "events" | "replyPermission">;
+  const authority = createOpencodeServerAuthority({
+    engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+  });
+  await authority.start();
+  const decision = authority.decisions()[0];
+  assert.equal(decision?.delivered, false);
+  assert.match(decision?.reason ?? "", /upstream reply failed/);
+  assert.doesNotMatch(decision?.reason ?? "", /already resolved upstream/);
+});
+
 test("W071 broker: the part's own sessionID is honored (review P2-1)", async (t) => {
   const workspace = mkdtempSync(join(tmpdir(), "wf-broker-partsession-"));
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
@@ -628,6 +681,49 @@ test("W071 broker (v2 wire): a data-wrapped permission.asked maps and is answere
   );
   assert.equal(authority.decisions()[0]?.decision, "allow");
   assert.equal(authority.decisions()[0]?.delivered, true);
+});
+
+/** A v2 `permission.asked` whose subject rides `resources` (the live wire shape). */
+function v2PermissionResources(id: string, action: string, resources: readonly string[], sourceCallId: string): RemoteEngineEvent {
+  return {
+    type: "permission.asked",
+    properties: { id, sessionID: "s1", action, resources, save: [], metadata: {}, source: { type: "tool", messageID: "m1", id: sourceCallId } },
+  } as unknown as RemoteEngineEvent;
+}
+
+test("W071 broker (v2 wire): an external_directory ask whose path rides `resources` denies by workspace confinement, not as unmappable", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-v2-extdir-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  // Live v2 puts the directory in `resources` (metadata is empty); the subject
+  // must map so the out-of-workspace path hits WORKSPACE_PATH_DENIED, the legible
+  // denial, instead of failing closed as "invalid ACP tool subject".
+  const fake = fakeEngine([v2PermissionResources("per_1", "external_directory", ["/app/src"], "call_1")]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+  });
+  await authority.start();
+  const decision = authority.decisions()[0];
+  assert.equal(decision?.decision, "deny");
+  assert.deepEqual(decision?.subjects, ["/app/src"]);
+  assert.match(decision?.reason ?? "", /outside authorized workspace/);
+  assert.doesNotMatch(decision?.reason ?? "", /unmappable permission request/);
+});
+
+test("W071 broker (v2 wire): an in-workspace edit whose path rides `resources` is allowed", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-v2-edit-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  const target = join(workspace, "src", "a.ts");
+  const fake = fakeEngine([v2PermissionResources("per_1", "edit", [target], "call_1")]);
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+  });
+  await authority.start();
+  assert.equal(authority.decisions()[0]?.decision, "allow");
+  assert.deepEqual(authority.decisions()[0]?.subjects, [target]);
 });
 
 test("W071 broker (v2 wire): session.tool.success consumes coverage and records the mutation", async (t) => {

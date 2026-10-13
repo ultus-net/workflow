@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 import type { ProcessContainment } from "../src/containment/contracts.js";
@@ -295,4 +295,62 @@ test("runtime: the default lane composes NO toolbox connectors when no skills st
   assert.equal(mcp["workflow-guard-mcp"], undefined, "the declared floor must not mount without a skills store on the default lane");
   assert.equal(mcp["git-intelligence-mcp"], undefined, "the full toolbox must not mount on the default lane");
   assert.equal(config.skills, undefined, "no skills mount is composed without a store");
+});
+
+// The plane lane sets `ensureSkillsStore` independent of the O-4 full-toolbox
+// switch, so the hub-owned store is created+provisioned even when the operator
+// has NOT opted into the full catalog. This pins the behavior end-to-end: a
+// resolved store composes the declared floor (guard + skills-mcp) but NOT the
+// full catalog, and the fleet skill lands in the store.
+test("runtime: ensureSkillsStore creates the store, provisions fleet skills, and composes the declared floor (not the full catalog)", { skip: binary === undefined, timeout: 60_000 }, async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-run-ws-"));
+  const stateHome = mkdtempSync(join(tmpdir(), "wf-run-state-"));
+  const absentSkillsDir = join(mkdtempSync(join(tmpdir(), "wf-run-ensure-")), "skills");
+  const priorSkillsDir = process.env.SKILLS_MCP_DIR;
+  process.env.SKILLS_MCP_DIR = absentSkillsDir;
+  t.after(() => {
+    if (priorSkillsDir === undefined) delete process.env.SKILLS_MCP_DIR;
+    else process.env.SKILLS_MCP_DIR = priorSkillsDir;
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(stateHome, { recursive: true, force: true });
+    rmSync(dirname(absentSkillsDir), { recursive: true, force: true });
+  });
+
+  const boundary: ProcessContainment = {
+    isolation: "enforced",
+    async execute() { throw new Error("not used"); },
+    spawn(request) {
+      return spawn(request.executable, [...request.args], {
+        ...(request.cwd === undefined ? {} : { cwd: request.cwd }),
+        env: { ...process.env, ...request.environment },
+      });
+    },
+  };
+  const proxy = {
+    url: "http://127.0.0.1:9/api/v1",
+    metrics: () => ({ requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0, costUsd: 0 }),
+    close: async () => undefined,
+  } as unknown as ModelUsageProxy;
+
+  const runtime = await createOpencodeServerRuntime({
+    workspace,
+    stateHome,
+    containment: boundary,
+    apiKey: "test-key-not-used",
+    createProxy: async () => proxy,
+    model: "openrouter/auto",
+    healthTimeoutMs: 30_000,
+    ensureSkillsStore: true,
+  });
+  t.after(() => runtime.dispose());
+
+  const config = JSON.parse(readFileSync(join(runtime.stateDir, "config", "opencode", "opencode.json"), "utf8")) as {
+    mcp?: Record<string, unknown>;
+  };
+  const mcp = config.mcp ?? {};
+  assert.ok(mcp["workflow-guard-mcp"] !== undefined, "the declared floor (guard) must mount once the store resolves");
+  assert.ok(mcp["skills-mcp"] !== undefined, "the delivery-mount skills server must mount");
+  assert.equal(mcp["git-intelligence-mcp"], undefined, "the full catalog must still require the O-4 opt-in");
+  // The store exists and the fleet skill is provisioned into it.
+  assert.ok(existsSync(join(absentSkillsDir, "code-cheatsheet", "SKILL.md")), "the fleet skill is provisioned into the store");
 });

@@ -28,8 +28,18 @@ export function permissionReplyFromOutcome(outcome: unknown): RemoteEngineReply 
 export function permissionToolCall(request: RemoteEnginePermissionRequest): Record<string, unknown> {
   const metadata = request.metadata ?? {};
   const toolName = typeof metadata.toolName === "string" ? metadata.toolName : request.action;
-  const title = permissionTitle(request.action, metadata);
-  const locations = permissionLocations(metadata);
+  // The subject path rides `request.resources` on the live v2 wire
+  // (`Permission.Request.resources`, `packages/schema/src/permission.ts`);
+  // v1/ACP carried it in `metadata`. Project both so a v2 `edit` (filePath in
+  // resources) and `external_directory` (the directory in resources) yield ACP
+  // locations and reach the workspace-confinement gate instead of failing
+  // closed as an unmappable permission request.
+  const locations = locationsFor(request);
+  // v2 metadata is freeform and typically omits the path, so the title would be
+  // the bare action name ("edit"); prefer the resource path when metadata
+  // offered nothing.
+  const metadataTitle = permissionTitle(request.action, metadata);
+  const title = metadataTitle === request.action && locations.length > 0 ? locations[0]!.path : metadataTitle;
   return {
     toolCallId: request.tool?.callID ?? request.id,
     title,
@@ -131,6 +141,73 @@ function permissionTitle(action: string, metadata: Record<string, unknown>): str
   }
   return action.length > 0 ? action : undefined;
 }
+
+/**
+ * The file/directory subjects a permission request names. One source, three
+ * wire generations:
+ *  - v1/ACP: `metadata.filepath` / `metadata.filePath` / `metadata.path` (or
+ *    `metadata.files[].filePath`).
+ *  - v2 (live, 2.0.10): `request.resources` — the `Permission.Request.resources`
+ *    array is where opencode v2 carries the subject (an absolute path for
+ *    `external_directory`, the target file for `edit`). `metadata` is freeform
+ *    and often omits the path, which is exactly why the subject came back empty
+ *    and the broker failed closed.
+ * Metadata locations win when present (they are the richer v1 signal); the
+ * resources array is the v2 fallback, and ONLY for actions whose resources name
+ * a filesystem subject — `shell`/`bash` carry a command string, `webfetch` a
+ * URL, `glob`/`grep`/`search` a glob/regex pattern, `task` an agent name, so
+ * treating those as paths would fake a workspace-confinement subject (and
+ * false-deny a benign read or a command that starts with `/`).
+ */
+function locationsFor(request: RemoteEnginePermissionRequest): readonly { path: string }[] {
+  const fromMetadata = permissionLocations(request.metadata ?? {});
+  if (fromMetadata.length > 0) return fromMetadata;
+  if (!PATH_RESOURCE_ACTIONS.has(request.action)) return [];
+  const resources = request.resources;
+  if (!Array.isArray(resources)) return [];
+  return resources
+    .filter((resource): resource is string => typeof resource === "string" && resource.length > 0)
+    .map((path) => ({ path }));
+}
+
+/**
+ * Permission actions whose `resources` entries are filesystem subjects. Every
+ * other action's resources are a command, URL, query, glob/regex pattern, or
+ * agent name and must NOT become workspace-confinement subjects.
+ *
+ * Deliberately NOT in this set:
+ *  - `shell`/`bash` (a command), `webfetch` (a URL), `task`/`agent` (a name) —
+ *    mapping them would fake a confinement subject (and false-deny a command
+ *    that starts with `/`).
+ *  - `glob`/`grep`/`search` — v2 carries the glob/regex **pattern** in
+ *    `resources` (e.g. `glob("\/**\/*.ts")` maps to pattern `/** /*.ts`); a
+ *    pattern is not a path, and `resolve(workspace, "/** /*.ts")` lands outside
+ *    it, false-denying a benign read. These are read-capability actions that
+ *    never hit the adapter's subject guard, so they need no resources mapping —
+ *    their real root rides `metadata.path`, which `permissionLocations` already
+ *    reads.
+ *  - `read_skill`/`skills-mcp__read_skill` — v2 carries the skill NAME in
+ *    `resources` (a single path segment, not a path). Also read-capability
+ *    (never reaches the subject guard), so mapping the name buys nothing and
+ *    would misstate the invariant.
+ * An action that is genuinely a file mutation but is absent here falls through
+ * to the adapter's fail-closed `invalid ACP tool subject` (never an unsafe
+ * allow).
+ */
+const PATH_RESOURCE_ACTIONS: ReadonlySet<string> = new Set([
+  "edit",
+  "write",
+  "patch",
+  "apply_patch",
+  "multiedit",
+  "move",
+  "delete",
+  "read",
+  "read_file",
+  "read_files",
+  "list",
+  "external_directory",
+]);
 
 function permissionLocations(metadata: Record<string, unknown>): readonly { path: string }[] {
   const direct = metadata.filepath ?? metadata.filePath ?? metadata.path;

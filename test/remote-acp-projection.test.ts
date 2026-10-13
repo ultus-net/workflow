@@ -60,6 +60,37 @@ test("permission tool call falls back to the request id when no tool call id is 
   assert.equal(toolCall.title, "npm test");
 });
 
+test("permission tool call takes v2 subjects from `resources` (metadata is empty)", () => {
+  // Live v2 `edit`: metadata omits the path; the target rides `resources`.
+  const edit = permissionToolCall({ id: "per_3", sessionID: "ses_1", action: "edit", resources: ["/workspace/src/a.ts"], metadata: {} });
+  assert.deepEqual(edit.locations, [{ path: "/workspace/src/a.ts" }]);
+  assert.equal(edit.title, "/workspace/src/a.ts", "the title prefers the resource path over the bare action name");
+  // Live v2 `external_directory`: the directory rides `resources`.
+  const ext = permissionToolCall({ id: "per_4", sessionID: "ses_1", action: "external_directory", resources: ["/app/src"], metadata: {} });
+  assert.deepEqual(ext.locations, [{ path: "/app/src" }]);
+});
+
+test("permission tool call does NOT treat a shell command's `resources` as a path", () => {
+  // `shell` carries the command in `resources`; mapping it as a location would
+  // fake a workspace-confinement subject (and false-deny a command starting `/`).
+  const shell = permissionToolCall({ id: "per_5", sessionID: "ses_1", action: "shell", resources: ["/bin/rm -rf x"], metadata: {} });
+  assert.equal(shell.locations, undefined);
+});
+
+test("permission tool call does NOT treat a glob/grep pattern's `resources` as a path", () => {
+  // Live v2 glob/grep carry the glob/regex PATTERN in `resources` (e.g.
+  // `grep("// TODO")` → resources `["// TODO"]`), with the real root in
+  // `metadata.path`. The pattern is not a path: mapping it would false-deny a
+  // benign read (resolve(workspace, "//") escapes the root).
+  const grep = permissionToolCall({ id: "per_6", sessionID: "ses_1", action: "grep", resources: ["//"], metadata: { root: "." } });
+  assert.equal(grep.locations, undefined);
+  const glob = permissionToolCall({ id: "per_7", sessionID: "ses_1", action: "glob", resources: ["/**/*.ts"], metadata: {} });
+  assert.equal(glob.locations, undefined);
+  // The metadata path, when present, still maps.
+  const withPath = permissionToolCall({ id: "per_8", sessionID: "ses_1", action: "grep", resources: ["TODO"], metadata: { path: "src" } });
+  assert.deepEqual(withPath.locations, [{ path: "src" }]);
+});
+
 test("text and reasoning part updates project to ACP message chunks", () => {
   const text = projectSessionUpdate(event("message.part.updated", {
     part: { type: "text", sessionID: "ses_1", messageID: "msg_1", text: "hello" },

@@ -122,6 +122,20 @@ export interface OpencodeServerRuntimeOptions {
    */
   readonly mountFullToolbox?: boolean | undefined;
   /**
+   * Creates the hub-owned skills delivery store (`~/.agents/skills`) when
+   * absent and provisions the fleet `skill` kind into it, so the journaled
+   * `read_skill` path reaches the vendored skills (e.g. `code-cheatsheet`,
+   * `/explain`). This is INDEPENDENT of {@link mountFullToolbox} (the O-4
+   * full-catalog switch): the plane lane sets it unconditionally so skill
+   * delivery never depends on the operator opting into the wider toolbox mount.
+   * Because a resolved store also lets the connector block run, this composes
+   * the narrow declared-floor connector mounts (`workflow-guard-mcp`, plus
+   * `skills-mcp` from the delivery mount) into the hub-written config — the
+   * documented plane floor, not the full catalog (that still needs O-4). The
+   * ambient/ACP lane leaves it off — byte-identical to before.
+   */
+  readonly ensureSkillsStore?: boolean | undefined;
+  /**
    * LSP enablement composed into the hub-written config (opencode v2 `lsp`
    * key). The plane lane passes the image-backed TypeScript server
    * (`plane-lsp.ts` `planeLspConfig()`), because an absent key disables every
@@ -317,7 +331,16 @@ export async function createOpencodeServerRuntime(
     // `~/.agents/skills` when absent) so the delivery mount resolves at deploy
     // time; the ACP/ambient lane keeps the strict "mount only when the operator
     // already provisioned a directory" posture.
-    const skillsMount = options.mountFullToolbox === true ? ensureSkillsMount() : resolveSkillsMount();
+    //
+    // `ensureSkillsStore` is the dedicated plane seam (independent of
+    // `mountFullToolbox`, the O-4 full-catalog switch): the fleet `skill` kind
+    // (e.g. `code-cheatsheet`, `/explain`) is delivered through the journaled
+    // `read_skill`, so the store must exist on every plane launch even when the
+    // operator has NOT opted into the full toolbox mount. `mountFullToolbox`
+    // still implies it (byte-identical to before for that path).
+    const skillsMount = options.mountFullToolbox === true || options.ensureSkillsStore === true
+      ? ensureSkillsMount()
+      : resolveSkillsMount();
     // W080 mount half: provision the workflow-toolbox skill into the hub-owned
     // delivery store and compose the connector mounts. The plane lane declares
     // the FULL built toolbox (spec §11: the whole `mcp-toolbox/` ships in the
