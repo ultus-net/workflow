@@ -15,7 +15,7 @@ import {
   runtimeFleetTransform,
   type FleetKind,
 } from "../src/integrations/fleet-payload.js";
-import { foldFleetAmbientDocs, normalizeFleetAgentPayload, rewriteFleetModelRef } from "../src/integrations/fleet-agent-install.js";
+import { foldFleetAmbientDocs, normalizeFleetAgentPayload, rewriteFleetModelRef, WORKSPACE_BOUNDARY_GUIDANCE } from "../src/integrations/fleet-agent-install.js";
 import {
   FLEET_TIER_MODEL_IDS,
   meteredOpencodeConfig,
@@ -223,6 +223,31 @@ test("the runtime-lane install folds STANDARDS.md and coding-style.md into the i
     // Idempotent install: a second run reports already-current (stable hash).
     const second = installFleetIntoOpencodeConfig(configDir);
     assert.ok(second.every((result) => result.action === "already-current"), "the folded AGENTS.md hashes stably");
+  } finally {
+    rmSync(configDir, { recursive: true, force: true });
+  }
+});
+
+test("the runtime-lane install folds the workspace-boundary guidance into AGENTS.md ahead of the ambient docs", () => {
+  const configDir = mkdtempSync(join(tmpdir(), "wf-fleet-boundary-"));
+  try {
+    installFleetIntoOpencodeConfig(configDir);
+    const agentsMd = readFileSync(join(configDir, "opencode", "AGENTS.md"), "utf8");
+    assert.ok(agentsMd.includes(WORKSPACE_BOUNDARY_GUIDANCE), "the boundary guidance is folded in");
+    // The guidance sits under its own fold banner, and that whole block leads
+    // the vendored STANDARDS/style docs (not merely that the body string
+    // happens to appear earlier).
+    const boundaryBanner = agentsMd.indexOf("# --- fleet:workspace-boundary.md");
+    assert.ok(boundaryBanner >= 0, "the boundary guidance carries its own fold banner");
+    assert.ok(
+      boundaryBanner < agentsMd.indexOf("# --- fleet:STANDARDS.md"),
+      "the boundary banner precedes the ambient doc banners",
+    );
+    assert.ok(agentsMd.indexOf(WORKSPACE_BOUNDARY_GUIDANCE) > boundaryBanner, "the guidance body follows its banner");
+    // No vendored source carries it: the fold is code-owned, so the sha256-pinned
+    // sources stay byte-identical.
+    const vendored = readFileSync(join(fleetAssetsRoot(), "instructions", "AGENTS.md"), "utf8");
+    assert.ok(!vendored.includes(WORKSPACE_BOUNDARY_GUIDANCE), "the vendored AGENTS.md source is untouched");
   } finally {
     rmSync(configDir, { recursive: true, force: true });
   }

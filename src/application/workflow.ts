@@ -217,11 +217,16 @@ export class WorkflowApplication {
    * circuit breaker, matching the plugin's repeated-failure behavior. */
   authorize(action: ProposedToolAction): PolicyDecision {
     const decision = this.#authorize(action);
-    const breakerCodes = new Set(["WORKSPACE_PATH_DENIED", "STALE_OR_MISSING_READ", "NO_ACTIVE_STEP", "TASK_NOT_IN_PROGRESS"]);
+    // Only repeated DESTRUCTIVE-policy violations open the breaker; capability
+    // configuration, skill delivery, pedagogy prompts, and the workspace
+    // boundary are not retries of that class and must not freeze a session.
+    // `WORKSPACE_PATH_DENIED` is the boundary (the agent probed outside its
+    // workspace once); counting it opened the breaker on the round-3 plane and
+    // froze the session after two path denials. The boundary is enforced
+    // engine-natively now (a non-fatal config `deny`), and a stray broker deny
+    // must not ratchet toward a freeze.
+    const breakerCodes = new Set(["STALE_OR_MISSING_READ", "NO_ACTIVE_STEP", "TASK_NOT_IN_PROGRESS"]);
     if (decision.kind === "deny" && action.mutating && decision.code !== "POLICY_CIRCUIT_BREAKER" && breakerCodes.has(decision.code)) {
-      // Only repeated mutation-policy violations open the breaker; capability
-      // configuration, skill delivery, and pedagogy prompts are not retries of
-      // the destructive-policy class and must not freeze a session.
       this.#policyFailures.recordFailure({ sessionId: action.sessionId, tool: action.tool, reason: decision.code });
     }
     return decision;

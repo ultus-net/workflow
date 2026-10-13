@@ -450,10 +450,16 @@ They change no posture claim; they are appended as dated dispositions.
    with the following feedback: …"). So a rejected mutation reads `Workflow denied
    'edit': session … exhausted the mutation budget (100/100 consumed); an
    operator/session reset (resetMutationBudget) is required …`. Bounded 200 chars;
-   allows carry no message. What is NOT claimed: the in-band message is
-   source-anchored on the pinned v2 but NOT live-probe-verified on a real model
-   turn (the v2 PERMISSION probe still needs a model key), so it is advisory until
-   that probe runs.
+   allows carry no message. **Dated 2026-10-13 (round-3):** the in-band message
+   is FALSIFIED as a model-facing channel on the pinned version — the tool
+   wrappers (`tool/{bash,read,write}.ts`) `Effect.mapError(() => new ToolFailure(…))`
+   with no error argument, so the `CorrectedError.feedback` is discarded and the
+   model sees a generic `Unable to …`; the reject's SIBLING cascade also always
+   produces a message-less `DeclinedError` that aborts the step. The channel that
+   works is the code-owned workspace-boundary block folded into the installed
+   `AGENTS.md` (`docs/OPENCODE_SERVER_AUTHORITY.md`, round-3 addendum), and the
+   boundary itself is now enforced engine-natively as a non-fatal config `deny`
+   (`permission.external_directory = "deny"`).
 
 2. **The mutation cap is operator-configurable (`WORKFLOW_MUTATION_BUDGET`).** The
    parse is fail-closed (a non-positive-integer throws; unset keeps the default

@@ -406,13 +406,27 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
     // through WorkflowApplication.authorize (G1 probe: denials honored).
     // `task` is included so subagent spawns are gateable at the hub
     // (subagent probe: the task tool call projected and permission-gated).
-    // `skill` is denied per the 2026-09-15 single-delivery-path rule —
-    // skills reach the model only through the journaled read_skill. Honest
-    // posture: the composed denial's live honoring on the pinned version is
-    // probe-gated (the skills-delivery family, pending); the invariant's
-    // PROVEN enforcement today is structural (the store lives outside every
-    // agent workspace, so the workspace-confined fs lane cannot reach it).
-    permission: { edit: "ask", bash: "ask", task: "ask", skill: "deny" },
+    // Skill delivery rides the journaled `read_skill`; the native `skill` tool
+    // stays denied (the 2026-09-15 single-delivery-path rule). Honest posture:
+    // the composed denial's live honoring on the pinned version is probe-gated
+    // (the skills-delivery family, pending); the invariant's PROVEN enforcement
+    // today is structural (the store lives outside every agent workspace, so
+    // the workspace-confined fs lane cannot reach it).
+    //
+    // `external_directory` is DENIED engine-natively (round-3 plane-compat,
+    // measured against the pinned v2.0.10 binary: it honors this v1 shape and
+    // migrates it to `permissions:[{action:"external_directory",resource:"*",
+    // effect:"deny"}]`). This is the workspace-boundary enforcement that does
+    // NOT kill the turn: a config `deny` returns a non-fatal `BlockedError`
+    // (the tool reports it and the agent continues), whereas answering an
+    // `ask` with `reject` produced a message-less `DeclinedError` that the
+    // runner's `isUserDeclined` turned into `Effect.interrupt` — aborting the
+    // whole step and (via the reject cascade) every sibling ask. In-workspace
+    // paths never assert `external_directory`, so this denies exactly the
+    // out-of-workspace access the plane already refuses, without the broker
+    // ask/reject cycle. The `WORKSPACE_PATH_DENIED` broker path remains as
+    // defense in depth for any path it still sees.
+    permission: { edit: "ask", bash: "ask", task: "ask", skill: "deny", external_directory: "deny" },
     // W181 (A6): the posture-gated runtime-context instruction references.
     // Only composed when the caller supplied paths (which it derives from an
     // ACTIVE enforcing posture), so an absent posture leaves this key out

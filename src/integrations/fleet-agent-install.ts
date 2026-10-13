@@ -119,6 +119,33 @@ export function normalizeFleetEntry(entry: FleetEntry, payload: Buffer): Buffer 
   return entry.kind === "agent" ? normalizeFleetAgentPayload(payload) : payload;
 }
 
+/**
+ * D4 (plane-compat round 3): the workspace-boundary instruction the runtime
+ * install folds into the installed global `AGENTS.md`, alongside the vendored
+ * `STANDARDS.md` and style floor. The plane confines every session to its
+ * workspace and denies any path outside it; before this, that denial ended the
+ * whole turn (the v2 reject cascade turned a policy deny into a message-less
+ * `DeclinedError` → `Effect.interrupt`), so the agent never learned the rule
+ * and could not adapt. This guidance states the boundary up front — the "make
+ * it easier for the agent not to break it" channel — while the composed
+ * `permission.external_directory = "deny"` ruleset enforces it engine-natively
+ * (a non-fatal `BlockedError` the tool reports, never a turn-killing decline).
+ *
+ * It is code-owned (never a vendored file), so the sha256-pinned vendored
+ * assets stay byte-identical; the fold is a pure function of shipped bytes.
+ */
+export const WORKSPACE_BOUNDARY_GUIDANCE = `# Workspace boundary
+
+Your workspace is the session working directory. Treat it as the whole world.
+
+- Read and edit only paths inside the workspace. Use workspace-relative paths.
+- Workflow denies any path outside the workspace (\`external_directory\`).
+- Never read or edit Workflow's own source tree or its hub configuration. Those
+  live outside the workspace, so Workflow denies them.
+- When a tool reports a denied path, do not retry it. Continue with the files
+  the workspace provides.
+`;
+
 /** A fixed, content-addressed banner that separates each folded ambient doc. */
 function foldBanner(sourceLabel: string): string {
   return `# --- fleet:${sourceLabel} (folded into AGENTS.md at install) ---`;

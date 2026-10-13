@@ -85,3 +85,23 @@ test("a vendor with no v2 built-in is omitted and the default falls back to the 
 test("the v2 metered env key is the documented OpenRouter credential variable", () => {
   assert.equal(OPENCODE_V2_METERED_ENV_KEY, "OPENROUTER_API_KEY");
 });
+
+test("the composed config denies external_directory engine-natively (round-3 workspace boundary)", () => {
+  // Round 3: answering an out-of-workspace ask with a broker `reject` aborted
+  // the turn (a message-less DeclinedError → Effect.interrupt). The pinned
+  // v2.0.10 honors this v1 `permission` shape and migrates it to
+  // `permissions:[{action:"external_directory",resource:"*",effect:"deny"}]`,
+  // so the boundary is enforced engine-natively with a NON-fatal BlockedError
+  // and no ask/reject cycle. In-workspace paths never assert the action, so
+  // this denies exactly the out-of-workspace access the plane already refuses.
+  for (const opencodeMajor of [undefined, 2] as const) {
+    const config = meteredOpencodeConfig({ proxyUrl, ...(opencodeMajor === undefined ? {} : { opencodeMajor }) });
+    const permission = config.permission as Record<string, string>;
+    assert.equal(permission.external_directory, "deny", `external_directory is denied (opencodeMajor=${String(opencodeMajor)})`);
+    // The pre-existing pins are unchanged.
+    assert.equal(permission.edit, "ask");
+    assert.equal(permission.bash, "ask");
+    assert.equal(permission.task, "ask");
+    assert.equal(permission.skill, "deny");
+  }
+});
