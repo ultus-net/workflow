@@ -52,25 +52,34 @@ test("W071 runtime: parseListeningUrl extracts the bound URL", () => {
   assert.equal(parseListeningUrl("nothing here"), undefined);
 });
 
-test("runtime: installVendoredFleet deploys the vendored agents/commands into the hub-owned config dir (never docs)", () => {
+test("runtime: installVendoredFleet deploys the vendored config kinds into the hub-owned config dir (never docs or config-dir skills)", () => {
   const configDir = mkdtempSync(join(tmpdir(), "wf-fleet-cfg-"));
   try {
     const results = installVendoredFleet(configDir);
     const manifest = loadFleetManifest();
+    const runtimeEntries = manifest.entries.filter((entry) =>
+      (["agent", "command", "instruction", "style", "template"] as const).includes(entry.kind as never),
+    );
     const agents = manifest.entries.filter((entry) => entry.kind === "agent");
     const commands = manifest.entries.filter((entry) => entry.kind === "command");
     assert.ok(agents.length >= 4, "the vendored fleet carries its agents");
     assert.ok(commands.length >= 4, "the vendored fleet carries its commands");
-    assert.equal(results.length, agents.length + commands.length, "only agent/command kinds install");
-    for (const entry of [...agents, ...commands]) {
-      const flat = entry.kind === "agent" ? "agents" : "commands";
+    assert.equal(results.length, runtimeEntries.length, "the runtime config-dir kinds install");
+    for (const entry of runtimeEntries) {
+      const subdir = entry.kind === "agent" ? "agents"
+        : entry.kind === "command" ? "commands"
+        : entry.kind === "instruction" ? ""
+        : entry.kind === "style" ? "style"
+        : "templates";
       assert.ok(
-        existsSync(join(configDir, "opencode", flat, entry.file)),
+        existsSync(join(configDir, "opencode", subdir, entry.file)),
         `${entry.id} landed under the OpenCode config dir`,
       );
     }
-    // The docs bundle is workspace-owned and must never land in the config dir.
+    // The docs bundle is workspace-owned and must never land in the config dir;
+    // skills are store-provisioned (skills-mcp), never config-dir files.
     assert.ok(!existsSync(join(configDir, "opencode", "docs")), "docs are never written into the config dir");
+    assert.ok(!existsSync(join(configDir, "opencode", "skills")), "skills are never written into the config dir");
   } finally {
     rmSync(configDir, { recursive: true, force: true });
   }

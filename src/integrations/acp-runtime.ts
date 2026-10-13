@@ -36,7 +36,7 @@ import { METERED_PLACEHOLDER_KEY, type EgressDenialEvent, type ModelUsageMetrics
 import type { CredentialEndpoint } from "./credentials.js";
 import { createEgressRuntimeFeed } from "./egress-audit-client.js";
 import { egressPostureFromEnv, egressRuntimeContext } from "./runtime-context.js";
-import { installFleetIntoOpencodeConfig, type FleetInstallResult } from "./fleet-payload.js";
+import { installFleetIntoOpencodeConfig, provisionFleetSkills, type FleetInstallResult } from "./fleet-payload.js";
 import type { TaskUsageSummary } from "./task-usage.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
 import { loadOpenModelKeys } from "./open-model-keys.js";
@@ -111,7 +111,8 @@ export function opencodeAcpArgs(majorVersion: number | undefined): readonly stri
 
 /**
  * Deploys the vendored OpenCode fleet (agents + slash commands) into a
- * hub-owned ACP config dir. Agents/commands only — the docs bundle is
+ * hub-owned ACP config dir. {@link RUNTIME_FLEET_KINDS} (agent/command/
+ * instruction/style/template) — the docs bundle is
  * workspace-owned. Fail-closed: a malformed manifest throws and refuses the
  * runtime. This is the ACP lane's named fleet-install seam, mirrored by the
  * server lane's `installVendoredFleet` (`opencode-server-runtime.ts`); both
@@ -378,6 +379,9 @@ async function createOpencodeRuntime(
       try {
         const catalog = resolveToolboxCatalog();
         provisionToolboxSkill(skillsMount.skillsDir, catalog);
+        // D1: provision the vendored fleet skills (e.g. code-cheatsheet) into
+        // the hub-owned store so `/explain` reaches them via read_skill.
+        provisionFleetSkills(skillsMount.skillsDir);
         const disabled = (options.settings?.mcpServers ?? [])
           .filter((server) => server.enabled === false)
           .map((server) => server.name);
@@ -434,10 +438,34 @@ async function createOpencodeRuntime(
         if (builtin !== undefined) v2VendorEnv[builtin.envKey] = METERED_PLACEHOLDER_KEY;
       }
     }
+    // Deploy the vendored fleet into this runtime's hub-owned config dir BEFORE
+    // composing the config, so the installed instruction/style paths the config
+    // auto-injects (D1) exist. The contained agent reads
+    // `$XDG_CONFIG_HOME/opencode` (set to `configDir` on the launch env below),
+    // which is isolated from the operator's `~/.config/opencode`, so without
+    // this install the custom fleet never loads on any hub-owned OpenCode lane
+    // (root-cause fix, 2026-10-10; the same gap closed for the server lane in
+    // opencode-server-runtime.ts). The docs bundle is workspace-owned and never
+    // installed here. Fail-closed: a malformed manifest throws and refuses the
+    // runtime. The install normalizes the agents (metered model provider,
+    // unmappable permission actions stripped — `fleet-agent-install.ts`) while
+    // the vendored source stays byte-identical.
+    const fleetInstall = options.installFleetImpl ?? installAcpVendoredFleet;
+    const fleetResults = fleetInstall(configDir);
+    const fleetInstalled = fleetResults.filter((result) => result.action === "written" || result.action === "forced").length;
+    console.log(`[fleet] installed ${fleetInstalled} vendored agent/command/instruction/style/template file(s) into ${join(configDir, "opencode")}`);
+    // D3: `STANDARDS.md` and `style/coding-style.md` are folded into the
+    // installed global `AGENTS.md` at install time (`runtimeFleetTransform`),
+    // because OpenCode v2 honors ONLY discovered `AGENTS.md` and ignores the
+    // config `instructions` array (measured 2026-10-13 against v2.0.10). No
+    // separate `instructions` composition is needed — that key is inert on v2.
     const opencodeConfig = meteredOpencodeConfig({
       proxyUrl: proxy.url,
       model: configModel ?? options.settings?.agents.opencode?.model,
       opencodeMajor: acpMajor,
+      // D2: expose the fleet tier ids so the install-rewritten per-agent model
+      // pins (`<meteredId>/syn:<tier>:text`) resolve and the picker accepts them.
+      fleetModelTiers: true,
       // W082: the operator's autoCompact preference composes the
       // `compaction: { auto: true }` block into the hub-written config —
       // the config-side auto-compaction trigger (default off).
@@ -457,18 +485,6 @@ async function createOpencodeRuntime(
       JSON.stringify(opencodeConfig),
       { encoding: "utf8", mode: 0o600 },
     );
-    // Deploy the vendored fleet (agents + slash commands) into this runtime's
-    // hub-owned config dir. The contained agent reads `$XDG_CONFIG_HOME/opencode`
-    // (set to `configDir` on the launch env below), which is isolated from the
-    // operator's `~/.config/opencode`, so without this install the custom fleet
-    // never loads on any hub-owned OpenCode lane (root-cause fix, 2026-10-10;
-    // the same gap closed for the server lane in opencode-server-runtime.ts).
-    // Agents/commands only — the docs bundle is workspace-owned. Fail-closed: a
-    // malformed manifest throws and refuses the runtime.
-    const fleetInstall = options.installFleetImpl ?? installAcpVendoredFleet;
-    const fleetResults = fleetInstall(configDir);
-    const fleetInstalled = fleetResults.filter((result) => result.action === "written" || result.action === "forced").length;
-    console.log(`[fleet] installed ${fleetInstalled} vendored agent/command file(s) into ${join(configDir, "opencode")}`);
     const resume = resumeFrom ?? process.env.WORKFLOW_ACP_RESUME;
     const driver = await AcpSessionDriver.contained({
       containment: new LinuxBubblewrapContainment(),

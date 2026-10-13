@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+
+import { foldFleetAmbientDocs, normalizeFleetEntry } from "./fleet-agent-install.js";
 
 /**
  * W086 — the control-plane fleet payload: the OpenCode golden tree (agents,
@@ -81,10 +83,21 @@ export interface FleetOptions {
   /**
    * Restrict install/compare to these kinds (default: every installable kind —
    * `host-config` is reference-only and never installed). The plane runtime
-   * installs only the agent/command config surface into its hub-owned config
-   * dir and never the workspace docs, so it passes `["agent", "command"]`.
+   * installs only the config surface the agents depend on into its hub-owned
+   * config dir and never the workspace docs, so it passes
+   * {@link RUNTIME_FLEET_KINDS}.
    */
   readonly kinds?: readonly FleetKind[];
+  /**
+   * Install-time payload transform (hub-owned runtime lanes): applied to the
+   * source bytes just before the atomic write, so the vendored source stays
+   * byte-identical while the installed copy is normalized for the plane
+   * (model-tier provider rewrite, host-specific permission stripping — see
+   * `fleet-agent-install.ts`). `compareFleet` accepts the same transform so it
+   * judges the on-disk copy against the transformed payload rather than the raw
+   * source; the CLI lane passes none and stays byte-for-byte.
+   */
+  readonly transform?: ((entry: FleetEntry, payload: Buffer) => Buffer) | undefined;
 }
 
 /** Per-kind placement: where the source lives and where (if ever) it installs. */
@@ -115,6 +128,52 @@ const KIND_SPECS: Record<FleetKind, KindSpec> = {
 
 const KINDS = Object.keys(KIND_SPECS) as readonly FleetKind[];
 const INSTALLABLE_KINDS: readonly FleetKind[] = KINDS.filter((kind) => KIND_SPECS[kind].referenceOnly !== true);
+
+/**
+ * The config-dir kinds the hub-owned runtime lanes install: agents, commands,
+ * and the instruction/style/template files the agent prompts reference. Skills
+ * are NOT config-dir files — they are provisioned into the hub-owned skills
+ * store the journaled `read_skill` path reads (see `provisionFleetSkills`),
+ * never under the OpenCode config dir. `doc` stays excluded (workspace-owned)
+ * and `host-config` stays reference-only.
+ */
+export const RUNTIME_FLEET_KINDS: readonly FleetKind[] = ["agent", "command", "instruction", "style", "template"];
+
+/**
+ * The hub-owned runtime-lane payload transform: agents are normalized for the
+ * plane (metered model provider, unmappable permission actions stripped — see
+ * `fleet-agent-install.ts`); the global `AGENTS.md` gets the fleet ambient docs
+ * (`STANDARDS.md`, `style/coding-style.md`) folded in, because OpenCode v2
+ * honors ONLY discovered `AGENTS.md` and ignores the config `instructions` array
+ * (measured 2026-10-13; `foldFleetAmbientDocs`); every other kind is
+ * byte-identical. A factory so the installer and the doctor's compare agree on
+ * exactly what "current" means AND resolve the sibling docs from the SAME
+ * `root` the caller compares against (no silent mismatch).
+ */
+export function runtimeFleetTransform(
+  options: Pick<FleetOptions, "root"> = {},
+): (entry: FleetEntry, payload: Buffer) => Buffer {
+  return (entry, payload) => {
+    if (entry.kind === "instruction" && entry.file === "AGENTS.md") {
+      return foldFleetAmbientDocs(payload, loadAmbientFoldDocs(options));
+    }
+    return normalizeFleetEntry(entry, payload);
+  };
+}
+
+/** The ambient docs folded into the runtime `AGENTS.md`, in fixed order. */
+function loadAmbientFoldDocs(options: Pick<FleetOptions, "root">): readonly { readonly label: string; readonly payload: Buffer }[] {
+  const manifest = loadFleetManifest(options);
+  const wanted: readonly { readonly label: string; readonly file: string }[] = [
+    { label: "STANDARDS.md", file: "STANDARDS.md" },
+    { label: "style/coding-style.md", file: "coding-style.md" },
+  ];
+  return wanted.map(({ label, file }) => {
+    const entry = manifest.entries.find((candidate) => candidate.kind === (file === "coding-style.md" ? "style" : "instruction") && candidate.file === file);
+    if (entry === undefined) throw new TypeError(`fleet ambient doc ${label} is missing from the manifest`);
+    return { label, payload: readFileSync(sourcePath(entry, options)) };
+  });
+}
 
 function specFor(kind: FleetKind): KindSpec {
   return KIND_SPECS[kind];
@@ -153,6 +212,10 @@ function sourcePath(entry: FleetEntry, options: Pick<FleetOptions, "root"> = {})
 
 function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function sha256Buffer(payload: Buffer): string {
+  return createHash("sha256").update(payload).digest("hex");
 }
 
 /** A manifest file path is a relative POSIX subpath: no absolute root, no `..` escape, no backslash. */
@@ -195,9 +258,14 @@ export function compareFleet(options: FleetOptions = {}): readonly FleetStatus[]
   const manifest = loadFleetManifest(options);
   return selectedEntries(manifest, options.kinds).map((entry) => {
     const target = fleetTarget(entry, options);
+    // Judge the on-disk copy against the payload the installer WOULD write: a
+    // runtime lane's transform (agent normalization) is the expected content,
+    // so a correctly installed runtime tree reports `current`, never a
+    // spurious `differs`. The CLI lane supplies no transform and stays raw.
+    const expected = options.transform === undefined ? entry.sha256 : sha256Buffer(options.transform(entry, readFileSync(sourcePath(entry, options))));
     let state: FleetEntryState;
     try {
-      state = sha256File(target) === entry.sha256 ? "current" : "differs";
+      state = sha256File(target) === expected ? "current" : "differs";
     } catch {
       state = "missing";
     }
@@ -225,7 +293,62 @@ export function fleetCopyCommand(status: FleetStatus, options: Pick<FleetOptions
  * and the ACP runtime so both lanes install identically from one tested definition.
  */
 export function installFleetIntoOpencodeConfig(configDir: string): readonly FleetInstallResult[] {
-  return installFleet({ configDir: join(configDir, "opencode"), kinds: ["agent", "command"], force: true });
+  return installFleet({
+    configDir: join(configDir, "opencode"),
+    kinds: RUNTIME_FLEET_KINDS,
+    force: true,
+    transform: runtimeFleetTransform(),
+  });
+}
+
+/**
+ * Provisions the fleet `skill` kind into the hub-owned skills-mcp delivery
+ * store — `<skillsDir>/<name>/<file>` — the directory `skills-mcp` scans and
+ * the journaled `read_skill` reads. This is the SANCTIONED delivery path for
+ * the vendored skills (e.g. `code-cheatsheet`, which `/explain` loads); the
+ * plane's native `permission: { skill: "deny" }` is untouched because the
+ * model reaches skill content through `read_skill`, never a native skill tool.
+ *
+ * Skills are NOT config-dir files (the runtime config-dir install excludes the
+ * `skill` kind), so they land only here. Writes only on create or content
+ * drift (byte-compare — no churn on every session); parent directories are
+ * created as needed. Returns every copied target path (skill sources may be
+ * nested, e.g. `code-cheatsheet/template.md`).
+ */
+export interface ProvisionFleetSkillsIo {
+  readonly mkdirSync?: (path: string, options: { recursive: boolean; mode?: number }) => unknown;
+  readonly existsSync?: (path: string) => boolean;
+  readonly readFileSync?: (path: string) => Buffer;
+  readonly writeFileSync?: (path: string, data: Buffer, options: { mode: number }) => unknown;
+}
+
+export function provisionFleetSkills(
+  skillsDir: string,
+  options: Pick<FleetOptions, "root"> & ProvisionFleetSkillsIo = {},
+): readonly string[] {
+  const manifest = loadFleetManifest(options);
+  const mkdir = options.mkdirSync ?? ((path: string, opts: { recursive: boolean; mode?: number }) => mkdirSync(path, opts));
+  const exists = options.existsSync ?? ((path: string) => existsSync(path));
+  const read = options.readFileSync ?? ((path: string) => readFileSync(path));
+  const write = options.writeFileSync ?? ((path: string, data: Buffer, opts: { mode: number }) => writeFileSync(path, data, opts));
+  const written: string[] = [];
+  for (const entry of manifest.entries) {
+    if (entry.kind !== "skill") continue;
+    const source = sourcePath(entry, options);
+    const target = join(skillsDir, entry.file);
+    const payload = read(source);
+    if (exists(target)) {
+      try {
+        if (Buffer.compare(read(target), payload) === 0) continue;
+      } catch {
+        // Fall through to a rewrite when the existing copy cannot be read.
+      }
+    }
+    mkdir(dirname(target), { recursive: true, mode: 0o700 });
+    write(target, payload, { mode: 0o600 });
+    written.push(target);
+  }
+  return written;
 }
 
 /**
@@ -239,13 +362,18 @@ export function installFleet(options: FleetOptions & { readonly force?: boolean 
   return selectedEntries(manifest, options.kinds).map((entry) => {
     const target = fleetTarget(entry, options);
     const installIfMissingOnly = specFor(entry.kind).installIfMissingOnly === true;
+    // The expected payload: the raw source for the CLI lane, or the runtime
+    // lane's normalized copy (agent model/permission transform). Comparing
+    // against it keeps a correctly-normalized installed tree `already-current`.
+    const source = sourcePath(entry, options);
+    const payload = options.transform === undefined ? readFileSync(source) : options.transform(entry, readFileSync(source));
     let installedHash: string | undefined;
     try {
       installedHash = sha256File(target);
     } catch {
       installedHash = undefined;
     }
-    if (installedHash === entry.sha256) {
+    if (installedHash === sha256Buffer(payload)) {
       return { entry, target, action: "already-current" as const };
     }
     if (installedHash !== undefined) {
@@ -256,8 +384,6 @@ export function installFleet(options: FleetOptions & { readonly force?: boolean 
         return { entry, target, action: "skipped-local-modified" as const };
       }
     }
-    const source = sourcePath(entry, options);
-    const payload = readFileSync(source);
     mkdirSync(dirname(target), { recursive: true });
     const staging = `${target}.install-${process.pid}.tmp`;
     writeFileSync(staging, payload);
