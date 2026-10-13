@@ -45,6 +45,22 @@ export const OPENCODE_V2_METERED_ENV_KEY = "OPENROUTER_API_KEY";
 export const OPENCODE_V2_METERED_PROVIDER_ID = "openrouter";
 
 /**
+ * D2: the fleet's per-agent tier model ids. The vendored agents pin
+ * `synthetic/syn:{small,large}:text`; the runtime-lane install rewrites the
+ * provider prefix to {@link OPENCODE_V2_METERED_PROVIDER_ID}, leaving these
+ * bare ids, which the metered provider catalog must list so the pin resolves
+ * and the ACP picker accepts it. The loopback proxy forwards these ids to
+ * Synthetic unchanged (only the `openrouter/auto` default is re-pinned).
+ */
+export const FLEET_TIER_MODEL_IDS: readonly string[] = ["syn:small:text", "syn:large:text"];
+
+/** Human labels for the fleet tier ids in the model picker. */
+export const FLEET_TIER_MODEL_LABELS: Readonly<Record<string, string>> = {
+  "syn:small:text": "Synthetic small text",
+  "syn:large:text": "Synthetic large text",
+};
+
+/**
  * A v2 BUILT-IN provider whose existing package/models a vendor family rides.
  *
  * v2 does not register a config-defined custom provider into the ACP model
@@ -222,6 +238,14 @@ export interface MeteredOpencodeConfigOptions {
    */
   readonly skillConnectors?: readonly { readonly name: string; readonly serverPath: string }[] | undefined;
   /**
+   * D2: compose the fleet tier model ids (`syn:small:text`, `syn:large:text`)
+   * into the metered provider's model catalog, so the vendored agents'
+   * per-tier pins (rewritten at install time to `<meteredId>/syn:<tier>:text`)
+   * resolve in the config and the ACP picker accepts them. Opt-in via the
+   * runtime lane; absent leaves the config's model catalog byte-identical.
+   */
+  readonly fleetModelTiers?: boolean | undefined;
+  /**
    * The resolved opencode major version. v1 (<2) keeps the historical
    * `provider`/`npm`/`options` shape byte-for-byte; v2+ emits the v2
    * `providers` shape (`package`/`settings`) and reuses the built-in
@@ -263,9 +287,16 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
   const models: Record<string, { name: string }> = {
     [DEFAULT_OPENCODE_MODEL]: { name: "Auto Router" },
     ...autoLatestModelCatalog(options.autoLatest?.aliases ?? []),
+    // D2: the fleet tier ids, so the install-rewritten per-agent pins
+    // (`<meteredId>/syn:<tier>:text`) resolve and the picker accepts them.
+    ...(options.fleetModelTiers === true ? fleetTierModels() : {}),
   };
   const legacyModel = options.model ?? DEFAULT_OPENCODE_MODEL;
   if (!(legacyModel in models)) models[legacyModel] = { name: legacyModel };
+  // D2: the fleet tier catalog entries (shared by both provider shapes).
+  function fleetTierModels(): Record<string, { name: string }> {
+    return Object.fromEntries(FLEET_TIER_MODEL_IDS.map((id) => [id, { name: FLEET_TIER_MODEL_LABELS[id] ?? id }]));
+  }
   const vendorProviders = options.openSource?.providers ?? [];
   const v1Provider = (): Record<string, unknown> => ({
     [OPENCODE_METERED_PROVIDER_ID]: {
@@ -309,6 +340,11 @@ export function meteredOpencodeConfig(options: MeteredOpencodeConfigOptions): Re
   const v2Providers = (): Record<string, unknown> => ({
     [OPENCODE_V2_METERED_PROVIDER_ID]: {
       settings: { baseURL: `${options.proxyUrl}/api/v1` },
+      // D2: merge the fleet tier ids into the built-in's model catalog, so the
+      // install-rewritten per-agent pins (`openrouter/syn:<tier>:text`) resolve
+      // and the ACP picker accepts them. Omitted (byte-identical to before this
+      // option) unless the runtime lane opts in.
+      ...(options.fleetModelTiers === true ? { models: fleetTierModels() } : {}),
     },
     ...Object.fromEntries(
       vendorProviders.flatMap((entry) =>

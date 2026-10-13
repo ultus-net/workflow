@@ -14,7 +14,7 @@ import { createModelUsageProxy, METERED_PLACEHOLDER_KEY, syntheticFailoverProxyO
 import type { CredentialEndpoint } from "./credentials.js";
 import { globalOpencodeBinary, meteredOpencodeConfig, OPENCODE_V2_METERED_ENV_KEY, resolveOpencodeLaunch, type OpencodeLspServer } from "./opencode-agent-config.js";
 import { PLANE_LSP_DEFAULT_PATH, PLANE_LSP_DISABLE_DOWNLOAD_ENV } from "./plane-lsp.js";
-import { installFleetIntoOpencodeConfig, type FleetInstallResult } from "./fleet-payload.js";
+import { installFleetIntoOpencodeConfig, provisionFleetSkills, type FleetInstallResult } from "./fleet-payload.js";
 import { enabledMcpServers, type WorkflowSettings } from "./workflow-settings.js";
 import { probeOpencodeHealth } from "./opencode-health.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
@@ -242,9 +242,12 @@ export function parseListeningUrl(stdout: string): string | undefined {
  * (`/api/command`). Installing the payload at launch restores the custom
  * config the operator depends on.
  *
- * Only the agent/command kinds install here: the docs bundle is a repo-owned
- * living set under the WORKSPACE (`<workspace>/docs/agents`), never written
- * into the config dir. `force` is deliberately true — the config dir is
+ * {@link RUNTIME_FLEET_KINDS} (agent/command/instruction/style/template)
+ * install here, each normalized by the runtime transform (metered model
+ * provider, unmappable permission actions stripped); the docs bundle is a
+ * repo-owned living set under the WORKSPACE (`<workspace>/docs/agents`), never
+ * written into the config dir, and skills go to the hub-owned skills store
+ * (never the config dir). `force` is deliberately true — the config dir is
  * hub-owned and regenerated per workspace, so a stale/mismatched copy from an
  * earlier plane revision is overwritten rather than skipped (the installer's
  * refuse-to-clobber protects operator edits on the host, which do not exist
@@ -332,7 +335,14 @@ export async function createOpencodeServerRuntime(
     let skillConnectors: readonly { readonly name: string; readonly serverPath: string }[] = [];
     try {
       const catalog = resolveToolboxCatalog();
-      if (skillsMount !== undefined) provisionToolboxSkill(skillsMount.skillsDir, catalog);
+      if (skillsMount !== undefined) {
+        provisionToolboxSkill(skillsMount.skillsDir, catalog);
+        // D1: provision the vendored fleet skills (e.g. code-cheatsheet) into
+        // the SAME hub-owned store, so the agent prompts that load them
+        // (`/explain`) reach them through the journaled `read_skill` path. The
+        // native `skill: "deny"` is untouched — this is the sanctioned delivery.
+        provisionFleetSkills(skillsMount.skillsDir);
+      }
       if (options.mountFullToolbox === true || skillsMount !== undefined) {
         const connectorOptions = {
           ...(options.skillConnectorsDisabled === undefined ? {} : { disabled: options.skillConnectorsDisabled }),
@@ -361,12 +371,28 @@ export async function createOpencodeServerRuntime(
     }));
     const opencode = resolveBinary();
     const opencodeMajor = await opencodeMajorVersion(opencode.executable);
+    // Deploy the vendored fleet into the hub-owned config dir BEFORE writing the
+    // config, so the installed instruction/style paths the config auto-injects
+    // (D1) exist. Root-cause fix (2026-10-10): the config dir is isolated from
+    // the operator's `~/.config/opencode`, so nothing else installs the fleet.
+    // Fail-closed: a malformed manifest throws and refuses the runtime.
+    const fleetInstall = options.installFleetImpl ?? installVendoredFleet;
+    const fleetResults = fleetInstall(configDir);
+    const fleetInstalled = fleetResults.filter((result) => result.action === "written" || result.action === "forced").length;
+    console.log(`[fleet] installed ${fleetInstalled} vendored agent/command/instruction/style/template file(s) into ${join(configDir, "opencode")}`);
+    // D3: `STANDARDS.md` and `style/coding-style.md` are folded into the
+    // installed global `AGENTS.md` at install time (`runtimeFleetTransform`),
+    // because OpenCode v2 honors ONLY discovered `AGENTS.md` and ignores the
+    // config `instructions` array (measured 2026-10-13 against v2.0.10).
     writeFileSync(
       join(configDir, "opencode", "opencode.json"),
       JSON.stringify(meteredOpencodeConfig({
         proxyUrl: proxy.url,
         model: options.model ?? process.env.WORKFLOW_OPENCODE_MODEL,
         opencodeMajor,
+        // D2: expose the fleet tier ids so the install-rewritten per-agent
+        // model pins resolve.
+        fleetModelTiers: true,
         // W082: the daemon carries the same config-side auto-compaction
         // trigger the ACP lane composes (settings `agents.opencode.autoCompact`).
         ...(options.autoCompact === true ? { autoCompact: true } : {}),
@@ -383,15 +409,6 @@ export async function createOpencodeServerRuntime(
       })),
       { encoding: "utf8", mode: 0o600 },
     );
-    // Deploy the vendored fleet into the hub-owned config dir so the contained
-    // `opencode serve` loads the custom agents/commands (root-cause fix,
-    // 2026-10-10: the config dir is isolated from the operator's
-    // `~/.config/opencode`, so nothing else installs them). Fail-closed: a
-    // malformed manifest throws and refuses the runtime.
-    const fleetInstall = options.installFleetImpl ?? installVendoredFleet;
-    const fleetResults = fleetInstall(configDir);
-    const fleetInstalled = fleetResults.filter((result) => result.action === "written" || result.action === "forced").length;
-    console.log(`[fleet] installed ${fleetInstalled} vendored agent/command file(s) into ${join(configDir, "opencode")}`);
 
     const port = options.port ?? (await freeLoopbackPort());
     const password = randomBytes(24).toString("hex");

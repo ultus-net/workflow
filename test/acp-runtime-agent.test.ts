@@ -256,27 +256,36 @@ test("resolveRuntimeMeteredLane: no resolvable key keeps the OpenRouter single-u
 
 // ── The ACP fleet-install seam (review follow-up 34a0ff8e) ──────────────────
 
-test("ACP lane fleet seam installs the vendored agents/commands exactly as the server lane does", () => {
+test("ACP lane fleet seam installs the vendored config kinds exactly as the server lane does", () => {
   // The ACP lane previously called the payload function inline with no seam;
-  // the named export is the seam and must deploy the SAME set (agents +
-  // commands, never docs) the server lane's installVendoredFleet does.
+  // the named export is the seam and must deploy the SAME set (the runtime
+  // config-dir kinds: agent + command + instruction + style + template, never
+  // docs or skills-as-config-files) the server lane's installVendoredFleet does.
   const configDir = mkdtempSync(join(tmpdir(), "wf-acp-fleet-cfg-"));
   try {
     const acp = installAcpVendoredFleet(configDir);
     const manifest = loadFleetManifest();
+    const runtimeEntries = manifest.entries.filter((entry) =>
+      (["agent", "command", "instruction", "style", "template"] as const).includes(entry.kind as never),
+    );
     const agents = manifest.entries.filter((entry) => entry.kind === "agent");
     const commands = manifest.entries.filter((entry) => entry.kind === "command");
     assert.ok(agents.length >= 4, "the vendored fleet carries its agents");
     assert.ok(commands.length >= 4, "the vendored fleet carries its commands");
-    assert.equal(acp.length, agents.length + commands.length, "only agent/command kinds install");
-    for (const entry of [...agents, ...commands]) {
-      const flat = entry.kind === "agent" ? "agents" : "commands";
+    assert.equal(acp.length, runtimeEntries.length, "the runtime config-dir kinds install");
+    for (const entry of runtimeEntries) {
+      const subdir = entry.kind === "agent" ? "agents"
+        : entry.kind === "command" ? "commands"
+        : entry.kind === "instruction" ? ""
+        : entry.kind === "style" ? "style"
+        : "templates";
       assert.ok(
-        existsSync(join(configDir, "opencode", flat, entry.file)),
+        existsSync(join(configDir, "opencode", subdir, entry.file)),
         `${entry.id} landed under the ACP config dir`,
       );
     }
     assert.ok(!existsSync(join(configDir, "opencode", "docs")), "docs are never written into the config dir");
+    assert.ok(!existsSync(join(configDir, "opencode", "skills")), "skills are store-provisioned, never config-dir files");
     // The server lane's seam is the same tested definition — the two lanes
     // install byte-identically.
     const serverDir = mkdtempSync(join(tmpdir(), "wf-server-fleet-cfg-"));
