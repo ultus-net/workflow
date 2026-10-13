@@ -138,10 +138,26 @@ export function loadProvenance(skillsDir) {
   return parsed.skills;
 }
 
-/** Shallow-clone a source repo and report its HEAD commit for provenance. */
-async function defaultClone(repo, dest) {
-  execFileSync("git", ["clone", "--depth", "1", "--quiet", repo, dest]);
-  return execFileSync("git", ["-C", dest, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+/**
+ * Shallow-clone a source repo and report its HEAD commit for provenance.
+ * When `commit` is supplied the clone is PINNED: the repository is fetched at
+ * exactly that revision (a shallow fetch of one object) and the resolved HEAD
+ * must equal it, so a build that claims a revision either gets it or fails —
+ * the image's vendored corpora stay reproducible instead of drifting to the
+ * upstream default branch on every rebuild.
+ */
+async function defaultClone(repo, dest, commit) {
+  if (commit === undefined) {
+    execFileSync("git", ["clone", "--depth", "1", "--quiet", repo, dest]);
+    return execFileSync("git", ["-C", dest, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  }
+  execFileSync("git", ["init", "--quiet", dest]);
+  execFileSync("git", ["-C", dest, "remote", "add", "origin", repo]);
+  execFileSync("git", ["-C", dest, "fetch", "--depth", "1", "--quiet", "origin", commit]);
+  execFileSync("git", ["-C", dest, "checkout", "--quiet", commit]);
+  const head = execFileSync("git", ["-C", dest, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  if (head !== commit) throw new Error(`pinned commit '${commit}' resolved to '${head}'`);
+  return head;
 }
 
 async function acquireSource(source, clone) {
@@ -149,7 +165,7 @@ async function acquireSource(source, clone) {
     const root = mkdtempSync(path.join(tmpdir(), "vendor-skills-"));
     let commit;
     try {
-      commit = await clone(source.repo, root);
+      commit = await clone(source.repo, root, source.commit);
     } catch (error) {
       // A failed clone must not leak its temp directory — the caller only
       // cleans up on the success path.
@@ -201,7 +217,13 @@ export async function importSkills(options) {
   const oldProvenance = loadProvenance(skillsDir);
   mkdirSync(skillsDir, { recursive: true });
 
-  // Phase 1: acquire every source and collect its candidates.
+  // Phase 1: acquire every source and collect its candidates. The clone roots
+  // must OUTLIVE selection — Phase 4 copies from `candidate.dir` — so cleanup
+  // is deferred to the end of the run (the pre-W187 code cleaned up in the
+  // per-source `finally`, which deleted a repo clone before it was copied; the
+  // successful-repo path was never exercised until the image-build seeding).
+  const cleanups = [];
+  try {
   const selections = [];
   for (const source of options.sources) {
     let acquired;
@@ -211,21 +233,18 @@ export async function importSkills(options) {
       report.problems.push(`source '${source.name}' failed: ${error instanceof Error ? error.message : String(error)}`);
       continue;
     }
-    try {
-      const { candidates, problems } = listSkillCandidates(acquired.root, source.include);
-      for (const problem of problems) report.problems.push(`source '${source.name}': ${problem}`);
-      for (const candidate of candidates) {
-        if (candidate.description === undefined || candidate.description.length === 0) {
-          report.skipped.push({
-            name: candidate.name,
-            reason: "SKILL.md has no frontmatter description — invisible to list_skills",
-          });
-          continue;
-        }
-        selections.push({ source, candidate, commit: acquired.commit, root: acquired.root });
+    if (acquired.cleanup !== undefined) cleanups.push(acquired.cleanup);
+    const { candidates, problems } = listSkillCandidates(acquired.root, source.include);
+    for (const problem of problems) report.problems.push(`source '${source.name}': ${problem}`);
+    for (const candidate of candidates) {
+      if (candidate.description === undefined || candidate.description.length === 0) {
+        report.skipped.push({
+          name: candidate.name,
+          reason: "SKILL.md has no frontmatter description — invisible to list_skills",
+        });
+        continue;
       }
-    } finally {
-      acquired.cleanup?.();
+      selections.push({ source, candidate, commit: acquired.commit, root: acquired.root });
     }
   }
 
@@ -306,6 +325,9 @@ export async function importSkills(options) {
     );
   }
   return report;
+  } finally {
+    for (const cleanup of cleanups) cleanup();
+  }
 }
 
 function usage() {
@@ -316,8 +338,9 @@ function usage() {
     "",
     "Options:",
     "  --dir <path>       Target skills directory (default: SKILLS_MCP_DIR or ~/.agents/skills)",
-    "  --sources <file>   JSON array of sources [{ name, repo | path, include: [\"skills/*\"] }]",
-    "                     (default: the curated obra/superpowers + mattpocock/skills set)",
+    "  --sources <file>   JSON array of sources [{ name, repo | path, include: [\"skills/*\"], commit? }]",
+    "                     (default: the curated obra/superpowers + mattpocock/skills set). A 'commit'",
+    "                     pins a repo source to an exact revision, fail-closed on mismatch — reproducible builds.",
     "  --list             Dry run: report what would be imported and refused, write nothing",
     "  --prune            Remove vendor-owned skills that left the selection",
     "  --archive          Move pre-existing unowned skill directories into .archive/<timestamp>/",
@@ -356,6 +379,11 @@ async function loadSources(file) {
   const parsed = JSON.parse(readFileSync(file, "utf8"));
   if (!Array.isArray(parsed) || !parsed.every((source) => typeof source === "object" && source !== null && typeof source.name === "string" && Array.isArray(source.include))) {
     throw new Error(`invalid sources file: expected an array of { name, repo | path, include }`);
+  }
+  for (const source of parsed) {
+    if (source.commit !== undefined && (typeof source.commit !== "string" || source.commit.length === 0)) {
+      throw new Error(`invalid sources file: '${source.name}' commit must be a non-empty string when present`);
+    }
   }
   return parsed;
 }

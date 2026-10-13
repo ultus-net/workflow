@@ -358,14 +358,6 @@ export async function createOpencodeServerRuntime(
     let skillConnectors: readonly { readonly name: string; readonly serverPath: string }[] = [];
     try {
       const catalog = resolveToolboxCatalog();
-      if (skillsMount !== undefined) {
-        provisionToolboxSkill(skillsMount.skillsDir, catalog);
-        // D1: provision the vendored fleet skills (e.g. code-cheatsheet) into
-        // the SAME hub-owned store, so the agent prompts that load them
-        // (`/explain`) reach them through the journaled `read_skill` path. The
-        // native `skill: "deny"` is untouched — this is the sanctioned delivery.
-        provisionFleetSkills(skillsMount.skillsDir);
-      }
       if (options.mountFullToolbox === true || skillsMount !== undefined) {
         const connectorOptions = {
           ...(options.skillConnectorsDisabled === undefined ? {} : { disabled: options.skillConnectorsDisabled }),
@@ -374,6 +366,26 @@ export async function createOpencodeServerRuntime(
         skillConnectors = options.mountFullToolbox === true
           ? toolboxCatalogMounts(catalog, connectorOptions)
           : skillConnectorMounts(catalog, connectorOptions);
+      }
+      if (skillsMount !== undefined) {
+        // W187: the delivered skill states the REAL mount set — the connectors
+        // just composed, the delivery mount itself, and any catalog server the
+        // operator enabled through settings. Filtered to catalog names (a
+        // custom settings server is not a toolbox connector) and ordered by the
+        // catalog, so the document's labels and `connectors:` list match the
+        // config `mcp` map instead of advertising bare build state.
+        const mountedSet = new Set([
+          "skills-mcp",
+          ...skillConnectors.map((mount) => mount.name),
+          ...(options.settings === undefined ? [] : enabledMcpServers(options.settings).map((server) => server.name)),
+        ]);
+        const mounted = catalog.map((entry) => entry.name).filter((name) => mountedSet.has(name));
+        provisionToolboxSkill(skillsMount.skillsDir, catalog, {}, { connectors: mounted });
+        // D1: provision the vendored fleet skills (e.g. code-cheatsheet) into
+        // the SAME hub-owned store, so the agent prompts that load them
+        // (`/explain`) reach them through the journaled `read_skill` path. The
+        // native `skill: "deny"` is untouched — this is the sanctioned delivery.
+        provisionFleetSkills(skillsMount.skillsDir);
       }
     } catch (error) {
       console.error(`workflow-toolbox skill delivery failed for the topology (continuing without it): ${error instanceof Error ? error.message : String(error)}`);

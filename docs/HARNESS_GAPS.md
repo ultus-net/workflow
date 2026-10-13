@@ -162,7 +162,14 @@ silently.
   (`gateSkills`, `skillReadableAt`).
 - `scripts/vendor-skills.mjs` vendors curated skills **at build time** with a
   `vendor-skills.json` provenance record; it is operator-invoked, not a
-  runtime gate.
+  runtime gate. **W187 (2026-10-13):** the control-plane image now runs it at
+  BUILD (`images/control-plane/Dockerfile`) against the committed operator
+  sources file `images/control-plane/vendor-skills.sources.json` (repos pinned
+  to exact commits, fail-closed on drift), so a fresh pod ships the curated
+  corpora pre-seeded. The update contract is deliberately MANUAL: there is no
+  `update`/`sync`/`check-for-updates` MCP tool — `skills-mcp` exposes only
+  `list_skills` and `read_skill`, and refreshing a source is a reviewed PR that
+  bumps the pinned commit and rebuilds the image (`skills-mcp/README.md`).
 - `src/integrations/fleet-payload.ts` (W086) vendors fleet assets with a
   committed sha256 manifest, again **build-time/PR-reviewed**, and its own
   header says the assets are versioned source audited by PR review.

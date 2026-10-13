@@ -135,7 +135,9 @@ test("W071 runtime: launches through an injected boundary and writes the pinned 
     providers?: Record<string, unknown>;
     lsp?: Record<string, { command?: readonly string[] }>;
   };
-  assert.deepEqual(config.permission, { edit: "ask", bash: "ask", task: "ask", skill: "deny" });
+  // Round 3 (2026-10-13) added the catch-all engine-native `external_directory`
+  // deny (the non-fatal workspace boundary); the pin now carries it.
+  assert.deepEqual(config.permission, { edit: "ask", bash: "ask", task: "ask", skill: "deny", external_directory: "deny" });
   // LSP wire: the composed `lsp` block survives into the config opencode read
   // (and the daemon accepted it — the server reached healthy above).
   assert.deepEqual(config.lsp, planeLspConfig(), "the lsp block must ride the hub-written config");
@@ -189,7 +191,19 @@ test("W071 runtime: launches through an injected boundary and writes the pinned 
 test("W-c1 runtime: mountFullToolbox + settings wire the whole toolbox and operator MCP servers into the hub-written config", { skip: binary === undefined, timeout: 60_000 }, async (t) => {
   const workspace = mkdtempSync(join(tmpdir(), "wf-run-ws-"));
   const stateHome = mkdtempSync(join(tmpdir(), "wf-run-state-"));
-  t.after(() => { rmSync(workspace, { recursive: true, force: true }); rmSync(stateHome, { recursive: true, force: true }); });
+  // Point the skills store at a temp dir so the delivered `workflow-toolbox`
+  // skill is provisioned here and can be compared against the config's mcp map
+  // (W187 end-to-end honesty parity).
+  const priorSkillsDir = process.env.SKILLS_MCP_DIR;
+  const skillsDir = mkdtempSync(join(tmpdir(), "wf-run-skills-"));
+  process.env.SKILLS_MCP_DIR = skillsDir;
+  t.after(() => {
+    if (priorSkillsDir === undefined) delete process.env.SKILLS_MCP_DIR;
+    else process.env.SKILLS_MCP_DIR = priorSkillsDir;
+    rmSync(workspace, { recursive: true, force: true });
+    rmSync(stateHome, { recursive: true, force: true });
+    rmSync(skillsDir, { recursive: true, force: true });
+  });
 
   const boundary: ProcessContainment = {
     isolation: "enforced",
@@ -238,6 +252,21 @@ test("W-c1 runtime: mountFullToolbox + settings wire the whole toolbox and opera
   // Operator-enabled servers ride the same config; disabled ones never do.
   assert.deepEqual(mcp["operator-server"]?.command, ["node", "/tmp/op.js"]);
   assert.equal(mcp["disabled-server"], undefined, "an operator-disabled server must never reach the config");
+
+  // W187 end-to-end honesty parity: the delivered skill's `connectors:`
+  // declaration (and its `mounted` labels) must equal the catalog connectors
+  // actually present in the config's mcp map — plus the delivery `skills-mcp`.
+  // This is the plane full-toolbox path, so every built catalog connector is
+  // mounted and every one is declared.
+  const { TOOLBOX_CATALOG } = await import("../src/integrations/toolbox-catalog.js");
+  const skill = readFileSync(join(skillsDir, "workflow-toolbox", "SKILL.md"), "utf8");
+  const declared = [...skill.matchAll(/^ {2}- (\S+)$/gm)].map((match) => match[1]);
+  const catalogNames = new Set(TOOLBOX_CATALOG.map((app) => app.name));
+  const mountedCatalog = Object.keys(mcp).filter((name) => catalogNames.has(name)).sort();
+  assert.ok(mountedCatalog.includes("skills-mcp"), "the delivery mount is a catalog connector");
+  assert.deepEqual([...declared].sort(), mountedCatalog, "the skill's connectors must equal the mounted catalog connectors (incl. the delivery mount)");
+  assert.equal((skill.match(/\(mounted\)/g) ?? []).length, mountedCatalog.length, "every mounted connector is labeled mounted");
+  assert.ok(!skill.includes("(available)"), "nothing is labeled merely available on the full-toolbox path");
 });
 
 // NOTE: this test's discriminating power assumes the toolbox `dist` builds are

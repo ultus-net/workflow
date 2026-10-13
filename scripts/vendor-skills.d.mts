@@ -10,6 +10,8 @@ export interface VendorSource {
   readonly repo?: string;
   readonly path?: string;
   readonly include: readonly string[];
+  /** Exact revision a repo source is pinned to; a mismatch fails closed. */
+  readonly commit?: string;
 }
 
 /** A discovered skill directory: the directory name is the skill name. */
@@ -49,7 +51,7 @@ export interface ImportOptions {
   readonly archive?: boolean;
   readonly dryRun?: boolean;
   /** Injectable shallow-clone for tests; returns the cloned HEAD commit. */
-  readonly clone?: (repo: string, dest: string) => Promise<string>;
+  readonly clone?: (repo: string, dest: string, commit?: string) => Promise<string>;
 }
 
 export const PROVENANCE_FILE: string;

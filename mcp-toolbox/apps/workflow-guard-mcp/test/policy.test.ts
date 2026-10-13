@@ -185,6 +185,30 @@ test("blocks dynamic shell syntax that can hide policy-relevant commands", () =>
   assert.equal(checkPolicy({ action: "shell", command: "kub" + "$" + "EMPTY" + "ectl delete pod api" }).decision, "deny");
 });
 
+test("W187: plain shell READ targets are as-found allow (secret-file read denial is unported)", () => {
+  // SECURITY_ASSURANCE #27, shell-read edge: the vendored secret-file READ
+  // denial lane is NOT ported into the app guard, so the shell lane classifies
+  // a plain read as baseline allow — the read (`cat`, `head`, `grep`) is not a
+  // mutation target and matches no destructive/exfil pattern. Reads outside
+  // /workspace are bounded by the pod, not the guard. A port that closes the
+  // lane flips this pin (see docs/SECURITY_ASSURANCE.md #27).
+  const root = mkdtempSync(join(tmpdir(), "workflow-guard-read-"));
+  for (const command of [
+    "cat /etc/passwd",
+    "head /etc/shadow",
+    "cat ~/.aws/credentials",
+    "cat /home/node/.ssh/id_rsa",
+    "grep -r PRIVATE /home/node/.workflow",
+  ]) {
+    const verdict = checkPolicy({ action: "shell", command, workspaceRoot: root });
+    assert.equal(verdict.decision, "allow", `${command} is as-found allow`);
+    assert.equal(verdict.policy, "baseline", `${command} classifies baseline`);
+  }
+  // The MUTATION form of the same path IS denied — the fence is the write lane
+  // (here via the protected-system-path rule, ahead of the workspace boundary).
+  assert.equal(checkPolicy({ action: "shell", command: "cat /etc/passwd > /etc/evil", workspaceRoot: root }).decision, "deny");
+});
+
 test("blocks protected paths hidden in interpreter payloads", () => {
   const envPath = ["/tmp/", ".e", "nv"].join("");
   assert.equal(checkPolicy({ action: "shell", command: `python -c 'open("${envPath}").read()'` }).policy, "interpreter-secret-path");

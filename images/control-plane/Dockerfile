@@ -60,6 +60,21 @@ RUN CI=true npm install -g pnpm@11.5.2 \
  && CI=true node scripts/prepare-tool.mjs \
  && npm prune --omit=dev
 
+# W187: seed the operator-configured vendored skill corpora into the
+# operator-managed skills store AT BUILD TIME, so a fresh pod's
+# `~/.agents/skills` already carries the curated set plus its
+# `vendor-skills.json` provenance (skills-mcp serves each through
+# `list_skills`/`read_skill`). The source list is OPERATOR config
+# (images/control-plane/vendor-skills.sources.json — repos + pinned commits),
+# NOT the script's hardcoded default, and the pins keep the image reproducible
+# instead of drifting to each upstream default branch on every rebuild. The
+# run fails the build CLOSED (exit 1) on a failed clone, an unowned collision,
+# or a cross-source duplicate, so the image never ships a half-seeded store.
+# `git` is present from the apt step above; the store is chowned to `node`
+# with the rest of /home/node below, so the runtime can update it in place.
+COPY images/control-plane/vendor-skills.sources.json /opt/vendor-skills.sources.json
+RUN node scripts/vendor-skills.mjs --dir /home/node/.agents/skills --sources /opt/vendor-skills.sources.json
+
 # Vendored, sha-verified opencode (the pin lives in opencode.sha256, in-tree).
 # Paths are repo-root-relative: the publish workflow builds with context: .
 # (the review's P2 — bare filenames would only resolve with a Dockerfile-dir

@@ -138,11 +138,28 @@ export function validateSkillConnectors(
  * connector claims and the document stays byte-identical to the W077 corpus
  * pin; declared connectors bump the frontmatter `version` to 2 (the document
  * shape changes).
+ *
+ * W187 (2026-10-13, the honesty fix): the SAME `connectors` list — the set
+ * actually wired into this session — drives the per-entry label. An entry in
+ * the set reads `mounted`; a built entry outside it reads `available` (built,
+ * not wired here); an unbuilt entry reads `unbuilt`. With no declaration every
+ * entry reads the bare build state, so the W077 corpus shape is byte-identical.
+ * The defect this closes was the delivered skill advertising all fourteen
+ * connectors as `available` while only the two-connector floor mounted. The
+ * delivery caller passes the real mount set (the connector mounts plus the
+ * delivery `skills-mcp` itself).
  */
-export function toolboxSkillBody(catalog: readonly ToolboxCatalogEntry[], options: { connectors?: readonly string[] } = {}): string {
+export function toolboxSkillBody(
+  catalog: readonly ToolboxCatalogEntry[],
+  options: { connectors?: readonly string[] } = {},
+): string {
   const connectors = validateSkillConnectors(options.connectors, catalog);
+  const mountedSet = new Set(connectors);
   const entries = catalog
-    .map((entry) => `- **${entry.name}** — ${entry.description} (${entry.available ? "available" : "unbuilt"})`)
+    .map((entry) => {
+      const state = mountedSet.has(entry.name) ? "mounted" : entry.available ? "available" : "unbuilt";
+      return `- **${entry.name}** — ${entry.description} (${state})`;
+    })
     .join("\n");
   return [
     "---",
@@ -154,9 +171,11 @@ export function toolboxSkillBody(catalog: readonly ToolboxCatalogEntry[], option
     "",
     "# Workflow toolbox",
     "",
-    "These MCP servers compose the Workflow hub's toolbox. Availability reflects the",
-    "vendored build; the hub's route-class gateway and the guard MCP server own the",
-    "enforcement — this document orients, it never authorizes.",
+    "These MCP servers compose the Workflow hub's toolbox. Each entry is labeled",
+    "`mounted` (wired into this session's config), `available` (built, not mounted",
+    "here), or `unbuilt` (absent from the vendored build). The hub's route-class",
+    "gateway and the guard MCP server own the enforcement — this document orients,",
+    "it never authorizes.",
     "",
     "## Connectors",
     "",
@@ -279,6 +298,7 @@ export function provisionToolboxSkill(
   skillsDir: string,
   catalog: readonly ToolboxCatalogEntry[],
   io: ProvisionToolboxSkillIo = {},
+  options: { readonly connectors?: readonly string[] } = {},
 ): { readonly skillPath: string; readonly written: boolean } {
   const mkdir = io.mkdirSync ?? ((path: string, options: { recursive: boolean; mode?: number }) => mkdirSyncReal(path, options));
   const exists = io.existsSync ?? existsSyncReal;
@@ -286,7 +306,13 @@ export function provisionToolboxSkill(
   const write = io.writeFileSync ?? ((path: string, data: string, options: { encoding: "utf8"; mode: number }) => writeFileSyncReal(path, data, options));
   const skillDir = join(skillsDir, "workflow-toolbox");
   const skillPath = join(skillDir, "SKILL.md");
-  const body = toolboxSkillBody(catalog, { connectors: declaredSkillConnectors(catalog) });
+  // W187: the delivered document states the REAL mount set when the caller
+  // supplies one (frontmatter `connectors` and the per-entry labels), so the
+  // skill and the hub-written config's `mcp` map agree. Absent it the
+  // historical declared floor is used and the document is byte-identical.
+  const body = toolboxSkillBody(catalog, {
+    ...(options.connectors === undefined ? { connectors: declaredSkillConnectors(catalog) } : { connectors: options.connectors }),
+  });
   if (exists(skillPath) && read(skillPath) === body) {
     return { skillPath, written: false };
   }
