@@ -459,7 +459,17 @@ They change no posture claim; they are appended as dated dispositions.
    works is the code-owned workspace-boundary block folded into the installed
    `AGENTS.md` (`docs/OPENCODE_SERVER_AUTHORITY.md`, round-3 addendum), and the
    boundary itself is now enforced engine-natively as a non-fatal config `deny`
-   (`permission.external_directory = "deny"`).
+   (`permission.external_directory = "deny"`). **Dated 2026-10-13 (round-4,
+   live):** the round-3 turn-abort fix is live-verified on v0.1.13
+   (`csh-dev-plane--0000020`) — an out-of-workspace read returned a non-fatal
+   engine-native `external_directory` denial and the turn continued (a same-turn
+   in-workspace write was allowed), with 0 breaker entries across 8+ repeated
+   probes. The broker-reject SIBLING cascade is NOT eliminated for a non-boundary
+   deny (e.g. a `subagent` `capability spawn is not available` reply still aborts
+   a mutating sibling in the same batch — turn and session survive, but that
+   sibling is lost); recorded as an open follow-up in
+   `docs/OPENCODE_SERVER_AUTHORITY.md` (round-4 addendum). This is a bounded,
+   same-batch blast radius, not a session freeze.
 
 2. **The mutation cap is operator-configurable (`WORKFLOW_MUTATION_BUDGET`).** The
    parse is fail-closed (a non-positive-integer throws; unset keeps the default
