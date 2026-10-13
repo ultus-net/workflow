@@ -363,15 +363,23 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
       record({ ...decision, delivered: true });
       return true;
     } catch (error) {
-      // A reply failure means the engine may still be waiting; the decision is
-      // recorded with delivery confirmation so the journal never reports an
-      // allow that never reached the server. The boolean return gates
-      // coverage seeding (fix-verify N2): an undelivered allow must never
-      // authorize later tool activity.
+      const message = error instanceof Error ? error.message : String(error);
+      // The v2 reject cascade drains every pending ask in the session: one
+      // reject resolves its siblings, so a follow-on reply for an ask the
+      // server already resolved answers 404 ("permission not found"). That is
+      // a resolution, not a transport loss; journal it as such so no surface
+      // reports the engine "may still be waiting". Match the engine's
+      // structured status (`remote engine POST … failed (404)`) precisely —
+      // free digits in an appended response body must not be misread. Any
+      // other failure keeps the alarming framing (the engine genuinely may be
+      // waiting).
+      const alreadyResolved = /^remote engine\b.*? failed \((?:404|409)\)(?::|$)/.test(message);
       record({
         ...decision,
         delivered: false,
-        reason: `${decision.reason ?? "policy allow"} (upstream reply failed: ${error instanceof Error ? error.message : String(error)})`,
+        reason: alreadyResolved
+          ? `${decision.reason ?? "policy allow"} (already resolved upstream: the v2 reject cascade drains sibling asks)`
+          : `${decision.reason ?? "policy allow"} (upstream reply failed: ${message})`,
       });
       return false;
     }

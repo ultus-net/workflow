@@ -221,3 +221,103 @@ Two lower-severity latents the same review found, recorded (not fixed):
 - **`rsi-campaign` command depends on `lib/` rulers** the runtime lane does not
   install (`lib` is excluded, workspace-owned), so that command's ruler calls do
   not resolve inside the plane container. Manual RSI tooling only.
+
+## Append 2026-10-13: round-2 in-plane findings (v0.1.11) — root causes and fixes
+
+Append-only. The v0.1.11 test on the `clean1` revision surfaced four round-2
+findings. Diagnosis is grounded in the PLANE console (`az containerapp logs show
+… --revision csh-dev-plane--clean1`, the authoritative decision log) and the
+pinned v2 source (`packages/schema/src/permission.ts`, `packages/core/src/permission.ts`).
+
+### R2-1 (P0) — `deny external_directory`/`deny edit` as `invalid ACP tool subject`
+
+**Evidence (plane console).** On session `ses_ecc8…`: `deny external_directory …
+reason=unmappable permission request (fail closed): invalid ACP tool subject` (×4)
+and `deny edit … invalid ACP tool subject` (×1). Zero capability/workspace/budget
+denials. The round-2 report's proposed remedy (grant the main session the RSI
+proposal capability set) is **misdiagnosed**: nothing was capability-withheld.
+
+**Root cause.** The pinned v2 `Permission.Request` carries the subject in
+`resources` (`{ id, sessionID, action, resources[], save?, metadata?, source? }`,
+`packages/schema/src/permission.ts`); `metadata` is freeform and, on the live
+wire, empty of the path. The projection built ACP `locations` from
+`metadata.filepath/filePath/path` only (`projection.ts permissionLocations`), so
+a v2 `edit` (path in `resources`) and `external_directory` (the directory in
+`resources`) yielded no subject. The adapter's fail-closed guard
+(`acp.ts` "mutating + mutation + no subjects ⇒ invalid ACP tool subject") then
+threw, and the broker recorded the unmappable deny. The tester reading `/app/src`
+is genuinely outside `/workspace`, so confinement was doing the right thing — the
+defect was that the subject never reached the confinement gate.
+
+**Why it looks like "the user declined this tool call".** opencode's
+`PermissionV2.reply("reject")` fails EVERY pending request in the session with a
+bare `DeclinedError` (message-less ⇒ `catchTag`→`die`) for the siblings
+(`packages/core/src/permission.ts` reply handler). A reject that carries no
+`message` is a raw decline, rendered as "The user declined this tool call" →
+"Step interrupted". The broker's unmappable path rejects with
+`rejectionFeedback` only when a reason exists — here the reason existed, but the
+*sibling* asks fail message-less regardless.
+
+**Fix.** `permissionToolCall` (`src/integrations/remote-acp/projection.ts`) now
+derives locations from `request.resources` for PATH-subject actions
+(`edit`/`write`/`patch`/`read`/`list`/`external_directory`/…), keeping
+`metadata` as the higher-priority v1 signal, and uses the resource path as the
+title when metadata offered none. `shell`/`webfetch`/`task` resources (a command,
+URL, or agent name) AND `glob`/`grep`/`search` resources (a glob/regex pattern,
+not a path) are deliberately NOT mapped, so they cannot fake a confinement
+subject. The out-of-workspace path now reaches
+`WORKSPACE_PATH_DENIED` (`workflow.ts:248-255`, the legible denial) instead of
+`invalid ACP tool subject`.
+
+### R2-2 (P1) — permission reply/poll 404s (`delivered=false … /reply`)
+
+**Evidence.** Each deny logs a `delivered=true` line paired with one or more
+`delivered=false … upstream reply failed: remote engine POST …/permission/…/reply`
+(404), matching the tester's `opencode.log` `POST …/reply 404` lines.
+
+**Root cause.** The v2 reject cascade above: the first reject drains every
+pending ask in the session, so a follow-on reply for a sibling the server already
+resolved answers 404. It is a resolution, not a transport loss.
+
+**Fix.** `deliver` (`opencode-server-authority.ts`) journals a reply failure
+whose engine status is `failed (404)`/`failed (409)` as `already resolved
+upstream (the v2 reject cascade drains sibling asks)` instead of the alarming
+`upstream reply failed` framing. The boolean still gates coverage seeding, so an
+undelivered allow never authorizes later activity (unchanged).
+
+### R2-3 (P2) — the fs route-template 500 (`/api/session/:id/permission/:pid`)
+
+Characterized as a tool calling the fs read on an OpenAPI template string
+(`GET /api/fs/list` on `/api/session/:id/permission/:pid`). It is a v2 fs-read
+surface (read-only class, forwarded), not an authority defect; no control-plane
+fix. Recorded, not fixed.
+
+### R2-4 (P1) — in-workspace write denied (`Unable to write /workspace/…`)
+
+Directly downstream of R2-1: an in-workspace `edit` whose path rides `resources`
+was unmappable, so the mutation was denied and the write never ran. The R2-1
+mapping fix resolves it (new test: an in-workspace `edit` with `resources` is
+allowed). The residual `tool.execution` message, if it persists after R2-1,
+would be an opencode-side write error, not the authority.
+
+### R2-5 — skills store (`/explain` reaches no `code-cheatsheet`)
+
+**Root cause.** `WORKFLOW_PLANE_FULL_TOOLBOX` is not set on the plane, so
+`mountFullToolbox=false` and the runtime took `resolveSkillsMount()` —
+mount-only-if-present — never `ensureSkillsMount()`. The hub-owned
+`~/.agents/skills` store was therefore never created or provisioned, so the fleet
+`skill` kind never resolved (confirmed: no `/home/node/.agents` on `clean1`).
+
+**Fix.** New runtime option `ensureSkillsStore` (independent of the O-4
+`mountFullToolbox` switch) wired `true` in the plane daemon block
+(`src/cli/opencode-server.ts`); the runtime uses `ensureSkillsMount()` when either
+is set and then `provisionToolboxSkill` + `provisionFleetSkills` populate the
+store. `skill: "deny"` is untouched (delivery is the journaled `read_skill`).
+
+### Posture
+
+All fixes are source-verified with focused tests (see PR); NONE is live-probed —
+the plane runs the old image, so every affected claim stays **Partial** until a
+rebuilt, digest-repinned release is deployed and the fleet loads an agent turn
+with an `edit`/`external_directory` and a `/explain`.
+

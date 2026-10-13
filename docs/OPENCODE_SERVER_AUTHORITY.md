@@ -666,4 +666,77 @@ configurable cap and the secret-store source are operator/deploy actions: the
 plane must set `WORKFLOW_UPSTREAM_KEY_FROM=azure-kv` (and store the secret) and
 stop riding `WORKFLOW_UPSTREAM_KEY` as a container env, or the exposure persists.
 
+## Addendum (2026-10-13, round-2 live plane — the v2 `resources` subject gap and the reject cascade)
+
+A round-2 in-plane test on the `clean1` revision (v0.1.11) surfaced: benign
+reads allowed (`allow shell … reason=policy allow`, ×27) while an
+`external_directory` tool turn and an `edit` were denied as
+`unmappable permission request (fail closed): invalid ACP tool subject` — with
+the paired `delivered=false … upstream reply failed: … /permission/…/reply`
+(404). Ground truth is the plane console (`[authority]` lines), not the inner
+OpenCode log.
+
+**Root cause (one defect, two symptoms).** The pinned v2 `Permission.Request`
+carries the subject in **`resources`** (`{ id, sessionID, action, resources[],
+save?, metadata?, source? }`, `packages/schema/src/permission.ts`); `metadata`
+is freeform and, on the live wire, held no path. `permissionToolCall`
+(`src/integrations/remote-acp/projection.ts`) built ACP locations from
+`metadata.filepath/filePath/path` ONLY, so a v2 `edit`/`external_directory` ask
+yielded no subject; the adapter's fail-closed guard (`src/adapters/acp.ts`,
+"mutating + mutation + no subject ⇒ invalid ACP tool subject") threw, and the
+broker recorded the unmappable deny. The path genuinely lay outside
+`/workspace`, so confinement was correct — the subject simply never reached the
+confinement gate (`workflow.ts:248-255` `WORKSPACE_PATH_DENIED`).
+
+**Second symptom — the reject cascade.** opencode's `PermissionV2.reply("reject")`
+fails EVERY pending request in the session with a bare `DeclinedError` (message
+-less ⇒ `catchTag`→`die`) for the siblings (`packages/core/src/permission.ts`).
+So one broker reject resolves a sibling ask, and the broker's follow-on reply for
+that sibling answers **404** (`pending.get(id)` misses ⇒ `NotFoundError`). A
+message-less decline is what the surface renders as "The user declined this tool
+call" → "Step interrupted".
+
+**Fix (two consumers).**
+
+- `permissionToolCall` derives locations from `request.resources` for
+  PATH-subject actions (`edit`/`write`/`patch`/`read`/`list`/
+  `external_directory`/…), keeping `metadata` as the higher-priority v1 signal,
+  and prefers the resource path as the title when metadata offered none.
+  `shell`/`webfetch`/`task` resources (a command, URL, or agent name) AND
+  `glob`/`grep`/`search` resources (a glob/regex pattern, not a path) are
+  deliberately NOT mapped, so they cannot fake a confinement subject. The
+  out-of-workspace path now returns the legible `WORKSPACE_PATH_DENIED`.
+- `deliver` (`opencode-server-authority.ts`) journals a reply failure carrying
+  `404`/`409` as `already resolved upstream (the v2 reject cascade drains
+  sibling asks)`, not the alarming `upstream reply failed` framing. The boolean
+  still gates coverage seeding, so an undelivered allow never authorizes later
+  activity (unchanged).
+
+**Skills (same run).** `WORKFLOW_PLANE_FULL_TOOLBOX` was unset, so the plane
+took `resolveSkillsMount()` (mount-only-if-present) and never created or
+provisioned the hub-owned `~/.agents/skills` store, leaving the fleet `skill`
+kind (e.g. `code-cheatsheet`, `/explain`) unreachable. A new runtime option
+`ensureSkillsStore` (independent of the O-4 `mountFullToolbox` switch) is wired
+`true` on the plane lane so the store is created and provisioned every launch;
+`skill: "deny"` is untouched (delivery is the journaled `read_skill`). A side
+effect is that once the store resolves, the block also composes the narrow
+declared-floor connector mounts (`workflow-guard-mcp`, and `skills-mcp` from the
+delivery mount) into `config.mcp` — the documented plane floor, restored rather
+than newly widened (the full catalog still needs the O-4 opt-in).
+
+**Tests.** `test/remote-acp-projection.test.ts` — a v2 `edit`/`external_directory`
+takes its subject from `resources`; a `shell` command's resources are NOT treated
+as a path. `test/opencode-server-authority.test.ts` — an out-of-workspace
+`external_directory` ask whose path rides `resources` denies by
+`WORKSPACE_PATH_DENIED` (not unmappable); an in-workspace `edit` is allowed; a
+404 reply is journaled as already-resolved. `test/opencode-server-launcher.test.ts`
+pins the plane wiring; `test/acp-runtime-agent.test.ts` pins `ensureSkillsMount`
+creating the store and degrading to no-mount when the build is absent.
+
+**Posture.** Source-verified with focused tests; live-probe PENDING — the plane
+runs the old image, so every affected claim stays **Partial** until a rebuilt,
+digest-repinned release loads a real `edit`/`external_directory` turn and a
+`/explain`.
+
+
 

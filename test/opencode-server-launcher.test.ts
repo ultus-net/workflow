@@ -275,4 +275,8 @@ test("O-4: the plane full-toolbox mount defaults OFF and is restored only by WOR
   // The decision must be WIRED into the daemon composition, not merely defined.
   const daemonSource = readFileSync(resolve(process.cwd(), "src", "cli", "opencode-server.ts"), "utf8");
   assert.match(daemonSource, /mountFullToolbox: planeMountsFullToolbox\(\)/, "main must wire the O-4 decision into the runtime options");
+  // The fleet skill store must be provisioned on the plane INDEPENDENT of the
+  // O-4 switch (which was OFF on the deployed plane, leaving `/explain` with no
+  // `code-cheatsheet`). Implemented-and-wired, not merely defined.
+  assert.match(daemonSource, /ensureSkillsStore: true/, "the plane lane must provision the hub-owned skills store");
 });

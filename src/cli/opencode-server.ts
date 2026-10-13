@@ -287,6 +287,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         ? {}
         : {
           mountFullToolbox: planeMountsFullToolbox(),
+          // The fleet `skill` kind is delivered through the journaled
+          // `read_skill` from the hub-owned store; the plane lane creates and
+          // provisions it on every launch, independent of the O-4 full-toolbox
+          // switch (which was OFF on the deployed plane, leaving `/explain`
+          // skill-less). A resolved store also composes the narrow
+          // declared-floor connectors into the config; the full catalog still
+          // requires the O-4 opt-in.
+          ensureSkillsStore: true,
           settings: loadSettings({ workspace }),
         }),
       // C1 plane: the LSP wire. On v2 an absent `lsp` key disables every

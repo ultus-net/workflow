@@ -16,10 +16,13 @@ import type { FleetEntry } from "./fleet-payload.js";
  *     provider id, which is the id the plane's composed config actually
  *     registers; the proxy forwards the bare `syn:<tier>:text` model id to
  *     Synthetic on the primary hop.
- *  2. `action: external_directory` permission rules — the ACP adapter cannot
- *     map that action (`src/adapters/acp.ts` throws `invalid ACP tool
- *     subject`), so the rule only produces fail-closed deny churn. The rules
- *     are dropped, and the style/standards docs the rules targeted are
+ *  2. `action: external_directory` permission rules — the frontmatter grants
+ *     access to paths outside the agent workspace (e.g.
+ *     `~/.config/opencode/style/**`). The plane confines every session to the
+ *     workspace, so such a rule can never authorize (a mapped request is denied
+ *     as `WORKSPACE_PATH_DENIED`), and the adapter's older fail-closed
+ *     `invalid ACP tool subject` on an unmappable ask only produced deny churn.
+ *     The rules are dropped, and the style/standards docs the rules targeted are
  *     delivered instead by folding them into the installed global `AGENTS.md`
  *     (see {@link foldFleetAmbientDocs}) — the one ambient-injection path the
  *     pinned OpenCode v2.0.10 actually honors.

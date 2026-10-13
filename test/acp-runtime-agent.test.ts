@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { acpAgentKind, installAcpVendoredFleet, openrouterAuthKeyFromAuth, resolveRuntimeMeteredLane, resolveSkillsMountFor } from "../src/integrations/acp-runtime.js";
+import { acpAgentKind, ensureSkillsMount, installAcpVendoredFleet, openrouterAuthKeyFromAuth, resolveRuntimeMeteredLane, resolveSkillsMountFor } from "../src/integrations/acp-runtime.js";
 import { installVendoredFleet } from "../src/integrations/opencode-server-runtime.js";
 import { loadFleetManifest } from "../src/integrations/fleet-payload.js";
 import { METERED_PLACEHOLDER_KEY } from "../src/integrations/model-usage-proxy.js";
@@ -198,6 +198,30 @@ test("resolveSkillsMountFor composes the delivery mount from the shared skills d
   assert.equal(resolveSkillsMountFor({ ...base, envSkillsDir: undefined, exists: () => false }), undefined);
   const noDir = (path: string) => path === "/repo/mcp-toolbox/apps/skills-mcp/dist/server.js";
   assert.equal(resolveSkillsMountFor({ ...base, envSkillsDir: undefined, exists: noDir }), undefined);
+});
+
+test("ensureSkillsMount creates the hub-owned skills store when absent (the plane lane seam)", () => {
+  // The store (default ~/.agents/skills) does not exist yet: the plane lane must
+  // create it so the delivery mount resolves on a fresh pod. `exists` is
+  // recomputed from the real filesystem after creation (the real mkdir is what
+  // populates it), so use a real temp home with the skills server build
+  // simulated present.
+  const home = mkdtempSync(join(tmpdir(), "wf-ensure-skills-home-"));
+  const root = mkdtempSync(join(tmpdir(), "wf-ensure-skills-root-"));
+  try {
+    const serverScript = join(root, "mcp-toolbox", "apps", "skills-mcp", "dist", "server.js");
+    mkdirSync(join(root, "mcp-toolbox", "apps", "skills-mcp", "dist"), { recursive: true });
+    writeFileSync(serverScript, "// build");
+    const mount = ensureSkillsMount({ root, home });
+    assert.ok(existsSync(join(home, ".agents", "skills")), "the store is created");
+    assert.deepEqual(mount, { serverScript, skillsDir: join(home, ".agents", "skills") });
+    // An absent skills-server build degrades to no mount (the directory may be
+    // left behind, harmless — pinned by the resolver, not the mkdir).
+    assert.equal(ensureSkillsMount({ root: "/nonexistent-root", home }), undefined);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 // ── The shared lane resolver (the operator pivot) ───────────────────────────
