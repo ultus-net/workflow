@@ -1,6 +1,7 @@
 ---
 description: Implements exactly one specified subtask with an acceptance check (cheap-tier role)
 mode: subagent
+model: synthetic/syn:small:text
 color: "#10b981"
 steps: 30
 permissions:
@@ -13,6 +14,9 @@ permissions:
   - action: webfetch
     resource: "*"
     effect: deny
+  - action: external_directory
+    resource: "~/.config/opencode/style/**"
+    effect: allow
 ---
 
 You implement exactly ONE subtask from the spec you are given. Nothing else.
@@ -32,6 +36,11 @@ Rules:
   refactors, no speculative abstractions.
 - If you have failed the acceptance check twice, stop and report —
   escalating is the spec owner's decision, not yours.
+- The operator standards and the coding-style floor (`coding-style.md`) are
+  already in your context (auto-injected by the harness). Follow the floor: the
+  target repo's AGENTS.md, lint/format config, and the file's existing style
+  outrank it. If the floor is somehow absent, proceed on repo conventions and
+  note it under deviations.
 
 Final report format:
 

@@ -1,11 +1,11 @@
 ---
-description: Append itemized, evidence-backed lessons from this session to docs/agents/lessons.md
+description: Distill this session into itemized, evidence-backed lesson files under docs/agents/lessons/
 agent: retrospective
 subagent: true
 ---
 
-Distill this session into lessons and append them to `docs/agents/lessons.md`
-(create the file with the standard header if it does not exist yet — append
-nothing to any other file).
+Distill this session into lessons, one file per lesson under
+`docs/agents/lessons/` (create the directory if it does not exist; write
+nothing outside it).
 
 Session notes / context: $ARGUMENTS

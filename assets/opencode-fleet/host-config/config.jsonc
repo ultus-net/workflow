@@ -1,0 +1,245 @@
+{
+  // No "$schema" line on purpose (adversarial P1-1): the only published URL,
+  // https://opencode.ai/config.json, is a v1 vocabulary with
+  // additionalProperties:false, so it flags this file's v2 keys (plugins,
+  // permissions, worktree) as unknown. A schema that rejects its own document
+  // is worse than none. The v2 shape is pinned repo-side by
+  // install/lib/config-shape.cjs and install/lib/validate-config.cjs.
+
+  // Golden OpenCode config. Deployed by install/30-settings.sh from
+  // install/opencode/. The agent cannot write ~/.config/opencode/** (the
+  // config's own edit-deny). The agent CAN write this golden tree under
+  // install/opencode/** (only the live ~/.config/opencode/** is tamper-gated),
+  // so an edit here is the sanctioned source edit the installer deploys.
+  //
+  // This file is named `config.jsonc`, not `opencode.jsonc`: a path whose
+  // basename is `opencode.jsonc` is edit-denied, including a staging copy. The
+  // installer deploys it to the live `opencode.jsonc` path.
+  //
+  // Model routing is intentionally NOT pinned here: agents carry per-role tier
+  // pins in their own frontmatter.
+
+  // ── Transitional (retiring the enforcement add-on) ──────────────────────
+  // The guard is still being retired, so it must stay active. Keep it here
+  // ONLY so deploying this file does not silently drop guard behavior during
+  // the cutover window. The destructive-command classes it held are now ported
+  // into this file's `permissions` (adversarial P1-2/P2-3; see
+  // install/lib/port-destructive-rules.cjs), so the last config-side blocker to
+  // removing this entry is the control plane's remaining port items in
+  // docs/agents/policy-review.md. The plugin is deliberately NOT pinned: pinning
+  // a dependency being retired is drift debt, so a guard-version bump stays a
+  // scored change only until this block is deleted. Remove this block at
+  // retirement. opencode-auto-router is auto-discovered from the live plugins/
+  // dir and is intentionally NOT referenced here.
+  "plugins": [
+    "opencode-workflow-guard@latest",
+  ],
+
+  // `build` is a host built-in, not a pinned fleet agent, so the routing ruler
+  // (verify-effective-model.cjs) does not grade the default session path (P2-4:
+  // a coverage hole, by design for now). Pin or extend the ruler before relying
+  // on the default agent's tier.
+  "default_agent": "build",
+
+  // ── Language servers (binaries installed via Homebrew) ──────────────────
+  // Explicit commands so the TS server also works in projects without a
+  // locally installed `typescript` package. Preserved from the pre-flip live
+  // config so deploying the golden tree does not drop LSP.
+  "lsp": {
+    "typescript": {
+      "command": ["typescript-language-server", "--stdio"],
+      "extensions": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"],
+    },
+    "pyright": {
+      "command": ["pyright-langserver", "--stdio"],
+      "extensions": [".py", ".pyi"],
+    },
+  },
+
+  // ── MCP servers ──────────────────────────────────────────────────────────
+  // Preserved from the pre-flip live config so deploying the golden tree does
+  // not drop the documentation and browser-automation servers.
+  "mcp": {
+    // Up-to-date library/framework documentation.
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp",
+    },
+    // Browser automation/inspection via Chrome DevTools.
+    "chrome-devtools": {
+      "type": "local",
+      "command": ["npx", "-y", "chrome-devtools-mcp@latest"],
+      "timeout": 30000,
+    },
+  },
+
+  // ── Ambient instructions (auto-injected into every session) ──────────────
+  // OpenCode reads these paths (and AGENTS.md/CLAUDE.md) into the system
+  // prompt for every turn and every agent, including subagents. Put standards
+  // here, not in per-agent "read this file" bullets an agent can skip. The
+  // paths resolve from $HOME; the golden tree symlinks them live.
+  "instructions": [
+    "~/.config/opencode/STANDARDS.md",
+    "~/.config/opencode/style/coding-style.md",
+  ],
+
+  // Compaction is tuned with no repo ruler yet (no compaction instrument in
+  // install/lib; pre-ruler tune, the n=12 tool_output state). The host honors
+  // these keys as v2 legacy aliases (preserve_recent_tokens -> keep.tokens,
+  // reserved -> buffer), a silent-drop surface if a future host drops an alias.
+  // Accepted defaults, not yet measured.
+  "compaction": {
+    "auto": true,
+    "keep": { "tokens": 15000 },
+    "buffer": 20000,
+  },
+
+  // Context bloat: ignore build, cache, VCS, and DB churn. Inert until
+  // OPENCODE_EXPERIMENTAL_FILEWATCHER is set in the serving process (n=8: the
+  // only consumer of watcher.ignore sits behind that flag, default false; the
+  // flag is staged in .config/environment.d/90-user.conf). Without the flag the
+  // ignore list does not run.
+  "watcher": {
+    "ignore": [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/.git/**",
+      "**/target/**",
+      "**/.tmp-tests/**",
+      "**/*.db",
+      "**/*.db-wal",
+      "**/*.db-shm",
+    ],
+  },
+
+  // Cap retained tool output. Large dumps (SQL, logs, trees) are being
+  // re-read and re-summarized; bound them at source instead. max_lines is a
+  // guardrail for pathological line-heavy output, not the active lever: the
+  // store is byte-bound (n=26: 81/84 spills exceed the byte cap, 17 exceed the
+  // line cap). max_bytes is the binding dimension and is tightened to 30000
+  // from the 51200 default. The full text stays on disk.
+  "tool_output": {
+    "max_lines": 800,
+    "max_bytes": 30000,
+  },
+
+  // ── Permissions ───────────────────────
+  // V2 shape: an array of rules. The previous V1 object shape was silently
+  // ignored in V2, so none of its rules were enforced. This file now carries the
+  // destructive-command classes the enforcement add-on held, so a clean install
+  // stays self-sufficient after the add-on is retired: the ported block is
+  // generated by install/lib/port-destructive-rules.cjs (single source of truth;
+  // re-run --apply after editing the class table). Coverage and residual classes
+  // (case-insensitive database verb alternation, remote HTTP DELETE, reverse
+  // shells) are documented in docs/agents/proposals/destructive-command-port.md.
+  // The installer refuses to overwrite a differing live config without FORCE=1.
+  //
+  // FRESH-INSTALL DELTA (P2-3): `permissions` is exempt from convergence, so on
+  // a machine with an existing live config this block is inert. On a fresh
+  // machine the installer seeds live from this block, so coverage is whatever
+  // this file carries. It is now at parity with the add-on's destructive set
+  // minus the residual regex-only classes named in the proposal.
+  //
+  // ORDER MATTERS: the host resolves the LAST matching rule, so broad rules go
+  // first and narrow ones after. The broad `git push *` ask precedes the
+  // `--force`/`-f`/`+`-refspec denials, so a force push stays denied. Ported
+  // rules default to `ask`; only the `+`-refspec class is `deny`, matching the
+  // force-push denials it belongs to.
+  "permissions": [
+    // Config files are off-limits to the agent. In V2 the `edit` action covers
+    // the edit, write, AND patch tools.
+    { "action": "edit", "resource": "~/.config/opencode/**", "effect": "deny" },
+    { "action": "edit", "resource": "opencode.json*", "effect": "deny" },
+    { "action": "edit", "resource": ".opencode/**", "effect": "deny" },
+    // Secrets are never worth reading.
+    { "action": "read", "resource": "*.env", "effect": "deny" },
+    { "action": "read", "resource": "*.env.*", "effect": "deny" },
+    { "action": "read", "resource": "*.env.example", "effect": "allow" },
+    { "action": "edit", "resource": "*.env*", "effect": "deny" },
+    // Read-only git inspection is always safe.
+    { "action": "shell", "resource": "git status *", "effect": "allow" },
+    { "action": "shell", "resource": "git diff *", "effect": "allow" },
+    { "action": "shell", "resource": "git log *", "effect": "allow" },
+    { "action": "shell", "resource": "git show *", "effect": "allow" },
+    { "action": "shell", "resource": "git branch *", "effect": "allow" },
+    // History rewrites are gated by confirmation.
+    { "action": "shell", "resource": "git reset --hard *", "effect": "ask" },
+    { "action": "shell", "resource": "git clean *", "effect": "ask" },
+    { "action": "shell", "resource": "rm -rf *", "effect": "ask" },
+    { "action": "shell", "resource": "git push *", "effect": "ask" },
+    // Narrow denials after the broad push ask, so they take precedence.
+    { "action": "shell", "resource": "git push --force *", "effect": "deny" },
+    { "action": "shell", "resource": "git push -f *", "effect": "deny" },
+    // >>> ported-destructive-rules (generated — run install/lib/port-destructive-rules.cjs --apply) <<<
+    { "action": "shell", "resource": "kubectl delete *", "effect": "ask" },
+    { "action": "shell", "resource": "kubectl drain *", "effect": "ask" },
+    { "action": "shell", "resource": "kubectl cordon *", "effect": "ask" },
+    { "action": "shell", "resource": "kubectl rollout undo *", "effect": "ask" },
+    { "action": "shell", "resource": "kubectl rollout restart *", "effect": "ask" },
+    { "action": "shell", "resource": "helm uninstall *", "effect": "ask" },
+    { "action": "shell", "resource": "helm rollback *", "effect": "ask" },
+    { "action": "shell", "resource": "helm delete *", "effect": "ask" },
+    { "action": "shell", "resource": "terraform destroy *", "effect": "ask" },
+    { "action": "shell", "resource": "tofu destroy *", "effect": "ask" },
+    { "action": "shell", "resource": "pulumi destroy *", "effect": "ask" },
+    { "action": "shell", "resource": "docker rm *", "effect": "ask" },
+    { "action": "shell", "resource": "docker prune *", "effect": "ask" },
+    { "action": "shell", "resource": "docker container rm *", "effect": "ask" },
+    { "action": "shell", "resource": "docker system prune *", "effect": "ask" },
+    { "action": "shell", "resource": "docker image prune *", "effect": "ask" },
+    { "action": "shell", "resource": "docker volume rm *", "effect": "ask" },
+    { "action": "shell", "resource": "docker volume prune *", "effect": "ask" },
+    { "action": "shell", "resource": "docker network prune *", "effect": "ask" },
+    { "action": "shell", "resource": "az * delete*", "effect": "ask" },
+    { "action": "shell", "resource": "az * purge*", "effect": "ask" },
+    { "action": "shell", "resource": "az * abandon*", "effect": "ask" },
+    { "action": "shell", "resource": "aws * delete*", "effect": "ask" },
+    { "action": "shell", "resource": "aws * terminate*", "effect": "ask" },
+    { "action": "shell", "resource": "gcloud * delete*", "effect": "ask" },
+    { "action": "shell", "resource": "gcloud * abandon*", "effect": "ask" },
+    { "action": "shell", "resource": "gh repo delete *", "effect": "ask" },
+    { "action": "shell", "resource": "gh issue delete *", "effect": "ask" },
+    { "action": "shell", "resource": "gh pr delete *", "effect": "ask" },
+    { "action": "shell", "resource": "gh pr close *", "effect": "ask" },
+    { "action": "shell", "resource": "gh release delete *", "effect": "ask" },
+    { "action": "shell", "resource": "gh secret delete *", "effect": "ask" },
+    { "action": "shell", "resource": "gh variable delete *", "effect": "ask" },
+    { "action": "shell", "resource": "prisma migrate reset *", "effect": "ask" },
+    { "action": "shell", "resource": "mkfs* *", "effect": "ask" },
+    { "action": "shell", "resource": "wipefs* *", "effect": "ask" },
+    { "action": "shell", "resource": "parted* *", "effect": "ask" },
+    { "action": "shell", "resource": "sfdisk* *", "effect": "ask" },
+    { "action": "shell", "resource": "gdisk* *", "effect": "ask" },
+    { "action": "shell", "resource": "sudo rm -rf *", "effect": "ask" },
+    { "action": "shell", "resource": "sudo rm -fr *", "effect": "ask" },
+    { "action": "shell", "resource": "sudo rm -r *", "effect": "ask" },
+    { "action": "shell", "resource": "sudo rm -f *", "effect": "ask" },
+    { "action": "shell", "resource": "git push * +*", "effect": "deny" },
+    { "action": "shell", "resource": "git push +*", "effect": "deny" },
+    { "action": "shell", "resource": "chmod -R * /", "effect": "ask" },
+    { "action": "shell", "resource": "chmod -R * ~", "effect": "ask" },
+    { "action": "shell", "resource": "chmod -R * $HOME", "effect": "ask" },
+    { "action": "shell", "resource": "chmod -r * /", "effect": "ask" },
+    { "action": "shell", "resource": "chmod -r * ~", "effect": "ask" },
+    { "action": "shell", "resource": "chmod -r * $HOME", "effect": "ask" },
+    { "action": "shell", "resource": "chown -R * /", "effect": "ask" },
+    { "action": "shell", "resource": "chown -R * ~", "effect": "ask" },
+    { "action": "shell", "resource": "chown -R * $HOME", "effect": "ask" },
+    { "action": "shell", "resource": "chown -r * /", "effect": "ask" },
+    { "action": "shell", "resource": "chown -r * ~", "effect": "ask" },
+    { "action": "shell", "resource": "chown -r * $HOME", "effect": "ask" },
+    { "action": "shell", "resource": "dd *of=/dev/*", "effect": "ask" },
+    { "action": "shell", "resource": "shred */dev/*", "effect": "ask" },
+    // <<< ported-destructive-rules <<<
+  ],
+
+  // Agents live in ./agents/*.md (markdown body = system prompt).
+  // Commands live in ./commands/*.md.
+  // Skills live in ./skills/.
+
+  // Deliberately unset, recorded so a future iteration does not rediscover them:
+  // `warming` trades tokens for latency (default false; off on purpose here,
+  // since every knob in this file targets context cost, not latency), and
+  // `snapshots` is a safety net with git overhead on large repos (off by
+  // choice, not oversight).
+}

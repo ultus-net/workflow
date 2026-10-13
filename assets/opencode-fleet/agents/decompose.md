@@ -1,6 +1,7 @@
 ---
 description: Decomposes a task into cheap-model-ready subtask specs (planner role)
 mode: subagent
+model: synthetic/syn:large:text
 color: "#8b5cf6"
 steps: 20
 permissions:

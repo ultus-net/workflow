@@ -63,7 +63,10 @@ given, but *judging* and *integrating* still need capability.
 
 - Escalation budget per subtask: e.g. 2 cheap attempts, then strong model.
   Retrying a cheap model past its capability is more expensive than doing
-  it strong the first time.
+  it strong the first time. Make the trigger observable and automatic (two
+  failed acceptance runs, a repeated error loop, or sustained exploration
+  with no accepted edit), not a judgment call mid-flight; this is the
+  *escalation router* pattern (see `reading-list.md` → NeMo Switchyard).
 - Track a simple success rate per subtask *type*; drop types whose
   cheap-attempt success rate makes retries net-negative.
 - The most expensive failure mode is a cheap model passing a weak check.
@@ -71,15 +74,18 @@ given, but *judging* and *integrating* still need capability.
 
 ## Anchoring to this repo (opencode + goose)
 
-- **opencode** — the fleet in `.config/opencode/agents/` encodes the roles
+- **opencode** — the fleet in `install/opencode/agents/` encodes the roles
   structurally: `decompose` (planner), `executor` (cheap-tier role),
-  `reviewer`, `retrospective`. No agent pins a model — routing is upstream —
-  so tiers are role assignments, not hardcoded IDs. Subagents spawned via
+  `executor-strong` (escalation twin, strong tier), `reviewer`,
+  `retrospective`. Each agent carries a per-role `model:` tier pin in its
+  frontmatter; the upstream router adds the Synthetic-primary/OpenRouter
+  failover layer, so tiers are role assignments backed by explicit pins, not
+  per-request guesses. Subagents spawned via
   the `subagent` tool run in their own context (subtask noise stays out of the
   main thread), and `steps` caps bound runaway spend.
 - **goose** — same split: planning stays on the session's routed model;
   mechanical fan-out goes to opencode subagents.
-- The `AGENTS.template.md` decision checklist is the natural acceptance
+- The `install/opencode/STANDARDS.md` decision checklist is the natural acceptance
   check for many subtask types (lint/test/typecheck already enumerated).
 
 ## Relation to the RSI loop

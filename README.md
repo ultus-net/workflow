@@ -61,7 +61,7 @@ workflow-monitor
 workflow-shell
 ```
 
-`workflow doctor` states the local setup honestly (settings, credentials, hub, topology, containment, probe verdicts, the vendored fleet payload, and the guard enforcement posture). `workflow install fleet` deploys the vendored OpenCode agent fleet (`workflow install fleet --force` to overwrite locally modified agent/command files).
+`workflow doctor` states the local setup honestly (settings, credentials, hub, topology, containment, probe verdicts, the vendored fleet payload, and the guard enforcement posture). `workflow install fleet` deploys the vendored OpenCode golden tree — agents, commands, root instructions, the style floor, the RSI templates, the code-cheatsheet skill, and the lib rulers — into the host config dir, and install-if-missing companion docs into the workspace (`workflow install fleet --force` to overwrite locally modified config files; repo-owned docs are never overwritten).
 
 Useful environment:
 

@@ -1,24 +1,27 @@
 import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * W086 — the control-plane fleet payload: the OpenCode agent/command files
- * and the companion repo docs the fleet references, vendored into this
- * repository under `assets/opencode-fleet/` with a committed sha256 manifest
- * (regenerate via `node scripts/generate-fleet-manifest.mjs`).
+ * W086 — the control-plane fleet payload: the OpenCode golden tree (agents,
+ * commands, root instructions, the style floor, the RSI scaffolding templates,
+ * the code-cheatsheet skill, and the harness `lib/` rulers) plus the companion
+ * repo docs the fleet references, vendored into this repository under
+ * `assets/opencode-fleet/` with a committed sha256 manifest (regenerate via
+ * `node scripts/generate-fleet-manifest.mjs`).
  *
  * Trust boundary, stated precisely (the guard-policy tier model,
  * 2026-09-21): the vendored assets are versioned source — PR review carries
  * their audit. `installFleet` writes ONLY into the operator-invoked targets
- * (the host agent/command directories and, install-if-missing only, the
- * workspace's docs/agents files). It never touches the root host config
- * document — that file is the permission surface and stays operator-owned;
- * the doctor verifies it and prints the fragment, the installer never
- * rewrites it. Nothing here runs unattended: running `workflow install
- * fleet` is the operator's ask-gate.
+ * (the host agent/command/instruction/style/template/skill/lib trees and,
+ * install-if-missing only, the workspace's docs/agents files). It never
+ * touches the root host config document (`opencode.jsonc`) — that file is the
+ * permission surface and stays operator-owned; the vendored `host-config/`
+ * copies are reference-only (for review and the doctor's fragment print), and
+ * the installer never writes them. Nothing here runs unattended: running
+ * `workflow install fleet` is the operator's ask-gate.
  *
  * The docs bundle is install-if-missing by design: `lessons.md` is a
  * per-repo append-only memory and the other docs are repo-owned living
@@ -27,7 +30,16 @@ import { fileURLToPath } from "node:url";
  * destroy.
  */
 
-export type FleetKind = "agent" | "command" | "doc";
+export type FleetKind =
+  | "agent"
+  | "command"
+  | "doc"
+  | "instruction"
+  | "style"
+  | "template"
+  | "skill"
+  | "lib"
+  | "host-config";
 
 export interface FleetEntry {
   readonly id: string;
@@ -67,19 +79,56 @@ export interface FleetOptions {
   /** Workspace whose repo docs receive the docs bundle (defaults to cwd). */
   readonly workspace?: string;
   /**
-   * Restrict install/compare to these kinds (default: every kind). The plane
-   * runtime installs only the agent/command config surface into its hub-owned
-   * config dir and never the workspace docs, so it passes `["agent", "command"]`.
+   * Restrict install/compare to these kinds (default: every installable kind —
+   * `host-config` is reference-only and never installed). The plane runtime
+   * installs only the agent/command config surface into its hub-owned config
+   * dir and never the workspace docs, so it passes `["agent", "command"]`.
    */
   readonly kinds?: readonly FleetKind[];
 }
 
-/** Manifest entries narrowed to the requested kinds (all kinds when absent). */
-function selectedEntries(manifest: FleetManifest, kinds: readonly FleetKind[] | undefined): readonly FleetEntry[] {
-  return kinds === undefined ? manifest.entries : manifest.entries.filter((entry) => kinds.includes(entry.kind));
+/** Per-kind placement: where the source lives and where (if ever) it installs. */
+interface KindSpec {
+  /** Source subdirectory under `assets/opencode-fleet/`. */
+  readonly dir: string;
+  /** Host config subdirectory for installable kinds (absent ⇒ the config dir root). */
+  readonly installSubdir?: string;
+  /** Workspace subdirectory for docs (absent ⇒ not workspace-installed). */
+  readonly workspaceSubdir?: string;
+  /** Docs are repo-owned living files: install-if-missing only, never overwritten. */
+  readonly installIfMissingOnly?: boolean;
+  /** Reference-only: vendored for review + the doctor's fragment print, never installed. */
+  readonly referenceOnly?: boolean;
 }
 
-const KINDS: readonly FleetKind[] = ["agent", "command", "doc"];
+const KIND_SPECS: Record<FleetKind, KindSpec> = {
+  agent: { dir: "agents", installSubdir: "agents" },
+  command: { dir: "commands", installSubdir: "commands" },
+  instruction: { dir: "instructions" },
+  style: { dir: "style", installSubdir: "style" },
+  template: { dir: "templates", installSubdir: "templates" },
+  skill: { dir: "skills", installSubdir: "skills" },
+  lib: { dir: "lib", installSubdir: "lib" },
+  doc: { dir: "docs", workspaceSubdir: "agents", installIfMissingOnly: true },
+  "host-config": { dir: "host-config", referenceOnly: true },
+};
+
+const KINDS = Object.keys(KIND_SPECS) as readonly FleetKind[];
+const INSTALLABLE_KINDS: readonly FleetKind[] = KINDS.filter((kind) => KIND_SPECS[kind].referenceOnly !== true);
+
+function specFor(kind: FleetKind): KindSpec {
+  return KIND_SPECS[kind];
+}
+
+/**
+ * Manifest entries narrowed to the requested kinds (all installable kinds when
+ * absent). Reference-only kinds are always excluded: even an explicit request
+ * cannot make the permission surface installable.
+ */
+function selectedEntries(manifest: FleetManifest, kinds: readonly FleetKind[] | undefined): readonly FleetEntry[] {
+  const wanted = kinds === undefined ? INSTALLABLE_KINDS : kinds.filter((kind) => specFor(kind).referenceOnly !== true);
+  return manifest.entries.filter((entry) => wanted.includes(entry.kind));
+}
 
 /** Vendored assets directory: an explicit root wins; otherwise this package's own checkout/install. */
 export function fleetAssetsRoot(options: Pick<FleetOptions, "root"> = {}): string {
@@ -87,21 +136,30 @@ export function fleetAssetsRoot(options: Pick<FleetOptions, "root"> = {}): strin
   return fileURLToPath(new URL("../../assets/opencode-fleet/", import.meta.url));
 }
 
-/** Where an entry installs: agents/commands under the host config dir, docs under the workspace repo. */
+/** Where an entry installs: config kinds under the host config dir, docs under the workspace repo. */
 export function fleetTarget(entry: FleetEntry, options: Pick<FleetOptions, "home" | "workspace" | "configDir"> = {}): string {
-  const configDir = options.configDir ?? join(options.home ?? homedir(), ".config", "opencode");
-  if (entry.kind === "doc") {
-    return join(options.workspace ?? process.cwd(), "docs", "agents", entry.file);
+  const spec = specFor(entry.kind);
+  if (spec.referenceOnly === true) throw new TypeError(`fleet entry ${entry.id} is reference-only and has no install target`);
+  if (spec.workspaceSubdir !== undefined) {
+    return join(options.workspace ?? process.cwd(), "docs", spec.workspaceSubdir, entry.file);
   }
-  return join(configDir, entry.kind === "agent" ? "agents" : "commands", entry.file);
+  const configDir = options.configDir ?? join(options.home ?? homedir(), ".config", "opencode");
+  return join(configDir, ...(spec.installSubdir === undefined ? [] : [spec.installSubdir]), entry.file);
 }
 
 function sourcePath(entry: FleetEntry, options: Pick<FleetOptions, "root"> = {}): string {
-  return join(fleetAssetsRoot(options), entry.kind === "agent" ? "agents" : entry.kind === "command" ? "commands" : "docs", entry.file);
+  return join(fleetAssetsRoot(options), specFor(entry.kind).dir, entry.file);
 }
 
 function sha256File(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+/** A manifest file path is a relative POSIX subpath: no absolute root, no `..` escape, no backslash. */
+function isSafeRelativeFile(file: string): boolean {
+  if (file.length === 0 || file.startsWith("/") || file.includes("\\")) return false;
+  const segments = file.split("/");
+  return segments.every((segment) => segment.length > 0 && segment !== "." && segment !== "..");
 }
 
 /**
@@ -121,8 +179,8 @@ export function loadFleetManifest(options: Pick<FleetOptions, "root"> = {}): Fle
     if (typeof entry.kind !== "string" || !KINDS.includes(entry.kind as FleetKind)) {
       throw new TypeError(`fleet manifest entry ${String(entry.id)} has an unknown kind: ${String(entry.kind)}`);
     }
-    if (typeof entry.file !== "string" || !entry.file.endsWith(".md") || basename(entry.file) !== entry.file) {
-      throw new TypeError(`fleet manifest entry ${String(entry.id)} has a non-basename file: ${String(entry.file)}`);
+    if (typeof entry.file !== "string" || !isSafeRelativeFile(entry.file)) {
+      throw new TypeError(`fleet manifest entry ${String(entry.id)} has an unsafe file path: ${String(entry.file)}`);
     }
     if (typeof entry.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(entry.sha256)) {
       throw new TypeError(`fleet manifest entry ${String(entry.id)} has a malformed sha256`);
@@ -151,7 +209,10 @@ export function compareFleet(options: FleetOptions = {}): readonly FleetStatus[]
 export function fleetCopyCommand(status: FleetStatus, options: Pick<FleetOptions, "root"> = {}): string {
   const quote = (value: string): string => `'${value.replaceAll("'", `'\\''`)}'`;
   const source = sourcePath(status.entry, options);
-  return `cp ${quote(source)} ${quote(status.target)}`;
+  // Nested kinds (templates/rsi/*, skills/<name>/*, lib/vendor/*) install into
+  // subdirectories that may not exist yet, so the hand-copy creates the parent
+  // the same way installFleet does. A flat target still gets a harmless mkdir -p.
+  return `mkdir -p ${quote(dirname(status.target))} && cp ${quote(source)} ${quote(status.target)}`;
 }
 
 /**
@@ -168,15 +229,16 @@ export function installFleetIntoOpencodeConfig(configDir: string): readonly Flee
 }
 
 /**
- * Deploys the fleet. Agents/commands refuse to clobber a locally-modified
- * install unless `force` is set; docs are install-if-missing only (never
- * overwritten, force or not). Writes are atomic (temp file + rename) and
- * nothing is ever deleted.
+ * Deploys the fleet. Config kinds (agents/commands/instructions/style/templates/
+ * skills/lib) refuse to clobber a locally-modified install unless `force` is
+ * set; docs are install-if-missing only (never overwritten, force or not).
+ * Writes are atomic (temp file + rename) and nothing is ever deleted.
  */
 export function installFleet(options: FleetOptions & { readonly force?: boolean } = {}): readonly FleetInstallResult[] {
   const manifest = loadFleetManifest(options);
   return selectedEntries(manifest, options.kinds).map((entry) => {
     const target = fleetTarget(entry, options);
+    const installIfMissingOnly = specFor(entry.kind).installIfMissingOnly === true;
     let installedHash: string | undefined;
     try {
       installedHash = sha256File(target);
@@ -187,7 +249,7 @@ export function installFleet(options: FleetOptions & { readonly force?: boolean 
       return { entry, target, action: "already-current" as const };
     }
     if (installedHash !== undefined) {
-      if (entry.kind === "doc") {
+      if (installIfMissingOnly) {
         return { entry, target, action: "skipped-repo-doc" as const };
       }
       if (options.force !== true) {
@@ -196,17 +258,12 @@ export function installFleet(options: FleetOptions & { readonly force?: boolean 
     }
     const source = sourcePath(entry, options);
     const payload = readFileSync(source);
-    mkdirSync(dirnameOf(target), { recursive: true });
+    mkdirSync(dirname(target), { recursive: true });
     const staging = `${target}.install-${process.pid}.tmp`;
     writeFileSync(staging, payload);
     renameSync(staging, target);
     return { entry, target, action: installedHash === undefined ? "written" as const : "forced" as const };
   });
-}
-
-function dirnameOf(path: string): string {
-  const cut = path.lastIndexOf("/");
-  return cut > 0 ? path.slice(0, cut) : ".";
 }
 
 /** Arg parsing for `workflow install fleet [--force]`. Unknown verbs fail closed. */
