@@ -814,4 +814,94 @@ digest-repinned release runs a real out-of-workspace probe and the session
 continues.
 
 
+## Addendum (2026-10-13, round-4 live plane — the turn-abort fix HELD; two narrower defects recorded)
+
+A round-4 in-plane test on the **v0.1.13** revision (`csh-dev-plane--0000020`,
+image `sha256:744c38d9…19cc0`) ran the probe round 3 left pending: a rebuilt,
+digest-repinned release executing a real out-of-workspace tool call on a live
+model turn. **The headline round-3 defect is FIXED.** The boundary denial is now
+non-fatal and the session never freezes.
+
+**Held (upgrades the round-3 claim from source-grounded to live-verified).**
+
+- **The boundary denial is non-fatal and the turn continues.** `read
+  /app/src/integrations/contained-shell-executor.ts` returned
+  `{"error":{"type":"permission.rejected","message":"Permission denied:
+  external_directory"},"content":[]}` — an engine-native `BlockedError` — and the
+  SAME turn then created `/workspace/probe1-inworkspace.txt` successfully
+  (`[authority] allow edit … delivered=true reason=policy allow`). The path never
+  reached the broker (journal `external_directory`/`WORKSPACE_PATH_DENIED`
+  entries = 0). No turn abort, no `Effect.interrupt`, no "The user declined this
+  tool call".
+- **Repeated boundary probes never freeze.** 8+ out-of-workspace probes
+  (read + edit against `/etc`, `/root`, `/app/src/containment`, `/srv`, …),
+  interleaved with in-workspace edits, all returned the same non-fatal
+  `external_directory` denial; a later in-workspace edit was ALLOWED and the
+  journal shows **0** `POLICY_CIRCUIT_BREAKER` / "repeated policy failures"
+  entries. The breaker-class removal and the server-lane reset hold live.
+- **No reject-cascade churn for boundary paths.** Broker `reject` decisions = 12,
+  **0** for `external_directory`; `upstream reply failed` = 0. The boundary no
+  longer routes an `ask`, so there is no reject and no sibling cascade.
+- **The boundary block is installed and precedes the ambient docs.**
+  `$XDG_CONFIG_HOME/opencode/AGENTS.md` line 53 =
+  `# --- fleet:workspace-boundary.md (folded into AGENTS.md at install) ---`,
+  ahead of the `fleet:STANDARDS.md` banner. (Behavioral attribution to the fold
+  vs the model's own reasoning is not cleanly separable — the deny message itself
+  names `external_directory`; recorded as PARTIAL.)
+- **Skills reach the model.** `read_skill name: code-cheatsheet len: 4230`;
+  `/home/node/.agents/skills/code-cheatsheet/SKILL.md` exists; `/explain` drove a
+  real session end to end; native `skill:"deny"` unchanged.
+- **Fleet + config parity.** `/api/agent` lists the six fleet agents; composed
+  config `permission {edit:ask, bash:ask, task:ask, skill:deny,
+  external_directory:deny}`.
+
+**New defect 1 — per-agent tier pins do NOT resolve on the v2 runtime
+(FALSIFIES the round-2 tier claim).** Running each agent via
+`POST /api/session {"agent":"…"}` records `model = {id:"openrouter/auto",
+providerID:"openrouter"}` for **executor, reviewer, and screener alike** — the
+session default, not the per-agent `openrouter/syn:small:text` /
+`syn:large:text` pin the runtime transform writes. Grounded in the pinned
+source: the v2 runner resolves the model from `session.model` only
+(`packages/core/src/session/runner/model.ts:188-206`), never `agent.model`; the
+v2 `CreateInput` carries `agent` and `model` as separate fields
+(`packages/core/src/session.ts:79-82`) and does not derive the model from the
+selected agent. The v1 path DOES fall back to `agent.model`
+(`packages/opencode/src/session/prompt.ts:469` — `input.model ?? agent.model ??
+…`), which is why the mechanism was assumed to carry over. It does not. The
+catalog and proxy resolve both tiers correctly; only the session's default-model
+selection ignores the agent pin. The round-2/round-3 FEATURES claim that "the pin
+resolves" is therefore **FALSIFIED for the v2 plane lane** (tracked as a work
+item; the fix is a plane-side session-create that seeds `model` from the selected
+agent, or a runtime mechanism that maps the v2 agent model into `session.model`).
+
+**New defect 2 — a broker `reject` still aborts siblings (narrower than round
+3).** The engine-native boundary is clean, but the broker path for a
+NON-boundary deny (e.g. the `subagent` tool denied `capability spawn is not
+available to this workflow`, answered with `reject`) still produces the v2
+sibling cascade: `[authority] deny subagent …`, then a sibling edit surfaces as
+`{"error":{"type":"aborted","message":"The user declined this tool call"}}`, and
+the allow is journaled `already resolved upstream`. Isolated probes: denied
+**read** + edit sibling → edit **succeeds**; denied **subagent** + edit sibling →
+edit **declined**. So the cascade is specific to the broker `reject` reply
+(fatal for a mutating sibling), NOT to the engine-native boundary. Turn
+continuation and the session survive; the blast radius is one batch's siblings.
+Tracked as a follow-up.
+
+**Residual — skill write target is outside the workspace.** `/explain`'s own
+write target (`~/.local/share/cheatsheets`) is outside `/workspace`, so a
+boundary-confined session cannot persist a sheet. A real skill/workspace-policy
+tension, recorded not fixed.
+
+**Also observed (not a regression):** `shell` (capability `process`) reads
+outside `/workspace` are not blocked — the external-directory deny is enforced
+on the `read`/`edit`/file-tool surface, not on arbitrary bash reads. This is the
+recorded boundary surface; note it plainly (the shell capability auto-allows, and
+the OS/confinement still permits reads).
+
+**Posture.** The turn-abort / session-freeze claim moves from **Partial** to
+**live-verified** on v0.1.13 (`csh-dev-plane--0000020`). The per-agent tier
+claim is marked **FALSIFIED for the v2 plane lane** and the broker-reject sibling
+cascade is a recorded **open follow-up** — neither blocks the boundary fix.
+
+
 
