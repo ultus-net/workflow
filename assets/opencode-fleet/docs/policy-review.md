@@ -147,9 +147,10 @@ Port requirements checklist:
 
 ## Appendix B — Follow-up state
 
-The OpenCode fleet wiring described in this review (4 agents: `decompose`,
-`executor`, `reviewer`, `retrospective`; 4 commands: `/decompose`,
-`/review-diff`, `/retro`, `/rsi-loop`; optimized config with
+The OpenCode fleet wiring described in this review (5 agents: `decompose`,
+`executor`, `executor-strong`, `reviewer`, `retrospective`; 6 commands:
+`/decompose`, `/explain`, `/retro`, `/review-diff`, `/rsi-loop`, `/tldr`;
+optimized config with
 permissions/compaction/worktrees) has since been landed on this branch
 (commit `feat: opencode agent fleet wiring`) and deployed to the live
 config directory. The stale-landing note and scaffolding text that

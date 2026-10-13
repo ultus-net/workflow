@@ -252,8 +252,10 @@ export function checkProbeVerdicts(options: { root?: string } = {}): DoctorCheck
 }
 
 /**
- * W086 — the fleet payload check: are the vendored OpenCode agents, commands,
- * and repo docs installed, and do they match the committed sha256 manifest?
+ * W086 — the fleet payload check: are the vendored OpenCode golden-tree files
+ * (agents, commands, instructions, style, templates, skills, lib) and the
+ * companion repo docs installed, and do they match the committed sha256
+ * manifest?
  * Existence alone is not "installed" — a stale or hand-edited copy reports
  * `differs`, because the whole point is that the control plane's versioned
  * payload is what actually runs. The fix line carries the sanctioned path
@@ -261,7 +263,7 @@ export function checkProbeVerdicts(options: { root?: string } = {}): DoctorCheck
  * operator who prefers to do it by hand (the doctor itself never writes).
  */
 export function checkFleetPayload(options: DoctorOptions = {}): DoctorCheck {
-  const name = "fleet payload (agents · commands · docs)";
+  const name = "fleet payload (agents · commands · instructions · style · templates · skills · lib · docs)";
   const fleetOptions = {
     ...(options.home === undefined ? {} : { home: options.home }),
     ...(options.workspace === undefined ? {} : { workspace: options.workspace }),
@@ -291,10 +293,10 @@ export function checkFleetPayload(options: DoctorOptions = {}): DoctorCheck {
   const detailParts = [
     `${current.length}/${statuses.length} entries current`,
     ...(missing.length > 0 ? [`missing: ${missingNames}`] : []),
-    ...(differs.length > 0 ? [`differs from the vendored version: ${differsNames} (agents/commands: a local edit or an older copy; docs: repo-owned living files)`] : []),
+    ...(differs.length > 0 ? [`differs from the vendored version: ${differsNames} (config kinds: a local edit or an older copy; docs: repo-owned living files)`] : []),
   ];
   const fixParts = [
-    "workflow install fleet" + (differs.some((status) => status.entry.kind !== "doc") ? " --force (only if the local agent/command edits are disposable)" : ""),
+    "workflow install fleet" + (differs.some((status) => status.entry.kind !== "doc") ? " --force (only if the local config edits are disposable)" : ""),
     ...(manual.length > 0 ? [`or by hand: ${manual}`] : []),
     ...(differs.some((status) => status.entry.kind === "doc") ? ["differing repo docs are NEVER overwritten by the installer — reconcile them by hand"] : []),
   ];

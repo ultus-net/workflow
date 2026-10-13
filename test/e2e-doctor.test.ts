@@ -89,6 +89,29 @@ const REGISTER_PATH = join(repoRoot, "docs", "PROBE_VERDICTS.json");
 const MANIFEST_PATH = join(repoRoot, "assets", "opencode-fleet", "manifest.json");
 const FLEET_ASSETS = join(repoRoot, "assets", "opencode-fleet");
 
+/** Mirrors fleet-payload.ts KIND_SPECS: the vendored source dir per kind. */
+const KIND_SOURCE: Record<string, string> = {
+  agent: "agents",
+  command: "commands",
+  doc: "docs",
+  instruction: "instructions",
+  style: "style",
+  template: "templates",
+  skill: "skills",
+  lib: "lib",
+  "host-config": "host-config",
+};
+/** Mirrors fleetTarget: the host-config subdir per installable config kind (absent ⇒ config-dir root). */
+const KIND_SUBDIR: Record<string, string> = {
+  agent: "agents",
+  command: "commands",
+  instruction: "",
+  style: "style",
+  template: "templates",
+  skill: "skills",
+  lib: "lib",
+};
+
 interface RegisterRecord {
   readonly id: string;
   readonly gate: string;
@@ -105,7 +128,7 @@ interface FleetManifestFile {
   readonly version: number;
   readonly entries: readonly {
     readonly id: string;
-    readonly kind: "agent" | "command" | "doc";
+    readonly kind: "agent" | "command" | "doc" | "instruction" | "style" | "template" | "skill" | "lib" | "host-config";
     readonly file: string;
     readonly sha256: string;
   }[];
@@ -113,6 +136,14 @@ interface FleetManifestFile {
 
 const register = JSON.parse(readFileSync(REGISTER_PATH, "utf8")) as ProbeVerdictsFile;
 const fleetManifest = JSON.parse(readFileSync(MANIFEST_PATH, "utf8")) as FleetManifestFile;
+
+/**
+ * Mirror fleet-payload.ts selectedEntries: the doctor compares/installs every
+ * kind EXCEPT the reference-only `host-config` kind (never installed). The
+ * kind order matches the generator (scripts/generate-fleet-manifest.mjs), so
+ * this list equals the doctor's own row order.
+ */
+const INSTALLABLE_ENTRIES = fleetManifest.entries.filter((entry) => entry.kind !== "host-config");
 
 /** Every gate the register names — deleted from each child's env so the
  * "no gates armed" pins cannot be skewed by an ambient operator gate. */
@@ -216,7 +247,7 @@ function assertReportOrder(stdout: string, needles: readonly string[]): void {
  * and a `workspace/` (the --cwd target) — nothing outside it is read for
  * state or written to. Fully provisioned means: the vendored fleet payload
  * copied byte-identical into the host config dirs and the workspace docs
- * (so compareFleet sees 15/15 current), fake agent binaries for the three
+ * (so compareFleet sees every installable entry current), fake agent binaries for the three
  * availability seams, and an executable `cline` on the child's PATH (the
  * cline availability check resolves the ambient `which cline`, unlike
  * opencode/goose which honor their *_BIN overrides — web-agents.ts:34-55,
@@ -228,16 +259,15 @@ function doctorTree(context: test.TestContext, provisioned: boolean): { home: st
   mkdirSync(home, { recursive: true });
   mkdirSync(workspace, { recursive: true });
   if (provisioned) {
-    const agentsDir = join(home, ".config", "opencode", "agents");
-    const commandsDir = join(home, ".config", "opencode", "commands");
-    const docsDir = join(workspace, "docs", "agents");
-    mkdirSync(agentsDir, { recursive: true });
-    mkdirSync(commandsDir, { recursive: true });
-    mkdirSync(docsDir, { recursive: true });
-    for (const entry of fleetManifest.entries) {
-      const sourceDir = entry.kind === "agent" ? "agents" : entry.kind === "command" ? "commands" : "docs";
-      const target = entry.kind === "agent" ? agentsDir : entry.kind === "command" ? commandsDir : docsDir;
-      copyFileSync(join(FLEET_ASSETS, sourceDir, entry.file), join(target, entry.file));
+    for (const entry of INSTALLABLE_ENTRIES) {
+      // Mirror fleetTarget (fleet-payload.ts): config kinds under
+      // <home>/.config/opencode/<subdir>, docs under <workspace>/docs/agents.
+      const target =
+        entry.kind === "doc"
+          ? join(workspace, "docs", "agents", entry.file)
+          : join(home, ".config", "opencode", KIND_SUBDIR[entry.kind] ?? "", entry.file);
+      mkdirSync(dirname(target), { recursive: true });
+      copyFileSync(join(FLEET_ASSETS, KIND_SOURCE[entry.kind] ?? "", entry.file), target);
     }
     writeFileSync(join(home, "fake-opencode"), "");
     writeFileSync(join(home, "fake-goose"), "");
@@ -330,10 +360,10 @@ test("doctor e2e (TSX lane): the honest uninstalled shape against a directed emp
   // missing (agent/command under <home>/.config/opencode, docs under
   // <workspace>/docs/agents) — the honest "not installed" FAIL that makes the
   // run exit 1.
-  const manifestIds = fleetManifest.entries.map((entry) => entry.id);
-  const expectedFleetRow = `  ✗ fleet payload (agents · commands · docs): 0/${manifestIds.length} entries current — missing: ${manifestIds.join(", ")}\n`;
+  const manifestIds = INSTALLABLE_ENTRIES.map((entry) => entry.id);
+  const expectedFleetRow = `  ✗ fleet payload (agents · commands · instructions · style · templates · skills · lib · docs): 0/${manifestIds.length} entries current — missing: ${manifestIds.join(", ")}\n`;
   assert.ok(run.stdout.includes(expectedFleetRow), `expected fleet row:\n${expectedFleetRow}\n--- stdout ---\n${run.stdout}`);
-  const fleetFix = run.stdout.split("\n").find((line) => line.startsWith("      fix: workflow install fleet; or by hand: cp '"));
+  const fleetFix = run.stdout.split("\n").find((line) => line.startsWith("      fix: workflow install fleet; or by hand: mkdir -p '"));
   assert.ok(fleetFix !== undefined, `the fleet fail must carry the two-way fix — stdout: ${run.stdout}`);
   assert.equal((fleetFix.match(/cp '/g) ?? []).length, manifestIds.length,
     "the fix carries one hand-install cp per manifest entry");
@@ -345,8 +375,14 @@ test("doctor e2e (TSX lane): the honest uninstalled shape against a directed emp
   assert.ok(!fleetFix.includes("--force"), `no differs rows -> no --force qualifier — fix: ${fleetFix}`);
   assert.ok(!fleetFix.includes("differing repo docs are NEVER overwritten"),
     `no differs rows -> no repo-docs clause — fix: ${fleetFix}`);
-  const lastEntry = fleetManifest.entries[fleetManifest.entries.length - 1];
-  assert.ok(lastEntry !== undefined && fleetFix.endsWith(`'${join(tree.workspace, "docs", "agents", lastEntry.file)}'`),
+  const lastEntry = INSTALLABLE_ENTRIES[INSTALLABLE_ENTRIES.length - 1];
+  const lastTarget =
+    lastEntry === undefined
+      ? ""
+      : lastEntry.kind === "doc"
+        ? join(tree.workspace, "docs", "agents", lastEntry.file)
+        : join(tree.home, ".config", "opencode", KIND_SUBDIR[lastEntry.kind] ?? "", lastEntry.file);
+  assert.ok(lastEntry !== undefined && fleetFix.endsWith(`'${lastTarget}'`),
     `the fix ends with the last entry's hand cp — fix: ${fleetFix}`);
 
   // Guard posture: no host config in a fresh home — honest pass.
@@ -392,7 +428,7 @@ test("doctor e2e (TSX lane): the register rendering matches the repo register an
 });
 
 test("doctor e2e (TSX lane): a fully provisioned directed HOME renders every satisfiable check green and exits 0", (context) => {
-  // Provisioned = fleet payload installed byte-identical (15/15 current),
+  // Provisioned = fleet payload installed byte-identical (all installable entries current),
   // fake agent binaries + the canonical upstream key env (all three
   // credential rows pass), no host config, no hub/topology state. Warns stay
   // honest (hub, topology, register) and do NOT fail the run — the exit-0
@@ -408,7 +444,7 @@ test("doctor e2e (TSX lane): a fully provisioned directed HOME renders every sat
     "  ✓ agent credentials: Cline: Cline is available (contained launch)",
     "  ! hub daemon: no hub discovery file",
     "  ! server topology gateway: no topology daemon for this workspace",
-    `  ✓ fleet payload (agents · commands · docs): ${fleetManifest.entries.length}/${fleetManifest.entries.length} entries installed and matching the committed manifest`,
+    `  ✓ fleet payload (agents · commands · instructions · style · templates · skills · lib · docs): ${INSTALLABLE_ENTRIES.length}/${INSTALLABLE_ENTRIES.length} entries installed and matching the committed manifest`,
     `  ✓ guard enforcement posture: no host config document at ${join(tree.home, ".config", "opencode", "opencode.jsonc")}`,
   ]);
   const expectedRegisterRow = `  ${openVerdicts.length > 0 ? "!" : "✓"} probe verdict register: ${registerDetail([])}\n`;
@@ -427,7 +463,7 @@ test("doctor e2e (TSX lane): fleet payload drift is a warn with the never-overwr
   writeFileSync(lessonsTarget, "# doctor-e2e: a local edit the vendored copy does not carry\n");
   const run = runDoctor({ home: tree.home, workspace: tree.workspace, set: provisionedEnv(tree) });
   assert.equal(run.status, 0, `doc-only drift is a warn, never a fail — stdout: ${run.stdout}`);
-  const expectedDriftRow = `  ! fleet payload (agents · commands · docs): ${fleetManifest.entries.length - 1}/${fleetManifest.entries.length} entries current — differs from the vendored version: doc:lessons (agents/commands: a local edit or an older copy; docs: repo-owned living files)\n`;
+  const expectedDriftRow = `  ! fleet payload (agents · commands · instructions · style · templates · skills · lib · docs): ${INSTALLABLE_ENTRIES.length - 1}/${INSTALLABLE_ENTRIES.length} entries current — differs from the vendored version: doc:lessons.md (config kinds: a local edit or an older copy; docs: repo-owned living files)\n`;
   assert.ok(run.stdout.includes(expectedDriftRow),
     `expected drift row:\n${expectedDriftRow}\n--- stdout ---\n${run.stdout}`);
   const fleetFix = run.stdout.split("\n").find((line) => line.startsWith("      fix: workflow install fleet"));

@@ -2,94 +2,406 @@
   "version": 1,
   "entries": [
     {
-      "id": "agent:decompose",
+      "id": "agent:decompose.md",
       "kind": "agent",
       "file": "decompose.md",
-      "sha256": "6d3d172c18d021306c4cf5a7405a7e5f56e2512823015c0bf2893d9bf788177c"
+      "sha256": "c62cef92505ba92f076aa80fc528b9266e280fb435c8111bad3dde0efc8b637c"
     },
     {
-      "id": "agent:executor",
+      "id": "agent:executor-strong.md",
+      "kind": "agent",
+      "file": "executor-strong.md",
+      "sha256": "c564da4cfa886d324096262c6aeb1444eb52edf2799b7d76508ad89608b5631b"
+    },
+    {
+      "id": "agent:executor.md",
       "kind": "agent",
       "file": "executor.md",
-      "sha256": "ec17d2f80d65dfe9cb64968cc93d13b0b3ed8781988cc51f988d753d5db1d7a5"
+      "sha256": "bb5ec275100763c15606e982985d07b4e013994b2bcc8aab024c158ea4097502"
     },
     {
-      "id": "agent:retrospective",
+      "id": "agent:retrospective.md",
       "kind": "agent",
       "file": "retrospective.md",
-      "sha256": "743c83784ad4e97e41e14d922a4c7a1b9379b4a37b239975535afbb6000ff664"
+      "sha256": "9f8732ffdf25213dde894b954168731ce772833a413d3a33675da27425ce7b9e"
     },
     {
-      "id": "agent:reviewer",
+      "id": "agent:reviewer.md",
       "kind": "agent",
       "file": "reviewer.md",
-      "sha256": "dfb2dc17c3d005198ca6e134d97ca8edbc8ebf6e7b0661d90c1d5f6562eac7db"
+      "sha256": "a4a77e454a0d4d540b987aa4dbf548eac1d92e589c50c0535c8ec77a5305df4f"
     },
     {
-      "id": "command:decompose",
+      "id": "agent:screener.md",
+      "kind": "agent",
+      "file": "screener.md",
+      "sha256": "98fee93023f2a6728dfe70725e82448dc95bccc798f79ce7b766aaf7e95b9af9"
+    },
+    {
+      "id": "command:decompose.md",
       "kind": "command",
       "file": "decompose.md",
       "sha256": "9bfa589835f24ac3f0b7a6270633db20bcfb8c56fd0c0a189f6bde3f7ce8321c"
     },
     {
-      "id": "command:retro",
+      "id": "command:explain.md",
       "kind": "command",
-      "file": "retro.md",
-      "sha256": "a3e85f541e0902e9bedcb81fbbdddfab9c27745b4cca8b3f667313f8cf139ff4"
+      "file": "explain.md",
+      "sha256": "5d6010c4eab6fa7cd5618620e54337b6008e9bf789f9eab5729efd332b78f0f8"
     },
     {
-      "id": "command:review-diff",
+      "id": "command:retro.md",
+      "kind": "command",
+      "file": "retro.md",
+      "sha256": "e0c3bc0c1d327729dc035198ec555c5aa911d5ded9e95efb4c578e1d016bf322"
+    },
+    {
+      "id": "command:review-diff.md",
       "kind": "command",
       "file": "review-diff.md",
       "sha256": "1aba1b3bdb4b1b0210e095ebe0e66d3bd50a6ad2bf8e2f2e7f1354c27ee84b04"
     },
     {
-      "id": "command:rsi-loop",
+      "id": "command:rsi-campaign.md",
+      "kind": "command",
+      "file": "rsi-campaign.md",
+      "sha256": "359a7383c5b6e1ffd944d39552407b0c369f69b70f9bce8156a87bad6db5deef"
+    },
+    {
+      "id": "command:rsi-loop.md",
       "kind": "command",
       "file": "rsi-loop.md",
-      "sha256": "adf4b17246285ffc817be45a6820beb5c507ce987275192ad0b37fa55cacc198"
+      "sha256": "b6d5a896b16d7e973036c841d05d6a4ffd686676ba2c5613851a1a3a09e09da7"
     },
     {
-      "id": "doc:README",
+      "id": "command:tldr.md",
+      "kind": "command",
+      "file": "tldr.md",
+      "sha256": "389a2d538cd19c7e75891c301a964d4b3a329ed1c52da63fa90574d2fb5f30f5"
+    },
+    {
+      "id": "doc:README.md",
       "kind": "doc",
       "file": "README.md",
-      "sha256": "6df17fa7d162f9044a4567e27ea5f92a6de15ac3dd55a4cc571fc1a57a027d17"
+      "sha256": "f79f14a3bc7299f037bd0078c8db12f2cbaf15fb31c37cb029782681d3b65b50"
     },
     {
-      "id": "doc:lessons",
+      "id": "doc:lessons.md",
       "kind": "doc",
       "file": "lessons.md",
-      "sha256": "8f4245832057418ff9ea3a522b6374f9fdf9c457338e0506a0efc78aa1b59cd8"
+      "sha256": "42493f5d37b4d8b6c30a29d002d3937a2791ec03c64e456a12b9159dea90cc5d"
     },
     {
-      "id": "doc:policy-review",
+      "id": "doc:operator-actions.md",
+      "kind": "doc",
+      "file": "operator-actions.md",
+      "sha256": "8578a83676fb216ce6aa22ef5e742ccb0ffe43ad0a67a369cb4af285ed696052"
+    },
+    {
+      "id": "doc:policy-review.md",
       "kind": "doc",
       "file": "policy-review.md",
-      "sha256": "dd48a2efa1acc32a402151c727e4e095cb14247a6eb1ddc50811d33e7536d01e"
+      "sha256": "5a5e49568a03570233860227d621c598d690d0af8eb21d045ea0d2b2ffa97aa8"
     },
     {
-      "id": "doc:prompt-design",
+      "id": "doc:prompt-design.md",
       "kind": "doc",
       "file": "prompt-design.md",
       "sha256": "8fa4c8848275bd5d85a1621d3bf79788eb09948de235f8712694311a8d1299f6"
     },
     {
-      "id": "doc:reading-list",
+      "id": "doc:reading-list.md",
       "kind": "doc",
       "file": "reading-list.md",
-      "sha256": "dfaa9c33376e7d9d7486b7a609806ca44b7b57015060a80585ec0d658598df6b"
+      "sha256": "33fd5f85f11bd451b9d3dc595ebdefd12a4c25b8975085d15b81c172b533dee6"
     },
     {
-      "id": "doc:rsi-loop-playbook",
+      "id": "doc:rsi-loop-playbook.md",
       "kind": "doc",
       "file": "rsi-loop-playbook.md",
-      "sha256": "eb2c01da8345ecf9928871bdd7c55d9a61db0d617c99393149502d94f9307dfd"
+      "sha256": "ab15bc19938d72e0e2610b0a0c14a74abf942fe846a398566e4ab8f4cfc9bbe5"
     },
     {
-      "id": "doc:task-decomposition",
+      "id": "doc:task-decomposition.md",
       "kind": "doc",
       "file": "task-decomposition.md",
-      "sha256": "ce14057e936b4755ee7a6414ef18175a1833347d6d9d187e40b024530243057d"
+      "sha256": "3d8b674094bd771243b930d859adfff60b94a97570c4ba26deb376256c40ef62"
+    },
+    {
+      "id": "instruction:AGENTS.md",
+      "kind": "instruction",
+      "file": "AGENTS.md",
+      "sha256": "b46de2563a692fce7283b124fead342753002ceca7964aecdb2d5143fe064ea4"
+    },
+    {
+      "id": "instruction:STANDARDS.md",
+      "kind": "instruction",
+      "file": "STANDARDS.md",
+      "sha256": "a686798eb472f307626db39027c5e9a55ce42afc7c3bbb9b1c7d86e4d2cd17ed"
+    },
+    {
+      "id": "style:coding-style.md",
+      "kind": "style",
+      "file": "coding-style.md",
+      "sha256": "751b93a5f231d89978d13763cd85c5853609990709e13ecb6bf326b050c2a5a7"
+    },
+    {
+      "id": "template:rsi/ledger.md",
+      "kind": "template",
+      "file": "rsi/ledger.md",
+      "sha256": "48783f3f6bd260efd1ec89800f2fd78bb8aaf5aa88e3146d5d16d9180f9b42eb"
+    },
+    {
+      "id": "template:rsi/lessons.md",
+      "kind": "template",
+      "file": "rsi/lessons.md",
+      "sha256": "5f71d98b8c48d436e981c008b3f051c5744fdad8fbf707def1501171238b1173"
+    },
+    {
+      "id": "template:rsi/rsi-loop-playbook.md",
+      "kind": "template",
+      "file": "rsi/rsi-loop-playbook.md",
+      "sha256": "84dae6ecfc5b1771a7cb4265ed6ebb47896f80bdc4ddcc82fbfaea264e71ce4a"
+    },
+    {
+      "id": "skill:code-cheatsheet/SKILL.md",
+      "kind": "skill",
+      "file": "code-cheatsheet/SKILL.md",
+      "sha256": "3efeccbd745906b08056ff71829b73ab05d27cec56efd664ece9560cfa63486b"
+    },
+    {
+      "id": "skill:code-cheatsheet/template.md",
+      "kind": "skill",
+      "file": "code-cheatsheet/template.md",
+      "sha256": "1bf16946a669ab8a6ab56a3804f989e16178f361090e317cb961d751ef5f4a18"
+    },
+    {
+      "id": "lib:agent-model-pin.cjs",
+      "kind": "lib",
+      "file": "agent-model-pin.cjs",
+      "sha256": "b8c2e6cacfaac53d291a6a9b2c5d3e6993b29cb9fb915ceb417b8799c74065f0"
+    },
+    {
+      "id": "lib:common.sh",
+      "kind": "lib",
+      "file": "common.sh",
+      "sha256": "1d33f6da68695f932fc6f3550b42dde113907d0f907323f8ab9807c61ae1edf2"
+    },
+    {
+      "id": "lib:config-shape.cjs",
+      "kind": "lib",
+      "file": "config-shape.cjs",
+      "sha256": "3b0d3e4b0022139c2b58eba7940321c37af33b5bf5da9e47fe1ce54e52dcecf4"
+    },
+    {
+      "id": "lib:env-flag.sh",
+      "kind": "lib",
+      "file": "env-flag.sh",
+      "sha256": "3866eb374f42f0b37cf5434f955975ab5cd1ead2c29cc0d6f40ccca7419dc178"
+    },
+    {
+      "id": "lib:host-fingerprint.cjs",
+      "kind": "lib",
+      "file": "host-fingerprint.cjs",
+      "sha256": "4f1d9d55dba05ebf6b1e2b72b7fb74850ec9845c4689ca1c153c21762a9bf8dc"
+    },
+    {
+      "id": "lib:index-read.cjs",
+      "kind": "lib",
+      "file": "index-read.cjs",
+      "sha256": "3894a51ebd8738c09a2fde02926c6716d31e9fe1f64cc1ef122c088df36a04a0"
+    },
+    {
+      "id": "lib:measure-cap-family.cjs",
+      "kind": "lib",
+      "file": "measure-cap-family.cjs",
+      "sha256": "a199b85db5def615faa0849762a7027c426955375b07555d124ab393497da0ab"
+    },
+    {
+      "id": "lib:measure-failure-composition.cjs",
+      "kind": "lib",
+      "file": "measure-failure-composition.cjs",
+      "sha256": "eddbede2d5a9274f8b6a33d58612f67176a6b89080c6ac0b467feed7abb0f0fd"
+    },
+    {
+      "id": "lib:measure-readback-effect.cjs",
+      "kind": "lib",
+      "file": "measure-readback-effect.cjs",
+      "sha256": "5499ea8ca16b91ccea6fec7f765165d6f6496285eeb4a9fe4e28d100ac2cbcbd"
+    },
+    {
+      "id": "lib:measure-tool-output.cjs",
+      "kind": "lib",
+      "file": "measure-tool-output.cjs",
+      "sha256": "73e003910ff29f5e78404bddfa9038f17236a9c92e527332b18a98388d685288"
+    },
+    {
+      "id": "lib:port-destructive-rules.cjs",
+      "kind": "lib",
+      "file": "port-destructive-rules.cjs",
+      "sha256": "41622bbdd5485447675c57aaad13dc4d6627463057b7bb8c796120239f8589e3"
+    },
+    {
+      "id": "lib:test-agent-model-pin.cjs",
+      "kind": "lib",
+      "file": "test-agent-model-pin.cjs",
+      "sha256": "7f9f6bd76cf78c705ab649558f8aff7cd734ec5c688bbfa78c57f858361fcfec"
+    },
+    {
+      "id": "lib:test-config-shape.cjs",
+      "kind": "lib",
+      "file": "test-config-shape.cjs",
+      "sha256": "b8ffb35f65fd4ab85eddd013447bc8b11a7165d6b4aa638ffc0fd9ae7ed014d8"
+    },
+    {
+      "id": "lib:test-effective-model.cjs",
+      "kind": "lib",
+      "file": "test-effective-model.cjs",
+      "sha256": "148b33194117e70585d1701273dad609d671c229998df66c4a8349648b3b3f31"
+    },
+    {
+      "id": "lib:test-env-flag.sh",
+      "kind": "lib",
+      "file": "test-env-flag.sh",
+      "sha256": "8e60d52dc662ee2a65c353d5e52e5f6e01eaf20a25174ebe240395ca3b24dc31"
+    },
+    {
+      "id": "lib:test-host-fingerprint.cjs",
+      "kind": "lib",
+      "file": "test-host-fingerprint.cjs",
+      "sha256": "e35912da58865d150dd1ab2fdd999835bc05fef4d49276d0d39b3871e1362bf8"
+    },
+    {
+      "id": "lib:test-host-vendor.cjs",
+      "kind": "lib",
+      "file": "test-host-vendor.cjs",
+      "sha256": "e8e789fda5151dbff7dec70fcbc69cd59d9c53162aef8325c7754a09aef4ff5b"
+    },
+    {
+      "id": "lib:test-index-read.cjs",
+      "kind": "lib",
+      "file": "test-index-read.cjs",
+      "sha256": "d7feada50a53ceddae64a5c0e7f6693f4ab9eac248b143321f3ed24fd999c128"
+    },
+    {
+      "id": "lib:test-measure-cap-family.cjs",
+      "kind": "lib",
+      "file": "test-measure-cap-family.cjs",
+      "sha256": "7697058c88a429e7b9897d3671c0d39c13b6cfa9a40d81fb38e4f73a62cb49e4"
+    },
+    {
+      "id": "lib:test-measure-failure-composition.cjs",
+      "kind": "lib",
+      "file": "test-measure-failure-composition.cjs",
+      "sha256": "f5e597da79f7e4de8d908559119749f82da5335b8ce0ac268939cd52cf87b478"
+    },
+    {
+      "id": "lib:test-measure-readback-effect.cjs",
+      "kind": "lib",
+      "file": "test-measure-readback-effect.cjs",
+      "sha256": "c96e06e0abe2981a681aadbca2d2d10b30481bb7bfc0f4d4688ae45737dfa1cc"
+    },
+    {
+      "id": "lib:test-measure-tool-output.cjs",
+      "kind": "lib",
+      "file": "test-measure-tool-output.cjs",
+      "sha256": "75837a9de7be98233a49aeb3338a6326f04651f2df7a4f7d7afe276c5f37458f"
+    },
+    {
+      "id": "lib:test-port-destructive-rules.cjs",
+      "kind": "lib",
+      "file": "test-port-destructive-rules.cjs",
+      "sha256": "431be37498d89b98c892df2a5600e1945a061ef31bfe9d30d3b259088926465e"
+    },
+    {
+      "id": "lib:test-validate-config-fleet.cjs",
+      "kind": "lib",
+      "file": "test-validate-config-fleet.cjs",
+      "sha256": "2b53fb5e0d3c14f655862b0a00b3d606a171b67db13d8e4402c1a4941c34c5e5"
+    },
+    {
+      "id": "lib:test-validate-ledger.cjs",
+      "kind": "lib",
+      "file": "test-validate-ledger.cjs",
+      "sha256": "596df2c2fba7491a78cb5679a61032ce787cca48ea05a1f3a293921a8bff68b1"
+    },
+    {
+      "id": "lib:test-validate-lessons.cjs",
+      "kind": "lib",
+      "file": "test-validate-lessons.cjs",
+      "sha256": "4f4eabc4b1c339df7229adf38f991b93e86989f3763ccbf2a7addeb6a5258a68"
+    },
+    {
+      "id": "lib:validate-agents.cjs",
+      "kind": "lib",
+      "file": "validate-agents.cjs",
+      "sha256": "d63e41d962038f83d98585a5f86ea3d90dd0213f0de40f1b3fe32da111319268"
+    },
+    {
+      "id": "lib:validate-config.cjs",
+      "kind": "lib",
+      "file": "validate-config.cjs",
+      "sha256": "4e01b4d78645fc57258b4980864423a959746cc3ba0a3c6ad4bbe3948e66b8c7"
+    },
+    {
+      "id": "lib:validate-ledger.cjs",
+      "kind": "lib",
+      "file": "validate-ledger.cjs",
+      "sha256": "669fcfc9d97d8867838c10639c7dbef7f6949942c5d96a1454cf69e604c05000"
+    },
+    {
+      "id": "lib:validate-lessons.cjs",
+      "kind": "lib",
+      "file": "validate-lessons.cjs",
+      "sha256": "bae8e75514e381489e67683515c557884cfd154b320c0ca1fe5d4f6d83dda5ed"
+    },
+    {
+      "id": "lib:validate-skills.cjs",
+      "kind": "lib",
+      "file": "validate-skills.cjs",
+      "sha256": "2eec91356d4c7a2043515eeab2f9bc1540f2d8641a4e138abf2a20bd62e63d81"
+    },
+    {
+      "id": "lib:vendor-host-preview.cjs",
+      "kind": "lib",
+      "file": "vendor-host-preview.cjs",
+      "sha256": "e9dc357454830e2205045e35357e9a26082d38fe95b378ec916c068febdd517c"
+    },
+    {
+      "id": "lib:vendor/LICENSE-opencode-src",
+      "kind": "lib",
+      "file": "vendor/LICENSE-opencode-src",
+      "sha256": "1532643d0807159d25a836abdf5ddf2119b8e837aa69c9ac9960daba3e6b3e68"
+    },
+    {
+      "id": "lib:vendor/tool-output-store.preview.ts",
+      "kind": "lib",
+      "file": "vendor/tool-output-store.preview.ts",
+      "sha256": "9bde71fbf50bec5cb7d3993582de7a02cf1f94c633934f1e52a8c8b963ed9b4f"
+    },
+    {
+      "id": "lib:verify-effective-model.cjs",
+      "kind": "lib",
+      "file": "verify-effective-model.cjs",
+      "sha256": "8d60b796a3efb240c6ad98764346bef399458e9f47fa91f32d6fd7ef952838ac"
+    },
+    {
+      "id": "host-config:cli.json",
+      "kind": "host-config",
+      "file": "cli.json",
+      "sha256": "c7ef542d42d7caff14d3999e2c2f4bc28f5016b043530136bd9aeae84568c2ea"
+    },
+    {
+      "id": "host-config:config.jsonc",
+      "kind": "host-config",
+      "file": "config.jsonc",
+      "sha256": "5e5b0af701e078a0cda09eda95f58e75135d16548f2bc2278b531426244c92f1"
+    },
+    {
+      "id": "host-config:tui.json",
+      "kind": "host-config",
+      "file": "tui.json",
+      "sha256": "6c10ea89aa68b58889724b72d384e9a430f8efd99ee85212ea83d85b8ad6d912"
     }
   ]
 }
