@@ -739,4 +739,79 @@ digest-repinned release loads a real `edit`/`external_directory` turn and a
 `/explain`.
 
 
+## Addendum (2026-10-13, round-3 live plane — the turn-abort class, the falsified in-band feedback, and the native deny)
+
+A round-3 in-plane test on the v0.1.12 revision (the round-2 fixes deployed)
+surfaced a WORSE class than round 2: the agent's tool calls failed AND the
+session froze. The round-3 console showed the legible deny the round-2 fix
+produced, paired with the reject cascade, and then the breaker:
+
+```text
+[authority] deny external_directory … reason=path /app/src/cli/* is outside authorized workspace /workspace
+[authority] deny external_directory … reason=path /app/src/integrations/* is outside authorized workspace /workspace (already resolved upstream: the v2 reject cascade drains sibling asks)
+[authority] deny shell … reason=session ses_… has repeated policy failures; operator intervention is required
+```
+
+**Root cause (one abort path, two amplifiers; grounded in the pinned source).**
+
+1. **A reject kills the turn; the round-2 in-band feedback never reached the
+   model.** `PermissionV2.assert` (`packages/core/src/permission.ts:197-218`)
+   awaits the ask deferred and does `catchTag("PermissionV2.DeclinedError", die)`.
+   `isUserDeclined` (`packages/core/src/session/runner/llm.ts:145-150`) matches
+   that die and `Effect.interrupt`s the step (`:304-308`). A reject WITH a
+   `message` becomes `CorrectedError` (non-fatal), but the SIBLING cascade
+   (`permission.ts:237-246`) fails every other pending ask with a bare
+   `DeclinedError` — always fatal. Worse, the tool wrappers
+   (`tool/{bash,read,write}.ts`) `Effect.mapError(() => new ToolFailure(…))`
+   with NO error argument, so even the primary `CorrectedError.feedback` is
+   discarded: the model saw a generic `Unable to …`. **The round-1 claim that
+   the in-band message reaches the model is FALSIFIED** (see the 2026-10-11
+   addendum §1 and THREAT_MODEL.md's "advisory until that probe runs"); the
+   message is masked by the tool wrapper on the pinned version.
+2. **The breaker counted the boundary.** `authorize` (`workflow.ts`) listed
+   `WORKSPACE_PATH_DENIED` among the breaker classes, so two path denials opened
+   the breaker (threshold 2) and every later mutation was denied
+   `POLICY_CIRCUIT_BREAKER` for the session. The server lane also never reset the
+   breaker (only the ACP lane wired `recordToolOutcome`).
+
+**Fix — the boundary is engine-native, and the guidance is stated up front.**
+
+1. **A native `deny` effect, not an ask answered with `reject`.** The composed
+   config now carries `permission.external_directory = "deny"` (the other pins
+   unchanged). Measured against the pinned v2.0.10 binary: it honors this v1
+   shape and migrates it to `permissions:[{action:"external_directory",
+   resource:"*",effect:"deny"}]` (`/api/config`). A config `deny` returns a
+   non-fatal `BlockedError` (`permission.ts:201-205`) — the tool reports it and
+   the step continues — and it never routes an `ask`, so there is no reject, no
+   cascade, and no turn abort. In-workspace paths never assert
+   `external_directory`, so this denies exactly the out-of-workspace access the
+   plane already refuses. The `WORKSPACE_PATH_DENIED` broker path remains as
+   defense in depth for any ask it still sees.
+2. **`WORKSPACE_PATH_DENIED` leaves the breaker classes** (`workflow.ts`): the
+   boundary is not a destructive-policy retry and must never ratchet toward a
+   freeze. The server lane now resets the breaker on a completed, policy-allowed
+   mutation (`opencode-server-authority.ts` `observeToolPart` →
+   `recordToolOutcome(…, "succeeded")`), matching the ACP lane.
+3. **The rule is told to the agent.** The runtime install folds a code-owned
+   workspace-boundary block into the installed global `AGENTS.md`
+   (`fleet-agent-install.ts` `WORKSPACE_BOUNDARY_GUIDANCE`, via
+   `loadAmbientFoldDocs`), ahead of the vendored `STANDARDS.md` and style floor.
+   The vendored sources stay byte-identical (the guidance is code-owned). This
+   is the "make it easier for the agent not to break it" channel: the agent says
+   what the boundary is before it probes.
+
+**Tests.** `test/opencode-v2-metered-config.test.ts` pins the composed
+`external_directory: "deny"` for both config shapes. `test/fleet-agent-install.test.ts`
+pins the boundary fold ordering and that the vendored `AGENTS.md` source is
+untouched. `test/application-policy-failure-tracker.test.ts` pins that repeated
+`WORKSPACE_PATH_DENIED` never opens the breaker and leaves the session live.
+
+**Posture.** Source-verified with focused tests AND the config migration
+verified live against the pinned v2.0.10 binary (`/api/config`); the
+turn-continuation behavior is source-grounded but live-probe PENDING on a real
+model turn — every affected claim stays **Partial** until a rebuilt,
+digest-repinned release runs a real out-of-workspace probe and the session
+continues.
+
+
 

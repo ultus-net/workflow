@@ -95,3 +95,27 @@ test("a denied mutation never denies a subsequent unrelated read in the same ses
   const read = { sessionId: "s", taskId: task.id, tool: "read", mutating: false, subjects: ["src/a.ts"], input: {} };
   assert.equal(application.authorize(read).kind, "allow", "a budget-exhausted mutation must not block an unrelated read");
 });
+
+test("repeated WORKSPACE_PATH_DENIED never opens the circuit breaker (round-3 plane regression)", () => {
+  // Round 3 on the plane: the agent probed the control plane's own source once
+  // (`/app/src/*`, outside `/workspace`), the broker denied it, and two such
+  // denials opened the breaker and froze the session (every later mutation
+  // denied with POLICY_CIRCUIT_BREAKER). The workspace boundary is not a
+  // destructive-policy retry class, so it must never ratchet toward a freeze.
+  const application = new WorkflowApplication(
+    new TaskGraph([task]),
+    hostCapabilities({ transport: "native", authoritativePreMutation: true }),
+    [],
+    new Set<ToolCapability>(["read", "mutation", "process"]),
+    "/workspace",
+  );
+  const outside = { ...action, subjects: ["/app/src/cli/opencode-server.ts"] };
+  for (let index = 0; index < 5; index += 1) {
+    const denied = application.authorize(outside);
+    assert.equal(denied.kind, "deny");
+    if (denied.kind === "deny") assert.equal(denied.code, "WORKSPACE_PATH_DENIED");
+  }
+  assert.equal(application.policyFailureCount("s"), 0, "path denials never count toward the breaker");
+  // An in-workspace mutation still authorizes: the session is live.
+  assert.equal(application.authorize({ ...action, subjects: ["src/a.ts"] }).kind, "allow");
+});

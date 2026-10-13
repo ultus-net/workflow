@@ -602,6 +602,19 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
       // Recording a mutation must never break the session stream; the journal
       // still holds the decision, and freshness stays conservative.
     }
+    // Breaker reset parity with the ACP lane (`acp-runtime.ts` wires
+    // `onToolOutcome` → `recordToolOutcome`): a completed, policy-allowed
+    // mutation is a success, so a prior transient failure streak clears instead
+    // of ratcheting toward a freeze. The server lane previously never reset the
+    // breaker, so policy failures were sticky for the session. Kept independent
+    // of `recordMutation` (its own try): the tool completed regardless of
+    // whether its journal write succeeded, so one must not mask the other.
+    try {
+      options.application.recordToolOutcome(sessionId, "succeeded", tool, "");
+    } catch {
+      // The breaker is observability-adjacent state; a reset write must never
+      // break the session stream.
+    }
   };
 
   return {

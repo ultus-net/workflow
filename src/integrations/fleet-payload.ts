@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
-import { foldFleetAmbientDocs, normalizeFleetEntry } from "./fleet-agent-install.js";
+import { foldFleetAmbientDocs, normalizeFleetEntry, WORKSPACE_BOUNDARY_GUIDANCE } from "./fleet-agent-install.js";
 
 /**
  * W086 — the control-plane fleet payload: the OpenCode golden tree (agents,
@@ -161,18 +161,24 @@ export function runtimeFleetTransform(
   };
 }
 
-/** The ambient docs folded into the runtime `AGENTS.md`, in fixed order. */
+/**
+ * The docs folded into the runtime `AGENTS.md`, in fixed order. The
+ * code-owned workspace-boundary guidance leads (D4, round 3), then the
+ * vendored `STANDARDS.md` and style floor. The vendored sources stay
+ * byte-identical — only the installed copy changes.
+ */
 function loadAmbientFoldDocs(options: Pick<FleetOptions, "root">): readonly { readonly label: string; readonly payload: Buffer }[] {
   const manifest = loadFleetManifest(options);
   const wanted: readonly { readonly label: string; readonly file: string }[] = [
     { label: "STANDARDS.md", file: "STANDARDS.md" },
     { label: "style/coding-style.md", file: "coding-style.md" },
   ];
-  return wanted.map(({ label, file }) => {
+  const folded = wanted.map(({ label, file }) => {
     const entry = manifest.entries.find((candidate) => candidate.kind === (file === "coding-style.md" ? "style" : "instruction") && candidate.file === file);
     if (entry === undefined) throw new TypeError(`fleet ambient doc ${label} is missing from the manifest`);
     return { label, payload: readFileSync(sourcePath(entry, options)) };
   });
+  return [{ label: "workspace-boundary.md", payload: Buffer.from(WORKSPACE_BOUNDARY_GUIDANCE, "utf8") }, ...folded];
 }
 
 function specFor(kind: FleetKind): KindSpec {
