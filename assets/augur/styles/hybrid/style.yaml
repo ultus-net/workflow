@@ -1,0 +1,20 @@
+id: hybrid
+mode: hybrid
+description: Prose lead plus bullets. For material that is part narrative, part enumeration.
+illustration:
+  render: labeled
+  labels: [example, analogy]
+  idiom: optional
+  diagram: optional
+voice:
+  person: first-plural
+  tense: present
+  tone: clear explainer
+rules:
+  maxHeadingDepth: 2
+  requireSourceLine: true
+  requireDiagramPerSection: false
+  requireRuleLine: true
+  bannedPhrases:
+    - "It's worth noting"
+    - "delve"

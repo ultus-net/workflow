@@ -1,0 +1,167 @@
+#!/usr/bin/env node
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname, join, isAbsolute } from "node:path";
+import { parseArgs } from "node:util";
+import { loadConfigFile, resolveConfig, resolveWorkspace, ensureWorkspace } from "../assistant/config.js";
+import { LangSchema } from "../assistant/model/source.js";
+import { AUDIENCES, isAudience } from "../assistant/style/audience.js";
+import { listStyles, loadStyle } from "../assistant/style/pack.js";
+import { formatFindings, lint } from "../assistant/lint.js";
+import { run, type RunRequest } from "../assistant/run.js";
+
+const USAGE = `augur - turn sources into styled notes
+
+Usage:
+  augur note <source> [options]     source: URL, file path, or - for stdin
+  augur lint <file>                 check a note against its style pack
+  augur styles list                 list available style packs
+
+Options:
+  --style <id>       style pack id (default: notes)
+  --audience <a>     junior | mid | senior (default: mid)
+  --lang <tag>       en | zh-Hans (default: en)
+  --out <file>       write output to a file instead of stdout
+  --workspace <dir>  working directory for inputs/outputs (default: ~/.local/share/augur/workspace)
+  --no-research      disable web-search grounding and references
+  --no-verify        skip the post-generation fact/currency verification
+  --models <list>    comma-separated OpenRouter model IDs, priority order
+  --variant <s>      routing suffix applied to all models (e.g. :nitro)
+  --no-lint          skip the post-generation lint
+
+Env:
+  OPENROUTER_API_KEY   required for generation
+  AUGUR_MODELS         default model list
+  AUGUR_CONFIG         alternate config path
+
+Examples:
+  augur note https://www.youtube.com/watch?v=zjkBMFhNj_g --audience junior
+  cat transcript.txt | augur note - --style essay --audience senior
+  augur note slides.pdf --lang zh-Hans --style hybrid
+`;
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+async function cmdNote(source: string, flags: Record<string, unknown>): Promise<number> {
+  const audience = isAudience(String(flags.audience ?? "mid"))
+    ? (flags.audience as RunRequest["audience"])
+    : "mid";
+  const req: RunRequest = {
+    source,
+    audience,
+    research: flags.research !== false,
+    verify: flags.verify !== false,
+  };
+  if (typeof flags.style === "string") req.style = flags.style;
+  if (flags.lang === "en" || flags.lang === "zh-Hans") req.lang = flags.lang;
+
+  const cfg = resolveConfig(loadConfigFile(), flags);
+  const wsFlag = typeof flags.workspace === "string" ? flags.workspace : undefined;
+  const ws = ensureWorkspace(resolveWorkspace(cfg, wsFlag));
+
+  let outPath: string | undefined;
+  if (typeof flags.out === "string") {
+    outPath = isAbsolute(flags.out) ? flags.out : join(ws, flags.out);
+    mkdirSync(dirname(outPath), { recursive: true });
+    req.out = outPath;
+  }
+
+  const result = await run(req, readStdin, {
+    onStatus: (m) => process.stderr.write(`${m}\n`),
+  });
+
+  if (outPath !== undefined) {
+    writeFileSync(outPath, result.markdown, "utf8");
+    process.stderr.write(`wrote ${outPath}\n`);
+  } else {
+    process.stdout.write(result.markdown);
+  }
+
+  if (flags["no-lint"] !== true) {
+    process.stderr.write(`${formatFindings(result.lint)}\n`);
+  }
+  if (result.blocked) {
+    process.stderr.write("note held: verification found a claim that must not ship unqualified (see Verification notes).\n");
+  }
+  return 0;
+}
+
+async function cmdLint(file: string, flags: Record<string, unknown>): Promise<number> {
+  const cfg = resolveConfig(loadConfigFile(), { style: flags.style });
+  const pack = loadStyle(cfg.style);
+  const audience = isAudience(String(flags.audience ?? "mid")) ? (flags.audience as "junior" | "mid" | "senior") : "mid";
+  const md = readFileSync(file, "utf8");
+  const res = lint(md, pack, audience);
+  process.stdout.write(`${formatFindings(res)}\n`);
+  return res.ok ? 0 : 1;
+}
+
+async function main(): Promise<number> {
+  const { values, positionals } = parseArgs({
+    args: process.argv.slice(2),
+    allowPositionals: true,
+    options: {
+      style: { type: "string" },
+      audience: { type: "string" },
+      lang: { type: "string" },
+      out: { type: "string" },
+      workspace: { type: "string" },
+      models: { type: "string" },
+      variant: { type: "string" },
+      research: { type: "boolean", default: true },
+      "no-research": { type: "boolean" },
+      verify: { type: "boolean", default: true },
+      "no-verify": { type: "boolean" },
+      help: { type: "boolean", short: "h" },
+      "no-lint": { type: "boolean" },
+    },
+  });
+
+  if (values.help || positionals.length === 0) {
+    process.stdout.write(USAGE);
+    return positionals.length === 0 && !values.help ? 1 : 0;
+  }
+
+  if (values.models) process.env.AUGUR_MODELS = values.models;
+  if (values.variant) process.env.AUGUR_VARIANT = values.variant;
+  if (values.lang) LangSchema.parse(values.lang);
+  if (values["no-research"]) values.research = false;
+  if (values["no-verify"]) values.verify = false;
+
+  const [cmd, arg] = positionals;
+  const flags = values as Record<string, unknown>;
+
+  switch (cmd) {
+    case "note":
+      if (!arg) throw new Error("note requires a source (URL, path, or -)");
+      return cmdNote(arg, flags);
+    case "lint":
+      if (!arg) throw new Error("lint requires a file path");
+      return cmdLint(arg, flags);
+    case "styles": {
+      if (arg === "list") {
+        for (const s of listStyles()) process.stdout.write(`${s}\n`);
+        return 0;
+      }
+      throw new Error("unknown styles subcommand");
+    }
+    case "audiences": {
+      for (const a of Object.values(AUDIENCES)) process.stdout.write(`${a.id}\t${a.blurb}\n`);
+      return 0;
+    }
+    default:
+      process.stderr.write(USAGE);
+      return 1;
+  }
+}
+
+main().then(
+  (code) => process.exit(code),
+  (err: unknown) => {
+    process.stderr.write(`error: ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(1);
+  },
+);

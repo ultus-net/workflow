@@ -1,0 +1,22 @@
+id: notes
+mode: notes
+description: Terse study notes. Bullets, labeled illustrations, a diagram per structural section.
+illustration:
+  render: labeled
+  labels: [example, analogy]
+  idiom: optional
+  diagram: optional
+voice:
+  person: third
+  tense: present
+  tone: terse senior engineer
+rules:
+  maxHeadingDepth: 2
+  requireSourceLine: true
+  requireDiagramPerSection: false
+  requireRuleLine: false
+  bannedPhrases:
+    - "In this section"
+    - "It's worth noting"
+    - "delve"
+    - "leverage"
