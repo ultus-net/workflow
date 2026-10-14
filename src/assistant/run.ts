@@ -1,4 +1,4 @@
-import { loadConfigFile, resolveConfig, apiKey, type Config } from "./config.js";
+import { loadConfigFile, resolveConfig, type Config } from "./config.js";
 import { AUDIENCES, isAudience, type Audience } from "./style/audience.js";
 import { buildSystemPrompt, loadStyle, type StylePack } from "./style/pack.js";
 import { ingestPath, ingestStdin, isUrl } from "./ingest/index.js";
@@ -8,6 +8,7 @@ import {
   OpenRouterProvider,
   langDirective,
   renderReferences,
+  resolveProviderTransport,
   timeContext,
   type ChatMessage,
 } from "./provider/openrouter.js";
@@ -108,7 +109,8 @@ export async function run(
   cb.onStatus?.(`title: ${src.title} | blocks: ${src.blocks.length}`);
 
   const messages = buildMessages(pack, src, audience, cfg.lang, research, new Date());
-  const provider = new OpenRouterProvider(apiKey(), cfg.provider);
+  const transport = resolveProviderTransport();
+  const provider = new OpenRouterProvider({ ...transport, config: cfg.provider });
   const webSearch = { enabled: research, engine: "auto", maxResults: 5, maxUses: 3 };
 
   let result;
