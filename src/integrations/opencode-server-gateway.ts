@@ -7,6 +7,7 @@ import {
   OPENCODE_V2_WORKFLOW_AUTHORITY_ROUTE,
   qualifyOpenCodeV2Route,
 } from "./opencode-v2-route-class.js";
+import { sessionModelRefForAgent } from "./fleet-agent-tiers.js";
 
 /**
  * W071 — the OpenCode server gateway.
@@ -89,7 +90,30 @@ export interface OpencodeServerGatewayOptions {
    * closed as an unknown read).
    */
   readonly authorityJournal?: (() => WorkflowAuthorityJournal) | undefined;
+  /**
+   * W185: the per-agent tier pins to seed at session-create. On OpenCode v2 the
+   * session runner resolves `session.model` only, never the agent's `model`
+   * frontmatter, so `POST /api/session {"agent":"executor"}` records the
+   * session DEFAULT model rather than the agent's tier pin. When present, the
+   * gateway rewrites a `POST /api/session` body that names an `agent` without a
+   * `model`, seeding the resolved `Model.Ref` so the pin resolves. A body that
+   * already carries a `model` (an explicit client choice), or names an agent
+   * with no pin, passes byte-identical. Absent → byte-identical (pre-W185 and
+   * ambient lanes unchanged).
+   */
+  readonly sessionModelPins?: Readonly<Record<string, string>> | undefined;
 }
+
+/**
+ * `POST /api/session` — the v2 session-create route the tier pin seeds. Pinned
+ * to the EXACT route the route-class matrix forwards (no `experimental/`
+ * alternation: `/api/experimental/session` is not a create route, so rewriting
+ * it under the advisory posture would seed a `model` onto a non-create call).
+ */
+const OPENCODE_V2_SESSION_CREATE_ROUTE = /^\/api\/session$/;
+
+/** The session-create body cap; a larger body is refused, never partially read. */
+const SESSION_CREATE_BODY_LIMIT = 1024 * 1024;
 
 /** The read-only payload of the Workflow authority-inspection route. */
 export interface WorkflowAuthorityJournal {
@@ -283,7 +307,89 @@ async function handle(
     });
     return;
   }
+  // W185: seed a fleet agent's tier pin at session-create. The v2 runner reads
+  // `session.model` only, never the agent's frontmatter `model`, so a create
+  // naming an `agent` without a `model` would otherwise record the session
+  // default. Only the exact `POST /api/session` route with a configured pin map
+  // is rewritten; every other request forwards byte-identical.
+  if (
+    options.sessionModelPins !== undefined
+    && method.toUpperCase() === "POST"
+    && OPENCODE_V2_SESSION_CREATE_ROUTE.test(pathname)
+  ) {
+    await forwardSessionCreate(request, response, upstream, upstreamAuth, options);
+    return;
+  }
   forward(request, response, upstream, upstreamAuth, options);
+}
+
+/**
+ * W185: forwards a `POST /api/session` with the agent's tier pin seeded as
+ * `model` when the body names an `agent` and carries no `model`. Fails closed
+ * to a plain forward (byte-identical) whenever the body is absent, unparseable,
+ * already carries a `model`, or names an agent with no pin — the gateway never
+ * invents or overrides a client's model choice. The rewritten body is sent as a
+ * buffered request (the upstream body is small and JSON).
+ */
+async function forwardSessionCreate(
+  request: IncomingMessage,
+  response: ServerResponse,
+  upstream: URL,
+  upstreamAuth: string | undefined,
+  options: OpencodeServerGatewayOptions,
+): Promise<void> {
+  // A body the client declared larger than the cap is forwarded WITHOUT being
+  // read, so it stays byte-identical and the stream is never left partially
+  // consumed (a `forward` after a partial read pipes a destroyed stream and
+  // hangs the client).
+  const declared = Number(request.headers["content-length"]);
+  if (Number.isFinite(declared) && declared > SESSION_CREATE_BODY_LIMIT) {
+    forward(request, response, upstream, upstreamAuth, options);
+    return;
+  }
+  let raw: Buffer;
+  try {
+    raw = await readRawBody(request, SESSION_CREATE_BODY_LIMIT);
+  } catch {
+    // A chunked body (no declarable length) that exceeded the cap CANNOT be
+    // replayed: its stream is already partially consumed. Fail closed with a
+    // clear 413 rather than a broken pass-through that would hang the client.
+    sendJson(response, 413, { error: "session-create body is too large" });
+    return;
+  }
+  const rewritten = seedSessionModelFromText(raw, options.sessionModelPins ?? {});
+  // No rewrite: replay the EXACT bytes we read, so the forwarded request is
+  // byte-identical to a plain pass-through.
+  const payload = rewritten === undefined ? raw : Buffer.from(JSON.stringify(rewritten), "utf8");
+  forward(request, response, upstream, upstreamAuth, options, { preserveHost: false, body: payload });
+}
+
+/**
+ * Returns a body with `model` seeded from the agent's pin, or undefined when no
+ * rewrite applies. An unparseable body, an absent/blank `agent`, a present
+ * `model`, or an agent with no pin all return undefined (pass through). The
+ * ref→`Model.Ref` shape is the SHARED {@link sessionModelRefForAgent} (W185: the
+ * resolver is consumed at both lanes, not re-implemented here).
+ */
+function seedSessionModelFromText(
+  raw: Buffer,
+  pins: Readonly<Record<string, string>>,
+): Record<string, unknown> | undefined {
+  let body: unknown;
+  try {
+    const text = raw.toString("utf8");
+    body = text.trim() === "" ? undefined : JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
+  const record = body as Record<string, unknown>;
+  const agent = record.agent;
+  if (typeof agent !== "string" || agent.length === 0) return undefined;
+  if (record.model !== undefined) return undefined;
+  const ref = sessionModelRefForAgent(pins, agent);
+  if (ref === undefined) return undefined;
+  return { ...record, model: ref };
 }
 
 /**
@@ -373,8 +479,11 @@ function forward(
    *  its same-origin mutation guard compares `Origin` to `Host`); when false the
    *  target's own Host is sent (the OpenCode lane). An absent `upstreamAuth`
    *  strips the client's Authorization rather than injecting one (the hub-UI
-   *  loopback is reached only through the gateway's already-passed auth). */
-  policy: { readonly preserveHost: boolean } = { preserveHost: false },
+   *  loopback is reached only through the gateway's already-passed auth).
+   *  `body`, when given, is written verbatim instead of piping the client stream
+   *  (the W185 session-create rewrite); the client's framing headers are then
+   *  replaced from the buffer so the forwarded bytes are exactly `body`. */
+  policy: { readonly preserveHost: boolean; readonly body?: Buffer } = { preserveHost: false },
 ): void {
   const incoming = new URL(request.url ?? "/", "http://gateway.invalid");
   const target = new URL(upstream.toString());
@@ -389,6 +498,9 @@ function forward(
     // untrusted-input surface, so a client's `X-Forwarded-*`/`Forwarded` must
     // never reach it as if the proxy had set them.
     if (policy.preserveHost && (lower === "forwarded" || lower.startsWith("x-forwarded-"))) continue;
+    // A buffered body replaces the client's framing headers: a lingering
+    // content-length/transfer-encoding would contradict the bytes we send.
+    if (policy.body !== undefined && (lower === "content-length" || lower === "transfer-encoding")) continue;
     headers[key] = value;
   }
   if (upstreamAuth !== undefined) headers["authorization"] = upstreamAuth;
@@ -400,6 +512,7 @@ function forward(
   } else {
     headers["host"] = upstream.host;
   }
+  if (policy.body !== undefined) headers["content-length"] = String(policy.body.length);
 
   const proxied = httpRequest(target, { method: request.method ?? "GET", headers }, (upstreamResponse) => {
     const responseHeaders: Record<string, string | string[]> = {};
@@ -427,7 +540,8 @@ function forward(
     if (!response.headersSent) sendJson(response, 502, { error: "gateway upstream unreachable" });
     else response.destroy();
   });
-  request.pipe(proxied);
+  if (policy.body !== undefined) proxied.end(policy.body);
+  else request.pipe(proxied);
 }
 
 /**
@@ -510,6 +624,12 @@ function isReplyValue(value: unknown): value is OpencodePermissionReplyValue {
 }
 
 async function readJson(request: IncomingMessage, limit: number): Promise<unknown> {
+  const text = (await readRawBody(request, limit)).toString("utf8");
+  return text.trim() === "" ? undefined : JSON.parse(text);
+}
+
+/** Reads a request body as bytes, enforcing a byte limit. */
+async function readRawBody(request: IncomingMessage, limit: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let length = 0;
   for await (const chunk of request) {
@@ -518,8 +638,7 @@ async function readJson(request: IncomingMessage, limit: number): Promise<unknow
     if (length > limit) throw new Error("gateway request is too large");
     chunks.push(buffer);
   }
-  const text = Buffer.concat(chunks).toString("utf8");
-  return text.trim() === "" ? undefined : JSON.parse(text);
+  return Buffer.concat(chunks);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

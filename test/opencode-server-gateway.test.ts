@@ -200,6 +200,179 @@ async function until(predicate: () => boolean, timeoutMs = 2_000): Promise<void>
   }
 }
 
+test("W185 gateway: session-create seeds a fleet agent tier pin, and only there", async (t) => {
+  // A stub that echoes the received POST /api/session body back, so the test
+  // sees exactly what the gateway forwarded upstream.
+  const bodies: string[] = [];
+  const server = createServer((request: IncomingMessage, response: ServerResponse) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      const pathname = new URL(request.url ?? "/", "http://stub.invalid").pathname;
+      const body = Buffer.concat(chunks).toString("utf8");
+      if (pathname === "/api/session" && request.method === "POST") {
+        bodies.push(body);
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ data: { id: "ses_1" } }));
+        return;
+      }
+      response.writeHead(404, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "not found" }));
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => { server.off("error", reject); resolve(); });
+  });
+  t.after(() => new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))));
+  const upstream = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+
+  const pins = { executor: "openrouter/syn:small:text", reviewer: "openrouter/syn:large:text" };
+  const gateway = await createOpencodeServerGateway({
+    upstream,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    sessionModelPins: pins,
+  });
+  t.after(() => void gateway.close());
+  const auth = { authorization: basic("opencode", "tuipw"), "content-type": "application/json" };
+
+  // (1) An agent WITHOUT a model seeds the resolved Model.Ref.
+  const seeded = await fetch(gateway.url + "/api/session", { method: "POST", headers: auth, body: JSON.stringify({ agent: "reviewer" }) });
+  assert.equal(seeded.status, 200);
+  assert.deepEqual(JSON.parse(bodies.at(-1)!), { agent: "reviewer", model: { providerID: "openrouter", id: "syn:large:text" } });
+
+  // (2) An explicit client model is NEVER overridden.
+  const explicit = await fetch(gateway.url + "/api/session", { method: "POST", headers: auth, body: JSON.stringify({ agent: "reviewer", model: { providerID: "anthropic", id: "claude-sonnet-4" } }) });
+  assert.equal(explicit.status, 200);
+  assert.deepEqual(JSON.parse(bodies.at(-1)!), { agent: "reviewer", model: { providerID: "anthropic", id: "claude-sonnet-4" } });
+
+  // (3) An agent with NO pin passes through byte-identical.
+  const unpinned = await fetch(gateway.url + "/api/session", { method: "POST", headers: auth, body: JSON.stringify({ agent: "build" }) });
+  assert.equal(unpinned.status, 200);
+  assert.equal(bodies.at(-1), JSON.stringify({ agent: "build" }));
+
+  // (4) A session-create with NO agent passes through byte-identical.
+  const agentless = await fetch(gateway.url + "/api/session", { method: "POST", headers: auth, body: JSON.stringify({ title: "x" }) });
+  assert.equal(agentless.status, 200);
+  assert.equal(bodies.at(-1), JSON.stringify({ title: "x" }));
+});
+
+test("W185 gateway: without a pin map, session-create forwards byte-identical (ambient/v1 lanes)", async (t) => {
+  const bodies: string[] = [];
+  const server = createServer((request: IncomingMessage, response: ServerResponse) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      bodies.push(Buffer.concat(chunks).toString("utf8"));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: { id: "ses_1" } }));
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => { server.off("error", reject); resolve(); });
+  });
+  t.after(() => new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))));
+  const upstream = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const gateway = await createOpencodeServerGateway({
+    upstream,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+  });
+  t.after(() => void gateway.close());
+  const sent = JSON.stringify({ agent: "reviewer" });
+  const response = await fetch(gateway.url + "/api/session", {
+    method: "POST",
+    headers: { authorization: basic("opencode", "tuipw"), "content-type": "application/json" },
+    body: sent,
+  });
+  assert.equal(response.status, 200);
+  assert.equal(bodies.at(-1), sent, "no pin map → the exact bytes forward unchanged");
+});
+
+test("W185 gateway: a declared-oversize session-create forwards byte-identical (never partially read)", async (t) => {
+  // Regression pin: an over-cap body must NOT be read then piped (a partial
+  // read destroys the request stream and hangs the client). A declared
+  // Content-Length past the cap forwards the original bytes untouched.
+  const bodies: string[] = [];
+  const server = createServer((request: IncomingMessage, response: ServerResponse) => {
+    const chunks: Buffer[] = [];
+    request.on("data", (chunk: Buffer) => chunks.push(chunk));
+    request.on("end", () => {
+      bodies.push(Buffer.concat(chunks).toString("utf8"));
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ data: { id: "ses_1" } }));
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => { server.off("error", reject); resolve(); });
+  });
+  t.after(() => new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))));
+  const upstream = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const gateway = await createOpencodeServerGateway({
+    upstream,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    sessionModelPins: { executor: "openrouter/syn:small:text" },
+  });
+  t.after(() => void gateway.close());
+
+  // 1 MiB + 1: a body over the cap the gateway is willing to buffer.
+  const large = "x".repeat(1024 * 1024 + 1);
+  const sent = JSON.stringify({ agent: "executor", pad: large });
+  const response = await fetch(gateway.url + "/api/session", {
+    method: "POST",
+    headers: { authorization: basic("opencode", "tuipw"), "content-type": "application/json" },
+    body: sent,
+  });
+  // The upstream owns validation; the gateway must not hang or truncate.
+  assert.equal(response.status, 200);
+  assert.equal(bodies.at(-1), sent, "the over-cap body forwards byte-identical");
+});
+
+test("W185 gateway: a chunked over-cap session-create fails closed with 413 (no hang)", async (t) => {
+  // A chunked body has no declarable length, so the gateway cannot forward it
+  // without reading. Once it exceeds the cap the stream is already partially
+  // consumed — it must answer 413, never a truncated pass-through.
+  const server = createServer((_request: IncomingMessage, response: ServerResponse) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ data: { id: "ses_1" } }));
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => { server.off("error", reject); resolve(); });
+  });
+  t.after(() => new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve()))));
+  const upstream = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const gateway = await createOpencodeServerGateway({
+    upstream,
+    upstreamUsername: "up",
+    upstreamPassword: "secret",
+    tuiPassword: "tuipw",
+    sessionModelPins: { executor: "openrouter/syn:small:text" },
+  });
+  t.after(() => void gateway.close());
+
+  const status = await new Promise<number>((resolve, reject) => {
+    // No Content-Length → chunked framing (the client stream is the body).
+    const req = httpRequest(
+      { host: "127.0.0.1", port: new URL(gateway.url).port, method: "POST", path: "/api/session",
+        headers: { authorization: basic("opencode", "tuipw"), "content-type": "application/json", "transfer-encoding": "chunked" } },
+      (res) => { res.resume(); resolve(res.statusCode ?? 0); },
+    );
+    req.on("error", reject);
+    const chunk = Buffer.alloc(256 * 1024, 0x78);
+    for (let i = 0; i < 6; i += 1) req.write(chunk);
+    req.end();
+  });
+  assert.equal(status, 413, "an un-replayable over-cap body fails closed");
+});
+
 test("W071 gateway: unauthenticated and wrong-password clients are rejected", async (t) => {
   const upstream = await stubUpstream();
   t.after(() => void upstream.close());

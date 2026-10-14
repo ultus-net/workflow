@@ -37,6 +37,7 @@ import type { CredentialEndpoint } from "./credentials.js";
 import { createEgressRuntimeFeed } from "./egress-audit-client.js";
 import { egressPostureFromEnv, egressRuntimeContext } from "./runtime-context.js";
 import { installFleetIntoOpencodeConfig, provisionFleetSkills, type FleetInstallResult } from "./fleet-payload.js";
+import { safeFleetAgentTierPins } from "./fleet-agent-tiers.js";
 import type { TaskUsageSummary } from "./task-usage.js";
 import { autoLatestConfigFromEnv } from "./openrouter-auto-latest.js";
 import { loadOpenModelKeys } from "./open-model-keys.js";
@@ -122,6 +123,21 @@ export function installAcpVendoredFleet(configDir: string): readonly FleetInstal
   return installFleetIntoOpencodeConfig(configDir);
 }
 
+/**
+ * W185: the v2 ACP session model for a runtime. When the caller names a vendored
+ * fleet agent whose tier resolves, its pin (already metered-id-prefixed) is used
+ * verbatim — the runtime install rewrote the AGENT file's provider prefix to the
+ * metered id, and the picker accepts that id. Otherwise the historical config
+ * model is translated through {@link v2BuiltinModelRef}.
+ */
+export function fleetSelectModel(fleetAgent: string | undefined, configModel: unknown): string {
+  if (fleetAgent !== undefined) {
+    const pin = safeFleetAgentTierPins()[fleetAgent];
+    if (pin !== undefined) return pin;
+  }
+  return v2BuiltinModelRef(String(configModel));
+}
+
 const opencodeMajorCache = new Map<string, Promise<number | undefined>>();
 
 /** Probe the opencode binary's major version once per executable path. */
@@ -198,6 +214,18 @@ export interface AcpRuntimeOptions {
    * the ACP lane previously called the payload function inline with no seam).
    */
   readonly installFleetImpl?: ((configDir: string) => readonly FleetInstallResult[]) | undefined;
+  /**
+   * W185: run this session as the named vendored fleet agent, pinning its tier
+   * model as the session model. On OpenCode v2 the session runner resolves
+   * `session.model` only, never the agent's frontmatter `model`, so a fleet
+   * agent would otherwise run on the session default. The fleet agents are
+   * `mode: subagent`, which the v2 ACP mode list excludes (it filters
+   * `mode !== "subagent"`), so the agent CANNOT be selected as a mode — the tier
+   * is instead pinned as `selectModel` (the same mechanism the v2 config-model
+   * pin uses). An unknown/nopinned agent falls back to the config model. Absent
+   * → the historical config-model selection (byte-identical).
+   */
+  readonly fleetAgent?: string | undefined;
 }
 
 export async function createConfiguredAcpRuntime(
@@ -560,8 +588,12 @@ async function createOpencodeRuntime(
       // a ref the v2 ACP picker accepts: a vendor built-in pool model is
       // translated to its catalog id (or the metered Auto Router when the
       // catalog has no faithful id — GLM on v2.0.10); every other ref passes
-      // through unchanged.
-      ...(acpMajor !== undefined && acpMajor >= 2 ? { selectModel: v2BuiltinModelRef(String(opencodeConfig.model)) } : {}),
+      // through unchanged. W185: when the caller names a vendored fleet agent
+      // (`options.fleetAgent`), its tier pin replaces the config model — the
+      // v2 runner reads `session.model` only (never the agent's frontmatter
+      // `model`), and the fleet agents are `mode: subagent`, which the ACP mode
+      // list excludes, so a model pin is the only way to run them at their tier.
+      ...(acpMajor !== undefined && acpMajor >= 2 ? { selectModel: fleetSelectModel(options.fleetAgent, opencodeConfig.model) } : {}),
       ...(guard === undefined ? {} : { guard }),
       ...(options.taskUsage === undefined ? {} : { taskUsage: options.taskUsage }),
       // Plan Task F1/F3: journal skill delivery into the application's
