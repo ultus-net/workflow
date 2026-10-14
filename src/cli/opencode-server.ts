@@ -14,6 +14,7 @@ import {
 } from "../integrations/opencode-server-authority.js";
 import { createOpencodeServerBudget } from "../integrations/opencode-server-budget.js";
 import { createOpencodeServerGateway, newTuiPassword } from "../integrations/opencode-server-gateway.js";
+import { loadAssistantGatewayConfig } from "../integrations/assistant-gateway.js";
 import { safeFleetAgentTierPins } from "../integrations/fleet-agent-tiers.js";
 import { readHubWebEndpoint } from "../integrations/hub-discovery.js";
 import {
@@ -27,6 +28,7 @@ import { createOpencodeServerRuntime } from "../integrations/opencode-server-run
 import { loadUpstreamApiKeyFromSecretStore } from "../integrations/upstream-key.js";
 import { resolveSecretStore } from "../integrations/secret-store.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
+import { createModelUsageProxy, type ModelUsageProxy } from "../integrations/model-usage-proxy.js";
 import { upstreamCredentialBinding } from "../integrations/egress-binding.js";
 import { loadEgressPolicyFile } from "../integrations/egress-policy-file.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
@@ -233,6 +235,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   const payloadPolicy = egressPolicy === undefined || egressPolicy.rules.length === 0
     ? undefined
     : { egressPolicy };
+  // M1 assistant lane: opt-in via `WORKFLOW_ASSISTANT_ROUTES` naming the route
+  // policy JSON. Absent/blank → no assistant lane, the ingress stays
+  // byte-identical. Present → loaded (fail closed on a bad config) and the lane
+  // is attached to the front door with a dedicated metered egress proxy.
+  const assistantRoutesPath = (process.env.WORKFLOW_ASSISTANT_ROUTES ?? "").trim();
+  const assistantRoutes = assistantRoutesPath === "" ? undefined : loadAssistantGatewayConfig(assistantRoutesPath);
   // C1 F2 durable fix: when `WORKFLOW_UPSTREAM_KEY_FROM` names a secret store
   // (the deployed plane points it at azure-kv), the upstream key is sourced from
   // Key Vault rather than a uid-shared env. Fail-closed on a named-but-absent
@@ -425,7 +433,24 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   void authority.start();
 
   let gateway;
+  // M1 assistant lane egress: a DEDICATED metered proxy pinned to the same
+  // OpenRouter upstream as the coding lane (never the runtime's Synthetic-lane
+  // proxy). Declared here so the shutdown and failure paths can reap it.
+  let assistantEgress: ModelUsageProxy | undefined;
   try {
+    if (assistantRoutes !== undefined) {
+      // Fail closed: a named assistant lane with no egress credential is
+      // misconfiguration — the metered proxy cannot inject a key.
+      if (upstreamApiKey === undefined) {
+        throw new Error("WORKFLOW_ASSISTANT_ROUTES names an assistant lane but no egress credential is configured; set WORKFLOW_UPSTREAM_KEY_FROM so the metered egress proxy can inject the upstream key");
+      }
+      assistantEgress = await createModelUsageProxy({
+        upstream,
+        apiKey: upstreamApiKey,
+        ...(credentialEndpoints.length === 0 ? {} : { credentialEndpoints }),
+        ...(payloadPolicy === undefined ? {} : { payloadPolicy }),
+      });
+    }
     gateway = await createOpencodeServerGateway({
       upstream: runtime.url,
       upstreamUsername: runtime.username,
@@ -468,9 +493,16 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       ...(opencodeMajorFromVersion(runtime.version) === 2
         ? { sessionModelPins: safeFleetAgentTierPins() }
         : {}),
+      // M1 assistant lane: attach the identity→route→system-prompt lane to the
+      // front door with its dedicated metered egress. Absent → omitted, so the
+      // ingress is byte-identical.
+      ...(assistantRoutes === undefined || assistantEgress === undefined
+        ? {}
+        : { assistantRoutes: { config: assistantRoutes, egressUrl: assistantEgress.url } }),
     });
   } catch (error) {
     await authority.stop();
+    await assistantEgress?.close();
     await runtime.dispose();
     await guard.close();
     throw error;
@@ -512,6 +544,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       compactionMonitor?.stop();
       await authority.stop();
       if (gateway !== undefined) await gateway.close();
+      await assistantEgress?.close();
       await runtime.dispose();
       await guard.close();
       removeOpencodeServerDiscovery(discoveryPath);
@@ -526,6 +559,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   compactionMonitor?.stop();
   await authority.stop();
   await gateway.close();
+  await assistantEgress?.close();
   await runtime.dispose();
   await guard.close();
   removeOpencodeServerDiscovery(discoveryPath);
