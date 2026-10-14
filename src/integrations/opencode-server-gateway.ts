@@ -8,6 +8,7 @@ import {
   qualifyOpenCodeV2Route,
 } from "./opencode-v2-route-class.js";
 import { sessionModelRefForAgent } from "./fleet-agent-tiers.js";
+import { handleAssistantRequest, type AssistantGatewayConfig } from "./assistant-gateway.js";
 
 /**
  * W071 — the OpenCode server gateway.
@@ -102,6 +103,15 @@ export interface OpencodeServerGatewayOptions {
    * ambient lanes unchanged).
    */
   readonly sessionModelPins?: Readonly<Record<string, string>> | undefined;
+  /**
+   * M1 assistant lane (augur). When present, a `POST .../chat/completions`
+   * request that survives the client credential gate is dispatched to the
+   * assistant gateway: the `x-workflow-user` identity selects a route policy,
+   * the route system prompt is injected, and the body is forwarded to the
+   * metered `egressUrl` proxy (which injects the upstream key and meters).
+   * Absent → the lane does not exist and the ingress is byte-identical.
+   */
+  readonly assistantRoutes?: { readonly config: AssistantGatewayConfig; readonly egressUrl: string } | undefined;
 }
 
 /**
@@ -262,6 +272,16 @@ async function handle(
     }
     forward(request, response, new URL(target), undefined, options, { preserveHost: true });
     return;
+  }
+  // M1 assistant lane: served by the gateway, never forwarded upstream. Placed
+  // after the client credential gate so the ingress credential is still
+  // required; identity binding via `x-workflow-user` is authorization on top.
+  if (options.assistantRoutes !== undefined) {
+    const handled = await handleAssistantRequest(request, response, {
+      egressUrl: options.assistantRoutes.egressUrl,
+      config: options.assistantRoutes.config,
+    });
+    if (handled) return;
   }
   const rawPathname = new URL(request.url ?? "/", "http://gateway.invalid").pathname;
   const pathname = decodedPathname(rawPathname);
