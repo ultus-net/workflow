@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 
-import { createOpencodeServerGuard, planeMountsFullToolbox } from "../src/cli/opencode-server.js";
+import { createOpencodeServerGuard, opencodeMajorFromVersion, planeMountsFullToolbox } from "../src/cli/opencode-server.js";
 import { ensureToolboxGuardBuilt } from "./fixtures/compiled-dist.js";
 
 import {
@@ -279,4 +279,24 @@ test("O-4: the plane full-toolbox mount defaults OFF and is restored only by WOR
   // O-4 switch (which was OFF on the deployed plane, leaving `/explain` with no
   // `code-cheatsheet`). Implemented-and-wired, not merely defined.
   assert.match(daemonSource, /ensureSkillsStore: true/, "the plane lane must provision the hub-owned skills store");
+});
+
+test("W185: opencodeMajorFromVersion parses the major and fails undefined on unparseable input", () => {
+  assert.equal(opencodeMajorFromVersion("2.0.10"), 2);
+  assert.equal(opencodeMajorFromVersion("v2.0.10"), 2);
+  assert.equal(opencodeMajorFromVersion("2.0.10-beta"), 2);
+  assert.equal(opencodeMajorFromVersion("  1.18.31  "), 1);
+  assert.equal(opencodeMajorFromVersion("3.0.0"), 3);
+  assert.equal(opencodeMajorFromVersion("opencode v2.0.10"), undefined, "a non-leading version is not a major");
+  assert.equal(opencodeMajorFromVersion("garbage"), undefined);
+  assert.equal(opencodeMajorFromVersion(""), undefined);
+  assert.equal(opencodeMajorFromVersion(undefined), undefined);
+  // The v2-only gate must stay WIRED in the daemon composition: v1 falls back
+  // to `agent.model` natively, so seeding its session model would change bytes.
+  const daemonSource = readFileSync(resolve(process.cwd(), "src", "cli", "opencode-server.ts"), "utf8");
+  assert.match(
+    daemonSource,
+    /opencodeMajorFromVersion\(runtime\.version\) === 2\s*\n\s*\? \{ sessionModelPins: safeFleetAgentTierPins\(\) \}/,
+    "the tier-pin seeding must be gated to v2 exactly",
+  );
 });

@@ -14,6 +14,7 @@ import {
 } from "../integrations/opencode-server-authority.js";
 import { createOpencodeServerBudget } from "../integrations/opencode-server-budget.js";
 import { createOpencodeServerGateway, newTuiPassword } from "../integrations/opencode-server-gateway.js";
+import { safeFleetAgentTierPins } from "../integrations/fleet-agent-tiers.js";
 import { readHubWebEndpoint } from "../integrations/hub-discovery.js";
 import {
   opencodeServerDiscoveryPath,
@@ -167,6 +168,17 @@ export async function createOpencodeServerGuard(workspace: string) {
  */
 export function planeMountsFullToolbox(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.WORKFLOW_PLANE_FULL_TOOLBOX === "1";
+}
+
+/**
+ * W185: parses the major version from a runtime version string (`2.0.10` → 2,
+ * a `v2.0.10`/`2.0.10-beta` shape tolerated). `undefined` when absent or
+ * unparseable — the caller then leaves the v1 byte-identical posture.
+ */
+export function opencodeMajorFromVersion(version: string | undefined): number | undefined {
+  if (version === undefined) return undefined;
+  const match = /^v?(\d+)/.exec(version.trim());
+  return match === null ? undefined : Number(match[1]);
 }
 
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
@@ -447,6 +459,15 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
           ...(decision.reason === undefined ? {} : { reason: decision.reason.slice(0, 200) }),
         })),
       }),
+      // W185: seed per-agent tier pins at session-create on OpenCode v2, whose
+      // session runner reads `session.model` only and ignores the agent's
+      // frontmatter `model` (falsified round-2 claim; issue #547). v1 falls back
+      // to `agent.model` natively, so the v1 lane stays byte-identical (the pin
+      // map is omitted). Fail-open on a resolve error: a missing assets tree
+      // must not refuse the daemon — the create body then passes unchanged.
+      ...(opencodeMajorFromVersion(runtime.version) === 2
+        ? { sessionModelPins: safeFleetAgentTierPins() }
+        : {}),
     });
   } catch (error) {
     await authority.stop();
