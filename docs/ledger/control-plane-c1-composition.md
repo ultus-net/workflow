@@ -363,6 +363,29 @@ hub-written config to carry them. Two paths did not reach the plane:
   `mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts`. Pins:
   `test/toolbox-catalog.test.ts#"W187: ..."`,
   `test/vendor-skills.test.ts#"W187: ..."`.
+- **W187 live verdict (2026-10-14, release `v0.1.14`, image
+  `sha256:14b0912bac3261518380b9afed92e4199f3dd48b06e9ee46170862dde5b3c1a6`,
+  revision `csh-dev-plane--0000022`):** all four W187 claims are
+  **live-verified** on a rebuilt plane. (1) **Three-way mount parity.** The
+  delivered `workflow-toolbox/SKILL.md` frontmatter `connectors:` lists the same
+  fourteen servers as `/api/mcp` (`data[].name`) and the composed config's
+  `mcp.servers` keys — `workflow-guard-mcp`, `skills-mcp`,
+  `project-context-mcp`, `project-memory-mcp`, `git-intelligence-mcp`,
+  `code-intelligence-mcp`, `test-intelligence-mcp`, `ci-intelligence-mcp`,
+  `change-intelligence-mcp`, `browser-verification-mcp`,
+  `accountability-mcp`, `continuity-checkpoint-mcp`, `learning-mcp`,
+  `workflow-task-mcp`; zero mounted-but-not-declared, zero
+  declared-but-not-mounted. (2) **Honest labels.** Every entry reads `(mounted)`;
+  the pre-fix defect (fourteen `available` while two mounted) is gone. (3)
+  **Image-build seeding.** `/home/node/.agents/skills` carries the curated set +
+  `vendor-skills.json` (`importedAt 03:21Z`, `obra/superpowers` pinned
+  `bb92a77741419a4ab5f06e711a283343f1ada0c3`), so the build-time seeder ran and
+  the clone-lifetime fix holds on the real image. (4) **Operator opt-in is live.**
+  `WORKFLOW_PLANE_FULL_TOOLBOX=1` is set on the revision and the plane lane
+  composed the full catalog. Evidence: `curl -u opencode:<client>…/api/mcp` and
+  `/api/config` (v2 document shape `mcp.servers`); `skills-mcp` resolves
+  `SKILLS_MCP_DIR=/home/node/.agents/skills`; `permission.external_directory =
+  deny` present.
 
 **Verification (this session):**
 
