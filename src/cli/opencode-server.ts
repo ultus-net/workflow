@@ -28,7 +28,8 @@ import { createOpencodeServerRuntime } from "../integrations/opencode-server-run
 import { loadUpstreamApiKeyFromSecretStore } from "../integrations/upstream-key.js";
 import { resolveSecretStore } from "../integrations/secret-store.js";
 import { loadCredentialDefinitions } from "../integrations/credential-config.js";
-import { createModelUsageProxy, type ModelUsageProxy } from "../integrations/model-usage-proxy.js";
+import { createModelUsageProxy, syntheticFailoverProxyOptions, type ModelUsageProxy } from "../integrations/model-usage-proxy.js";
+import { resolveRuntimeMeteredLane } from "../integrations/acp-runtime.js";
 import { upstreamCredentialBinding } from "../integrations/egress-binding.js";
 import { loadEgressPolicyFile } from "../integrations/egress-policy-file.js";
 import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
@@ -433,9 +434,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   void authority.start();
 
   let gateway;
-  // M1 assistant lane egress: a DEDICATED metered proxy pinned to the same
-  // OpenRouter upstream as the coding lane (never the runtime's Synthetic-lane
-  // proxy). Declared here so the shutdown and failure paths can reap it.
+  // M1 assistant lane egress: a DEDICATED metered proxy that resolves the SAME
+  // metered lane as the coding lane via `resolveRuntimeMeteredLane` — Synthetic
+  // primary with an automatic OpenRouter failover when a Synthetic key resolves,
+  // else OpenRouter single-upstream (an explicit `WORKFLOW_ACP_UPSTREAM` wins).
+  // Declared here so the shutdown and failure paths can reap it.
   let assistantEgress: ModelUsageProxy | undefined;
   try {
     if (assistantRoutes !== undefined) {
@@ -444,9 +447,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       if (upstreamApiKey === undefined) {
         throw new Error("WORKFLOW_ASSISTANT_ROUTES names an assistant lane but no egress credential is configured; set WORKFLOW_UPSTREAM_KEY_FROM so the metered egress proxy can inject the upstream key");
       }
+      // No explicit upstream argument: the lane resolver defaults to
+      // `WORKFLOW_ACP_UPSTREAM`, exactly like the server runtime, so Synthetic
+      // auto-select is not disabled by the local `upstream` literal.
+      const assistantLane = resolveRuntimeMeteredLane(upstreamApiKey);
       assistantEgress = await createModelUsageProxy({
-        upstream,
-        apiKey: upstreamApiKey,
+        upstream: assistantLane.upstream,
+        apiKey: assistantLane.apiKey,
+        ...(assistantLane.failover === undefined ? {} : { syntheticFailover: syntheticFailoverProxyOptions(assistantLane.failover) }),
         ...(credentialEndpoints.length === 0 ? {} : { credentialEndpoints }),
         ...(payloadPolicy === undefined ? {} : { payloadPolicy }),
       });
