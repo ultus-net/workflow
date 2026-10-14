@@ -887,6 +887,39 @@ edit **declined**. So the cascade is specific to the broker `reject` reply
 continuation and the session survive; the blast radius is one batch's siblings.
 Tracked as a follow-up.
 
+#### Update (2026-10-14, W186): the single-deny batch is now drained
+
+The cascade is structural in the host: `PermissionV2.reply("reject")` fails the
+target ask and then **every other pending ask in the same session** with a bare
+`DeclinedError` (`packages/core/src/permission.ts:231-247`), and the runner's
+`isUserDeclined` interrupts the turn (`packages/core/src/session/runner/llm.ts`).
+There is no non-cascading deny reply (`Permission.Reply` is `once | always |
+reject`, `packages/schema/src/permission.ts:40`).
+
+The broker now **drains allowed siblings before delivering a reject**
+(`drainAllowedSiblings`, `src/integrations/opencode-server-authority.ts`): when a
+deny is decided in `auto-resolve` mode, it lists the session's host-pending asks
+(`GET /api/session/:id/permission`, `packages/protocol/src/groups/permission.ts`)
+and resolves every one that policy ALLOWS with `once` — which does NOT cascade —
+so the reject finds no allowed sibling pending. The reported case (one deny plus
+a concurrently-allowed edit) no longer loses the edit, independent of SSE event
+arrival order — the drain reads the host's pending-ask registration, so a sibling
+is caught whether or not its own event has streamed yet. A drained ask is
+remembered so its still-queued SSE event is not answered a second time.
+
+**Residual (stated, not fixed): a batch with TWO OR MORE concurrent denies still
+aborts.** A denied sibling cannot be resolved without delivering its own reject,
+which cascades onto the others; no reply value or ordering avoids this host-side.
+Fix requires an upstream non-cascading deny reply. `ask-me` mode is deliberately
+exempt from the drain (an allowed sibling must stay held for the operator, never
+auto-approved). The drain is best-effort and fail-open: an absent listing route, a
+listing failure, or a drain that exceeds the bound (`siblingDrainTimeoutMs`,
+default 2000ms — the drain sits on the deny path, so the listing round trip AND
+the sibling decide/resolve loop must not stall the reject) leaves the pre-W186
+reject path unchanged. A sibling id is remembered as drained only when its reply
+actually reached the host, so a failed delivery can never leave an ask silently
+unanswered.
+
 **Residual — skill write target is outside the workspace.** `/explain`'s own
 write target (`~/.local/share/cheatsheets`) is outside `/workspace`, so a
 boundary-confined session cannot persist a sheet. A real skill/workspace-policy
@@ -901,7 +934,9 @@ the OS/confinement still permits reads).
 **Posture.** The turn-abort / session-freeze claim moves from **Partial** to
 **live-verified** on v0.1.13 (`csh-dev-plane--0000020`). The per-agent tier
 claim is marked **FALSIFIED for the v2 plane lane** and the broker-reject sibling
-cascade is a recorded **open follow-up** — neither blocks the boundary fix.
+cascade is a **partially-drained follow-up** (W186: the single-deny batch is
+drained host-side; a 2+-deny batch remains a stated residual) — none blocks the
+boundary fix.
 
 
 

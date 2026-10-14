@@ -139,6 +139,18 @@ export interface RemoteEngine {
     readonly message?: string | undefined;
   }): Promise<void>;
   /**
+   * The session's currently-PENDING permission requests, as the HOST sees them
+   * (including asks this broker's event loop has not consumed yet — they are
+   * registered host-side at raise time). W186 uses this to drain allowed
+   * siblings before delivering a `reject`, whose host-side cascade otherwise
+   * fails every other pending ask with a bare decline and aborts the turn.
+   *
+   * Optional: a server generation that does not answer the route, or a caller
+   * that does not need the drain, omits it — the broker then delivers a reject
+   * directly (the pre-W186 behavior).
+   */
+  listPermissions?(input: { readonly sessionId: string; readonly cwd: string }): Promise<readonly RemoteEnginePermissionRequest[]>;
+  /**
    * The server event subscription. An implementation reconnects a dropped
    * stream within its own bound, so the stream ends (or throws) only when the
    * caller aborts, when the route cannot be opened at all, or when that bound is
@@ -395,6 +407,31 @@ export class HttpRemoteEngine implements RemoteEngine {
       `/api/session/${encodeURIComponent(input.sessionId)}/permission/${encodeURIComponent(input.requestId)}/reply`,
       { cwd: input.cwd, body: { decision: input.reply, ...(input.message === undefined ? {} : { message: input.message }) } },
     );
+  }
+
+  async listPermissions(input: { sessionId: string; cwd: string }): Promise<readonly RemoteEnginePermissionRequest[]> {
+    // `GET /api/session/:sessionID/permission` → `{ data: Request[] }`
+    // (packages/protocol/src/groups/permission.ts:89). Returns [] on any
+    // non-array envelope rather than throwing: a listing failure must not turn
+    // a policy deny into an authority error — the caller falls back to a plain
+    // reject.
+    const body = await this.#json("GET", `/api/session/${encodeURIComponent(input.sessionId)}/permission`, { cwd: input.cwd });
+    return asArray(body).flatMap((entry): readonly RemoteEnginePermissionRequest[] => {
+      if (!isRecord(entry) || typeof entry.id !== "string" || entry.id.length === 0) return [];
+      const resources = Array.isArray(entry.resources)
+        ? entry.resources.filter((value): value is string => typeof value === "string")
+        : [];
+      return [{
+        id: entry.id,
+        sessionID: typeof entry.sessionID === "string" ? entry.sessionID : input.sessionId,
+        action: typeof entry.action === "string" ? entry.action : "unknown",
+        resources,
+        ...(Array.isArray(entry.save)
+          ? { save: entry.save.filter((value): value is string => typeof value === "string") }
+          : {}),
+        ...(isRecord(entry.metadata) ? { metadata: entry.metadata } : {}),
+      }];
+    });
   }
 
   async *events(input: { cwd: string; signal: AbortSignal }): AsyncIterable<RemoteEngineEvent> {

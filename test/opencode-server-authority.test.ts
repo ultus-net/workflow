@@ -29,12 +29,18 @@ import type { WorkflowGuardProvider } from "../src/integrations/mcp-toolbox-guar
  */
 
 interface FakeEngine {
-  readonly engine: Pick<RemoteEngine, "events" | "replyPermission">;
+  readonly engine: Pick<RemoteEngine, "events" | "replyPermission" | "listPermissions">;
   readonly replies: { readonly sessionId: string; readonly requestId: string; readonly reply: string; readonly message?: string }[];
 }
 
-function fakeEngine(events: readonly RemoteEngineEvent[], mode: "complete" | "throw" = "complete"): FakeEngine {
+function fakeEngine(
+  events: readonly RemoteEngineEvent[],
+  mode: "complete" | "throw" = "complete",
+  pendingHost: readonly RemoteEnginePermissionRequest[] = [],
+  replyFailures: readonly string[] = [],
+): FakeEngine {
   const replies: { sessionId: string; requestId: string; reply: string; message?: string }[] = [];
+  const remainingFailures = new Set(replyFailures);
   return {
     replies,
     engine: {
@@ -43,12 +49,21 @@ function fakeEngine(events: readonly RemoteEngineEvent[], mode: "complete" | "th
         if (mode === "throw") throw new Error("SSE stream lost");
       },
       async replyPermission(input) {
+        // Simulate a HOST reply failure for a named request on its FIRST reply
+        // only (a transient error, not the cascade 404), so a failed drain
+        // delivery can be exercised and a later retry can succeed.
+        if (remainingFailures.delete(input.requestId)) {
+          throw new Error(`remote engine POST /permission/${input.requestId}/reply failed (500): boom`);
+        }
         replies.push({
           sessionId: input.sessionId,
           requestId: input.requestId,
           reply: input.reply,
           ...(input.message === undefined ? {} : { message: input.message }),
         });
+      },
+      async listPermissions() {
+        return pendingHost;
       },
     },
   };
@@ -61,7 +76,12 @@ function expectsRejectFeedback(replies: readonly { readonly message?: string }[]
 }
 
 function permission(id: string, action: string, metadata: Record<string, unknown>, callId?: string): RemoteEngineEvent {
-  const request: RemoteEnginePermissionRequest = {
+  return { type: "permission.asked", properties: permissionRequest(id, action, metadata, callId) };
+}
+
+/** The bare request shape `listPermissions` returns (no event envelope). */
+function permissionRequest(id: string, action: string, metadata: Record<string, unknown>, callId?: string): RemoteEnginePermissionRequest {
+  return {
     id,
     sessionID: "s1",
     action,
@@ -69,7 +89,6 @@ function permission(id: string, action: string, metadata: Record<string, unknown
     metadata,
     ...(callId === undefined ? {} : { tool: { callID: callId } }),
   };
-  return { type: "permission.asked", properties: request };
 }
 
 function toolPart(callId: string, tool: string, status: string = "pending", input?: unknown): RemoteEngineEvent {
@@ -310,6 +329,150 @@ test("W071 broker (enforced): a mutating tool covered by a decision does not ala
   assert.deepEqual(bypasses, []);
   assert.equal(authority.decisions().some((decision) => decision.tool === "(bypass)"), false);
   assert.equal(authority.decisions()[0]?.decision, "allow");
+});
+
+test("W186 broker: a deny drains an allowed sibling before the reject (no cascade)", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-drain-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  // The batch: a subagent spawn (no `spawn` capability → DENY) arrives with an
+  // in-workspace edit sibling (mutation → ALLOW). Host-pending lists both, as
+  // the host holds both asks concurrently.
+  const sibling = permission("r2", "edit", { filePath: join(workspace, "src", "b.ts") }, "c2");
+  const fake = fakeEngine(
+    // Both asks are streamed in arrival order; the drain resolves r2 while
+    // answering r1, so r2's own event must be skipped (no second reply).
+    [permission("r1", "subagent", { toolName: "subagent" }, "c1"), sibling],
+    "complete",
+    [permissionRequest("r1", "subagent", { toolName: "subagent" }, "c1"), permissionRequest("r2", "edit", { filePath: join(workspace, "src", "b.ts") }, "c2")],
+  );
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]), // no "spawn"
+    workspace,
+  });
+  await authority.start();
+  // The allowed edit sibling is resolved `once` BEFORE the subagent reject, so
+  // the host has no pending sibling for the reject to cascade onto.
+  assert.deepEqual(fake.replies, [
+    { sessionId: "s1", requestId: "r2", reply: "once" },
+    { sessionId: "s1", requestId: "r1", reply: "reject", message: fake.replies[1]!.message },
+  ]);
+  assert.ok((fake.replies[1]!.message ?? "").length > 0, "the reject carries feedback");
+  assert.equal(authority.decisions().find((d) => d.requestId === "r1")?.decision, "deny");
+});
+
+test("W186 broker: a denied sibling is left pending (its own reject would cascade)", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-drain2-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  // Two denied siblings (both out-of-workspace). Only the arriving target is
+  // rejected; the denied sibling is NOT answered here (answering it would be a
+  // second reject and cascade). This documents the residual: a multi-deny batch
+  // is not made sibling-safe host-side.
+  const fake = fakeEngine(
+    [permission("r1", "edit", { filePath: "/etc/shadow" }, "c1")],
+    "complete",
+    [permissionRequest("r1", "edit", { filePath: "/etc/shadow" }, "c1"), permissionRequest("r2", "edit", { filePath: "/etc/passwd" }, "c2")],
+  );
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+  });
+  await authority.start();
+  assert.deepEqual(fake.replies.map((r) => r.requestId), ["r1"], "only the target is answered");
+  assert.equal(fake.replies[0]!.reply, "reject");
+});
+
+test("W186 broker: a drained sibling whose delivery FAILED is not silently skipped", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-drainfail-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  // The drain resolves the allowed sibling r2 as `once`, but the host reply
+  // FAILS (transient 500). The id must NOT be marked drained, so r2's own SSE
+  // event is processed normally and r2 is answered on the retry — never
+  // swallowed with no reply and no journal entry (review P0).
+  const sibling = permission("r2", "edit", { filePath: join(workspace, "src", "b.ts") }, "c2");
+  const fake = fakeEngine(
+    [permission("r1", "subagent", { toolName: "subagent" }, "c1"), sibling],
+    "complete",
+    [permissionRequest("r1", "subagent", { toolName: "subagent" }, "c1"), permissionRequest("r2", "edit", { filePath: join(workspace, "src", "b.ts") }, "c2")],
+    ["r2"],
+  );
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]), // no "spawn"
+    workspace,
+  });
+  await authority.start();
+  // r1 (deny) and r2 (allowed, on retry) both reach the host; r2 is never lost.
+  assert.deepEqual(fake.replies.map((r) => `${r.requestId}:${r.reply}`).sort(), ["r1:reject", "r2:once"]);
+});
+
+test("W186 broker: a hung permission listing does not stall the deny (bounded drain)", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-drainhang-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  // The listing route never settles. The deny must still be delivered within the
+  // (tiny) drain bound, and the stall must be journaled as an observe decision.
+  const fake = fakeEngine([permission("r1", "subagent", { toolName: "subagent" }, "c1")]);
+  const hungEngine = {
+    ...fake.engine,
+    listPermissions: () => new Promise<never>(() => {}),
+  };
+  const authority = createOpencodeServerAuthority({
+    engine: hungEngine,
+    application: application(workspace, ["read", "mutation", "process"]), // no "spawn"
+    workspace,
+    siblingDrainTimeoutMs: 25,
+  });
+  await authority.start();
+  assert.deepEqual(fake.replies.map((r) => `${r.requestId}:${r.reply}`), ["r1:reject"]);
+  const drainNote = authority.decisions().find((d) => d.tool === "(sibling drain)");
+  assert.equal(drainNote?.decision, "observe");
+  assert.match(drainNote?.reason ?? "", /timed out after 25ms/);
+});
+
+test("W186 broker: a permission listing FAILURE is journaled and the deny still lands", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-drainerr-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  // The listing route errors (not a timeout). The deny must still be delivered,
+  // and the failure must be journaled as an observe decision (review P3).
+  const fake = fakeEngine([permission("r1", "subagent", { toolName: "subagent" }, "c1")]);
+  const brokenEngine = {
+    ...fake.engine,
+    listPermissions: async () => {
+      throw new Error("remote engine GET /permission failed (500): boom");
+    },
+  };
+  const authority = createOpencodeServerAuthority({
+    engine: brokenEngine,
+    application: application(workspace, ["read", "mutation", "process"]), // no "spawn"
+    workspace,
+  });
+  await authority.start();
+  assert.deepEqual(fake.replies.map((r) => `${r.requestId}:${r.reply}`), ["r1:reject"]);
+  const drainNote = authority.decisions().find((d) => d.tool === "(sibling drain)");
+  assert.equal(drainNote?.decision, "observe");
+  assert.match(drainNote?.reason ?? "", /permission list failed/);
+});
+
+test("W186 broker: ask-me does not drain (an allowed sibling stays held for the operator)", async (t) => {
+  const workspace = mkdtempSync(join(tmpdir(), "wf-broker-drain3-"));
+  t.after(() => rmSync(workspace, { recursive: true, force: true }));
+  // In ask-me mode, the deny path must not auto-approve an allowed sibling: the
+  // operator holds the pen. Only the arriving deny is answered.
+  const fake = fakeEngine(
+    [permission("r1", "subagent", { toolName: "subagent" }, "c1")],
+    "complete",
+    [permissionRequest("r1", "subagent", { toolName: "subagent" }, "c1"), permissionRequest("r2", "edit", { filePath: join(workspace, "src", "b.ts") }, "c2")],
+  );
+  const authority = createOpencodeServerAuthority({
+    engine: fake.engine,
+    application: application(workspace, ["read", "mutation", "process"]),
+    workspace,
+    mode: "ask-me",
+  });
+  await authority.start();
+  assert.deepEqual(fake.replies.map((reply) => reply.requestId), ["r1"], "only the deny is answered; the sibling is not drained");
+  assert.equal(fake.replies[0]!.reply, "reject");
 });
 
 test("W071 broker: assertAskRuleset fails closed on a permissive ruleset", () => {
