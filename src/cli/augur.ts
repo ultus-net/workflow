@@ -8,6 +8,8 @@ import { AUDIENCES, isAudience } from "../assistant/style/audience.js";
 import { listStyles, loadStyle } from "../assistant/style/pack.js";
 import { formatFindings, lint } from "../assistant/lint.js";
 import { run, type RunRequest } from "../assistant/run.js";
+import { startDiscordConnector } from "../assistant/discord/connector.js";
+import type { DiscordAllowlist } from "../assistant/discord/allowlist.js";
 
 const USAGE = `augur - turn sources into styled notes
 
@@ -15,6 +17,7 @@ Usage:
   augur note <source> [options]     source: URL, file path, or - for stdin
   augur lint <file>                 check a note against its style pack
   augur styles list                 list available style packs
+  augur discord                     run the Discord connector (outbound-only)
 
 Options:
   --style <id>       style pack id (default: notes)
@@ -32,6 +35,14 @@ Env:
   OPENROUTER_API_KEY   required for generation
   AUGUR_MODELS         default model list
   AUGUR_CONFIG         alternate config path
+  DISCORD_BOT_TOKEN    required for \`augur discord\`
+  AUGUR_GATEWAY_URL    required for \`augur discord\` (assistant gateway base URL)
+  AUGUR_GATEWAY_BASIC_AUTH required: front-door client credential (user:pass or base64)
+  AUGUR_DISCORD_ALLOW  comma-separated allowed guild/channel/user ids (empty = open)
+  AUGUR_DISCORD_DENY   comma-separated denied guild/channel/user ids (deny wins)
+
+Note: \`augur discord\` requires the Message Content privileged intent enabled
+in the Discord application settings.
 
 Examples:
   augur note https://www.youtube.com/watch?v=zjkBMFhNj_g --audience junior
@@ -86,6 +97,49 @@ async function cmdNote(source: string, flags: Record<string, unknown>): Promise<
   if (result.blocked) {
     process.stderr.write("note held: verification found a claim that must not ship unqualified (see Verification notes).\n");
   }
+  return 0;
+}
+
+/** Parse a comma-separated env id list into a trimmed, non-empty array. */
+function parseIdList(value: string | undefined): string[] {
+  if (value === undefined) return [];
+  return value.split(",").map((id) => id.trim()).filter((id) => id !== "");
+}
+
+/** Thin entry: parse env, wire the connector, block until SIGINT/SIGTERM. */
+async function cmdDiscord(): Promise<number> {
+  const token = process.env.DISCORD_BOT_TOKEN;
+  if (!token) throw new Error("augur discord requires DISCORD_BOT_TOKEN");
+  const gatewayUrl = process.env.AUGUR_GATEWAY_URL;
+  if (!gatewayUrl) throw new Error("augur discord requires AUGUR_GATEWAY_URL");
+  // The front door enforces its client Basic credential before the assistant
+  // lane, so the connector must present it. Accept `user:pass` directly or a
+  // pre-encoded value.
+  const basicCred = process.env.AUGUR_GATEWAY_BASIC_AUTH;
+  if (!basicCred) throw new Error("augur discord requires AUGUR_GATEWAY_BASIC_AUTH (the front-door client credential, user:pass or base64)");
+  const basicAuth = basicCred.includes(":") ? Buffer.from(basicCred).toString("base64") : basicCred;
+
+  const allowlist: DiscordAllowlist = {
+    allow: parseIdList(process.env.AUGUR_DISCORD_ALLOW),
+    deny: parseIdList(process.env.AUGUR_DISCORD_DENY),
+  };
+  const model = process.env.AUGUR_MODELS?.split(",")[0]?.trim() || undefined;
+
+  const connector = await startDiscordConnector({
+    token,
+    gatewayUrl,
+    basicAuth,
+    allowlist,
+    ...(model === undefined ? {} : { model }),
+  });
+  process.stderr.write("augur discord: connected\n");
+
+  await new Promise<void>((resolve) => {
+    const shutdown = (): void => resolve();
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+  });
+  await connector.stop();
   return 0;
 }
 
@@ -152,6 +206,8 @@ async function main(): Promise<number> {
       for (const a of Object.values(AUDIENCES)) process.stdout.write(`${a.id}\t${a.blurb}\n`);
       return 0;
     }
+    case "discord":
+      return cmdDiscord();
     default:
       process.stderr.write(USAGE);
       return 1;
