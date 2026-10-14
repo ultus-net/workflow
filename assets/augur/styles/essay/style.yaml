@@ -1,0 +1,21 @@
+id: essay
+mode: essay
+description: Long-form retrospective essay. Prose, woven illustrations, bolded lessons.
+illustration:
+  render: woven
+  labels: [example, analogy]
+  idiom: optional
+  diagram: optional
+voice:
+  person: first-plural
+  tense: past
+  tone: frank engineer writing a postmortem
+rules:
+  maxHeadingDepth: 2
+  requireSourceLine: false
+  requireDiagramPerSection: false
+  requireRuleLine: true
+  bannedPhrases:
+    - "In conclusion"
+    - "delve"
+    - "leverage"
