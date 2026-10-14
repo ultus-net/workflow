@@ -176,6 +176,19 @@ export function createWorkflowWebServer(
     return { board: null, reason: payload?.error ?? "hub unavailable", read: null };
   };
 
+  /** W195: the assistant route summary relay — the hub's
+   * `POST /assistant/routes` read (the hub is POST-only; this service bridges
+   * the browser's GET onto it). Fail-closed: no hub, or a hub predating the
+   * slice, answers routes: null with the reason — the view renders its
+   * named-absence state, never a fabricated route table. The browser never
+   * sees a hub token. */
+  const hubAssistantRoutes = async (): Promise<{ routes: unknown; reason?: string }> => {
+    const result = await hubPost("/assistant/routes", {});
+    const payload = result.payload as { routes?: unknown; error?: string } | undefined;
+    if (result.status === 200 && payload?.routes !== undefined) return { routes: payload.routes };
+    return { routes: null, reason: payload?.error ?? "hub unavailable" };
+  };
+
   /** W175: the ONE runs read route — the hub's /snapshot runs block, the
    * run-registry projection (all run rows with their recorded origins,
    * work-product links, review outcomes, blocking reasons, completion claims,
@@ -277,6 +290,9 @@ export function createWorkflowWebServer(
     // W175: the runs read relay (see hubRuns above) — the run-registry
     // projection lane the Runs/Reviews pages and the detail panel read.
     if (request.method === "GET" && pathname === "/api/runs") return json(response, 200, await hubRuns());
+    // W195: the assistant routes read relay (see hubAssistantRoutes) — the
+    // browser's GET is bridged onto the hub's POST-only read.
+    if (request.method === "GET" && pathname === "/api/assistant/routes") return json(response, 200, await hubAssistantRoutes());
     // W177: the audit read relay (see hubAudit above) — the three recorded
     // authorization-adjacent lanes the audit page renders.
     if (request.method === "GET" && pathname === "/api/audit") return json(response, 200, await hubAudit());

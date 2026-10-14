@@ -20,6 +20,7 @@ import { ActivityTimelinePanel, useActivityTimeline } from "./activity-timeline.
 import { PostureStrip, postureBudgetIncidents, usePosture } from "./posture-strip.js";
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
 import { ProjectsView, type ProjectMeta } from "./projects-view.js";
+import { RoutesView, type RouteRow } from "./routes-view.js";
 import { BoardView, BoardCardDetailPanel } from "./board-view.js";
 import { readIssueViewStateGuarded, saveIssueViewStateGuarded, type IssueViewState } from "./issue-view-state.js";
 // W174 phase 1a: the shell chrome (rail / header) and its plain hash routing
@@ -369,6 +370,11 @@ function useSessions() {
 function useOperatorSurfaces() {
   const [schedules, setSchedules] = useState<ScheduleMeta[] | undefined>(undefined);
   const [projects, setProjects] = useState<ProjectMeta[] | undefined>(undefined);
+  // W195: the assistant route summary — undefined means the hub does not
+  // report routes (an absent capability 404s); a string reason is a provider
+  // fault the view renders honestly. It rides the schedules poll lane.
+  const [routes, setRoutes] = useState<readonly RouteRow[] | undefined>(undefined);
+  const [routesReason, setRoutesReason] = useState<string | undefined>(undefined);
   const [loops, setLoops] = useState<LoopMeta[] | undefined>(undefined);
   const [recentRuns, setRecentRuns] = useState<readonly ScheduleRecentRun[] | undefined>(undefined);
   const [board, setBoard] = useState<BoardOutcome | null | undefined>(undefined);
@@ -434,6 +440,22 @@ function useOperatorSurfaces() {
     } catch {
       // Keep the last good list; the next poll retries.
     }
+    // W195: the assistant route summary; a null routes field with a reason is
+    // the relay's fail-closed answer (hub absent, or a hub predating the
+    // route). Ride the same poll lane.
+    try {
+      const routesResponse = await fetch("/api/assistant/routes");
+      if (routesResponse.ok) {
+        const payload = (await routesResponse.json()) as { routes?: readonly RouteRow[] | null; reason?: string };
+        setRoutes(payload.routes ?? undefined);
+        setRoutesReason(payload.reason);
+      } else {
+        setRoutes(undefined);
+        setRoutesReason(undefined);
+      }
+    } catch {
+      // Keep the last good summary; the next poll retries.
+    }
   }, []);
   useEffect(() => {
     void load();
@@ -446,7 +468,7 @@ function useOperatorSurfaces() {
       clearInterval(boardTimer);
     };
   }, [load, loadBoard]);
-  return { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, refresh: load, refreshBoard: loadBoard };
+  return { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, routes, routesReason, refresh: load, refreshBoard: loadBoard };
 }
 
 function createSession(refresh: () => Promise<void>): void {
@@ -2335,7 +2357,7 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
   const gitStatus = useGitStatus();
   const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
-  const { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, refresh: refreshSchedules } = useOperatorSurfaces();
+  const { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, routes, routesReason, refresh: refreshSchedules } = useOperatorSurfaces();
   // W163: the board's per-column view preferences live UI-local — read once
   // per browser from the persisted IssueViewState and saved on change; they
   // never ride any board payload (pinned by construction).
@@ -2765,6 +2787,11 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
             }
           }}
         />
+      ) : view === "routes" ? (
+        // W195: the Routes page (hub overhaul slice 1) — the assistant's three
+        // routes, their bound identities, and each route's withheld set; a
+        // read-only projection of operator config.
+        <RoutesView routes={routes} reason={routesReason} />
       ) : view === "board" ? (
         // W176 phase 3 (#347): the Board's card detail panel docks in the
         // shell's right-side contextual region — the same region composition

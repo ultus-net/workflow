@@ -48,7 +48,7 @@ const noAsync = async (): Promise<void> => {};
 
 const VIEWS: readonly AppView[] = [
   "overview", "chat", "agents", "board", "runs", "reviews",
-  "schedules", "projects", "usage", "activity", "audit", "settings",
+  "schedules", "projects", "routes", "usage", "activity", "audit", "settings",
 ];
 
 /** A healthy window whose localStorage is a real map — the round-trip seat
@@ -90,6 +90,7 @@ test("the command dispatch routes the new pages and keeps every existing command
   assert.equal(commandView("/sessions"), "agents", "/sessions stays the documented /agents alias");
   assert.equal(commandView("/board"), "board");
   assert.equal(commandView("/projects"), "projects");
+  assert.equal(commandView("/routes"), "routes");
   assert.equal(commandView("/schedules"), "schedules");
   assert.equal(commandView("/usage"), "usage");
   assert.equal(commandView("/settings"), "settings");
@@ -106,7 +107,7 @@ test("the rail carries every page in its groups, with the wordmark and the colla
       focusedSessionId: undefined,
       setFocusedSessionId: noop,
     }));
-    for (const label of ["Overview", "Chat", "Board", "Agents", "Runs", "Reviews", "Schedules", "Projects", "Usage", "Activity", "Audit", "Settings"]) {
+    for (const label of ["Overview", "Chat", "Board", "Agents", "Runs", "Reviews", "Schedules", "Projects", "Routes", "Usage", "Activity", "Audit", "Settings"]) {
       assert.ok(markup.includes(label), "the rail is missing the \"" + label + "\" entry");
     }
     for (const group of ["Working", "Automation", "Insight"]) {

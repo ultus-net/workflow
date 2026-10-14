@@ -3749,3 +3749,27 @@ div.board-issue-detail {
 .audit-provenance-body { display: flex; flex-direction: column; gap: 0.05rem; min-width: 0; }
 .audit-provenance-workspace { font-family: var(--font-mono); font-size: 0.66rem; color: var(--text-muted); overflow-wrap: anywhere; }
 .audit-provenance-findings { overflow-wrap: anywhere; }
+
+/* W195: the Routes page. Dense, low-motion, existing tokens only — one card
+   per route reusing the session-card shell; the route name is the card's
+   title, the bound identities and the withheld set render as compact tag
+   rows. No new accent, font, or radius is introduced. */
+.routes-grid { align-items: start; }
+.routes-route-name {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.routes-identities, .routes-withheld { flex-wrap: wrap; }
+.routes-field-label {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.routes-none { font-size: 0.68rem; }
+.routes-withheld-tag { color: var(--text-muted); border-color: var(--border-strong); }
+

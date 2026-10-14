@@ -126,6 +126,14 @@ export async function createWorkflowHub(
      */
     projects?: ProjectRegistry;
     /**
+     * W195 (hub Routes view): the assistant route summary read — the closure
+     * over the loaded route config (`loadAssistantGatewayConfig`). When
+     * provided, the hub exposes the operator-token `POST /assistant/routes`
+     * read; absent means the route 404s (capability withheld, fail closed).
+     * The composition root builds it from `WORKFLOW_ASSISTANT_ROUTES`.
+     */
+    assistantRoutes?: () => import("./hub-http.js").AssistantRouteSummary;
+    /**
      * W165: the board's pull-request-state read capability (the hub-side
      * provider read the /board/tasks work-product join composes from — see
      * task-provider.ts). Absent means the payload carries no workProducts.
@@ -257,6 +265,7 @@ export async function createWorkflowHub(
         ...(options.readBoardTasks === undefined ? {} : { readBoardTasks: options.readBoardTasks }),
         ...(options.delegateBoardTask === undefined ? {} : { delegateBoardTask: options.delegateBoardTask }),
         ...(options.projects === undefined ? {} : { projects: options.projects }),
+        ...(options.assistantRoutes === undefined ? {} : { assistantRoutes: options.assistantRoutes }),
         ...(options.readWorkProductState === undefined ? {} : { readWorkProductState: options.readWorkProductState }),
         ...(options.readIssueDetail === undefined ? {} : { readIssueDetail: options.readIssueDetail }),
         ...(options.providerReadState === undefined ? {} : { providerReadState: options.providerReadState }),
