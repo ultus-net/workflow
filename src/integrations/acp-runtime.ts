@@ -378,10 +378,8 @@ async function createOpencodeRuntime(
     if (skillsMount !== undefined) {
       try {
         const catalog = resolveToolboxCatalog();
-        provisionToolboxSkill(skillsMount.skillsDir, catalog);
         // D1: provision the vendored fleet skills (e.g. code-cheatsheet) into
         // the hub-owned store so `/explain` reaches them via read_skill.
-        provisionFleetSkills(skillsMount.skillsDir);
         const disabled = (options.settings?.mcpServers ?? [])
           .filter((server) => server.enabled === false)
           .map((server) => server.name);
@@ -392,6 +390,14 @@ async function createOpencodeRuntime(
           disabled,
           alreadyMounted: ["skills-mcp", ...operatorMounted],
         });
+        // W187: provision the workflow-toolbox skill with the REAL mount set —
+        // the guard floor just composed, the delivery mount, and any catalog
+        // connector the operator enabled — so the document matches the config.
+        // Catalog order keeps the delivered document deterministic.
+        const mountedSet = new Set(["skills-mcp", ...skillConnectors.map((mount) => mount.name), ...operatorMounted]);
+        const mounted = catalog.map((entry) => entry.name).filter((name) => mountedSet.has(name));
+        provisionToolboxSkill(skillsMount.skillsDir, catalog, {}, { connectors: mounted });
+        provisionFleetSkills(skillsMount.skillsDir);
       } catch (error) {
         console.error(`workflow-toolbox skill delivery failed (continuing without it): ${error instanceof Error ? error.message : String(error)}`);
       }

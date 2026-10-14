@@ -345,6 +345,24 @@ hub-written config to carry them. Two paths did not reach the plane:
   the narrow declared floor like every other lane. Pin:
   `test/opencode-server-launcher.test.ts#"O-4: the plane full-toolbox mount
   defaults OFF and is restored only by WORKFLOW_PLANE_FULL_TOOLBOX=1"`.
+- **W187 (2026-10-13):** the delivered `workflow-toolbox` skill now states the
+  REAL mount set rather than bare build state — `provisionToolboxSkill` is given
+  the composed connector names (+ the delivery `skills-mcp`, + operator-enabled
+  catalog servers), and `toolboxSkillBody` labels each catalog entry `mounted` /
+  `available` / `unbuilt`. The defect closed: the document advertised all
+  fourteen connectors `available` while the two-connector floor mounted. The
+  plane lane turns the full catalog on by setting `WORKFLOW_PLANE_FULL_TOOLBOX=1`
+  in the instance env (csh-dev `infra/modules/plane.bicep`); the code default
+  stays OFF (O-4). Vendor skill corpora are seeded AT IMAGE BUILD
+  (`images/control-plane/Dockerfile` runs `scripts/vendor-skills.mjs` against
+  the operator sources file `images/control-plane/vendor-skills.sources.json`,
+  repos pinned to exact commits), so a fresh pod's `~/.agents/skills` carries
+  the curated set + `vendor-skills.json`. Shell reads outside `/workspace` stay
+  as-found `allow` (the vendored secret-file read-denial lane is unported),
+  recorded in `docs/SECURITY_ASSURANCE.md` #27 and pinned in
+  `mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts`. Pins:
+  `test/toolbox-catalog.test.ts#"W187: ..."`,
+  `test/vendor-skills.test.ts#"W187: ..."`.
 
 **Verification (this session):**
 

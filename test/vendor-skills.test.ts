@@ -279,6 +279,98 @@ test("a failed repo clone cleans up its temp directory and is reported, never fa
   assert.equal(leaked.length, 0, "a failed clone must not leak its vendor-skills-* temp directory");
 });
 
+test("W187: a repo source's clone outlives selection and its HEAD is copied, then cleaned up", async (t) => {
+  const work = makeWorkspace();
+  t.after(() => rmSync(work, { recursive: true, force: true }));
+  const before = new Set(readdirSync(tmpdir()));
+  const source = makeGitRepo(work, "repo-src");
+
+  const report = await importSkills({
+    skillsDir: path.join(work, "skills"),
+    sources: [{ name: "repo-src", repo: source.repo, include: ["skills/*"] }],
+  });
+
+  // The regression: the clone root was cleaned up in Phase 1's `finally`,
+  // before Phase 4 copied from it, so a successful repo import threw ENOENT.
+  assert.deepEqual(report.imported, ["tdd"], JSON.stringify(report.problems));
+  assert.equal(report.problems.length, 0, "a successful repo clone reports no problems");
+  assert.equal(existsSync(path.join(work, "skills", "tdd", "SKILL.md")), true, "the cloned skill is copied, not lost with the clone");
+  assert.equal(loadProvenance(path.join(work, "skills"))["tdd"]?.commit, source.commit, "the clone HEAD is recorded as provenance");
+
+  const leaked = readdirSync(tmpdir()).filter((entry) => entry.startsWith("vendor-skills-") && !before.has(entry));
+  assert.equal(leaked.length, 0, "the clone is cleaned up once the run completes");
+});
+
+test("W187: a pinned repo source fetches exactly the requested revision and fails closed on drift", async (t) => {
+  const work = makeWorkspace();
+  t.after(() => rmSync(work, { recursive: true, force: true }));
+  const source = makeGitRepo(work, "repo-src");
+
+  const pinned = await importSkills({
+    skillsDir: path.join(work, "pinned"),
+    sources: [{ name: "repo-src", repo: source.repo, commit: source.commit, include: ["skills/*"] }],
+  });
+  assert.deepEqual(pinned.imported, ["tdd"]);
+  assert.equal(loadProvenance(path.join(work, "pinned"))["tdd"]?.commit, source.commit, "the pinned revision is what lands");
+
+  // A pin the repository cannot resolve is a source problem (fail-closed),
+  // never a silent fallback to the default branch.
+  const drifted = await importSkills({
+    skillsDir: path.join(work, "drifted"),
+    sources: [{ name: "repo-src", repo: source.repo, commit: "0".repeat(40), include: ["skills/*"] }],
+  });
+  assert.deepEqual(drifted.imported, []);
+  assert.ok(drifted.problems.some((problem) => problem.includes("repo-src") && problem.includes("failed")), "an unresolvable pin fails closed as a source problem");
+});
+
+test("W187: re-running the seeder over an unchanged upstream is idempotent — stable tree, no refusals", async (t) => {
+  const work = makeWorkspace();
+  t.after(() => rmSync(work, { recursive: true, force: true }));
+  const flat = path.join(work, "flat-src");
+  writeSkill(flat, "skills/tdd", "red-green-refactor");
+  writeSkill(flat, "skills/grill-me", "interview me");
+  const target = path.join(work, "skills");
+
+  const first = await importSkills({ skillsDir: target, sources: [flatSource(work)] });
+  assert.deepEqual([...first.imported].sort(), ["grill-me", "tdd"]);
+  const treeAfterFirst = skillTreeDigest(target);
+
+  const second = await importSkills({ skillsDir: target, sources: [flatSource(work)] });
+  // Owned skills are recognized (not imported anew) and never refused; the
+  // on-disk content is byte-identical, so the store is idempotent.
+  assert.deepEqual(second.imported, [], "a second run imports nothing new");
+  assert.deepEqual([...second.updated].sort(), ["grill-me", "tdd"], "owned skills are updated in place, not re-imported");
+  assert.equal(second.refused.length, 0, "an owned skill is never refused on re-run");
+  assert.equal(skillTreeDigest(target), treeAfterFirst, "the skill tree is byte-for-byte stable across runs");
+});
+
+function skillTreeDigest(root: string): string {
+  const entries: string[] = [];
+  const walk = (dir: string, prefix: string): void => {
+    for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (entry.name === "vendor-skills.json") continue; // provenance carries a timestamp
+      const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      if (entry.isDirectory()) walk(path.join(dir, entry.name), rel);
+      else entries.push(`${rel}\n${readFileSync(path.join(dir, entry.name), "utf8")}`);
+    }
+  };
+  walk(root, "");
+  return entries.join("\n");
+}
+
+/** A throwaway git repo carrying one skill, for the pinned-clone tests. */
+function makeGitRepo(work: string, name: string): { readonly repo: string; readonly commit: string } {
+  const repo = path.join(work, name);
+  mkdirSync(repo, { recursive: true });
+  writeSkill(repo, "skills/tdd", "red-green-refactor");
+  const git = (...args: string[]): string =>
+    execFileSync("git", ["-C", repo, ...args], { encoding: "utf8" }).trim();
+  git("init", "--quiet");
+  git("add", ".");
+  git("-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "--quiet", "-m", "seed");
+  return { repo, commit: git("rev-parse", "HEAD") };
+}
+
 test("CLI --list is a dry run: it reports the plan and writes nothing", (t) => {
   const work = makeWorkspace();
   t.after(() => rmSync(work, { recursive: true, force: true }));

@@ -101,6 +101,27 @@ test("the W075 skill body is generated from the catalog and stays in lockstep wi
   assert.ok(!unbuilt.includes("(available)"), "no entry may claim availability it does not have");
 });
 
+test("W187: a mounted set labels each entry honestly and the frontmatter declares it", () => {
+  const built = resolveToolboxCatalog({ exists: () => true });
+  const body = toolboxSkillBody(built, { connectors: ["workflow-guard-mcp", "skills-mcp"] });
+  // The declared/mounted names read "mounted"; a built-but-unmounted connector
+  // reads "available" (built, not wired here) — the defect this closes was
+  // every entry reading "available" while only the floor mounted.
+  assert.match(body, /\*\*workflow-guard-mcp\*\* — [^\n]+\(mounted\)/);
+  assert.match(body, /\*\*skills-mcp\*\* — [^\n]+\(mounted\)/);
+  assert.equal(body.split("\n").filter((line) => line.includes("(mounted)")).length, 2, "exactly the mounted set is labeled mounted");
+  assert.equal(body.split("\n").filter((line) => line.includes("(available)")).length, built.length - 2, "the rest stay honestly 'available'");
+  assert.match(body, /connectors:\n {2}- workflow-guard-mcp\n {2}- skills-mcp\n---/, "the declaration is the mounted set, not the floor");
+
+  // The full-toolbox mount reads every entry as mounted.
+  const full = toolboxSkillBody(built, { connectors: built.map((entry) => entry.name) });
+  assert.equal(full.split("\n").filter((line) => line.includes("(mounted)")).length, built.length, "the full mount labels every entry mounted");
+
+  // Absent a declaration, no entry claims to be mounted (the W077 shape).
+  const legacy = toolboxSkillBody(built);
+  assert.ok(!legacy.includes("(mounted)"), "no mounted label without a mount set");
+});
+
 function readdirNames(dir: string): string[] {
   return readdirSync(dir);
 }
