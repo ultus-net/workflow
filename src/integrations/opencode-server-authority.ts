@@ -55,7 +55,7 @@ export interface OpencodeAuthorityDecision {
 }
 
 export interface OpencodeServerAuthorityOptions {
-  readonly engine: Pick<RemoteEngine, "events" | "replyPermission">;
+  readonly engine: Pick<RemoteEngine, "events" | "replyPermission"> & Partial<Pick<RemoteEngine, "listPermissions">>;
   readonly application: WorkflowApplication;
   /** Workspace directory sent on the engine's routing query. */
   readonly workspace: string;
@@ -66,6 +66,11 @@ export interface OpencodeServerAuthorityOptions {
   readonly enforcement?: OpencodeAuthorityEnforcement | undefined;
   /** Ask-me hold window; on timeout the ask is rejected (fail closed). Default 120s. */
   readonly operatorReplyTimeoutMs?: number | undefined;
+  /**
+   * W186: bound on the pre-reject sibling listing (ms). Default 2000. A listing
+   * that exceeds it is skipped and the deny proceeds (pre-W186 behavior).
+   */
+  readonly siblingDrainTimeoutMs?: number | undefined;
   /** Observation hook: every decision is journaled (observability only). */
   readonly onDecision?: ((decision: OpencodeAuthorityDecision) => void) | undefined;
   /** Fired once when the event stream ends or fails (review P2-1). */
@@ -168,6 +173,43 @@ export function assertAskRuleset(config: Record<string, unknown> | undefined): v
 const V2_ACTION_FOR_CLASS: Record<string, string> = { edit: "edit", bash: "shell", task: "subagent" };
 
 /**
+ * W186: cap on the drained-id set — oldest entries evict first (FIFO). An entry
+ * is consumed when the sibling's own ask event arrives; the cap only matters if
+ * that event never does (a dropped/reconnected stream), so the set cannot grow
+ * without limit over a long session.
+ */
+const DRAINED_ID_CAP = 1_000;
+
+/**
+ * W186: the drain lists the host's pending asks BEFORE delivering a deny, so a
+ * hung listing route would otherwise stall the reject. Bound it: on timeout the
+ * drain is skipped and the deny proceeds (pre-W186 behavior). The listing is a
+ * best-effort optimization, never a gate on delivering policy.
+ */
+const DRAIN_LIST_TIMEOUT_MS = 2_000;
+
+/**
+ * Resolves with `work` or rejects after `ms`. The timer is always cleared so a
+ * pending timeout never keeps the process alive, and the underlying promise is
+ * left to settle on its own (its result is discarded on timeout).
+ */
+function withTimeout<T>(work: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
+/**
  * The effective `ask`/`allow`/`deny` effect for one pinned class, from either
  * config shape. A class pinned by several v2 entries is only pinned when every
  * entry asks (a broader `allow` entry would reopen the class); an absent class
@@ -199,6 +241,7 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
   const mode = options.mode ?? "auto-resolve";
   const enforcement = options.enforcement ?? "advisory";
   const operatorReplyTimeoutMs = options.operatorReplyTimeoutMs ?? 120_000;
+  const siblingDrainTimeoutMs = options.siblingDrainTimeoutMs ?? DRAIN_LIST_TIMEOUT_MS;
   const now = options.now ?? (() => Date.now());
   const journal: OpencodeAuthorityDecision[] = [];
   let lost = false;
@@ -222,6 +265,14 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
    * by session+tool — consumed on first observation (review P1-2).
    */
   const allowedSubjectsBySessionTool = new Map<string, readonly string[]>();
+  /**
+   * W186: request ids this broker resolved while draining allowed siblings
+   * before a session reject. Its own SSE ask event is still queued, so the
+   * broker must not reply to it a second time. Bounded: an entry is consumed
+   * when the ask event arrives, and the cap evicts the oldest so a long session
+   * whose events never arrive cannot grow it without limit.
+   */
+  const drainedRequestIds = new Set<string>();
 
   const record = (decision: OpencodeAuthorityDecision): void => {
     journal.push(decision);
@@ -390,6 +441,9 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
     // downstream (classifier, callID matching, coverage keys) sees the
     // contract shape.
     const request = normalizePermissionRequest(rawRequest);
+    // W186: a sibling this broker already resolved during a drain needs no
+    // second reply — the host holds no pending ask for it any more.
+    if (drainedRequestIds.delete(request.id)) return;
     const decision = await decide(request);
     if (mode === "ask-me" && decision.decision === "allow") {
       // Policy allows but the operator holds the pen (M3): their reply can
@@ -400,11 +454,89 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
       if (delivered && held.decision === "allow" && held.reply === "once") rememberAllowed(request, held.subjects);
       return;
     }
+    // W186: before delivering a `reject`, drain the session's OTHER pending asks
+    // that policy ALLOWS (auto-resolve only). The host cascades a reject to
+    // every pending same-session ask (a bare DeclinedError) and the runner then
+    // interrupts the turn; pre-resolving allowed siblings with `once` (which
+    // does NOT cascade) leaves no allowed sibling pending when the reject lands,
+    // so the reported batch (one deny + an allowed edit) no longer aborts. Only
+    // policy-allowed siblings are drained — a DENIED sibling cannot be resolved
+    // without its own cascade, so a batch with 2+ denies still aborts (recorded
+    // residual, docs/OPENCODE_SERVER_AUTHORITY.md). ask-me mode is exempt: an
+    // allowed sibling must be HELD for the operator, never auto-approved.
+    if (decision.decision === "deny" && mode === "auto-resolve") await drainAllowedSiblings(request);
     // Coverage seeds only from a DELIVERED allow (review P1-1 / fix-verify N2):
     // a denied, operator-rejected, timed-out, or undelivered ask must never
     // authorize later tool activity.
     const delivered = await deliver(decision);
     if (delivered && decision.decision === "allow" && decision.reply === "once") rememberAllowed(request, decision.subjects);
+  };
+
+  /**
+   * W186: pre-resolves every host-pending ask in the target's session that
+   * policy ALLOWS, so the target reject does not cascade a decline onto them.
+   * Best-effort and fail-open: an absent `listPermissions`, a listing failure,
+   * or an unreadable sibling leaves the reject path unchanged (the pre-W186
+   * behavior). Only `once` is ever delivered here — never a second reject.
+   */
+  const drainAllowedSiblings = async (target: RemoteEnginePermissionRequest): Promise<void> => {
+    if (options.engine.listPermissions === undefined) return;
+    let pendingHost: readonly RemoteEnginePermissionRequest[];
+    try {
+      // Bounded (review W186 P2): the listing sits on the deny path, so a hung
+      // route must not stall the reject. On timeout the drain is skipped and the
+      // deny proceeds — the pre-W186 behavior.
+      pendingHost = await withTimeout(
+        options.engine.listPermissions({ sessionId: target.sessionID, cwd: options.workspace }),
+        siblingDrainTimeoutMs,
+        `sibling drain list timed out after ${siblingDrainTimeoutMs}ms`,
+      );
+    } catch (error) {
+      // Best-effort: a listing failure leaves the pre-W186 reject path (the
+      // reject is still delivered). Journaled through record() so surfaces that
+      // read decisions() see it, not a raw stderr line alone.
+      record({
+        sessionId: target.sessionID,
+        requestId: target.id,
+        tool: "(sibling drain)",
+        subjects: [],
+        decision: "observe",
+        reply: "once",
+        reason: `sibling drain skipped (permission list failed): ${error instanceof Error ? error.message : String(error)}`,
+        observedAt: now(),
+      });
+      return;
+    }
+    // Bound the WHOLE drain, not only the listing round trip (review P3): the
+    // per-sibling decide+deliver loop must not delay the deny indefinitely if
+    // the host is slow. Same window as the listing; on expiry the remaining
+    // siblings are left for their own SSE events (their answers are idempotent).
+    const drainDeadline = now() + siblingDrainTimeoutMs;
+    for (const sibling of pendingHost) {
+      if (now() >= drainDeadline) break;
+      // Never re-answer the target, and never re-answer what the broker already
+      // resolved (host-pending is not-yet-answered, but a concurrent drain may
+      // have just resolved one).
+      if (sibling.sessionID !== target.sessionID || sibling.id === target.id || drainedRequestIds.has(sibling.id)) continue;
+      const normalized = normalizePermissionRequest(sibling);
+      const siblingDecision = await decide(normalized);
+      // A sibling that policy denies is left pending: delivering its reject
+      // would itself cascade, which is the very fault being corrected.
+      if (siblingDecision.decision !== "allow") continue;
+      const resolved = { ...siblingDecision, reply: "once" as const };
+      const delivered = await deliver(resolved);
+      // Suppress the sibling's own SSE event ONLY when its reply actually
+      // reached the host (recorded `delivered`), so a duplicate reply is never
+      // sent. A FAILED delivery (a transient error, or the ask was already
+      // resolved host-side) leaves the id unmarked: the sibling's event is then
+      // processed normally — answered `once` if still pending, or journaled
+      // `already resolved upstream` if the host no longer holds it. Silently
+      // skipping an unanswered ask would hang it with no journal record.
+      if (delivered) {
+        rememberDrained(sibling.id);
+        rememberAllowed(normalized, resolved.subjects);
+      }
+    }
   };
 
   const holdForOperator = (request: RemoteEnginePermissionRequest): Promise<"once" | "reject"> => {
@@ -437,6 +569,17 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
       return;
     }
     allowedSubjectsBySessionTool.set(`${request.sessionID}\u0000${permissionToolName(request)}`, subjects);
+  }
+
+  function rememberDrained(requestId: string): void {
+    // A re-add of an existing id keeps insertion order stable for the eviction.
+    if (drainedRequestIds.has(requestId)) return;
+    drainedRequestIds.add(requestId);
+    while (drainedRequestIds.size > DRAINED_ID_CAP) {
+      const oldest = drainedRequestIds.values().next().value;
+      if (oldest === undefined) break;
+      drainedRequestIds.delete(oldest);
+    }
   }
 
   /** Extracts the skill name from a read_skill-shaped tool input (M4). */
@@ -652,6 +795,7 @@ export function createOpencodeServerAuthority(options: OpencodeServerAuthorityOp
       }
       pending.clear();
       earlyReplies.clear();
+      drainedRequestIds.clear();
     },
     async handleOperatorReply(reply) {
       const held = pending.get(reply.requestId);

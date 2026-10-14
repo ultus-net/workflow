@@ -469,7 +469,14 @@ They change no posture claim; they are appended as dated dispositions.
    a mutating sibling in the same batch — turn and session survive, but that
    sibling is lost); recorded as an open follow-up in
    `docs/OPENCODE_SERVER_AUTHORITY.md` (round-4 addendum). This is a bounded,
-   same-batch blast radius, not a session freeze.
+   same-batch blast radius, not a session freeze. **Dated 2026-10-14 (W186):**
+   the single-deny batch is now drained host-side — before delivering a reject
+   the broker pre-resolves every policy-allowed sibling with `once` (which does
+   not cascade), so the reported batch (one deny + a concurrently-allowed edit)
+   no longer loses the edit. A batch with TWO OR MORE concurrent denies still
+   aborts (a denied sibling's own reject cascades; no host reply avoids it), so
+   the residual narrows but does not close; still source-verified, live-probe
+   PENDING.
 
 2. **The mutation cap is operator-configurable (`WORKFLOW_MUTATION_BUDGET`).** The
    parse is fail-closed (a non-positive-integer throws; unset keeps the default

@@ -169,6 +169,34 @@ test("HttpRemoteEngine carries reject feedback as `message` (and omits it on all
   assert.deepEqual(captured[1]!.body, { decision: "once" });
 });
 
+test("HttpRemoteEngine lists session permissions and tolerates non-array envelopes", async () => {
+  const captured: { url: string }[] = [];
+  const engine = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096",
+    cwd: "/w",
+    fetch: async (url) => {
+      captured.push({ url: String(url) });
+      return new Response(JSON.stringify({ data: [
+        { id: "per_1", sessionID: "ses_1", action: "edit", resources: ["/w/a.ts"], metadata: { toolName: "edit" } },
+        { id: "", sessionID: "ses_1", action: "edit", resources: [] },
+        "not-an-object",
+      ] }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const listed = await engine.listPermissions({ sessionId: "ses_1", cwd: "/w" });
+  assert.match(captured[0]!.url, /\/api\/session\/ses_1\/permission\?directory=%2Fw$/);
+  // Only the well-formed entry survives; the empty id and the string are dropped.
+  assert.deepEqual(listed, [
+    { id: "per_1", sessionID: "ses_1", action: "edit", resources: ["/w/a.ts"], metadata: { toolName: "edit" } },
+  ]);
+  // A non-array envelope yields [] rather than throwing (the drain fails open).
+  const empty = new HttpRemoteEngine({
+    baseUrl: "http://127.0.0.1:4096", cwd: "/w",
+    fetch: async () => new Response(JSON.stringify({ unexpected: true }), { status: 200 }),
+  });
+  assert.deepEqual(await empty.listPermissions({ sessionId: "ses_1", cwd: "/w" }), []);
+});
+
 test("HttpRemoteEngine events stream parses SSE event envelopes", async () => {
   const engine = new HttpRemoteEngine({
     baseUrl: "http://127.0.0.1:4096",
