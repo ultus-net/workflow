@@ -2,6 +2,27 @@
 
 Date: 2026-09-29. Status: design approved in session, awaiting spec review.
 Branch: `docs/hub-dashboard-guide`.
+
+> **Status refresh (2026-10-15).** Phases 1–4 below are **built on `main`**
+> (`eadec11a`): W174 shell + Overview landing, W175 Runs + detail panel, W176
+> Reviews + Activity + board card panel, W177 Audit. The stretch ⌘K palette
+> (phase 5) also landed (`fa60ed88`). The shell is now current fact — see
+> `shell.tsx` (`AppView`, `APP_VIEWS`, `shellRailSections`) and `app.tsx`
+> (the `view === "…"` ladder).
+>
+> **Extension, not supersession (the augur layer).** This spec stays the layout
+> authority. The assistant build adds a new dimension this spec does not cover:
+> the three skills/routes (`coding | tutor | care`), the route→identity binding
+> (`x-workflow-user`), the care route's withheld capability set, and the shared
+> `augur-workspace` surface. Those extend the rail with a new section and new
+> `*-view.tsx` pages, built in this spec's token/class system — no restyle of
+> existing views. The read pattern is the same three layers this spec's relays
+> use: a fail-closed `hub-http.ts` route, a fail-closed `/api/*` relay in
+> `web.ts`, a polling view. Scoped in the augur decision record (the `augur`
+> repo's `docs/planning-questions.md`, kept outside this repo until the fold
+> finalizes); the in-repo anchors are `src/integrations/assistant-gateway.ts`
+> (`AssistantGatewayConfig`, `WORKFLOW_ASSISTANT_ROUTES`) and
+> `src/ui/webapp/shell.tsx`.
 Companion research: `docs/HUB_DASHBOARD_UI_GUIDE.md` (the 2026-09-29 layout
 study of satnaing/shadcn-admin and paperclipai/paperclip, and the gap analysis
 of built-but-unrendered hub surfaces). Mockups: `.superpowers/brainstorm/`

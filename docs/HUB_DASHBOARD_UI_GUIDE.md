@@ -1,6 +1,18 @@
 # Hub dashboard UI guide — layout expectations from shadcn-admin and paperclip
 
 Date: 2026-09-29. Status: active guide. Branch: `docs/hub-dashboard-guide`.
+
+> **Status refresh (2026-10-15).** The target shell below is no longer a plan:
+> the sidebar rail, Overview landing, and the Runs/Reviews/Activity/Audit pages
+> are built on `main` (`eadec11a`; W174 through W177). Read the "current shell"
+> and "target shell" sections as history. The spec
+> (`docs/superpowers/specs/2026-09-29-hub-dashboard-redesign-design.md`) was
+> implemented. The guide's gap analysis remains useful as the record of what was
+> built-but-unrendered at main 6466634. The next extension (assistant
+> routes/identities, `augur-workspace`) is scoped in the augur decision record
+> (outside this repo until the fold finalizes); its in-repo anchors are
+> `src/integrations/assistant-gateway.ts` and `src/ui/webapp/shell.tsx`, and it
+> extends this layout rather than replacing it.
 Research sources: layout study of [satnaing/shadcn-admin](https://github.com/satnaing/shadcn-admin)
 (sidebars, page patterns, data tables) and [paperclipai/paperclip](https://github.com/paperclipai/paperclip)
 (`DESIGN.md`, `ui/src/components/Sidebar.production.tsx`, `ui/src/App.tsx` route
