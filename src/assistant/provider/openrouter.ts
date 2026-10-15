@@ -71,7 +71,7 @@ export interface ChatResult {
   raw: unknown;
 }
 
-const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
+const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
 /** Loose shape of an untrusted OpenRouter JSON body. */
 type Json = Record<string, unknown>;
@@ -113,12 +113,31 @@ function parseUsage(raw: unknown): ChatResult["usage"] {
   };
 }
 
+export interface OpenRouterProviderOptions {
+  /** Full URL to POST chat completions to. Defaults to OpenRouter's public endpoint. */
+  readonly endpoint?: string;
+  /** Credential for the `authorization` header (already formatted: "Bearer x" or "Basic y"). */
+  readonly authorization: string;
+  /** Optional identity header value (x-workflow-user); sent only when set. */
+  readonly identity?: string;
+  readonly config: ProviderConfig;
+  readonly fetchImpl?: typeof fetch;
+}
+
 export class OpenRouterProvider {
-  constructor(
-    private readonly apiKey: string,
-    private readonly config: ProviderConfig,
-    private readonly fetchImpl: typeof fetch = fetch,
-  ) {}
+  private readonly endpoint: string;
+  private readonly authorization: string;
+  private readonly identity: string | undefined;
+  private readonly config: ProviderConfig;
+  private readonly fetchImpl: typeof fetch;
+
+  constructor(options: OpenRouterProviderOptions) {
+    this.endpoint = options.endpoint ?? OPENROUTER_ENDPOINT;
+    this.authorization = options.authorization;
+    this.identity = options.identity;
+    this.config = options.config;
+    this.fetchImpl = options.fetchImpl ?? fetch;
+  }
 
   private buildBody(opts: ChatOptions, stream: boolean): Record<string, unknown> {
     if (this.config.models.length === 0) {
@@ -162,14 +181,15 @@ export class OpenRouterProvider {
   private headers(): Record<string, string> {
     return {
       "content-type": "application/json",
-      authorization: `Bearer ${this.apiKey}`,
+      authorization: this.authorization,
       "x-title": "augur",
+      ...(this.identity === undefined ? {} : { "x-workflow-user": this.identity }),
     };
   }
 
   async chat(opts: ChatOptions): Promise<ChatResult> {
     const body = this.buildBody(opts, false);
-    const res = await this.fetchImpl(ENDPOINT, {
+    const res = await this.fetchImpl(this.endpoint, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify(body),
@@ -204,7 +224,7 @@ export class OpenRouterProvider {
     onDelta: (chunk: string) => void,
   ): Promise<ChatResult> {
     const body = this.buildBody(opts, true);
-    const res = await this.fetchImpl(ENDPOINT, {
+    const res = await this.fetchImpl(this.endpoint, {
       method: "POST",
       headers: this.headers(),
       body: JSON.stringify(body),
@@ -255,6 +275,40 @@ export class OpenRouterProvider {
     }
     return { text, modelUsed, usage, citations, raw: null };
   }
+}
+
+/**
+ * Resolve the provider transport from env. Precedence:
+ *   - AUGUR_GATEWAY_URL set: the assistant gateway FRONT DOOR — authorization
+ *     is Basic <AUGUR_GATEWAY_BASIC_AUTH>, identity is AUGUR_IDENTITY
+ *     (default "operator"). AUGUR_GATEWAY_BASIC_AUTH accepts user:pass or
+ *     base64; AUGUR_GATEWAY_URL is the base (we append /v1/chat/completions).
+ *   - else: OpenRouter direct — authorization is Bearer <OPENROUTER_API_KEY>.
+ * A missing required credential in either lane throws with the missing var named.
+ */
+export function resolveProviderTransport(
+  env: NodeJS.ProcessEnv = process.env,
+): { endpoint: string; authorization: string; identity?: string } {
+  const gatewayUrl = env.AUGUR_GATEWAY_URL;
+  if (gatewayUrl !== undefined && gatewayUrl.length > 0) {
+    const cred = env.AUGUR_GATEWAY_BASIC_AUTH;
+    if (!cred) {
+      throw new Error(
+        "AUGUR_GATEWAY_BASIC_AUTH is not set. The assistant gateway front door requires its client Basic credential (user:pass or base64).",
+      );
+    }
+    const basic = cred.includes(":") ? Buffer.from(cred).toString("base64") : cred;
+    const base = gatewayUrl.replace(/\/+$/, "");
+    const identity = env.AUGUR_IDENTITY ?? "operator";
+    return { endpoint: `${base}/v1/chat/completions`, authorization: `Basic ${basic}`, identity };
+  }
+  const key = env.OPENROUTER_API_KEY;
+  if (!key) {
+    throw new Error(
+      "OPENROUTER_API_KEY is not set. Export it, or add it to your shell profile.",
+    );
+  }
+  return { endpoint: OPENROUTER_ENDPOINT, authorization: `Bearer ${key}` };
 }
 
 /** Language directive appended to system prompts so output lang is explicit. */
