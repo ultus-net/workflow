@@ -60,18 +60,101 @@ export function saveLearnerProfile(profile: LearnerProfile, path = defaultLearne
   renameSync(temporary, path);
 }
 
+// ── M6: the single-writer lock ─────────────────────────────────────────────
+//
+// Two writers share one `<path>.lock` (this module and `learning-mcp`). The
+// original acquire threw on the first EEXIST, so a concurrent session failed
+// outright and a crash between `openSync` and the PID write stranded the lock
+// forever ("Remove stale lock if process terminated"). This is the documented
+// availability defect (`integration-plan.md` §F item 2): the defect was never
+// corruption (the write is atomic temp+rename), it was liveness. The fix keeps
+// the same exclusive-create lock but adds two recoveries:
+//
+//   1. Stale reclaim: a lock whose PID is unreadable (crash mid-acquire) or
+//      whose process is gone is abandoned, reclaimed, and retried.
+//   2. Bounded retry: a live holder is waited on up to `timeoutMs`, so two
+//      overlapping sessions serialize instead of one throwing.
+//
+// Ownership is unchanged: whoever holds the lock does the read-modify-write.
+
+const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
+const DEFAULT_LOCK_RETRY_DELAY_MS = 25;
+const MAX_STALE_RECLAIMS = 3;
+
+export interface LearnerProfileLockOptions {
+  /** Wait this long for a live holder before failing. Default 5000ms. */
+  readonly timeoutMs?: number;
+  /** Delay between acquire attempts. Default 25ms. */
+  readonly retryDelayMs?: number;
+}
+
+/** Synchronous sleep; the update path is sync, so a blocking wait is required. */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Is the lock at `lockPath` abandoned? True when it already vanished, holds no
+ * readable PID (a crash between open and write), or names a process that is
+ * gone. A live PID, including one owned by another user (EPERM), is not stale.
+ */
+function lockIsStale(lockPath: string): boolean {
+  let raw: string;
+  try {
+    raw = readFileSync(lockPath, "utf8").trim();
+  } catch {
+    // The holder released it between our EEXIST and this read; take it.
+    return true;
+  }
+  const pid = Number.parseInt(raw, 10);
+  if (!Number.isInteger(pid) || pid <= 0) return true;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
+
+function acquireLearnerProfileLock(lockPath: string, options: LearnerProfileLockOptions): number {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
+  const retryDelayMs = options.retryDelayMs ?? DEFAULT_LOCK_RETRY_DELAY_MS;
+  const deadline = Date.now() + timeoutMs;
+  let staleReclaims = 0;
+  for (;;) {
+    try {
+      return openSync(lockPath, "wx", 0o600);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    if (lockIsStale(lockPath)) {
+      staleReclaims += 1;
+      // A lock we cannot reclaim (e.g. unlink denied) must not spin forever.
+      if (staleReclaims > MAX_STALE_RECLAIMS) {
+        throw new Error("Learner profile lock is stale but cannot be reclaimed. Remove it manually if no process is running.");
+      }
+      try {
+        unlinkSync(lockPath);
+      } catch {
+        // Lost the reclaim race; the next iteration retries acquisition.
+      }
+      continue;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error("Learner profile is currently locked by another process. Remove stale lock if process terminated.");
+    }
+    sleepSync(retryDelayMs);
+  }
+}
+
 export function updateLearnerProfile(
   update: (profile: LearnerProfile) => void,
   path = defaultLearnerProfilePath(),
+  options: LearnerProfileLockOptions = {},
 ): LearnerProfile {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const lockPath = `${path}.lock`;
-  let lockFd: number;
-  try {
-    lockFd = openSync(lockPath, "wx", 0o600);
-  } catch {
-    throw new Error("Learner profile is currently locked by another process. Remove stale lock if process terminated.");
-  }
+  const lockFd = acquireLearnerProfileLock(lockPath, options);
 
   try {
     writeFileSync(lockFd, String(process.pid));
