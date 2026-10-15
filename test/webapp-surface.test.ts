@@ -11,6 +11,8 @@ import { ProjectsView, projectIdCollisionError, projectFormError, type ProjectMe
 import { ActivityTimelinePanel, type TimelineState } from "../src/ui/webapp/activity-timeline.js";
 import { TIMELINE_RETENTION } from "../src/integrations/activity-timeline.js";
 import { AgentsView, budgetRaiseOutcome } from "../src/ui/webapp/agents-view.js";
+import { BoardView } from "../src/ui/webapp/board-view.js";
+import { OverviewView } from "../src/ui/webapp/overview-view.js";
 import type { SessionBudgetPosture } from "../src/ui/web-sessions.js";
 import type { ScheduleRecentRun } from "../src/integrations/operator-posture.js";
 import { ConfigField, ConfigSelect } from "../src/ui/webapp/config-field.js";
@@ -1087,5 +1089,87 @@ test("W164: the id-collision refusal and the shape validation refuse before the 
     /positive integer/,
   );
   assert.equal(projectFormError({ id: "p", title: "t", fullName: "o/r", repoId: 7, status: "active", workspaces: [] }), undefined);
+});
+
+test("B4 Board unconfigured: lead has operator copy, env vars in details (red-first pin)", () => {
+  const markup = renderToStaticMarkup(
+    createElement(BoardView, {
+      board: { state: "unconfigured", missing: ["WORKFLOW_GITHUB_REPO", "WORKFLOW_GITHUB_TOKEN"] },
+      reason: undefined,
+      read: undefined,
+      workProducts: undefined,
+      inProgress: undefined,
+      viewState: undefined,
+      onViewState: noop,
+      projectWorkspaces: undefined,
+      gitStatus: undefined,
+      worktrees: undefined,
+      onOpenDetail: undefined,
+    })
+  );
+  assert.ok(markup.includes("No task provider is configured for this hub."), "lead has operator copy");
+  assert.ok(markup.includes("WORKFLOW_GITHUB_REPO"), "first env var is named");
+  assert.ok(markup.includes("WORKFLOW_GITHUB_TOKEN"), "second env var is named");
+  assert.ok(markup.includes("<details"), "env vars are wrapped in details");
+  assert.ok(markup.includes("board-missing-details"), "bare <details> carries expected class (no CSS needed)");
+  assert.ok(markup.includes("<summary>required configuration</summary>"), "summary labels disclosure");
+  assert.ok(markup.includes("Set the variables below in the hub environment, then reload."), "action line follows lead");
+});
+
+test("B4 agents: empty sessions copy replaced with plain operator language", () => {
+  const markup = renderToStaticMarkup(createElement(AgentsView, {
+    sessions: undefined,
+    agents: [],
+    onActivate: noop,
+    onCreate: noop,
+    onSwitchAgent: noop,
+    onRename: noop,
+    onDismiss: noop,
+    onClearUnused: noop,
+    onOpenChat: noop,
+    onBudgetRaise: noop as () => Promise<string | undefined>,
+  }));
+  assert.ok(!markup.includes("session management is unavailable"), "removed developer string");
+  assert.ok(markup.includes("one agent session at a time"), "plain operator language present");
+  assert.ok(markup.includes("This hub runs one agent session at a time. Open Chat to work in it."), "full operator line");
+});
+
+test("B4 Overview: rank + Needs-you before Live runs/Next fires, empty-zone modifier", () => {
+  const markup = renderToStaticMarkup(createElement(OverviewView, {
+    runTasks: [],
+    inProgressCount: undefined,
+    pendingPermission: false,
+    awaitingReview: null,
+    decisions: [],
+    recentRuns: undefined,
+    schedules: undefined,
+    timeline: { timeline: null, reason: "hub unavailable" },
+    runsRecord: { runs: null, reason: "hub unavailable" },
+    onNavigate: noop,
+  }));
+  const needsYouStr = "Needs you";
+  const liveRunsStr = "Live runs";
+  const nextFiresStr = "Next fires";
+  const needsYouIdx = markup.indexOf(needsYouStr);
+  const liveRunsIdx = markup.indexOf(liveRunsStr);
+  const nextFiresIdx = markup.indexOf(nextFiresStr);
+  const statsIdx = markup.indexOf("overview-stats");
+  const recentActivityIdx = markup.indexOf("overview-recent-activity");
+
+  assert.ok(statsIdx >= 0, "the stat strip leads the page");
+  assert.ok(needsYouIdx >= 0, "Needs-you section present");
+  assert.ok(liveRunsIdx >= 0, "Live runs section present");
+  assert.ok(nextFiresIdx >= 0, "Next fires section present");
+  assert.ok(statsIdx < needsYouIdx, "the stat strip renders before Needs you");
+  assert.ok(needsYouIdx < liveRunsIdx, "Needs-you (attention) ranks above Live runs");
+  assert.ok(liveRunsIdx < nextFiresIdx, "the secondary band holds Live runs then Next fires");
+  assert.ok(nextFiresIdx < recentActivityIdx, "Recent activity closes the page");
+  assert.ok(markup.includes("overview-recent-activity"), "Recent activity class present");
+
+  // The secondary band wraps Live runs and Next fires side by side; the
+  // attention zone carries its modifier, and recedes when it has no rows.
+  assert.ok(markup.includes("overview-secondary"), "the secondary band wrapper is present");
+  assert.ok(markup.includes("overview-attention"), "the attention modifier rides Needs you");
+  assert.ok(markup.includes("overview-empty-zone"), "an empty Needs-you zone carries the recede modifier");
 });
 
