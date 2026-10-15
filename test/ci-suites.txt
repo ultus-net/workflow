@@ -12,6 +12,7 @@ test/activity-timeline.test.ts
 test/assistant-egress-lane.test.ts
 test/assistant-gateway.test.ts
 test/assistant-isolation.test.ts
+test/assistant-tool-loop.test.ts
 test/assistant/discord/connector.test.ts
 test/assistant/provider-endpoint.test.ts
 test/azure-jobs-dispatch.test.ts
