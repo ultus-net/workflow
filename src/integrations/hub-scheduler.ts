@@ -4,6 +4,7 @@ import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { WorkflowRunController } from "./run-controller.js";
 import { isOffPeak, offPeakSpec, type OffPeakVendor } from "./off-peak.js";
 import type { ModelTaskClass } from "./model-profile.js";
+import type { DurableTimer, DurableTimerTable } from "./durable-timers.js";
 
 /**
  * Plan Tasks C1/C2: hub-native scheduled runs and per-run budget enforcement.
@@ -324,6 +325,15 @@ export function createHubScheduler(options: {
   readonly promptGuidance?: string;
   /** Injectable environment for off-peak window resolution (DeepSeek window). */
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * W199: durable one-shot timers. When present, `tick(now)` drains every due,
+   * unfired timer through `resumeTimer` and marks it fired. The scheduler owns
+   * the only clock, so a timer fires from the same tick that fires cron
+   * schedules; no second timer source is introduced.
+   */
+  readonly timers?: DurableTimerTable;
+  /** Resume the work a fired timer was waiting on. A throw leaves the timer unfired for the next tick. */
+  readonly resumeTimer?: (timer: DurableTimer) => Promise<void>;
 }): HubScheduler {
   const log = options.log ?? (() => undefined);
   const env = options.env ?? process.env;
@@ -413,6 +423,21 @@ export function createHubScheduler(options: {
     }
   };
 
+  const drainTimers = async (now: Date): Promise<void> => {
+    if (options.timers === undefined || options.resumeTimer === undefined) return;
+    for (const timer of options.timers.due(now)) {
+      try {
+        await options.resumeTimer(timer);
+      } catch (error) {
+        // A failed resume leaves the timer unfired so the next tick retries;
+        // the resumed work must itself be idempotent (its step key guards it).
+        log(`scheduler: timer '${timer.id}' resume failed: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+      options.timers.markFired(timer.id, now);
+    }
+  };
+
   const tick = async (now = (options.now ?? ((): Date => new Date()))()): Promise<void> => {
     let schedules: readonly ScheduleDefinition[];
     try {
@@ -421,6 +446,9 @@ export function createHubScheduler(options: {
       log(`scheduler: could not load schedules: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
+    // W199: durable timers drain first, so a one-shot wake that unblocks a
+    // schedule's work runs before this tick's cron evaluation.
+    await drainTimers(now);
     const minute = Math.floor(now.getTime() / 60_000);
     for (const schedule of schedules) {
       const deferred = pendingOffPeak.get(schedule.id);
