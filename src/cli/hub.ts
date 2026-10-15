@@ -19,6 +19,7 @@ import { hubPromptGuidanceFromEnv } from "../integrations/prompt-guidance.js";
 import { createReviewerFactory, createRunTestRunner, reviewerRunTaskId } from "../integrations/hub-run-gates.js";
 import { createJsonReviewProvenanceStore } from "../integrations/review-provenance-store.js";
 import { createConfiguredAcpRuntime, type WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
+import { hubLaneSettings } from "../integrations/hub-lane-settings.js";
 import { canonicalWorkspace } from "../integrations/run-registry.js";
 import { TaskUsageAttributor, laneTaskUsageSink } from "../integrations/task-usage.js";
 import {
@@ -332,6 +333,7 @@ const reviewerFactory = createReviewerFactory({
     // for the review's whole lifetime), read at boundary time, never inferred.
     // `usage` is deferred: the runtime exists by turn boundary.
     const runtime: WorkflowAcpRuntime = await createConfiguredAcpRuntime(reviewerApplication, reviewerWorkspace, reviewerRunCorrelationTaskId, undefined, guard, {
+      settings: hubLaneSettings({ workspace: reviewerWorkspace }),
       taskUsage: laneTaskUsageSink(() => runtime.metrics?.(), (delta) => recordTaskUsage(delta)),
       ...hubEgressOptions(),
     }).catch((error: unknown) => {
@@ -553,6 +555,7 @@ const rsiAgentTurn = (handles: WorkflowHubSchedulerHandles): AgentTurnRunner => 
   // count); this lane has no such finally, so the driver seam is the honest
   // composition. `usage` is deferred: the runtime exists by turn boundary.
   const runtime = await createConfiguredAcpRuntime(turnApplication, input.workspace, turnTaskId, undefined, guard, {
+    settings: hubLaneSettings({ workspace: input.workspace }),
     taskUsage: laneTaskUsageSink(() => runtime.metrics?.(), (delta) => handles.recordTaskUsage(delta)),
     ...hubEgressOptions(),
   });
@@ -630,7 +633,10 @@ const schedulerFactory = (handles: WorkflowHubSchedulerHandles) => {
       const runApplication = handles.resolve(workspace, runId);
       const runTaskId: TaskId = taskId(`run:${runId}`);
       const turnWorkspace = workspace ?? process.cwd();
-      const runtime = await createConfiguredAcpRuntime(runApplication, turnWorkspace, runTaskId, undefined, guard, { ...hubEgressOptions() });
+      const runtime = await createConfiguredAcpRuntime(runApplication, turnWorkspace, runTaskId, undefined, guard, {
+        settings: hubLaneSettings({ workspace: turnWorkspace }),
+        ...hubEgressOptions(),
+      });
       // W045: record which interactive budget enforcement mechanism this
       // scheduled run's runtime carries (local guard vs the OpenRouter
       // per-key backstop) alongside the schedule's own run budget.

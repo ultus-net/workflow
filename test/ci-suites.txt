@@ -52,6 +52,7 @@ test/hub-assistant-routes.test.ts
 test/hub-assistant-workspace.test.ts
 test/hub-egress-approvals.test.ts
 test/hub-endpoint-dispatch.test.ts
+test/hub-lane-settings.test.ts
 test/hub-review.test.ts
 test/hub-rsi.test.ts
 test/hub-runs.test.ts
