@@ -203,6 +203,13 @@ interface HubRequestContext {
    * (capability withheld, fail closed, like the other optional registries).
    */
   readonly assistantRoutes?: (() => AssistantRouteSummary) | undefined;
+  /**
+   * W197 (hub Workspace view): the assistant workspace directory listing —
+   * a FIELD on the capabilities object, never a positional. When composed
+   * the hub answers the operator-token `POST /workspace` read; absent → the
+   * route 404s (capability withheld, fail closed).
+   */
+  readonly assistantWorkspace?: (() => AssistantWorkspaceListing) | undefined;
 }
 
 /**
@@ -272,6 +279,12 @@ export interface HubBridgeCapabilities {
    * withheld, fail closed).
    */
   readonly assistantRoutes?: (() => AssistantRouteSummary) | undefined;
+  /**
+   * W197 (hub Workspace view): the assistant workspace directory listing
+   * (see HubRequestContext) — a FIELD on the capabilities object (the post-#330
+   * extension point), never a positional.
+   */
+  readonly assistantWorkspace?: (() => AssistantWorkspaceListing) | undefined;
 }
 
 /**
@@ -289,6 +302,26 @@ export interface AssistantRouteSummary {
     /** Empty for coding/tutor; the care route's configured set otherwise. */
     readonly withheld: readonly string[];
   }[];
+}
+
+/**
+ * W197 (hub Workspace view): the assistant workspace directory listing the hub
+ * answers on `POST /workspace`. Read-only, bounded: a max entry count
+ * (e.g. 500) and files-only-vs-directories handled explicitly, with `truncated:
+ * true` when the bound is hit. Each entry carries basic metadata
+ * (name, kind, size, modifiedMs); directories carry size 0 (the hub never
+ * reads file contents).
+ */
+export interface AssistantWorkspaceEntry {
+  readonly name: string;
+  readonly kind: "file" | "directory";
+  readonly size: number; // bytes; 0 for directories
+  readonly modifiedMs: number; // epoch ms
+}
+export interface AssistantWorkspaceListing {
+  readonly root: string; // the configured workspace root (absolute path)
+  readonly truncated: boolean; // true when the bound stopped enumeration early
+  readonly entries: readonly AssistantWorkspaceEntry[];
 }
 
 /**
@@ -474,6 +507,24 @@ async function handleRequest(
       // closed, like the other optional registries).
       if (context.assistantRoutes === undefined) return send(response, 404, { error: "not found" });
       return send(response, 200, context.assistantRoutes());
+    }
+    if (request.url === "/workspace") {
+      // W197 (hub Workspace view): the assistant workspace directory listing
+      // — POST read-class (the hub is POST-only: handleRequest rejects every
+      // non-POST method at the gate above, so this is the contract like
+      // /snapshot and /board/tasks, and the web relay is what bridges the
+      // browser's GET onto it). The hub enumerates the directory BOUNDED: a
+      // max entry count (e.g. 500) and files-only-vs-directories handled
+      // explicitly, setting `truncated: true` when the bound is hit. The hub
+      // resolves each entry with `fs.lstatSync` and skips symlinks (never
+      // follow them out of the root). Entries are sorted deterministically
+      // (name, locale-independent plain `<` comparison) so the listing is
+      // stable and testable. The hub only casts entries directly inside the
+      // root — do NOT recurse in V1. The hub never reads file CONTENTS (V1 is
+      // a listing only; do not add a content-read route). Absent capability →
+      // 404 (capability withheld, fail closed).
+      if (context.assistantWorkspace === undefined) return send(response, 404, { error: "not found" });
+      return send(response, 200, { workspace: context.assistantWorkspace() });
     }
     if (request.url === "/evidence-content") {
       // W158: the bounded content behind an evidence record's reference — the

@@ -21,6 +21,7 @@ import { PostureStrip, postureBudgetIncidents, usePosture } from "./posture-stri
 import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-view.js";
 import { ProjectsView, type ProjectMeta } from "./projects-view.js";
 import { RoutesView, type RouteRow } from "./routes-view.js";
+import { WorkspaceView, type WorkspaceListing } from "./workspace-view.js";
 import { BoardView, BoardCardDetailPanel } from "./board-view.js";
 import { readIssueViewStateGuarded, saveIssueViewStateGuarded, type IssueViewState } from "./issue-view-state.js";
 // W174 phase 1a: the shell chrome (rail / header) and its plain hash routing
@@ -375,6 +376,12 @@ function useOperatorSurfaces() {
   // fault the view renders honestly. It rides the schedules poll lane.
   const [routes, setRoutes] = useState<readonly RouteRow[] | undefined>(undefined);
   const [routesReason, setRoutesReason] = useState<string | undefined>(undefined);
+  // W197: the assistant workspace directory listing — undefined means the
+  // hub does not report a workspace (an absent capability 404s); a string
+  // reason is a provider fault the view renders honestly. It rides the
+  // schedules poll lane.
+  const [workspace, setWorkspace] = useState<WorkspaceListing | undefined>(undefined);
+  const [workspaceReason, setWorkspaceReason] = useState<string | undefined>(undefined);
   const [loops, setLoops] = useState<LoopMeta[] | undefined>(undefined);
   const [recentRuns, setRecentRuns] = useState<readonly ScheduleRecentRun[] | undefined>(undefined);
   const [board, setBoard] = useState<BoardOutcome | null | undefined>(undefined);
@@ -456,6 +463,22 @@ function useOperatorSurfaces() {
     } catch {
       // Keep the last good summary; the next poll retries.
     }
+    // W197: the assistant workspace directory listing; a null workspace field
+    // with a reason is the relay's fail-closed answer (hub absent, or a hub
+    // predating the route). Ride the same poll lane.
+    try {
+      const workspaceResponse = await fetch("/api/workspace");
+      if (workspaceResponse.ok) {
+        const payload = (await workspaceResponse.json()) as { workspace?: WorkspaceListing | null; reason?: string };
+        setWorkspace(payload.workspace ?? undefined);
+        setWorkspaceReason(payload.reason);
+      } else {
+        setWorkspace(undefined);
+        setWorkspaceReason(undefined);
+      }
+    } catch {
+      // Keep the last good listing; the next poll retries.
+    }
   }, []);
   useEffect(() => {
     void load();
@@ -468,7 +491,7 @@ function useOperatorSurfaces() {
       clearInterval(boardTimer);
     };
   }, [load, loadBoard]);
-  return { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, routes, routesReason, refresh: load, refreshBoard: loadBoard };
+  return { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, routes, routesReason, workspace, workspaceReason, refresh: load, refreshBoard: loadBoard };
 }
 
 function createSession(refresh: () => Promise<void>): void {
@@ -2357,7 +2380,7 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
   const gitStatus = useGitStatus();
   const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
-  const { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, routes, routesReason, refresh: refreshSchedules } = useOperatorSurfaces();
+  const { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, routes, routesReason, workspace, workspaceReason, refresh: refreshSchedules } = useOperatorSurfaces();
   // W163: the board's per-column view preferences live UI-local — read once
   // per browser from the persisted IssueViewState and saved on change; they
   // never ride any board payload (pinned by construction).
@@ -2792,6 +2815,11 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
         // routes, their bound identities, and each route's withheld set; a
         // read-only projection of operator config.
         <RoutesView routes={routes} reason={routesReason} />
+      ) : view === "workspace" ? (
+        // W197: the Workspace page (hub overhaul slice 2) — the shared
+        // assistant workspace directory listing; a read-only, bounded
+        // projection (never file contents).
+        <WorkspaceView workspace={workspace} reason={workspaceReason} />
       ) : view === "board" ? (
         // W176 phase 3 (#347): the Board's card detail panel docks in the
         // shell's right-side contextual region — the same region composition

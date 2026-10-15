@@ -23,8 +23,8 @@ import type { ReactNode } from "react";
  * via the /agents command, with /sessions kept as an alias. The settings
  * panel (W077-era operator surfaces) is reachable from the gear and the
  * Ctrl/Cmd+, command. W174 phase 1a adds the dashboard pages (overview at
- * the rail's top, plus runs / reviews / activity / audit); their content
- * arrives with the next phase — routes live now.
+ * the rail's top, plus runs / reviews / activity / audit); routes and
+ * workspace arrive here.
  */
 export type AppView =
   | "overview"
@@ -36,6 +36,7 @@ export type AppView =
   | "schedules"
   | "projects"
   | "routes"
+  | "workspace"
   | "usage"
   | "activity"
   | "audit"
@@ -44,7 +45,7 @@ export type AppView =
 /** Every route the shell honors, in rail order. */
 export const APP_VIEWS: readonly AppView[] = [
   "overview", "chat", "agents", "board", "runs", "reviews",
-  "schedules", "projects", "routes", "usage", "activity", "audit", "settings",
+  "schedules", "projects", "routes", "workspace", "usage", "activity", "audit", "settings",
 ];
 
 /** The view a first paint lands on when no hash (or no known hash) says
@@ -101,6 +102,7 @@ const SHELL_VIEW_TITLES: Record<AppView, string> = {
   schedules: "Schedules",
   projects: "Projects",
   routes: "Routes",
+  workspace: "Workspace",
   usage: "Usage",
   activity: "Activity",
   audit: "Audit",
@@ -353,6 +355,10 @@ export function shellRailSections(badges: RailBadges = {}): readonly RailSection
         // withheld set), the same class as schedules/projects, not produced
         // work (Runs) or a live surface (Working).
         { view: "routes", label: "Routes", icon: <RoutesIcon /> },
+        // W197: Workspace sits in Automation — the shared assistant workspace
+        // directory is operator CONFIGURATION (an Azure Files mount path), the
+        // same class as schedules/projects/routes.
+        { view: "workspace", label: "Workspace", icon: <ProjectsIcon /> },
       ],
     },
     {

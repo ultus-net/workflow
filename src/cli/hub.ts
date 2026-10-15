@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { appendFileSync } from "node:fs";
+import { readdirSync, lstatSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
@@ -52,7 +53,7 @@ import {
 import { createAuthorityGate } from "../integrations/self-improvement-loop.js";
 import { createWorkflowHub, type WorkflowHubSchedulerHandles } from "../integrations/workflow-hub.js";
 import { loadAssistantGatewayConfig, type AssistantRoute } from "../integrations/assistant-gateway.js";
-import type { AssistantRouteSummary } from "../integrations/hub-http.js";
+import type { AssistantRouteSummary, AssistantWorkspaceEntry, AssistantWorkspaceListing } from "../integrations/hub-http.js";
 import { opencodeServerStateHome, planeRevisionIdentity } from "../integrations/opencode-server-discovery.js";
 import { hubWebDiscoveryPath, removeHubWebDiscovery, writeHubWebDiscovery } from "../integrations/hub-web-discovery.js";
 import type { WorkflowWebService } from "./web-service.js";
@@ -70,7 +71,7 @@ import { TaskGraph } from "../kernel/task-graph.js";
 if (process.argv.slice(2).some((argument) => argument === "--help" || argument === "-h")) {
   console.log("workflow-hub — the Workflow authority daemon (one hub, one journal)");
   console.log("  state: ~/.workflow (per-revision when CONTAINER_APP_REVISION/WORKFLOW_PLANE_REVISION is set)");
-  console.log("  env: WORKFLOW_HUB_DIR, WORKFLOW_HUB_PROVENANCE, WORKFLOW_HUB_SCHEDULES, WORKFLOW_HUB_PROJECTS");
+  console.log("  env: WORKFLOW_HUB_DIR, WORKFLOW_HUB_PROVENANCE, WORKFLOW_HUB_SCHEDULES, WORKFLOW_HUB_PROJECTS, WORKFLOW_ASSISTANT_ROUTES, WORKFLOW_CARE_WITHHELD, WORKFLOW_ASSISTANT_WORKSPACE");
   console.log("  --help  print this help");
   process.exit(0);
 }
@@ -425,7 +426,53 @@ const assistantRoutesCapability = assistantRoutesConfigPath === ""
         })),
       });
     })();
-// Plan Task G5 + W077 wiring: the hub composes scheduled prompts, so the
+// W197 (hub Workspace view): the assistant workspace directory listing
+// capability. Opt-in via WORKFLOW_ASSISTANT_WORKSPACE naming the shared
+// workspace root (the augur-workspace Azure Files mount, e.g. /workspace).
+// Absent/empty -> the capability is withheld and POST /workspace 404s (fail
+// closed). A non-absolute path throws here at hub start (fail closed, the same
+// posture WORKFLOW_PLANE_WORKSPACE takes in plane-config.ts). The closure is
+// read-only and bounded: it never reads file contents, never recurses, skips
+// symlinks (lstat, never follows them out of the root), and enumerates at most
+// WORKSPACE_MAX_ENTRIES entries, setting `truncated: true` when the bound is
+// hit. Entries sort by name with a plain `<` comparison (locale-independent,
+// so the listing is stable and testable).
+const WORKSPACE_MAX_ENTRIES = 500;
+const assistantWorkspaceRoot = (process.env.WORKFLOW_ASSISTANT_WORKSPACE ?? "").trim();
+const assistantWorkspaceCapability = assistantWorkspaceRoot === ""
+  ? undefined
+  : (() => {
+      if (!isAbsolute(assistantWorkspaceRoot)) {
+        throw new Error(`WORKFLOW_ASSISTANT_WORKSPACE must be an absolute path (got ${JSON.stringify(assistantWorkspaceRoot)})`);
+      }
+      return (): AssistantWorkspaceListing => {
+        const names = readdirSync(assistantWorkspaceRoot);
+        // Deterministic, locale-independent order: plain code-unit `<`.
+        names.sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+        const truncated = names.length > WORKSPACE_MAX_ENTRIES;
+        const bounded = truncated ? names.slice(0, WORKSPACE_MAX_ENTRIES) : names;
+        const entries: AssistantWorkspaceEntry[] = [];
+        for (const name of bounded) {
+          // lstat, never stat: a symlink is skipped rather than followed out
+          // of the root. A vanished entry (a race between readdir and lstat)
+          // is skipped, not thrown.
+          let stats;
+          try {
+            stats = lstatSync(join(assistantWorkspaceRoot, name));
+          } catch {
+            continue;
+          }
+          const isDirectory = stats.isDirectory();
+          entries.push({
+            name,
+            kind: isDirectory ? "directory" : "file",
+            size: isDirectory ? 0 : stats.size,
+            modifiedMs: Math.floor(stats.mtimeMs),
+          });
+        }
+        return { root: assistantWorkspaceRoot, truncated, entries };
+      };
+    })();
 // orientation block (W077 — static, versioned, no interpolation; the agent
 // learns the hub exists and which tools to reach for) and the operator's
 // advisory guidance (WORKFLOW_ADVISORY_STYLE / WORKFLOW_ADVISORY_NOTES) are
@@ -731,6 +778,7 @@ try {
     schedules: scheduleRegistry,
     projects: projectRegistry,
     ...(assistantRoutesCapability === undefined ? {} : { assistantRoutes: assistantRoutesCapability }),
+    ...(assistantWorkspaceCapability === undefined ? {} : { assistantWorkspace: assistantWorkspaceCapability }),
     // W073 trigger surface / Checkpoint F: the registry is composed lazily
     // against the run-registry handles so the production loop (agent proposal
     // source + agent applier + measure) drives the real controller. With
