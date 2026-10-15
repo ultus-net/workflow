@@ -105,7 +105,7 @@ export function AgentsView({ sessions, agents, onActivate, onCreate, onSwitchAge
         <header className="sessions-view-head">
           <h2>Agents</h2>
         </header>
-        <p className="muted sessions-empty-note">This server runs a single session — session management is unavailable.</p>
+        <p className="muted sessions-empty-note">This hub runs one agent session at a time. Open Chat to work in it.</p>
       </section>
     );
   }

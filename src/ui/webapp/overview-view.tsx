@@ -22,6 +22,14 @@
  * named-absence rule); absent registries render "state unavailable", never a
  * fabricated zero.
  *
+ * W201 (layout + IA rework): the zones keep their records but gain RANK. The
+ * stat strip leads, the Needs-you zone (attention) comes next and carries
+ * `overview-attention`, Live runs and Next fires share one `overview-secondary`
+ * band (informational, not stacked full-width), and Recent activity closes the
+ * page. An empty Needs-you zone gains `overview-empty-zone` so it recedes
+ * instead of carrying a populated box's weight. Rank only — no record, no
+ * named-absence string, and no derivation changed.
+ *
  * (Template literals are deliberately absent: string concatenation keeps
  * the source patchable under the guard shell classifier.)
  */
@@ -120,7 +128,10 @@ export function OverviewView({
         </div>
       </section>
 
-      <section className="overview-needs-you" aria-label="What needs you">
+      <section
+        className={"overview-needs-you overview-attention" + (pendingPermission || decisions.length > 0 ? "" : " overview-empty-zone")}
+        aria-label="What needs you"
+      >
         <h3>Needs you</h3>
         <ul className="overview-needs-list">
           {pendingPermission && (
@@ -144,46 +155,48 @@ export function OverviewView({
         </ul>
       </section>
 
-      <section className="overview-live-runs" aria-label="Live runs">
-        <h3>Live runs</h3>
-        {runTasks.length === 0 ? (
-          <p className="overview-empty">no runs recorded yet — delegate a board task or fire a schedule</p>
-        ) : (
-          <ul className="overview-run-list">
-            {runTasks.map((task) => (
-              <li key={task.id} className="overview-run-row">
-                <span className={"status-dot status-" + statusToken(task.state)} aria-hidden="true" />
-                <span className="overview-run-id">{task.id}</span>
-                <span className="overview-run-title">{task.title}</span>
-                <span className="overview-run-state">{task.state}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-        {recentRuns === undefined || recentRuns.length === 0 ? null : (
-          <p className="overview-recent-note">
-            {recentRuns.length} recent schedule run(s) recorded — the runs page (next phase) lists every registry run
-          </p>
-        )}
-      </section>
+      <div className="overview-secondary">
+        <section className="overview-live-runs" aria-label="Live runs">
+          <h3>Live runs</h3>
+          {runTasks.length === 0 ? (
+            <p className="overview-empty">no runs recorded yet — delegate a board task or fire a schedule</p>
+          ) : (
+            <ul className="overview-run-list">
+              {runTasks.map((task) => (
+                <li key={task.id} className="overview-run-row">
+                  <span className={"status-dot status-" + statusToken(task.state)} aria-hidden="true" />
+                  <span className="overview-run-id">{task.id}</span>
+                  <span className="overview-run-title">{task.title}</span>
+                  <span className="overview-run-state">{task.state}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {recentRuns === undefined || recentRuns.length === 0 ? null : (
+            <p className="overview-recent-note">
+              {recentRuns.length} recent schedule run(s) recorded — the runs page (next phase) lists every registry run
+            </p>
+          )}
+        </section>
 
-      <section className="overview-next-fires" aria-label="Next fires">
-        <h3>Next fires</h3>
-        {schedules === undefined ? (
-          <p className="overview-empty">state unavailable — the schedules registry has not answered</p>
-        ) : nextFires.length === 0 ? (
-          <p className="overview-empty">no schedules armed — arm one from the Schedules page</p>
-        ) : (
-          <ul className="overview-fire-list">
-            {nextFires.map((schedule) => (
-              <li key={schedule.id}>
-                <span className="overview-run-title">{schedule.title}</span>
-                <span className="overview-fire-time">next {formatScheduleFire(schedule.nextRunAt as string)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+        <section className="overview-next-fires" aria-label="Next fires">
+          <h3>Next fires</h3>
+          {schedules === undefined ? (
+            <p className="overview-empty">state unavailable — the schedules registry has not answered</p>
+          ) : nextFires.length === 0 ? (
+            <p className="overview-empty">no schedules armed — arm one from the Schedules page</p>
+          ) : (
+            <ul className="overview-fire-list">
+              {nextFires.map((schedule) => (
+                <li key={schedule.id}>
+                  <span className="overview-run-title">{schedule.title}</span>
+                  <span className="overview-fire-time">next {formatScheduleFire(schedule.nextRunAt as string)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
 
       <section className="overview-recent-activity" aria-label="Recent activity">
         <h3>Recent activity</h3>

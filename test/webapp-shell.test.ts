@@ -48,7 +48,7 @@ const noAsync = async (): Promise<void> => {};
 
 const VIEWS: readonly AppView[] = [
   "overview", "chat", "agents", "board", "runs", "reviews",
-  "schedules", "projects", "routes", "usage", "activity", "audit", "settings",
+  "schedules", "projects", "routes", "workspace", "usage", "activity", "audit", "settings",
 ];
 
 /** A healthy window whose localStorage is a real map — the round-trip seat
@@ -110,7 +110,7 @@ test("the rail carries every page in its groups, with the wordmark and the colla
     for (const label of ["Overview", "Chat", "Board", "Agents", "Runs", "Reviews", "Schedules", "Projects", "Routes", "Usage", "Activity", "Audit", "Settings"]) {
       assert.ok(markup.includes(label), "the rail is missing the \"" + label + "\" entry");
     }
-    for (const group of ["Working", "Automation", "Insight"]) {
+    for (const group of ["Working", "Runs", "Automation", "Assistant", "Insight"]) {
       assert.ok(markup.includes(group), "the rail is missing the \"" + group + "\" group title");
     }
     assert.ok(markup.includes(">Workflow</h1>"), "the shell wordmark still renders");

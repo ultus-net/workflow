@@ -10,6 +10,14 @@ Branch: `docs/hub-dashboard-guide`.
 > `shell.tsx` (`AppView`, `APP_VIEWS`, `shellRailSections`) and `app.tsx`
 > (the `view === "…"` ladder).
 >
+> **Amended 2026-10-16 (W201).** `docs/HUB_LAYOUT_IA_REWORK.md` refines this
+> spec's frame: a measured content column (`--measure`), one chrome band
+> (header + posture strip merged via `:has()`), landed rank on the Overview
+> (attention above information), operator copy for the degraded states, and a
+> new `Assistant` rail group (Routes/Workspace out of `Automation`). It keeps
+> this spec's token/class system, "no restyle of existing views" rule, and
+> projection-only discipline.
+>
 > **Extension, not supersession (the augur layer).** This spec stays the layout
 > authority. The assistant build adds a new dimension this spec does not cover:
 > the three skills/routes (`coding | tutor | care`), the route→identity binding

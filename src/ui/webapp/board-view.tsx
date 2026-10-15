@@ -84,12 +84,16 @@ export function BoardView({ board, reason, read, workProducts, inProgress, viewS
   if (board.state === "unconfigured") {
     return (
       <section className="sessions-view" aria-label="Task board">
-        <p className="muted sessions-empty-note">no provider configured on the hub</p>
-        <ul className="board-missing" aria-label="missing provider configuration">
-          {board.missing.map((name) => (
-            <li key={name}><code className="board-env-var">{name}</code></li>
-          ))}
-        </ul>
+        <p className="muted sessions-empty-note">No task provider is configured for this hub.</p>
+        <p className="muted sessions-empty-note">Set the variables below in the hub environment, then reload.</p>
+        <details className="board-missing-details">
+          <summary>required configuration</summary>
+          <ul className="board-missing" aria-label="missing provider configuration">
+            {board.missing.map((name) => (
+              <li key={name}><code className="board-env-var">{name}</code></li>
+            ))}
+          </ul>
+        </details>
       </section>
     );
   }

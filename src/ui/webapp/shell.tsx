@@ -81,6 +81,7 @@ export function commandView(command: string): AppView | undefined {
   if (name === "/board") return "board";
   if (name === "/projects") return "projects";
   if (name === "/routes") return "routes";
+  if (name === "/workspace") return "workspace";
   if (name === "/usage") return "usage";
   if (name === "/settings") return "settings";
   if (name === "/chat") return "chat";
@@ -350,14 +351,18 @@ export function shellRailSections(badges: RailBadges = {}): readonly RailSection
       entries: [
         { view: "schedules", label: "Schedules", icon: <SchedulesIcon /> },
         { view: "projects", label: "Projects", icon: <ProjectsIcon /> },
-        // W195: Routes sits in Automation — the assistant routes are operator
-        // CONFIGURATION (identity -> route -> system prompt, plus each route's
-        // withheld set), the same class as schedules/projects, not produced
-        // work (Runs) or a live surface (Working).
+      ],
+    },
+    {
+      title: "Assistant",
+      entries: [
+        // W201 (layout + IA rework): Routes and Workspace move out of
+        // Automation into their own Assistant group — the hub is a
+        // route-aware control plane, so the assistant dimension (each route's
+        // identity -> system prompt -> withheld set, and the shared
+        // augur-workspace) ranks as its own section rather than as generic
+        // operator configuration beside Schedules/Projects.
         { view: "routes", label: "Routes", icon: <RoutesIcon /> },
-        // W197: Workspace sits in Automation — the shared assistant workspace
-        // directory is operator CONFIGURATION (an Azure Files mount path), the
-        // same class as schedules/projects/routes.
         { view: "workspace", label: "Workspace", icon: <ProjectsIcon /> },
       ],
     },
