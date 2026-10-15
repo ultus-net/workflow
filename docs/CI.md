@@ -54,13 +54,26 @@ decides what runs where, and what CI is allowed to claim.
 
 ## 4. The test-set curation rule (the load-bearing decision)
 
-`npm run test:ci` **enumerates suite files by name** in `package.json` — never
-a glob. Adding a suite to CI is a deliberate, ledger-visible act: edit the
-script, cite it in the work item. Rationale: the resource directive exists
-because some suites spawn PTYs/agents/hubs; a glob would silently violate it
-the first time someone adds a file to `test/`. This rule is what makes Tier B
-honest: CI's green is the evidence that exactly the enumerated safe set
-passed, not that "the tests passed".
+`npm run test:ci` **enumerates suite files by name** in
+`test/ci-suites.txt` (one path per line), run by
+`scripts/run-ci-suites.mjs` — never a glob. Adding a suite to CI is a
+deliberate, ledger-visible act: add the path to the manifest, cite it in the
+work item. Rationale: the resource directive exists because some suites spawn
+PTYs/agents/hubs; a glob would silently violate it the first time someone adds
+a file to `test/`. This rule is what makes Tier B honest: CI's green is the
+evidence that exactly the enumerated safe set passed, not that "the tests
+passed".
+
+**2026-10-15 — the manifest replaces the single-line script (W196).** The
+enumeration used to ride one long `package.json` `test:ci` line. Because
+*every* test-adding PR edited that identical line, any two such PRs conflicted
+with each other on merge — PRs #560 and #561 both hit it in the same wave, and
+the resolution cost a rebase each. The list is now a **sorted** manifest file:
+two concurrent additions land on different lines, so git merges them without a
+conflict, while the enumeration-by-name guarantee is unchanged. Sorted order is
+enforced by `test/ci-suites-manifest.test.ts` (itself listed in the manifest),
+which also pins uniqueness, file existence, and that `test:ci` routes through
+the runner and carries no glob.
 
 ## 5. What CI does NOT do
 
