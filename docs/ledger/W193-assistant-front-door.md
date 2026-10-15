@@ -44,3 +44,23 @@ workstreams. The front-door attach takes the next free number, W193.
   `POST /v1/chat/completions` fall through byte-identical.
 - `npx tsc -p tsconfig.json --noEmit` and `npx eslint src test` — clean; the
   gateway and assistant-gateway suites pass unchanged (no regression).
+
+---
+
+**Supersession (2026-10-15, branch `feat/assistant-egress-lane`).** The
+"Dedicated metered egress" decision above is corrected: the assistant lane no
+longer pins its own `createModelUsageProxy` to a hard-coded OpenRouter upstream.
+That pin bypassed the platform's real metered lane. `src/cli/opencode-server.ts`
+now calls `resolveRuntimeMeteredLane(upstreamApiKey)` with NO explicit upstream
+(so `configuredUpstream` defaults to `WORKFLOW_ACP_UPSTREAM`, exactly as the
+server runtime does) and composes `upstream`/`apiKey` plus
+`syntheticFailoverProxyOptions(lane.failover)` when a failover resolves. The
+assistant lane therefore agrees with every other agent lane: Synthetic primary
+(`https://api.synthetic.new`) with an automatic OpenRouter failover when a
+Synthetic key resolves, else OpenRouter single-upstream, with an explicit
+`WORKFLOW_ACP_UPSTREAM` always winning. The fail-closed guard
+(`upstreamApiKey === undefined` throws) and the reaping/lifecycle are unchanged.
+Verified by `test/assistant-egress-lane.test.ts` (the lane resolver semantics the
+assistant composition now shares); the composed-lane tests
+`test/opencode-server-assistant-lane.test.ts` and
+`test/opencode-server-runtime.test.ts` pass unchanged.
