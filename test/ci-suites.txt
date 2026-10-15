@@ -49,6 +49,7 @@ test/egress-policy-file.test.ts
 test/egress-policy-revisions.test.ts
 test/egress-policy.test.ts
 test/hub-assistant-routes.test.ts
+test/hub-assistant-workspace.test.ts
 test/hub-egress-approvals.test.ts
 test/hub-endpoint-dispatch.test.ts
 test/hub-review.test.ts
@@ -73,3 +74,4 @@ test/web-scoping.test.ts
 test/webapp-surface.test.ts
 test/worker-image.test.ts
 test/workflow-action-pins.test.ts
+test/workspace-view.test.ts

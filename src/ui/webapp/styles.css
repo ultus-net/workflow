@@ -3773,3 +3773,21 @@ div.board-issue-detail {
 .routes-none { font-size: 0.68rem; }
 .routes-withheld-tag { color: var(--text-muted); border-color: var(--border-strong); }
 
+/* W197: the Workspace page. Dense record table in the existing token system —
+   no new accent, font, or radius. The root path is monospace; the table reuses
+   the usage-table shell. */
+.workspace-root { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; margin: 0.35rem 0 0.6rem; }
+.workspace-field-label {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.workspace-root-path { font-family: var(--font-mono); font-size: 0.72rem; overflow-wrap: anywhere; }
+.workspace-name { font-family: var(--font-mono); font-size: 0.72rem; overflow-wrap: anywhere; }
+.workspace-size, .workspace-modified { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.workspace-kind { color: var(--text-muted); border-color: var(--border-strong); }
+.workspace-truncated { margin: 0.3rem 0; }
+.workspace-empty { margin: 0.4rem 0; }
+

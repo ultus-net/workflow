@@ -189,6 +189,19 @@ export function createWorkflowWebServer(
     return { routes: null, reason: payload?.error ?? "hub unavailable" };
   };
 
+  /** W197: the assistant workspace directory listing relay — the hub's
+   * `POST /workspace` read (the hub is POST-only; this service bridges the
+   * browser's GET onto it). Fail-closed: no hub, or a hub predating the
+   * slice, answers workspace: null with the reason — the view renders its
+   * named-absence state, never a fabricated directory table. The browser never
+   * sees a hub token. */
+  const hubAssistantWorkspace = async (): Promise<{ workspace: unknown; reason?: string }> => {
+    const result = await hubPost("/workspace", {});
+    const payload = result.payload as { workspace?: unknown; error?: string } | undefined;
+    if (result.status === 200 && payload?.workspace !== undefined) return { workspace: payload.workspace };
+    return { workspace: null, reason: payload?.error ?? "hub unavailable" };
+  };
+
   /** W175: the ONE runs read route — the hub's /snapshot runs block, the
    * run-registry projection (all run rows with their recorded origins,
    * work-product links, review outcomes, blocking reasons, completion claims,
@@ -293,6 +306,9 @@ export function createWorkflowWebServer(
     // W195: the assistant routes read relay (see hubAssistantRoutes) — the
     // browser's GET is bridged onto the hub's POST-only read.
     if (request.method === "GET" && pathname === "/api/assistant/routes") return json(response, 200, await hubAssistantRoutes());
+    // W197: the assistant workspace read relay (see hubAssistantWorkspace) — the
+    // browser's GET is bridged onto the hub's POST-only read.
+    if (request.method === "GET" && pathname === "/api/workspace") return json(response, 200, await hubAssistantWorkspace());
     // W177: the audit read relay (see hubAudit above) — the three recorded
     // authorization-adjacent lanes the audit page renders.
     if (request.method === "GET" && pathname === "/api/audit") return json(response, 200, await hubAudit());
