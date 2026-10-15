@@ -48,6 +48,13 @@ export type ResponseFormat =
 
 export interface ChatOptions {
   messages: ChatMessage[];
+  /**
+   * Override the configured model priority for THIS call (first entry wins,
+   * the rest are the fallback model array). This is how the research conductor
+   * tiers its roles: the frontier model plans and synthesizes, the cheap model
+   * runs the high-token search loop. Absent means the config's own list.
+   */
+  model?: string | readonly string[];
   temperature?: number;
   maxTokens?: number;
   responseFormat?: ResponseFormat;
@@ -140,10 +147,11 @@ export class OpenRouterProvider {
   }
 
   private buildBody(opts: ChatOptions, stream: boolean): Record<string, unknown> {
-    if (this.config.models.length === 0) {
+    const requested = opts.model === undefined ? this.config.models : typeof opts.model === "string" ? [opts.model] : opts.model;
+    if (requested.length === 0) {
       throw new Error("No models configured. Set provider.models in config or AUGUR_MODELS.");
     }
-    const [primary, ...fallbacks] = this.config.models;
+    const [primary, ...fallbacks] = requested;
     const body: Record<string, unknown> = {
       model: withVariant(primary!, this.config.variant),
       messages: opts.messages,

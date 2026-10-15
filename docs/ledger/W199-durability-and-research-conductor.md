@@ -104,3 +104,23 @@ tests green, and `hub-scheduler` + `hub-scheduler-off-peak` + `hub-run-gates` +
 - The timer table's storage location and retention (plan §9 open questions) stay
   open; this slice persists alongside the schedule table only when a caller
   passes a `path`, and retains fired timers.
+
+## W199b (same branch): the OpenRouter binding
+
+`src/assistant/research/openrouter-ports.ts` realises the conductor's three
+ports against the already-deployed `OpenRouterProvider` (direct key or gateway
+front door), so the conductor is **usable now** and the Foundry move replaces
+this binding rather than the conductor. It measured two gaps and closed them:
+
+- `ChatOptions.model` (per-call model override) was added to
+  `src/assistant/provider/openrouter.ts`. Without it the "tier the roles" control
+  was unenforceable: the provider only knew one configured priority list, so the
+  frontier and cheap tiers could not differ per call.
+- The binding passes the frontier list to plan/synthesis and the cheap list to
+  workers, and gives workers `openrouter:web_search` while the conductor calls
+  carry no tool.
+
+`test/research-openrouter-ports.test.ts`: frontier plans/synthesizes, cheap runs
+workers, workers carry the search tool and the planner does not, bodies land in
+the artifact store, a malformed plan degrades to a single-question plan rather
+than crashing a durable run, and the per-call model override reaches the wire.
