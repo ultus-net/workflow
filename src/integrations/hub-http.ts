@@ -196,6 +196,13 @@ interface HubRequestContext {
    * capabilities object, never a positional. Absent → the route 404s.
    */
   readonly validateDispatch?: ValidateDispatchFn;
+  /**
+   * W195 (hub Routes view): the assistant route summary — a FIELD on the
+   * capabilities object, never a positional. When composed the hub answers
+   * the operator-token `POST /assistant/routes` read; absent → the route 404s
+   * (capability withheld, fail closed, like the other optional registries).
+   */
+  readonly assistantRoutes?: (() => AssistantRouteSummary) | undefined;
 }
 
 /**
@@ -257,6 +264,31 @@ export interface HubBridgeCapabilities {
    * `unknown`, never a fabricated pass.
    */
   readonly validateDispatch?: ValidateDispatchFn;
+  /**
+   * W195 (hub Routes view): the assistant route summary (see
+   * HubRequestContext) — a FIELD on the capabilities object, never a
+   * positional. When composed the hub answers the operator-token
+   * `POST /assistant/routes` read; absent → the route 404s (capability
+   * withheld, fail closed).
+   */
+  readonly assistantRoutes?: (() => AssistantRouteSummary) | undefined;
+}
+
+/**
+ * W195 (hub Routes view): the assistant route summary the hub answers on
+ * `POST /assistant/routes`. One entry per route in declaration order; each
+ * carries the route's system prompt, the identities bound to it, and the
+ * capability set withheld from it (empty for coding/tutor, the care route's
+ * configured set otherwise — read from config, never invented).
+ */
+export interface AssistantRouteSummary {
+  readonly routes: readonly {
+    readonly route: "coding" | "tutor" | "care";
+    readonly systemPrompt: string;
+    readonly identities: readonly string[];
+    /** Empty for coding/tutor; the care route's configured set otherwise. */
+    readonly withheld: readonly string[];
+  }[];
 }
 
 /**
@@ -430,6 +462,18 @@ async function handleRequest(
         if (isDispatchRequestError(error)) return send(response, 400, { error: error.message });
         throw error;
       }
+    }
+    if (request.url === "/assistant/routes") {
+      // W195 (hub Routes view): the assistant route summary — POST read-class
+      // (the hub is POST-only: handleRequest rejects every non-POST method at
+      // the gate above, so this is the contract like /snapshot and
+      // /board/tasks, and the web relay is what bridges the browser's GET onto
+      // it). It projects operator config only (the route policies, each
+      // route's bound identities, and the route's configured withheld set) and
+      // fabricates nothing: absent capability → 404 (capability withheld, fail
+      // closed, like the other optional registries).
+      if (context.assistantRoutes === undefined) return send(response, 404, { error: "not found" });
+      return send(response, 200, context.assistantRoutes());
     }
     if (request.url === "/evidence-content") {
       // W158: the bounded content behind an evidence record's reference — the

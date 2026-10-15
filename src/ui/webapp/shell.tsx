@@ -35,6 +35,7 @@ export type AppView =
   | "reviews"
   | "schedules"
   | "projects"
+  | "routes"
   | "usage"
   | "activity"
   | "audit"
@@ -43,7 +44,7 @@ export type AppView =
 /** Every route the shell honors, in rail order. */
 export const APP_VIEWS: readonly AppView[] = [
   "overview", "chat", "agents", "board", "runs", "reviews",
-  "schedules", "projects", "usage", "activity", "audit", "settings",
+  "schedules", "projects", "routes", "usage", "activity", "audit", "settings",
 ];
 
 /** The view a first paint lands on when no hash (or no known hash) says
@@ -78,6 +79,7 @@ export function commandView(command: string): AppView | undefined {
   if (name === "/schedules") return "schedules";
   if (name === "/board") return "board";
   if (name === "/projects") return "projects";
+  if (name === "/routes") return "routes";
   if (name === "/usage") return "usage";
   if (name === "/settings") return "settings";
   if (name === "/chat") return "chat";
@@ -98,6 +100,7 @@ const SHELL_VIEW_TITLES: Record<AppView, string> = {
   reviews: "Reviews",
   schedules: "Schedules",
   projects: "Projects",
+  routes: "Routes",
   usage: "Usage",
   activity: "Activity",
   audit: "Audit",
@@ -230,6 +233,18 @@ function AuditIcon() {
   );
 }
 
+/** Split/branch glyph for the Routes slug — one trunk forking into three
+ * route lanes (the three assistant routes: coding / tutor / care). */
+function RoutesIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 13.5V6.5c0-1.4 1.1-2.5 2.5-2.5H8" />
+      <path d="M8 4h5M8 8h5M8 12h5" />
+      <circle cx="3" cy="13.5" r="1.1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
 export const ENFORCEMENT_COPY: Record<string, string> = {
   advisory: "Advisory: the agent's actions are reviewed and recorded, but file and command mutations are not pre-authorized before they run.",
   enforced: "Enforced: agent file and command mutations require Workflow authorization before they run.",
@@ -333,6 +348,11 @@ export function shellRailSections(badges: RailBadges = {}): readonly RailSection
       entries: [
         { view: "schedules", label: "Schedules", icon: <SchedulesIcon /> },
         { view: "projects", label: "Projects", icon: <ProjectsIcon /> },
+        // W195: Routes sits in Automation — the assistant routes are operator
+        // CONFIGURATION (identity -> route -> system prompt, plus each route's
+        // withheld set), the same class as schedules/projects, not produced
+        // work (Runs) or a live surface (Working).
+        { view: "routes", label: "Routes", icon: <RoutesIcon /> },
       ],
     },
     {

@@ -51,6 +51,8 @@ import {
 } from "../integrations/self-improvement-agent.js";
 import { createAuthorityGate } from "../integrations/self-improvement-loop.js";
 import { createWorkflowHub, type WorkflowHubSchedulerHandles } from "../integrations/workflow-hub.js";
+import { loadAssistantGatewayConfig, type AssistantRoute } from "../integrations/assistant-gateway.js";
+import type { AssistantRouteSummary } from "../integrations/hub-http.js";
 import { opencodeServerStateHome, planeRevisionIdentity } from "../integrations/opencode-server-discovery.js";
 import { hubWebDiscoveryPath, removeHubWebDiscovery, writeHubWebDiscovery } from "../integrations/hub-web-discovery.js";
 import type { WorkflowWebService } from "./web-service.js";
@@ -393,6 +395,36 @@ const scheduleRegistry = createScheduleRegistry({ path: schedulesPath });
 // empty table means no projects; the routes still answer.
 const projectsPath = hubStatePath(process.env.WORKFLOW_HUB_PROJECTS, "projects.json");
 const projectRegistry = createProjectRegistry({ path: projectsPath });
+// W195 (hub Routes view): the assistant route summary capability. Opt-in via
+// WORKFLOW_ASSISTANT_ROUTES naming the same JSON the M1 lane loads (so the hub
+// and the gateway read ONE config). Absent -> the capability is withheld and
+// POST /assistant/routes 404s (fail closed). The closure projects operator
+// config only: each route's identities (grouped from the identity map) and its
+// withheld set (WORKFLOW_CARE_WITHHELD, comma-separated, empty when unset —
+// never an invented policy). A malformed config throws here at hub start, the
+// same fail-closed behavior the gateway has.
+const assistantRoutesConfigPath = (process.env.WORKFLOW_ASSISTANT_ROUTES ?? "").trim();
+const assistantRoutesCapability = assistantRoutesConfigPath === ""
+  ? undefined
+  : (() => {
+      const config = loadAssistantGatewayConfig(assistantRoutesConfigPath);
+      const withheld = (process.env.WORKFLOW_CARE_WITHHELD ?? "")
+        .split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
+      const identitiesByRoute = new Map<AssistantRoute, string[]>();
+      for (const [identity, route] of Object.entries(config.identities)) {
+        const list = identitiesByRoute.get(route) ?? [];
+        list.push(identity);
+        identitiesByRoute.set(route, list);
+      }
+      return (): AssistantRouteSummary => ({
+        routes: (["coding", "tutor", "care"] as const).map((route) => ({
+          route,
+          systemPrompt: config.routes[route].systemPrompt,
+          identities: identitiesByRoute.get(route) ?? [],
+          withheld: route === "care" ? withheld : [],
+        })),
+      });
+    })();
 // Plan Task G5 + W077 wiring: the hub composes scheduled prompts, so the
 // orientation block (W077 — static, versioned, no interpolation; the agent
 // learns the hub exists and which tools to reach for) and the operator's
@@ -698,6 +730,7 @@ try {
     schedulerFactory,
     schedules: scheduleRegistry,
     projects: projectRegistry,
+    ...(assistantRoutesCapability === undefined ? {} : { assistantRoutes: assistantRoutesCapability }),
     // W073 trigger surface / Checkpoint F: the registry is composed lazily
     // against the run-registry handles so the production loop (agent proposal
     // source + agent applier + measure) drives the real controller. With
