@@ -87,14 +87,21 @@ export interface AssistantToolHostOptions {
   /**
    * Build the dispatcher for a route bound to the run's application + the
    * broker's ask hold. The hub composes the contained-shell dispatcher here so
-   * the shell seat shares the run's withholding.
+   * the shell seat shares the run's withholding. Returns `undefined` when this
+   * process does NOT own the tool's execution seat: the host then answers the
+   * call with a DISPATCH DIRECTIVE (topology Option B, W205 S5) and the daemon
+   * fulfills it locally against its own MCP clients. A dispatch is only ever
+   * reached AFTER the hub has authorized the call (kernel gate + guard +
+   * ask-hold), so the directive carries an already-decided call.
    */
   readonly dispatcherFor: (input: {
     readonly route: AssistantRoute;
     readonly workspace: string;
     readonly application: WorkflowApplication;
     readonly hold: ReturnType<PermissionBroker["askHold"]> | undefined;
-  }) => AssistantToolDispatcher;
+    /** The tool the call names; the composition decides seat ownership per call. */
+    readonly toolName: string;
+  }) => AssistantToolDispatcher | undefined;
 }
 
 /** The withheld capability set for a route (empty for coding/tutor). */
@@ -200,22 +207,45 @@ export function createAssistantToolHost(options: AssistantToolHostOptions): Assi
 
       const sessionId = "assistant:" + request.identity + ":session";
       const hold = options.broker?.askHold(sessionId);
-      const dispatcher = options.dispatcherFor({ route: boundRoute, workspace, application, hold });
+      const dispatcher = options.dispatcherFor({ route: boundRoute, workspace, application, hold, toolName: request.call.name });
       const executor = createAssistantToolExecutor({
         application,
         capabilities: options.capabilities,
-        dispatcher,
+        dispatcher: dispatcher ?? NEVER_DISPATCH,
         sessionId,
         taskId: assistantRunTaskId(runId),
         ...(options.guard === undefined ? {} : { guard: options.guard }),
         ...(hold === undefined ? {} : { hold }),
         workspace,
       });
-      const result: AssistantToolResult = await executor.execute(request.call, {
+      const context = {
         identity: request.identity,
         route: boundRoute,
         iteration: 0,
-      });
+      };
+      // Topology Option B (W205 S5): this process authorizes every call, but it
+      // only dispatches the tools whose execution seat it owns (the coding
+      // route's contained shell). For any other tool the authority half still
+      // runs here (kernel gate, guard, broker ask-hold), and an ALLOW becomes a
+      // dispatch directive the daemon fulfills locally. A DENY is the final
+      // observation either way; the daemon never sees an undecided call.
+      if (dispatcher === undefined) {
+        const authorized = await executor.authorize(request.call);
+        if (authorized.decision === "deny") {
+          return { status: 200, body: { result: authorized.result } };
+        }
+        return {
+          status: 200,
+          body: {
+            dispatch: {
+              call: request.call,
+              capability: authorized.toolClass.capability,
+              mutating: authorized.toolClass.mutating,
+            },
+          },
+        };
+      }
+      const result: AssistantToolResult = await executor.execute(request.call, context);
       return { status: 200, body: { result } };
     },
   };
@@ -232,3 +262,20 @@ export function assistantRunTaskId(runId: string): TaskId {
 
 /** Re-export the classifier for callers that compose a map (parity with S1). */
 export { classifyMcpTool };
+
+/**
+ * Placeholder dispatcher for the authority-only branch. It is never called:
+ * when `dispatcherFor` returns `undefined` the host runs `authorize` alone and
+ * answers with a directive, so an allow never reaches `execute`. Should the
+ * composition ever change such that it does, this fails the call closed rather
+ * than fabricating a success.
+ */
+const NEVER_DISPATCH: AssistantToolDispatcher = {
+  async dispatch(call) {
+    return {
+      callId: call.id,
+      content: "assistant tool dispatch is misconfigured: the authority-only branch reached a dispatcher",
+      isError: true,
+    };
+  },
+};

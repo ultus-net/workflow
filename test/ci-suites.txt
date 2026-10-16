@@ -13,6 +13,7 @@ test/assistant-egress-lane.test.ts
 test/assistant-gateway-tool-wiring.test.ts
 test/assistant-gateway.test.ts
 test/assistant-isolation.test.ts
+test/assistant-mcp-dispatch.test.ts
 test/assistant-tool-executor.test.ts
 test/assistant-tool-loop.test.ts
 test/assistant-withheld-enforcement.test.ts
