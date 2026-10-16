@@ -8,6 +8,12 @@ import { z } from "zod";
 
 import { METERED_PLACEHOLDER_KEY } from "./egress-credential.js";
 import type { ModelUsageMetrics } from "./model-usage-proxy.js";
+import {
+  hasTools,
+  runAssistantToolLoop,
+  type AssistantCompletionClient,
+  type AssistantToolExecutor,
+} from "./assistant-tool-loop.js";
 
 /**
  * W192 (assistant gateway, M1): the assistant gateway lane.
@@ -128,11 +134,20 @@ export async function createAssistantGateway(options: {
   readonly config: AssistantGatewayConfig;
   readonly host?: string;
   readonly port?: number;
+  /** W205: the tool executor. Present → a request carrying `tools` runs the loop; absent → M1 passthrough. */
+  readonly executor?: AssistantToolExecutor;
+  /** W205: the completion transport the loop drives. Defaults to the metered egress. */
+  readonly completionClient?: AssistantCompletionClient;
 }): Promise<AssistantGateway> {
   const server = createServer((request, response) => {
     // Error boundary: a throw on the request path fails closed with a 502,
     // never crashes the daemon and orphans the server.
-    handleAssistantRequest(request, response, { egressUrl: options.egressUrl, config: options.config }).catch(() => {
+    handleAssistantRequest(request, response, {
+      egressUrl: options.egressUrl,
+      config: options.config,
+      ...(options.executor === undefined ? {} : { executor: options.executor }),
+      ...(options.completionClient === undefined ? {} : { completionClient: options.completionClient }),
+    }).catch(() => {
       if (!response.headersSent) sendJson(response, 502, { error: { message: "assistant gateway handler failure", type: "api_error" } });
       else response.destroy();
     });
@@ -166,7 +181,12 @@ export async function createAssistantGateway(options: {
 export async function handleAssistantRequest(
   request: import("node:http").IncomingMessage,
   response: import("node:http").ServerResponse,
-  deps: { readonly egressUrl: string; readonly config: AssistantGatewayConfig },
+  deps: {
+    readonly egressUrl: string;
+    readonly config: AssistantGatewayConfig;
+    readonly executor?: AssistantToolExecutor;
+    readonly completionClient?: AssistantCompletionClient;
+  },
 ): Promise<boolean> {
   // 1. Only `POST .../chat/completions` belongs to this lane; everything else
   // is the caller's to dispatch.
@@ -179,7 +199,7 @@ export async function handleAssistantRequest(
   // through to another dispatcher that might forward the request unmetered.
   const identity = headerValue(request.headers[ASSISTANT_IDENTITY_HEADER]);
   const route = identity === undefined ? undefined : deps.config.identities[identity];
-  if (route === undefined) {
+  if (identity === undefined || route === undefined) {
     sendJson(response, 403, { error: { message: "unknown assistant identity", type: "invalid_request_error" } });
     return true;
   }
@@ -212,6 +232,30 @@ export async function handleAssistantRequest(
     ...parsed,
     messages: [{ role: "system", content: policy.systemPrompt }, ...messages],
   };
+
+  // 3b. W205 tool loop. A request carrying `tools` with a configured executor is
+  // buffered and run through the loop instead of streamed: the loop needs each
+  // full `choices[0].message`. No executor (or no `tools`) → the M1 passthrough
+  // below, unchanged. The identity is the route's binding; the loop hands the
+  // executor the route so authority is classified per route.
+  if (deps.executor !== undefined && hasTools(transformed)) {
+    const client = deps.completionClient ?? defaultCompletionClient(deps.egressUrl);
+    let result;
+    try {
+      result = await runAssistantToolLoop({
+        body: transformed,
+        identity,
+        route,
+        client,
+        executor: deps.executor,
+      });
+    } catch (error) {
+      sendJson(response, 502, { error: { message: `assistant tool loop failed: ${error instanceof Error ? error.message : String(error)}`, type: "api_error" } });
+      return true;
+    }
+    sendJson(response, 200, result.body);
+    return true;
+  }
 
   // 4. Forward the transformed body to the metered loopback proxy. We set the
   // placeholder authorization the proxy expects (it injects the real key).
@@ -259,6 +303,28 @@ async function readAll(request: IncomingMessage): Promise<Buffer> {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
   }
   return Buffer.concat(chunks);
+}
+
+/**
+ * The default completion transport for the tool loop: one buffered
+ * chat-completion round-trip through the metered loopback egress, exactly like
+ * the M1 passthrough forwards. The loop needs the full `choices[0].message`, so
+ * the response is parsed, never streamed.
+ */
+function defaultCompletionClient(egressUrl: string): AssistantCompletionClient {
+  return {
+    async runCompletion(body: Readonly<Record<string, unknown>>): Promise<unknown> {
+      const upstream = await fetch(`${egressUrl.replace(/\/+$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${METERED_PLACEHOLDER_KEY}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!upstream.ok) {
+        throw new Error("assistant egress returned " + String(upstream.status) + " for a tool-loop round-trip");
+      }
+      return (await upstream.json()) as unknown;
+    },
+  };
 }
 
 /** Normalizes a possibly-array header value to a single string. */
