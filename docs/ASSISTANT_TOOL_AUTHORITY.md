@@ -241,3 +241,38 @@ right home (it owns the mount config and the containment posture).
 
 Tests: `test/assistant-mcp-dispatch.test.ts` (11). Ledger:
 `docs/ledger/W205-s5-mcp-dispatch.md`.
+
+### M7 (W209): care-route withholding by tool NAME
+
+S4/S5 built capability-level withholding: the care run's effective grant is the
+full set minus `withheldCapabilities`, so a withheld capability denies
+`CAPABILITY_WITHHELD` at the kernel gate. But `withheldCapabilities` FILTERS OUT
+any entry that is not a known `ToolCapability` (`assistant-tool-host.ts`), so a
+tool NAME such as `file_write` or `shell` withheld nothing at that layer. The
+code comment explicitly deferred care's tool-NAME policy to the M7 domain. This
+slice supplies it.
+
+The two layers are DISJOINT and explicit. `withheldToolNames(route, withheld,
+knownCapabilities)` returns the care route's withheld TOOL NAMES: every entry
+that is NOT one of the six capability names. A capability name is never
+reinterpreted as a tool name, and a tool name is never read as a capability. A
+name that is neither a known capability nor a declared tool is STILL withheld as
+a tool name (fail closed): an operator typo withholds rather than grants.
+
+In the hub tool-call lane, a call whose `toolName` is in the care route's
+withheld NAME set is DENIED terminally (an error observation) BEFORE a run is
+resolved, before the kernel gate, the guard, or an ask, and before any dispatch
+directive is produced. Coding/tutor routes withhold no names, so the same call
+on a coding route is unaffected: it authorizes and delegates as today.
+
+- `assistant-tool-host.ts`: new `withheldToolNames` helper. The lane checks it
+  first. `withheldCapabilities` (capability level) is unchanged.
+- `cli/hub.ts`: `careWithheld` already threads `WORKFLOW_CARE_WITHHELD` into the
+  host's `withheld`; each layer reads the one list through its own vocabulary.
+
+Tests (`test/assistant-withheld-enforcement.test.ts`,
+`test/hub-assistant-tool-route.test.ts`): a care-route call to a withheld NAME is
+denied before any dispatch; the same name on a coding route is NOT denied; an
+undeclared tool still fails closed to the strictest class; capability
+withholding still denies as before. Ledger:
+`docs/ledger/W209-m7-care-tool-policy.md`.
