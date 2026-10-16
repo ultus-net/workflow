@@ -89,7 +89,13 @@ export function RoutesView({ routes, reason }: {
           </article>
         ))}
         {routes.length === 0 && (
-          <p className="muted sessions-empty-note">no routes configured — set WORKFLOW_ASSISTANT_ROUTES to bind identities to routes</p>
+          <>
+            <p className="muted sessions-empty-note">No routes are configured for this hub.</p>
+            <details className="routes-config-details">
+              <summary>how to configure routes</summary>
+              <p className="muted">Set <code>WORKFLOW_ASSISTANT_ROUTES</code> to the route config the gateway loads, then reload. It is the same JSON the gateway reads.</p>
+            </details>
+          </>
         )}
       </div>
     </section>

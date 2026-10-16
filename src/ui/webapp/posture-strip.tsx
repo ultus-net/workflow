@@ -96,7 +96,7 @@ export function PostureStrip({ state, onAction }: {
     return (
       <div className="posture-strip posture-strip-degraded" role="status">
         <span className="posture-degraded-note">
-          {state?.reason === undefined ? "operator posture: loading…" : `operator posture: hub unavailable (${state.reason})`}
+          {state?.reason === undefined ? "operator posture: loading…" : `operator posture: ${state.reason}`}
         </span>
       </div>
     );
