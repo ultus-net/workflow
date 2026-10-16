@@ -19,6 +19,8 @@
  */
 
 import type { AssistantToolCall, AssistantToolContext, AssistantToolResult, AssistantToolExecutor } from "./assistant-tool-loop.js";
+import type { AssistantToolDispatcher } from "./assistant-tool-executor.js";
+import type { McpToolClass } from "./mcp-tool-capability.js";
 import { readHubCredentials } from "./hub-discovery.js";
 
 export interface HubAssistantToolExecutorOptions {
@@ -30,6 +32,13 @@ export interface HubAssistantToolExecutorOptions {
   readonly fetchImpl?: typeof fetch;
   /** Loopback call timeout; defaults to 60s (a guard `ask` may hold past 5s). */
   readonly timeoutMs?: number;
+  /**
+   * W205 S5 (topology Option B): the local dispatcher that fulfills a hub
+   * DISPATCH DIRECTIVE — a call the hub authorized but does not own the
+   * execution seat for (every MCP tool; the hub keeps the contained shell).
+   * Absent, a directive fails the call closed rather than fabricating a result.
+   */
+  readonly dispatch?: AssistantToolDispatcher;
 }
 
 /** The hub reply shape the executor reads (`{ result: AssistantToolResult }`). */
@@ -53,6 +62,45 @@ function resultFromBody(body: unknown, callId: string): AssistantToolResult {
     content: "hub assistant tool call returned an unreadable observation",
     isError: true,
   };
+}
+
+/**
+ * The hub's authority decision, as the daemon reads it. `result` is terminal
+ * (an allow the hub dispatched itself, or a deny). `dispatch` is the directive:
+ * the hub authorized the call, and THIS process must run it.
+ */
+type HubToolDecision =
+  | { readonly kind: "result"; readonly result: AssistantToolResult }
+  | { readonly kind: "dispatch"; readonly call: AssistantToolCall; readonly toolClass: McpToolClass };
+
+function readDecision(body: unknown, request: AssistantToolCall): HubToolDecision {
+  if (typeof body === "object" && body !== null) {
+    const dispatch = (body as Record<string, unknown>).dispatch;
+    if (typeof dispatch === "object" && dispatch !== null) {
+      const record = dispatch as Record<string, unknown>;
+      const call = record.call;
+      const capability = record.capability;
+      const mutating = record.mutating;
+      if (
+        typeof call === "object" && call !== null &&
+        typeof (call as Record<string, unknown>).name === "string" &&
+        typeof capability === "string" &&
+        typeof mutating === "boolean"
+      ) {
+        const callRecord = call as Record<string, unknown>;
+        return {
+          kind: "dispatch",
+          toolClass: { capability: capability as McpToolClass["capability"], mutating },
+          call: {
+            id: typeof callRecord.id === "string" ? callRecord.id : request.id,
+            name: callRecord.name as string,
+            arguments: typeof callRecord.arguments === "string" ? callRecord.arguments : request.arguments,
+          },
+        };
+      }
+    }
+  }
+  return { kind: "result", result: resultFromBody(body, request.id) };
 }
 
 export function createHubAssistantToolExecutor(options: HubAssistantToolExecutorOptions): AssistantToolExecutor {
@@ -104,7 +152,19 @@ export function createHubAssistantToolExecutor(options: HubAssistantToolExecutor
           isError: true,
         };
       }
-      return resultFromBody(body, call.id);
+      const decision = readDecision(body, call);
+      if (decision.kind === "result") return decision.result;
+      // Topology Option B: the hub authorized the call but does not own the
+      // execution seat. Fulfill the directive locally, fail closed when no
+      // local dispatcher is composed (never a fabricated success).
+      if (options.dispatch === undefined) {
+        return {
+          callId: call.id,
+          content: "the hub authorized tool '" + call.name + "' for local dispatch but no assistant MCP dispatcher is configured (fail closed)",
+          isError: true,
+        };
+      }
+      return options.dispatch.dispatch(decision.call, context, decision.toolClass);
     },
   };
 }

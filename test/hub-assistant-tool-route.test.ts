@@ -124,7 +124,7 @@ async function compose(options: {
     runs: port,
     ...(options.guard === undefined ? {} : { guard: options.guard }),
     broker,
-    dispatcherFor: ({ hold }) => ({
+    dispatcherFor: ({ hold, toolName }) => toolName !== "run_shell" ? undefined : ({
       dispatch: async (call) => {
         // Prove the ask hold is threaded into the dispatcher's seat: a parked ask
         // would resolve here rather than at dispatch; the dispatcher itself just

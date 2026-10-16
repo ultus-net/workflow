@@ -206,3 +206,38 @@ care-route login asking for the same tool gets `CAPABILITY_WITHHELD`.
 - `setCapability` per-session scoping: S4 uses the existing fresh-application
   pattern instead, so the process-global `setCapability` is untouched. Record
   that in the S4 ledger.
+
+### S5 (W205): MCP-tool dispatch (split authority/dispatch, topology Option B)
+
+**Topology decision (operator, 2026-10-16): the hub decides, the daemon
+dispatches.** S4's single hub hop both authorized and dispatched, which only
+served the coding route's contained shell (a seat the hub owns). An MCP tool had
+no dispatcher. The operator picked the split over a hub-side MCP client.
+
+One correction this slice records: the daemon did NOT hold a live MCP client. It
+writes the MCP config and the sandboxed `opencode serve` launches the servers, so
+Option B means building the daemon-side client, not reusing one. The daemon is the
+right home (it owns the mount config and the containment posture).
+
+- `assistant-tool-executor.ts` splits the authority ordering into
+  `authorize(call)` (classify → `application.authorize` → guard → ask-hold) and
+  `execute` (authorize + dispatch). `AssistantToolAuthorization` is the new union.
+- `assistant-tool-host.ts` (`dispatcherFor` → `AssistantToolDispatcher | undefined`
+  + `toolName`): the composition declares which tools the hub owns. For a
+  non-owned tool the host runs `authorize` alone — a DENY is the terminal
+  observation, an ALLOW becomes a dispatch directive
+  (`{ dispatch: { call, capability, mutating } }`). A dispatch is only ever
+  reached AFTER the hub authorized.
+- `cli/hub.ts`: the shell seat is returned only for
+  `WORKFLOW_ASSISTANT_SHELL_TOOL`; every other tool delegates.
+- `assistant-mcp-dispatcher.ts` (new, daemon): holds no authority content; an
+  undeclared tool fails closed before any connection. Composes a stdio `Client`
+  per call and closes it in a `finally`. Plus `parseAssistantMcpToolServerMap`
+  (fail-closed operator tool→server map) and `resolveAssistantMcpServers`.
+- `assistant-tool-hub-client.ts`: reads the hub reply as a union; a directive is
+  fulfilled by the injected local dispatcher, else the call fails closed.
+- `cli/opencode-server.ts`: reads `WORKFLOW_ASSISTANT_MCP_TOOLS`, composes the
+  MCP dispatcher, and threads it into the forwarding executor.
+
+Tests: `test/assistant-mcp-dispatch.test.ts` (11). Ledger:
+`docs/ledger/W205-s5-mcp-dispatch.md`.

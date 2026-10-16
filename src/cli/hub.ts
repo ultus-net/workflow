@@ -472,11 +472,20 @@ const assistantToolCallFactory = assistantGatewayConfig === undefined
       // route's effective capability grant to it) so the contained shell shares
       // the run's withholding rather than a second workspace-scoped application.
       // The hold is the same operator ask hold the executor parks on.
-      dispatcherFor: ({ workspace: callWorkspace, application, hold }) => createContainedShellAssistantDispatcher({
-        toolName: assistantShellToolName,
-        shell: shellExecutorFor(application, undefined, true, guard, undefined, hold),
-        cwd: callWorkspace,
-      }),
+      dispatcherFor: ({ workspace: callWorkspace, application, hold, toolName }) =>
+        // Topology Option B (W205 S5): the hub owns dispatch for the configured
+        // shell tool ONLY. Any other tool returns `undefined`, and the host
+        // answers with a dispatch directive the daemon fulfills against its own
+        // MCP clients. The containment seat still runs in the hub because it
+        // shares the run's application (and its withholding) plus the operator
+        // ask hold.
+        toolName !== assistantShellToolName
+          ? undefined
+          : createContainedShellAssistantDispatcher({
+              toolName: assistantShellToolName,
+              shell: shellExecutorFor(application, undefined, true, guard, undefined, hold),
+              cwd: callWorkspace,
+            }),
     });
 // W197 (hub Workspace view): the assistant workspace directory listing
 // capability. Opt-in via WORKFLOW_ASSISTANT_WORKSPACE naming the shared

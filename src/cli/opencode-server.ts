@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
@@ -16,6 +17,11 @@ import { createOpencodeServerBudget } from "../integrations/opencode-server-budg
 import { createOpencodeServerGateway, newTuiPassword } from "../integrations/opencode-server-gateway.js";
 import { loadAssistantGatewayConfig } from "../integrations/assistant-gateway.js";
 import { createHubAssistantToolExecutor } from "../integrations/assistant-tool-hub-client.js";
+import {
+  createAssistantMcpDispatcher,
+  parseAssistantMcpToolServerMap,
+  resolveAssistantMcpServers,
+} from "../integrations/assistant-mcp-dispatcher.js";
 import { safeFleetAgentTierPins } from "../integrations/fleet-agent-tiers.js";
 import { readHubWebEndpoint } from "../integrations/hub-discovery.js";
 import {
@@ -243,6 +249,15 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   // is attached to the front door with a dedicated metered egress proxy.
   const assistantRoutesPath = (process.env.WORKFLOW_ASSISTANT_ROUTES ?? "").trim();
   const assistantRoutes = assistantRoutesPath === "" ? undefined : loadAssistantGatewayConfig(assistantRoutesPath);
+  // W205 S5 (M4, topology Option B): the operator's tool→server declaration for
+  // the daemon-side MCP dispatch seat. Absent → the map is empty and every
+  // dispatch directive from the hub fails closed inside the executor (never a
+  // fabricated success). Parsed here so a malformed declaration fails the
+  // daemon at start, matching the other fail-closed config reads.
+  const assistantMcpToolsPath = (process.env.WORKFLOW_ASSISTANT_MCP_TOOLS ?? "").trim();
+  const assistantMcpTools = assistantMcpToolsPath === ""
+    ? {}
+    : parseAssistantMcpToolServerMap(JSON.parse(readFileSync(assistantMcpToolsPath, "utf8")));
   // C1 F2 durable fix: when `WORKFLOW_UPSTREAM_KEY_FROM` names a secret store
   // (the deployed plane points it at azure-kv), the upstream key is sourced from
   // Key Vault rather than a uid-shared env. Fail-closed on a named-but-absent
@@ -516,7 +531,23 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
             // holds the broker + run registry, topology Q3b). The executor reads
             // hub discovery per call, so an absent hub fails each call closed
             // rather than silently passing the request through.
-            executor: createHubAssistantToolExecutor({ workspace }),
+            // W205 S5: the hub authorizes every call; for an MCP tool it answers
+            // with a DISPATCH DIRECTIVE. This dispatcher fulfills it against the
+            // daemon's own stdio MCP client (the hub holds no client; it writes
+            // config and the sandboxed agent launches servers). The tool→server
+            // map is operator-declared (WORKFLOW_ASSISTANT_MCP_TOOLS); an
+            // undeclared tool fails closed inside the dispatcher.
+            executor: createHubAssistantToolExecutor({
+              workspace,
+              ...(Object.keys(assistantMcpTools).length === 0
+                ? {}
+                : {
+                    dispatch: createAssistantMcpDispatcher({
+                      tools: assistantMcpTools,
+                      servers: resolveAssistantMcpServers({ settings: loadSettings({ workspace }) }),
+                    }),
+                  }),
+            }),
           },
         }),
     });
