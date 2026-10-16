@@ -241,3 +241,19 @@ right home (it owns the mount config and the containment posture).
 
 Tests: `test/assistant-mcp-dispatch.test.ts` (11). Ledger:
 `docs/ledger/W205-s5-mcp-dispatch.md`.
+
+## M6 assistant tool config (W207)
+
+The M6 evidence half is config, not code: the plane records learning evidence
+when the tutor route calls the `learning-mcp` tools through the S5 MCP dispatch
+seat. Two checked-in examples name that surface:
+
+- `docs/assistant-config/mcp-tools.json` — tool name → MCP server name.
+- `docs/assistant-config/tool-capabilities.json` — tool name → `{ capability, mutating }`.
+
+The deployed plane points its env vars at these files (or an instance copy):
+`WORKFLOW_ASSISTANT_MCP_TOOLS` → the tool map, and
+`WORKFLOW_ASSISTANT_TOOL_CAPABILITIES` → the capability map. The values are
+instance-supplied; the examples are the operator surface, and
+`test/assistant-tool-config-examples.test.ts` runs the real parsers on them so
+a drift fails in CI rather than at plane start.
