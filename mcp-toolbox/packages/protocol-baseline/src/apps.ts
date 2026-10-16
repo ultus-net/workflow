@@ -28,6 +28,7 @@ export const APPS: readonly AppDescriptor[] = [
   { id: "continuity-checkpoint-mcp", contentOnlyTools: [] },
   { id: "git-intelligence-mcp", contentOnlyTools: [] },
   { id: "learning-mcp", contentOnlyTools: [] },
+  { id: "notify-mcp", contentOnlyTools: [] },
   { id: "project-context-mcp", contentOnlyTools: [] },
   { id: "project-memory-mcp", contentOnlyTools: [] },
   { id: "skills-mcp", contentOnlyTools: [] },
