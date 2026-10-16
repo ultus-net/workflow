@@ -788,6 +788,20 @@ body {
   margin-bottom: var(--space-4);
 }
 
+/* W203: a page-header NOTE is a subtitle, not an alert. A descriptive
+   `.sessions-empty-note` that is a DIRECT child of the header wraps to its own
+   full-width row as plain muted prose — the shared empty-state box (border,
+   fill, left rule) is reset so it stops floating as a right-aligned panel.
+   Control children (the Agents picker, the Board's <code>/meta spans) are
+   untouched: only the note direct child matches. */
+.sessions-view-head > .sessions-empty-note {
+  flex-basis: 100%;
+  max-width: none;
+  border: 0;
+  background: none;
+  padding: 0;
+}
+
 .sessions-view-head h2 {
   margin: 0;
   font-family: var(--font-mono);
@@ -1112,6 +1126,40 @@ body {
   border-left: 3px solid var(--accent);
   padding: 0.7rem 0.9rem;
   color: var(--text-muted);
+}
+
+/* W203 (R4): the setup guidance and the attribution lanes ride disclosures —
+   the fix (an env var) and the long list are demoted below the operator lead,
+   never page content. Bare <details>, so no summary marker styling is needed;
+   the body is the shared mono note register, bounded to a reading measure. */
+.usage-config-details,
+.usage-attribution-details,
+.routes-config-details {
+  margin: 0.2rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.usage-config-details > summary,
+.usage-attribution-details > summary,
+.routes-config-details > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  max-width: 72ch;
+}
+
+.usage-config-detail,
+.usage-attribution-lanes {
+  margin: 0.4rem 0 0;
+  max-width: 72ch;
+}
+
+.usage-attribution-lanes {
+  padding-left: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
 .usage-credits {

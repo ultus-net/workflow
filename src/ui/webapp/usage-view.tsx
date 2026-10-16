@@ -124,14 +124,63 @@ function SessionRollupTable(props: { readonly rows: readonly UsageSessionRow[] }
   );
 }
 
-function UsageAttributionNote(props: { readonly attribution: UsageAttribution }) {
+// W203 (R4): the attribution note was one eight-line run-on paragraph. The
+// per-task fact is the LEAD; the uncovered lanes are DEMOTED into a
+// disclosure list. The payload fields (and their server-side pins) are
+// unchanged — this is the same shape W201 applied to the Board's config dump.
+export function UsageAttributionNote(props: { readonly attribution: UsageAttribution }) {
+  const { attribution } = props;
   return (
-    <p className="muted usage-note usage-attribution" aria-label="Metering attribution">
-      per-task attribution: {props.attribution.perTask}.
-      {props.attribution.unrecordedLanes.length > 0 && (
-        <> the metering trail does NOT cover: {props.attribution.unrecordedLanes.join("; ")} — they are not free, they are off-ledger.</>
+    <>
+      <p className="muted usage-note usage-attribution" aria-label="Metering attribution">
+        per-task attribution: {attribution.perTask}. attention: {attribution.attention}.
+      </p>
+      {attribution.unrecordedLanes.length > 0 && (
+        <details className="usage-attribution-details">
+          <summary>what the metering trail does not cover</summary>
+          <ul className="usage-attribution-lanes">
+            {attribution.unrecordedLanes.map((lane) => (
+              <li key={lane}>{lane}</li>
+            ))}
+          </ul>
+        </details>
       )}
-    </p>
+    </>
+  );
+}
+
+/**
+ * W203 (R4): the Usage page's not-available state. The server's reason names
+ * an env var (a fix, not a sentence), so the view leads with operator copy and
+ * DEMOTES the server string into a disclosure — never renders it as page
+ * content (the Board precedent, `board-view.tsx`). A transport error carries
+ * no fix to disclose, so it stays a plain line. The Workflow-side facts
+ * (headline, session rollup, attribution) render regardless, as before.
+ */
+export function UsageUnavailable({ payload }: { readonly payload: UsagePayload }) {
+  const detail = payload.reason ?? payload.error ?? "usage unavailable";
+  // `reason` is the analytics-not-configured case (the server sets it on the
+  // 200 body); `error` alone is a transport failure with nothing to disclose.
+  const configured = payload.reason !== undefined;
+  return (
+    <>
+      {configured ? (
+        <>
+          <p className="muted usage-setup">
+            OpenRouter analytics are not configured for this hub, so the spend breakdown is unavailable. The Workflow-side figures below are this server's own measurements.
+          </p>
+          <details className="usage-config-details">
+            <summary>why, and how to enable it</summary>
+            <p className="muted usage-config-detail">{detail}</p>
+          </details>
+        </>
+      ) : (
+        <p className="muted usage-setup">{detail}</p>
+      )}
+      {payload.headline !== undefined && <UsageHeadlineBlock headline={payload.headline} />}
+      {payload.sessionRollup !== undefined && payload.sessionRollup.length > 0 && <SessionRollupTable rows={payload.sessionRollup} />}
+      {payload.attribution !== undefined && <UsageAttributionNote attribution={payload.attribution} />}
+    </>
   );
 }
 
@@ -291,12 +340,7 @@ export function UsageView() {
       {payload === undefined && <p className="muted usage-empty-note">{loading ? "loading usage…" : ""}</p>}
 
       {payload !== undefined && payload.available === false && (
-        <>
-          <p className="muted usage-setup">{payload.reason ?? payload.error ?? "usage unavailable"}</p>
-          {payload.headline !== undefined && <UsageHeadlineBlock headline={payload.headline} />}
-          {payload.sessionRollup !== undefined && payload.sessionRollup.length > 0 && <SessionRollupTable rows={payload.sessionRollup} />}
-          {payload.attribution !== undefined && <UsageAttributionNote attribution={payload.attribution} />}
-        </>
+        <UsageUnavailable payload={payload} />
       )}
 
       {payload !== undefined && payload.available === true && (
