@@ -10,6 +10,7 @@
 test/acp-runtime-args.test.ts
 test/activity-timeline.test.ts
 test/assistant-egress-lane.test.ts
+test/assistant-gateway-tool-wiring.test.ts
 test/assistant-gateway.test.ts
 test/assistant-isolation.test.ts
 test/assistant-tool-executor.test.ts

@@ -119,18 +119,29 @@ closed; the strictest default governs an unknown tool (its proposal carries
 
 ### S3 (W205): wire the gateway to the loop
 
-**Edit:** `src/integrations/assistant-gateway.ts` — `handleAssistantRequest`
-buffers when `hasTools(body)` is true and runs `runAssistantToolLoop` with the
-injected `executor` + `client`, else the existing M1 passthrough. Streaming with
-no tools stays passthrough (no regression).
+**Edit:** `src/integrations/assistant-gateway.ts`.
 
-`AssistantCompletionClient` for a buffered request: POST the body to
-`deps.egressUrl` and parse the JSON (the loop needs the full `choices[0].message`,
-so a tool-carrying request is never streamed).
+- `handleAssistantRequest`'s `deps` gains an optional
+  `executor?: AssistantToolExecutor` and `completionClient?:
+  AssistantCompletionClient`. When a request carries tools AND an executor is
+  configured, the gateway buffers and runs `runAssistantToolLoop` and answers
+  with the final JSON body; otherwise the M1 passthrough is byte-identical.
+- `createAssistantGateway` and the front-door call site
+  (`opencode-server-gateway.ts:280`) thread the optional executor through.
+- The default `AssistantCompletionClient` (used when none is injected) POSTs the
+  body to `deps.egressUrl` + `/chat/completions` with the placeholder
+  authorization and parses the JSON response. A tool-carrying request is never
+  streamed: the loop needs the full `choices[0].message`. The client is
+  injectable so the test can script round-trips without a live egress.
+
+A request with `tools` where NO executor is configured keeps the M1 passthrough
+(the executor is opt-in, so an unconfigured ingress is byte-identical).
 
 Tests (`test/assistant-gateway-tool-wiring.test.ts`): a no-tools request stays
-byte-passthrough; a tools request runs the loop and returns the final JSON; a
-streaming no-tools request is untouched.
+byte-passthrough (assert the egress saw the injected system prompt and untouched
+body); a tools request with an injected executor + scripted completion client
+runs the loop and returns the final JSON; a tools request with NO executor stays
+passthrough; a streaming no-tools request is untouched.
 
 ### S4 (W205): run/session binding + the withheld set becomes enforcement
 
