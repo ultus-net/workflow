@@ -33,6 +33,7 @@ test/credential-config.test.ts
 test/credential-mcp.test.ts
 test/credentials.test.ts
 test/dependabot-lane.test.ts
+test/diagram-format.test.ts
 test/durable-timers.test.ts
 test/e2e-admin-azure-kv.test.ts
 test/e2e-admin.test.ts
