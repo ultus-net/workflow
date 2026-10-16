@@ -61,6 +61,7 @@ test/hub-rsi.test.ts
 test/hub-runs.test.ts
 test/hub-web-service.test.ts
 test/kernel-purity.test.ts
+test/mcp-tool-capability.test.ts
 test/model-usage-proxy.test.ts
 test/opencode-server-assistant-lane.test.ts
 test/opencode-server-budget-enforcement.test.ts
