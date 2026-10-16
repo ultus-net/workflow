@@ -76,8 +76,11 @@ export interface AssistantToolHostOptions {
   readonly config: AssistantGatewayConfig;
   /**
    * The route's withheld labels (WORKFLOW_CARE_WITHHELD), applied to the care
-   * route only. Entries outside the capability vocabulary withhold nothing at
-   * this layer (care's tool-name policy is the M7 domain).
+   * route only. The set is split by vocabulary: an entry that names one of the
+   * six capabilities is the CAPABILITY layer's (`withheldCapabilities`, the
+   * kernel gate); every other entry is a TOOL NAME (`withheldToolNames`, the
+   * M7 name policy). The two readings are disjoint, so a capability name is
+   * never reinterpreted as a tool name nor the reverse.
    */
   readonly withheld: readonly string[];
   readonly capabilities: McpToolCapabilityMap;
@@ -113,6 +116,25 @@ export function withheldCapabilities(
   if (route !== "care") return new Set<ToolCapability>();
   const known = new Set(all);
   return new Set(withheld.filter((entry): entry is ToolCapability => known.has(entry as ToolCapability)));
+}
+
+/**
+ * The withheld TOOL NAME set for a route (empty for coding/tutor). This is the
+ * M7 name policy, distinct from the capability layer above: an entry that is NOT
+ * one of the six capability names is read as a tool name. FAIL CLOSED: a name
+ * that is neither a known capability nor a declared tool is still withheld as a
+ * tool name for the care route, so an operator typo withholds rather than
+ * grants. The two vocabularies are disjoint by construction, so a capability
+ * name is never reinterpreted as a tool name (and vice versa).
+ */
+export function withheldToolNames(
+  route: AssistantRoute,
+  withheld: readonly string[],
+  knownCapabilities: readonly ToolCapability[] = ALL_TOOL_CAPABILITIES,
+): ReadonlySet<string> {
+  if (route !== "care") return new Set<string>();
+  const capabilities = new Set<string>(knownCapabilities);
+  return new Set(withheld.filter((entry) => !capabilities.has(entry)));
 }
 
 /**
@@ -164,6 +186,25 @@ export function createAssistantToolHost(options: AssistantToolHostOptions): Assi
       }
       if (typeof request.call?.id !== "string" || typeof request.call?.name !== "string") {
         return { status: 400, body: { error: "assistant tool call requires a call id and name" } };
+      }
+
+      // Care-route TOOL-NAME policy (M7), checked BEFORE any run or dispatch:
+      // a care identity whose call names a withheld tool is denied terminally,
+      // so the call never reaches the kernel gate, the guard, or a dispatch
+      // directive. A withheld name that is neither a capability nor a declared
+      // tool still denies (fail closed). Coding/tutor routes withhold no names,
+      // so the same call is unaffected there.
+      if (withheldToolNames(boundRoute, options.withheld).has(request.call.name)) {
+        return {
+          status: 200,
+          body: {
+            result: {
+              callId: request.call.id,
+              content: "tool '" + request.call.name + "' is withheld on the care route",
+              isError: true,
+            },
+          },
+        };
       }
 
       // Resolve or begin the run. A run id the caller supplied (a reused session

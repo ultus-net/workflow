@@ -1,6 +1,6 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import process from "node:process";
 
 import {
@@ -12,6 +12,24 @@ import {
   type OpportunityType,
 } from "./contracts.js";
 
+/**
+ * W206 (M6, `augur/docs/integration-plan.md` §F item 2, option (a)): this
+ * module is PURE with respect to the learner-profile file. `learning-mcp` is
+ * the SOLE writer of `<path>` (it owns the `<path>.lock` and the atomic
+ * temp+rename write, `mcp-toolbox/apps/learning-mcp/src/learner-profile.ts`).
+ * The plane reads the profile and computes over it, and hands evidence to an
+ * injected `LearnerEvidenceRecorder` port when it wants it persisted.
+ *
+ * There is no write path, no lock, and no `save`/`update` here any more. The
+ * pre-W206 module shared the one `<path>.lock` with `learning-mcp`, which was
+ * the availability defect this slice removes (two writers, one lock).
+ *
+ * The concrete recorder that calls the `record_learning_evidence` MCP tool
+ * through the assistant tool lane lives in `src/assistant/` — never here. The
+ * plane must not import the assistant subtree: the dependency arrow is one-way
+ * (assistant imports plane), enforced by `test/assistant-isolation.test.ts`.
+ */
+
 const STAGE_ORDER: readonly LearningStage[] = LEARNING_STAGES;
 
 const TYPE_WEIGHT: Record<OpportunityType, number> = {
@@ -21,19 +39,56 @@ const TYPE_WEIGHT: Record<OpportunityType, number> = {
   "new-concept": 0.2,
 };
 
+/**
+ * The injected persistence port (W206). A caller with evidence to persist hands
+ * it here; the implementation decides where it lands. The assistant adapter
+ * (`src/assistant/learner-evidence.ts`) fulfills it by calling the
+ * `record_learning_evidence` MCP tool through the assistant tool lane, so the
+ * single writer stays `learning-mcp`. The plane itself holds no implementation.
+ */
+export interface LearnerEvidenceRecorder {
+  /** Persist one observation. Rejects when the persistence lane refuses it. */
+  record(evidence: LearnerEvidence): Promise<void>;
+}
+
+/**
+ * The default recorder: a documented no-op. HONEST NOTE (W206): the tutor
+ * pipeline has no live evidence-emission call site today, so nothing composes a
+ * real recorder yet. This value exists so a caller that only reads
+ * (the TUI profile panel) or a test can hold a recorder without a non-null
+ * assertion. It performs no IO and holds no lock. When a real recorder is
+ * composed it MUST be the assistant-lane adapter
+ * (`src/assistant/learner-evidence.ts`), which routes through the
+ * `record_learning_evidence` MCP tool so `learning-mcp` stays the sole writer.
+ * Prefer that adapter wherever silently dropping evidence would be wrong.
+ */
+export const noopLearnerEvidenceRecorder: LearnerEvidenceRecorder = {
+  record(): Promise<void> {
+    return Promise.resolve();
+  },
+};
+
 export function createLearnerProfile(): LearnerProfile {
   return { version: 1, concepts: {} };
 }
 
+/**
+ * Pure path helper: where the profile lives. This module never writes it; the
+ * helper exists so the default read path and callers agree on one location.
+ */
 export function defaultLearnerProfilePath(): string {
   const dataRoot = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
   return join(dataRoot, "workflow", "learner-profile.json");
 }
 
-export function loadLearnerProfile(path = defaultLearnerProfilePath()): LearnerProfile {
+/**
+ * Parse and validate a profile from its raw file text. PURE: no IO, no lock.
+ * A version mismatch, a malformed `concepts` map, or a concept with an unknown
+ * stage, a non-finite `lastObservedAt`, or a non-array `evidence` list all
+ * yield a fresh profile rather than a partially trusted one.
+ */
+export function parseLearnerProfile(raw: string): LearnerProfile {
   try {
-    if (!existsSync(path)) return createLearnerProfile();
-    const raw = readFileSync(path, "utf8");
     const parsed = JSON.parse(raw) as Partial<LearnerProfile>;
     if (parsed.version === 1 && parsed.concepts && typeof parsed.concepts === "object" && !Array.isArray(parsed.concepts)) {
       const validConcepts = Object.values(parsed.concepts).every(
@@ -48,127 +103,24 @@ export function loadLearnerProfile(path = defaultLearnerProfilePath()): LearnerP
       if (validConcepts) return parsed as LearnerProfile;
     }
   } catch {
-    // Ignore corrupt or unreadable profile and create fresh
+    // Ignore corrupt content and fall through to a fresh profile.
   }
   return createLearnerProfile();
 }
 
-export function saveLearnerProfile(profile: LearnerProfile, path = defaultLearnerProfilePath()): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(temporary, JSON.stringify(profile, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
-  renameSync(temporary, path);
-}
-
-// ── M6: the single-writer lock ─────────────────────────────────────────────
-//
-// Two writers share one `<path>.lock` (this module and `learning-mcp`). The
-// original acquire threw on the first EEXIST, so a concurrent session failed
-// outright and a crash between `openSync` and the PID write stranded the lock
-// forever ("Remove stale lock if process terminated"). This is the documented
-// availability defect (`integration-plan.md` §F item 2): the defect was never
-// corruption (the write is atomic temp+rename), it was liveness. The fix keeps
-// the same exclusive-create lock but adds two recoveries:
-//
-//   1. Stale reclaim: a lock whose PID is unreadable (crash mid-acquire) or
-//      whose process is gone is abandoned, reclaimed, and retried.
-//   2. Bounded retry: a live holder is waited on up to `timeoutMs`, so two
-//      overlapping sessions serialize instead of one throwing.
-//
-// Ownership is unchanged: whoever holds the lock does the read-modify-write.
-
-const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
-const DEFAULT_LOCK_RETRY_DELAY_MS = 25;
-const MAX_STALE_RECLAIMS = 3;
-
-export interface LearnerProfileLockOptions {
-  /** Wait this long for a live holder before failing. Default 5000ms. */
-  readonly timeoutMs?: number;
-  /** Delay between acquire attempts. Default 25ms. */
-  readonly retryDelayMs?: number;
-}
-
-/** Synchronous sleep; the update path is sync, so a blocking wait is required. */
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
 /**
- * Is the lock at `lockPath` abandoned? True when it already vanished, holds no
- * readable PID (a crash between open and write), or names a process that is
- * gone. A live PID, including one owned by another user (EPERM), is not stale.
+ * Read the persisted profile. READ-ONLY: no lock, no write, no directory
+ * creation. A missing, corrupt, or unreadable file yields a fresh profile, so
+ * the plane always has a value to compute over and never throws at a read.
+ * `learning-mcp` owns the write; this function only ever reads.
  */
-function lockIsStale(lockPath: string): boolean {
-  let raw: string;
+export function loadLearnerProfile(path = defaultLearnerProfilePath()): LearnerProfile {
   try {
-    raw = readFileSync(lockPath, "utf8").trim();
+    if (!existsSync(path)) return createLearnerProfile();
+    return parseLearnerProfile(readFileSync(path, "utf8"));
   } catch {
-    // The holder released it between our EEXIST and this read; take it.
-    return true;
-  }
-  const pid = Number.parseInt(raw, 10);
-  if (!Number.isInteger(pid) || pid <= 0) return true;
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ESRCH";
-  }
-}
-
-function acquireLearnerProfileLock(lockPath: string, options: LearnerProfileLockOptions): number {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
-  const retryDelayMs = options.retryDelayMs ?? DEFAULT_LOCK_RETRY_DELAY_MS;
-  const deadline = Date.now() + timeoutMs;
-  let staleReclaims = 0;
-  for (;;) {
-    try {
-      return openSync(lockPath, "wx", 0o600);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
-    if (lockIsStale(lockPath)) {
-      staleReclaims += 1;
-      // A lock we cannot reclaim (e.g. unlink denied) must not spin forever.
-      if (staleReclaims > MAX_STALE_RECLAIMS) {
-        throw new Error("Learner profile lock is stale but cannot be reclaimed. Remove it manually if no process is running.");
-      }
-      try {
-        unlinkSync(lockPath);
-      } catch {
-        // Lost the reclaim race; the next iteration retries acquisition.
-      }
-      continue;
-    }
-    if (Date.now() >= deadline) {
-      throw new Error("Learner profile is currently locked by another process. Remove stale lock if process terminated.");
-    }
-    sleepSync(retryDelayMs);
-  }
-}
-
-export function updateLearnerProfile(
-  update: (profile: LearnerProfile) => void,
-  path = defaultLearnerProfilePath(),
-  options: LearnerProfileLockOptions = {},
-): LearnerProfile {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const lockPath = `${path}.lock`;
-  const lockFd = acquireLearnerProfileLock(lockPath, options);
-
-  try {
-    writeFileSync(lockFd, String(process.pid));
-    const profile = loadLearnerProfile(path);
-    update(profile);
-    saveLearnerProfile(profile, path);
-    return profile;
-  } finally {
-    closeSync(lockFd);
-    try {
-      unlinkSync(lockPath);
-    } catch {
-      // Ignore if lock file was already unlinked
-    }
+    // Ignore an unreadable profile and create a fresh one.
+    return createLearnerProfile();
   }
 }
 
