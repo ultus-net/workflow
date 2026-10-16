@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -7,11 +7,30 @@ import test from "node:test";
 import {
   createLearnerProfile,
   loadLearnerProfile,
+  noopLearnerEvidenceRecorder,
+  parseLearnerProfile,
   recordLearningEvidence,
-  saveLearnerProfile,
   selectLearningOpportunity,
-  updateLearnerProfile,
 } from "../src/index.js";
+import {
+  createAssistantLearnerEvidenceRecorder,
+  RECORD_LEARNING_EVIDENCE_TOOL,
+} from "../src/assistant/learner-evidence.js";
+import type {
+  AssistantToolCall,
+  AssistantToolContext,
+  AssistantToolResult,
+} from "../src/integrations/assistant-tool-loop.js";
+
+/**
+ * W206 (M6): the plane's learner-profile module is pure with respect to the
+ * file. `learning-mcp` is the sole writer. These cover the in-memory evidence
+ * merge (unchanged, monotonic), the pure parse, the read-only load, and the
+ * assistant-lane recorder that fulfills the injected persistence port. The
+ * write/lock assertions that lived here moved out with the write path; the
+ * lock's own coverage stays at
+ * `mcp-toolbox/apps/learning-mcp/test/learner-profile-lock.test.ts`.
+ */
 
 test("creates an empty valid learner profile", () => {
   const profile = createLearnerProfile();
@@ -72,11 +91,34 @@ test("needs-reinforcement evidence preserves stage and records gap", () => {
   assert.equal(profile.concepts["promises"]?.evidence.at(-1)?.kind, "needs-reinforcement");
 });
 
-test("saves and loads learner profile cleanly from disk", () => {
+test("parseLearnerProfile is pure: a valid document round-trips, a corrupt one is fresh", () => {
+  const profile = createLearnerProfile();
+  recordLearningEvidence(profile, {
+    concept: "variables",
+    kind: "independent",
+    summary: "Mastered const vs let",
+    timestamp: 5000,
+  });
+
+  const parsed = parseLearnerProfile(JSON.stringify(profile));
+  assert.equal(parsed.version, 1);
+  assert.equal(parsed.concepts["variables"]?.stage, "independent");
+
+  // Malformed JSON, wrong version, and an unknown stage all yield a fresh profile.
+  assert.deepEqual(parseLearnerProfile("{ not json"), createLearnerProfile());
+  assert.deepEqual(parseLearnerProfile(JSON.stringify({ version: 2, concepts: {} })), createLearnerProfile());
+  assert.deepEqual(
+    parseLearnerProfile(JSON.stringify({ version: 1, concepts: { x: { stage: "nope", lastObservedAt: 1, evidence: [] } } })),
+    createLearnerProfile(),
+  );
+});
+
+test("loadLearnerProfile only reads: it reflects a file it did not write, and a missing file is fresh", () => {
   const tempDir = mkdtempSync(join(tmpdir(), "workflow-learner-test-"));
   const profilePath = join(tempDir, "profile.json");
 
   try {
+    // The TEST writes the file (the module no longer can); the module only reads.
     const profile = createLearnerProfile();
     recordLearningEvidence(profile, {
       concept: "variables",
@@ -84,38 +126,69 @@ test("saves and loads learner profile cleanly from disk", () => {
       summary: "Mastered const vs let",
       timestamp: 5000,
     });
-
-    saveLearnerProfile(profile, profilePath);
+    writeFileSync(profilePath, JSON.stringify(profile), "utf8");
 
     const reloaded = loadLearnerProfile(profilePath);
     assert.equal(reloaded.version, 1);
     assert.equal(reloaded.concepts["variables"]?.stage, "independent");
+
+    const missing = loadLearnerProfile(join(tempDir, "absent.json"));
+    assert.deepEqual(missing, createLearnerProfile());
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
 });
 
-test("atomic updateLearnerProfile locks and persists changes", () => {
-  const tempDir = mkdtempSync(join(tmpdir(), "workflow-learner-lock-test-"));
-  const profilePath = join(tempDir, "profile.json");
+test("the no-op recorder resolves without touching disk", async () => {
+  await noopLearnerEvidenceRecorder.record({
+    concept: "x",
+    kind: "exposed",
+    summary: "dropped",
+    timestamp: 1,
+  });
+});
 
-  try {
-    const result = updateLearnerProfile((profile) => {
-      recordLearningEvidence(profile, {
-        concept: "closures",
-        kind: "developing",
-        summary: "Engaged in closure exercise",
-        timestamp: 6000,
-      });
-    }, profilePath);
+test("the assistant-lane recorder routes evidence through the record_learning_evidence tool", async () => {
+  const calls: AssistantToolCall[] = [];
+  const executor = {
+    async execute(call: AssistantToolCall): Promise<AssistantToolResult> {
+      calls.push(call);
+      return { callId: call.id, content: JSON.stringify({ concept: "closures", stage: "developing" }) };
+    },
+  };
+  const context: AssistantToolContext = { identity: "tutor-user", route: "tutor", iteration: 0 };
+  const recorder = createAssistantLearnerEvidenceRecorder({ executor, context });
 
-    assert.equal(result.concepts["closures"]?.stage, "developing");
+  await recorder.record({
+    concept: "closures",
+    kind: "developing",
+    summary: "Engaged in closure exercise",
+    timestamp: 6000,
+  });
 
-    const onDisk = loadLearnerProfile(profilePath);
-    assert.equal(onDisk.concepts["closures"]?.stage, "developing");
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.name, RECORD_LEARNING_EVIDENCE_TOOL);
+  // The tool stamps the time; the evidence timestamp is NOT sent.
+  assert.deepEqual(JSON.parse(calls[0]!.arguments), {
+    concept: "closures",
+    kind: "developing",
+    summary: "Engaged in closure exercise",
+  });
+});
+
+test("the assistant-lane recorder rejects (never silently drops) when the tool lane refuses", async () => {
+  const executor = {
+    async execute(call: AssistantToolCall): Promise<AssistantToolResult> {
+      return { callId: call.id, content: "capability or policy denied", isError: true };
+    },
+  };
+  const context: AssistantToolContext = { identity: "tutor-user", route: "tutor", iteration: 0 };
+  const recorder = createAssistantLearnerEvidenceRecorder({ executor, context });
+
+  await assert.rejects(
+    recorder.record({ concept: "x", kind: "exposed", summary: "nope", timestamp: 1 }),
+    /record_learning_evidence refused/,
+  );
 });
 
 test("selectLearningOpportunity respects budget, gap, and mastered concepts", () => {
