@@ -26,6 +26,13 @@ export const StylePackSchema = z.object({
     idiom: z.enum(["off", "optional", "required"]).default("optional"),
     /** Diagram policy mirrors idiom. */
     diagram: z.enum(["off", "optional", "required"]).default("optional"),
+    /**
+     * Diagram fence format. "text" is the ASCII glyph drawing the packs have
+     * always asked for. "mermaid" asks for Mermaid source text instead, which a
+     * surface capable of rendering it turns into a real diagram. Source text
+     * only; augur renders nothing.
+     */
+    diagramFormat: z.enum(["text", "mermaid"]).default("text"),
   }).default({}),
   voice: z.object({
     person: z.enum(["third", "first-plural", "second"]).default("third"),
@@ -109,10 +116,17 @@ export function buildSystemPrompt(pack: StylePack, langDirective: string, audien
           .join(", ")}.`
       : "Where an illustration earns its place, weave it into the prose as a sentence. Do not add standalone labels.";
 
+  const textDiagramRule =
+    "Where a section describes structure, flow, or a comparison, end it with a fenced ```text diagram. Use a fixed glyph set: ──► ▲ ▼ │ ┌ ┐ └ ┘ ├ ┤.";
+  const mermaidDiagramRule =
+    "Where a section describes structure, flow, or a hierarchy, end it with a fenced ```mermaid block. Emit valid Mermaid source only: a `flowchart` (or `graph`) for structure and flow, and a hierarchy/nested form for trees. Keep node labels short.";
+
   const diagramRule =
     ill.diagram === "off"
       ? "Do not add diagrams."
-      : "Where a section describes structure, flow, or a comparison, end it with a fenced ```text diagram. Use a fixed glyph set: ──► ▲ ▼ │ ┌ ┐ └ ┘ ├ ┤.";
+      : ill.diagramFormat === "mermaid"
+        ? mermaidDiagramRule
+        : textDiagramRule;
 
   const rules = pack.rules;
   const banned = rules.bannedPhrases.length
