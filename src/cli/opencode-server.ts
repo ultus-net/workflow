@@ -15,6 +15,7 @@ import {
 import { createOpencodeServerBudget } from "../integrations/opencode-server-budget.js";
 import { createOpencodeServerGateway, newTuiPassword } from "../integrations/opencode-server-gateway.js";
 import { loadAssistantGatewayConfig } from "../integrations/assistant-gateway.js";
+import { createHubAssistantToolExecutor } from "../integrations/assistant-tool-hub-client.js";
 import { safeFleetAgentTierPins } from "../integrations/fleet-agent-tiers.js";
 import { readHubWebEndpoint } from "../integrations/hub-discovery.js";
 import {
@@ -506,7 +507,18 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       // ingress is byte-identical.
       ...(assistantRoutes === undefined || assistantEgress === undefined
         ? {}
-        : { assistantRoutes: { config: assistantRoutes, egressUrl: assistantEgress.url } }),
+        : {
+          assistantRoutes: {
+            config: assistantRoutes,
+            egressUrl: assistantEgress.url,
+            // W205 S4: a `tools`-carrying request runs the S3 tool loop with each
+            // call forwarded to the hub's `/assistant/tool-call` route (the hub
+            // holds the broker + run registry, topology Q3b). The executor reads
+            // hub discovery per call, so an absent hub fails each call closed
+            // rather than silently passing the request through.
+            executor: createHubAssistantToolExecutor({ workspace }),
+          },
+        }),
     });
   } catch (error) {
     await authority.stop();

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { appendFileSync } from "node:fs";
-import { readdirSync, lstatSync } from "node:fs";
+import { readFileSync, readdirSync, lstatSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
@@ -55,6 +55,9 @@ import { createAuthorityGate } from "../integrations/self-improvement-loop.js";
 import { createWorkflowHub, type WorkflowHubSchedulerHandles } from "../integrations/workflow-hub.js";
 import { loadAssistantGatewayConfig, type AssistantRoute } from "../integrations/assistant-gateway.js";
 import type { AssistantRouteSummary, AssistantWorkspaceEntry, AssistantWorkspaceListing } from "../integrations/hub-http.js";
+import { createAssistantToolHost } from "../integrations/assistant-tool-host.js";
+import { createContainedShellAssistantDispatcher } from "../integrations/assistant-tool-dispatcher.js";
+import { parseMcpToolCapabilityMap } from "../integrations/mcp-tool-capability.js";
 import { opencodeServerStateHome, planeRevisionIdentity } from "../integrations/opencode-server-discovery.js";
 import { hubWebDiscoveryPath, removeHubWebDiscovery, writeHubWebDiscovery } from "../integrations/hub-web-discovery.js";
 import type { WorkflowWebService } from "./web-service.js";
@@ -72,7 +75,7 @@ import { TaskGraph } from "../kernel/task-graph.js";
 if (process.argv.slice(2).some((argument) => argument === "--help" || argument === "-h")) {
   console.log("workflow-hub — the Workflow authority daemon (one hub, one journal)");
   console.log("  state: ~/.workflow (per-revision when CONTAINER_APP_REVISION/WORKFLOW_PLANE_REVISION is set)");
-  console.log("  env: WORKFLOW_HUB_DIR, WORKFLOW_HUB_PROVENANCE, WORKFLOW_HUB_SCHEDULES, WORKFLOW_HUB_PROJECTS, WORKFLOW_ASSISTANT_ROUTES, WORKFLOW_CARE_WITHHELD, WORKFLOW_ASSISTANT_WORKSPACE");
+  console.log("  env: WORKFLOW_HUB_DIR, WORKFLOW_HUB_PROVENANCE, WORKFLOW_HUB_SCHEDULES, WORKFLOW_HUB_PROJECTS, WORKFLOW_ASSISTANT_ROUTES, WORKFLOW_CARE_WITHHELD, WORKFLOW_ASSISTANT_WORKSPACE, WORKFLOW_ASSISTANT_TOOL_CAPABILITIES, WORKFLOW_ASSISTANT_SHELL_TOOL");
   console.log("  --help  print this help");
   process.exit(0);
 }
@@ -407,12 +410,22 @@ const projectRegistry = createProjectRegistry({ path: projectsPath });
 // never an invented policy). A malformed config throws here at hub start, the
 // same fail-closed behavior the gateway has.
 const assistantRoutesConfigPath = (process.env.WORKFLOW_ASSISTANT_ROUTES ?? "").trim();
-const assistantRoutesCapability = assistantRoutesConfigPath === ""
+// W205 S4: load the route config ONCE — the same config feeds the route-summary
+// read (W195) and the hub-hosted tool-call lane, so the hub and the gateway read
+// ONE policy. Absent the path the config is undefined and BOTH capabilities are
+// withheld (fail closed).
+const assistantGatewayConfig = assistantRoutesConfigPath === ""
+  ? undefined
+  : loadAssistantGatewayConfig(assistantRoutesConfigPath);
+// W205 S4: the care route's withheld capability labels. Read once so the route
+// summary and the tool-call lane agree (WORKFLOW_CARE_WITHHELD, comma-separated,
+// empty when unset — never an invented policy).
+const careWithheld = (process.env.WORKFLOW_CARE_WITHHELD ?? "")
+  .split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
+const assistantRoutesCapability = assistantGatewayConfig === undefined
   ? undefined
   : (() => {
-      const config = loadAssistantGatewayConfig(assistantRoutesConfigPath);
-      const withheld = (process.env.WORKFLOW_CARE_WITHHELD ?? "")
-        .split(",").map((entry) => entry.trim()).filter((entry) => entry !== "");
+      const config = assistantGatewayConfig;
       const identitiesByRoute = new Map<AssistantRoute, string[]>();
       for (const [identity, route] of Object.entries(config.identities)) {
         const list = identitiesByRoute.get(route) ?? [];
@@ -424,10 +437,47 @@ const assistantRoutesCapability = assistantRoutesConfigPath === ""
           route,
           systemPrompt: config.routes[route].systemPrompt,
           identities: identitiesByRoute.get(route) ?? [],
-          withheld: route === "care" ? withheld : [],
+          withheld: route === "care" ? careWithheld : [],
         })),
       });
     })();
+// W205 S4 (M4): the assistant tool-call lane (topology Q3b). Built lazily
+// against the run-registry handles so the host resolves an assistant run's
+// application and begins runs with recorded origin. Composed only when the
+// route config is present (the identity→route map the host resolves against);
+// absent, the capability is withheld and POST /assistant/tool-call 404s.
+// WORKFLOW_ASSISTANT_TOOL_CAPABILITIES names a JSON file declaring each tool's
+// capability class (S1's parseMcpToolCapabilityMap, fail-closed on a malformed
+// value); absent, the map is empty and every tool classifies to the strictest
+// class. The coding route's dispatcher runs the configured shell tool through
+// the hub's contained shell seat.
+const assistantToolCapabilitiesPath = (process.env.WORKFLOW_ASSISTANT_TOOL_CAPABILITIES ?? "").trim();
+const assistantToolCapabilities = assistantToolCapabilitiesPath === ""
+  ? {}
+  : parseMcpToolCapabilityMap(JSON.parse(readFileSync(assistantToolCapabilitiesPath, "utf8")));
+const assistantShellToolName = (process.env.WORKFLOW_ASSISTANT_SHELL_TOOL ?? "").trim() || "run_shell";
+const assistantToolCallFactory = assistantGatewayConfig === undefined
+  ? undefined
+  : (handles: WorkflowHubSchedulerHandles) => createAssistantToolHost({
+      config: assistantGatewayConfig,
+      withheld: careWithheld,
+      capabilities: assistantToolCapabilities,
+      runs: {
+        resolve: handles.resolve,
+        begin: (input) => handles.controller.begin(input),
+      },
+      guard,
+      broker: permissionBroker,
+      // Bind the shell seat to the RUN's own application (the host applied the
+      // route's effective capability grant to it) so the contained shell shares
+      // the run's withholding rather than a second workspace-scoped application.
+      // The hold is the same operator ask hold the executor parks on.
+      dispatcherFor: ({ workspace: callWorkspace, application, hold }) => createContainedShellAssistantDispatcher({
+        toolName: assistantShellToolName,
+        shell: shellExecutorFor(application, undefined, true, guard, undefined, hold),
+        cwd: callWorkspace,
+      }),
+    });
 // W197 (hub Workspace view): the assistant workspace directory listing
 // capability. Opt-in via WORKFLOW_ASSISTANT_WORKSPACE naming the shared
 // workspace root (the augur-workspace Azure Files mount, e.g. /workspace).
@@ -784,6 +834,7 @@ try {
     schedules: scheduleRegistry,
     projects: projectRegistry,
     ...(assistantRoutesCapability === undefined ? {} : { assistantRoutes: assistantRoutesCapability }),
+    ...(assistantToolCallFactory === undefined ? {} : { assistantToolCallFactory }),
     ...(assistantWorkspaceCapability === undefined ? {} : { assistantWorkspace: assistantWorkspaceCapability }),
     // W073 trigger surface / Checkpoint F: the registry is composed lazily
     // against the run-registry handles so the production loop (agent proposal

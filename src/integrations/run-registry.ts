@@ -119,10 +119,15 @@ export interface ReasoningClaimMetrics {
  * record it, both hub-side: the route records what its OWN provider read
  * returned — the client never supplies attribution, and /run/begin still
  * accepts none (a client-supplied one would be forgeable attribution).
+ *
+ * W205 (M4) adds the `assistant` kind: a run begun by the assistant tool lane.
+ * The identity is the route binding (`x-workflow-user`), so a run row names
+ * which assistant identity drove it. Hub-side only, like the two above.
  */
 export type RunOrigin =
   | { readonly kind: "schedule"; readonly scheduleId: string }
-  | { readonly kind: "provider-task"; readonly provider: "github" | "azure_devops"; readonly key: string; readonly url: string };
+  | { readonly kind: "provider-task"; readonly provider: "github" | "azure_devops"; readonly key: string; readonly url: string }
+  | { readonly kind: "assistant"; readonly identity: string };
 
 /**
  * W165: the hub-recorded run→work-product (PR) linkage — the provider-stable
@@ -590,7 +595,9 @@ export function createRunRegistry(
           ? "run begin (run registry)"
           : origin.kind === "schedule"
             ? `schedule-fired run begin (origin ${origin.scheduleId})`
-            : `provider-task run begin (origin ${origin.key})`,
+            : origin.kind === "assistant"
+              ? `assistant run begin (identity ${origin.identity})`
+              : `provider-task run begin (origin ${origin.key})`,
         observedAt: beganAt,
       });
       if (started.kind !== "accepted") throw new Error(`cannot start run ${runId}: ${started.reason}`);

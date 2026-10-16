@@ -104,6 +104,9 @@ export function formatRunOrigin(origin: RunOriginView | undefined): string | und
       ? undefined
       : "provider-task " + origin.provider + " " + origin.key;
   }
+  if (origin.kind === "assistant") {
+    return origin.identity === undefined ? undefined : "assistant " + origin.identity;
+  }
   return undefined;
 }
 
