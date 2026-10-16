@@ -45,6 +45,7 @@ export const TOOLBOX_CATALOG: readonly ToolboxApp[] = [
   { name: "accountability-mcp", description: "Subject-bound review attestations plus authority-backed verification observations over MCP." },
   { name: "continuity-checkpoint-mcp", description: "Bounded read-only continuity recovery for coding agents over MCP." },
   { name: "learning-mcp", description: "Adaptive pedagogy engine (learner profile, stage progression, intervention budgeting, Socratic checkpoints) over MCP." },
+  { name: "notify-mcp", description: "Pluggable notification-delivery channel for care reminders over MCP (v1 records; real channels deferred)." },
   { name: "workflow-task-mcp", description: "The canonical Workflow step ledger over MCP: define, start, complete, and cancel evidence-bound task steps." },
 ];
 

@@ -14,6 +14,7 @@ test/assistant-gateway-tool-wiring.test.ts
 test/assistant-gateway.test.ts
 test/assistant-isolation.test.ts
 test/assistant-mcp-dispatch.test.ts
+test/assistant-tool-config-examples.test.ts
 test/assistant-tool-executor.test.ts
 test/assistant-tool-loop.test.ts
 test/assistant-withheld-enforcement.test.ts
@@ -69,12 +70,13 @@ test/hub-web-service.test.ts
 test/kernel-purity.test.ts
 test/mcp-tool-capability.test.ts
 test/model-usage-proxy.test.ts
+test/notify-delivery.test.ts
 test/opencode-server-assistant-lane.test.ts
 test/opencode-server-budget-enforcement.test.ts
 test/opencode-server-egress-wiring.test.ts
 test/operator-ask-hold.test.ts
 test/operator-posture.test.ts
-test/pedagogy-learner-lock.test.ts
+test/pedagogy-learner-profile-purity.test.ts
 test/plane-supervisor.test.ts
 test/plane-wake.test.ts
 test/publish-image-workflow.test.ts

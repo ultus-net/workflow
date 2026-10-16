@@ -13,6 +13,7 @@ import {
   assistantRunTaskId,
   createAssistantToolHost,
   withheldCapabilities,
+  withheldToolNames,
   type AssistantRunPort,
   type AssistantToolCallOutcome,
 } from "../src/integrations/assistant-tool-host.js";
@@ -48,9 +49,14 @@ const CONFIG: AssistantGatewayConfig = {
 const CAPABILITIES: McpToolCapabilityMap = {
   network_tool: { capability: "network", mutating: true },
   read_tool: { capability: "read", mutating: false },
+  // Declared mutation/process tools the care route does NOT withhold by
+  // capability, so the NAME policy is the only thing that can deny them.
+  file_write: { capability: "mutation", mutating: true },
+  shell: { capability: "process", mutating: true },
 };
 
-const WITHHELD = ["network"];
+/** Capability labels plus two tool NAMES the care route withholds. */
+const WITHHELD = ["network", "file_write", "shell"];
 
 /** A run port mirroring the registry: a FRESH application per begin, per run id. */
 function fakeRunPort(): AssistantRunPort & { origins: RunOrigin[]; apps: Map<string, WorkflowApplication> } {
@@ -189,13 +195,62 @@ test("an unknown identity fails closed (403) and begins nothing", async () => {
   assert.equal(port.origins.length, 0, "an unknown identity never begins a run");
 });
 
-test("withheld entries outside the capability vocabulary withhold nothing at this layer", () => {
-  // care's tool-name policy (file_write, shell) is the M7 domain; at this layer
-  // only the six capability strings apply, so a non-capability entry is inert.
+test("withheld entries outside the capability vocabulary withhold nothing at the capability layer", () => {
+  // The capability layer reads only the six capability strings, so a tool name
+  // (file_write, shell) is inert HERE — it is the NAME layer's business
+  // (`withheldToolNames`), never reinterpreted as a capability.
   const withheld = withheldCapabilities("care", ["file_write", "shell", "network"]);
   assert.deepEqual([...withheld], ["network"]);
   // And a non-care route withholds nothing regardless.
   assert.deepEqual([...withheldCapabilities("coding", ["network"])], []);
+});
+
+test("withheldToolNames reads every non-capability entry as a tool name, fail closed", () => {
+  // Capability names are NOT reinterpreted as tool names: the two vocabularies
+  // are disjoint, so `network` is the capability layer's and never withheld here.
+  assert.deepEqual([...withheldToolNames("care", ["network", "file_write", "shell"])], ["file_write", "shell"]);
+  // A name that is neither a capability nor a declared tool is still withheld
+  // (fail closed): an operator typo withholds rather than grants.
+  assert.deepEqual([...withheldToolNames("care", ["no_such_tool"])], ["no_such_tool"]);
+  // Coding/tutor routes withhold no names.
+  assert.deepEqual([...withheldToolNames("coding", ["file_write"])], []);
+});
+
+test("a care identity's withheld tool NAME is denied before any dispatch", async () => {
+  const { host, calls } = composeHost();
+
+  const outcome = await host.toolCall(callNamed("care_user", "file_write"));
+
+  assert.equal(outcome.status, 200, "the host answers an observation, not an HTTP failure");
+  const result = bodyResult(outcome);
+  assert.equal(result.isError, true);
+  assert.match(result.content, /withheld on the care route/);
+  assert.equal(calls.length, 0, "a withheld tool name never reaches the dispatcher");
+});
+
+test("the SAME withheld name is NOT denied on a coding route (the name policy is the care route's)", async () => {
+  const { host, calls } = composeHost();
+
+  const outcome = await host.toolCall(callNamed("coding_user", "file_write"));
+
+  const result = bodyResult(outcome);
+  assert.equal(result.isError, undefined, "the coding route is unaffected by the care name policy");
+  assert.equal(result.content, "dispatched: file_write");
+  assert.equal(calls.length, 1, "the coding call dispatched");
+});
+
+test("a care identity's undeclared tool still fails closed to the strictest class", async () => {
+  const { host, calls } = composeHost();
+
+  // Not a declared tool and not withheld by name: it classifies to the
+  // strictest class (process + mutating) and reaches the dispatcher, exactly as
+  // today. The care route withholds only `network` at the capability layer here.
+  const outcome = await host.toolCall(callNamed("care_user", "undeclared_tool"));
+
+  const result = bodyResult(outcome);
+  assert.equal(result.isError, undefined);
+  assert.equal(result.content, "dispatched: undeclared_tool");
+  assert.equal(calls.length, 1);
 });
 
 test("applyRouteCapabilities derives the effective set as the full grant minus withheld", () => {

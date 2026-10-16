@@ -1,0 +1,31 @@
+{
+  "schema": "https://modelcontextprotocol.io/schemas/server-card/2026-07-28",
+  "schemaVersion": "1",
+  "name": "notify-mcp",
+  "version": "0.1.0",
+  "description": "Pluggable notification-delivery channel for care reminders over MCP (v1 records; real channels deferred).",
+  "protocolVersion": "2026-07-28",
+  "transport": "stdio",
+  "capabilities": {
+    "logging": {},
+    "tools": {
+      "listChanged": true
+    }
+  },
+  "tools": [
+    {
+      "name": "notify",
+      "description": "Deliver a care reminder through a notification channel. v1 ships a recording channel that captures the reminder without external delivery; the real channel (Discord/email/ntfy/SMS) is a later M7 decision behind the same channel seam. Returns the delivery receipt (deliveryId, delivered, channel) that the delivery-id dedupe store keys on for exactly-once.",
+      "readOnly": false,
+      "taskSupport": "forbidden"
+    }
+  ],
+  "discovery": {
+    "strategy": "host-side-progressive",
+    "note": "Complete, stable tools/list is always served. This card carries a compact index (names, descriptions, risk hints) for hosts that progressively disclose model-visible definitions; tool definitions are never made connection-local or model-use-dependent.",
+    "fullCatalogBytes": 1273,
+    "toolIndexBytes": 434
+  },
+  "generatedBy": "@agent-tools/protocol-baseline",
+  "surveyedAt": "2026-09-19"
+}
