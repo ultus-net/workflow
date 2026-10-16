@@ -89,9 +89,16 @@ returns an `AssistantToolExecutor`:
    closed, never throws past the loop).
 3. `application.authorize(proposal)` — a denial returns `{ content: reason,
    isError: true }` (the loop surfaces it as an observation).
-4. `guardInputFromToolCall(call.name, input, workspace)` → `guard.guardCheck`.
-   A guard `ask` parks on `hold.park(...)`; `reject`/timeout → error observation,
-   `once` → proceed. `deny` → error observation. A guard throw fails closed.
+4. Guard input. `guardInputFromToolCall(name, input, workspace)` maps host tool
+   names only and returns `undefined` for an arbitrary MCP tool
+   (`mcp-toolbox-guard.ts:298-349`). For an MCP tool, build the guard input
+   directly as `{ action: "mcp", toolName: name, ...(workspace === undefined ?
+   {} : { workspaceRoot: workspace }) }` — the guard already has an `mcp` action
+   path keyed on `toolName` (`guard-policy/policy.ts:205-207`,
+   `guard-policy/mcp-policy.ts`), so no guard change is needed. Then
+   `guard.guardCheck(input)`. A guard `ask` parks on `hold.park(...)`;
+   `reject`/timeout → error observation, `once` → proceed. `deny` → error
+   observation. A guard throw fails closed.
 5. On allow, **dispatch**: for a `read`-class MCP tool, call the tool via the
    injected `McpToolClient` (the stdio pattern from `project-memory.ts:66-120`);
    for a `process`/`mutation` tool, route through the contained shell executor.
