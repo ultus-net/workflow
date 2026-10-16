@@ -45,7 +45,8 @@ export interface RunRowView {
  * missing its kind's own field attributes nothing. */
 export type RunOriginView =
   | { readonly kind: "schedule"; readonly scheduleId?: string }
-  | { readonly kind: "provider-task"; readonly provider?: string; readonly key?: string; readonly url?: string };
+  | { readonly kind: "provider-task"; readonly provider?: string; readonly key?: string; readonly url?: string }
+  | { readonly kind: "assistant"; readonly identity?: string };
 
 /** W165: the relay's recorded run→work-product link. */
 export interface WorkProductLinkView {

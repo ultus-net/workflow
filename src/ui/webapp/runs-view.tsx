@@ -24,7 +24,7 @@ import type { RunOriginView, RunRowView, RunsRecordState } from "./runs-record.j
 /** The origin filter's tokens: the recorded origin kinds plus the honest
  * "no recorded origin" bucket (an unattributed run is never squeezed into a
  * recorded kind). */
-export type RunOriginFilter = "all" | "schedule" | "provider-task" | "unrecorded";
+export type RunOriginFilter = "all" | "schedule" | "provider-task" | "assistant" | "unrecorded";
 
 /** The runs table's two filters. The state token is a verbatim recorded
  * state (never a hardcoded vocabulary — the records supply the options). */
@@ -38,6 +38,7 @@ export function originBucket(origin: RunOriginView | undefined): Exclude<RunOrig
   if (origin === undefined) return "unrecorded";
   if (origin.kind === "schedule") return "schedule";
   if (origin.kind === "provider-task") return "provider-task";
+  if (origin.kind === "assistant") return "assistant";
   return "unrecorded";
 }
 
@@ -61,7 +62,7 @@ export function runFilterChoices(
   rows: readonly RunRowView[],
   origins: Readonly<Record<string, RunOriginView>> | undefined,
 ): { readonly origin: readonly RunOriginFilter[]; readonly state: readonly string[] } {
-  const originOrder: readonly Exclude<RunOriginFilter, "all">[] = ["schedule", "provider-task", "unrecorded"];
+  const originOrder: readonly Exclude<RunOriginFilter, "all">[] = ["schedule", "provider-task", "assistant", "unrecorded"];
   const present = new Set(rows.map((row) => originBucket(origins?.[row.runId])));
   const states: string[] = [];
   for (const row of rows) if (!states.includes(row.state)) states.push(row.state);
@@ -75,6 +76,7 @@ const ORIGIN_LABELS: Readonly<Record<RunOriginFilter, string>> = {
   all: "all origins",
   schedule: "schedule",
   "provider-task": "provider-task",
+  assistant: "assistant",
   unrecorded: "no recorded origin",
 };
 

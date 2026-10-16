@@ -210,6 +210,13 @@ interface HubRequestContext {
    * route 404s (capability withheld, fail closed).
    */
   readonly assistantWorkspace?: (() => AssistantWorkspaceListing) | undefined;
+  /**
+   * W205 S4 (M4): the assistant tool-call lane (see AssistantToolCallCapability)
+   * — a FIELD on the capabilities object, never a positional. When composed the
+   * hub answers the operator-token `POST /assistant/tool-call`; absent → the
+   * route 404s (capability withheld, fail closed).
+   */
+  readonly assistantToolCall?: AssistantToolCallCapability | undefined;
 }
 
 /**
@@ -285,6 +292,14 @@ export interface HubBridgeCapabilities {
    * extension point), never a positional.
    */
   readonly assistantWorkspace?: (() => AssistantWorkspaceListing) | undefined;
+  /**
+   * W205 S4 (M4): the assistant tool-call lane (see AssistantToolCallCapability)
+   * — a FIELD on the capabilities object (the post-#330 extension point), never a
+   * positional. When composed the hub answers the operator-token
+   * `POST /assistant/tool-call`; absent → the route 404s (capability withheld,
+   * fail closed).
+   */
+  readonly assistantToolCall?: AssistantToolCallCapability | undefined;
 }
 
 /**
@@ -322,6 +337,25 @@ export interface AssistantWorkspaceListing {
   readonly root: string; // the configured workspace root (absolute path)
   readonly truncated: boolean; // true when the bound stopped enumeration early
   readonly entries: readonly AssistantWorkspaceEntry[];
+}
+
+/**
+ * W205 S4 (M4): the assistant tool-call lane the hub answers on
+ * `POST /assistant/tool-call`. The daemon's gateway forwards each authorized
+ * tool call here (topology Q3b: the broker + run registry live in the hub
+ * process); the hub composes the per-identity run, its route's withheld
+ * capability set, and the S2 executor with the in-process guard + broker hold,
+ * and returns one observation. Structural so hub-http does not import the host
+ * module (the post-#330 capability-extension discipline: a field, never a
+ * positional). Absent → the route 404s (capability withheld, fail closed).
+ */
+export interface AssistantToolCallCapability {
+  toolCall(input: {
+    readonly identity: string;
+    readonly workspace: string;
+    readonly call: { readonly id: string; readonly name: string; readonly arguments: string };
+    readonly runId?: string;
+  }): Promise<{ readonly status: number; readonly body: unknown }>;
 }
 
 /**
@@ -507,6 +541,35 @@ async function handleRequest(
       // closed, like the other optional registries).
       if (context.assistantRoutes === undefined) return send(response, 404, { error: "not found" });
       return send(response, 200, context.assistantRoutes());
+    }
+    if (request.url === "/assistant/tool-call") {
+      // W205 S4 (M4): the hub-hosted assistant tool-call lane (topology Q3b).
+      // The daemon's gateway forwards each authorized tool call here; the hub
+      // composes the per-identity run, the route's withheld capability set, and
+      // the S2 executor with the in-process guard + broker hold, and returns one
+      // observation. Operator-token class (same-process loopback authority). A
+      // malformed body is a 400; an absent capability → 404 (withheld, fail
+      // closed); the adapter's own status (403 unknown identity, 502 run
+      // failure, 200 observation) rides through verbatim so the route never
+      // fabricates a success.
+      if (context.assistantToolCall === undefined) return send(response, 404, { error: "not found" });
+      if (
+        !isRecord(body) ||
+        typeof body.identity !== "string" || body.identity.length === 0 ||
+        typeof body.workspace !== "string" || body.workspace.length === 0 ||
+        !isRecord(body.call) ||
+        typeof body.call.id !== "string" || typeof body.call.name !== "string" ||
+        typeof body.call.arguments !== "string"
+      ) {
+        return send(response, 400, { error: "invalid assistant tool call request: identity, workspace, and call {id,name,arguments} are required" });
+      }
+      const outcome = await context.assistantToolCall.toolCall({
+        identity: body.identity,
+        workspace: body.workspace,
+        call: { id: body.call.id, name: body.call.name, arguments: body.call.arguments },
+        ...(typeof body.runId === "string" && body.runId.length > 0 ? { runId: body.runId } : {}),
+      });
+      return send(response, outcome.status, outcome.body);
     }
     if (request.url === "/workspace") {
       // W197 (hub Workspace view): the assistant workspace directory listing

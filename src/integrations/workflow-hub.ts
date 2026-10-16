@@ -134,6 +134,22 @@ export async function createWorkflowHub(
      */
     assistantRoutes?: () => import("./hub-http.js").AssistantRouteSummary;
     /**
+     * W205 S4 (M4): the assistant tool-call lane (`POST /assistant/tool-call`).
+     * When provided, the hub exposes the operator-token route; absent means the
+     * route 404s (capability withheld, fail closed). The composition root builds
+     * it from the loaded route config + the run registry handles.
+     */
+    assistantToolCall?: import("./hub-http.js").AssistantToolCallCapability;
+    /**
+     * W205 S4 (M4): the assistant tool-call lane built LAZILY against the run
+     * registry handles (the `schedulerFactory` pattern). The factory receives the
+     * same handles the scheduler/self-improvement factories do, so the
+     * composition root can resolve an assistant run's application and begin runs
+     * with recorded origin. Takes precedence over `assistantToolCall` when both
+     * are provided. With no graph the factory is unused and the route 404s.
+     */
+    assistantToolCallFactory?: (handles: WorkflowHubSchedulerHandles) => import("./hub-http.js").AssistantToolCallCapability;
+    /**
      * W165: the board's pull-request-state read capability (the hub-side
      * provider read the /board/tasks work-product join composes from — see
      * task-provider.ts). Absent means the payload carries no workProducts.
@@ -244,6 +260,23 @@ export async function createWorkflowHub(
         recordTaskUsage: runs.recordTaskUsage,
       })
       : options.selfImprovement;
+    // W205 S4 (M4): the assistant tool-call lane may be composed lazily against
+    // the run-registry handles so it can resolve an assistant run's application
+    // and begin runs with recorded origin. A factory beats a pre-built
+    // capability; absent both, the route 404s (fail closed). With no graph the
+    // factory is unused.
+    const assistantToolCall = options.assistantToolCallFactory !== undefined && runs !== undefined
+      ? options.assistantToolCallFactory({
+        resolve: runs.resolve,
+        controller: runs.controller,
+        recordBlockingReason: runs.recordBlockingReason,
+        recordCompletionClaim: runs.recordCompletionClaim,
+        recordReasoningClaim: runs.recordReasoningClaim,
+        noteReasoningClaimMonitor: runs.noteReasoningClaimMonitor,
+        recordRunUsage: runs.recordRunUsage,
+        recordTaskUsage: runs.recordTaskUsage,
+      })
+      : options.assistantToolCall;
     // W074: connect the schedule registry's run-now to the live scheduler so
     // the operator route fires the same gated run path the clock uses. Done
     // here (not in each composition root) so any caller wiring a registry and
@@ -266,6 +299,7 @@ export async function createWorkflowHub(
         ...(options.delegateBoardTask === undefined ? {} : { delegateBoardTask: options.delegateBoardTask }),
         ...(options.projects === undefined ? {} : { projects: options.projects }),
         ...(options.assistantRoutes === undefined ? {} : { assistantRoutes: options.assistantRoutes }),
+        ...(assistantToolCall === undefined ? {} : { assistantToolCall }),
         ...(options.readWorkProductState === undefined ? {} : { readWorkProductState: options.readWorkProductState }),
         ...(options.readIssueDetail === undefined ? {} : { readIssueDetail: options.readIssueDetail }),
         ...(options.providerReadState === undefined ? {} : { providerReadState: options.providerReadState }),

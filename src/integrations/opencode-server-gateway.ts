@@ -9,6 +9,7 @@ import {
 } from "./opencode-v2-route-class.js";
 import { sessionModelRefForAgent } from "./fleet-agent-tiers.js";
 import { handleAssistantRequest, type AssistantGatewayConfig } from "./assistant-gateway.js";
+import type { AssistantToolExecutor } from "./assistant-tool-loop.js";
 
 /**
  * W071 — the OpenCode server gateway.
@@ -111,7 +112,16 @@ export interface OpencodeServerGatewayOptions {
    * metered `egressUrl` proxy (which injects the upstream key and meters).
    * Absent → the lane does not exist and the ingress is byte-identical.
    */
-  readonly assistantRoutes?: { readonly config: AssistantGatewayConfig; readonly egressUrl: string } | undefined;
+  readonly assistantRoutes?: {
+    readonly config: AssistantGatewayConfig;
+    readonly egressUrl: string;
+    /**
+     * W205 S4: the assistant tool executor. Present → a request carrying `tools`
+     * runs the tool loop (execution forwarded to the hub's
+     * `POST /assistant/tool-call`); absent → M1 passthrough.
+     */
+    readonly executor?: AssistantToolExecutor;
+  } | undefined;
 }
 
 /**
@@ -280,6 +290,7 @@ async function handle(
     const handled = await handleAssistantRequest(request, response, {
       egressUrl: options.assistantRoutes.egressUrl,
       config: options.assistantRoutes.config,
+      ...(options.assistantRoutes.executor === undefined ? {} : { executor: options.assistantRoutes.executor }),
     });
     if (handled) return;
   }

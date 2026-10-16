@@ -612,9 +612,9 @@ test("the runs page mounts in the shell — the placeholder is replaced by the r
 // ── the filter tokens carry through (a type-level pin in runtime clothing) ──
 
 test("the origin filter vocabulary is closed — a token outside it never reaches the filter", () => {
-  const tokens: readonly RunOriginFilter[] = ["all", "schedule", "provider-task", "unrecorded"];
+  const tokens: readonly RunOriginFilter[] = ["all", "schedule", "provider-task", "assistant", "unrecorded"];
   const record = fullRunsRecord();
-  const buckets: Readonly<Record<RunOriginFilter, number>> = { all: 3, schedule: 1, "provider-task": 1, unrecorded: 1 };
+  const buckets: Readonly<Record<RunOriginFilter, number>> = { all: 3, schedule: 1, "provider-task": 1, assistant: 0, unrecorded: 1 };
   for (const token of tokens) {
     const filtered = filterRunRows(record.runs!.rows, record.runs!.origins, { origin: token, state: "all" });
     assert.equal(filtered.length, buckets[token], "the filter accepts vocabulary token \"" + token + "\" and selects exactly its recorded bucket");

@@ -143,27 +143,52 @@ body); a tools request with an injected executor + scripted completion client
 runs the loop and returns the final JSON; a tools request with NO executor stays
 passthrough; a streaming no-tools request is untouched.
 
-### S4 (W205): run/session binding + the withheld set becomes enforcement
+### S4 (W205): hub-hosted execution, run binding, withheld enforcement
 
-**Edit:** `src/cli/opencode-server.ts` — compose the executor with a run
-(`run-registry.begin`), the workspace `WorkflowApplication`, the in-process guard,
-and a broker-backed `hold`. Record `origin.kind === "assistant"` on the run
-(`run-registry.ts:114-137` gains the variant).
+**Topology decision (operator, 2026-10-16): hub-hosted execution.** The M1
+gateway runs in the `opencode-server` daemon process, but the operator
+`PermissionBroker` (`hub.ts:169`) and the run registry (`run-registry.ts`) live
+in the `hub` process. In the deployed plane both run in one container over
+loopback (`docs/HOSTING_ASSESSMENT_2026-09-30.md:100,127`). Rather than stand a
+second broker in the daemon, the daemon forwards each authorized tool-call round
+to a new hub loopback route and the hub composes the executor with its broker and
+registry. Both the ask and the run then stay where they already live.
 
-**Edit:** `src/cli/hub.ts:414-427` — the care route's withheld set drives a
-**fresh `WorkflowApplication` per identity/session** whose
-`allowedCapabilities` is the full set minus the withheld ones. This is the
-existing per-session pattern (`hub.ts:290` and `:312-318` both compose a bound
-application with a chosen capability set), so withholding rides session scope by
-construction. Do NOT use process-global `setCapability` here: it would withhold
-the capability from every session in the process, including the operator's.
-A care session then genuinely lacks the capability (`CAPABILITY_WITHHELD`),
-not a label.
+**New (hub):** a Workflow-owned route on the hub daemon, e.g.
+`POST /assistant/tool-call`, token-authorized like the other hub routes
+(`hub-http.ts:395-406`). It:
+1. Resolves the identity → route from the loaded `WORKFLOW_ASSISTANT_ROUTES`
+   config (the hub already loads it: `hub.ts:409-427`).
+2. Composes a **fresh `WorkflowApplication` per identity/session** whose
+   `allowedCapabilities` is the full set minus the withheld set when the route is
+   `care` (the per-session pattern at `hub.ts:290`, `:312-318`). Do NOT use
+   process-global `setCapability`: it would withhold from every session.
+3. Composes `createAssistantToolExecutor` with that application, the in-process
+   guard, `permissionBroker.askHold(sessionKey)`, and a run
+   (`run-registry.begin`, `origin.kind === "assistant"`).
+4. Runs ONE tool call and returns the observation JSON. Per-call (not the whole
+   loop) keeps the daemon↔hub hop stateless and the ask lifecycle simple.
 
-Tests (`test/assistant-withheld-enforcement.test.ts`): a care-route identity
-requesting a withheld capability wraps the run in a `CAPABILITY_WITHHELD`
-observation; a coding-route identity with the same tool succeeds. Negative:
-toggling the capability back on re-admits.
+**Edit (daemon):** `src/cli/opencode-server.ts` composes a dispatcher
+(`assistant-tool-hub-client.ts`) that POSTs each call to the hub route and parses
+the observation. The executor reads hub discovery per call, so it is composed
+whenever the assistant lane exists and each call fails CLOSED with an error
+observation when no hub is reachable — never a silent local allow and never a
+passthrough that would let the model believe a tool ran.
+
+**Edit:** `run-registry.ts:114-137` — `RunOrigin` gains
+`{ kind: "assistant"; identity: string }`.
+
+Tests:
+- `test/assistant-withheld-enforcement.test.ts`: a `care` identity requesting a
+  withheld capability (`network`) gets a `CAPABILITY_WITHHELD` observation and no
+  dispatch; a `coding` identity with the same tool succeeds; the withheld set is
+  per-session (a coding session in the same process is unaffected).
+- `test/hub-assistant-tool-route.test.ts`: the hub route parks a guard `ask` on
+  the broker (observable on `/api/permission`), an `answer` resolves it, and a
+  `reject` fails the call closed. The run lands with `origin.kind ===
+  "assistant"`.
+- Run-origin round-trip: `origin.kind === "assistant"` renders in the runs view.
 
 ## Acceptance (the M4 row)
 
