@@ -69,6 +69,7 @@ test/hub-web-service.test.ts
 test/kernel-purity.test.ts
 test/mcp-tool-capability.test.ts
 test/model-usage-proxy.test.ts
+test/notify-delivery.test.ts
 test/opencode-server-assistant-lane.test.ts
 test/opencode-server-budget-enforcement.test.ts
 test/opencode-server-egress-wiring.test.ts
