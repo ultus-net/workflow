@@ -241,3 +241,31 @@ right home (it owns the mount config and the containment posture).
 
 Tests: `test/assistant-mcp-dispatch.test.ts` (11). Ledger:
 `docs/ledger/W205-s5-mcp-dispatch.md`.
+
+### M6 (W206): the first plane consumer of the tool lane
+
+The tool lane's first real client is the learner-profile persistence path. Under
+M6 (`augur/docs/integration-plan.md` §F item 2, option (a)) `learning-mcp` is
+the SOLE writer of `learner-profile.json`; the plane module
+`src/pedagogy/learner-profile.ts` holds no write path and no lock.
+
+The plane defines the persistence port `LearnerEvidenceRecorder { record(evidence):
+Promise<void> }` and a documented no-op default. The concrete adapter that
+fulfills it by calling the `record_learning_evidence` MCP tool through an
+injected `AssistantToolExecutor` lives under `src/assistant/`
+(`learner-evidence.ts`) — never under `src/pedagogy/`, because the plane must
+not import the assistant subtree (`test/assistant-isolation.test.ts`). An
+evidence write is therefore a normal assistant tool call: authorized by the
+kernel gate, checked by the guard, and dispatched to `learning-mcp` by the
+daemon. The `record_learning_evidence` tool is declared `mutating` (no
+`readOnlyHint`), so it rides the same authority ordering as every other mutating
+MCP tool.
+
+Honest status: the tutor pipeline emits no evidence today, so nothing composes
+the adapter yet; the follow-up wires the call site. The deploy env
+`WORKFLOW_ASSISTANT_MCP_TOOLS` must declare `record_learning_evidence` →
+learning-mcp for dispatch to succeed.
+
+Tests: `test/pedagogy-learner-profile.test.ts` and
+`test/pedagogy-learner-profile-purity.test.ts`. Ledger:
+`docs/ledger/W206-m6-learner-profile-single-writer.md`.
