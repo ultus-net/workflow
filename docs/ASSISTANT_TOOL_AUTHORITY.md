@@ -241,3 +241,82 @@ right home (it owns the mount config and the containment posture).
 
 Tests: `test/assistant-mcp-dispatch.test.ts` (11). Ledger:
 `docs/ledger/W205-s5-mcp-dispatch.md`.
+
+### M6 (W206): the first plane consumer of the tool lane
+
+The tool lane's first real client is the learner-profile persistence path. Under
+M6 (`augur/docs/integration-plan.md` §F item 2, option (a)) `learning-mcp` is
+the SOLE writer of `learner-profile.json`; the plane module
+`src/pedagogy/learner-profile.ts` holds no write path and no lock.
+
+The plane defines the persistence port `LearnerEvidenceRecorder { record(evidence):
+Promise<void> }` and a documented no-op default. The concrete adapter that
+fulfills it by calling the `record_learning_evidence` MCP tool through an
+injected `AssistantToolExecutor` lives under `src/assistant/`
+(`learner-evidence.ts`) — never under `src/pedagogy/`, because the plane must
+not import the assistant subtree (`test/assistant-isolation.test.ts`). An
+evidence write is therefore a normal assistant tool call: authorized by the
+kernel gate, checked by the guard, and dispatched to `learning-mcp` by the
+daemon. The `record_learning_evidence` tool is declared `mutating` (no
+`readOnlyHint`), so it rides the same authority ordering as every other mutating
+MCP tool.
+
+Honest status: the tutor pipeline emits no evidence today, so nothing composes
+the adapter yet; the follow-up wires the call site. The deploy env
+`WORKFLOW_ASSISTANT_MCP_TOOLS` must declare `record_learning_evidence` →
+learning-mcp for dispatch to succeed.
+
+Tests: `test/pedagogy-learner-profile.test.ts` and
+`test/pedagogy-learner-profile-purity.test.ts`. Ledger:
+`docs/ledger/W206-m6-learner-profile-single-writer.md`.
+
+### M7 (W209): care-route withholding by tool NAME
+
+S4/S5 built capability-level withholding: the care run's effective grant is the
+full set minus `withheldCapabilities`, so a withheld capability denies
+`CAPABILITY_WITHHELD` at the kernel gate. But `withheldCapabilities` FILTERS OUT
+any entry that is not a known `ToolCapability` (`assistant-tool-host.ts`), so a
+tool NAME such as `file_write` or `shell` withheld nothing at that layer. The
+code comment explicitly deferred care's tool-NAME policy to the M7 domain. This
+slice supplies it.
+
+The two layers are DISJOINT and explicit. `withheldToolNames(route, withheld,
+knownCapabilities)` returns the care route's withheld TOOL NAMES: every entry
+that is NOT one of the six capability names. A capability name is never
+reinterpreted as a tool name, and a tool name is never read as a capability. A
+name that is neither a known capability nor a declared tool is STILL withheld as
+a tool name (fail closed): an operator typo withholds rather than grants.
+
+In the hub tool-call lane, a call whose `toolName` is in the care route's
+withheld NAME set is DENIED terminally (an error observation) BEFORE a run is
+resolved, before the kernel gate, the guard, or an ask, and before any dispatch
+directive is produced. Coding/tutor routes withhold no names, so the same call
+on a coding route is unaffected: it authorizes and delegates as today.
+
+- `assistant-tool-host.ts`: new `withheldToolNames` helper. The lane checks it
+  first. `withheldCapabilities` (capability level) is unchanged.
+- `cli/hub.ts`: `careWithheld` already threads `WORKFLOW_CARE_WITHHELD` into the
+  host's `withheld`; each layer reads the one list through its own vocabulary.
+
+Tests (`test/assistant-withheld-enforcement.test.ts`,
+`test/hub-assistant-tool-route.test.ts`): a care-route call to a withheld NAME is
+denied before any dispatch; the same name on a coding route is NOT denied; an
+undeclared tool still fails closed to the strictest class; capability
+withholding still denies as before. Ledger:
+`docs/ledger/W209-m7-care-tool-policy.md`.
+
+## M6 assistant tool config (W207)
+
+The M6 evidence half is config, not code: the plane records learning evidence
+when the tutor route calls the `learning-mcp` tools through the S5 MCP dispatch
+seat. Two checked-in examples name that surface:
+
+- `docs/assistant-config/mcp-tools.json` — tool name → MCP server name.
+- `docs/assistant-config/tool-capabilities.json` — tool name → `{ capability, mutating }`.
+
+The deployed plane points its env vars at these files (or an instance copy):
+`WORKFLOW_ASSISTANT_MCP_TOOLS` → the tool map, and
+`WORKFLOW_ASSISTANT_TOOL_CAPABILITIES` → the capability map. The values are
+instance-supplied; the examples are the operator surface, and
+`test/assistant-tool-config-examples.test.ts` runs the real parsers on them so
+a drift fails in CI rather than at plane start.

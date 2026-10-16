@@ -80,17 +80,24 @@ export function lint(md: string, pack: StylePack, audience: Audience = "mid"): L
   // Illustration policy per section, read from the pack.
   const ill = pack.illustration;
   const labelRe = new RegExp(`^(?:[-*]\\s+)?(${ill.labels.join("|")}):\\s*\\S`, "i");
+  /**
+   * The diagram fence follows the pack format: "mermaid" matches a ```mermaid
+   * block, "text" matches the ASCII ```text block exactly as before. The regex
+   * is built from the format enum, never from pack-supplied free text.
+   */
+  const diagramFence = ill.diagramFormat === "mermaid" ? "mermaid" : "text";
+  const diagramRe = new RegExp("```" + diagramFence + "[\\s\\S]*?```");
   for (const sec of sections(md)) {
     const body = sec.body;
     const hasLabel = body.split("\n").some((l) => labelRe.test(l.trim()));
-    const hasDiagram = /```text[\s\S]*?```/.test(body);
+    const hasDiagram = diagramRe.test(body);
     const hasWoven = ill.render === "woven" && sec.body.length > 240;
 
     if (ill.idiom === "required" && !hasLabel) {
       findings.push({ rule: "illustration-required", line: sec.startLine, message: `Section "${sec.title}" has no labeled illustration.` });
     }
     if (ill.diagram === "required" && !hasDiagram) {
-      findings.push({ rule: "diagram-required", line: sec.startLine, message: `Section "${sec.title}" has no \`\`\`text diagram.` });
+      findings.push({ rule: "diagram-required", line: sec.startLine, message: `Section "${sec.title}" has no \`\`\`${diagramFence} diagram.` });
     }
     if (pack.rules.requireDiagramPerSection && !hasDiagram && !hasWoven) {
       findings.push({ rule: "diagram-per-section", line: sec.startLine, message: `Section "${sec.title}" has no diagram.` });
