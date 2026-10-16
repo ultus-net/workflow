@@ -128,13 +128,15 @@ streaming no-tools request is untouched.
 and a broker-backed `hold`. Record `origin.kind === "assistant"` on the run
 (`run-registry.ts:114-137` gains the variant).
 
-**Edit:** `src/cli/hub.ts:414-427` — the care route's withheld set drives
-`application.setCapability(capability, enabled=false)` at composition, so a care
-session genuinely lacks the capability (not a label). Keys the withheld set to
-the **care identity's** session, not the process: `setCapability` is
-process-global today, so per-session withholding is the real work here — a
-session-scoped capability view over `allowedCapabilities`, or a fresh application
-per session.
+**Edit:** `src/cli/hub.ts:414-427` — the care route's withheld set drives a
+**fresh `WorkflowApplication` per identity/session** whose
+`allowedCapabilities` is the full set minus the withheld ones. This is the
+existing per-session pattern (`hub.ts:290` and `:312-318` both compose a bound
+application with a chosen capability set), so withholding rides session scope by
+construction. Do NOT use process-global `setCapability` here: it would withhold
+the capability from every session in the process, including the operator's.
+A care session then genuinely lacks the capability (`CAPABILITY_WITHHELD`),
+not a label.
 
 Tests (`test/assistant-withheld-enforcement.test.ts`): a care-route identity
 requesting a withheld capability wraps the run in a `CAPABILITY_WITHHELD`
@@ -154,5 +156,6 @@ care-route login asking for the same tool gets `CAPABILITY_WITHHELD`.
   the coding route today dispatches through the contained shell executor (S2),
   which is sufficient for the file-write acceptance. Renting a full OpenCode
   headless session per coding job is its own decision (cost + lifecycle).
-- `setCapability` per-session scoping if S4 takes the fresh-application route
-  instead. Record which was taken in the S4 ledger.
+- `setCapability` per-session scoping: S4 uses the existing fresh-application
+  pattern instead, so the process-global `setCapability` is untouched. Record
+  that in the S4 ledger.
