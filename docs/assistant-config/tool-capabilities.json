@@ -1,0 +1,10 @@
+{
+  "record_learning_evidence": {
+    "capability": "mutation",
+    "mutating": true
+  },
+  "learning_checkpoint": {
+    "capability": "mutation",
+    "mutating": true
+  }
+}
