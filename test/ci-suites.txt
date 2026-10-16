@@ -82,6 +82,7 @@ test/web-dispatch-relay.test.ts
 test/web-scoping.test.ts
 test/webapp-degraded-copy.test.ts
 test/webapp-shell.test.ts
+test/webapp-statusbar-layout.test.ts
 test/webapp-surface.test.ts
 test/worker-image.test.ts
 test/workflow-action-pins.test.ts
