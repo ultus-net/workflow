@@ -99,19 +99,23 @@ returns an `AssistantToolExecutor`:
    `guard.guardCheck(input)`. A guard `ask` parks on `hold.park(...)`;
    `reject`/timeout → error observation, `once` → proceed. `deny` → error
    observation. A guard throw fails closed.
-5. On allow, **dispatch**: for a `read`-class MCP tool, call the tool via the
-   injected `McpToolClient` (the stdio pattern from `project-memory.ts:66-120`);
-   for a `process`/`mutation` tool, route through the contained shell executor.
+5. On allow, **dispatch**: hand the call to an injected
+   `AssistantToolDispatcher` port (`dispatch(call, context, toolClass)` →
+   `AssistantToolResult`). S2 ships no real dispatcher: the port is injected so
+   S2's tests run against a fake and S2 does not depend on a live server. S4
+   composes the real dispatcher (an MCP client for the tool's server on the
+   coding/tutor routes; the contained shell executor for a coding route's shell
+   tool). This keeps S2's job purely the authority ordering: classify,
+   `authorize`, guard, ask-park, then delegate.
 
-The dispatch client is a second injected port, so S2's tests run against a fake
-and S2 does not depend on a live server.
-
-Tests (`test/assistant-tool-executor.test.ts`): an allowed read-class tool runs
-and returns content; a withheld capability (care route, `network` withheld)
-returns a `CAPABILITY_WITHHELD` observation and the dispatch client is never
-called; a guard `ask` with `reject` returns an error observation; `once`
-proceeds; a guard throw fails closed; malformed `arguments` fails closed; the
-capability map's strict default governs an unknown tool.
+Tests (`test/assistant-tool-executor.test.ts`): an allowed read-class tool
+delegates to the dispatcher and returns its result; a withheld capability (care
+route, `network` withheld) returns a `CAPABILITY_WITHHELD` observation and the
+dispatcher is never called; a guard `ask` with `reject` returns an error
+observation and never dispatches; `once` proceeds; a guard `deny` returns an
+error observation; a guard throw fails closed; malformed `arguments` fails
+closed; the strictest default governs an unknown tool (its proposal carries
+`capability: "process"`, `mutating: true`).
 
 ### S3 (W205): wire the gateway to the loop
 
