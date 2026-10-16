@@ -119,8 +119,8 @@ async function compose(options: {
   const broker = new PermissionBroker();
   const host = createAssistantToolHost({
     config: CONFIG,
-    withheld: ["network"],
-    capabilities: { run_shell: { capability: "process", mutating: true } },
+    withheld: ["network", "file_write"],
+    capabilities: { run_shell: { capability: "process", mutating: true }, file_write: { capability: "mutation", mutating: true } },
     runs: port,
     ...(options.guard === undefined ? {} : { guard: options.guard }),
     broker,
@@ -204,6 +204,40 @@ test("a malformed body 400s (identity, workspace, and call are required)", async
     await composed.bridge.close();
   }
 });
+
+test("a care route call to a withheld tool NAME is denied before any dispatch directive", async () => {
+  const composed = await compose();
+  try {
+    const denied = await postToolCall(composed, {
+      identity: "care_user",
+      workspace: "/tmp/assistant-workspace",
+      call: { id: "call-1", name: "file_write", arguments: JSON.stringify({ path: "/x", content: "hi" }) },
+    });
+    assert.equal(denied.status, 200);
+    assert.deepEqual(denied.payload, {
+      result: { callId: "call-1", content: "tool 'file_write' is withheld on the care route", isError: true },
+    });
+  } finally {
+    await composed.bridge.close();
+  }
+});
+
+test("the same withheld NAME is NOT denied on a coding route (it delegates, not denies)", async () => {
+  const composed = await compose();
+  try {
+    const answered = await postToolCall(composed, {
+      identity: "coding_user",
+      workspace: "/tmp/assistant-workspace",
+      call: { id: "call-1", name: "file_write", arguments: JSON.stringify({ path: "/x", content: "hi" }) },
+    });
+    assert.equal(answered.status, 200);
+    const body = answered.payload as { dispatch?: { call: { name: string } } };
+    assert.equal(body.dispatch?.call.name, "file_write", "the coding route authorizes and delegates the name");
+  } finally {
+    await composed.bridge.close();
+  }
+});
+
 
 test("the route is operator-token class — the verifier credential is refused", async () => {
   const composed = await compose();
