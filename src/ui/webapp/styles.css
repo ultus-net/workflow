@@ -727,11 +727,16 @@ body {
   padding: 0 0.25rem;
 }
 
-/* The usage readout rides the status bar (the TUI's bottom-right cluster). */
+/* The usage readout rides the status bar (the TUI's bottom-right cluster).
+   W204: `min-width: 0` + `overflow: hidden` make the meter CLIP its own text
+   when the bar is tight, instead of letting the nowrap children paint over the
+   neighboring keybind strip (the observed 900-1100px overlap). */
 .status-bar .usage-meter {
   display: flex;
   align-items: center;
   gap: 0.9rem;
+  min-width: 0;
+  overflow: hidden;
   border-left: 1px solid var(--border);
   padding-left: 0.9rem;
   font-size: 0.72rem;
@@ -2920,6 +2925,16 @@ body {
 .task-action:hover { color: var(--text); text-decoration-color: var(--accent); }
 .task-action:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 
+@media (max-width: 1280px) {
+  /* W204: the status bar cannot hold the live usage readout AND the keybind
+     strip below ~1281px (measured onset: the nowrap meter painted over the
+     hints). The keybinds are duplicated in the composer hint line
+     (app.tsx, "Ctrl + P commands ... Ctrl + , settings"), so they YIELD to
+     the live facts (context fill, cost, branch). Do not reorder: the meter is
+     the operator's mid-turn signal, the hints are static. */
+  .status-bar-keys { display: none; }
+}
+
 @media (max-width: 1100px) {
   /* Half-screen chat: the inspector collapses away and the thread + composer
      own the screen. The inspector's facts remain reachable at full width or
@@ -2954,7 +2969,6 @@ body {
   .composer-meta { flex-wrap: wrap; }
   .composer-chips { overflow-x: auto; }
   .usage-cost { display: none; }
-  .status-bar-keys { display: none; }
   .status-bar-branch { display: none; }
   .task-add { display: grid; grid-template-columns: 1fr auto; }
   .task-add input:nth-child(2), .task-add button { grid-column: 1 / -1; }
