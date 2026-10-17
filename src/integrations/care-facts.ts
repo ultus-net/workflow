@@ -40,10 +40,15 @@ import { readCarePolicy, type CareRealityOrientation } from "./care-policy.js";
  * dir/file is the honest empty channel), never fabricate (a MALFORMED —
  * present-but-unparseable or schema-invalid — core or annotations file
  * THROWS; it never reads as empty, because a silently-empty core would hide
- * the very facts the rule exists to assert). The store loads a snapshot at
- * construction; re-read by constructing again (the hub projection helper does
- * exactly that per request, so an operator core edit is live on the next
- * read).
+ * the very facts the rule exists to assert). Zero-byte coherence (W213
+ * review follow-up): a ZERO-BYTE or whitespace-only file is the honest
+ * EMPTY channel for BOTH core and annotations — a writer that produced
+ * nothing is an absent channel, not a malformed one — so the two formats
+ * (YAML's lenient empty-document null and JSON's strict empty-string throw)
+ * resolve to ONE deliberate posture instead of an accidental asymmetry. The
+ * store loads a snapshot at construction; re-read by constructing again
+ * (the hub projection helper does exactly that per request, so an operator
+ * core edit is live on the next read).
  */
 
 const careFactSchema = z.object({
@@ -131,6 +136,7 @@ function loadCore(dir: string, maxFacts: number): readonly CareFact[] {
     if (isEnoent(error)) return []; // honest absence: no core file is the empty core
     throw error;
   }
+  if (raw.trim() === "") return []; // zero-byte/whitespace-only: the honest empty core (see module note)
   let parsed: unknown;
   try {
     parsed = parseYaml(raw);
@@ -154,6 +160,7 @@ function loadAnnotations(dir: string, maxAnnotations: number): readonly CareAnno
     if (isEnoent(error)) return []; // honest absence: no annotations file is the empty channel
     throw error;
   }
+  if (raw.trim() === "") return []; // zero-byte/whitespace-only: the honest empty channel (see module note)
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw) as unknown;

@@ -162,6 +162,54 @@ Test files: `test/care-facts.test.ts` (11), `test/hub-assistant-care.test.ts`
 (5), `test/hub-composition-forwarding.test.ts` (extended with the /care
 pins). Both new files added to `test/ci-suites.txt` in sorted position.
 
+## Review follow-ups (2026-10-17, branch `feat/w213-care-fact-store`)
+
+Independent review of the W213 slice APPROVED with one P2 and one P3, both
+closed here in a follow-up commit.
+
+- **P2 — the "fabricates nothing" error path was unpinned.** The headline
+  claim is that a malformed core never fabricates a projection, but the path
+  where `context.assistantCare()` throws (the router's catch-all at
+  `src/integrations/hub-http.ts:1362-1368` turns it into a 500 carrying the
+  real message) had no test. **Disposition: pinned at all three levels** in
+  `test/hub-assistant-care.test.ts` ("a malformed core fabricates NOTHING"):
+  closure level (`assert.throws(() => readCareProjection(dir), /invalid care
+  core/)`), route level (POST /care over `createWorkflowHubBridge` → 500, the
+  body has NO `care` field and the error carries the real message), and relay
+  level (real `createWorkflowHub` + real `createWorkflowWebServer`, GET
+  /api/care → 200 `{ care: null, reason }` with the hub's real error as the
+  reason — the named-absence contract holds for any non-200 hub answer, the
+  web-dispatch-relay composition pattern).
+- **P3 — the zero-byte asymmetry was accidental, not decided.** A
+  present-but-zero-byte `core.yaml` read as the honest EMPTY core (YAML's
+  lenient empty-document `null` → `parsed ?? {}`), but a zero-byte
+  `annotations.json` THREW (`JSON.parse("")`). **Disposition: made coherent —
+  the preferred posture.** A zero-byte or whitespace-only file is now the
+  honest EMPTY channel for BOTH formats (an explicit `raw.trim() === ""` →
+  `[]` guard in `loadCore` and `loadAnnotations`): a writer that produced
+  nothing is an absent channel, not a malformed one. The rationale is
+  documented in the `care-facts.ts` module doc comment, and both behaviors —
+  plus the unchanged "non-empty malformed content still throws" posture — are
+  pinned in `test/care-facts.test.ts` ("a zero-byte or whitespace-only file
+  is the honest EMPTY channel for BOTH formats").
+
+`test/ci-suites.txt` is unchanged (same test files; both new pins ride the
+existing entries).
+
+Verification after the follow-ups:
+
+```text
+$ node --import tsx --test test/care-facts.test.ts \
+    test/hub-assistant-care.test.ts \
+    test/hub-composition-forwarding.test.ts \
+    test/ci-suites-manifest.test.ts
+# tests 26  # pass 26  # fail 0   (was 24; +1 store pin, +1 hub-route pin)
+
+$ npm run typecheck   -> clean
+$ npm run lint        -> clean
+$ npm run build       -> clean
+```
+
 ## Not built in this slice (scope discipline)
 
 - The care UI view (W214), the care loop and fact-grounded replies, and the

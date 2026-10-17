@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
 
 import { createWorkflowHubBridge, type HubBridgeCapabilities } from "../src/integrations/hub-http.js";
 import { CARE_ASSERTION_RULE, readCareProjection, type CareProjection } from "../src/integrations/care-facts.js";
+import { createWorkflowHub } from "../src/integrations/workflow-hub.js";
+import { createWorkflowWebServer } from "../src/ui/web.js";
 import { hostCapabilities } from "../src/adapters/host.js";
 import { WorkflowApplication } from "../src/application/workflow.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
@@ -137,4 +140,46 @@ test("W213: the hub stays POST-only — a GET on /care is 401", async (context) 
     headers: { authorization: `Bearer ${bridge.token}` },
   });
   assert.equal(response.status, 401, "the POST-only gate runs before dispatch");
+});
+
+test("W213 (review P2): a malformed core fabricates NOTHING — closure throws, the route is an honest 500, the relay names the absence", async (context) => {
+  const dir = seat(context);
+  const careDir = join(dir, "care");
+  mkdirSync(careDir);
+  writeFileSync(join(careDir, "core.yaml"), "facts: [not a list"); // present but unparseable
+
+  // Closure level: the projection never returns a fabricated payload.
+  assert.throws(() => readCareProjection(careDir), /invalid care core/, "the projection closure throws on a malformed core — it fabricates nothing");
+
+  // Route level: the capability's throw hits the router's catch-all, so the
+  // operator gets an honest 500 carrying the real message — never a 200 with
+  // a `care` field.
+  const bridge = await compose(context, { assistantCare: () => readCareProjection(careDir) });
+  const answered = await call(bridge, "/care", bridge.token);
+  assert.equal(answered.status, 500, "a malformed core is an honest server error, never a fabricated projection");
+  const body = answered.payload as { care?: unknown; error?: unknown };
+  assert.equal(body.care, undefined, "the 500 body has NO care field — nothing is fabricated");
+  assert.match(String(body.error), /invalid care core/, "the 500 carries the real error message");
+
+  // Relay level: the web service's fail-closed contract for ANY non-200 hub
+  // answer holds here too — GET /api/care answers care: null with the hub's
+  // real error as the reason (composed end-to-end: real hub + real web
+  // server, the web-dispatch-relay pattern).
+  const hubDir = join(dir, "hub");
+  mkdirSync(hubDir);
+  const graph = new TaskGraph([{ id: taskId("seed"), title: "seed", state: "READY", dependencies: [], requiredEvidence: [] } satisfies WorkflowTask]);
+  const hub = await createWorkflowHub(seedApplication(), {
+    discoveryDir: hubDir,
+    graph,
+    assistantCare: () => readCareProjection(careDir),
+  });
+  context.after(() => hub.close());
+  const server = createWorkflowWebServer(seedApplication(), undefined, undefined, { hubDiscoveryDir: hubDir });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const relayed = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/api/care`);
+  assert.equal(relayed.status, 200);
+  const relayBody = (await relayed.json()) as { care: unknown; reason?: string };
+  assert.equal(relayBody.care, null, "the relay answers the named absence, never a fabricated projection");
+  assert.match(String(relayBody.reason), /invalid care core/, "the relay's reason is the hub's real error");
 });

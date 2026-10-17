@@ -122,6 +122,28 @@ test("W213: a missing dir or missing files are honest absences — the empty cor
   assert.deepEqual(absent.annotations(), []);
 });
 
+test("W213 (review P3): a zero-byte or whitespace-only file is the honest EMPTY channel for BOTH formats", (context) => {
+  // Deliberate posture, decided in review: a writer that produced nothing is
+  // an absent channel, not a malformed one. YAML's lenient empty-document
+  // null and JSON's strict empty-string throw must resolve to ONE behavior.
+  const dir = seat(context);
+  writeFileSync(join(dir, "core.yaml"), "");
+  writeFileSync(join(dir, "annotations.json"), "");
+  const store = createCareFacts({ dir });
+  assert.deepEqual(store.facts(), [], "zero-byte core.yaml is the honest empty core");
+  assert.deepEqual(store.annotations(), [], "zero-byte annotations.json is the honest empty channel (no throw)");
+  const dir2 = join(dir, "whitespace");
+  mkdirSync(dir2);
+  writeFileSync(join(dir2, "core.yaml"), "  \n\n  ");
+  writeFileSync(join(dir2, "annotations.json"), " \n\t ");
+  const ws = createCareFacts({ dir: dir2 });
+  assert.deepEqual(ws.facts(), [], "whitespace-only core.yaml is the honest empty core");
+  assert.deepEqual(ws.annotations(), [], "whitespace-only annotations.json is the honest empty channel");
+  // The malformed posture is unchanged: non-empty invalid content still throws.
+  writeFileSync(join(dir2, "annotations.json"), "{still not json");
+  assert.throws(() => createCareFacts({ dir: dir2 }), /invalid care annotations/, "non-empty malformed content stays an honest error");
+});
+
 test("W213: a malformed core THROWS — present-but-invalid never reads as silently empty", (context) => {
   const dir = seat(context);
   writeFileSync(join(dir, "core.yaml"), "facts: [unclosed");
