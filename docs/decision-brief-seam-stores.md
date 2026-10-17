@@ -3,7 +3,7 @@
 **Status:** Open - awaiting operator decision (2026-10-17)
 **Decision owner:** operator
 **Gates:** the hub care view and note view (currently unbuilt by design)
-**Context:** `augur/docs/planning-questions.md` Q26, Q28, Q31; `augur/docs/integration-plan.md` M5/M6/M7
+**Context:** `augur/docs/planning-questions.md` Q26, Q28, Q29, Q31; `augur/docs/integration-plan.md` M5/M6/M7
 
 ## Why this brief exists
 
@@ -22,12 +22,14 @@ policy decision.
 - A produced note is already a markdown file on disk. `augur` writes it with
   `writeFileSync(outPath, result.markdown, "utf8")` under the resolved workspace
   (`augur/src/cli.ts:72-79`).
-- The hub already lists that workspace. The `augur-workspace` share is mounted
-  into the plane and the assistant, and the hub's `POST /workspace` read returns
-  a bounded directory listing (root, `truncated` flag, per-entry name/kind/size/
-  modifiedMs) (`src/integrations/hub-http.ts:323-338`).
-- The Workspace view renders that listing and states it never reads file
-  contents (`src/ui/webapp/workspace-view.tsx:7-14`).
+- The hub already lists that workspace. The hub's workspace capability is
+  opt-in via `WORKFLOW_ASSISTANT_WORKSPACE`, naming the shared `augur-workspace`
+  Azure Files mount (e.g. `/workspace`), and its `POST /workspace` read returns a
+  bounded directory listing (root, `truncated` flag, per-entry name/kind/size/
+  modifiedMs) (`src/cli/hub.ts:490-496`, `src/integrations/hub-http.ts:323-338`).
+- The Workspace view renders that listing and states it "fabricates nothing"
+  (`src/ui/webapp/workspace-view.tsx:7`); the listing route itself states the hub
+  "never reads file contents" (`src/integrations/hub-http.ts:327`).
 - The bounded evidence content store is a different mechanism: it holds only
   `"test-output" | "screenshot"` bytes for the evidence strip, capped at 24
   entries and 256 KiB (`src/integrations/evidence-content-store.ts:19-40`).
@@ -162,9 +164,12 @@ annotations (timestamps, observed counters) that never override core facts.
 - Pros: preserves operator authority while letting the runtime record what it
   observed; matches the evidence-based, annotated instinct elsewhere.
 - Cons: the core-versus-annotation boundary must be enforced in code, not
-  convention, or it degrades into Option B with unclear authority. Q29
-  (self-reported claims) already points at the annotation channel, so this
-  option also gives those claims a home.
+  convention, or it degrades into Option B with unclear authority. It inherits
+  Option A's con: the authoritative core is still human-edited, so the operator
+  carries the edit load for facts that change weekly. Q29 (self-reported claims)
+  already points at the annotation channel, so this option also gives those
+  claims a home. The gain over Option A is the inert home for observations that
+  must never become assertions.
 - Fitness for Q28: strong, same as A, with the annotation channel kept out of
   the authoritative read.
 
@@ -182,20 +187,32 @@ high-stakes categories:
   where a wrong name or date does damage.
 
 **Recommended rule, sharper than a category split:** the curated core is the
-ONLY source of factual assertions. Anything not in it is not asserted; it is
-handled by the Q28 policy (validate without endorsement / redirect). The
-annotation channel lives beside the core and is excluded from the authoritative
-read, enforced in code, not convention. Deflection is the default, not a
-grounding call, so there is no per-utterance lookup cost to trim later and the
-fail-closed property is structural.
+ONLY source of factual assertions. The annotation channel lives beside the core
+and is excluded from the authoritative read, enforced in code, not convention.
+The rule is not a category split, so there is no expensive per-claim LLM
+grounding call to trim later: a claim is a keyed lookup against a small curated
+core, not a separate reasoning pass. The fail-closed surface is structural.
+
+**Two behaviors, two triggers (resolving the Q28 relationship).** The core
+enforces two distinct things, and conflating them is why Q28 looks like it gates
+the whole rule:
+
+- **Not asserting what is not in the core (structural, no Q28 needed).** A
+  claim absent from the core is simply not emitted. This is the fail-closed
+  default and it needs no policy value: silence is the fallback.
+- **How to respond when the user asserts something false (needs Q28).** When
+  the user himself asserts a falsehood, the system must choose: gentle
+  orientation, validation without endorsement, or redirect. That choice IS the
+  Q28 policy and has no structural default. It is the behavior the care view
+  must let the operator audit, so Q28 is a GATING dependency for the care view.
 
 **Enforcement point (named, so the rule is operative):** the assertion gate sits
 at the care loop's pre-emit step, the same position `verify.ts` blocks notes
 (`augur/src/verify.ts:159-190`). Every outgoing factual claim is checked against
-the authored core; a claim that fails or is absent falls to the Q28 policy. The
-gate reads the core only — the annotation channel is never a source, at read or
-render time. Without a policy value from Q28 the gate has nothing to fall to, so
-Q28 is a GATING dependency for the care view, not a parallel task.
+the authored core. The gate reads the core only; the annotation channel is never
+a source, at read or render time. This gate does not need Q28 to be fail-closed:
+an ungrounded claim is dropped. Q28 governs the separate false-user-assertion
+response above.
 
 **Annotation channel is inert data.** An annotation is never asserted unless it
 is promoted into the authored core by the operator. The brief states no
@@ -219,9 +236,11 @@ brief recommends only the store shape (C) and the read rule (curated core only).
 - **Decision 1 (recommended A):** the hub note view becomes buildable on real
   data. No store build; one bounded read route and one view.
 - **Decision 2 (recommended C + curated-core-only):** the care view becomes
-  buildable; the care route's grounding gate gets its contract; Q28 gets a config
-  home. Q28's policy value gates the care view (the assertion gate needs a
-  fallback), so that decision is on the critical path, not parallel.
+  buildable; the care route's assertion gate gets its contract. The gate is
+  fail-closed without Q28 (an ungrounded claim is dropped). Q28 is still required
+  for the care view, because it supplies the false-user-assertion response the
+  view must expose; that decision is on the care view's critical path, not
+  parallel.
 
 ## What stays deferred regardless
 
