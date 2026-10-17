@@ -88,6 +88,7 @@ test/plane-wake.test.ts
 test/publish-image-workflow.test.ts
 test/reminder-state-machine.test.ts
 test/research-conductor.test.ts
+test/research-entry.test.ts
 test/research-openrouter-ports.test.ts
 test/research-prompt.test.ts
 test/security-assurance.test.ts
