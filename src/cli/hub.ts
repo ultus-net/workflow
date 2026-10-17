@@ -7,6 +7,7 @@ import { isAbsolute, join } from "node:path";
 import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createEvidenceContentStore } from "../integrations/evidence-content-store.js";
+import { createNoteStore } from "../integrations/note-store.js";
 import { fetchBoardTasksFromEnv } from "../integrations/azure-devops-provider.js";
 import { providerEnvWithStoredTokens, PROVIDER_TOKEN_ENV_NAMES } from "../integrations/provider-token.js";
 import { boardProviderFromEnv, createBoardReadCache, fetchBoardTask, fetchIssueCrossReferences, fetchWorkProductState } from "../integrations/task-provider.js";
@@ -534,6 +535,24 @@ const assistantWorkspaceCapability = assistantWorkspaceRoot === ""
         return { root: assistantWorkspaceRoot, truncated, entries };
       };
     })();
+// W212 (hub Note view, decision-brief Option A): the notes subtree
+// capabilities. Gated on the SAME WORKFLOW_ASSISTANT_WORKSPACE env that gates
+// /workspace — no new env var. The notes subtree is `<workspace>/notes`; the
+// store (`src/integrations/note-store.ts`) carries the W158/W197 discipline:
+// bounded (500-entry listing, 256 KiB per-note read cap), path-confined (the
+// read accepts only a bare `.md` basename), lstat-only (symlinks never
+// followed), never recursed, and never fabricating sidecar metadata (a
+// missing/malformed `<slug>.json` reads as `meta: null`). Absent capability
+// -> POST /notes and POST /note-read 404 (fail closed, like /workspace).
+const assistantNoteStore = assistantWorkspaceRoot === ""
+  ? undefined
+  : createNoteStore({ root: join(assistantWorkspaceRoot, "notes") });
+const assistantNotesCapability = assistantNoteStore === undefined
+  ? undefined
+  : () => assistantNoteStore.list();
+const assistantNoteReadCapability = assistantNoteStore === undefined
+  ? undefined
+  : (name: string) => assistantNoteStore.read(name);
 // orientation block (W077 — static, versioned, no interpolation; the agent
 // learns the hub exists and which tools to reach for) and the operator's
 // advisory guidance (WORKFLOW_ADVISORY_STYLE / WORKFLOW_ADVISORY_NOTES) are
@@ -845,6 +864,10 @@ try {
     ...(assistantRoutesCapability === undefined ? {} : { assistantRoutes: assistantRoutesCapability }),
     ...(assistantToolCallFactory === undefined ? {} : { assistantToolCallFactory }),
     ...(assistantWorkspaceCapability === undefined ? {} : { assistantWorkspace: assistantWorkspaceCapability }),
+    // W212: compose the notes subtree listing + confined content read beside
+    // the workspace listing (same WORKFLOW_ASSISTANT_WORKSPACE gate).
+    ...(assistantNotesCapability === undefined ? {} : { assistantNotes: assistantNotesCapability }),
+    ...(assistantNoteReadCapability === undefined ? {} : { assistantNoteRead: assistantNoteReadCapability }),
     // W073 trigger surface / Checkpoint F: the registry is composed lazily
     // against the run-registry handles so the production loop (agent proposal
     // source + agent applier + measure) drives the real controller. With
