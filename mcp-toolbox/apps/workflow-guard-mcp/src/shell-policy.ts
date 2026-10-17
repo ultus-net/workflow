@@ -176,6 +176,46 @@ function interactiveReason(command: string, depth = 0): string | undefined {
   return undefined;
 }
 
+// W214 (residual #27, issue #540): the upstream destructive.ts content-scan
+// operators. liveMutationIn unifies the shell lane's OWN destructive
+// detection surface (the same patterns and normalization variants
+// checkShellPolicy runs), so a written script body is classified by exactly
+// the shapes the shell lane would deny — script content that names a live
+// mutation is caught before execution, not after. The W108 destination-aware
+// force-push classification stays out of this blind scan by design: a
+// feature-branch force-push is an allowed shell operation, so content may
+// describe it.
+export function liveMutationIn(command: string): string | undefined {
+  const decoded = decodeShellEscapes(command);
+  const normalized = normalizedCommand(decoded);
+  for (const pattern of destructivePatterns) {
+    if (pattern.re.test(command) || pattern.re.test(decoded) || pattern.re.test(normalized)) return pattern.reason;
+  }
+  return undefined;
+}
+
+/**
+ * Extracts every content-bearing field of a write/edit payload (upstream
+ * destructive.ts extractEditContent): direct content/newString, patch bodies
+ * (patchText/patch/diff), and multi-file changes[].content.
+ */
+export function extractEditContent(input: unknown): string[] {
+  if (typeof input !== "object" || input === null) return [];
+  const record = input as Record<string, unknown>;
+  const contents: string[] = [];
+  for (const key of ["content", "newString", "patchText", "patch", "diff"]) {
+    if (typeof record[key] === "string") contents.push(record[key] as string);
+  }
+  if (Array.isArray(record.changes)) {
+    for (const change of record.changes) {
+      if (typeof change === "object" && change !== null && typeof (change as Record<string, unknown>).content === "string") {
+        contents.push((change as Record<string, unknown>).content as string);
+      }
+    }
+  }
+  return contents;
+}
+
 export function checkShellPolicy(command: string, context: GitPolicyContext = {}): ShellPolicyMatch | undefined {
   const dynamic = dynamicShellSyntaxIn(command);
   if (dynamic) return { policy: "dynamic-shell-syntax", decision: "deny", reason: `Cannot safely inspect shell command: ${dynamic}.`, matched: command };

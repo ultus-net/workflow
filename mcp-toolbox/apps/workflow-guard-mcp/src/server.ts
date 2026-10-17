@@ -21,7 +21,7 @@ server.registerTool(
   {
     description: "Proactively call before a guarded coding-agent action when the host does not enforce this policy itself. Modifications require an active task, a feature branch, and a prior same-session read. Advisory unless the host wires the result into enforcement.",
     inputSchema: {
-      action: z.enum(["shell", "file_write", "git", "network", "mcp"]),
+      action: z.enum(["shell", "file_write", "git", "network", "mcp", "read"]),
       command: z.string().optional(),
       path: z.string().optional(),
       workspaceRoot: z.string().optional(),
