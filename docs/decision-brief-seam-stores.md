@@ -71,8 +71,13 @@ read them without becoming a general file browser?
 An `augur` run writes each note to a known subdirectory of the shared workspace
 (for example `<workspace>/notes/<date>-<slug>.md`) with a small sidecar of
 admission metadata. The hub note view lists that subtree through the existing
-`POST /workspace` pattern and reads one note's content through a new bounded
-`POST /note-read` route confined to that subtree.
+`POST /workspace` pattern and reads a single note's content through a new
+bounded `POST /note-read` route confined to that subtree. The read route is
+net-new: the existing listing route deliberately reads no file contents
+(`src/integrations/hub-http.ts:323-338`), so it is the read-free precedent, not
+the read itself. Its bounds mirror the evidence store's discipline
+(`src/integrations/evidence-content-store.ts:36-40`): a path-confinement
+allowlist (the notes subtree only) and a per-note byte cap.
 
 - Pros: no new store; reuses the share, the mount, and the listing route that
   already exist; notes stay diffable files on disk, matching the "config is
@@ -184,6 +189,19 @@ read, enforced in code, not convention. Deflection is the default, not a
 grounding call, so there is no per-utterance lookup cost to trim later and the
 fail-closed property is structural.
 
+**Enforcement point (named, so the rule is operative):** the assertion gate sits
+at the care loop's pre-emit step, the same position `verify.ts` blocks notes
+(`augur/src/verify.ts:159-190`). Every outgoing factual claim is checked against
+the authored core; a claim that fails or is absent falls to the Q28 policy. The
+gate reads the core only — the annotation channel is never a source, at read or
+render time. Without a policy value from Q28 the gate has nothing to fall to, so
+Q28 is a GATING dependency for the care view, not a parallel task.
+
+**Annotation channel is inert data.** An annotation is never asserted unless it
+is promoted into the authored core by the operator. The brief states no
+automatic promotion path; promotion is a deliberate human edit, which is the
+point of choosing the hybrid over a pure structured store.
+
 **Recommendation: Option C for the store, the curated-core-only assertion rule
 for the read.** The hybrid keeps operator authority (facts stay human-edited),
 gives self-reported claims an explicit home (Q29), and confines the annotation
@@ -202,7 +220,8 @@ brief recommends only the store shape (C) and the read rule (curated core only).
   data. No store build; one bounded read route and one view.
 - **Decision 2 (recommended C + curated-core-only):** the care view becomes
   buildable; the care route's grounding gate gets its contract; Q28 gets a config
-  home.
+  home. Q28's policy value gates the care view (the assertion gate needs a
+  fallback), so that decision is on the critical path, not parallel.
 
 ## What stays deferred regardless
 
