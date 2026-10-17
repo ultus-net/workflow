@@ -8,6 +8,7 @@ import { hostCapabilities } from "../adapters/host.js";
 import { WorkflowApplication } from "../application/workflow.js";
 import { createEvidenceContentStore } from "../integrations/evidence-content-store.js";
 import { createNoteStore } from "../integrations/note-store.js";
+import { readCareProjection } from "../integrations/care-facts.js";
 import { fetchBoardTasksFromEnv } from "../integrations/azure-devops-provider.js";
 import { providerEnvWithStoredTokens, PROVIDER_TOKEN_ENV_NAMES } from "../integrations/provider-token.js";
 import { boardProviderFromEnv, createBoardReadCache, fetchBoardTask, fetchIssueCrossReferences, fetchWorkProductState } from "../integrations/task-provider.js";
@@ -76,7 +77,7 @@ import { TaskGraph } from "../kernel/task-graph.js";
 if (process.argv.slice(2).some((argument) => argument === "--help" || argument === "-h")) {
   console.log("workflow-hub — the Workflow authority daemon (one hub, one journal)");
   console.log("  state: ~/.workflow (per-revision when CONTAINER_APP_REVISION/WORKFLOW_PLANE_REVISION is set)");
-  console.log("  env: WORKFLOW_HUB_DIR, WORKFLOW_HUB_PROVENANCE, WORKFLOW_HUB_SCHEDULES, WORKFLOW_HUB_PROJECTS, WORKFLOW_ASSISTANT_ROUTES, WORKFLOW_CARE_WITHHELD, WORKFLOW_ASSISTANT_WORKSPACE, WORKFLOW_ASSISTANT_TOOL_CAPABILITIES, WORKFLOW_ASSISTANT_SHELL_TOOL");
+  console.log("  env: WORKFLOW_HUB_DIR, WORKFLOW_HUB_PROVENANCE, WORKFLOW_HUB_SCHEDULES, WORKFLOW_HUB_PROJECTS, WORKFLOW_ASSISTANT_ROUTES, WORKFLOW_CARE_WITHHELD, WORKFLOW_ASSISTANT_WORKSPACE, WORKFLOW_CARE_FACTS, WORKFLOW_ASSISTANT_TOOL_CAPABILITIES, WORKFLOW_ASSISTANT_SHELL_TOOL");
   console.log("  --help  print this help");
   process.exit(0);
 }
@@ -553,6 +554,25 @@ const assistantNotesCapability = assistantNoteStore === undefined
 const assistantNoteReadCapability = assistantNoteStore === undefined
   ? undefined
   : (name: string) => assistantNoteStore.read(name);
+// W213 (Decision 2, Option C): the care fact store + read path. Opt-in via
+// WORKFLOW_CARE_FACTS naming the care directory (holding the human-edited
+// `core.yaml`, the inert `annotations.json`, and the Q28-seam `policy.yaml`).
+// Unset/empty -> the capability is withheld and POST /care 404s (fail
+// closed). A non-absolute path throws here at hub start (the same posture
+// WORKFLOW_ASSISTANT_WORKSPACE takes above). ONE care-dir resolution feeds
+// both the fact store and the policy seam (`readCareProjection`), and the
+// projection re-reads from disk per call so an operator core edit is live on
+// the next read. A malformed core/policy throw surfaces as a genuine error,
+// never a fabricated projection.
+const careFactsRoot = (process.env.WORKFLOW_CARE_FACTS ?? "").trim();
+const assistantCareCapability = careFactsRoot === ""
+  ? undefined
+  : (() => {
+      if (!isAbsolute(careFactsRoot)) {
+        throw new Error(`WORKFLOW_CARE_FACTS must be an absolute path (got ${JSON.stringify(careFactsRoot)})`);
+      }
+      return () => readCareProjection(careFactsRoot);
+    })();
 // orientation block (W077 — static, versioned, no interpolation; the agent
 // learns the hub exists and which tools to reach for) and the operator's
 // advisory guidance (WORKFLOW_ADVISORY_STYLE / WORKFLOW_ADVISORY_NOTES) are
@@ -868,6 +888,11 @@ try {
     // the workspace listing (same WORKFLOW_ASSISTANT_WORKSPACE gate).
     ...(assistantNotesCapability === undefined ? {} : { assistantNotes: assistantNotesCapability }),
     ...(assistantNoteReadCapability === undefined ? {} : { assistantNoteRead: assistantNoteReadCapability }),
+    // W213: compose the care fact projection from the WORKFLOW_CARE_FACTS
+    // gate. The option is declared on createWorkflowHub's options type and
+    // forwarded there (the W212 P0 pair; pinned by
+    // test/hub-composition-forwarding.test.ts).
+    ...(assistantCareCapability === undefined ? {} : { assistantCare: assistantCareCapability }),
     // W073 trigger surface / Checkpoint F: the registry is composed lazily
     // against the run-registry handles so the production loop (agent proposal
     // source + agent applier + measure) drives the real controller. With

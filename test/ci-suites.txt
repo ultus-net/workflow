@@ -24,6 +24,7 @@ test/azure-jobs-dispatch.test.ts
 test/azure-jobs-hub-route.test.ts
 test/azure-jobs-record.test.ts
 test/azure-jobs-schema.test.ts
+test/care-facts.test.ts
 test/ci-suites-manifest.test.ts
 test/cli-entrypoint.test.ts
 test/conductor-checkpoint.test.ts
@@ -57,6 +58,7 @@ test/egress-forward-proxy.test.ts
 test/egress-policy-file.test.ts
 test/egress-policy-revisions.test.ts
 test/egress-policy.test.ts
+test/hub-assistant-care.test.ts
 test/hub-assistant-note.test.ts
 test/hub-assistant-routes.test.ts
 test/hub-assistant-tool-route.test.ts

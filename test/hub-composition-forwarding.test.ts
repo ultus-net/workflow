@@ -10,6 +10,7 @@ import { hostCapabilities } from "../src/adapters/host.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { createWorkflowHub, resolveHubDiscoveryPath } from "../src/integrations/workflow-hub.js";
 import { createNoteStore } from "../src/integrations/note-store.js";
+import { CARE_ASSERTION_RULE, readCareProjection } from "../src/integrations/care-facts.js";
 
 // W212 P0 — the PRODUCTION composition path (`createWorkflowHub`) silently
 // dropped the assistant-workspace family: the CLI passed assistantWorkspace
@@ -29,13 +30,15 @@ interface Hub {
   close(): Promise<void>;
 }
 
-const seat = (context: TestContext): { readonly dir: string; readonly workspace: string; readonly notes: string } => {
+const seat = (context: TestContext): { readonly dir: string; readonly workspace: string; readonly notes: string; readonly care: string } => {
   const dir = mkdtempSync(join(tmpdir(), "wf-hub-compose-"));
   const workspace = join(dir, "workspace");
   const notes = join(workspace, "notes");
+  const care = join(dir, "care");
   mkdirSync(notes, { recursive: true });
+  mkdirSync(care);
   context.after(() => rmSync(dir, { recursive: true, force: true }));
-  return { dir, workspace, notes };
+  return { dir, workspace, notes, care };
 };
 
 const seedGraph = (): TaskGraph => {
@@ -75,10 +78,11 @@ const call = async (hub: Hub, path: string, token: string, body: unknown = {}): 
 };
 
 test("W212 P0: the production composition forwards the workspace + notes capabilities to live routes", async (context) => {
-  const { dir, workspace, notes } = seat(context);
+  const { dir, workspace, notes, care } = seat(context);
   writeFileSync(join(notes, "one.md"), "# One\n\nbody\n");
   writeFileSync(join(notes, "one.json"), JSON.stringify({ title: "One", findings: 1 }));
   writeFileSync(join(workspace, "sibling.txt"), "plain file");
+  writeFileSync(join(care, "core.yaml"), ["facts:", "  - key: resident-name", "    value: Margaret Ellis", "    category: person", ""].join("\n"));
   const store = createNoteStore({ root: notes });
   const hub = await compose(context, dir, {
     assistantWorkspace: () => {
@@ -89,6 +93,9 @@ test("W212 P0: the production composition forwards the workspace + notes capabil
     },
     assistantNotes: () => store.list(),
     assistantNoteRead: (name) => store.read(name),
+    // W213: the care projection — the same readCareProjection closure shape
+    // src/cli/hub.ts builds off WORKFLOW_CARE_FACTS.
+    assistantCare: () => readCareProjection(care),
   });
 
   const listedWorkspace = await call(hub, "/workspace", hub.token);
@@ -107,12 +114,19 @@ test("W212 P0: the production composition forwards the workspace + notes capabil
   assert.equal(read.status, 200, "POST /note-read reaches the bridge through createWorkflowHub");
   const note = (read.payload as { note: { body: string } }).note;
   assert.equal(note.body, "# One\n\nbody\n");
+
+  const careAnswered = await call(hub, "/care", hub.token);
+  assert.equal(careAnswered.status, 200, "POST /care reaches the bridge through createWorkflowHub");
+  const projection = (careAnswered.payload as { care: { root: string; facts: readonly { key: string }[]; rule: string } }).care;
+  assert.equal(projection.root, care);
+  assert.deepEqual(projection.facts.map((fact) => fact.key), ["resident-name"], "the care projection rides the production path verbatim");
+  assert.equal(projection.rule, CARE_ASSERTION_RULE);
 });
 
 test("W212 P0: absent capabilities still 404 through the production composition (fail closed)", async (context) => {
   const { dir } = seat(context);
   const hub = await compose(context, dir, {});
-  for (const path of ["/workspace", "/notes", "/note-read"]) {
+  for (const path of ["/workspace", "/notes", "/note-read", "/care"]) {
     const refused = await call(hub, path, hub.token, path === "/note-read" ? { name: "one.md" } : {});
     assert.equal(refused.status, 404, "withheld capability stays fail-closed through createWorkflowHub (" + path + ")");
     assert.deepEqual(refused.payload, { error: "not found" });
@@ -120,16 +134,18 @@ test("W212 P0: absent capabilities still 404 through the production composition 
 });
 
 test("W212 P0: the forwarded routes keep the token classes through the production composition", async (context) => {
-  const { dir, notes } = seat(context);
+  const { dir, notes, care } = seat(context);
   writeFileSync(join(notes, "one.md"), "# One\n");
   const store = createNoteStore({ root: notes });
   const hub = await compose(context, dir, {
     assistantNotes: () => store.list(),
     assistantNoteRead: (name) => store.read(name),
+    assistantCare: () => readCareProjection(care),
   });
   // The verifier credential is refused on both reads (operator-token class).
   assert.equal((await call(hub, "/notes", hub.verificationToken)).status, 401);
   assert.equal((await call(hub, "/note-read", hub.verificationToken, { name: "one.md" })).status, 401);
+  assert.equal((await call(hub, "/care", hub.verificationToken)).status, 401, "the verifier credential is refused on /care too");
   // The confinement gate holds end-to-end through the forwarded capability.
   const traversal = await call(hub, "/note-read", hub.token, { name: "../escape.md" });
   assert.equal(traversal.status, 400);
