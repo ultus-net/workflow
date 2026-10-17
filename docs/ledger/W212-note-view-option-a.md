@@ -101,9 +101,54 @@ holds a hub token.
 
 ## Notes
 
-- TASKS.md is operator-frozen ("new work items are NOT appended here
-  anymore"); like W208–W211 this item's record lives here and in
+- TASKS.md is operator-frozen ("new work items are NOT appended here anymore"); like W208–W211 this item's record lives here and in
   `docs/FEATURES.md` only.
 - The `runId` sidecar field is wired but not yet produced: `augur note` has
   no run id at write time, so the field stays honestly absent until a run
   wrapper supplies one.
+
+## Addendum 2026-10-17: the P0 — production composition dropped the capabilities
+
+A fresh audit found the note routes (and the W197 workspace route) DEAD in
+production. `createWorkflowHub`
+(`src/integrations/workflow-hub.ts`) never declared or forwarded
+`assistantWorkspace`, `assistantNotes`, or `assistantNoteRead`:
+`src/cli/hub.ts` passed all three, but the options object type did not list
+them and the capabilities object passed to `createWorkflowHubBridge` never
+forwarded them. The hub silently dropped them, so in the real hub
+`POST /workspace`, `POST /notes`, and `POST /note-read` all 404ed even with
+`WORKFLOW_ASSISTANT_WORKSPACE` set at deploy.
+
+**Root cause, two halves.** (1) The composition seam duplicated the
+capability list: declared in `HubRequestContext` + `HubBridgeCapabilities`
+(hub-http.ts), re-declared in `createWorkflowHub`'s options
+(workflow-hub.ts), and re-forwarded by hand — every new capability had to
+survive three hand-written copies of its name. (2) The spread-call shape
+`...(cap === undefined ? {} : { key: cap })` bypasses TypeScript's
+excess-property check, so `tsc --strict` accepted the unknown keys silently;
+and the W197/W212 test suites exercised `createWorkflowHubBridge` directly,
+never the production `createWorkflowHub` path. All three defenses failed in
+the same direction, so CI stayed green.
+
+**Fix.** The three capabilities are now declared on the options type beside
+`assistantRoutes` (the note types are imported from `./note-store.js`, the
+module that actually exports them; the workspace listing type from
+`./hub-http.js`) and forwarded into the bridge's capabilities object beside
+`assistantRoutes`. The full options-vs-call-site audit found two further
+findings of lower severity: `teamTaskVerificationCommand` is declared and
+passed but never consumed inside `createWorkflowHub` (a dead option —
+harmless: the CLI consumes the env var itself to build the forwarded
+`testRunner`); no other declared-but-not-forwarded or passed-but-not-declared
+capability exists.
+
+**Regression pin (the point).** `test/hub-composition-forwarding.test.ts`
+composes through `createWorkflowHub` exactly like the CLI — seeded temp
+notes dir, token read from the published discovery file — and asserts the
+three routes answer 200 with the payload verbatim, that absent capabilities
+still 404, and that the token classes and the confinement gate hold end to
+end. Red-green verified: with the forwards removed it fails 2/3; with them
+restored it passes 3/3. Evidence and gate results are in the row below
+(`npm run typecheck` / `lint` / `build` clean;
+`test/hub-assistant-note.test.ts`, `test/hub-assistant-workspace.test.ts`,
+`test/ci-suites-manifest.test.ts`, `test/hub-runs.test.ts` 44/44;
+`test/hub-composition-forwarding.test.ts` + the two store/view suites 21/21).
