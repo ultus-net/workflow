@@ -67,3 +67,17 @@ requires every file to be listed here.
 - L034 — `lessons/2026-10-12T20-15-00Z-a-write-scope-must-cover-the-gates-cross-file-requirement.md`
 - L035 — `lessons/2026-10-12T21-30-00Z-an-append-only-check-must-be-bullet-scoped-and-fail-closed.md`
 - L036 — `lessons/2026-10-13T09-00-00Z-a-policy-port-must-name-its-residuals.md`
+- L037 — `lessons/2026-10-15T00-00-00Z-a-differential-that-skips-where-the-gate-runs-is-not-a-gate.md`
+- L038 — `lessons/2026-10-15T09-30-00Z-measure-the-field-you-can-read-not-the-one-the-comment-implies.md`
+- L039 — `lessons/2026-10-15T12-00-00Z-a-deny-in-the-shared-config-is-not-a-deny-in-the-shadowing-agent.md`
+- L040 — `lessons/2026-10-16T00-00-00Z-a-permission-rule-the-resolver-never-matches-is-not-a-permission.md`
+- L041 — `lessons/2026-10-16T01-00-00Z-an-instrument-that-scores-the-loop-is-audited-not-edited.md`
+- L042 — `lessons/2026-10-16T02-00-00Z-a-plane-the-host-decodes-leniently-ships-typos-inert.md`
+- L043 — `lessons/2026-10-16T03-00-00Z-a-number-the-loop-routes-on-must-come-from-a-query.md`
+- L044 — `lessons/2026-10-16T05-00-00Z-a-hook-run-from-a-linked-worktree-commits-into-the-real-repo.md`
+- L045 — `lessons/2026-10-16T04-00-00Z-an-enum-field-fails-silent-and-drops-the-whole-agent.md`
+- L046 — `lessons/2026-10-16T06-00-00Z-a-caveat-that-routes-a-decision-needs-a-ruler-and-declared-is-not-enforced.md`
+- L047 — `lessons/2026-10-16T07-00-00Z-a-gate-on-one-field-of-a-rule-is-not-a-gate-on-the-rule.md`
+- L048 — `lessons/2026-10-17T00-00-00Z-a-predicate-that-ignores-the-record-s-own-outcome-field-miscounts-its-population.md`
+- L049 — `lessons/2026-10-17T01-00-00Z-a-ruler-pinned-only-by-its-own-fixtures-agrees-with-itself.md`
+- L050 — `lessons/2026-10-17T02-00-00Z-a-ruler-that-grades-only-the-declared-set-goes-green-by-omission.md`

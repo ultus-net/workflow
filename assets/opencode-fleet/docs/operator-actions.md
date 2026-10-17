@@ -48,11 +48,12 @@ score it once the flag is active.
 
 The fix is in the separate `opencode-openrouter-auto-latest` plugin repo, so it
 is out of this repo's scope. Scoring the fix live needs an **unpinned stranger
-agent** (one with no `model:` frontmatter) on a **fresh server/location**, but
-note that `install/lib/verify-effective-model.cjs` **cannot** grade it: that
-ruler grades only pinned agents (`intendedModels()` skips pins-less files,
-`verify()` drops any row whose agent has no intent, `:88`/`:227`). Read the
-store directly instead:
+agent** (one with no `model:` frontmatter) on a **fresh server/location**. Note
+that `install/lib/verify-effective-model.cjs` grades only pinned agents:
+`intendedModels()` skips pin-less files and `verify()` drops any row whose agent
+has no pin, so an arbitrary unpinned stranger is not graded (n=46 / P2-4 adds
+only a resolvability check on the config's `default_agent`, not a graded row for
+it). Read the store directly instead:
 
     # per-agent effective model after the stranger has run (v2 store)
     # time_created is epoch-ms, and `model` is a JSON blob, so parse both.
@@ -188,3 +189,57 @@ skills}` entries symlink straight into it (see `golden-config-plan.md` section 8
 The live `~/.config/opencode/{cli.json,tui.json}` were replaced by
 `FORCE=1 bash install/bootstrap.sh --only 30`. Backups are under
 `~/.local/share/dotfiles-backup/`.
+
+## 10. Correct the failure-composition ruler's failure predicate (DONE — RSI n=44)
+
+**Landed** as branch `rsi/n44-failure-predicate` (change-type `instrument`), in
+the operator-reviewed shape this item specified: `isFailureSession` now returns
+`false` for a `succeeded` outcome, `analyze()` carries a `recovered` bucket, the
+semantics are fixture-pinned, and the campaign Setup note is re-baselined.
+Verified on the live store at acceptance (30-day window): **178 failed (127
+process / 51 content), 957 recovered** — the split moved from 81/19 to 71/29.
+
+The failure-composition ruler (`install/lib/measure-failure-composition.cjs`,
+2610.11655) is read-only to the loop: it is the instrument the campaign's Setup
+reads to route candidates, so the playbook ("eval-harness changes are separate
+human-reviewed PRs, never made in-loop") and the campaign hard rule ("the ruler
+stays read-only") put a correction outside the agent's boundary. n=38 audited the
+predicate and filed it here instead of editing it in-loop.
+
+- **Defect (as filed at n=38).** `isFailureSession` (`:178-181`) marked a session
+  a failure when it had any error-state tool unit, ignoring the terminal outcome.
+  On the live store, 939 of 1160 error-bearing sessions in the 30-day window
+  ended `succeeded` (`session_v2.idle_outcome`). The ruler reported 1180 failed
+  sessions (959 process / 221 content); a scratch patch that honors `succeeded`
+  reported 243 failed (163 process / 80 content), 938 recovered. The
+  process/content split the campaign routes on moved from 81/19 to 67/33.
+- **Action (done at n=44).** Landed as a separate human-reviewed PR on
+  `install/lib/measure-failure-composition.cjs` (change-type `instrument`),
+  preregistered with its own prediction and held-out score: honor
+  `outcome === 'succeeded'` as not-a-failure, add a `recovered` bucket so the
+  population stays visible, and pin the semantics with fixtures. The campaign
+  Setup note is re-baselined to the corrected split.
+- **Frozen baseline.** n=38 left the ruler unedited. Its digest, so the operator
+  PR proves what it moved from:
+  `sha256(install/lib/measure-failure-composition.cjs) = eddbede2d5a9274f8b6a33d58612f67176a6b89080c6ac0b467feed7abb0f0fd`.
+- **Evidence.** `docs/agents/findings/failure-composition-recovered-sessions.md`
+  (the predicate, the reconciling SQL, the split, the landed correction).
+
+## 11. Pin the default agent's intended tier (operator decision; ruler half DONE — RSI n=46)
+
+The config-adversarial review's P2-4 found `default_agent: "build"` was outside
+the routing ruler. **The ruler half landed at n=46**: `verify-effective-model.cjs`
+now resolves the key against the fleet plus the selectable built-ins and fails
+loud when it names no selectable agent (the host would otherwise silently fall
+back to `build`).
+
+What remains is a **policy decision the loop must not make**: should the default
+session agent carry an intended tier, or is "any routed alias" correct? If a
+tier is wanted, add `install/opencode/agents/build.md` with `mode: primary` and a
+`model:` line, then `bash install/bootstrap.sh`. The host mutates the built-in
+`build` from that document, and the ruler then grades `build` by the pin, so a
+drift from the declared tier turns the ruler red. (The ruler does not read a
+`model:` on a `build` entry declared inline in the config's own `agent` map.)
+
+The change itself is config/operator-owned; the loop measures, it does not choose
+the tier.

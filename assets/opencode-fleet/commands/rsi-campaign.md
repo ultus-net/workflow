@@ -41,7 +41,8 @@ loop; it does not edit it.
 - Parse N from `$ARGUMENTS` (default 3; hard cap 5).
 - Run `node ~/.config/opencode/lib/measure-failure-composition.cjs` (read-only). Drop any
   candidate whose target failures are content-class — the harness cannot fix
-  them (2610.11655).
+  them (2610.11655). The terminal outcome is authoritative: a session that ended
+  `succeeded` is reported as **recovered**, not a failure (n=44 correction).
 - Build the candidate set **before** iterating — the playbook's "selection set
   for diversity," from AIDE² (2609.26457): pressure must favor general
   mechanisms over task-specific tricks, so assemble 3-5 one-line hypotheses
@@ -93,11 +94,14 @@ loop; it does not edit it.
    admission: a hash-chained gate admitted 144/7449 candidates with no held-out
    regressions where the ungated loop admitted 309 harmful changes (2610.10629).
    Compute the chain hash from the prior record block — the exact bytes the
-   gate hashes, i.e. the prior `### n=<k-1>` block. The node form reuses the
-   gate's own `sha256`/`parseRecords`:
+   gate hashes. The gate parses only top-level `### n=` headers, so the prior
+   block is the highest `### n=` below this record's number, not necessarily
+   `n=<k-1>`. Select it by max-n-below-k rather than by an exact `n`, so an
+   out-of-order, skipped, or nested number does not throw. The node form reuses
+   the gate's own `sha256`/`parseRecords`:
 
    ```sh
-   node -e "const v=require(process.env.HOME+'/.config/opencode/lib/validate-ledger.cjs');const r=v.parseRecords(require('fs').readFileSync('docs/agents/ledger.md','utf8'));console.log(v.sha256(r.find(x=>x.n===<k-1>).raw))"
+   node -e "const v=require(process.env.HOME+'/.config/opencode/lib/validate-ledger.cjs');const k=<k>;const fs=require('fs');const r=v.parseRecords(fs.readFileSync('docs/agents/ledger.md','utf8'));const p=r.filter(x=>x.n<k).reduce((a,b)=>!a||b.n>a.n?b:a,null);if(!p){console.error('no top-level ### n= record below '+k);process.exit(2)}console.log(v.sha256(p.raw))"
    ```
 
    Equivalently, extract that block with `git show HEAD:docs/agents/ledger.md`
@@ -110,10 +114,11 @@ loop; it does not edit it.
    - Mechanical subtasks: `executor` (cheap tier) with a full spec (inputs,
      constraints, acceptance command). Strong-to-weak transfer justifies this
      (2608.12307). Escalate to `executor-strong` only on an observable trigger
-     (two failed acceptance runs, a repeated error loop, sustained
-     exploration) — the NeMo Switchyard escalation router (NVIDIA blog, Aug
-     2026): start cheap, promote on sustained difficulty. Re-dispatch the same
-     spec with the failed attempt and its acceptance output.
+     (two failed acceptance runs, a repeated error loop, half the subtask's
+     step cap burned with no accepted edit) — the NeMo Switchyard escalation
+     router (NVIDIA blog, Aug 2026): start cheap, promote on sustained
+     difficulty. Re-dispatch the same spec with the failed attempt and its
+     acceptance output.
    - Independent investigations (find files, map a code path, reproduce a
      failure): `explore`.
    - Reuse a long-running helper across iterations by creating ONE

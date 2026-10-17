@@ -255,8 +255,9 @@ Base loop — improves artifacts (code, prompts, skills, configs, docs):
    to cheaper models only where each subtask has explicit inputs, bounded
    scope, and an executable acceptance check (see task-decomposition.md).
    Start each subtask on the cheap tier and escalate on an observable trigger
-   (two failed acceptance runs, a repeated error loop, or sustained
-   exploration) rather than guessing the tier up front — the escalation-router
+   (two failed acceptance runs, a repeated error loop, or half the subtask's
+   step cap burned with no accepted edit) rather than guessing the tier up
+   front — the escalation-router
    pattern. On each accepted change, log whether the benefit was measured on
    the *target* tier, not just on the strong model. Appraise before editing:
    label the failure composition first — if the target failures are
@@ -404,6 +405,12 @@ and the exact first experiment. Ask up to 3 questions before designing.
 | Answer-rescue gain | the gain comes from rescuing unreadable answers, a weak baseline, or an eval defect, not the harness | answer-rescue/eval-defect audit; inject a known defect and confirm the metric moves (2610.05533) |
 | Shared blind spot | in a homogeneous loop the same weakness compromises the behavior and the mechanism meant to correct it | keep the reviewer external and strong; independent anchors; the read-only ruler (2610.12176) |
 | Skill scope-stripping | a verified-successful experience is admitted as a skill after its applicability conditions are dropped, so it overgeneralizes | audit scope conditions, not just correctness, at admission; SkillPoison passes verification and lexical inspection (2610.07645) |
+| Rerun noise read as a gain | a harness swap "wins" that a rerun of the unchanged harness reproduces | calibrate the rerun flip rate; a harness swap flips ~13% of tasks, the same as rerunning, and wins do not replicate across runs (2610.04433); report paired per-seed deltas |
+| Judge drift read as a regression | an LLM-judge alarm is ambiguous between a real change and a silently updated judge | pin the judge or hold a human-labeled anchor set; re-grade unchanged anchors each run; attribute drift before acting (2606.15474) |
+| Protocol-level shortcut | task holdout holds, but the harness encodes a benchmark-wide protocol shortcut | add a counterfactual/protocol-shift check that destroys the shortcut; a validity firewall (CHASE, 2609.18366) |
+| Self-scored memory inflation | a stored self-grade is a proxy reward, so the agent confidently reuses its own mistakes | the confirming judge must be independent of the grading model (Error-Independence Assumption); a same-family judge cannot correct the inflation (2608.00017) |
+| Skill-library drift | unbounded skill accumulation degrades retrieval and injects false positives; LLM-authored skills deliver +0.0pp vs +16.2pp for human-curated | outcome-driven retirement plus a bounded active cap (2605.19576) |
+| Task-order / underspecification sensitivity | "improvement" depends on the default task order acting as a hidden curriculum, and does not survive a shuffle | multi-seed, order-shuffled reporting; treat a single ordering as one sample (2608.18066) |
 
 ## The first experiment
 
@@ -455,8 +462,9 @@ citation of record):
   subagents in parallel: mechanical subtasks to `executor` (cheap) with an
   executable acceptance check, independent investigations to `explore`, and a
   fresh-eyes `reviewer` at Select. Escalate to `executor-strong` only on an
-  observable trigger (two failed acceptance runs, a repeated error loop,
-  sustained exploration), re-dispatching the same spec with the failure trace —
+  observable trigger (two failed acceptance runs, a repeated error loop, half
+  the subtask's step cap burned with no accepted edit), re-dispatching the same
+  spec with the failure trace —
   NeMo Switchyard's escalation router. Strong-to-weak transfer (2608.12307)
   justifies routing execution down; HarnessOpt-Bench (2608.06301) and
   "Harness Updating Is Not Harness Benefit" (2605.30621) keep Select/Evaluate
@@ -497,6 +505,20 @@ citation of record):
   "gain" (2607.12227, 2609.40303, 2610.05533). A deterministic verifier fixes
   compute per item, so record that and skip the control. A gain the scaling
   control reproduces is a no-gain for the brake.
+- **Calibrate the noise floor before crediting any harness gain.** Re-run the
+  *unchanged* harness to measure how often outcomes flip: a harness swap moves
+  about as many tasks as a rerun (~13% in 2610.04433), so a single-run delta is
+  not an effect. Report paired per-seed deltas, not endpoint scores, and treat a
+  gain inside the rerun flip band as no-gain.
+- **Attribute judge drift before acting.** If the acceptance signal is an LLM
+  judge over time, hold a human-labeled anchor set and re-grade unchanged anchors
+  each run. An alarm is ambiguous between a real regression and a silently
+  updated judge until attributing; pinning the judge is cheaper (2606.15474,
+  2609.39958).
+- **Guard the protocol, not only the tasks.** Task holdout holds the semantic
+  tasks fixed, so a proposer can still encode a benchmark-wide protocol shortcut;
+  add a counterfactual/protocol-shift check that would destroy a shortcut, behind
+  a validity firewall (CHASE, 2609.18366; same class as 2610.05533).
 - **Failure-composition triage.** Run `install/lib/measure-failure-composition.cjs`;
   drop candidates whose target failures are content-class (2610.11655).
 - **Idea-level screening.** Screen candidates with the `screener` subagent
@@ -518,12 +540,11 @@ The executable form is the `/rsi-campaign` command
 Substrates already here:
 
 - `install/opencode/` — the agent fleet: `decompose`, `executor`,
-  `executor-strong`, `reviewer`, `retrospective`, each with permission
-  boundaries and `steps`
-  caps. Agents carry per-role `model:` tier pins (the router adds the failover
-  layer), and subagents run in their own context via the `subagent` tool. The
-  slash commands
-  `/decompose`, `/review-diff`, `/retro`, and `/rsi-loop` make the loop
+  `executor-strong`, `reviewer`, `retrospective`, `screener`, each with
+  permission boundaries and `steps` caps. Agents carry per-role `model:` tier
+  pins (the router adds the failover layer), and subagents run in their own
+  context via the `subagent` tool. The slash commands `/decompose`,
+  `/review-diff`, `/retro`, `/rsi-loop`, and `/rsi-campaign` make the loop
   invocable manually.
 - `opencode-auto-router` (external plugin, symlinked live) — the cost plan
   made mechanical. Primary provider is Synthetic's `syn:*` aliases with a
@@ -531,7 +552,7 @@ Substrates already here:
   fleet, the tier is enforced by each agent's explicit `model:` pin (the
   authoritative mechanism, n=8): heavy/judgment roles (decompose, reviewer,
   executor-strong) pinned to `syn:large:text`, mechanical/light roles (executor,
-  retrospective) to `syn:small:text`. The plugin's `ctx.agent.transform`
+  retrospective, screener) to `syn:small:text`. The plugin's `ctx.agent.transform`
   role-routing remains for **unpinned** agents — built-ins (measured: `explore`
   -> `syn:small:text`) and strangers — so it is the fallback mechanism, not what
   sets the fleet's tier. Either way the tier is a property of the role, not a
@@ -546,6 +567,12 @@ Substrates already here:
   `install/lib/validate-ledger.cjs` (gate, pre-commit Layer 15) — the
   failure-composition triage ruler (2610.11655) and the held-out/prev-chain
   admission gate (2610.09239, 2610.10629).
+- `install/lib/reconcile-rulers.cjs` (gate, pre-commit Layer 24) — reconciles
+  each store-census ruler's headline against an INDEPENDENT SQLite-JSON1 oracle
+  over the same store. Catches mechanism drift (the ruler and its oracle
+  disagree); a faithful re-expression of a wrong definition reconciles clean and
+  stays a reviewer's job. The n=38 (a) instrument-reconciliation gate, unblocked
+  by the n=44 predicate correction.
 
 An RSI-lite loop for this repo (ladder levels 1–3: persistent
 self-improvement, not yet recursive):

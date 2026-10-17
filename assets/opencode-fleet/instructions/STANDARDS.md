@@ -109,6 +109,41 @@
 
 ---
 
+## Platform & Portability Principles
+
+Prefer commodity substrates over opinionated products, and keep business logic in your own code.
+
+### Service Selection
+
+- **Use commodity primitives.** Storage, queues, relational databases, secrets, identity, telemetry. Managed is preferred for these. Do not hand-roll them.
+- **Avoid opinionated products on load-bearing paths.** Workflow engines, managed connectors, and vendor-specific orchestration platforms get renamed and retired on the vendor's schedule. New work does not adopt one. An existing system that uses one is grandfathered, and migrates only on a load-bearing failure or a vendor-forced change.
+- **Keep logic in your own code.** Business logic belongs in the repository as code, not in a vendor workflow or a connector config. Code is portable; a workflow product is not.
+- Serverless compute is acceptable and preferred where it fits. Do not self-host compute, databases, or queues merely to avoid a managed service.
+
+### Portability & Data Boundaries
+
+- Consume data through a contract you own (a versioned schema, an open format, an API you control), never by binding application code to the mechanism that produces it.
+- Treat any contract another system owns as versioned and subject to drift: it can move on the owner's schedule. Isolate reads behind one thin access module so a forced re-point or schema change touches one place.
+- Prefer open formats (for example Parquet/Delta, OTLP, OpenAPI) over proprietary ones for anything crossing a system boundary. Open formats outlive the mechanism that wrote them.
+- When a format or schema has more than one consumer, treat it as a shared contract. A change must update every consumer.
+
+### Ingestion & File-Based Integration
+
+- Any new file- or folder-oriented ingestion mechanism must enumerate a bounded set. Never walk an unbounded or growing tree.
+- It must have an explicit completion contract: a manifest or marker file, never lock files.
+- It must be restart-safe and idempotent when reprocessed.
+- It must enforce timeouts with per-unit observability.
+- Unbounded enumeration and never-finalising locks cause silent outages. Decoupling alone does not prevent re-selecting that failure mode.
+
+### Language, Hosting & Dependencies
+
+- Keep one standard language and hosting model per project. Do not introduce a second one into an existing working project unless a load-bearing failure or a separately documented decision requires it.
+- A rewrite requires the same test. "New work touched this area" is not, by itself, a trigger.
+- Pin dependency versions centrally. Version bumps are deliberate, reviewed changes, never incidental.
+- Build and tests are the verification of API correctness. Do not rely on recall of framework APIs.
+
+---
+
 ## Boundaries
 
 - Never commit secrets, `.env`, or credentials.

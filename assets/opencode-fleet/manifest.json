@@ -23,19 +23,19 @@
       "id": "agent:retrospective.md",
       "kind": "agent",
       "file": "retrospective.md",
-      "sha256": "9f8732ffdf25213dde894b954168731ce772833a413d3a33675da27425ce7b9e"
+      "sha256": "1a4861e30ad6235ed84b68808c7878c745a270cf3274c030f232d06d75a0d3e9"
     },
     {
       "id": "agent:reviewer.md",
       "kind": "agent",
       "file": "reviewer.md",
-      "sha256": "a4a77e454a0d4d540b987aa4dbf548eac1d92e589c50c0535c8ec77a5305df4f"
+      "sha256": "150ab6082840e4583536c16813ca210d6d779a6340fc9944108a467511c43c1f"
     },
     {
       "id": "agent:screener.md",
       "kind": "agent",
       "file": "screener.md",
-      "sha256": "98fee93023f2a6728dfe70725e82448dc95bccc798f79ce7b766aaf7e95b9af9"
+      "sha256": "1b49f22442b5080cfaac5cb51f20a8124176c0afde83e366e2a9ff3f33d58666"
     },
     {
       "id": "command:decompose.md",
@@ -53,7 +53,7 @@
       "id": "command:retro.md",
       "kind": "command",
       "file": "retro.md",
-      "sha256": "e0c3bc0c1d327729dc035198ec555c5aa911d5ded9e95efb4c578e1d016bf322"
+      "sha256": "98a5e62b517d7c25f6c7c2735696b2c989a8f6168d43d48964a16e3c1ba42603"
     },
     {
       "id": "command:review-diff.md",
@@ -65,13 +65,13 @@
       "id": "command:rsi-campaign.md",
       "kind": "command",
       "file": "rsi-campaign.md",
-      "sha256": "359a7383c5b6e1ffd944d39552407b0c369f69b70f9bce8156a87bad6db5deef"
+      "sha256": "202151f1de97b83337d13211eb54090b1bf3022d426624a6ca35be3a52f2c69e"
     },
     {
       "id": "command:rsi-loop.md",
       "kind": "command",
       "file": "rsi-loop.md",
-      "sha256": "b6d5a896b16d7e973036c841d05d6a4ffd686676ba2c5613851a1a3a09e09da7"
+      "sha256": "11fb28eeda4b43353417578e8997c4e6fb732031ff213ac92f7413c9508b3e97"
     },
     {
       "id": "command:tldr.md",
@@ -89,13 +89,13 @@
       "id": "doc:lessons.md",
       "kind": "doc",
       "file": "lessons.md",
-      "sha256": "42493f5d37b4d8b6c30a29d002d3937a2791ec03c64e456a12b9159dea90cc5d"
+      "sha256": "42afd08deb9c54dc30e433c6381ac5f66b786500b7a8c6998153d488bb493d1b"
     },
     {
       "id": "doc:operator-actions.md",
       "kind": "doc",
       "file": "operator-actions.md",
-      "sha256": "8578a83676fb216ce6aa22ef5e742ccb0ffe43ad0a67a369cb4af285ed696052"
+      "sha256": "2e1f7245fc007c32de1175d9923d619edbc291aa7967c4cb15730e70a6049df3"
     },
     {
       "id": "doc:policy-review.md",
@@ -113,31 +113,31 @@
       "id": "doc:reading-list.md",
       "kind": "doc",
       "file": "reading-list.md",
-      "sha256": "33fd5f85f11bd451b9d3dc595ebdefd12a4c25b8975085d15b81c172b533dee6"
+      "sha256": "5f7f974f6c5fdc75c695dae745053591d55cda0cc0140f086b2c51dea99e5c5c"
     },
     {
       "id": "doc:rsi-loop-playbook.md",
       "kind": "doc",
       "file": "rsi-loop-playbook.md",
-      "sha256": "ab15bc19938d72e0e2610b0a0c14a74abf942fe846a398566e4ab8f4cfc9bbe5"
+      "sha256": "04f35e4b0c9cb22ce033e201f473aa62224cdf68bb969df73f2bcf4674b7bf6d"
     },
     {
       "id": "doc:task-decomposition.md",
       "kind": "doc",
       "file": "task-decomposition.md",
-      "sha256": "3d8b674094bd771243b930d859adfff60b94a97570c4ba26deb376256c40ef62"
+      "sha256": "e7102648d2cd3dc54b0f0f58c9c86398b49a446df6bb5db321e121d47f5fc737"
     },
     {
       "id": "instruction:AGENTS.md",
       "kind": "instruction",
       "file": "AGENTS.md",
-      "sha256": "b46de2563a692fce7283b124fead342753002ceca7964aecdb2d5143fe064ea4"
+      "sha256": "5edd87f0ed4d03bf84c8a7b94d4a1578c58b230ad66186b7cba5b673f4db3dd7"
     },
     {
       "id": "instruction:STANDARDS.md",
       "kind": "instruction",
       "file": "STANDARDS.md",
-      "sha256": "a686798eb472f307626db39027c5e9a55ce42afc7c3bbb9b1c7d86e4d2cd17ed"
+      "sha256": "836adf0878f68dfc24ea0b38b8e252115fb3a244559b3b15a5bc5a3b689f2e3f"
     },
     {
       "id": "style:coding-style.md",
@@ -203,7 +203,7 @@
       "id": "lib:host-fingerprint.cjs",
       "kind": "lib",
       "file": "host-fingerprint.cjs",
-      "sha256": "4f1d9d55dba05ebf6b1e2b72b7fb74850ec9845c4689ca1c153c21762a9bf8dc"
+      "sha256": "3cd8d101aee04914aead0199b74ef82144e25a54fdd8ed62c41da29c702e7da9"
     },
     {
       "id": "lib:index-read.cjs",
@@ -218,10 +218,28 @@
       "sha256": "a199b85db5def615faa0849762a7027c426955375b07555d124ab393497da0ab"
     },
     {
+      "id": "lib:measure-compaction.cjs",
+      "kind": "lib",
+      "file": "measure-compaction.cjs",
+      "sha256": "ca0634dcc4598613b615c9adb2a6f784aa9e7636fe3572315ddae33d1095724b"
+    },
+    {
       "id": "lib:measure-failure-composition.cjs",
       "kind": "lib",
       "file": "measure-failure-composition.cjs",
-      "sha256": "eddbede2d5a9274f8b6a33d58612f67176a6b89080c6ac0b467feed7abb0f0fd"
+      "sha256": "f9b715f2a9b64fc8704447196ee5e0ffd7af345bf105b76c8eea061c0e8ec1d5"
+    },
+    {
+      "id": "lib:measure-permission-friction.cjs",
+      "kind": "lib",
+      "file": "measure-permission-friction.cjs",
+      "sha256": "94046cf9db35431ca4c8d6de36b71c86976f8e353bc2eb91466501666f7efbd4"
+    },
+    {
+      "id": "lib:measure-permission-reach.cjs",
+      "kind": "lib",
+      "file": "measure-permission-reach.cjs",
+      "sha256": "e56d34a17affdde877f15956db095a181e8f0611af2f7eed1836b10eb912b548"
     },
     {
       "id": "lib:measure-readback-effect.cjs",
@@ -242,6 +260,18 @@
       "sha256": "41622bbdd5485447675c57aaad13dc4d6627463057b7bb8c796120239f8589e3"
     },
     {
+      "id": "lib:port-secret-read-rules.cjs",
+      "kind": "lib",
+      "file": "port-secret-read-rules.cjs",
+      "sha256": "06a879834c739c6a2125d09687ba1d4d5390b3088bf5ed5e676a50b413d8f383"
+    },
+    {
+      "id": "lib:reconcile-rulers.cjs",
+      "kind": "lib",
+      "file": "reconcile-rulers.cjs",
+      "sha256": "be112d4edb90cb128a6f8ace449f5c641cabe563e0d832ad9c0d2d37ebc3e2e0"
+    },
+    {
       "id": "lib:test-agent-model-pin.cjs",
       "kind": "lib",
       "file": "test-agent-model-pin.cjs",
@@ -257,7 +287,7 @@
       "id": "lib:test-effective-model.cjs",
       "kind": "lib",
       "file": "test-effective-model.cjs",
-      "sha256": "148b33194117e70585d1701273dad609d671c229998df66c4a8349648b3b3f31"
+      "sha256": "5ed6f02453f83941e10f49782284feeb4f06da2c8207078fbd310d33723f49b5"
     },
     {
       "id": "lib:test-env-flag.sh",
@@ -266,10 +296,16 @@
       "sha256": "8e60d52dc662ee2a65c353d5e52e5f6e01eaf20a25174ebe240395ca3b24dc31"
     },
     {
+      "id": "lib:test-hook-worktree-guard.sh",
+      "kind": "lib",
+      "file": "test-hook-worktree-guard.sh",
+      "sha256": "1515662b78a04fdfeb35cb7382f5b08228eee9f8b0dd3735122cbd6fd5ac44e3"
+    },
+    {
       "id": "lib:test-host-fingerprint.cjs",
       "kind": "lib",
       "file": "test-host-fingerprint.cjs",
-      "sha256": "e35912da58865d150dd1ab2fdd999835bc05fef4d49276d0d39b3871e1362bf8"
+      "sha256": "842e2b46c62732ef114891ab590514f3a6e08fe23ba0940383da854f06c5f88c"
     },
     {
       "id": "lib:test-host-vendor.cjs",
@@ -290,10 +326,28 @@
       "sha256": "7697058c88a429e7b9897d3671c0d39c13b6cfa9a40d81fb38e4f73a62cb49e4"
     },
     {
+      "id": "lib:test-measure-compaction.cjs",
+      "kind": "lib",
+      "file": "test-measure-compaction.cjs",
+      "sha256": "90ad95839183ec2c8fb6e1fd16184ad469726c7b5b08f261d394724516f55d59"
+    },
+    {
       "id": "lib:test-measure-failure-composition.cjs",
       "kind": "lib",
       "file": "test-measure-failure-composition.cjs",
-      "sha256": "f5e597da79f7e4de8d908559119749f82da5335b8ce0ac268939cd52cf87b478"
+      "sha256": "9fa65881c531b21d4b2521e7540b311d99f81086efd22463df5d878a0f7be724"
+    },
+    {
+      "id": "lib:test-measure-permission-friction.cjs",
+      "kind": "lib",
+      "file": "test-measure-permission-friction.cjs",
+      "sha256": "5c9ff00b5f533b517b91a6ef16555996d9c11e880007f3727cce9f80c016a232"
+    },
+    {
+      "id": "lib:test-measure-permission-reach.cjs",
+      "kind": "lib",
+      "file": "test-measure-permission-reach.cjs",
+      "sha256": "44bea28e3141ff9073e9986550f56daed7c5fe85eeeea67185b3aa2eba13fa55"
     },
     {
       "id": "lib:test-measure-readback-effect.cjs",
@@ -311,7 +365,43 @@
       "id": "lib:test-port-destructive-rules.cjs",
       "kind": "lib",
       "file": "test-port-destructive-rules.cjs",
-      "sha256": "431be37498d89b98c892df2a5600e1945a061ef31bfe9d30d3b259088926465e"
+      "sha256": "456ffa9b6f323cc2114a983687bdc2deede1122331fa7f7900229476611bd769"
+    },
+    {
+      "id": "lib:test-port-secret-read-rules.cjs",
+      "kind": "lib",
+      "file": "test-port-secret-read-rules.cjs",
+      "sha256": "10e0228b40173a6c1b51a6e7a8d8307fb9a3fb2c6727561c09fa73bac83cca9b"
+    },
+    {
+      "id": "lib:test-reconcile-rulers.cjs",
+      "kind": "lib",
+      "file": "test-reconcile-rulers.cjs",
+      "sha256": "7a0a31ca1bf148fff28d69e023a9f18ede5b083a9c7bbd205d4875173c9dad2d"
+    },
+    {
+      "id": "lib:test-validate-agents-actions.cjs",
+      "kind": "lib",
+      "file": "test-validate-agents-actions.cjs",
+      "sha256": "43d5c72558ec2fd2843f93ced48e14dd3c55dd858df24f3e03ff99be8b94b046"
+    },
+    {
+      "id": "lib:test-validate-commands.cjs",
+      "kind": "lib",
+      "file": "test-validate-commands.cjs",
+      "sha256": "1cf30cfc55d623d019a0e660956275d251a01c7c7943967927ebb679ab603833"
+    },
+    {
+      "id": "lib:test-validate-config-coherence.cjs",
+      "kind": "lib",
+      "file": "test-validate-config-coherence.cjs",
+      "sha256": "5bca2c4bc66a0014704705f05e2eb3a83e297f86970ef773bee40b3dcbaa79bd"
+    },
+    {
+      "id": "lib:test-validate-config-effects.cjs",
+      "kind": "lib",
+      "file": "test-validate-config-effects.cjs",
+      "sha256": "b7f2bd7868606a34fb5ecae518eb87def61b18359a208d05cdf669e1132714a7"
     },
     {
       "id": "lib:test-validate-config-fleet.cjs",
@@ -332,16 +422,28 @@
       "sha256": "4f4eabc4b1c339df7229adf38f991b93e86989f3763ccbf2a7addeb6a5258a68"
     },
     {
+      "id": "lib:test-wildcard-vendor.cjs",
+      "kind": "lib",
+      "file": "test-wildcard-vendor.cjs",
+      "sha256": "b1075859fe89eaeea454667840e870f71619d6a8759c6c8230061650b4f670a0"
+    },
+    {
       "id": "lib:validate-agents.cjs",
       "kind": "lib",
       "file": "validate-agents.cjs",
-      "sha256": "d63e41d962038f83d98585a5f86ea3d90dd0213f0de40f1b3fe32da111319268"
+      "sha256": "a977e060b3eba18eb16615dd45f6954a97a3d61d8a0eba2edd44c0e5626b0c0d"
+    },
+    {
+      "id": "lib:validate-commands.cjs",
+      "kind": "lib",
+      "file": "validate-commands.cjs",
+      "sha256": "bd67f11cc84cd25c5051fb19bf616ed8c058338a24f18709fcaab1efddec0817"
     },
     {
       "id": "lib:validate-config.cjs",
       "kind": "lib",
       "file": "validate-config.cjs",
-      "sha256": "4e01b4d78645fc57258b4980864423a959746cc3ba0a3c6ad4bbe3948e66b8c7"
+      "sha256": "3bd492753214de0878ea7bda7c12809f84f5ff7b2c1d2122bfcc1851ebde0a0f"
     },
     {
       "id": "lib:validate-ledger.cjs",
@@ -368,6 +470,12 @@
       "sha256": "e9dc357454830e2205045e35357e9a26082d38fe95b378ec916c068febdd517c"
     },
     {
+      "id": "lib:vendor-host-wildcard.cjs",
+      "kind": "lib",
+      "file": "vendor-host-wildcard.cjs",
+      "sha256": "1ec46bc83312a45f839fca43b23b5cb760bf37ec0740e33f4b56e3b2f4f5d15f"
+    },
+    {
       "id": "lib:vendor/LICENSE-opencode-src",
       "kind": "lib",
       "file": "vendor/LICENSE-opencode-src",
@@ -380,10 +488,22 @@
       "sha256": "9bde71fbf50bec5cb7d3993582de7a02cf1f94c633934f1e52a8c8b963ed9b4f"
     },
     {
+      "id": "lib:vendor/wildcard.match.ts",
+      "kind": "lib",
+      "file": "vendor/wildcard.match.ts",
+      "sha256": "91a040d86ff0b82c09d18aa3a1ce8379b24d4eea23b4f295eab628da36a58548"
+    },
+    {
       "id": "lib:verify-effective-model.cjs",
       "kind": "lib",
       "file": "verify-effective-model.cjs",
-      "sha256": "8d60b796a3efb240c6ad98764346bef399458e9f47fa91f32d6fd7ef952838ac"
+      "sha256": "5d1aa3d400876539a4d3e845ad54721ef3556fc7d5b26a87d8a6f17a1aaaca1c"
+    },
+    {
+      "id": "lib:wildcard-match.cjs",
+      "kind": "lib",
+      "file": "wildcard-match.cjs",
+      "sha256": "8e64c03b11c092695595215c58e94972bfa3a4731172d4b02fdc85130ab8e66c"
     },
     {
       "id": "host-config:cli.json",
@@ -395,7 +515,7 @@
       "id": "host-config:config.jsonc",
       "kind": "host-config",
       "file": "config.jsonc",
-      "sha256": "5e5b0af701e078a0cda09eda95f58e75135d16548f2bc2278b531426244c92f1"
+      "sha256": "c1ec87ef0729bb10379d0b4eeb85eebe374a42cf27cbe66675777365afef3269"
     },
     {
       "id": "host-config:tui.json",

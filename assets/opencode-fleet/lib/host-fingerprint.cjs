@@ -61,6 +61,18 @@ const HOST_FILES = [
       'const boundedPreview = (text: string, marker: string, maxLines: number, maxBytes: number)',
     ],
   },
+  {
+    // n=34: the destructive-rule port certifies its globs against this matcher
+    // (mirror at install/lib/wildcard-match.cjs, vendored at
+    // install/lib/vendor/wildcard.match.ts).
+    path: 'packages/core/src/util/wildcard.ts',
+    sha256: '58803dad815e7086ad3e71746bb39fd63d48ab3041644cbd5f9a546c5617157c',
+    markers: [
+      'export function match(input: string, pattern: string)',
+      'if (escaped.endsWith(" .*")) escaped = escaped.slice(0, -3) + "( .*)?"',
+      'process.platform === "win32" ? "si" : "s"',
+    ],
+  },
 ];
 
 function sha256(buf) {

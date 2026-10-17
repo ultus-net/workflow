@@ -20,6 +20,13 @@
  * execution errors; the session's terminal outcome lives on `session_v2
  * .idle_outcome` or an `idle`-type row's `.outcome`.
  *
+ * The terminal outcome is authoritative: a session whose outcome is
+ * `succeeded` is NOT a failure even though it carries error units (it
+ * recovered), and it is reported in the `recovered` bucket so the population
+ * stays visible. The error-unit fallback applies only to sessions with no
+ * recorded outcome, preserving coverage of rows the store never marked
+ * (n=38 audit; `docs/agents/findings/failure-composition-recovered-sessions.md`).
+ *
  * Read-only: opens the store `readOnly`, never writes, no config read, no
  * network. Absence of data is a graceful SKIP (exit 0); a present store with a
  * schema we cannot read is an error (exit 1), matching the other rulers.
@@ -171,27 +178,43 @@ function classifySession(session) {
 }
 
 /**
- * Is this session a candidate failure? True when its terminal outcome is
- * failed/interrupted, or it contains any error-state unit. Non-failures are
- * not classified.
+ * Is this session a failure? The terminal outcome is authoritative: a session
+ * that ended `succeeded` is not a failure even if it hit an error unit (it
+ * recovered). `failed`/`interrupted` is a failure regardless of units. When
+ * the outcome is unknown (null), the error-unit evidence is the fallback, so a
+ * session the store never marked still counts if it carries an error.
  */
 function isFailureSession(session) {
+  if (session.outcome === 'succeeded') return false;
   if (session.outcome === 'failed' || session.outcome === 'interrupted') return true;
   return (session.units || []).some((u) => u.status === 'error');
 }
 
 /**
+ * Did this session recover? True when it ended `succeeded` but carries at
+ * least one error-state unit — the population the pre-correction predicate
+ * mis-counted as failures.
+ */
+function isRecoveredSession(session) {
+  return session.outcome === 'succeeded' && (session.units || []).some((u) => u.status === 'error');
+}
+
+/**
  * Compose the failure split over assembled sessions. Each session is
  * `{ id, outcome, units }`. Returns the process/content counts, the per-signal
- * breakdown, and up to `cap` representative session ids per class.
+ * breakdown, the recovered count, and up to `cap` representative session ids
+ * per class. `recovered` sessions are reported but not classified (they are
+ * not failures).
  */
 function analyze(sessions, cap = 10) {
   const bySignal = { permission: 0, 'step-budget': 0, 'error-loop': 0 };
   let process = 0;
   let content = 0;
+  let recovered = 0;
   const processIds = [];
   const contentIds = [];
   for (const s of sessions) {
+    if (isRecoveredSession(s)) recovered += 1;
     if (!isFailureSession(s)) continue;
     const r = classifySession(s);
     if (r.cls === 'process') {
@@ -208,6 +231,7 @@ function analyze(sessions, cap = 10) {
     failures,
     process,
     content,
+    recovered,
     processRate: failures > 0 ? process / failures : 0,
     contentRate: failures > 0 ? content / failures : 0,
     bySignal,
@@ -370,6 +394,7 @@ function main(argv) {
     console.log(`failure composition (${window})`);
     console.log(`  ${result.failures} failed session(s): ${result.process} process (${pct(result.processRate)}), ${result.content} content (${pct(result.contentRate)})`);
     console.log(`  process signals: permission ${result.bySignal.permission}, step-budget ${result.bySignal['step-budget']}, error-loop ${result.bySignal['error-loop']}`);
+    console.log(`  ${result.recovered} recovered (succeeded with >=1 error unit; not counted as failures)`);
     if (result.failures === 0) console.log('  ~  no failed sessions in this window');
   }
 
@@ -391,6 +416,7 @@ module.exports = {
   sessionSignals,
   classifySession,
   isFailureSession,
+  isRecoveredSession,
   analyze,
   readSessions,
   measure,

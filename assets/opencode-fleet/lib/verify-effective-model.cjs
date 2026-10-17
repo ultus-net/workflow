@@ -13,33 +13,37 @@
  * post-pin sessions and flag the pre-pin `syn:auto` reach gap.
  *
  * Intended tier is the single source of truth: the pinned `model:` line in the
- * overlay agent frontmatter (`install/opencode/agents/*.md`). Only agents with
- * an explicit pin are graded; unpinned agents (built-ins, strangers) are not.
+ * overlay agent frontmatter (`install/opencode/agents/*.md`). Agents with an
+ * explicit pin are graded against it. Unpinned agents (built-ins, strangers)
+ * are not graded. The one exception is the DEFAULT session agent, which is
+ * checked for RESOLVABILITY (adversarial P2-4), below.
  *
- * Classification of an effective model for a pinned agent:
- *   ok           — synthetic provider and the exact intended alias
- *   unrouted     — synthetic/syn:auto (the router/pin did not take effect)
- *   wrong-tier   — another synthetic alias (e.g. small where large is intended)
- *   off-provider — not synthetic at all (OpenRouter/Azure failover is legitimate)
- *   unparseable  — the `model` column is not a JSON object (format drift /
- *                  corruption). This is DRIFT, not failover: bucketing it as
- *                  off-provider would let a store-format change turn the ruler
- *                  green forever. A malformed row must fail loud.
+ * The default agent: `default_agent` names the agent every session starts as. A
+ * rename to a name the host will not use is a silent no-op (the host falls back
+ * to `build`, `packages/core/src/agent.ts:92-97`), so this ruler reads the key
+ * (via `stripJsonc`) and fails loud when it resolves to no selectable agent. A
+ * selectable default that carries a fleet pin is graded by that pin. Unset
+ * resolves to the host default `build`. Resolution is fleet frontmatter + the
+ * selectable built-ins (`SELECTABLE_BUILTINS`), not an inline config `agent` map.
  *
- * Exit codes: 0 = no drift (ok/off-provider only), 1 = drift
- * (unrouted/wrong-tier/unparseable), a present-but-unreadable store, or an
- * unreadable/empty intent source (bad `--agents` dir, no pinned agents), 2 =
- * usage error. A missing store or absent `session_v2` table is a graceful SKIP
- * (exit 0): the tool is inert where there is no database to measure, never a
- * spurious failure. Absence of data is a skip; presence of unreadable data (bad
- * query, missing columns, malformed rows) is a failure. The same split applies
- * to the intent source: a missing/unreadable `--agents` dir, or one that yields
- * no pinned agents, is an error, not a clean run — otherwise a typo would grade
- * nothing and exit 0.
+ * Classification for a graded agent: ok (exact intended alias), unrouted
+ * (syn:auto — the pin did not take effect), wrong-tier (another synthetic
+ * alias), off-provider (non-synthetic; failover is legitimate), unparseable
+ * (the `model` column is not a JSON object — DRIFT, not failover, and must fail
+ * loud rather than turn the ruler green forever).
+ *
+ * Exit codes: 0 = no drift, or a graceful SKIP (no store / no `session_v2`
+ * table: inert, never a spurious failure). 1 = drift (unrouted/wrong-tier/
+ * unparseable), a present-but-unreadable store (bad query, missing columns,
+ * malformed rows), or an unusable intent source (bad/empty `--agents` dir, no
+ * pinned agents, unreadable `--config`, or a `default_agent` that resolves to
+ * no selectable agent). Absence of data is a skip; presence of unreadable data
+ * is a failure. A typo in an intent source must not grade nothing and exit 0.
+ * 2 = usage error.
  *
  * Usage:
  *   node install/lib/verify-effective-model.cjs [--db PATH] [--since ISO]
- *        [--agents DIR] [--json]
+ *        [--agents DIR] [--config PATH] [--no-default] [--json]
  */
 
 'use strict';
@@ -47,6 +51,9 @@
 const fs   = require('fs');
 const os   = require('os');
 const path = require('path');
+
+// One parser, one answer: the same JSONC normalizer the config validator uses.
+const { stripJsonc } = require('./validate-config.cjs');
 
 const SYNTHETIC = 'synthetic';
 const AUTO_ID   = 'syn:auto';
@@ -96,6 +103,34 @@ function intendedModels(agentsDir) {
   return out;
 }
 
+/**
+ * Read each fleet agent's selection fields (`id -> { mode, hidden }`), needed to
+ * resolve `default_agent`. The host selects a default only among non-subagent,
+ * non-hidden agents (`packages/core/src/agent.ts:92-97`). A file with no (or
+ * unparseable) frontmatter yields `{ mode: undefined, hidden: false }`: the host
+ * still loads it and its mode defaults to `primary` (`Info.default`,
+ * `packages/schema/src/agent.ts:44`), so it is selectable. The id is always
+ * present as a key, distinguishing a fleet agent from a name that is not one.
+ */
+function fleetSelectability(agentsDir) {
+  const out = {};
+  let entries;
+  try {
+    entries = fs.readdirSync(agentsDir);
+  } catch {
+    return out;
+  }
+  for (const name of entries) {
+    if (!name.endsWith('.md')) continue;
+    const fm = parseFrontmatter(fs.readFileSync(path.join(agentsDir, name), 'utf8'));
+    out[name.replace(/\.md$/, '')] = {
+      mode: fm ? fm.mode : undefined,
+      hidden: fm ? fm.hidden === 'true' : false,
+    };
+  }
+  return out;
+}
+
 /** Classify one effective model against its intended target. */
 function classify(effective, intended) {
   if (!intended) return 'no-intent';
@@ -104,6 +139,58 @@ function classify(effective, intended) {
   if (effective.id === intended.id) return 'ok';
   if (effective.id === AUTO_ID) return 'unrouted';
   return 'wrong-tier';
+}
+
+// Host built-in agent ids the default selector can pick: `build`/`plan` (from
+// the v2 source `packages/core/src/agent.ts:18,92-101`, `plugin/plan.ts:12`).
+// The other registry entries are subagents or hidden, so naming them falls back
+// to `build`. This set is the source pin for resolution below.
+const SELECTABLE_BUILTINS = new Set(['build', 'plan']);
+
+/**
+ * Read `default_agent` from an overlay config. Returns `{ id, present }` where
+ * `present` distinguishes an unset key from a set one; `{ error }` on an
+ * unreadable or unparseable config. Reuses the canonical JSONC normalizer so the
+ * ruler and `validate-config.cjs` cannot disagree about what the config says.
+ */
+function readDefaultAgent(configPath) {
+  let text;
+  try {
+    text = fs.readFileSync(configPath, 'utf8');
+  } catch {
+    return { error: `config not readable: ${configPath}` };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(stripJsonc(text));
+  } catch (err) {
+    return { error: `config does not parse as JSONC: ${err.message}` };
+  }
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { error: `config root is not an object: ${JSON.stringify(parsed)}` };
+  }
+  const raw = parsed.default_agent;
+  if (raw === undefined) return { id: 'build', present: false }; // host default
+  if (typeof raw !== 'string' || raw.length === 0) {
+    return { error: `default_agent is not a non-empty string: ${JSON.stringify(raw)}` };
+  }
+  return { id: raw, present: true };
+}
+
+/**
+ * Would the host accept `id` as a session default? The host's rule is a
+ * blacklist (`packages/core/src/agent.ts:92-97`: `mode !== "subagent" &&
+ * !hidden`), so this mirrors it exactly rather than whitelisting the modes that
+ * exist today: any non-`subagent`, non-hidden mode is selectable, including a
+ * mode the host adds later. A fleet agent with no declared mode defaults to
+ * `primary` (`packages/schema/src/agent.ts:44`) and is selectable. A fleet agent
+ * is keyed in `fleet`; any other id must be one of `SELECTABLE_BUILTINS`. An
+ * agent declared inline in the config's `agent` map is not seen. Pure.
+ */
+function isSelectable(id, fleet) {
+  const spec = Object.prototype.hasOwnProperty.call(fleet, id) ? fleet[id] : null;
+  if (!spec) return SELECTABLE_BUILTINS.has(id);
+  return spec.mode !== 'subagent' && spec.hidden !== true;
 }
 
 // ─── Store access ────────────────────────────────────────────────────────────
@@ -189,12 +276,17 @@ function parseModel(raw) {
 // ─── Verify ──────────────────────────────────────────────────────────────────
 
 /**
- * Compare effective session models to intended pins.
- * Returns `{ agents, drift, skipped, error, totals }` where `agents` is keyed by
- * agent id and each entry lists per-classification counts, distinct models seen,
- * cost and tokens. `error` is non-null when the store is present-but-unreadable
- * or the intent source is unusable (bad/empty `agentsDir`); a `readSessions`
- * error takes precedence over the intent-source error.
+ * Compare effective session models to intended pins. `agents` is keyed by agent
+ * id and each entry lists per-classification counts, models, cost and tokens.
+ * `error` is non-null when the store is present-but-unreadable or the intent
+ * source is unusable (a `readSessions` error takes precedence).
+ *
+ * With `options.configPath`, the config's `default_agent` is checked for
+ * resolvability (adversarial P2-4): a name that resolves to no selectable agent
+ * is an error (the host would silently fall back to `build`). A selectable
+ * default that carries a fleet pin is already graded by that pin and is marked
+ * `default`. Without `configPath` (the fixture suite, embedded use) the
+ * pre-change behavior holds exactly.
  */
 function verify(options = {}) {
   const agentsDir = options.agentsDir;
@@ -217,14 +309,37 @@ function verify(options = {}) {
     dirError = `no pinned agents found in ${agentsDir}`;
   }
 
-  const agents = {};
+  // Null-prototype map: a store row whose `agent` is `"constructor"` or
+  // `"__proto__"` must not resolve to a prototype member and be graded by
+  // accident (or write counts onto Object.prototype).
+  const agents = Object.create(null);
   for (const id of Object.keys(intended)) {
     agents[id] = { intended: intended[id], ok: 0, unrouted: 0, 'wrong-tier': 0, 'off-provider': 0, unparseable: 0, models: {}, cost: 0, tokens: 0 };
   }
 
+  // Check the default agent (P2-4): a name that resolves to nothing selectable
+  // is an error, not a silent skip — the host would fall back to `build`.
+  let defaultAgent = null;
+  if (options.configPath != null) {
+    const read = readDefaultAgent(options.configPath);
+    if (read.error) {
+      defaultAgent = { error: read.error };
+    } else {
+      // Read the fleet's selection fields only when the default needs resolving
+      // (skips the second directory read on the pre-existing pinned-only path).
+      const selectable = isSelectable(read.id, fleetSelectability(agentsDir));
+      defaultAgent = { id: read.id, present: read.present, selectable, error: null };
+      if (!selectable) {
+        defaultAgent.error = `default_agent "${read.id}" names no selectable agent (the host would fall back to build)`;
+      } else if (agents[read.id]) {
+        agents[read.id].default = true; // already graded by its pin
+      }
+    }
+  }
+
   for (const row of rows) {
     const spec = agents[row.agent];
-    if (!spec) continue; // not a pinned fleet agent
+    if (!spec) continue; // not a graded agent
     const effective = parseModel(row.model);
     const status    = classify(effective, spec.intended);
     spec[status] = (spec[status] || 0) + 1;
@@ -243,7 +358,15 @@ function verify(options = {}) {
     (n, s) => n + s.ok + s.unrouted + s['wrong-tier'] + s['off-provider'] + s.unparseable,
     0,
   );
-  return { agents, drift, skipped, error: error ?? dirError, totals: { graded, intendedAgents: Object.keys(intended).length } };
+  const defaultError = defaultAgent && defaultAgent.error ? defaultAgent.error : null;
+  return {
+    agents,
+    drift,
+    skipped,
+    error: error ?? dirError ?? defaultError,
+    defaultAgent,
+    totals: { graded, intendedAgents: Object.keys(intended).length },
+  };
 }
 
 // ─── CLI ─────────────────────────────────────────────────────────────────────
@@ -252,6 +375,7 @@ function parseArgs(argv) {
   const opts = {
     dbPath:   path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db'),
     agentsDir: path.resolve(__dirname, '..', 'opencode', 'agents'),
+    configPath: path.resolve(__dirname, '..', 'opencode', 'config.jsonc'),
     since:    null,
     json:     false,
   };
@@ -259,6 +383,8 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a === '--db')          { const v = argv[++i]; if (v == null) return { error: '--db requires a path' }; opts.dbPath = v; }
     else if (a === '--agents') { const v = argv[++i]; if (v == null) return { error: '--agents requires a directory' }; opts.agentsDir = path.resolve(v); }
+    else if (a === '--config') { const v = argv[++i]; if (v == null) return { error: '--config requires a path' }; opts.configPath = path.resolve(v); }
+    else if (a === '--no-default') opts.configPath = null;
     else if (a === '--since')  { const v = argv[++i]; if (v == null) return { error: '--since requires an ISO timestamp' }; opts.since = Date.parse(v); }
     else if (a === '--json')   opts.json = true;
     else if (a === '-h' || a === '--help') { opts.help = true; }
@@ -272,7 +398,7 @@ function main(argv) {
   const opts = parseArgs(argv);
   if (opts.error) { console.error(opts.error); return 2; }
   if (opts.help) {
-    console.log('usage: verify-effective-model.cjs [--db PATH] [--since ISO] [--agents DIR] [--json]');
+    console.log('usage: verify-effective-model.cjs [--db PATH] [--since ISO] [--agents DIR] [--config PATH] [--no-default] [--json]');
     return 0;
   }
 
@@ -294,8 +420,10 @@ function main(argv) {
         .join(', ');
       const bad = s.unrouted + s['wrong-tier'] + s.unparseable;
       const mark = bad > 0 ? '✗' : '✓';
+      const intent = `${s.intended.providerID}/${s.intended.id}`;
+      const label = s.default ? `${id} (default)` : id;
       console.log(
-        `  ${mark}  ${id} → ${s.intended.providerID}/${s.intended.id}  ` +
+        `  ${mark}  ${label} → ${intent}  ` +
           `[ok ${s.ok}, unrouted ${s.unrouted}, wrong-tier ${s['wrong-tier']}, ` +
           `off-provider ${s['off-provider']}, unparseable ${s.unparseable}]` +
           (seen ? `  { ${seen} }` : ''),
@@ -313,4 +441,8 @@ function main(argv) {
 
 if (require.main === module) process.exit(main(process.argv.slice(2)));
 
-module.exports = { parseFrontmatter, intendedModels, classify, readSessions, parseModel, verify, main };
+module.exports = {
+  parseFrontmatter, intendedModels, classify,
+  readDefaultAgent, isSelectable,
+  readSessions, parseModel, verify, parseArgs, main,
+};

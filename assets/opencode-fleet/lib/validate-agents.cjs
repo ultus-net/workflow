@@ -9,6 +9,9 @@
  * Checks (errors block CI):
  *   - every *.md has YAML frontmatter with a non-empty 'description',
  *     'mode: subagent', and an integer 'steps' >= 0
+ *   - every rule's `effect` VALUE is one of the host literals
+ *     {allow, deny, ask}; an invalid value silently drops the whole agent
+ *     (the host decodes `effect` as a closed literal set, unlike `action`)
  *   - the only frontmatter external_directory item allowed is the
  *     ~/.config/opencode/style/** glob with effect: allow, written in the
  *     canonical block form (any other spelling is an error, not a skip)
@@ -34,6 +37,53 @@ const AGENTS_DIR = process.env.AGENTS_DIR ||
 
 // The style-floor reference every grant-bearing agent must contain.
 const STYLE_REF = 'coding-style.md';
+
+// Host permission-action vocabulary (running host opencode v2.0.10). The host
+// parses an agent `permissions` entry as a Rule with `action: Schema.String`
+// and NO enum (packages/schema/src/permission.ts:58-64), and the frontmatter
+// decode drops an agent only when an ENUM field fails
+// (packages/core/src/config/plugin/agent.ts:26,36-41). A misspelled action is
+// therefore accepted and simply never matches under `findLast`
+// (packages/core/src/permission.ts:76-84) — an inert rule that looks present in
+// review. This set is the actions some tool actually asserts, so the validator
+// can reject a typo instead of shipping a rule that does nothing.
+//
+// Sources (pinned):
+//   - v1 known keys: packages/core/src/v1/config/permission.ts:16-33 (read,
+//     edit, glob, grep, list, bash, task, external_directory, todowrite,
+//     question, webfetch, websearch, lsp, doom_loop, skill). NOTE: the v1
+//     NAMES bash/task are normalized to shell/subagent by `qf()` only for the
+//     legacy `permission:` object form; in the v2 `permissions:` ARRAY the host
+//     decodes the action verbatim (no `qf`), so a v2 rule `action: bash` never
+//     matches the runtime `shell` and is inert. The v2 names are therefore the
+//     only accepted spellings here.
+//   - v2 renames the host requests at runtime (binary `qf(H)`): write|patch ->
+//     edit, task -> subagent, bash -> shell
+//   - host-internal actions observed in the v2.0.10 binary: plan_enter,
+//     plan_exit, execute, browser
+// `*` is the universal wildcard every ruleset may use.
+const KNOWN_ACTIONS = new Set([
+  '*',
+  'read', 'edit', 'glob', 'grep', 'list', 'shell', 'subagent',
+  'webfetch', 'websearch', 'question', 'skill', 'todowrite',
+  'external_directory', 'lsp', 'doom_loop',
+  'plan_enter', 'plan_exit', 'execute', 'browser',
+]);
+
+// Host permission-EFFECT vocabulary (running host opencode v2.0.10). Unlike
+// `action` (a free string with no enum), `effect` IS a closed literal set:
+// `Schema.Literals(["allow","deny","ask"])` (packages/schema/src/permission.ts:54).
+// A value outside the set fails the decode, and the failure is SILENT: the
+// agent is decoded with `Schema.decodeUnknownOption(ConfigAgent.Info)` under
+// `errors:"all"` (packages/core/src/config/plugin/agent.ts:24,169), so an
+// invalid `effect` returns Option.none and the WHOLE agent is dropped with no
+// warning (binary oracle: `opencode debug agents` does not list an agent whose
+// rule reads `effect: alow`). This is the sharper form of the n=37 silent-drop
+// class: there a typo made one rule inert, here it removes the entire agent.
+// n=37 deferred this check on the belief "the host fails loud"; the binary
+// refutes that. Pin the literal set so a bad value fails the build, not the
+// fleet.
+const KNOWN_EFFECTS = new Set(['allow', 'deny', 'ask']);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -166,6 +216,67 @@ function externalDirectoryGrants(content) {
 
 // ─── Validator ───────────────────────────────────────────────────────────────
 
+/**
+ * Inspect the frontmatter `permissions` block and classify every rule's
+ * `action`. Fail-closed: a rule with no `action`, an action outside the host
+ * vocabulary (KNOWN_ACTIONS), a rule with no `effect`, or an `effect` outside
+ * the host literal set (KNOWN_EFFECTS) is reported, so an inert or agent-
+ * dropping rule cannot ship. Also reports the count of `action:` tokens the
+ * canonical item scanner did not account for, so a non-canonical spelling is an
+ * error rather than a silent skip. Returns { rules, unknown, missingAction,
+ * missingEffect, badEffect, unscanned }.
+ */
+function permissionActions(content) {
+  const block = frontmatterBlock(content);
+  const result = { rules: 0, unknown: [], missingAction: 0, missingEffect: 0, badEffect: [], unscanned: 0 };
+  if (block === null) return result;
+
+  // Scope to the permissions block: a top-level (column-0) key starts it, the
+  // next top-level key ends it. Matches externalDirectoryGrants.
+  const permLines = [];
+  let inPerms = false;
+  for (const line of block.split(/\r?\n/)) {
+    if (/^\S/.test(line)) inPerms = /^\s*permissions\s*:/.test(line);
+    if (inPerms) permLines.push(line);
+  }
+
+  let actionTokenCount = 0;
+  for (const line of permLines) {
+    const occ = line.match(/["']?\baction["']?\s*:/g);
+    if (occ) actionTokenCount += occ.length;
+  }
+
+  const pairRe = /^\s*-?\s*(action|resource|effect)\s*:\s*("(?:[^"]*)"|'(?:[^']*)'|[^,}\n#]+)/;
+  let inItem = false;
+  let action = null;
+  let effect = null;
+  const flush = () => {
+    if (!inItem) return;
+    result.rules++;
+    if (action === null) result.missingAction++;
+    else if (!KNOWN_ACTIONS.has(action)) result.unknown.push(action);
+    if (effect === null) result.missingEffect++;
+    else if (!KNOWN_EFFECTS.has(effect)) result.badEffect.push(effect);
+    inItem = false; action = null; effect = null;
+  };
+
+  for (const line of permLines) {
+    if (/^\s*-\s+\S/.test(line)) { flush(); inItem = true; }
+    if (!inItem) continue;
+    const m = line.match(pairRe);
+    if (!m) continue;
+    const val = normVal(m[2]);
+    if (m[1] === 'action') action = val;
+    else if (m[1] === 'effect') effect = val;
+  }
+  flush();
+
+  // Every scanned rule carries exactly one action; any extra `action:` token is
+  // outside the canonical form.
+  if (actionTokenCount > result.rules) result.unscanned = actionTokenCount - result.rules;
+  return result;
+}
+
 function validateAgent(name, content) {
   const errors = [];
 
@@ -183,6 +294,28 @@ function validateAgent(name, content) {
     if (!/^\d+$/.test(fm.steps === undefined ? '' : fm.steps)) {
       errors.push(`Frontmatter 'steps' must be a non-negative integer (got '${fm.steps || ''}')`);
     }
+  }
+
+  // ── Permission actions are classified (fail closed) ──────────────────────
+  // The host accepts any action string and silently never matches an unknown
+  // one, so a typo becomes an inert rule. Classify every action here.
+  const acts = permissionActions(content);
+  if (acts.unscanned > 0) {
+    errors.push(`${acts.unscanned} action token(s) outside the canonical rule form (one 'action:' per '- action:' item)`);
+  }
+  if (acts.missingAction > 0) {
+    errors.push(`${acts.missingAction} permission rule(s) with no 'action'`);
+  }
+  if (acts.missingEffect > 0) {
+    errors.push(`${acts.missingEffect} permission rule(s) with no 'effect'`);
+  }
+  if (acts.unknown.length > 0) {
+    const uniq = [...new Set(acts.unknown)].sort();
+    errors.push(`unknown permission action(s): ${uniq.join(', ')} (the host accepts any string and silently never matches it; use a known action or '*' )`);
+  }
+  if (acts.badEffect.length > 0) {
+    const uniq = [...new Set(acts.badEffect)].sort();
+    errors.push(`invalid permission effect(s): ${uniq.join(', ')} (the host decodes 'effect' as ${[...KNOWN_EFFECTS].join('|')}; an invalid value fails the decode and silently drops the ENTIRE agent, so no rule of this agent takes effect)`);
   }
 
   // ── Style grant requires a coding-style.md reference ─────────────────────
@@ -248,4 +381,6 @@ function main() {
   if (totalErrors > 0) process.exit(1);
 }
 
-main();
+module.exports = { validateAgent, permissionActions, KNOWN_ACTIONS, KNOWN_EFFECTS, parseFrontmatter };
+
+if (require.main === module) main();

@@ -38,6 +38,86 @@ permissions:
   - action: external_directory
     resource: "~/.config/opencode/style/**"
     effect: allow
+  # >>> ported-secret-read-rules (generated — run install/lib/port-secret-read-rules.cjs --apply) <<<
+  - action: read
+    resource: "*id_rsa"
+    effect: deny
+  - action: read
+    resource: "*id_rsa.*"
+    effect: deny
+  - action: read
+    resource: "*id_dsa"
+    effect: deny
+  - action: read
+    resource: "*id_dsa.*"
+    effect: deny
+  - action: read
+    resource: "*id_ecdsa"
+    effect: deny
+  - action: read
+    resource: "*id_ecdsa.*"
+    effect: deny
+  - action: read
+    resource: "*id_ed25519"
+    effect: deny
+  - action: read
+    resource: "*id_ed25519.*"
+    effect: deny
+  - action: read
+    resource: "*.pem"
+    effect: deny
+  - action: read
+    resource: "*.key"
+    effect: deny
+  - action: read
+    resource: "*.pkcs12"
+    effect: deny
+  - action: read
+    resource: "*.pfx"
+    effect: deny
+  - action: read
+    resource: "*.p12"
+    effect: deny
+  - action: read
+    resource: "*kubeconfig*"
+    effect: deny
+  - action: read
+    resource: "*.netrc"
+    effect: deny
+  - action: read
+    resource: "*.git-credentials"
+    effect: deny
+  - action: read
+    resource: "*.kube/config*"
+    effect: deny
+  - action: read
+    resource: "*.aws/credentials*"
+    effect: deny
+  - action: read
+    resource: "*.docker/config.json*"
+    effect: deny
+  - action: read
+    resource: "*credentials.json"
+    effect: deny
+  - action: read
+    resource: "*serviceaccount*.json"
+    effect: deny
+  - action: read
+    resource: "*service-account*.json"
+    effect: deny
+  - action: read
+    resource: "*service_account*.json"
+    effect: deny
+  - action: read
+    resource: "*clientsecret*.json"
+    effect: deny
+  - action: read
+    resource: "*client-secret*.json"
+    effect: deny
+  - action: read
+    resource: "*client_secret*.json"
+    effect: deny
+  # <<< ported-secret-read-rules <<<
 ---
 
 You are a fresh-eyes reviewer. You did not write this diff and you owe it no
