@@ -37,6 +37,7 @@ export type AppView =
   | "projects"
   | "routes"
   | "workspace"
+  | "notes"
   | "usage"
   | "activity"
   | "audit"
@@ -45,7 +46,7 @@ export type AppView =
 /** Every route the shell honors, in rail order. */
 export const APP_VIEWS: readonly AppView[] = [
   "overview", "chat", "agents", "board", "runs", "reviews",
-  "schedules", "projects", "routes", "workspace", "usage", "activity", "audit", "settings",
+  "schedules", "projects", "routes", "workspace", "notes", "usage", "activity", "audit", "settings",
 ];
 
 /** The view a first paint lands on when no hash (or no known hash) says
@@ -82,6 +83,7 @@ export function commandView(command: string): AppView | undefined {
   if (name === "/projects") return "projects";
   if (name === "/routes") return "routes";
   if (name === "/workspace") return "workspace";
+  if (name === "/notes") return "notes";
   if (name === "/usage") return "usage";
   if (name === "/settings") return "settings";
   if (name === "/chat") return "chat";
@@ -104,6 +106,7 @@ const SHELL_VIEW_TITLES: Record<AppView, string> = {
   projects: "Projects",
   routes: "Routes",
   workspace: "Workspace",
+  notes: "Notes",
   usage: "Usage",
   activity: "Activity",
   audit: "Audit",
@@ -248,6 +251,17 @@ function RoutesIcon() {
   );
 }
 
+/** Document glyph for the Notes slug — a page with a folded corner. */
+function NotesIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3.5 2.5h6l3 3v8h-9z" />
+      <path d="M9.5 2.5v3h3" />
+      <path d="M5.5 8.5h5M5.5 11h5" />
+    </svg>
+  );
+}
+
 export const ENFORCEMENT_COPY: Record<string, string> = {
   advisory: "Advisory: the agent's actions are reviewed and recorded, but file and command mutations are not pre-authorized before they run.",
   enforced: "Enforced: agent file and command mutations require Workflow authorization before they run.",
@@ -364,6 +378,7 @@ export function shellRailSections(badges: RailBadges = {}): readonly RailSection
         // operator configuration beside Schedules/Projects.
         { view: "routes", label: "Routes", icon: <RoutesIcon /> },
         { view: "workspace", label: "Workspace", icon: <ProjectsIcon /> },
+        { view: "notes", label: "Notes", icon: <NotesIcon /> },
       ],
     },
     {

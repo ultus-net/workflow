@@ -25,6 +25,7 @@ import { operatorPosture, scheduleLineage, scheduleRecentRuns, type PostureBudge
 import { inProgressBoardTasks, workProductStates } from "./task-provider.js";
 import type { BoardOutcome, BoardTaskOutcome, CrossReferenceOutcome, WorkProductStateOutcome } from "./task-provider.js";
 import type { IssueDetailOutcome, ProviderReadRecord } from "./issue-detail.js";
+import type { NoteListing, NoteReadOutcome } from "./note-store.js";
 import type { SurfaceUsageCounters, SurfaceUsageObservation } from "./task-usage.js";
 
 /**
@@ -211,6 +212,22 @@ interface HubRequestContext {
    */
   readonly assistantWorkspace?: (() => AssistantWorkspaceListing) | undefined;
   /**
+   * W212 (hub Note view, decision-brief Option A): the notes subtree listing
+   * (`<WORKFLOW_ASSISTANT_WORKSPACE>/notes`) — a FIELD on the capabilities
+   * object, never a positional. When composed the hub answers the
+   * operator-token `POST /notes` read; absent → the route 404s (capability
+   * withheld, fail closed, like the other optional registries).
+   */
+  readonly assistantNotes?: (() => NoteListing) | undefined;
+  /**
+   * W212: the bounded, path-confined single-note content read (see
+   * AssistantNoteRead capability note) — a FIELD on the capabilities object,
+   * never a positional. When composed the hub answers the operator-token
+   * `POST /note-read`; absent → the route 404s (capability withheld, fail
+   * closed).
+   */
+  readonly assistantNoteRead?: ((name: string) => NoteReadOutcome) | undefined;
+  /**
    * W205 S4 (M4): the assistant tool-call lane (see AssistantToolCallCapability)
    * — a FIELD on the capabilities object, never a positional. When composed the
    * hub answers the operator-token `POST /assistant/tool-call`; absent → the
@@ -292,6 +309,18 @@ export interface HubBridgeCapabilities {
    * extension point), never a positional.
    */
   readonly assistantWorkspace?: (() => AssistantWorkspaceListing) | undefined;
+  /**
+   * W212 (hub Note view, decision-brief Option A): the notes subtree listing
+   * (see HubRequestContext) — a FIELD on the capabilities object (the
+   * post-#330 extension point), never a positional.
+   */
+  readonly assistantNotes?: (() => NoteListing) | undefined;
+  /**
+   * W212: the bounded, path-confined single-note content read (see
+   * HubRequestContext) — a FIELD on the capabilities object, never a
+   * positional.
+   */
+  readonly assistantNoteRead?: ((name: string) => NoteReadOutcome) | undefined;
   /**
    * W205 S4 (M4): the assistant tool-call lane (see AssistantToolCallCapability)
    * — a FIELD on the capabilities object (the post-#330 extension point), never a
@@ -588,6 +617,35 @@ async function handleRequest(
       // 404 (capability withheld, fail closed).
       if (context.assistantWorkspace === undefined) return send(response, 404, { error: "not found" });
       return send(response, 200, { workspace: context.assistantWorkspace() });
+    }
+    if (request.url === "/notes") {
+      // W212 (hub Note view, decision-brief Option A): the notes subtree
+      // listing — POST read-class, operator-token, like /workspace. The store
+      // answers `.md` files only, bounded, sorted by name with a plain `<`
+      // comparison, lstat-resolved (symlinks skipped, never followed), never
+      // recursed, each entry carrying its parsed admission sidecar or `null`
+      // (a missing/malformed sidecar is never fabricated). Absent capability
+      // → 404 (capability withheld, fail closed).
+      if (context.assistantNotes === undefined) return send(response, 404, { error: "not found" });
+      return send(response, 200, { notes: context.assistantNotes() });
+    }
+    if (request.url === "/note-read") {
+      // W212: the bounded, path-confined single-note content read — POST
+      // read-class, operator-token. `name` must be a bare `.md` basename:
+      // the store rejects separators, `..`, and absolute resolution (a 400
+      // naming the confinement rule), answers an unknown or non-regular note
+      // with `unknown` (an honest 404), and refuses a body over the per-note
+      // byte cap (an honest 413 with the count). Absent capability → 404
+      // (capability withheld, fail closed).
+      if (context.assistantNoteRead === undefined) return send(response, 404, { error: "not found" });
+      if (!isRecord(body) || typeof body.name !== "string" || body.name.length === 0) {
+        return send(response, 400, { error: "invalid note-read request: name is required" });
+      }
+      const outcome = context.assistantNoteRead(body.name);
+      if (outcome.kind === "invalid") return send(response, 400, { error: "invalid note-read request: " + outcome.error });
+      if (outcome.kind === "unknown") return send(response, 404, { error: "not found" });
+      if (outcome.kind === "over-cap") return send(response, 413, { error: outcome.error });
+      return send(response, 200, { note: outcome.note });
     }
     if (request.url === "/evidence-content") {
       // W158: the bounded content behind an evidence record's reference — the

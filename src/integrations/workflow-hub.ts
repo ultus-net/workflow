@@ -134,6 +134,29 @@ export async function createWorkflowHub(
      */
     assistantRoutes?: () => import("./hub-http.js").AssistantRouteSummary;
     /**
+     * W197 (hub Workspace view): the assistant workspace directory listing —
+     * when provided, the hub exposes the operator-token `POST /workspace`
+     * read; absent means the route 404s (capability withheld, fail closed).
+     * The composition root builds it from `WORKFLOW_ASSISTANT_WORKSPACE`.
+     * (W212 P0 fix: this forward was silently dropped by the spread-typed
+     * options object — the W197 route was dead in production until the W212
+     * audit caught it.)
+     */
+    assistantWorkspace?: () => import("./hub-http.js").AssistantWorkspaceListing;
+    /**
+     * W212 (hub Note view, decision-brief Option A): the notes subtree
+     * listing (`<WORKFLOW_ASSISTANT_WORKSPACE>/notes`) — when provided, the
+     * hub exposes the operator-token `POST /notes` read; absent means the
+     * route 404s (capability withheld, fail closed).
+     */
+    assistantNotes?: () => import("./note-store.js").NoteListing;
+    /**
+     * W212: the bounded, path-confined single-note content read — when
+     * provided, the hub exposes the operator-token `POST /note-read`; absent
+     * means the route 404s (capability withheld, fail closed).
+     */
+    assistantNoteRead?: (name: string) => import("./note-store.js").NoteReadOutcome;
+    /**
      * W205 S4 (M4): the assistant tool-call lane (`POST /assistant/tool-call`).
      * When provided, the hub exposes the operator-token route; absent means the
      * route 404s (capability withheld, fail closed). The composition root builds
@@ -299,6 +322,13 @@ export async function createWorkflowHub(
         ...(options.delegateBoardTask === undefined ? {} : { delegateBoardTask: options.delegateBoardTask }),
         ...(options.projects === undefined ? {} : { projects: options.projects }),
         ...(options.assistantRoutes === undefined ? {} : { assistantRoutes: options.assistantRoutes }),
+        // W197/W212: the shared-workspace family — the workspace listing, the
+        // notes subtree listing, and the confined note content read. W212 P0:
+        // these three were declared by the CLI and never forwarded here, so
+        // /workspace, /notes, and /note-read were all dead in production.
+        ...(options.assistantWorkspace === undefined ? {} : { assistantWorkspace: options.assistantWorkspace }),
+        ...(options.assistantNotes === undefined ? {} : { assistantNotes: options.assistantNotes }),
+        ...(options.assistantNoteRead === undefined ? {} : { assistantNoteRead: options.assistantNoteRead }),
         ...(assistantToolCall === undefined ? {} : { assistantToolCall }),
         ...(options.readWorkProductState === undefined ? {} : { readWorkProductState: options.readWorkProductState }),
         ...(options.readIssueDetail === undefined ? {} : { readIssueDetail: options.readIssueDetail }),
