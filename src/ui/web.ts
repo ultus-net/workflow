@@ -214,6 +214,19 @@ export function createWorkflowWebServer(
     return { notes: null, reason: payload?.error ?? "hub unavailable" };
   };
 
+  /** W213: the care fact projection relay — the hub's `POST /care` read (the
+   * hub is POST-only; this service bridges the browser's GET onto it).
+   * Fail-closed: no hub, or a hub predating the slice, answers care: null
+   * with the reason — the future care view renders its named-absence state,
+   * never a fabricated fact table. The browser never sees a hub token. The
+   * view itself is W214; this relay pins the read seam now. */
+  const hubCare = async (): Promise<{ care: unknown; reason?: string }> => {
+    const result = await hubPost("/care", {});
+    const payload = result.payload as { care?: unknown; error?: string } | undefined;
+    if (result.status === 200 && payload?.care !== undefined) return { care: payload.care };
+    return { care: null, reason: payload?.error ?? "hub unavailable" };
+  };
+
   /** W175: the ONE runs read route — the hub's /snapshot runs block, the
    * run-registry projection (all run rows with their recorded origins,
    * work-product links, review outcomes, blocking reasons, completion claims,
@@ -324,6 +337,10 @@ export function createWorkflowWebServer(
     // W212: the notes subtree listing relay (see hubNotes above) — the
     // browser's GET is bridged onto the hub's POST-only read.
     if (request.method === "GET" && pathname === "/api/notes") return json(response, 200, await hubNotes());
+    // W213: the care fact projection relay (see hubCare above) — the
+    // browser's GET is bridged onto the hub's POST-only read. The care view
+    // is W214; this is the read seam, pinned like its neighbors.
+    if (request.method === "GET" && pathname === "/api/care") return json(response, 200, await hubCare());
     // W212: the single-note content relay — the read-only same-origin bridge
     // onto the hub's POST /note-read. The name rides the query string, and
     // the hub's own answer passes through verbatim: 200 note, 400 malformed

@@ -26,6 +26,7 @@ import { inProgressBoardTasks, workProductStates } from "./task-provider.js";
 import type { BoardOutcome, BoardTaskOutcome, CrossReferenceOutcome, WorkProductStateOutcome } from "./task-provider.js";
 import type { IssueDetailOutcome, ProviderReadRecord } from "./issue-detail.js";
 import type { NoteListing, NoteReadOutcome } from "./note-store.js";
+import type { CareProjection } from "./care-facts.js";
 import type { SurfaceUsageCounters, SurfaceUsageObservation } from "./task-usage.js";
 
 /**
@@ -228,6 +229,14 @@ interface HubRequestContext {
    */
   readonly assistantNoteRead?: ((name: string) => NoteReadOutcome) | undefined;
   /**
+   * W213 (Decision 2, Option C): the care fact projection (the curated core,
+   * the inert annotation channel, the Q28 seam value, and the static rule) —
+   * a FIELD on the capabilities object, never a positional. When composed the
+   * hub answers the operator-token `POST /care`; absent → the route 404s
+   * (capability withheld, fail closed).
+   */
+  readonly assistantCare?: (() => CareProjection) | undefined;
+  /**
    * W205 S4 (M4): the assistant tool-call lane (see AssistantToolCallCapability)
    * — a FIELD on the capabilities object, never a positional. When composed the
    * hub answers the operator-token `POST /assistant/tool-call`; absent → the
@@ -321,6 +330,14 @@ export interface HubBridgeCapabilities {
    * positional.
    */
   readonly assistantNoteRead?: ((name: string) => NoteReadOutcome) | undefined;
+  /**
+   * W213 (Decision 2, Option C): the care fact projection (see
+   * HubRequestContext) — a FIELD on the capabilities object (the post-#330
+   * extension point), never a positional. When composed the hub answers the
+   * operator-token `POST /care`; absent → the route 404s (capability
+   * withheld, fail closed).
+   */
+  readonly assistantCare?: (() => CareProjection) | undefined;
   /**
    * W205 S4 (M4): the assistant tool-call lane (see AssistantToolCallCapability)
    * — a FIELD on the capabilities object (the post-#330 extension point), never a
@@ -646,6 +663,19 @@ async function handleRequest(
       if (outcome.kind === "unknown") return send(response, 404, { error: "not found" });
       if (outcome.kind === "over-cap") return send(response, 413, { error: outcome.error });
       return send(response, 200, { note: outcome.note });
+    }
+    if (request.url === "/care") {
+      // W213 (Decision 2, Option C + the curated-core-only read rule): the
+      // care fact projection — POST read-class, operator-token, like
+      // /workspace and /notes. The payload keeps `facts` (the curated core,
+      // the ONLY assertion source) and `annotations` (inert audit data,
+      // never asserted) SEPARATE so the core/annotation boundary is visible
+      // on the wire; `realityOrientation` is the Q28 seam value, honestly
+      // "unset" until the operator sets it; `rule` is the static, versioned
+      // statement of the curated-core-only rule (no interpolated data).
+      // Absent capability → 404 (capability withheld, fail closed).
+      if (context.assistantCare === undefined) return send(response, 404, { error: "not found" });
+      return send(response, 200, { care: context.assistantCare() });
     }
     if (request.url === "/evidence-content") {
       // W158: the bounded content behind an evidence record's reference — the

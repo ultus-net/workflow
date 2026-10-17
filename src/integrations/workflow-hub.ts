@@ -157,6 +157,17 @@ export async function createWorkflowHub(
      */
     assistantNoteRead?: (name: string) => import("./note-store.js").NoteReadOutcome;
     /**
+     * W213 (Decision 2, Option C): the care fact projection (curated core +
+     * inert annotations + the Q28 seam + the static rule) — when provided,
+     * the hub exposes the operator-token `POST /care` read; absent means the
+     * route 404s (capability withheld, fail closed). The composition root
+     * builds it from `WORKFLOW_CARE_FACTS`. (W212 P0 lesson applied: this
+     * option is declared here AND forwarded below; the spread-call shape in
+     * `src/cli/hub.ts` bypasses excess-property checks, and the pair is
+     * pinned by `test/hub-composition-forwarding.test.ts`.)
+     */
+    assistantCare?: () => import("./care-facts.js").CareProjection;
+    /**
      * W205 S4 (M4): the assistant tool-call lane (`POST /assistant/tool-call`).
      * When provided, the hub exposes the operator-token route; absent means the
      * route 404s (capability withheld, fail closed). The composition root builds
@@ -329,6 +340,11 @@ export async function createWorkflowHub(
         ...(options.assistantWorkspace === undefined ? {} : { assistantWorkspace: options.assistantWorkspace }),
         ...(options.assistantNotes === undefined ? {} : { assistantNotes: options.assistantNotes }),
         ...(options.assistantNoteRead === undefined ? {} : { assistantNoteRead: options.assistantNoteRead }),
+        // W213: the care fact projection — declared on the options type AND
+        // forwarded here as one deliberate pair (the W212 P0 was a declared-
+        // only capability that never reached the bridge; this forward is
+        // pinned through the production composition test).
+        ...(options.assistantCare === undefined ? {} : { assistantCare: options.assistantCare }),
         ...(assistantToolCall === undefined ? {} : { assistantToolCall }),
         ...(options.readWorkProductState === undefined ? {} : { readWorkProductState: options.readWorkProductState }),
         ...(options.readIssueDetail === undefined ? {} : { readIssueDetail: options.readIssueDetail }),
