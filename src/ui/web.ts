@@ -21,7 +21,8 @@ import { syntheticKeyFromAuthFile, syntheticKeyPresent } from "../integrations/u
 import { stepId, taskId, type TaskState } from "../kernel/contracts.js";
 import { transportPermissionView } from "./permission-broker.js";
 import { SessionChannel, isPromptRequest, PROMPT_BODY_LIMIT } from "./web-session-channel.js";
-import { WebSessionManager, parseSessionBudgetRaise, type SessionSwitchResult } from "./web-sessions.js";
+import type { OperatorPosture } from "../integrations/operator-posture.js";
+import { WebSessionManager, parseSessionBudgetRaise, withSessionBudgetIncidents, type SessionSwitchResult } from "./web-sessions.js";
 import { isWebAgentId, listWebAgents } from "./web-agents.js";
 import type { WebappBundle } from "./webapp/bundle.js";
 import { PWA_MANIFEST, renderIconPng, serviceWorkerSource } from "./webapp/pwa.js";
@@ -110,7 +111,14 @@ export function createWorkflowWebServer(
   const hubPosture = async (): Promise<{ posture: unknown; reason?: string }> => {
     const result = await hubPost("/snapshot", {});
     const payload = result.payload as { posture?: unknown; error?: string } | undefined;
-    if (result.status === 200 && payload?.posture !== undefined) return { posture: payload.posture };
+    if (result.status === 200 && payload?.posture !== undefined) {
+      // W215: the budget incident RECORDS merge in here — the hub composes no
+      // session registry, so the honest producer of per-session incidents is
+      // this service's WebSessionManager (observed-truth only; the merge
+      // never fabricates an empty set, and with no manager the hub's own
+      // answer passes through untouched).
+      return { posture: withSessionBudgetIncidents(payload.posture as OperatorPosture, manager?.list()) };
+    }
     return { posture: null, reason: payload?.error ?? "hub unavailable" };
   };
 

@@ -50,3 +50,10 @@ plumbing), and the new focused suites' `test:ci` inclusion still rides a
 manifest-touching PR after the guard's preflight lockfile false positive is
 fixed at source (the heuristic lives in the opencode-workflow-guard plugin
 repo, not this repo's toolbox copy).
+
+**Dated 2026-10-17 (W215):** the `budgetIncidents` residual above is RESOLVED
+web-side, not hub-side — the process topology pins the producer to the web
+process (`sessionBudgetIncidents` over the `WebSessionManager` registry,
+merged into the posture `GET /api/posture` relays). The hub never builds
+per-session incidents from session registries because it owns none; the dead
+W176 hub seam was removed. Record: `docs/ledger/W215-budget-incidents-producer.md`.

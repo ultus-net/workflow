@@ -36,6 +36,8 @@
  * panel must copy it verbatim.
  */
 
+import { BUDGET_INCIDENTS_DEGRADED } from "./operator-posture.js";
+
 export interface TimelineInput {
   /**
    * The kernel's transition log, IN KERNEL ORDER (the graph's mutation
@@ -83,7 +85,7 @@ export function activityTimeline(input: TimelineInput): ActivityTimeline {
   if (input.completionClaims === undefined) degraded.push("completion-claims journal");
   if (input.runUsage === undefined) degraded.push("per-run usage records");
   if (input.runOrigins === undefined) degraded.push("run origin records");
-  if (input.budgetIncidents === undefined) degraded.push("per-session budget state");
+  if (input.budgetIncidents === undefined) degraded.push(BUDGET_INCIDENTS_DEGRADED);
 
   const titleFor = (taskId: string): string => input.tasks.find((task) => task.id === taskId)?.title ?? taskId;
 
