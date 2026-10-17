@@ -80,6 +80,7 @@ test/notify-delivery.test.ts
 test/opencode-server-assistant-lane.test.ts
 test/opencode-server-budget-enforcement.test.ts
 test/opencode-server-egress-wiring.test.ts
+test/opencode-server-guard-reap.test.ts
 test/operator-ask-hold.test.ts
 test/operator-posture.test.ts
 test/pedagogy-learner-profile-purity.test.ts
@@ -96,6 +97,7 @@ test/step-journal.test.ts
 test/text-hygiene.test.ts
 test/web-budget-posture.test.ts
 test/web-dispatch-relay.test.ts
+test/web-note-relay.test.ts
 test/web-scoping.test.ts
 test/webapp-degraded-copy.test.ts
 test/webapp-shell.test.ts

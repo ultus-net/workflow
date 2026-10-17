@@ -39,7 +39,7 @@ import { createModelUsageProxy, syntheticFailoverProxyOptions, type ModelUsagePr
 import { resolveRuntimeMeteredLane } from "../integrations/acp-runtime.js";
 import { upstreamCredentialBinding } from "../integrations/egress-binding.js";
 import { loadEgressPolicyFile } from "../integrations/egress-policy-file.js";
-import { createDefaultToolboxGuardProvider } from "../integrations/mcp-toolbox-guard.js";
+import { createDefaultToolboxGuardProvider, type WorkflowGuardProvider } from "../integrations/mcp-toolbox-guard.js";
 import { planeLspConfig } from "../integrations/plane-lsp.js";
 import { createSessionCompactionMonitor } from "../integrations/opencode-server-monitor.js";
 import { HttpRemoteEngine } from "../integrations/remote-acp/engine.js";
@@ -191,7 +191,21 @@ export function opencodeMajorFromVersion(version: string | undefined): number | 
   return match === null ? undefined : Number(match[1]);
 }
 
-export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+/**
+ * W217 (issue #536): the injectable composition seam. `main` composes the
+ * guard and reaps it explicitly on every post-composition fail-closed throw
+ * (W094: `await guard.close()` before rethrow). The real in-process guard's
+ * own `close()` is a no-op, so a direct unit test can only observe the reap by
+ * injecting a guard double at the composition point — the alternative is
+ * spawning the whole server, which is environment-heavy. The default is the
+ * real vendor composition, so an unparameterized caller is byte-identical;
+ * only the `createGuard` factory is injectable here.
+ */
+export interface OpencodeServerDeps {
+  readonly createGuard?: (workspace: string) => Promise<WorkflowGuardProvider>;
+}
+
+export async function main(argv: readonly string[] = process.argv.slice(2), deps: OpencodeServerDeps = {}): Promise<void> {
   const args = parseDaemonArgs(argv);
   // W129: the help contract — print and exit before the guard composition or
   // the runtime spawn (`--help` must never start the daemon).
@@ -214,7 +228,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   // daemon refuses to run guard-less (the hub's "no hub, no mutations"
   // posture; a guardless authority issues permissive decisions no operator
   // asked for).
-  const guard = await createOpencodeServerGuard(workspace);
+  // W217 (issue #536): the `createGuard` injection is a test seam for the
+  // reap-on-throw contract; the default is the real vendor composition, so an
+  // unparameterized call is byte-identical.
+  const guard = await (deps.createGuard ?? createOpencodeServerGuard)(workspace);
   // C1: the state root honors WORKFLOW_OPENCODE_SERVER_HOME, and — when a
   // revision identity is present (the instance's WORKFLOW_PLANE_REVISION, or
   // the ACA-injected CONTAINER_APP_REVISION) — is scoped to that revision so
