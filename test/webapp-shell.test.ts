@@ -48,7 +48,7 @@ const noAsync = async (): Promise<void> => {};
 
 const VIEWS: readonly AppView[] = [
   "overview", "chat", "agents", "board", "runs", "reviews",
-  "schedules", "projects", "routes", "workspace", "usage", "activity", "audit", "settings",
+  "schedules", "projects", "routes", "workspace", "notes", "usage", "activity", "audit", "settings",
 ];
 
 /** A healthy window whose localStorage is a real map — the round-trip seat

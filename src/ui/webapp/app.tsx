@@ -22,6 +22,7 @@ import { SchedulesView, type LoopMeta, type ScheduleMeta } from "./schedules-vie
 import { ProjectsView, type ProjectMeta } from "./projects-view.js";
 import { RoutesView, type RouteRow } from "./routes-view.js";
 import { WorkspaceView, type WorkspaceListing } from "./workspace-view.js";
+import { NoteView, type NoteContent, type NoteListing } from "./note-view.js";
 import { BoardView, BoardCardDetailPanel } from "./board-view.js";
 import { readIssueViewStateGuarded, saveIssueViewStateGuarded, type IssueViewState } from "./issue-view-state.js";
 // W174 phase 1a: the shell chrome (rail / header) and its plain hash routing
@@ -382,6 +383,11 @@ function useOperatorSurfaces() {
   // schedules poll lane.
   const [workspace, setWorkspace] = useState<WorkspaceListing | undefined>(undefined);
   const [workspaceReason, setWorkspaceReason] = useState<string | undefined>(undefined);
+  // W212: the notes subtree listing — undefined means the hub does not report
+  // notes (an absent capability 404s); a string reason is a provider fault the
+  // view renders honestly. It rides the schedules poll lane like workspace.
+  const [notes, setNotes] = useState<NoteListing | undefined>(undefined);
+  const [notesReason, setNotesReason] = useState<string | undefined>(undefined);
   const [loops, setLoops] = useState<LoopMeta[] | undefined>(undefined);
   const [recentRuns, setRecentRuns] = useState<readonly ScheduleRecentRun[] | undefined>(undefined);
   const [board, setBoard] = useState<BoardOutcome | null | undefined>(undefined);
@@ -479,6 +485,22 @@ function useOperatorSurfaces() {
     } catch {
       // Keep the last good listing; the next poll retries.
     }
+    // W212: the notes subtree listing; a null notes field with a reason is the
+    // relay's fail-closed answer (hub absent, or a hub predating the route).
+    // Ride the same poll lane.
+    try {
+      const notesResponse = await fetch("/api/notes");
+      if (notesResponse.ok) {
+        const payload = (await notesResponse.json()) as { notes?: NoteListing | null; reason?: string };
+        setNotes(payload.notes ?? undefined);
+        setNotesReason(payload.reason);
+      } else {
+        setNotes(undefined);
+        setNotesReason(undefined);
+      }
+    } catch {
+      // Keep the last good listing; the next poll retries.
+    }
   }, []);
   useEffect(() => {
     void load();
@@ -491,7 +513,7 @@ function useOperatorSurfaces() {
       clearInterval(boardTimer);
     };
   }, [load, loadBoard]);
-  return { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, routes, routesReason, workspace, workspaceReason, refresh: load, refreshBoard: loadBoard };
+  return { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, routes, routesReason, workspace, workspaceReason, notes, notesReason, refresh: load, refreshBoard: loadBoard };
 }
 
 function createSession(refresh: () => Promise<void>): void {
@@ -2380,7 +2402,38 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
   const gitStatus = useGitStatus();
   const worktrees = useWorktrees();
   const { sessions, refresh: refreshSessions } = useSessions();
-  const { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, routes, routesReason, workspace, workspaceReason, refresh: refreshSchedules } = useOperatorSurfaces();
+  const { schedules, projects, loops, recentRuns, board, boardReason, boardRead, workProducts, inProgress, routes, routesReason, workspace, workspaceReason, notes, notesReason, refresh: refreshSchedules } = useOperatorSurfaces();
+  // W212: the Notes page's selected note. The list poll rides
+  // useOperatorSurfaces like the workspace listing; the body is fetched
+  // per selection through the same-origin /api/note relay. Selection state is
+  // UI-local — it never rides any poll payload, and a cleared selection
+  // discards the last body (the next selection fetches fresh).
+  const [selectedNote, setSelectedNote] = useState<string | undefined>(undefined);
+  const [noteContent, setNoteContent] = useState<NoteContent | undefined>(undefined);
+  const [noteReason, setNoteReason] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (selectedNote === undefined) {
+      setNoteContent(undefined);
+      setNoteReason(undefined);
+      return;
+    }
+    let cancelled = false;
+    setNoteContent(undefined);
+    setNoteReason(undefined);
+    void fetch("/api/note?name=" + encodeURIComponent(selectedNote)).then(async (response) => {
+      if (cancelled) return;
+      if (response.ok) {
+        const payload = (await response.json()) as { note?: NoteContent };
+        setNoteContent(payload.note);
+      } else {
+        const payload = (await response.json().catch(() => undefined)) as { error?: string } | undefined;
+        setNoteReason(payload?.error ?? ("the note read was refused (" + response.status + ")"));
+      }
+    }).catch(() => {
+      if (!cancelled) setNoteReason("the note read could not reach the hub proxy");
+    });
+    return () => { cancelled = true; };
+  }, [selectedNote]);
   // W163: the board's per-column view preferences live UI-local — read once
   // per browser from the persisted IssueViewState and saved on change; they
   // never ride any board payload (pinned by construction).
@@ -2820,6 +2873,19 @@ export function AppShell({ view, setView, focusedSessionId, setFocusedSessionId 
         // assistant workspace directory listing; a read-only, bounded
         // projection (never file contents).
         <WorkspaceView workspace={workspace} reason={workspaceReason} />
+      ) : view === "notes" ? (
+        // W212: the Notes page (decision-brief Option A) — the notes subtree's
+        // bounded listing plus one note's body on selection; read-only, and
+        // every absent/withheld case stays a named absence (never a
+        // fabricated table or body).
+        <NoteView
+          notes={notes}
+          reason={notesReason}
+          selected={selectedNote}
+          note={noteContent}
+          noteReason={noteReason}
+          onSelect={setSelectedNote}
+        />
       ) : view === "board" ? (
         // W176 phase 3 (#347): the Board's card detail panel docks in the
         // shell's right-side contextual region — the same region composition

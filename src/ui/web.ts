@@ -202,6 +202,18 @@ export function createWorkflowWebServer(
     return { workspace: null, reason: payload?.error ?? "hub unavailable" };
   };
 
+  /** W212: the notes subtree listing relay — the hub's `POST /notes` read
+   * (the hub is POST-only; this service bridges the browser's GET onto it).
+   * Fail-closed: no hub, or a hub predating the slice, answers notes: null
+   * with the reason — the view renders its named-absence state, never a
+   * fabricated note table. The browser never sees a hub token. */
+  const hubNotes = async (): Promise<{ notes: unknown; reason?: string }> => {
+    const result = await hubPost("/notes", {});
+    const payload = result.payload as { notes?: unknown; error?: string } | undefined;
+    if (result.status === 200 && payload?.notes !== undefined) return { notes: payload.notes };
+    return { notes: null, reason: payload?.error ?? "hub unavailable" };
+  };
+
   /** W175: the ONE runs read route — the hub's /snapshot runs block, the
    * run-registry projection (all run rows with their recorded origins,
    * work-product links, review outcomes, blocking reasons, completion claims,
@@ -309,6 +321,21 @@ export function createWorkflowWebServer(
     // W197: the assistant workspace read relay (see hubAssistantWorkspace) — the
     // browser's GET is bridged onto the hub's POST-only read.
     if (request.method === "GET" && pathname === "/api/workspace") return json(response, 200, await hubAssistantWorkspace());
+    // W212: the notes subtree listing relay (see hubNotes above) — the
+    // browser's GET is bridged onto the hub's POST-only read.
+    if (request.method === "GET" && pathname === "/api/notes") return json(response, 200, await hubNotes());
+    // W212: the single-note content relay — the read-only same-origin bridge
+    // onto the hub's POST /note-read. The name rides the query string, and
+    // the hub's own answer passes through verbatim: 200 note, 400 malformed
+    // or confined-out name, 404 unknown/withheld, 413 over-cap — never a
+    // rewritten status and never a fabricated body. The browser never holds
+    // a hub token.
+    if (request.method === "GET" && pathname === "/api/note") {
+      const name = new URL(request.url ?? "/", "http://workflow.local").searchParams.get("name");
+      if (name === null) return json(response, 400, { error: "invalid note request" });
+      const result = await hubPost("/note-read", { name });
+      return json(response, result.status, result.payload);
+    }
     // W177: the audit read relay (see hubAudit above) — the three recorded
     // authorization-adjacent lanes the audit page renders.
     if (request.method === "GET" && pathname === "/api/audit") return json(response, 200, await hubAudit());
