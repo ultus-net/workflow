@@ -87,6 +87,20 @@ async function cmdNote(source: string, flags: Record<string, unknown>): Promise<
   if (outPath !== undefined) {
     writeFileSync(outPath, result.markdown, "utf8");
     process.stderr.write(`wrote ${outPath}\n`);
+    // W212 (hub Note view, decision-brief Option A): a markdown note gets its
+    // admission sidecar `<slug>.json` beside `<slug>.md`, so the hub's Note
+    // view has real metadata to render. Only facts the run actually produced
+    // ride the sidecar (unknown fields stay absent, never fabricated); the
+    // stdout path and every flag's semantics are unchanged.
+    if (outPath.endsWith(".md")) {
+      const sidecar = {
+        source,
+        producedAt: new Date().toISOString(),
+        blocked: result.blocked,
+        findings: result.lint.findings.length,
+      };
+      writeFileSync(outPath.slice(0, -".md".length) + ".json", JSON.stringify(sidecar, null, 2) + "\n", "utf8");
+    }
   } else {
     process.stdout.write(result.markdown);
   }
