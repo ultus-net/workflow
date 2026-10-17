@@ -23,9 +23,13 @@ conductor was unreachable outside its own tests.
 - **Deterministic run id ⇒ resume, not re-spend.** When `--run-id` is absent the
   id is `sha256(question).slice(0, 16)`. Re-running the same question resolves
   the same `<workspace>/research/<runId>` root and loads the existing
-  `checkpoint.json`, so completed workers whose artifacts still verify are
-  skipped and the frontier tier is not re-paid. An explicit `--run-id` is the
-  escape hatch for a deliberate fresh run or a shared handle.
+  `checkpoint.json`, so the plan is reused and workers whose artifacts still
+  verify are skipped: plan and workers are not re-paid. Synthesis still runs on
+  every invocation (it is re-computed from the recorded findings, not
+  checkpointed), so "resume" saves the fan-out, not the final synthesis call.
+  An explicit `--run-id` is the escape hatch for a deliberate fresh run or a
+  shared handle; it is validated as a single safe path segment so it cannot
+  escape `<workspace>/research/`.
 - **Foundry stays operator-gated.** The entry point takes an injected
   `OpenRouterProvider`; the eventual Foundry move replaces the provider binding
   in `openrouter-ports.ts`, not this composition. No Foundry code or credential
@@ -38,17 +42,21 @@ conductor was unreachable outside its own tests.
 ## Files
 
 - `src/assistant/research/entry.ts` (new): `ResearchRunOptions`,
-  `ResearchRunResult`, `runResearchEntry`. Builds the file store, loads or
-  creates the checkpoint, derives the budget from `researchBudget(complexity)`
-  with `maxSubagents`/`maxCostUsd` overrides, binds the ports, runs the
-  conductor, and writes `answer.md`. Exact-optional spreads throughout
+  `ResearchRunResult`, `runResearchEntry`, and `resolveRunId` (the shared,
+  testable run-id gate). Builds the file store, loads or creates the
+  checkpoint, derives the budget from `researchBudget(complexity)` with
+  `maxSubagents`/`maxCostUsd` overrides, binds the ports, runs the conductor,
+  and writes `answer.md`. Exact-optional spreads throughout
   (`...(x === undefined ? {} : { k: x })`).
 - `src/cli/augur.ts`: the `research` subcommand, `cmdResearch`, `requireComplexity`,
   `optionalNumber`, the four new `parseArgs` options
   (`complexity`, `max-cost-usd`, `max-subagents`, `run-id`), and the USAGE
-  lines/options/examples.
+  lines/options/examples. The stderr status prints the EFFECTIVE subagent cap
+  (the override re-capped by the complexity's effort ceiling).
 - `test/research-entry.test.ts` (new): a real offline end-to-end through a fake
-  `fetchImpl` that roles the reply by request body (plan / worker / synthesize).
+  `fetchImpl` that roles the reply by request body (plan / worker / synthesize),
+  plus a unit pin on `resolveRunId` (hash fallback, safe-id passthrough,
+  traversal refusal).
 - `test/ci-suites.txt`: `test/research-entry.test.ts` added in sorted position.
 - `docs/FEATURES.md`: the honest Partial status row.
 
@@ -68,6 +76,15 @@ dispatches with digests; a second run on the same run id/root reports both
 steps `skipped` and issues ZERO new worker calls (while still synthesizing);
 and a seeded 2-task plan under `maxSubagents: 1` reports
 `budgetExhausted === true` after exactly one worker.
+
+## Review follow-up
+
+Independent five-axis review returned REVISE (highest P2). Fixed before merge:
+(a) `--run-id` is validated as a single safe path segment (`resolveRunId`),
+closing a path-traversal write out of `<workspace>/research/`; (b) the
+"no re-spend" wording in this ledger and `docs/FEATURES.md` was corrected
+(plan + workers are not re-paid; synthesis re-runs each invocation); (c) the
+stderr status now prints the EFFECTIVE subagent cap, not an over-cap override.
 
 ## Honest residuals
 

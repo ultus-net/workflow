@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join, isAbsolute } from "node:path";
 import { parseArgs } from "node:util";
@@ -10,7 +9,7 @@ import { listStyles, loadStyle } from "../assistant/style/pack.js";
 import { formatFindings, lint } from "../assistant/lint.js";
 import { run, type RunRequest } from "../assistant/run.js";
 import { OpenRouterProvider, resolveProviderTransport } from "../assistant/provider/openrouter.js";
-import { runResearchEntry } from "../assistant/research/entry.js";
+import { runResearchEntry, resolveRunId } from "../assistant/research/entry.js";
 import { researchBudget } from "../assistant/research/conductor.js";
 import type { ResearchComplexity } from "../assistant/research/types.js";
 import { startDiscordConnector } from "../assistant/discord/connector.js";
@@ -204,11 +203,10 @@ async function cmdResearch(question: string, flags: Record<string, unknown>): Pr
   const ws = ensureWorkspace(resolveWorkspace(cfg, wsFlag));
   const complexity = requireComplexity(flags.complexity);
   // A deterministic run id keeps re-running the SAME question on the SAME
-  // durable run: the second invocation resumes from the checkpoint instead of
-  // re-spending the frontier tier.
-  const runId = typeof flags["run-id"] === "string" && flags["run-id"].length > 0
-    ? flags["run-id"]
-    : createHash("sha256").update(question).digest("hex").slice(0, 16);
+  // durable run: the second invocation resumes from the checkpoint. The plan
+  // and the workers whose artifacts still verify are not re-paid; synthesis
+  // re-runs from the recorded findings.
+  const runId = resolveRunId(flags["run-id"], question);
   const root = join(ws, "research", runId);
 
   const transport = resolveProviderTransport();
@@ -239,11 +237,14 @@ async function cmdResearch(question: string, flags: Record<string, unknown>): Pr
 
   // Honest one-line status on stderr: the numbers are the run's REAL usage
   // against its budget, and exhaustion is stated plainly rather than hidden.
-  const budget = researchBudget(complexity);
-  const maxSubagentsUsed = maxSubagents ?? budget.maxSubagents;
+  // The denominator is the EFFECTIVE cap: the conductor re-caps the override
+  // against the complexity's effort ceiling (`conductor.ts` Math.min), so a
+  // `--max-subagents 12` under `--complexity simple` must print /1, not /12.
+  const effortCap = researchBudget(complexity).maxSubagents;
+  const effectiveCap = Math.min(maxSubagents ?? effortCap, effortCap);
   const usage = result.outcome.usage;
   process.stderr.write(
-    `research ${runId} [${complexity}]: ${usage.subagents}/${maxSubagentsUsed} subagents, ` +
+    `research ${runId} [${complexity}]: ${usage.subagents}/${effectiveCap} subagents, ` +
       `${usage.toolCalls} tool calls, $${usage.costUsd.toFixed(4)}` +
       `${result.outcome.budgetExhausted ? " (budget exhausted: plan not completed)" : ""}\n` +
       `answer: ${result.answerPath} | artifacts: ${result.artifactRoot}\n`,

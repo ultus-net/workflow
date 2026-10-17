@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { OpenRouterProvider } from "../src/assistant/provider/openrouter.js";
-import { runResearchEntry } from "../src/assistant/research/entry.js";
+import { resolveRunId, runResearchEntry } from "../src/assistant/research/entry.js";
 import { ConductorCheckpointStore } from "../src/integrations/conductor-checkpoint.js";
 
 /**
@@ -181,8 +181,7 @@ test("runResearchEntry: a 2-task plan under a 1-subagent budget reports exhausti
   }
 });
 
-test("runResearchEntry: new runs are independent when the run id differs", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "wf-research-entry-fresh-"));
+test("runResearchEntry: new runs are independent when the run id differs", async () => {  const dir = mkdtempSync(join(tmpdir(), "wf-research-entry-fresh-"));
   try {
     const lane = fakeLane();
     const first = await runResearchEntry({
@@ -206,5 +205,23 @@ test("runResearchEntry: new runs are independent when the run id differs", async
     assert.notEqual(first.checkpointPath, second.checkpointPath);
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("resolveRunId: generates a hex hash and refuses path-traversing ids", () => {
+  // Absent or empty -> the deterministic 16-char hex hash of the question.
+  const generated = resolveRunId(undefined, "compare X and Y");
+  assert.match(generated, /^[0-9a-f]{16}$/);
+  assert.equal(resolveRunId("", "compare X and Y"), generated, "an empty flag falls back to the hash");
+  assert.equal(resolveRunId(undefined, "compare X and Y"), generated, "the hash is deterministic per question");
+  assert.notEqual(resolveRunId(undefined, "a different question"), generated, "a different question hashes differently");
+
+  // A safe explicit id is kept verbatim (the resume handle).
+  assert.equal(resolveRunId("my-run_1.2", "q"), "my-run_1.2");
+
+  // Traversal and separators are refused: the id is a single path segment.
+  for (const bad of ["..", ".", "../evil", "../../etc", "a/b", "a\\b", "a b", ""]) {
+    if (bad === "") continue; // empty is the documented fallback, covered above
+    assert.throws(() => resolveRunId(bad, "q"), /not a safe path segment/, `'${bad}' must be refused`);
   }
 });

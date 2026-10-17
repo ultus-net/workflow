@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -58,6 +59,28 @@ export interface ResearchRunResult {
   readonly answerPath: string;
   readonly checkpointPath: string;
   readonly artifactRoot: string;
+}
+
+/**
+ * A run id becomes a single path segment under `<workspace>/research/`, so it
+ * must not carry a separator or a `.`/`..` traversal: an operator-supplied
+ * `--run-id ../../../etc` would otherwise place the run root outside the
+ * workspace and let `mkdirSync`/`writeFileSync` write there. The generated
+ * question hash already satisfies this; only an explicit id needs the gate.
+ * Exported so the CLI can share it and tests can pin it without importing the
+ * CLI module (whose import runs `main()`).
+ */
+const SAFE_RUN_ID = /^[A-Za-z0-9._-]+$/;
+
+export function resolveRunId(value: unknown, question: string): string {
+  const generated = (): string => createHash("sha256").update(question).digest("hex").slice(0, 16);
+  if (value === undefined) return generated();
+  const raw = String(value);
+  if (raw.length === 0) return generated();
+  if (raw === "." || raw === ".." || !SAFE_RUN_ID.test(raw)) {
+    throw new Error(`run id '${raw}' is not a safe path segment (allowed: letters, digits, '.', '_', '-')`);
+  }
+  return raw;
 }
 
 export async function runResearchEntry(options: ResearchRunOptions): Promise<ResearchRunResult> {
