@@ -7,10 +7,13 @@
 
 ## Why this brief exists
 
-Two hub views stay deliberately unbuilt because no authoritative data source
-backs them. Building them now would project fabricated or empty content, which
-violates the hub's "fabricates nothing" discipline (`src/ui/webapp/workspace-view.tsx:7`).
-This brief frames the two decisions so the views can be built on real data.
+Two hub views stay deliberately unbuilt. Neither has an authoritative data
+source the hub can read today: the note view lacks a content read and an
+admission surface, and the care view lacks both a decided fact store and a
+reality-orientation policy. Building them now would project fabricated or empty
+content, which violates the hub's "fabricates nothing" discipline
+(`src/ui/webapp/workspace-view.tsx:7`). This brief frames the two decisions so
+the views can be built on real data.
 
 ## Grounding (what already exists)
 
@@ -32,7 +35,7 @@ policy decision.
   "never reads file contents" (`src/integrations/hub-http.ts:327`).
 - The bounded evidence content store is a different mechanism: it holds only
   `"test-output" | "screenshot"` bytes for the evidence strip, capped at 24
-  entries and 256 KiB (`src/integrations/evidence-content-store.ts:19-40`).
+  entries and 256 KiB (`src/integrations/evidence-content-store.ts:22-40`).
   It is not, and should not become, a note store.
 
 So a note view needs a CONTENT read over files that already exist, not a new
@@ -74,17 +77,20 @@ An `augur` run writes each note to a known subdirectory of the shared workspace
 (for example `<workspace>/notes/<date>-<slug>.md`) with a small sidecar of
 admission metadata. The hub note view lists that subtree through the existing
 `POST /workspace` pattern and reads a single note's content through a new
-bounded `POST /note-read` route confined to that subtree. The read route is
-net-new: the existing listing route deliberately reads no file contents
+bounded `POST /note-read` route confined to that subtree. Like `POST /workspace`,
+the new route is operator-token authorized (`authorizeHubToken`,
+`src/integrations/hub-http.ts:4,209`) and withholds itself (404) when the
+workspace capability is unset. The read route is net-new: the existing listing
+route deliberately reads no file contents
 (`src/integrations/hub-http.ts:323-338`), so it is the read-free precedent, not
 the read itself. Its bounds mirror the evidence store's discipline
-(`src/integrations/evidence-content-store.ts:36-40`): a path-confinement
+(`src/integrations/evidence-content-store.ts:22-40`): a path-confinement
 allowlist (the notes subtree only) and a per-note byte cap.
 
-- Pros: no new store; reuses the share, the mount, and the listing route that
-  already exist; notes stay diffable files on disk, matching the "config is
-  policy" and golden-source patterns; the assistant and the operator see the
-  same bytes.
+- Pros: no new store; reuses the share, the mount and listing route the hub
+  already has when `WORKFLOW_ASSISTANT_WORKSPACE` is set; notes stay diffable
+  files on disk, matching the "config is policy" and golden-source patterns; the
+  assistant and the operator see the same bytes.
 - Cons: needs an admission sidecar (title, source, date, run id, verdict
   summary) so the view is not a raw file browser; needs the bounded read route
   and its own path-confinement test.
@@ -109,7 +115,7 @@ Add `"note"` to the stored kinds and route notes through it.
 
 - Rejected in the framing, listed for completeness: the store is a bounded
   24-entry, 256 KiB preview buffer for the evidence strip
-  (`src/integrations/evidence-content-store.ts:36-40`). Notes are durable,
+  (`src/integrations/evidence-content-store.ts:22-40`). Notes are durable,
   unbounded in count, and not preview fragments. Overloading it would evict
   captures and misstate durability.
 
@@ -124,10 +130,12 @@ empty (no notes yet), populated, plus the hub's truncation notice.
 
 ---
 
-## Decision 2: the care fact store shape (Q26), with Q28 and Q31 folded in
+## Decision 2: the care fact store shape (Q26), with Q28 and Q31 discussed
 
 **Question:** what is the authoritative store of care facts, and how does the
-care route read it.
+care route read it. (Vocabulary: the *care route* is the identity-scoped
+assistant route; the *care loop* is the runtime turn that emits a care reply;
+the *care view* is the hub surface the operator audits.)
 
 ### Option A - curated file tree (golden source)
 
@@ -235,12 +243,12 @@ brief recommends only the store shape (C) and the read rule (curated core only).
 
 - **Decision 1 (recommended A):** the hub note view becomes buildable on real
   data. No store build; one bounded read route and one view.
-- **Decision 2 (recommended C + curated-core-only):** the care view becomes
-  buildable; the care route's assertion gate gets its contract. The gate is
-  fail-closed without Q28 (an ungrounded claim is dropped). Q28 is still required
-  for the care view, because it supplies the false-user-assertion response the
-  view must expose; that decision is on the care view's critical path, not
-  parallel.
+- **Decision 2 (recommended C + curated-core-only):** the care fact store and
+  the read rule get their contract, so the care view's data side is buildable.
+  The assertion gate is fail-closed without Q28 (an ungrounded claim is dropped).
+  Q28 still gates the care view's full behavior: it supplies the
+  false-user-assertion response the view must expose. Decision 2 unblocks the
+  store and the read; Q28 remains the one open item before the care view ships.
 
 ## What stays deferred regardless
 
