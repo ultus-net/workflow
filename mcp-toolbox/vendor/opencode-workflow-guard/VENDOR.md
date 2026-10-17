@@ -41,26 +41,33 @@ port) and the `opencode-workflow-guard` npm plugin (being end-of-lifed).
   OpenCode-host and sqlite session-state concerns and are not portable). The
   per-policy disposition is recorded in `COVERAGE.json` and pinned by
   `test/guard-policy-corpus-coverage.test.ts`.
-- **Honest gap (not a guarantee).** Three upstream enforcement lanes are
-  **absent** from the port: secret-file **read** denial (`secretFileReadIn` in
-  the shell lane and the read-tool seat), the destructive-command scan over
-  **written file content** (`extractEditContent` + `liveMutationIn` on a
-  `file_write` payload), and the inline-interpreter **workspace-escape /
-  secret-read** lanes (`outsideWritePathInPayload`, `secretPathInPayload`). They
-  are defense-in-depth (execution is still gated by the shell lane and
-  containment), and each is recorded in `COVERAGE.json` and pinned absent by the
-  coverage test. Porting one is a deliberate change that updates the inventory,
-  this file, and the security-assurance case together.
+- **Residual #27 lanes PORTED (W214, 2026-10-17; issues #539/#540/#541).**
+  This section previously recorded an honest gap: three upstream enforcement
+  lanes were **absent** from the port. All three are now carried and
+  dispositioned `ported` in `COVERAGE.json`:
+  secret-file **read** denial (`secretFileReadIn` in the shell lane and the
+  `read` action tool seat with the masked-`.env`-schema hint, `path-policy.ts`
+  + `policy.ts`), the destructive-command scan over **written file content**
+  (`extractEditContent` + `liveMutationIn` on a `file_write` payload,
+  respecting `WORKFLOW_GUARD_ALLOW_LIVE`, `shell-policy.ts` + `policy.ts`),
+  and the inline-interpreter **workspace-escape / secret-read** lanes
+  (`outsideWritePathInPayload`, `secretPathInPayload`, `interpreter-policy.ts`,
+  fail-closed on unresolvable/variable targets). The corpus-coverage test now
+  pins the lanes **present** — a silent regression is the same inventory lie
+  in the other direction. Behavioral evidence:
+  `mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts` (the W214 block);
+  disposition record: `docs/SECURITY_ASSURANCE.md` #27.
 
 ## Drift control
 
 - Record the pinned commit here on every re-vendor.
 - **Corpus ↔ port coverage:** `test/guard-policy-corpus-coverage.test.ts` pins
   every vendored `src/policies/*.ts` to a `COVERAGE.json` disposition, checks
-  each named module exists in the port, and pins the three security-relevant
-  absent lanes above as absent — so a vendored policy cannot be added, removed,
-  or ported without updating the recorded disposition. This replaces the
-  earlier "a future drift test should..." placeholder.
+  each named module exists in the port, and pins the security-relevant lanes
+  above as **ported** (pre-W214 it pinned them absent — the same fail-closed
+  discipline in both directions), so a vendored policy cannot be added,
+  removed, ported, or unported without updating the recorded disposition. This
+  replaces the earlier "a future drift test should..." placeholder.
 - Byte-parity of the operative copy is pinned separately at the **port ↔
   in-process** boundary by `test/guard-policy-drift.test.ts`.
 - Re-vendoring (`git archive` from the pinned ref) is verified by re-running the

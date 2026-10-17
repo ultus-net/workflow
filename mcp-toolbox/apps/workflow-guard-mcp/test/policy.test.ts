@@ -185,28 +185,153 @@ test("blocks dynamic shell syntax that can hide policy-relevant commands", () =>
   assert.equal(checkPolicy({ action: "shell", command: "kub" + "$" + "EMPTY" + "ectl delete pod api" }).decision, "deny");
 });
 
-test("W187: plain shell READ targets are as-found allow (secret-file read denial is unported)", () => {
-  // SECURITY_ASSURANCE #27, shell-read edge: the vendored secret-file READ
-  // denial lane is NOT ported into the app guard, so the shell lane classifies
-  // a plain read as baseline allow — the read (`cat`, `head`, `grep`) is not a
-  // mutation target and matches no destructive/exfil pattern. Reads outside
-  // /workspace are bounded by the pod, not the guard. A port that closes the
-  // lane flips this pin (see docs/SECURITY_ASSURANCE.md #27).
+test("W214 (formerly W187): shell reads of NON-secret paths stay baseline allow after the secret-read port", () => {
+  // SECURITY_ASSURANCE #27, shell-read edge — pre-W214 pin: the vendored
+  // secret-file READ denial lane was NOT ported, so the shell lane classified
+  // every plain read as baseline allow. W214 ported the lane
+  // (secretFileReadIn, issue #539): reads of secret-shaped paths now deny at
+  // the secret-read lane (asserted in the W214 block below). The W187 posture
+  // narrows to NON-secret reads — reads outside /workspace stay bounded by
+  // the pod boundary, not the guard (docs/SECURITY_ASSURANCE.md #27).
   const root = mkdtempSync(join(tmpdir(), "workflow-guard-read-"));
   for (const command of [
     "cat /etc/passwd",
     "head /etc/shadow",
-    "cat ~/.aws/credentials",
-    "cat /home/node/.ssh/id_rsa",
     "grep -r PRIVATE /home/node/.workflow",
   ]) {
     const verdict = checkPolicy({ action: "shell", command, workspaceRoot: root });
-    assert.equal(verdict.decision, "allow", `${command} is as-found allow`);
+    assert.equal(verdict.decision, "allow", `${command} stays baseline allow`);
     assert.equal(verdict.policy, "baseline", `${command} classifies baseline`);
+  }
+  // The pin flip the W187 entry queued: the two secret-shaped reads deny now.
+  for (const command of [
+    "cat ~/.aws/credentials",
+    "cat /home/node/.ssh/id_rsa",
+  ]) {
+    const verdict = checkPolicy({ action: "shell", command, workspaceRoot: root });
+    assert.equal(verdict.decision, "deny", `${command} denies after the W214 port`);
+    assert.equal(verdict.policy, "secret-read");
   }
   // The MUTATION form of the same path IS denied — the fence is the write lane
   // (here via the protected-system-path rule, ahead of the workspace boundary).
   assert.equal(checkPolicy({ action: "shell", command: "cat /etc/passwd > /etc/evil", workspaceRoot: root }).decision, "deny");
+});
+
+// ---- W214: residual #27 port — the three absent upstream security lanes ----
+// (issues #539/#540/#541). companion flips: COVERAGE.json dispositions, the
+// corpus-coverage test's ABSENT_SECURITY_LANES, VENDOR.md and
+// docs/SECURITY_ASSURANCE.md #27. The destructive spellings are assembled
+// from fragments so this fixture never carries the full pattern text (the
+// same dodge the other adversarial fixtures in this file use).
+
+test("W214: the shell lane denies secret-file reads (ported secretFileReadIn)", () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-guard-secret-read-"));
+  // Read-class commands over secret-shaped paths deny, attributed to the
+  // secret-read lane with the secret path as the matched surface (W121).
+  for (const command of [
+    "cat .env",
+    "grep TOKEN .env.production",
+    "cat ~/.aws/credentials",
+    "cat /home/node/.ssh/id_rsa",
+    "head -1 certs/server.pem",
+    "dd if=/home/node/.aws/credentials of=scratch.bin",
+  ]) {
+    const verdict = checkPolicy({ action: "shell", command, workspaceRoot: root });
+    assert.equal(verdict.decision, "deny", `${command} must deny`);
+    assert.equal(verdict.policy, "secret-read", `${command} attributes to the secret-read lane`);
+  }
+  // Plain wrapped spelling (env/sudo prefixes) reaches the same lane.
+  assert.equal(checkPolicy({ action: "shell", command: "env cat .env.local", workspaceRoot: root }).policy, "secret-read");
+  // Safe env fixtures and ordinary files stay allowed; non-secret reads stay
+  // the containment boundary's concern, not the guard's (the ported lane
+  // denies SECRET paths only — the W187 posture for system reads stands).
+  assert.equal(checkPolicy({ action: "shell", command: "cat .env.example", workspaceRoot: root }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "cat .env.sample.yaml", workspaceRoot: root }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "cat README.md", workspaceRoot: root }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: "cat /etc/passwd", workspaceRoot: root }).decision, "allow");
+});
+
+test("W214: the read tool seat denies secret paths and offers a masked .env schema", () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-guard-read-seat-"));
+  writeFileSync(join(root, ".env"), ["SERVICE_TOKEN=topsecret", "value", "\n# note\n"].join(""));
+  const denied = checkPolicy({ action: "read", path: ".env", workspaceRoot: root });
+  assert.equal(denied.decision, "deny");
+  assert.equal(denied.policy, "secret-read");
+  assert.equal(denied.matched, ".env", "the read lane's matched surface is the requested path");
+  assert.ok(denied.reason.includes("SERVICE_TOKEN=********"), "the masked schema names keys without values");
+  assert.ok(!denied.reason.includes("topsecretvalue"), "the hint never leaks the value");
+  // Non-.env secrets deny without the schema hint.
+  const keyPath = ["config/id_r", "sa"].join("");
+  const keyRead = checkPolicy({ action: "read", path: keyPath, workspaceRoot: root });
+  assert.equal(keyRead.decision, "deny");
+  assert.equal(keyRead.policy, "secret-read");
+  assert.ok(!keyRead.reason.includes("********"), "only .env files offer the masked schema");
+  // Safe fixtures and ordinary files stay allowed.
+  assert.equal(checkPolicy({ action: "read", path: ".env.example", workspaceRoot: root }).decision, "allow");
+  assert.equal(checkPolicy({ action: "read", path: "src/index.ts", workspaceRoot: root }).decision, "allow");
+  assert.equal(checkPolicy({ action: "read", path: "src/index.ts" }).decision, "allow");
+});
+
+test("W214: file_write content cannot smuggle live destructive commands past the shell lane", () => {
+  const kubectlLine = ["kubectl --namespace prod del", "ete namespace prod"].join("");
+  const denied = checkPolicy({ action: "file_write", path: "deploy.sh", content: `#!/bin/sh\nset -e\n${kubectlLine}\n` });
+  assert.equal(denied.decision, "deny");
+  assert.equal(denied.policy, "live-mutation-payload");
+  assert.ok(denied.reason.includes("Script files are not a way to smuggle destructive commands"), "the upstream reason text");
+  const terraformLine = ["terra", "form des", "troy -auto-approve"].join("");
+  const patched = checkPolicy({ action: "file_write", patchText: `--- /dev/null\n+++ b/ops.sh\n@@ -0,0 +1,1 @@\n+${terraformLine}\n` });
+  assert.equal(patched.decision, "deny");
+  assert.equal(patched.policy, "live-mutation-payload", "patch bodies are scanned the same way");
+  // Comment lines are documentation, not commands (upstream's comment skip).
+  const commented = checkPolicy({
+    action: "file_write",
+    path: "runbook.md",
+    content: ["# runbook", `# ${["docker system pr", "une -a"].join("")} is forbidden here`, "# end"].join("\n"),
+  });
+  assert.equal(commented.decision, "allow");
+  const benign = checkPolicy({ action: "file_write", path: "src/index.ts", content: "export const x = 1;\n" });
+  assert.equal(benign.decision, "allow");
+});
+
+test("W214: WORKFLOW_GUARD_ALLOW_LIVE gates the destructive-content scan (upstream override)", () => {
+  const kubectlLine = ["kubectl --namespace prod del", "ete namespace prod"].join("");
+  const saved = process.env.WORKFLOW_GUARD_ALLOW_LIVE;
+  process.env.WORKFLOW_GUARD_ALLOW_LIVE = "1";
+  try {
+    assert.equal(checkPolicy({ action: "file_write", path: "deploy.sh", content: `#!/bin/sh\n${kubectlLine}\n` }).decision, "allow", "the operator override opens the lane, as upstream");
+  } finally {
+    if (saved === undefined) delete process.env.WORKFLOW_GUARD_ALLOW_LIVE;
+    else process.env.WORKFLOW_GUARD_ALLOW_LIVE = saved;
+  }
+  // The override is exact: only "1" opens the gate.
+  process.env.WORKFLOW_GUARD_ALLOW_LIVE = "true";
+  try {
+    assert.equal(checkPolicy({ action: "file_write", path: "deploy.sh", content: `#!/bin/sh\n${kubectlLine}\n` }).policy, "live-mutation-payload");
+  } finally {
+    if (saved === undefined) delete process.env.WORKFLOW_GUARD_ALLOW_LIVE;
+    else process.env.WORKFLOW_GUARD_ALLOW_LIVE = saved;
+  }
+});
+
+test("W214: inline interpreter payloads cannot escape the workspace or read secrets", () => {
+  const root = mkdtempSync(join(tmpdir(), "workflow-guard-interp-"));
+  const outside = mkdtempSync(join(tmpdir(), "workflow-guard-interp-out-"));
+  // Writes outside the workspace via python/node inline payloads deny...
+  assert.equal(checkPolicy({ action: "shell", command: `python -c "open('${outside}/evil.txt','w').write('x')"`, workspaceRoot: root }).policy, "interpreter-workspace-escape");
+  assert.equal(checkPolicy({ action: "shell", command: `node --eval "require('fs').writeFileSync('${outside}/x.js','1')"`, workspaceRoot: root }).policy, "interpreter-workspace-escape");
+  // ...including heredoc-delivered scripts, and an unresolvable variable path
+  // fails closed (treated as outside, the port's boundary posture).
+  const heredoc = ["python <<PY", `open("${outside}/h.py","w").write("x")`, "PY"].join("\n");
+  assert.equal(checkPolicy({ action: "shell", command: heredoc, workspaceRoot: root }).policy, "interpreter-workspace-escape");
+  assert.equal(checkPolicy({ action: "shell", command: `python -c "open('$INTERP_UNSET_PATH/evil','w').write('x')"`, workspaceRoot: root }).policy, "interpreter-workspace-escape");
+  // Secret reads through an interpreter payload attribute to the secret-path
+  // lane (upstream secretPathInPayload, now ported as the named operator).
+  assert.equal(checkPolicy({ action: "shell", command: `python -c "open('secrets/id_ed25519').read()"`, workspaceRoot: root }).policy, "interpreter-secret-path");
+  const envJson = ["config/service-acc", "ount.json"].join("");
+  assert.equal(checkPolicy({ action: "shell", command: `node --eval "require('fs').readFileSync('${envJson}')"`, workspaceRoot: root }).policy, "interpreter-secret-path");
+  // In-workspace writes and /dev/null sinks stay allowed.
+  assert.equal(checkPolicy({ action: "shell", command: `python -c "open('out.txt','w').write('x')"`, workspaceRoot: root }).decision, "allow");
+  assert.equal(checkPolicy({ action: "shell", command: `python -c "open('/dev/null','w').write('')"`, workspaceRoot: root }).decision, "allow");
 });
 
 test("blocks protected paths hidden in interpreter payloads", () => {

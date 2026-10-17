@@ -28,9 +28,9 @@
       "note": "Session-continuation / Ralph orchestration is host lifecycle, outside guard_check."
     },
     "destructive.ts": {
-      "disposition": "partial",
-      "modules": ["shell-policy.ts"],
-      "missing": "SECURITY-RELEVANT: the destructive-command PATTERNS are ported into shell-policy.ts, but upstream's liveMutationIn scan over WRITTEN file content (extractEditContent + liveMutationIn on a file_write payload) is NOT ported. A script body that contains a live destructive command is not denied at the file_write lane."
+      "disposition": "ported",
+      "modules": ["shell-policy.ts", "policy.ts"],
+      "note": "Destructive-command patterns in shell-policy.ts; the liveMutationIn scan over WRITTEN file content (extractEditContent + the file_write content lane in policy.ts) ported in W214 (residual #27, issue #540, 2026-10-17). The content scan unifies the port's own destructive pattern surface; the W108 destination-aware force-push classification stays a shell-lane context check, not part of the blind content scan. One pre-existing pattern divergence is carried forward, not fixed: the port's loopback-exempt remote-DELETE curl pattern excludes 127.0.1 whereas upstream excludes 127.0.0.1 (shell-policy.ts vs vendor src/policies/destructive.ts:48)."
     },
     "docs.ts": {
       "disposition": "host-owned",
@@ -48,9 +48,9 @@
       "missing": "Protected-branch and pointer-write parsing is ported (git-policy.ts superset of the tracker gate); repo-discovery, base-staleness, merged-branch, and merge-conflict checks need remote/repo facts and are host-owned."
     },
     "interpreter.ts": {
-      "disposition": "partial",
+      "disposition": "ported",
       "modules": ["interpreter-policy.ts"],
-      "missing": "SECURITY-RELEVANT: interpreter payload inspection is ported, but upstream's outsideWritePathInPayload (inline interpreter script writing OUTSIDE the workspace root) and secretPathInPayload (inline interpreter reading a secret file) are NOT ported."
+      "note": "Interpreter payload inspection; upstream's outsideWritePathInPayload (inline interpreter script writing OUTSIDE the workspace root) and secretPathInPayload (inline interpreter reading a secret file) ported in W214 (residual #27, issue #541, 2026-10-17), fail-closed on unresolvable/variable targets via the boundary classifier."
     },
     "mcp.ts": {
       "disposition": "ported",
@@ -68,9 +68,9 @@
       "note": "Post-edit validator execution needs the host's configured commands; the hub owns it."
     },
     "secrets.ts": {
-      "disposition": "partial",
-      "modules": ["path-policy.ts"],
-      "missing": "SECURITY-RELEVANT: secret-content detection (secretIn) and symlink-aware secret PATHS are ported, but upstream's secret-file READ denial lane (secretFileReadIn for shell reads of .env/secret files, and the read/read_file tool seat) is NOT ported; the port has no read action."
+      "disposition": "ported",
+      "modules": ["path-policy.ts", "policy.ts"],
+      "note": "secretIn + symlink-aware secret paths in path-policy.ts; the secret-file READ denial lane (secretFileReadIn shell lane plus the read/read_file tool seat with the masked-.env-schema hint, GuardAction 'read' in policy.ts) ported in W214 (residual #27, issue #539, 2026-10-17)."
     },
     "shell-safety.ts": {
       "disposition": "ported",

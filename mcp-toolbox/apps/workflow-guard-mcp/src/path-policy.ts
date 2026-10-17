@@ -1,6 +1,7 @@
 import { realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { homedir } from "node:os";
+import { unwrapShellWords } from "./shell.js";
 
 const SAFE_ENV_FIXTURE_RE = /\.env\.(example|sample|template|dist|schema)(\.[\w-]+)*$/i;
 
@@ -82,6 +83,96 @@ export function checkSecretPath(path: string, workspaceRoot?: string): boolean {
   if (isSecretName(lexical)) return true;
   const real = workspaceRoot || isAbsolute(path) ? realPathWithMissingTail(lexical) : undefined;
   return real ? isSecretName(real) : false;
+}
+
+// W214 (residual #27, issue #539): ported from upstream policies/secrets.ts.
+// The upstream secret-file READ denial lane: a read-class command (cat/head/
+// grep/sed/.../dd if=) whose operand names a secret path. Upstream resolves
+// operands against the ambient workspace root; the port has no ambient state,
+// so the root arrives as a parameter and the name/realpath matching rides the
+// port's checkSecretPath (the upstream isSecretPath equivalent), keeping the
+// SAFE_ENV_FIXTURE exemption and realpath awareness identical. (The character
+// classes drop upstream's `\` before `/` — a no-useless-escape lint rule; the
+// pattern is semantically identical either way.)
+const SECRET_READ_COMMAND_RE =
+  /(?:^|\s)(?:cat|head|tail|less|more|grep|awk|sed|od|hexdump|strings|base64|xxd|nl|sort|uniq|view|nano|vim?)\s+[^|;&]*?(?:["']?)([\w/.~-]*\.(?:pem|key|pfx|p12)|[\w/.~-]*\.env(?:\.[\w-]+)*|[\w/.~-]*id_(?:rsa|dsa|ecdsa|ed25519)[\w.-]*|[\w/.~-]*kubeconfig[\w.-]*|[\w/.~-]*(?:service[-_]?account|credentials|client[-_]?secret)[\w.-]*\.json)(?:["']?)/i;
+const SIMPLE_FILE_READ_COMMAND_RE =
+  /(?:^|\s)(?:cat|head|tail|less|more|od|hexdump|strings|base64|xxd|nl|view|nano|vim?)\s+(?:-\S+\s+)*["']?([^\s|;&"']+)/i;
+
+export function secretFileReadIn(segment: string, workspaceRoot?: string): string | undefined {
+  const match = segment.match(SECRET_READ_COMMAND_RE);
+  if (match?.[1] && checkSecretPath(match[1], workspaceRoot)) return match[1];
+  const simpleMatch = segment.match(SIMPLE_FILE_READ_COMMAND_RE);
+  if (simpleMatch?.[1] && checkSecretPath(simpleMatch[1], workspaceRoot)) return simpleMatch[1];
+  const words = unwrapShellWords(segment);
+  if (["cat", "head", "tail", "less", "more", "od", "hexdump", "strings", "base64", "xxd", "nl", "view", "nano", "vim"].includes(words[0] ?? "")) {
+    for (const operand of words.slice(1).filter((word) => !word.startsWith("-"))) {
+      if (checkSecretPath(operand, workspaceRoot)) return operand;
+    }
+  }
+  if (words[0] === "dd") {
+    for (const word of words.slice(1)) {
+      if (word.startsWith("if=") && checkSecretPath(word.slice(3), workspaceRoot)) return word.slice(3);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Returns true specifically for environment variable files (.env, .env.local,
+ * etc.) that can safely present their schema (masked keys) to agents without
+ * exposing secret values. Ported from upstream policies/secrets.ts (W214).
+ */
+export function isEnvFilePath(targetPath: string): boolean {
+  if (!targetPath) return false;
+  const base = basename(targetPath).toLowerCase();
+  if (SAFE_ENV_FIXTURE_RE.test(base)) return false;
+  return /^\.env(?:\.|$)/i.test(base);
+}
+
+/**
+ * Parses a raw .env file and returns a sanitized schema mask where variable
+ * names and comment structures are preserved, but sensitive values (including
+ * multiline secret continuations) are redacted to '********'. Ported from
+ * upstream policies/secrets.ts (W214).
+ */
+export function generateMaskedEnvSchema(content: string): string {
+  const lines = content.split("\n");
+  let inMultilineQuote: string | null = null;
+
+  return lines
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) {
+        inMultilineQuote = null;
+        return line;
+      }
+
+      if (inMultilineQuote) {
+        if (trimmed.endsWith(inMultilineQuote) || trimmed.includes(inMultilineQuote)) {
+          inMultilineQuote = null;
+        }
+        return "********";
+      }
+
+      const eqIdx = line.indexOf("=");
+      if (eqIdx === -1) {
+        return "********";
+      }
+
+      const key = line.slice(0, eqIdx);
+      const val = line.slice(eqIdx + 1).trim();
+
+      if (
+        (val.startsWith('"') && !val.slice(1).includes('"')) ||
+        (val.startsWith("'") && !val.slice(1).includes("'"))
+      ) {
+        inMultilineQuote = val[0]!;
+      }
+
+      return `${key}=********`;
+    })
+    .join("\n");
 }
 
 const secretPatterns: Array<{ re: RegExp; reason: string }> = [

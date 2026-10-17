@@ -1,6 +1,7 @@
-import { basename } from "node:path";
-import { checkShellPolicy } from "./shell-policy.js";
-import { checkProtectedPath, secretIn } from "./path-policy.js";
+import { basename, resolve } from "node:path";
+import { readFileSync } from "node:fs";
+import { checkShellPolicy, extractEditContent, liveMutationIn } from "./shell-policy.js";
+import { checkProtectedPath, checkSecretPath, generateMaskedEnvSchema, isEnvFilePath, secretIn, secretFileReadIn } from "./path-policy.js";
 import { decodeShellEscapes, splitShellSegments, unwrapShellWords } from "./shell.js";
 import { checkGitPolicy, directRefWriteTargetIn, hasGitMutation, protectedBranchesIn, protectedBranchWriteReason } from "./git-policy.js";
 import { checkInterpreterPolicy } from "./interpreter-policy.js";
@@ -9,7 +10,10 @@ import { mcpMutationTarget } from "./mcp-policy.js";
 import { checkPrCreatePreflight } from "./pr-policy.js";
 import { redirectGuidance } from "./redirect.js";
 
-export type GuardAction = "shell" | "file_write" | "git" | "network" | "mcp";
+// W214 (residual #27): "read" joined the action set when the upstream
+// secret-file READ denial lane was ported (issue #539) — the read/read_file
+// tool seat checks its path against the secret-path classifier.
+export type GuardAction = "shell" | "file_write" | "git" | "network" | "mcp" | "read";
 
 export interface GuardCheckInput {
   action: GuardAction;
@@ -113,6 +117,18 @@ function evaluatePolicy(input: GuardCheckInput): GuardDecision {
     const boundary = checkBoundaryPolicy(input.command, input.workspaceRoot, 0, input.liveConfigPaths, { currentBranch: input.currentBranch, protectedBranches: input.protectedBranches });
     if (boundary) return boundary;
   }
+  // W214 (residual #27, issue #539): the shell secret-file READ denial lane,
+  // between the tamper/boundary classification and the interpreter payload
+  // checks (upstream's dispatcher order). A plain read of a NON-secret path
+  // stays the containment boundary's concern, not the guard's.
+  if ((input.action === "shell" || input.action === "git") && input.command?.trim()) {
+    for (const segment of splitShellSegments(decodeShellEscapes(input.command))) {
+      const secretTarget = secretFileReadIn(segment, input.workspaceRoot);
+      if (secretTarget) {
+        return { decision: "deny", policy: "secret-read", reason: `Reading sensitive credential/secret file '${secretTarget}' via shell is not permitted. Reference environment variables by name or inspect safe templates (e.g. .env.example) instead.`, matched: secretTarget };
+      }
+    }
+  }
   if ((input.action === "shell" || input.action === "git") && input.command?.trim()) {
     const interpreter = checkInterpreterPolicy(input.command, input.workspaceRoot, input.liveConfigPaths);
     if (interpreter) return interpreter;
@@ -135,6 +151,28 @@ function evaluatePolicy(input: GuardCheckInput): GuardDecision {
   if ((input.action === "shell" || input.action === "git") && input.command?.trim()) {
     const pr = checkPrCreatePreflight(input.command);
     if (pr) return pr;
+  }
+
+  // W214 (residual #27, issue #539): the read/read_file tool seat (upstream
+  // guard-dispatcher.ts:163-182). A secret-path read denies; for .env files
+  // the denial offers the masked variable schema (the keys, never the
+  // values). The hint is best-effort: an unreadable target reads as absent.
+  if (input.action === "read") {
+    const path = input.path?.trim() ?? "";
+    if (path && checkSecretPath(path, input.workspaceRoot)) {
+      let hint = "";
+      if (isEnvFilePath(path)) {
+        try {
+          const resolved = resolve(input.workspaceRoot ?? process.cwd(), path);
+          const masked = generateMaskedEnvSchema(readFileSync(resolved, "utf8"));
+          hint = `\n\nSafe variable schema mask:\n\`\`\`\n${masked.slice(0, 800)}\n\`\`\``;
+        } catch {
+          // The hint is best-effort: an unreadable target carries no mask.
+        }
+      }
+      return { decision: "deny", policy: "secret-read", reason: `Reading sensitive credential/secret file '${path}' directly is not permitted. Reference environment variables by name or inspect safe templates (e.g. .env.example) instead.${hint}`, matched: path };
+    }
+    return { decision: "allow", policy: "baseline", reason: "No baseline high-risk policy matched the proposed action." };
   }
 
   if (isReadOnlyRole(input.trustedRole)) {
@@ -186,6 +224,25 @@ function evaluatePolicy(input: GuardCheckInput): GuardDecision {
   if (input.action === "file_write" && input.content) {
     const secret = secretIn(input.content);
     if (secret) return { decision: "deny", policy: "secret-content", reason: `The proposed content contains ${secret}.` };
+  }
+
+  // W214 (residual #27, issue #540): the destructive-content scan over
+  // written file content (upstream extractEditContent + liveMutationIn on a
+  // file_write payload). Script files are not a way to smuggle destructive
+  // commands past the shell guard — this is the write-lane half of that
+  // fence; execution still flows through the shell lane and containment.
+  // Comment lines are documentation, not commands (upstream's comment skip).
+  if (input.action === "file_write" && process.env.WORKFLOW_GUARD_ALLOW_LIVE !== "1") {
+    for (const content of extractEditContent(input)) {
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed.startsWith("#") || trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*")) continue;
+        const what = liveMutationIn(line);
+        if (what) {
+          return { decision: "deny", policy: "live-mutation-payload", reason: `The file you are writing contains a ${what}. Script files are not a way to smuggle destructive commands past the shell guard. Only the user can allow live mutations (WORKFLOW_GUARD_ALLOW_LIVE=1).` };
+        }
+      }
+    }
   }
 
   if (input.action === "file_write") {

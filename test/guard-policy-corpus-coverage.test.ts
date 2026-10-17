@@ -19,11 +19,12 @@ import test from "node:test";
  *      (a newly vendored policy cannot go unaccounted);
  *   2. every policy that names `modules` actually maps to those app-port
  *      files (a module rename/deletion cannot silently orphan a disposition);
- *   3. the three SECURITY-RELEVANT lanes COVERAGE.json records as absent from
- *      the port stay absent — if any is ported, this fails and forces the
- *      inventory + the honest docs to be updated in the same change (the
- *      "extract the corpus into guard-policy" claim in VENDOR.md is a
- *      provision, not a present fact, until that day).
+ *   3. the SECURITY-RELEVANT lanes the corpus records stay honest in the
+ *      direction they were recorded — pre-W214 (2026-10-17, residual #27)
+ *      this pinned the three upstream enforcement lanes ABSENT from the port
+ *      (fail-closed if ported without an inventory update); post-W214 the
+ *      same mechanism pins them PORTED, so a silent regression removing a
+ *      ported lane fails here too.
  */
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -69,11 +70,14 @@ test("every disposition names a valid class and existing app-port modules", () =
   }
 });
 
-// The three upstream enforcement lanes the port does NOT carry, named by their
-// exported operator so the absence is exact. Each is SECURITY-RELEVANT
-// (defense-in-depth): porting any one of them must flip its COVERAGE.json
-// entry to 'ported'/'partial'-with-the-name-removed and update VENDOR.md.
-const ABSENT_SECURITY_LANES: ReadonlyArray<{ operator: string; vendored: string; vendoredFile: string }> = [
+// W214 (2026-10-17, residual #27, issues #539/#540/#541): the three upstream
+// enforcement lanes the port once lacked are PORTED, named by their exported
+// operator so the record is exact. Pre-W214 this block pinned the lanes
+// ABSENT (fail-closed if any was ported without an inventory update); it now
+// pins them PRESENT — a silent regression removing a ported lane is the same
+// inventory lie in the other direction. The behavioral proof lives in
+// mcp-toolbox/apps/workflow-guard-mcp/test/policy.test.ts (the W214 block).
+const PORTED_SECURITY_LANES: ReadonlyArray<{ operator: string; vendored: string; vendoredFile: string }> = [
   { operator: "secretFileReadIn", vendored: "secrets", vendoredFile: "secrets.ts" },
   { operator: "liveMutationIn", vendored: "destructive", vendoredFile: "destructive.ts" },
   { operator: "extractEditContent", vendored: "destructive", vendoredFile: "destructive.ts" },
@@ -81,12 +85,12 @@ const ABSENT_SECURITY_LANES: ReadonlyArray<{ operator: string; vendored: string;
   { operator: "secretPathInPayload", vendored: "interpreter", vendoredFile: "interpreter.ts" },
 ];
 
-test("the security-relevant lanes recorded absent from the port stay absent (unported corpus is honest)", () => {
+test("the security-relevant lanes pinned as ported stay ported (ported corpus is honest)", () => {
   const appSource = readdirSync(appSrcDir)
     .filter((name) => name.endsWith(".ts"))
     .map((name) => readFileSync(join(appSrcDir, name), "utf8"))
     .join("\n");
-  for (const lane of ABSENT_SECURITY_LANES) {
+  for (const lane of PORTED_SECURITY_LANES) {
     // The operator must exist upstream (the corpus really carries the lane)...
     const vendoredSource = readFileSync(join(vendoredPoliciesDir, lane.vendoredFile), "utf8");
     assert.match(
@@ -94,10 +98,18 @@ test("the security-relevant lanes recorded absent from the port stay absent (unp
       new RegExp(`export function ${lane.operator}\\b`),
       `the vendored corpus no longer exports ${lane.operator}; re-vendor or update COVERAGE.json`,
     );
-    // ...and must NOT be present in the app port (the record of absence stays true).
+    // ...and must be present in the app port, with its disposition no longer
+    // recording it as missing (the record of the port stays true).
     assert.ok(
-      !new RegExp(`\\b${lane.operator}\\b`).test(appSource),
-      `app port now references '${lane.operator}': a formerly-absent security lane appears ported. Update COVERAGE.json + VENDOR.md, then remove it from ABSENT_SECURITY_LANES.`,
+      new RegExp(`\\b${lane.operator}\\b`).test(appSource),
+      `app port no longer references '${lane.operator}': a ported security lane was silently removed. Restore it, or record the regression in COVERAGE.json + VENDOR.md + docs/SECURITY_ASSURANCE.md #27.`,
     );
+    const entry = coverage.policies[`${lane.vendored}.ts`]!;
+    if (entry.disposition === "partial") {
+      assert.ok(
+        !(entry.missing ?? "").includes(lane.operator),
+        `${lane.vendored}.ts records '${lane.operator}' as missing, but the port carries it; update COVERAGE.json`,
+      );
+    }
   }
 });
