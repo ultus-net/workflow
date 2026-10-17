@@ -150,9 +150,10 @@ test("guardInputFromToolCall maps every host family to guard actions", () => {
   assert.deepEqual(guardInputFromToolCall("write", { filePath: "src/b.ts", content: "export {};" }), { action: "file_write", path: "src/b.ts", content: "export {};" });
   // Hub-implemented fs server — a delegated write hits the same write policy
   assert.deepEqual(guardInputFromToolCall("fs/write_text_file", { path: "/repo/src/b.ts", content: "export {};" }, "/repo"), { action: "file_write", path: "/repo/src/b.ts", content: "export {};", workspaceRoot: "/repo" });
-  // Delegated reads are not guard-gated (the guard has no read action — the
-  // same as direct reads on every surface)
-  assert.equal(guardInputFromToolCall("fs/read_text_file", { path: "/repo/a.ts" }), undefined);
+  // W214: read-class tools seat the ported secret-file READ denial lane
+  // (`action: "read"`); delegated ACP fs reads ride the same mapping.
+  assert.deepEqual(guardInputFromToolCall("read", { filePath: "a.ts" }), { action: "read", path: "a.ts" });
+  assert.deepEqual(guardInputFromToolCall("fs/read_text_file", { path: "/repo/a.ts" }), { action: "read", path: "/repo/a.ts" });
   assert.deepEqual(guardInputFromToolCall("apply_patch", { patchText: "*** Update File: x" }), { action: "file_write", patchText: "*** Update File: x" });
   assert.deepEqual(guardInputFromToolCall("bash", { command: "echo hi" }), { action: "shell", command: "echo hi" });
   // Network tools reach the guard with the target URL

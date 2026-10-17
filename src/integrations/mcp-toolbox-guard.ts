@@ -17,9 +17,13 @@ import { checkPolicy, type GuardCheckInput, type GuardDecision } from "./guard-p
  * handshakes over stdio, or executes a possibly-stale `dist` — the SAME
  * `checkPolicy` the vendored app runs is statically linked here. The port is a
  * SUBSET of the vendored upstream corpus
- * (`mcp-toolbox/vendor/opencode-workflow-guard/`): three upstream enforcement
- * lanes are absent (secret-file read denial, destructive-content-on-write,
- * inline-interpreter workspace-escape/secret-read), recorded in the vendor's
+ * (`mcp-toolbox/vendor/opencode-workflow-guard/`). W214 (residual #27, issues
+ * #539/#540/#541) ported the three upstream enforcement lanes that were
+ * absent: the secret-file read denial (`secretFileReadIn` shell lane + the
+ * `read` action seat), the destructive-content-on-write scan
+ * (`extractEditContent` + `liveMutationIn`), and the inline-interpreter
+ * workspace-escape / secret-read lanes (`outsideWritePathInPayload`,
+ * `secretPathInPayload`) — dispositions recorded in the vendor's
  * `COVERAGE.json` and pinned by `test/guard-policy-corpus-coverage.test.ts`.
  * MCP remains capability and observation plumbing; Workflow's kernel owns task
  * state. The vendored app is still built and mounted as an agent-facing MCP
@@ -294,6 +298,10 @@ const FILE_WRITE_TOOLS = new Set([
 const PATCH_TOOLS = new Set(["apply_patch", "patch"]);
 const DELETE_TOOLS = new Set(["delete_file"]);
 const NETWORK_TOOLS = new Set(["webfetch", "web_fetch", "fetch_web_content", "websearch", "web_search"]);
+// W214 (residual #27, issue #539): read-class tools seat the ported
+// secret-file READ denial lane (`action: "read"`) — ACP's delegated
+// `fs/read_text_file` rides the same mapping as the direct tool names.
+const READ_TOOLS = new Set(["read", "read_file", "fs/read_text_file"]);
 
 export function guardInputFromToolCall(toolName: string, input: unknown, workspaceRoot?: string): GuardCheckInput | undefined {
   const base = workspaceRoot === undefined ? {} : { workspaceRoot };
@@ -332,6 +340,15 @@ export function guardInputFromToolCall(toolName: string, input: unknown, workspa
     const path = firstString(record, ["path", "filePath", "file_path"]);
     return {
       action: "file_write",
+      ...(path === undefined ? {} : { path }),
+      ...base,
+    };
+  }
+  if (READ_TOOLS.has(toolName)) {
+    const record = inputRecord(input);
+    const path = firstString(record, ["path", "filePath", "file_path"]);
+    return {
+      action: "read",
       ...(path === undefined ? {} : { path }),
       ...base,
     };
