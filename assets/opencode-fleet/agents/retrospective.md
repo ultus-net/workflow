@@ -62,3 +62,10 @@ and brevity bias are the failure modes you exist to prevent.
   ONLY places you may write. The registry is append-only: add your one line,
   never rewrite, reorder, or delete existing entries. Everything else is
   read-only to you.
+- **Final output (required).** End with exactly one line so the writes and the
+  rejections are both visible in the transcript:
+
+  `written: <ids> | none — rejected: <candidate> — <reason> | none`
+
+  A rejection is a result, not a silent drop: the admission gate exists so a
+  lesson that fails the external check leaves a record instead of vanishing.

@@ -35,10 +35,10 @@
     "opencode-workflow-guard@latest",
   ],
 
-  // `build` is a host built-in, not a pinned fleet agent, so the routing ruler
-  // (verify-effective-model.cjs) does not grade the default session path (P2-4:
-  // a coverage hole, by design for now). Pin or extend the ruler before relying
-  // on the default agent's tier.
+  // `build` is a host built-in, not a pinned fleet agent. The routing ruler
+  // checks that this key resolves to a selectable agent (P2-4): a rename to a
+  // name the host would not use fails loud instead of silently falling back.
+  // The default's *tier* is an operator decision (operator-actions item 11).
   "default_agent": "build",
 
   // ── Language servers (binaries installed via Homebrew) ──────────────────
@@ -83,11 +83,14 @@
     "~/.config/opencode/style/coding-style.md",
   ],
 
-  // Compaction is tuned with no repo ruler yet (no compaction instrument in
-  // install/lib; pre-ruler tune, the n=12 tool_output state). The host honors
-  // these keys as v2 legacy aliases (preserve_recent_tokens -> keep.tokens,
-  // reserved -> buffer), a silent-drop surface if a future host drops an alias.
-  // Accepted defaults, not yet measured.
+  // Compaction is measured by install/lib/measure-compaction.cjs (pre-commit
+  // Layer 18). The ruler reports coverage (rows/sessions), the reason and
+  // status splits, the schema vintage, the per-agent split, and per-session
+  // thrash. The host honors these keys as v2 legacy aliases
+  // (preserve_recent_tokens -> keep.tokens, reserved -> buffer), a silent-drop
+  // surface if a future host drops an alias. Accepted defaults, now measured
+  // rather than assumed: the value is unchanged this iteration (the tune is a
+  // later, measured decision).
   "compaction": {
     "auto": true,
     "keep": { "tokens": 15000 },
@@ -138,7 +141,10 @@
   // a machine with an existing live config this block is inert. On a fresh
   // machine the installer seeds live from this block, so coverage is whatever
   // this file carries. It is now at parity with the add-on's destructive set
-  // minus the residual regex-only classes named in the proposal.
+  // minus the residual regex-only classes named in the proposal. The inert gap
+  // is MEASURED by install/lib/measure-permission-reach.cjs (pre-commit Layer 23):
+  // run it to see how many rules the live config actually carries on this
+  // machine, so the caveat is a number, not an assertion.
   //
   // ORDER MATTERS: the host resolves the LAST matching rule, so broad rules go
   // first and narrow ones after. The broad `git push *` ask precedes the
@@ -155,6 +161,34 @@
     { "action": "read", "resource": "*.env", "effect": "deny" },
     { "action": "read", "resource": "*.env.*", "effect": "deny" },
     { "action": "read", "resource": "*.env.example", "effect": "allow" },
+    // >>> ported-secret-read-rules (generated — run install/lib/port-secret-read-rules.cjs --apply) <<<
+    { "action": "read", "resource": "*id_rsa", "effect": "deny" },
+    { "action": "read", "resource": "*id_rsa.*", "effect": "deny" },
+    { "action": "read", "resource": "*id_dsa", "effect": "deny" },
+    { "action": "read", "resource": "*id_dsa.*", "effect": "deny" },
+    { "action": "read", "resource": "*id_ecdsa", "effect": "deny" },
+    { "action": "read", "resource": "*id_ecdsa.*", "effect": "deny" },
+    { "action": "read", "resource": "*id_ed25519", "effect": "deny" },
+    { "action": "read", "resource": "*id_ed25519.*", "effect": "deny" },
+    { "action": "read", "resource": "*.pem", "effect": "deny" },
+    { "action": "read", "resource": "*.key", "effect": "deny" },
+    { "action": "read", "resource": "*.pkcs12", "effect": "deny" },
+    { "action": "read", "resource": "*.pfx", "effect": "deny" },
+    { "action": "read", "resource": "*.p12", "effect": "deny" },
+    { "action": "read", "resource": "*kubeconfig*", "effect": "deny" },
+    { "action": "read", "resource": "*.netrc", "effect": "deny" },
+    { "action": "read", "resource": "*.git-credentials", "effect": "deny" },
+    { "action": "read", "resource": "*.kube/config*", "effect": "deny" },
+    { "action": "read", "resource": "*.aws/credentials*", "effect": "deny" },
+    { "action": "read", "resource": "*.docker/config.json*", "effect": "deny" },
+    { "action": "read", "resource": "*credentials.json", "effect": "deny" },
+    { "action": "read", "resource": "*serviceaccount*.json", "effect": "deny" },
+    { "action": "read", "resource": "*service-account*.json", "effect": "deny" },
+    { "action": "read", "resource": "*service_account*.json", "effect": "deny" },
+    { "action": "read", "resource": "*clientsecret*.json", "effect": "deny" },
+    { "action": "read", "resource": "*client-secret*.json", "effect": "deny" },
+    { "action": "read", "resource": "*client_secret*.json", "effect": "deny" },
+    // <<< ported-secret-read-rules <<<
     { "action": "edit", "resource": "*.env*", "effect": "deny" },
     // Read-only git inspection is always safe.
     { "action": "shell", "resource": "git status *", "effect": "allow" },

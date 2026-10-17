@@ -64,8 +64,8 @@ given, but *judging* and *integrating* still need capability.
 - Escalation budget per subtask: e.g. 2 cheap attempts, then strong model.
   Retrying a cheap model past its capability is more expensive than doing
   it strong the first time. Make the trigger observable and automatic (two
-  failed acceptance runs, a repeated error loop, or sustained exploration
-  with no accepted edit), not a judgment call mid-flight; this is the
+  failed acceptance runs, a repeated error loop, or half the subtask's step cap
+  burned with no accepted edit), not a judgment call mid-flight; this is the
   *escalation router* pattern (see `reading-list.md` → NeMo Switchyard).
 - Track a simple success rate per subtask *type*; drop types whose
   cheap-attempt success rate makes retries net-negative.
@@ -77,7 +77,8 @@ given, but *judging* and *integrating* still need capability.
 - **opencode** — the fleet in `install/opencode/agents/` encodes the roles
   structurally: `decompose` (planner), `executor` (cheap-tier role),
   `executor-strong` (escalation twin, strong tier), `reviewer`,
-  `retrospective`. Each agent carries a per-role `model:` tier pin in its
+  `retrospective`, `screener` (idea-level pre-screen). Each agent carries a
+  per-role `model:` tier pin in its
   frontmatter; the upstream router adds the Synthetic-primary/OpenRouter
   failover layer, so tiers are role assignments backed by explicit pins, not
   per-request guesses. Subagents spawned via

@@ -1,8 +1,11 @@
 # Global instructions: communication style
 
 Applies to every agent and session on this machine.
-Grounding: `docs/agents/rsi-loop-playbook.md` failure modes (brevity bias,
-context collapse, over-optimism) and the external-verification rule.
+Grounding: the RSI-loop playbook's failure modes (brevity bias, context
+collapse, over-optimism) and the external-verification rule. That playbook
+lives in the dotfiles repo (`docs/agents/rsi-loop-playbook.md`); this file is
+injected globally, so a repo-relative path here would not resolve in any other
+repo.
 
 ## Responses
 
@@ -23,6 +26,9 @@ context collapse, over-optimism) and the external-verification rule.
   filler vocabulary ("delve", "utilize", "leverage", "seamless", "crucial"
   as decoration), and "not only X but Y" framing. When a word is the
   precise technical term it stays. The tell is filler, not vocabulary.
+  This governs chat replies, not files you write: a file follows its own
+  repo's style (see `coding-style.md` → Precedence), which may keep em
+  dashes.
 - Register: plain technical prose, like a terse senior engineer.
 
 - One instruction per sentence. Keep instruction sentences to 20 words or

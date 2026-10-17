@@ -30,8 +30,9 @@ Protocol:
    a full spec (inputs, constraints, acceptance command). Keep the diff
    minimal. Start each subtask on the cheap tier and escalate on an
    observable trigger (two failed acceptance runs, a repeated error loop, or
-   sustained exploration) by re-dispatching the same spec, with the failed
-   attempt and its acceptance output, to the `executor-strong` twin; do not
+   half the subtask's step cap burned with no accepted edit) by re-dispatching
+   the same spec, with the failed attempt and its acceptance output, to the
+   `executor-strong` twin; do not
    guess the tier up front. Judgment-heavy
    edits you do yourself, stating why they were strong-only. On each accepted
    change, note whether the benefit was measured on the *target* tier, not

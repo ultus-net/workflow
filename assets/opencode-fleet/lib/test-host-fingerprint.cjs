@@ -28,6 +28,21 @@ function hostWith(entry) {
   return { dir, full };
 }
 
+/**
+ * Build a temp host tree with a matching file for every pinned entry, so the
+ * all-match path is exercised against the real pin list regardless of its
+ * length (n=34 added a second pin). `contents` maps an entry path to its bytes.
+ */
+function hostWithAll(contents) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'hostfp-'));
+  for (const entry of h.HOST_FILES) {
+    const full = path.join(dir, entry.path);
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, contents[entry.path]);
+  }
+  return dir;
+}
+
 test('verifyHost: an unset source is a SKIP, not a failure', () => {
   const r = h.verifyHost(null);
   assert.equal(r.status, 'skip');
@@ -88,22 +103,28 @@ test('checkFile: a matching digest with a gone marker is DRIFT (marker guards a 
 
 test('verifyHost: all-match is ok; any divergence is drift', () => {
   const content = 'export const MAX_LINES = 2_000\n';
-  const real = h.HOST_FILES[0];
-  const orig = { ...real, markers: [...real.markers] };
+  const saved = h.HOST_FILES.map((e) => ({ ref: e, path: e.path, sha256: e.sha256, markers: [...e.markers] }));
   try {
-    real.sha256 = h.sha256(Buffer.from(content, 'utf8'));
-    real.markers = ['export const MAX_LINES = 2_000'];
-    const { dir, full } = hostWith(real);
-    fs.writeFileSync(full, content);
+    // Pin every entry to the same synthetic content so the tree is buildable.
+    for (const e of h.HOST_FILES) {
+      e.sha256 = h.sha256(Buffer.from(content, 'utf8'));
+      e.markers = ['export const MAX_LINES = 2_000'];
+    }
+    const contents = {};
+    for (const e of h.HOST_FILES) contents[e.path] = content;
+    const dir = hostWithAll(contents);
     const ok = h.verifyHost(dir);
     assert.equal(ok.status, 'ok');
-    assert.equal(ok.checked, 1);
-    fs.writeFileSync(full, content + '// host changed\n');
+    assert.equal(ok.checked, h.HOST_FILES.length);
+    // Diverge exactly one pinned file (the last), so drift is detected even with
+    // multiple pins and regardless of which one changes.
+    const target = path.join(dir, h.HOST_FILES[h.HOST_FILES.length - 1].path);
+    fs.writeFileSync(target, content + '// host changed\n');
     const drift = h.verifyHost(dir);
     assert.equal(drift.status, 'drift');
     fs.rmSync(dir, { recursive: true, force: true });
   } finally {
-    Object.assign(real, orig);
+    for (const s of saved) { s.ref.path = s.path; s.ref.sha256 = s.sha256; s.ref.markers = s.markers; }
   }
 });
 
@@ -139,11 +160,12 @@ test('verifyHost: a file passed as --src is DRIFT, not a skip', () => {
 
 test('emitPins: reports the digest of a real file', () => {
   const content = 'export const MAX_LINES = 2_000\n';
-  const { dir, full } = hostWith({ path: 'packages/core/src/tool-output-store.ts' });
-  fs.writeFileSync(full, content);
+  const contents = {};
+  for (const e of h.HOST_FILES) contents[e.path] = content;
+  const dir = hostWithAll(contents);
   const pins = h.emitPins(dir);
-  assert.equal(pins.length, 1);
-  assert.equal(pins[0].sha256, h.sha256(Buffer.from(content, 'utf8')));
+  assert.equal(pins.length, h.HOST_FILES.length);
+  for (const p of pins) assert.equal(p.sha256, h.sha256(Buffer.from(content, 'utf8')));
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

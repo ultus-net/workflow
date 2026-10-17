@@ -29,21 +29,10 @@ const path = require('node:path');
 
 const g = require('./port-destructive-rules.cjs');
 
+const { hostMatch } = require('./wildcard-match.cjs');
+
 /** Join tokens with a space, so no contiguous literal is written in this file. */
 const J = (...p) => p.join(' ');
-
-// The host's anchored-glob matcher, mirrored from
-// packages/core/src/util/wildcard.ts (match()).
-function hostMatch(input, pattern) {
-  const normalized = input.replaceAll('\\', '/');
-  let escaped = pattern
-    .replaceAll('\\', '/')
-    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-    .replace(/\*/g, '.*')
-    .replace(/\?/g, '.');
-  if (escaped.endsWith(' .*')) escaped = escaped.slice(0, -3) + '( .*)?';
-  return new RegExp('^' + escaped + '$', 's').test(normalized);
-}
 
 test('resource() builds the anchored glob for each form', () => {
   assert.equal(g.resource('kubectl', 'delete', 'toolverb'), J('kubectl', 'delete', '*'));
@@ -104,10 +93,14 @@ test('a rule is anchored and case-sensitive (does not over-match)', () => {
 });
 
 test('hostMatch mirrors the real host matcher (SKIP if $OPENCODE_SRC absent)', (t) => {
-  // hostMatch above is a from-memory mirror of wildcard.ts. When the host source
+  // hostMatch (the shared mirror, install/lib/wildcard-match.cjs) is a
+  // from-memory port of wildcard.ts. When the host source
   // is checked out, load the real matcher and diff it on the ported globs plus
   // adversarial inputs, so a mirror drift fails loud instead of certifying the
-  // port against a matcher the host does not share.
+  // port against a matcher the host does not share. This is now a SECONDARY
+  // check: install/lib/test-wildcard-vendor.cjs runs the same equivalence
+  // against a vendored host copy with no $OPENCODE_SRC needed, so the enforced
+  // path no longer depends on this skip.
   const src = process.env.OPENCODE_SRC;
   if (!src) { t.skip('no $OPENCODE_SRC (host not checked out)'); return; }
   const hostFile = path.join(src, 'packages/core/src/util/wildcard.ts');

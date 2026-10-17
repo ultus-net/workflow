@@ -6,12 +6,13 @@
 > upstream quarterly.
 >
 > Every entry below was re-verified against its primary source on
-> 2026-09-22; follow-up passes on 2026-10-01, 2026-10-02, and 2026-10-12
-> added later entries and one correction. See
+> 2026-09-22; follow-up passes on 2026-10-01, 2026-10-02, 2026-10-12, and
+> 2026-10-17 added later entries and two corrections. See
 > [Verification status (2026-09-22)](#verification-status-2026-09-22),
 > [Verification status (2026-10-01)](#verification-status-2026-10-01),
-> [Verification status (2026-10-02)](#verification-status-2026-10-02--deeper-pass-one-correction), and
-> [Verification status (2026-10-12)](#verification-status-2026-10-12).
+> [Verification status (2026-10-02)](#verification-status-2026-10-02--deeper-pass-one-correction),
+> [Verification status (2026-10-12)](#verification-status-2026-10-12), and
+> [Verification status (2026-10-17)](#verification-status-2026-10-17).
 
 ## Start here (synthesis)
 
@@ -40,6 +41,41 @@
   and human gates are the scarce resource; and its recursive scenario is
   **compute-bound** and raises verification/slowdown/pause policy questions
   (see `policy-review.md`). Primary-verified.
+- **Anthropic — "Redesigning source control at Anthropic"** (engineering post,
+  13 Oct 2026; updated 15 Oct) — the *infrastructure* frame of the macro
+  picture, one level below the "When AI builds itself" strategy post. Anthropic
+  went from ~2,500 merges/day (May 2026) to 30,000+/day (September), git
+  collapsed under ~25M checkouts/day, and a 7-person team built and migrated to
+  an in-house VCS (Scion) plus a review surface (Antique) in five months,
+  largely written by Claude. Reports: 200x smaller infra footprint, checkouts
+  in seconds not minutes, 25% CI CPU win, each cache tier >99% hit rate; review
+  moved from lines to *intent*; the merge-queue lock was dropped for post-merge
+  testing because conflict fixes outpaced manual identification. Tier B
+  (vendor internal metrics); the architecture (changeset WAL, derived-data
+  recursion, tiered caches) is primary text. Falsifiable consequence: the
+  Amdahl bottleneck this guide already names is now documented in production at
+  the frontier, and it is verification and merge throughput, not generation.
+  https://www.anthropic.com/engineering/redesigning-source-control
+
+## Evidence tiering (distillation-aware)
+
+This list is read by an operator who runs **primarily open, frontier-distilled
+models** (the fleet is pinned to `synthetic/*` and routed across open
+backbones). A large share of recent RSI results are produced by models trained
+on frontier-lab artifacts, so a claim can be true *of the distilled model*
+while reflecting the teacher, not the mechanism. Every new entry carries a
+tier:
+
+- **A — primary/independently replicated.** Peer-reviewed, or a third party
+  re-ran it. Trust the effect and the mechanism.
+- **B — vendor/lab-reported, unreplicated.** The authors measured their own
+  system on their own (often private) eval. Trust the direction; treat the
+  magnitude as an upper bound until replicated.
+- **C — distilled-risk.** The claim likely rests on frontier-lab artifacts a
+  distilled model may merely echo, or the evaluation is scored by a judge from
+  the same model family as the candidate. Independent confirmation is required
+  before a mechanism is adopted. This is the tier the operator's own
+  homogeneous self-grading loops drift into, so it is flagged aggressively.
 
 ## Foundations
 
@@ -182,6 +218,47 @@
   to the harness not the model.
 - **SIA** (2605.27276, 26 May 2026) — updates BOTH the harness and the weights
   (the two silos joined); beats scaffold-only on three domains.
+- **"Self-Evolving Agent Harness"** (2610.18813, 13 Oct 2026; tier B) — the
+  closest formal match to this repo's setting: harness self-evolution (prompts,
+  memory, workflows, executable components) with **weights fixed**. Proposes an
+  admission rule that requires *fresh independent validation data* per accepted
+  edit, plus PAC-style retention/generalization bounds under stated
+  assumptions. Theory with sparse empirical validation, but the admission rule
+  is the same shape as the playbook's external-verification gate.
+  github.com/zgcagi/Harness-RSI.
+- **"A Strong Harness Narrows the Model Gap"** (2610.19999, 14 Oct 2026, EMNLP
+  2026 NLLP workshop; tier B) — a controlled 3-harness × 3-model ablation (153
+  gold bills, two jurisdictions): the *weakest* model in a decomposed
+  multi-agent pipeline beats the *strongest* model zero-shot, 0.948 vs 0.806
+  (paired bootstrap p<0.001), and model spread collapses from 0.68-0.81 to
+  ~0.95. Orchestration, not tools, carries the gap. Domain is document
+  conversion, not coding, so it bounds the "harness > model" claim rather than
+  proving it for code.
+- **Terminal-RSI** (2610.22192, 15 Oct 2026; tier B/C) — five-stage
+  trajectory self-rewrite + critic-inheriting policy refine on open-weights
+  Qwen3.8-27B; Terminal-Bench 4.0 19.84%, 3.0 16.95%, Hard 79.00%. **Weight
+  training, not harness-only** — the transplantable idea is the bounded
+  partial-credit reward design, not the loop.
+- **RRI — "Recursive Reward Improvement via Adversarial Meta-Prompt
+  Evolution"** (2610.21040, 15 Oct 2026, Microsoft Research + CMU/UPenn; tier
+  B) — for open-ended tasks with no answer key, a reward-hacking *adversary*
+  writes a rubric-gaming answer, an honest answer is generated blind, and ≤2
+  repair steps revise the rubric. +10.9 pts (9B) / +12.4 pts (27B open-weights)
+  on HealthBench Professional. The adversary is the mechanism that catches the
+  hack the current loop would wave through.
+- **"The Agentic Scientist"** (2610.18933, 13 Oct 2026, Sakana AI; tier B/C) —
+  88-page system paper: a meta-controller orchestrates parallel research agents
+  with per-stage rubric verification; claims one agent-authored paper accepted
+  at ALIFE 2026. Extends the AIDE²/AI-Scientist lineage; capability claims
+  need independent replication.
+- **SwarmRSI** (2610.20431, 14 Oct 2026; tier B/C) — evolves scientific-agent
+  swarms by feedback-guided mutation + complementary recombination; claims SOTA
+  on OpenProblems/NatureBench/MLE-Bench Lite with **no effect sizes in the
+  abstract**. Cited for the recombination idea pending body numbers.
+- **RSIFlow** (2610.21791, 15 Oct 2026; tier C) — a meta-agent diagnoses
+  bottlenecks from trajectories, selects component-specific workflows, and
+  distills outcomes into skills that evolve its own meta-harness. Generic SOTA
+  claims, unspecified models — hold for verification.
 
 ## Memory & context
 
@@ -221,6 +298,51 @@
 - **EASE** (2609.36746, 29 Sep 2026) — skill curation is executor-dependent;
   one curator conditioned on an online behavioral profile transfers across
   unseen executors, with 34-41% fewer skills.
+- **"MemScope: Evolving Agent Memory Architectures through Localized Code
+  Repair"** (2610.21170, 15 Oct 2026; tier B) — a patch agent inspects raw
+  traces + runtime memory state + architecture code and makes *bounded,
+  in-place* memory edits (median code-change ratio 4.4%). GAIA 86.67%
+  (trace+memory) vs 70.0% (trace-only) vs 63.3% (summary-only); unseen ALFWorld
+  50.75%→71.64%. Open-model deltas: DeepSeek V3.2 49→55, Kimi K2.7 Code 50→53.
+  Evidence that localized trace-grounded patches beat wholesale rewrites — the
+  shape a repo-local memory subsystem should take.
+- **"Lost in Implicit Routing"** (2610.18522, 13 Oct 2026; tier B, NEGATIVE) —
+  on fixed SkillsBench tasks, adding **1,000 irrelevant skills** drops
+  loaded-skill recall from 73.6% to 27.4% and raises the zero-load rate from
+  9.3% to 51.6%; explicit preselection keeps 73.9%. Masking irrelevant
+  descriptions mostly restores it, so the failure is **metadata interference,
+  not capacity**. Actionable: implicit skill routing does not scale — budget
+  the skill-metadata surface, do not grow it unbounded.
+- **"Evolving Together, Failing Apart: The Skill-Policy Co-evolution Trap"**
+  (2610.20845, 14 Oct 2026; tier B, NEGATIVE) — across 4 co-evolution methods
+  and 5 benchmarks, worst-case success under skill-bank drift is **5-13 points
+  below the co-training peak**, erasing 52-93% of the skill bank's gain over
+  no-skill. Fragility *grows* as co-evolution training proceeds. Directly
+  cautions the playbook's skill-bank assumptions: verifying only against the
+  "delivered" bank overstates robustness.
+- **"Library Drift"** (2605.19576, May 2026, ICML 2026 FAGEN workshop; tier B,
+  missed earlier) — unbounded skill accumulation degrades retrieval and injects
+  false positives; **LLM-authored skills deliver +0.0pp vs +16.2pp for
+  human-curated**; premature retirement actively harms (−0.019). A governance
+  recipe (outcome-driven retirement + a bounded active cap) lifts MBPP+
+  hard-100 from 0.258 to 0.584 over 100 rounds. The strongest existing bound on
+  self-authored skill libraries.
+- **"Memory Reward Inflation in Self-Improving LLM Agents" (the Echo Gap)**
+  (2608.00017, 29 Jun 2026; tier A, missed earlier) — the sharpest formal bound
+  on repo-local lesson memory. Stored self-grades are *proxy rewards*:
+  incorrect episodes get inflated scores, so the agent preferentially reuses
+  its confident mistakes, and the confirming judge's errors stay correlated
+  with the original bias. Proves an **Error-Independence Assumption is
+  necessary** — a judge drawn from the *same model family* cannot correct the
+  inflation, which compounds even under ordinary similarity retrieval. Fix
+  (LUCID): 56.9% vs 54.0% (self-graded) vs 52.4% (no memory). This is exactly
+  the distillation hazard for an open-model fleet grading itself.
+- **MetaShare** (2610.21887, 15 Oct 2026, NeurIPS 2026 Meta-Agents workshop;
+  tier B) — records *successful and unsuccessful* modifications with signed
+  deltas, retrieves known failures across lineages, and gates applicability by a
+  deterministic selector. Matches DGM-Hyperagents' final performance in 1.7-2.9×
+  fewer iterations across five domains. Supports storing failed edits as
+  first-class memory rather than only accepted ones.
 
 ## Verification & the negative results
 
@@ -291,6 +413,75 @@
   solver in self-evolving search increasingly agree on shared errors; a
   split-source feedback solver cuts false agreement 8.8% → 3.7%, +8.4 pts
   over coupled self-evolution.
+- **"What Does a Harness Buy? Tokens, Mostly"** (2610.04433, 3 Oct 2026; tier
+  A) — the calibration paper this list was missing. Five models × three
+  production harnesses (Claude Code, mini-SWE-agent, OpenCode) on SWE-bench
+  Verified (447 tasks) plus a 45-task hard subset, with deliberate reruns. A
+  harness swap flips **13%** of tasks — **identical to the 13% flip rate of
+  rerunning the same harness**, so wins do not replicate across runs. The only
+  effect clearing noise is a *loss* (OpenCode −9 pts, half from output caps).
+  Cost/task differs 3× across harnesses, set by prompt preamble × step count.
+  Power: 45 tasks catch a 13-pt gap only half the time; 447 resolve only ~5
+  pts. **Every claimed harness gain must be compared to the rerun flip band.**
+- **"Trace Evolution Bench"** (2610.15055, 10 Oct 2026; tier A) — endpoint
+  *Gain* (held-out success after − before) can credit a *frozen rescore* as
+  evolution. A no-evolve control that never changes policy still moves
+  5.0-12.5pp across three seeds on the coding pack (40 held-out tasks). Of nine
+  text-update cells modeled on GEPA/ACE/ExpeL, seven beat their seed's noise
+  band on DeepSeek v4 Pro — but the pattern does **not** reproduce on GLM or
+  MiniMax, and no method stays above its band on all seeds of all three models.
+  Acceptance rules must be **paired per-seed**, not endpoint.
+- **"The Self-Improvement Problem"** (2610.21646, 15 Oct 2026, DFKI; tier A) —
+  proves **no terminating gate can be both reliable (never accept a
+  non-improvement) and non-conservative (never miss an improvement)**, even
+  randomized with bounded error. A chain of accepted updates can raise a
+  bounded score every round while the *true* score falls — formal backing for
+  Goodhart-style drift. Bounded evaluation + a finite proposal budget is the
+  only recoverable regime, which is what this repo's design already assumes.
+- **"More Methods, Better Agents? A Reality Check on Self-Distillation in
+  Agentic RL"** (2610.19789, 14 Oct 2026; tier B leaning A) — 132 training
+  runs, 12,124 H800 GPU-hours, 8 rollout seeds, 10 self-distillation methods vs
+  GRPO across 4 environments and 3 model sizes: **no method consistently beats
+  plain GRPO**, strong final scores mask unstable training, and extra compute
+  does not reliably convert. The strongest skeptical datapoint of the wave.
+- **"Bad Genius: Counterfactual-Guided Harness Evolution Beyond Task-Specific
+  Shortcuts" (CHASE)** (2609.18366, v3 24 Sep 2026; tier B) — task holdout —
+  this repo's guard — is **insufficient**: the benchmark *protocol* stays
+  fixed, so a "bad genius" proposer can build a harness that exploits
+  benchmark-wide shortcuts. Fix: a Challenger that searches for protocol
+  transformations which destroy the gain, plus a validity firewall. Directly
+  targets the holdout admission gate: it gates *tasks*, not *protocols*.
+- **"When Self-Evolution Backfires" gating protocol (VaG)** (2608.05810, v2
+  Sep 2026; tier B) — already cited above; note the operational numbers: on
+  Terminal-Bench 2 unconditional accumulation peaks then gives back most gains,
+  while the gated variant reaches 72% pass@1 with a ~5× smaller pool and
+  transfers to four backbones. Gate before commit; rollback will not save you.
+- **"On the Fragility of Self-Improving Agents: Variance, Task Order, and
+  Underspecification"** (2608.18066, v2 Sep 2026, Salesforce; tier A, missed
+  earlier) — a re-evaluation of two memory-based self-improving methods across
+  runs and shuffled task orders: the loops **amplify already-noisy agent
+  evaluation**, and "improvement" depends on a default task ordering acting as
+  a hidden curriculum. Mandates multi-seed, order-shuffled reporting.
+- **"Who Drifted: the System or the Judge?"** (2606.15474, 13 Jun 2026; tier A,
+  missed earlier) — every LLM-judge drift alarm is ambiguous between a product
+  regression and a silently updated judge. A fixed human-labeled anchor set +
+  betting e-process attributes drift: silent version bumps detected 60/60 with
+  zero misattribution, while the industry-default rolling z-test false-alarms on
+  75% of drift-free streams. Pin the judge or anchor it.
+- **"Agent Evaluation Reliability: More Tasks Won't (Always) Fix An Agent
+  Leaderboard"** (2610.00651, 30 Sep 2026, Stanford; tier B) — Bayesian variance
+  decomposition of 22 benchmarks (Holistic Agent Leaderboard, Harbor Index):
+  system-level ranking reliability 0.935-0.994, but *underlying-model*
+  reliability only 0.148-0.841; scaffold choice changes model conclusions, and
+  infinitely many same-style tasks raise model-ranking reliability by at most
+  0.097 when scaffold coverage is the bottleneck. Quantifies why
+  harness-vs-model attribution dominates benchmark uncertainty.
+- **"Recovering True Success from Judge-Gated Loops"** (OpenReview
+  `J2Yg9vJcYb`; venue/date UNVERIFIED, tier C) — formalizes retry-until-PASS
+  with cap K as optional stopping against a noisy classifier (the repeated-
+  significance-testing problem) and derives ship-probability under independent
+  rulings. Bounds any "rerun until the gate passes" policy in the loop; verify
+  the venue before citing.
 
 ## Safety & drift
 
@@ -342,6 +533,24 @@
   and a *backbone-capability bound* (harness redesign cannot overcome a
   frozen model's limit; on beyond-capability tasks it gives no improvement).
   The empirical shape of the capability gate on the meta loop.
+- **ReSI — "Recursive Safety Improvement toward Resistant and Resilient AI"**
+  (2610.12233, 8 Oct 2026; tier B) — a bounded recursive loop for **safety**
+  alignment: red-team → recipe search → a Pareto gate on capability retention
+  per round. Mean X-Teaming attack success falls 86.01% → 31.45% across four
+  dense/MoE models (claimed below the frontier open-source result of 56.69%).
+  The safety mirror of the capability loop: gate on a second axis so a safety
+  gain cannot be bought with a capability loss.
+- **"MMLA-RSI"** (2610.20294, 14 Oct 2026; tier B, NEGATIVE) — an admirably
+  honest null: component-level RSI gains that do not compose into an
+  end-to-end improvement. The failure mode the stop brakes exist to catch.
+- **GLM-5.3** (z.ai blog, 14 Aug 2026; tier B/C) — unusually candid vendor
+  note: "every gain comes from post-training" on the same base, via scaled RL
+  environments, and the lab's stated next step is "making environment
+  generation and verification more autonomous" — an RSI-shaped roadmap.
+  Headline numbers (Terminal-Bench 3.0 4.6→28.3, DeepSWE 46.2→66.9) are
+  self-graded on a private bench (tier C). The *relative standing* is
+  independent: Artificial Analysis 44.8, above Kimi K3 (43.6) and DeepSeek V4.1
+  Flash (39.5). The operator's incumbent open models lead this class.
 - **NVIDIA OpenShell 0.1.0** (developer blog, Sep 28 2026) — an
   open-source runtime that enforces which systems/data an agent can reach,
   with credential substitution and a formal policy prover, **outside** the
@@ -446,6 +655,14 @@
 - **ScholarEvolve** (2609.40169, 30 Sep 2026) — harness evolution guided by
   research literature via topic-modeled improvement strategies per module;
   +14 pts AppWorld.
+- **"How to Build a Model Router in the Harness"** (LangChain, 1 Oct 2026;
+  tier B, missed earlier) — the strongest routing datapoint since NeMo
+  Switchyard. The router lives *in the harness* (middleware swaps the model),
+  not in a gateway, because routing needs the task context the harness already
+  holds. Live A/B on 973 Open SWE threads, router vs always-frontier: median
+  cost per task −64%, merged-PR rate 29.2% vs 27.3% (**p=0.49, not
+  significant**) — the honest negative-quality-delta control that most routing
+  posts omit. Classifier moved to a small decision model, ~50× faster.
 
 ## Benchmarks worth knowing (for verifier design)
 
@@ -469,6 +686,126 @@
 - **MiMo-V2.6** (2610.11959, 8 Oct 2026; vendor-reported, unreplicated) —
   scaled agentic RL across mixed harnesses; explicit multi-layer
   reward-hacking defenses.
+- **"Doc2Harness"** (2610.20344, 14 Oct 2026; tier B) — the first
+  *deterministic* benchmark for harness **construction**: 19 frontier models ×
+  3 builds × 328 test cases, scored by mock-model execution on 4 observable
+  channels. Best model (GPT-6 Astra) passes 53.05%, weakest 27.44% — the
+  frontier fails nearly half, clustering in cross-cutting module
+  decomposition. Sets realistic expectations for asking a model to build or
+  repair its own harness.
+- **SWE-bench Verified saturation** (multiple, Oct 2026; tier C, context) —
+  Verified is saturated (93.9%+ top scores) and multiple labs have flagged
+  contamination; earlier audits (UTBoost) found fixing flawed tests re-ranked
+  24-41% of agents. **Adopt the discipline, retire it as the primary holdout**:
+  its remaining headroom is smaller than the noise floor above (2610.04433,
+  2610.15055).
+
+## Harness & agent engineering (practice)
+
+Practitioner artifacts: primary changelogs, a lab's own engineering post, and
+open repos. They carry mechanisms a repo-local harness can copy, but the
+results are tier B unless a changelog is the artifact.
+
+- **"Closing the verification loop" (Parts 1 and 2)** (Datadog engineering, exact
+  dates UNVERIFIED, tier B) — two large systems (redis-rust, Helix) built
+  mainly by agents under a **verification pyramid**: design contracts as the
+  interface, deterministic simulation as the falsifier, production telemetry
+  feeding the harness. Reported: redis-rust to staging at comparable latency
+  with 87% less memory; Helix sustained millions of deterministic simulation
+  runs at ~93% of peak disk throughput. Their operating line: "code reviews
+  become bloom filters — a fast gate, not the source of correctness."
+  https://www.datadoghq.com/blog/ai/harness-first-agents/
+- **SkillOpt** (Microsoft, repo, date UNVERIFIED, tier B) — treats skills
+  (`*.md` artifacts) as optimizable parameters: trajectory feedback drives
+  edits, validation gates accept/reject, output is a deployable `best_skill.md`.
+  Structurally the same hill-climb this repo runs, with the gate as a
+  first-class mechanism. https://github.com/microsoft/SkillOpt
+- **skillgrade** (mgechev, repo, date UNVERIFIED, tier B) — CI unit tests for
+  `SKILL.md`: generates task/grader pairs and runs multi-trial evals against
+  Claude, Codex, Gemini, or OpenCode, with a CI-ready threshold. Fills the gap
+  between "shipped a skill" and "the agent discovers and invokes it."
+  Multi-harness grading partly de-risks "works only because the teacher model
+  distils." https://github.com/mgechev/skillgrade
+- **desloppify** (peteromallet, repo, date UNVERIFIED, tier B) — a mechanical +
+  LLM-review score with a persistent `next → fix → resolve` loop whose score is
+  explicitly **anti-gaming**: `wontfix` items widen the gap between lenient and
+  strict scores instead of letting the agent deflate the metric. Harness-level
+  incentive engineering against reward hacking.
+  https://github.com/peteromallet/desloppify
+- **"Testing Agent Skills Systematically with Evals"** (OpenAI developers, date
+  UNVERIFIED, tier B) — procedural: eval a skill as prompt → JSONL trace →
+  deterministic graders on execution events + rubric grading via output schema
+  → score over time; explicitly advocates **negative controls**
+  (`should_trigger=false` rows), thrash/token-budget counters, and
+  repo-cleanliness checks. Maps onto the playbook's Evaluate mechanics.
+  https://developers.openai.com/blog/eval-skills
+- **"Rethinking skills and prompts for GPT-6 Astra"** (OpenAI developers, ~12
+  Sep 2026, tier B) — vendor evidence for context bloat at the skill layer: too
+  many/long skill descriptions get **truncated by the harness itself**, worsening
+  selection; prescribes minimal-router root docs (progressive disclosure) and
+  warns that over-specific recipes now hurt stronger models — **instructions are
+  model-generation-specific**. A caveat for this repo's skill and `AGENTS.md`
+  authoring: write triggers, not itineraries.
+- **"Driving the Agent Quality Flywheel from Your Coding Agent"** (Google
+  Developers, Jun 2026; tier B, missed earlier) — an automated eval-optimize
+  loop where independent AutoRaters grade outputs so the optimizer cannot game
+  its own metrics; per-behavior rubrics (e.g. stale-message echoing) catch
+  regressions a blended score hides. The grader-independence rule, missed from
+  June.
+- **"The Anatomy of an Agent Harness"** (LangChain, date UNVERIFIED, tier B) —
+  reports moving its own coding agent from Top 30 to Top 5 on Terminal-Bench 2.0
+  by changing **only the harness**, and argues model training and harness design
+  are now coupled. Useful citation for "harness investment dominates a model
+  swap"; direction is independently echoed (2610.19999).
+- **"Context Engineering in 2026: Why We Stopped Compacting"** (L.-F. Bouchard,
+  4 Aug 2026, tier B) — capping each tool output at a stable fixed size before
+  it enters history cut cost/turn **38%** in a paired comparison (won 14/15
+  trajectories) with memory-probe accuracy unchanged. Mechanism: a stable cap
+  shrinks context without rewriting the cached prefix, so it **preserves the
+  prefix cache that compaction destroys**. n=15, single product, self-reported;
+  the mechanism is the interesting part.
+- **Claude Code worktree-isolation hardening** (changelogs v2.1.203, v2.1.218;
+  7 and 22 Jul 2026; tier A) — v2.1.218 fixed worktree-isolated subagents
+  redirecting git into the shared checkout via `git -C`, `--git-dir`, or
+  `GIT_DIR`/`GIT_WORK_TREE`; v2.1.203 fixed isolated subagents running shell in
+  the parent checkout. A real isolation escape that applies to **any hand-rolled
+  worktree isolation**, not just Claude Code: assume env-var-level escape until
+  proven closed. The `guard_worktree_*` tooling exists for exactly this.
+- **Codex CLI release train** (OpenAI, Oct 2026 changelog, tier A) — parallel
+  execution of independent read-only tools; instant interrupt that stops active
+  Code Mode cells and nested tool calls; an internal "Guardian" agent-review
+  surface with persisted reviews and stale-review rollback. Cheap, transferable
+  primitives: parallel reads and interrupt semantics.
+- **opencode Code Mode worktree tools** (Anomaly, v1.18.3x, Oct 2026 changelog,
+  tier A) — built-in worktree create/list/remove where **removal requires
+  approval and `force: true` can discard modified files**; subagent sessions now
+  counted in session cost. The mainstream harness converged on the same
+  approval-gated-removal contract this repo's guard uses.
+- **Microsoft Agent Lightning v1.0** (Research blog, 7 Oct 2026; tier B) — an RL
+  framework that trains agents *inside* their real deployment harnesses (harness
+  fixed, weights move), the complement to this list's harness-evolution
+  literature.
+- **GitHub Copilot local sandboxing GA** (7 Oct 2026 changelog, tier B) — local
+  sandboxing limiting agent file/network/credential access across CLI, app, and
+  VS Code Agent Host sessions. The containment trendline now spans all three
+  major coding-agent vendors (with OpenShell and Anthropic's May containment
+  post).
+- **NVIDIA NeMo Gym for chip design** (14 Oct 2026 blog, tier B) — Siemens EDA
+  iterated an EDA agent's tool descriptions via eval environments with a
+  zero-if-any-gate-fails reward: composite verification score ~55% → ~95% on 229
+  standard cells, 66% fewer agent turns. A human-in-the-loop case of
+  "verified outcome + efficiency per success."
+- **Meta Muse Spark Open** (15 Oct 2026 blog; tier B vendor, **A** independent
+  standing) — 816B-total / ~42B-active MoE open weights. Vendor calls it "most
+  capable US open-weight model." Independent check contradicts the ceiling:
+  Artificial Analysis Intelligence Index v4.3 puts it at **38.9, below GLM-5.3
+  (44.8), Kimi K3 (43.6), and DeepSeek V4.1 Flash (39.5)**. A rare clean case of
+  vendor claim vs independent standing, and it favors the operator's incumbents.
+- **Mistral Large 4** (6 Oct 2026; tier B/C) — 1.05T MoE; weights promised for
+  end of October (still unreleased at write time). Vendor/poll claims SOTA-among-
+  open; independent Artificial Analysis scores it 38 (~6 months behind
+  frontier). The sponsored human-eval win over GLM-5.3/Kimi K3 is tier C.
+  Re-check when weights drop.
 
 ## Verification status (2026-09-22)
 
@@ -735,3 +1072,146 @@ playbook and `/rsi-campaign` — a model-scored verifier runs it, a deterministi
 one records that compute is fixed per item and skips it. So the decision moves
 to rank 2 (contract-faithful tests before a harness self-edit) against rank 3
 (split-source feedback solver).
+
+## Verification status (2026-10-17)
+
+A fourth sweep, run to the edge of October 2026 with a distillation-aware
+evidence tier (see "Evidence tiering" above). Four independent scouts covered
+the arXiv listing for the newest wave (cs.AI/cs.SE/cs.LG, 13,604 entries
+scanned) plus a citation fan-out from AIDE² (2609.26457), MASS (2610.12176),
+and 2610.11655; frontier-lab and vendor blogs; practitioner harness engineering
+and agent-native tooling; and the critical/negative literature. The
+Anthropic source-control post the operator flagged is the anchor of the
+practice section this pass adds.
+
+Scope rule this pass: prefer primary sources, negative results, and
+independently replicated findings, and tag each claim by whether it rests on
+frontier-lab artifacts a distilled model may echo. Titles, IDs, and dates for
+every arXiv entry below were re-checked against the abstract page on
+2026-10-17 (17 new-wave IDs plus 7 earlier IDs verified directly); the raw
+harness-buy numbers were then used to set a new playbook gate.
+
+Added (arXiv): 2610.18813, 2610.21646, 2610.20845, 2610.18522, 2610.19999,
+2610.22192, 2610.21040, 2610.19789, 2610.21170, 2610.20344, 2610.18933,
+2610.20431, 2610.21791; 2610.12233, 2610.20294, 2610.14625; 2610.00651;
+2610.04433, 2610.15055, 2609.18366; 2608.00017, 2608.18066, 2605.19576,
+2606.15474, 2610.21887.
+
+Added (practice / vendor, tier-tagged): Anthropic "Redesigning source control";
+Datadog verification-loop parts 1-2; SkillOpt; skillgrade; desloppify; OpenAI
+eval-skills and the Astra skill post; Google agent-quality flywheel; LangChain
+router and harness-anatomy posts; Bouchard context engineering; Claude Code
+worktree-isolation changelogs; Codex CLI and opencode changelogs; Microsoft
+Agent Lightning v1.0; GitHub Copilot sandboxing GA; NVIDIA NeMo Gym chip design;
+Meta Muse Spark Open; Mistral Large 4; GLM-5.3.
+
+Confirmed unchanged: Weng's synthesis and the seven mechanisms hold. The
+capability gate (STOP/HSI) and the negative-results cluster (2607.12227,
+2609.40303, 2610.05533) are reinforced, not overturned.
+
+**Corrections to existing entries.**
+
+1. **AIDE² (2609.26457)** — Sakana's own MASS post (Oct 12) concedes the
+   homogeneous-loop shared-blind-spot failure: the model modified a simulator
+   to pass, and the evaluator admitted it for training. This is a material
+   caveat on the "reward-hacking rate fell 55% → 32%" headline; note it as an
+   unreplicated self-report with a known failure mode in the same system.
+2. **"Memory & context" growth** — the +0.0pp-vs-+16.2pp contrast (2605.19576)
+   and the 1,000-irrelevant-skills collapse (2610.18522) together bound the
+   repo's implicit assumption that more, better skills monotonically help.
+   They do not. This reinforces the pre-commit admission gate and adds a
+   metadata-surface budget.
+
+**Net for the loop.** The design still holds, and this pass *strengthens* the
+skeptical half: the new evidence bounds harness gains by the rerun flip band
+(2610.04433, 2610.15055), proves no terminating gate is both reliable and
+non-conservative (2610.21646), shows task holdout is not protocol holdout
+(2609.18366), and shows self-scored memory inflates without an
+error-independent judge (2608.00017). Two mechanisms are folded into the
+playbook: a **rerun-noise floor** before crediting any harness gain, and
+**judge-drift attribution** before acting on an LLM-judge alarm. Two more are
+adopted as guidance: **protocol-shift counterfactual** alongside task holdout,
+and **failure-retaining memory** (MetaShare) with an **independent judge**.
+
+Method note: seeded from the primary sources' neighborhood (AIDE²/MASS citation
+fan-out and the October arXiv listing), not from the list's own topics.
+
+### Disposition (2026-10-17)
+
+| id / source | tier | disposition |
+| --- | --- | --- |
+| 2610.04433 | A | new-gate (rerun-noise floor) |
+| 2610.15055 | A | new-gate (paired per-seed acceptance) |
+| 2610.21646 | A | protocol-adopt (gate-limits framing) |
+| 2609.18366 | B | new-gate (protocol-shift counterfactual) |
+| 2608.00017 | A | new-gate (independent-judge requirement) |
+| 2606.15474 | A | new-instrument (judge-drift attribution) |
+| 2608.18066 | A | protocol-adopt (order-shuffled seeds) |
+| 2605.19576 | B | new-gate (skill-library cap + retirement) |
+| 2610.18522 | B | new-gate (metadata-surface budget) |
+| 2610.20845 | B | watch-only |
+| 2610.21170 | B | protocol-adopt (localized memory patches) |
+| 2610.21887 | B | protocol-adopt (failure-retaining memory) |
+| 2610.18813 | B | protocol-adopt (fresh-validation admission) |
+| 2610.19999 | B | reference-only (harness>model evidence) |
+| 2610.22192 | B/C | watch-only (weight-level loop) |
+| 2610.21040 | B | protocol-adopt (adversarial rubric) |
+| 2610.19789 | B/A | new-instrument (matched-condition control) |
+| 2610.20344 | B | watch-only |
+| 2610.18933 | B/C | watch-only |
+| 2610.20431 | B/C | watch-only (verify numbers) |
+| 2610.21791 | C | watch-only |
+| 2610.12233 | B | protocol-adopt (second-axis safety gate) |
+| 2610.20294 | B | new-instrument (null composition) |
+| 2610.00651 | B | protocol-adopt (attribution variance) |
+| 2610.14625 | C | reference-only (taxonomy) |
+| Anthropic source-control | B | reference-only (macro frame) |
+| Datadog verification loop | B | reference-only |
+| SkillOpt / skillgrade | B | new-instrument (skill gating) |
+| desloppify | B | protocol-adopt (anti-gaming score) |
+| OpenAI eval-skills / Astra | B | protocol-adopt (negative controls; triggers not itineraries) |
+| Google quality flywheel | B | protocol-adopt (grader independence) |
+| LangChain router | B | reference-only |
+| Bouchard context engineering | B | reference-only |
+| Claude Code worktree changelogs | A | new-instrument (isolation escape) |
+| Codex CLI / opencode changelogs | A | reference-only |
+| NeMo Gym chip design | B | watch-only |
+| Muse Spark Open / Mistral Large 4 / GLM-5.3 | B/C | vendor-noted |
+| SWE-bench Verified saturation | C | protocol-adopt (retire as primary holdout) |
+
+### Actionable core (triaged 2026-10-17)
+
+The Disposition table labels 40 entries. Most are reference, watch-only, or
+design evidence with no mechanical surface. This reduces them to the set that
+maps to a concrete action.
+
+**Landed this pass** (mechanism now in `rsi-loop-playbook.md`):
+
+| id | mechanism | where |
+| --- | --- | --- |
+| 2610.04433, 2610.15055 | rerun-noise floor before crediting a harness gain | playbook Evaluate (new) |
+| 2606.15474 | judge-drift attribution before acting on a judge alarm | playbook Evaluate (new) |
+| 2609.18366 | protocol-shift counterfactual beside task holdout | playbook Verify (new) |
+| 2608.00017 | independent-judge requirement for lesson memory | failure-mode table (new row) |
+| 2610.04433, 2610.15055, 2609.18366, 2608.00017, 2605.19576, 2608.18066 | six new failure-mode rows | playbook failure-mode table |
+
+**Open core** (ranked by value against the current loop):
+
+| rank | id | what it would add | disposition |
+| --- | --- | --- | --- |
+| 1 | 2608.00017 | an error-independent judge for the lesson admission gate: the current gate's semantic half is human/reviewer-owned, which is a same-family risk for an open-model fleet | new-gate |
+| 2 | 2610.04433 | a rerun-flip-rate instrument: measure the harness's own flip band per task set, so a gain claim can be tested against it mechanically | new-instrument |
+| 3 | 2610.18522 | a skill-metadata budget gate: bound the router/menu surface, since 1,000 irrelevant skills drop recall 73.6% → 27.4% | new-gate |
+| 4 | 2609.18366 | a protocol-shift counterfactual in Select, beyond the task holdout | new-gate |
+| 5 | 2610.21887 | retain failed edits as first-class memory (the loop already archives them; make them retrievable) | protocol-adopt |
+
+**Reference-only** (kept for grounding, no action pending): the remaining
+`new-gate`, `new-instrument`, and `protocol-adopt` entries — design evidence
+for existing mechanisms or negative controls already cited. `watch-only` and
+`vendor-noted` stay parked.
+
+The single decision this triage asks for: rank 1 (an
+error-independent judge for the admission gate) is the sharpest fit for an
+open-model fleet, because it is the one where the operator's own setup is the
+documented failure mode. Is it the next campaign, or is rank 2 (the rerun-flip
+instrument) cheaper to land first?

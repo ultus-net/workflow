@@ -6,6 +6,15 @@
  *   - install/opencode/config.jsonc parses as JSON once // comments and
  *     trailing commas are stripped
  *   - permissions is an array (V2 shape); top-level `permission` must not exist
+ *   - every permissions[] element's `effect` VALUE is one of {allow, deny, ask};
+ *     the host silently drops an element with an invalid effect, so a mistyped
+ *     effect stops gating without any warning (checkPermissionEffects)
+ *   - every permissions[] element's `action` is one the host actually emits, and
+ *     its `resource` is coherent with that action (a home-token resource only on
+ *     the three path actions the host home-expands; a command resource only on a
+ *     non-path action); the V2 action decodes as a free string and is matched
+ *     verbatim, so a V1 name or a wrong-plane resource is inert
+ *     (checkPermissionCoherence)
  *   - every top-level key is classified and every cap-bearing key's value shape
  *     matches its declared shape (config-shape.cjs)
  *   - each agent frontmatter carries its expected model tier pin
@@ -189,6 +198,178 @@ function checkAgentFleet(discovered, read) {
   return { errors, lines };
 }
 
+// ─── Permission-effect gate ──────────────────────────────────────────────────
+
+// The overlay's top-level `permissions` is a V2 array of rules; the host decodes
+// each rule's `effect` as a closed literal set (packages/schema/src/permission.ts:54,
+// `Schema.Literals(["allow","deny","ask"])`). validate-config checks only that
+// `permissions` is an array (`:219-223`), never its element values, and the host
+// is SILENT about a bad one: `Config.Info` is decoded with
+// `Schema.decodeUnknownOption(..., {errors:"all", onExcessProperty:"ignore"})`
+// (packages/core/src/config.ts:144), so an element whose `effect` is outside the
+// set is dropped from the array while the rest of the document survives. Binary
+// oracle (`opencode debug config`, v2.0.10): a three-rule array (`allow`,
+// `alow`, `deny`) decodes to a two-element `permissions` array — the stray rule
+// gone, exit 0, no warning. A dropped rule is a permission gate that silently
+// stops gating, so fail closed on the VALUE, not just the shape.
+const KNOWN_EFFECTS = new Set(['allow', 'deny', 'ask']);
+
+/**
+ * Validate every `permissions[]` element's `effect` VALUE (not just presence).
+ * Returns `{ errors, lines, rules }`. Fail-closed: a non-object element, a
+ * missing/non-string effect, or an effect outside {allow,deny,ask} is an error.
+ */
+function checkPermissionEffects(permissions) {
+  const errors = [];
+  const lines = [];
+  if (!Array.isArray(permissions)) {
+    return { errors, lines, rules: 0 };
+  }
+  let bad = 0;
+  permissions.forEach((rule, i) => {
+    const where = `permissions[${i}]`;
+    if (rule === null || typeof rule !== 'object' || Array.isArray(rule)) {
+      errors.push(`${where} is not an object`);
+      lines.push(`  ✗  config.jsonc — ${where} is not an object`);
+      bad++;
+      return;
+    }
+    const { effect } = rule;
+    if (typeof effect !== 'string' || effect.length === 0) {
+      errors.push(`${where}.effect is missing or not a string`);
+      lines.push(`  ✗  config.jsonc — ${where}.effect is missing or not a string`);
+      bad++;
+      return;
+    }
+    if (!KNOWN_EFFECTS.has(effect)) {
+      errors.push(`${where}.effect is '${effect}', expected one of ${[...KNOWN_EFFECTS].join('|')}`);
+      lines.push(`  ✗  config.jsonc — ${where}.effect is '${effect}', expected one of ${[...KNOWN_EFFECTS].join('|')} (the host silently drops a rule with an invalid effect)`);
+      bad++;
+    }
+  });
+  if (bad === 0 && permissions.length > 0) {
+    lines.push(`  ✓  config.jsonc — all ${permissions.length} permission rule effects are valid`);
+  }
+  return { errors, lines, rules: permissions.length };
+}
+
+// ─── Permission action/resource coherence gate ───────────────────────────────
+
+// The `effect` VALUE check above is one of three ways a V2 permission rule can be
+// inert. The other two are the `action` string and the action/resource pairing,
+// and the host is silent about both, so fail closed one level deeper.
+//
+// 1. ACTION vocabulary. A rule's `action` decodes as a free `Schema.String`
+//    (packages/schema/src/permission.ts:27, no enum), so any spelling is
+//    accepted and then matched by glob under `findLast`
+//    (packages/core/src/permission.ts:87-93). The host renames V1 action names
+//    ONLY for the legacy `permission:`/`tools` keys (packages/core/src/config/
+//    normalize.ts:179-182 via `ConfigMigrateV1.normalizeAction`,
+//    packages/core/src/v1/config/migrate.ts:117-122: write|patch -> edit,
+//    task -> subagent, bash -> shell). A V2 `permissions` array entry is decoded
+//    VERBATIM, so a rule spelled with a V1 name (or any unimplemented string) is
+//    inert. `HOST_PERMISSION_ACTIONS` mirrors the agent-plane gate
+//    (validate-agents.cjs `KNOWN_ACTIONS`, n=37): the same `Permission.Rule`
+//    decodes both planes, so the accepted set is the same. It is re-declared
+//    rather than imported so one validator's change cannot silently move the
+//    other; `test-validate-config-coherence.cjs` pins the two sets equal.
+//
+// 2. ACTION/RESOURCE plane. `expandHome` runs ONLY for the path actions
+//    `external_directory|read|edit` (packages/core/src/config/plugin/agent.ts:
+//    the `pathActions` list at `:31`, the expansion call site at `:145`, the
+//    `isPathAction` definition at `:149-151`), so a `~`/`$HOME` resource on any
+//    other action is matched verbatim and never matches a path. Conversely, a
+//    rule on a path action whose resource is a shell command (it contains a
+//    space, which the overlay's path globs never do) is inert too. Flag both
+//    directions. (Note: the host source is external to this repo, so these
+//    citations are pinned to the v2.0.0 tree the sibling records cite, not
+//    verifiable in-repo.)
+const HOST_PERMISSION_ACTIONS = new Set([
+  '*',
+  'read', 'edit', 'glob', 'grep', 'list', 'shell', 'subagent',
+  'webfetch', 'websearch', 'question', 'skill', 'todowrite',
+  'external_directory', 'lsp', 'doom_loop',
+  'plan_enter', 'plan_exit', 'execute', 'browser',
+]);
+
+// The three actions whose `resource` the host home-expands (isPathAction).
+const PATH_ACTIONS = new Set(['external_directory', 'read', 'edit']);
+
+// A resource the host would need to home-expand to match a tool's path.
+function isHomeResource(resource) {
+  return typeof resource === 'string' && /^(~(\/|$|\\)|\$HOME(\/|$|\\))/.test(resource);
+}
+
+// A shell-command resource. The overlay's path globs never contain a space
+// (`*.env`, `~/.config/opencode/**`, `.opencode/**`, `opencode.json*`), while
+// every shell rule does (`git status *`, `rm -rf *`, `dd *of=/dev/*`), so a
+// space is the discriminator. This is a HEURISTIC, not a parse: its named
+// false-positive class is a legitimate path resource that itself contains a
+// space (e.g. `~/Library/Application Support/**`), which this predicate would
+// flag on a path action. The gate is scoped to the shipped overlay (accept/
+// reject rule) and it names the offending rule in the error, so the reader sees
+// the rule rather than a bare failure; relaxing it would need a path grammar.
+function isCommandResource(resource) {
+  return typeof resource === 'string' && /\s/.test(resource);
+}
+
+/**
+ * Validate every `permissions[]` element's `action` and its action/resource
+ * coherence. Returns `{ errors, lines, rules }`. Fail-closed: a missing/
+ * non-string `action` or `resource`, an `action` outside the host vocabulary,
+ * a home-token resource on a non-path action, or a command resource on a path
+ * action is an error. Non-object elements are left to `checkPermissionEffects`
+ * so the two checks do not double-report.
+ */
+function checkPermissionCoherence(permissions) {
+  const errors = [];
+  const lines = [];
+  if (!Array.isArray(permissions)) {
+    return { errors, lines, rules: 0 };
+  }
+  let bad = 0;
+  permissions.forEach((rule, i) => {
+    const where = `permissions[${i}]`;
+    if (rule === null || typeof rule !== 'object' || Array.isArray(rule)) return;
+
+    const { action, resource } = rule;
+
+    if (typeof action !== 'string' || action.length === 0) {
+      errors.push(`${where}.action is missing or not a string`);
+      lines.push(`  ✗  config.jsonc — ${where}.action is missing or not a string`);
+      bad++;
+      return;
+    }
+    if (!HOST_PERMISSION_ACTIONS.has(action)) {
+      errors.push(`${where}.action is '${action}', not a host action`);
+      lines.push(`  ✗  config.jsonc — ${where}.action is '${action}', not an action the host emits (the host matches it verbatim, so the rule is inert)`);
+      bad++;
+    }
+    if (typeof resource !== 'string' || resource.length === 0) {
+      errors.push(`${where}.resource is missing or not a string`);
+      lines.push(`  ✗  config.jsonc — ${where}.resource is missing or not a string`);
+      bad++;
+      return;
+    }
+
+    const isPath = PATH_ACTIONS.has(action);
+    if (!isPath && isHomeResource(resource)) {
+      errors.push(`${where} pairs a non-path action '${action}' with a home-token resource '${resource}'`);
+      lines.push(`  ✗  config.jsonc — ${where} resource '${resource}' is never home-expanded on action '${action}' (only ${[...PATH_ACTIONS].join('|')} expand), so it is inert`);
+      bad++;
+    }
+    if (isPath && isCommandResource(resource)) {
+      errors.push(`${where} pairs a path action '${action}' with a command resource '${resource}'`);
+      lines.push(`  ✗  config.jsonc — ${where} resource '${resource}' looks like a shell command, not a path, so it never matches action '${action}'`);
+      bad++;
+    }
+  });
+  if (bad === 0 && permissions.length > 0) {
+    lines.push(`  ✓  config.jsonc — all ${permissions.length} permission rule actions are known and coherent`);
+  }
+  return { errors, lines, rules: permissions.length };
+}
+
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 function main() {
@@ -222,6 +403,24 @@ function main() {
         console.log("  ✗  config.jsonc — 'permissions' is missing or not an array (V2 shape)");
         errors.push("permissions is not an array");
       }
+
+      // ── Permission-effect values (fail closed) ────────────────────────────
+      // The array shape does not imply the rule VALUES are decodable: the host
+      // drops an element whose `effect` is outside {allow,deny,ask} with no
+      // warning (config.ts:144), so a mistyped effect silently stops gating.
+      const effects = checkPermissionEffects(parsed.permissions);
+      for (const line of effects.lines) console.log(line);
+      errors.push(...effects.errors);
+
+      // ── Permission action vocabulary + action/resource coherence ─────────
+      // The effect VALUE check above is one of three inertness classes; the
+      // `action` string and the action/resource plane are the other two, and
+      // the host is silent about both (a V2 rule's action decodes as a free
+      // string and is matched verbatim; only read/edit/external_directory are
+      // home-expanded). Fail closed on both.
+      const coherence = checkPermissionCoherence(parsed.permissions);
+      for (const line of coherence.lines) console.log(line);
+      errors.push(...coherence.errors);
 
       // ── Overlay top-level key classification ─────────────────────────────
       // Static and overlay-only: a new overlay key must be classified as
@@ -320,6 +519,6 @@ function main() {
   if (errors.length > 0) process.exit(1);
 }
 
-module.exports = { stripJsonc, checkAgentFleet, parseFrontmatter, EXPECTED_MODELS };
+module.exports = { stripJsonc, checkAgentFleet, parseFrontmatter, EXPECTED_MODELS, checkPermissionEffects, KNOWN_EFFECTS, checkPermissionCoherence, HOST_PERMISSION_ACTIONS, PATH_ACTIONS };
 
 if (require.main === module) main();

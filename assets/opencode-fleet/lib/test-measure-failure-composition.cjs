@@ -114,11 +114,25 @@ test('classify: first-signal precedence — process wins over content', () => {
   assert.equal(m.classifySession(s).cls, 'process');
 });
 
-test('isFailureSession: failed/interrupted outcome or any error unit', () => {
+test('isFailureSession: outcome is authoritative; error units are the fallback', () => {
   assert.equal(m.isFailureSession({ id: 's', outcome: 'failed', units: [] }), true);
   assert.equal(m.isFailureSession({ id: 's', outcome: 'interrupted', units: [] }), true);
   assert.equal(m.isFailureSession({ id: 's', outcome: null, units: [{ status: 'error' }] }), true);
   assert.equal(m.isFailureSession({ id: 's', outcome: 'succeeded', units: [{ status: 'completed' }] }), false);
+});
+
+test('isFailureSession: a succeeded session with error units recovered, not a failure', () => {
+  const recovered = { id: 's', outcome: 'succeeded', units: [
+    { kind: 'tool', tool: 'bash', status: 'error', errorType: 'permission.rejected', text: 'blocked', t: 1 },
+  ] };
+  assert.equal(m.isFailureSession(recovered), false, 'succeeded outcome wins over error units');
+  assert.equal(m.isRecoveredSession(recovered), true);
+  // An outcome-unknown session with the same error units stays a failure (the fallback).
+  assert.equal(m.isFailureSession({ ...recovered, outcome: null }), true);
+  assert.equal(m.isRecoveredSession({ ...recovered, outcome: null }), false);
+  // A succeeded session with no error units is neither a failure nor recovered.
+  assert.equal(m.isFailureSession({ id: 's', outcome: 'succeeded', units: [{ status: 'completed' }] }), false);
+  assert.equal(m.isRecoveredSession({ id: 's', outcome: 'succeeded', units: [{ status: 'completed' }] }), false);
 });
 
 // ─── analyze ─────────────────────────────────────────────────────────────────
@@ -134,11 +148,28 @@ test('analyze: splits process vs content and counts signals', () => {
   assert.equal(a.failures, 3);
   assert.equal(a.process, 2);
   assert.equal(a.content, 1);
+  assert.equal(a.recovered, 0);
   assert.equal(a.bySignal.permission, 1);
   assert.equal(a.bySignal['error-loop'], 1);
   assert.equal(a.processRate, 2 / 3);
   assert.deepEqual(a.representatives.process.sort(), ['p1', 'p2']);
   assert.deepEqual(a.representatives.content, ['c1']);
+});
+
+test('analyze: a succeeded-with-error session is recovered, excluded from the failure split', () => {
+  const sessions = [
+    { id: 'p1', outcome: 'failed', units: [{ kind: 'tool', status: 'error', errorType: 'permission.rejected', text: 'blocked', t: 1 }] },
+    { id: 'rec1', outcome: 'succeeded', units: [{ kind: 'tool', status: 'error', errorType: 'permission.rejected', text: 'blocked', t: 2 }] },
+    { id: 'rec2', outcome: 'succeeded', units: [{ kind: 'text', status: null, text: 'poor plan', t: 3 }] },
+    { id: 'ok1', outcome: 'succeeded', units: [{ kind: 'tool', status: 'completed', text: 'ok', t: 4 }] },
+  ];
+  const a = m.analyze(sessions);
+  assert.equal(a.failures, 1, 'only the failed-outcome session is a failure');
+  assert.equal(a.process, 1);
+  assert.equal(a.content, 0);
+  assert.equal(a.recovered, 1, 'one succeeded-with-error session');
+  assert.equal(a.processRate, 1);
+  assert.deepEqual(a.representatives.process, ['p1']);
 });
 
 test('analyze: zero failures yields zero rates, not NaN', () => {
