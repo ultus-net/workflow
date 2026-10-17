@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 
 import type { WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
 import type { OperatorPosture, PostureBudgetIncident } from "../integrations/operator-posture.js";
+import { BUDGET_INCIDENTS_DEGRADED } from "../integrations/operator-posture.js";
 import { budgetDowngradeFromEnv, describeBudgetMechanism, mergeSessionBudget, sessionBudgetFromEnv, sessionBudgetTier, type SessionBudget, type SessionBudgetTier } from "../integrations/session-budget.js";
 import type { OperatorSessionItem } from "./operator-session.js";
 import type { PermissionBroker } from "./permission-broker.js";
@@ -117,7 +118,7 @@ export function withSessionBudgetIncidents(
   return {
     ...posture,
     counts: { ...posture.counts, budgetIncidents: records.length },
-    degraded: posture.degraded.filter((name) => name !== "per-session budget state"),
+    degraded: posture.degraded.filter((name) => name !== BUDGET_INCIDENTS_DEGRADED),
     budgetIncidents: records,
   };
 }

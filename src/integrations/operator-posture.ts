@@ -116,10 +116,19 @@ export interface OperatorPosture {
 /** The scheduler-origin run id shape: three segments, `schedule:<id>:<uuid>`. */
 const SCHEDULE_ORIGIN = /^schedule:[^:]+:[^:]+$/;
 
+/**
+ * W215: the named degraded registry that a posture without budget-incident
+ * records pushes (and that a producer lifts once the records exist). Exported
+ * so the code that RECOMPOSES a posture can name the same string — a web-side
+ * producer filtering this exact name (`src/ui/web-sessions.ts`) must not
+ * silently stop matching if the literal is ever reworded.
+ */
+export const BUDGET_INCIDENTS_DEGRADED = "per-session budget state";
+
 export function operatorPosture(input: OperatorPostureInput): OperatorPosture {
   const degraded: string[] = [];
   if (input.reviewOutcomes === undefined || input.blockingReasons === undefined) degraded.push("run-gate observability");
-  if (input.budgetIncidents === undefined) degraded.push("per-session budget state");
+  if (input.budgetIncidents === undefined) degraded.push(BUDGET_INCIDENTS_DEGRADED);
   if (input.orphans === undefined) degraded.push("orphaned-run detection");
   if (input.schedules === undefined) degraded.push("schedule registry");
 
