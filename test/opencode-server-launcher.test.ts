@@ -258,7 +258,7 @@ test("W094: main() actually wires the guard into the authority (live-artifact an
   // source-artifact pin, the LESS-0004 precedent: the production composition
   // has no other automated verifier.
   const daemonSource = readFileSync(resolve(process.cwd(), "src", "cli", "opencode-server.ts"), "utf8");
-  assert.match(daemonSource, /const guard = await createOpencodeServerGuard\(workspace\);/, "main must compose the guard");
+  assert.match(daemonSource, /const guard = await \(deps\.createGuard \?\? createOpencodeServerGuard\)\(workspace\);/, "main must compose the guard");
   assert.match(daemonSource, /createOpencodeServerAuthority\(\{[^}]*\n\s*guard,\n/, "main must pass the guard into the authority options");
   assert.match(daemonSource, /await guard\.close\(\);/, "the guard must be reaped on teardown");
   assert.match(daemonSource, /await guard\.close\(\);\s*\n\s*throw error;/, "failure paths must reap the guard before rethrowing");
