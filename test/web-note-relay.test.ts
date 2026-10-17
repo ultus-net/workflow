@@ -186,5 +186,21 @@ test("W217: /api/note?name=<confined-out> passes the hub's 400 through verbatim"
   const response = await fetch(`${base}/api/note?name=${encodeURIComponent("../outside-secret.md")}`);
   assert.equal(response.status, 400, "a confined-out name is the hub's 400, not a fabricated 404/200");
   const body = (await response.json()) as { error: string };
-  assert.match(body.error, /note/, "the refusal still names its confinement rule");
+  assert.match(body.error, /bare basenames/, "the refusal pins the confinement RULE, not just an error mentioning a note");
+});
+
+test("W217: /api/note with NO hub is the named absence on the single-note lane", async (context) => {
+  // The sibling of the /api/notes no-hub pin: an empty discovery dir means the
+  // hub-availability read fails closed, so hubPost answers its own
+  // {error:"hub unavailable"} and the relay must pass that through verbatim
+  // (the browser never holds a hub token, so this is the honest face).
+  const orphan = seat(context);
+  const server = createWorkflowWebServer(seedApplication(), undefined, undefined, { hubDiscoveryDir: join(orphan, "hub") });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+  const response = await fetch(`${base}/api/note?name=anything.md`);
+  const body = (await response.json()) as { error?: string };
+  assert.equal(body.error, "hub unavailable", "no hub -> the relay's own availability error, never a fabricated note");
 });

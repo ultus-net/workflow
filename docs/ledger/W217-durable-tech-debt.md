@@ -35,7 +35,7 @@ Two durable test-coverage debts, both P2:
 
 A new suite composing a REAL hub + REAL web server over one discovery dir and
 fetching the relay (the W213 care-relay pattern,
-`test/hub-assistant-care.test.ts:164-186`). Seven pins:
+`test/hub-assistant-care.test.ts:164-186`). Eight pins:
 
 - `/api/notes` relays the hub's real listing verbatim (root, entry count,
   entry name, sidecar metadata) — a real hub + a real `createNoteStore` root.
@@ -49,7 +49,10 @@ fetching the relay (the W213 care-relay pattern,
   relay (no hub round-trip).
 - `/api/note?name=<unknown>` relays the hub's 404 verbatim (never rewritten).
 - `/api/note?name=<confined-out>` (`../outside-secret.md`) relays the hub's 400
-  verbatim, with the confinement-rule message intact.
+  verbatim, pinning the confinement RULE (`/bare basenames/`), not just any
+  error mentioning a note.
+- `/api/note` with NO hub passes the relay's own `{ error: "hub unavailable" }`
+  through verbatim (the single-note sibling of the `/api/notes` absence pin).
 
 Registered in `test/ci-suites.txt` in sorted position (between
 `test/web-dispatch-relay.test.ts` and `test/web-scoping.test.ts`), pinned by
@@ -93,7 +96,7 @@ line so it still pins that `main` composes the guard.
 - `npm run lint` — exit 0.
 - `npm run typecheck` — exit 0.
 - `npm run build` — exit 0.
-- `node --import tsx --test test/web-note-relay.test.ts` — 7/7 pass, exit 0.
+- `node --import tsx --test test/web-note-relay.test.ts` — 8/8 pass, exit 0.
 - `node --import tsx --test test/opencode-server-guard-reap.test.ts` — 1/1
   pass, exit 0.
 - `node --import tsx --test test/opencode-server-guard-reap.test.ts
