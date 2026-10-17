@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import type { WorkflowAcpRuntime } from "../integrations/acp-runtime.js";
+import type { OperatorPosture, PostureBudgetIncident } from "../integrations/operator-posture.js";
 import { budgetDowngradeFromEnv, describeBudgetMechanism, mergeSessionBudget, sessionBudgetFromEnv, sessionBudgetTier, type SessionBudget, type SessionBudgetTier } from "../integrations/session-budget.js";
 import type { OperatorSessionItem } from "./operator-session.js";
 import type { PermissionBroker } from "./permission-broker.js";
@@ -52,6 +53,73 @@ export interface SessionBudgetPosture {
   readonly violation?: string;
   /** The enforcement mechanism description — the live runtime's own when live, the effective caps' description otherwise. */
   readonly mechanism: string;
+}
+
+/**
+ * W215: derive the per-session budget incident records from the served
+ * registry view (`list()`). This web-process derivation is the ONLY producer
+ * of `PostureBudgetIncident` records: the hub composes no session registry
+ * (its W176-era declared seam never carried a forwarder and is removed in
+ * W215), and grafting run ids onto the session-shaped record would fabricate
+ * session semantics (the record's action target is `#session:<id>`).
+ *
+ * Observed-truth only: a record exists exactly when the session's RECORDED
+ * posture tier is warn or abort — `under` (below the guard's threshold),
+ * `unknown` (usage axes incomplete), and the no-local-cap state emit NO row.
+ * The fields ride the record verbatim: the session's id and title, the
+ * recorded tier, the recorded enforcement mechanism, and the recorded sticky
+ * refusal as `reason` when one exists (a warn-tier crossing has none — no
+ * reason is ever invented).
+ */
+export function sessionBudgetIncidents(sessions: readonly WebSessionMeta[]): PostureBudgetIncident[] {
+  const records: PostureBudgetIncident[] = [];
+  for (const session of sessions) {
+    const tier = session.budget.tier;
+    if (tier !== "warn" && tier !== "abort") continue;
+    records.push({
+      sessionId: session.id,
+      title: session.title,
+      tier,
+      mechanism: session.budget.mechanism,
+      ...(session.budget.violation === undefined ? {} : { reason: session.budget.violation }),
+    });
+  }
+  return records;
+}
+
+/**
+ * W215: merge the session-derived incident records into the hub-computed
+ * posture block this service relays at GET /api/posture. Honest degradation
+ * holds end to end:
+ * - no registry (`sessions` undefined) → the hub's own answer passes through
+ *   untouched;
+ * - no tier crossed → the block passes through untouched (the panel renders
+ *   the named absence from the absent field — NEVER a fabricated `[]`, which
+ *   would claim a successfully-read empty incident set);
+ * - records → they ride verbatim, and the two projection fields the records
+ *   legitimately recompose follow the projection's own composition rule
+ *   (count = records.length; the "per-session budget state" degradation
+ *   lifts) so the served wire cannot contradict itself. The input block is
+ *   never mutated.
+ *
+ * Named residual: the decision inbox's budget ROWS stay the hub projection's
+ * own composition (duplicating its row assembly here would fork the
+ * projection); the strip's budget count and the panel rows are the parts the
+ * merge owns.
+ */
+export function withSessionBudgetIncidents(
+  posture: OperatorPosture,
+  sessions: readonly WebSessionMeta[] | undefined,
+): OperatorPosture {
+  if (sessions === undefined) return posture;
+  const records = sessionBudgetIncidents(sessions);
+  if (records.length === 0) return posture;
+  return {
+    ...posture,
+    counts: { ...posture.counts, budgetIncidents: records.length },
+    degraded: posture.degraded.filter((name) => name !== "per-session budget state"),
+    budgetIncidents: records,
+  };
 }
 
 /** W151: the per-axis cap override an operator raise installs on a session. */

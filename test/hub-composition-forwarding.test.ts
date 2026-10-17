@@ -133,6 +133,17 @@ test("W212 P0: absent capabilities still 404 through the production composition 
   }
 });
 
+test("W215: the production hub's posture carries no budgetIncidents — the named degraded registry, never a fabricated row", async (context) => {
+  const { dir } = seat(context);
+  const hub = await compose(context, dir, {});
+  const snapshot = await call(hub, "/snapshot", hub.token);
+  assert.equal(snapshot.status, 200, "POST /snapshot answers through the production composition");
+  const posture = (snapshot.payload as { posture: { counts: { budgetIncidents: number | null }; degraded: readonly string[] } }).posture;
+  assert.equal("budgetIncidents" in posture, false, "the hub composes no session registry — the incident producer is web-side (W215); the dead hub seam is removed");
+  assert.equal(posture.counts.budgetIncidents, null, "the count keeps its honest null");
+  assert.equal(posture.degraded.includes("per-session budget state"), true, "the absent registry stays named");
+});
+
 test("W212 P0: the forwarded routes keep the token classes through the production composition", async (context) => {
   const { dir, notes, care } = seat(context);
   writeFileSync(join(notes, "one.md"), "# One\n");

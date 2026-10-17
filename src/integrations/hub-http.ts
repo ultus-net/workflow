@@ -21,7 +21,7 @@ import type { ScheduleRegistry } from "./schedule-registry.js";
 import type { ProjectRegistry } from "./project-registry.js";
 import { projectScopedBoard, type ProjectRecord } from "./project-registry.js";
 import { activityTimeline } from "./activity-timeline.js";
-import { operatorPosture, scheduleLineage, scheduleRecentRuns, type PostureBudgetIncident } from "./operator-posture.js";
+import { operatorPosture, scheduleLineage, scheduleRecentRuns } from "./operator-posture.js";
 import { inProgressBoardTasks, workProductStates } from "./task-provider.js";
 import type { BoardOutcome, BoardTaskOutcome, CrossReferenceOutcome, WorkProductStateOutcome } from "./task-provider.js";
 import type { IssueDetailOutcome, ProviderReadRecord } from "./issue-detail.js";
@@ -62,17 +62,6 @@ interface HubRequestContext {
   readonly guard: WorkflowGuardProvider | undefined;
   readonly selfImprovement: SelfImprovementRegistry | undefined;
   readonly schedules: ScheduleRegistry | undefined;
-  /**
-   * W176: the per-session budget incident records accessor — the seam the
-   * W151 residual scoped ("the hub builds per-session incidents from the
-   * session registries"). Absent or answering undefined → the posture keeps
-   * its honest degradation (null count, the named degraded registry, NO
-   * incident rows on the wire — the projection emits nothing for data it was
-   * never given). Present → the records compose the count AND ride the
-   * posture block verbatim, bounded by the producer's own record set
-   * (per-session W045 budget-guard state: one record per session).
-   */
-  readonly budgetIncidents?: () => readonly PostureBudgetIncident[] | undefined;
   /**
    * W164: the project container's registry — the hub-owned "open a project"
    * records (provider-stable repo identity, status, budget envelope,
@@ -273,8 +262,6 @@ export interface HubBridgeCapabilities {
   /** W171: the discovery capability — a FIELD on the capabilities object (the
    * post-#330 extension point), never a positional. */
   readonly discoverIssueCrossReferences?: (issueNumber: number) => Promise<CrossReferenceOutcome>;
-  /** W176: the budget incident records accessor (see HubRequestContext). */
-  readonly budgetIncidents?: () => readonly PostureBudgetIncident[] | undefined;
   /** P4 topology Option A1 (issue #283): the surface-observation journal writer (see HubRequestContext). */
   readonly recordSurfaceUsage?: (observation: SurfaceUsageObservation) => void;
   /** P4 topology Option A2 (issue #283): the session mint (see HubRequestContext) — a FIELD, never a positional. */
@@ -1200,11 +1187,14 @@ async function handleRequest(
       // count needs. Absent registries (per-session budget state, orphan
       // detection) degrade with NAMED absences and null counts — never
       // fabricated zeros.
-      // W176 (additive): the incident records ride the posture block when a
-      // source answers — the projection composes the count from them and the
-      // rows ride verbatim (the runs-block pattern: absent source, no field).
-      // Without a source the posture keeps its honest degradation.
-      const incidentRecords = context.budgetIncidents?.();
+      // W215: no budgetIncidents source composes here — the hub owns NO
+      // session registry (startHubWebUi composes none by design,
+      // src/cli/web-service.ts), and the W176-era declared seam was never
+      // forwarded (the W212 P0 defect class), so it is REMOVED rather than
+      // left declared-but-dead. The projection keeps its honest degradation
+      // (null count, the named "per-session budget state" registry, no rows);
+      // the WEB process derives the records from its session registry and
+      // merges them into the posture it relays (src/ui/web.ts).
       const posture = operatorPosture({
         runTasks: snapshot.tasks
           .filter((task) => task.id.startsWith("run:"))
@@ -1214,7 +1204,6 @@ async function handleRequest(
           blockingReasons: gates.blockingReasons,
         }),
         ...(context.schedules === undefined ? {} : { schedules: context.schedules.list().map((schedule) => ({ id: schedule.id, title: schedule.title })) }),
-        ...(incidentRecords === undefined ? {} : { budgetIncidents: incidentRecords }),
       });
       // W152: the unified activity timeline rides the same snapshot response —
       // the projection over the kernel's transition log and the registry's

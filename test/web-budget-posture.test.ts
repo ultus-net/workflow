@@ -11,9 +11,11 @@ import { WorkflowApplication } from "../src/application/workflow.js";
 import { taskId, type WorkflowTask } from "../src/kernel/contracts.js";
 import { TaskGraph } from "../src/kernel/task-graph.js";
 import type { WorkflowAcpRuntime } from "../src/integrations/acp-runtime.js";
+import { operatorPosture, type OperatorPosture, type PostureBudgetIncident } from "../src/integrations/operator-posture.js";
 import { describeBudgetMechanism, mergeSessionBudget, sessionBudgetTier } from "../src/integrations/session-budget.js";
+import { createWorkflowHub } from "../src/integrations/workflow-hub.js";
 import { createWorkflowWebServer } from "../src/ui/web.js";
-import { WebSessionManager, parseSessionBudgetRaise } from "../src/ui/web-sessions.js";
+import { WebSessionManager, parseSessionBudgetRaise, sessionBudgetIncidents, withSessionBudgetIncidents, type SessionBudgetPosture, type WebSessionMeta } from "../src/ui/web-sessions.js";
 
 // W151 (Paperclip borrow wave 2): budget state as agent posture. Pins:
 //   - the tier derives from the guard's OWN predicates (sessionBudgetTier —
@@ -87,6 +89,37 @@ function fakeRuntime(options: StubOptions = {}): WorkflowAcpRuntime {
 function application(): WorkflowApplication {
   const tasks: WorkflowTask[] = [{ id: taskId("A"), title: "Task", state: "READY", dependencies: [], requiredEvidence: [] }];
   return new WorkflowApplication(new TaskGraph(tasks), hostCapabilities({ transport: "acp", authoritativePreMutation: false }));
+}
+
+/** The GET /api/posture wire shape, minus the fields these pins never read. */
+interface PostureWire {
+  readonly posture: {
+    readonly counts: { readonly budgetIncidents: number | null };
+    readonly degraded: readonly string[];
+    readonly budgetIncidents?: readonly PostureBudgetIncident[];
+  } | null;
+  readonly reason?: string;
+}
+
+async function listen(server: ReturnType<typeof createWorkflowWebServer>): Promise<number> {
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return (server.address() as AddressInfo).port;
+}
+
+/** A REAL hub composed the production way, so the posture pin drives the true
+ * composition path (the W212 P0 lesson), never a hand-built posture. */
+async function realHub(context: { after(fn: () => unknown): void }, dir: string): Promise<string> {
+  const graph = new TaskGraph([{ id: taskId("A"), title: "Task", state: "READY", dependencies: [], requiredEvidence: [] }]);
+  const app = new WorkflowApplication(graph, hostCapabilities({ transport: "native", authoritativePreMutation: true }));
+  const hub = await createWorkflowHub(app, { discoveryDir: dir, graph });
+  context.after(() => hub.close());
+  return dir;
+}
+
+async function postureFrom(port: number): Promise<PostureWire> {
+  const response = await fetch(`http://127.0.0.1:${port}/api/posture`);
+  assert.equal(response.status, 200);
+  return (await response.json()) as PostureWire;
 }
 
 /** A registry file preloaded with one session whose usage is fully recorded. */
@@ -278,4 +311,154 @@ test("W151: POST /api/sessions/budget-raise maps the authority's outcomes onto h
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+// W215: the budgetIncidents PRODUCER. The AgentsView incident panel reads the
+// posture block's `budgetIncidents` verbatim, and the hub composes no session
+// registry (src/cli/web-service.ts), so the records derive HERE — from the
+// web's session registry — and merge into the posture GET /api/posture
+// relays. Red-first: the relay pins drive the REAL composition (real hub,
+// real WebSessionManager, real web route), so a regression to the W176-era
+// declared-but-never-forwarded seam fails here, never at typecheck.
+
+test("W215: GET /api/posture merges the session-derived warn incident record into the posture the real hub serves (production path)", async (context) => {
+  await withEnv({ WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS: "100", WORKFLOW_BUDGET_DOWNGRADE_MODEL: "m2" }, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "web-posture-incidents-"));
+    try {
+      const hubDir = join(dir, "hub");
+      await realHub(context, hubDir);
+      // Persisted usage at 0.9 of the cap: the recorded tier is warn.
+      const registryPath = registryWith({ promptTokens: 40, completionTokens: 50, totalTokens: 90, costUsd: 0.5 }, join(dir, "sessions"));
+      const manager = new WebSessionManager({ registryPath, factory: async () => fakeRuntime() });
+      const server = createWorkflowWebServer(application(), manager, undefined, { hubDiscoveryDir: hubDir });
+      context.after(() => { void server.close(); void manager.dispose(); });
+      const port = await listen(server);
+
+      const answer = await postureFrom(port);
+      assert.ok(answer.posture !== null, "the hub posture relays");
+      assert.deepEqual(answer.posture.budgetIncidents, [{
+        sessionId: "s1",
+        title: "capped session",
+        tier: "warn",
+        mechanism: describeBudgetMechanism({ maxTotalTokens: 100 }),
+      }], "the recorded warn tier rides the posture block as a real incident record");
+      assert.equal(answer.posture.counts.budgetIncidents, 1, "the count composes from the merged records");
+      assert.equal(answer.posture.degraded.includes("per-session budget state"), false, "the served registry answer lifts the named degradation");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test("W215: a live session's sticky budget refusal rides as an abort-tier incident record with its recorded reason (production path)", async (context) => {
+  await withEnv({ WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS: "100", WORKFLOW_BUDGET_DOWNGRADE_MODEL: "m2" }, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "web-posture-incidents-abort-"));
+    try {
+      const hubDir = join(dir, "hub");
+      await realHub(context, hubDir);
+      const violation = "budget exceeded: total tokens 101 > cap 100";
+      const registryPath = registryWith({ promptTokens: 40, completionTokens: 50, totalTokens: 90, costUsd: 0.5 }, join(dir, "sessions"));
+      const manager = new WebSessionManager({ registryPath, factory: async () => fakeRuntime({ violation }) });
+      const server = createWorkflowWebServer(application(), manager, undefined, { hubDiscoveryDir: hubDir });
+      context.after(() => { void server.close(); void manager.dispose(); });
+      const port = await listen(server);
+      // Spawn the live runtime so its guard's sticky refusal is recorded.
+      await manager.channel("s1");
+
+      const answer = await postureFrom(port);
+      assert.ok(answer.posture !== null, "the hub posture relays");
+      assert.deepEqual(answer.posture.budgetIncidents, [{
+        sessionId: "s1",
+        title: "capped session",
+        tier: "abort",
+        mechanism: "test: local session-budget guard (total≤100)",
+        reason: violation,
+      }], "the recorded sticky refusal rides as the abort record's reason, the live mechanism verbatim");
+      assert.equal(answer.posture.counts.budgetIncidents, 1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test("W215: sessions under every tier keep the named absence — the wire never fabricates an empty record set (production path)", async (context) => {
+  await withEnv({ WORKFLOW_SESSION_BUDGET_TOTAL_TOKENS: "100", WORKFLOW_BUDGET_DOWNGRADE_MODEL: "m2" }, async () => {
+    const dir = mkdtempSync(join(tmpdir(), "web-posture-incidents-under-"));
+    try {
+      const hubDir = join(dir, "hub");
+      await realHub(context, hubDir);
+      // Persisted usage at 0.5 of the cap: under the warn threshold.
+      const registryPath = registryWith({ promptTokens: 20, completionTokens: 20, totalTokens: 50, costUsd: 0.2 }, join(dir, "sessions"));
+      const manager = new WebSessionManager({ registryPath, factory: async () => fakeRuntime() });
+      const server = createWorkflowWebServer(application(), manager, undefined, { hubDiscoveryDir: hubDir });
+      context.after(() => { void server.close(); void manager.dispose(); });
+      const port = await listen(server);
+
+      const answer = await postureFrom(port);
+      assert.ok(answer.posture !== null, "the hub posture relays");
+      assert.equal("budgetIncidents" in answer.posture, false, "no tier crossed: the field stays ABSENT — never a fabricated []");
+      assert.equal(answer.posture.counts.budgetIncidents, null, "the count keeps its honest null");
+      assert.equal(answer.posture.degraded.includes("per-session budget state"), true, "the panel renders the named absence, not an empty success");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+test("W215: the derivation gates on the recorded tier — under/unknown/no-caps never emit a row", () => {
+  const meta = (budget: SessionBudgetPosture): WebSessionMeta => ({
+    id: "s1",
+    title: "capped session",
+    createdAt: "2026-10-17T00:00:00.000Z",
+    updatedAt: "2026-10-17T00:00:00.000Z",
+    active: false,
+    agent: "opencode",
+    live: false,
+    busy: false,
+    budget,
+  });
+  const mechanism = "local session-budget guard (total≤100)";
+  assert.deepEqual(sessionBudgetIncidents([
+    meta({ tier: "under", mechanism }),
+    meta({ tier: "unknown", mechanism }),
+    meta({ mechanism }),
+  ]), [], "under / unknown / no-local-cap emit no record");
+  assert.deepEqual(sessionBudgetIncidents([meta({ tier: "warn", mechanism })]), [{
+    sessionId: "s1",
+    title: "capped session",
+    tier: "warn",
+    mechanism,
+  }], "the warn record carries the recorded mechanism and no fabricated reason");
+  assert.deepEqual(sessionBudgetIncidents([meta({ tier: "abort", violation: "over cap", mechanism })]), [{
+    sessionId: "s1",
+    title: "capped session",
+    tier: "abort",
+    mechanism,
+    reason: "over cap",
+  }], "the abort record carries the recorded sticky refusal verbatim");
+});
+
+test("W215: the merge never fabricates an empty set, never mutates the hub block, and passes the hub answer through with no registry", () => {
+  const posture: OperatorPosture = operatorPosture({ runTasks: [], reviewOutcomes: new Map(), blockingReasons: new Map() });
+  assert.equal("budgetIncidents" in posture, false, "the hub projection emits nothing for a source it never had");
+  assert.equal(withSessionBudgetIncidents(posture, undefined), posture, "no session registry: the hub's own answer passes through untouched");
+  const absent = withSessionBudgetIncidents(posture, []);
+  assert.equal(absent, posture, "an empty registry answer keeps the block untouched — never a fabricated []");
+  assert.equal("budgetIncidents" in absent, false);
+
+  const merged = withSessionBudgetIncidents(posture, [{
+    id: "s1",
+    title: "capped session",
+    createdAt: "2026-10-17T00:00:00.000Z",
+    updatedAt: "2026-10-17T00:00:00.000Z",
+    active: false,
+    agent: "opencode",
+    live: false,
+    busy: false,
+    budget: { tier: "warn", mechanism: "local session-budget guard (total≤100)" },
+  }]);
+  assert.equal("budgetIncidents" in posture, false, "the hub block is never mutated in place");
+  assert.equal(merged.counts.budgetIncidents, 1, "the count recomposes exactly as the projection would compose it");
+  assert.equal(merged.degraded.includes("per-session budget state"), false, "the named degradation lifts with the served answer");
+  assert.deepEqual(merged.budgetIncidents, [{ sessionId: "s1", title: "capped session", tier: "warn", mechanism: "local session-budget guard (total≤100)" }]);
 });
