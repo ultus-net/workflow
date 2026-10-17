@@ -30,7 +30,7 @@
     "destructive.ts": {
       "disposition": "ported",
       "modules": ["shell-policy.ts", "policy.ts"],
-      "note": "Destructive-command patterns in shell-policy.ts; the liveMutationIn scan over WRITTEN file content (extractEditContent + the file_write content lane in policy.ts) ported in W214 (residual #27, issue #540, 2026-10-17). The content scan unifies the port's own destructive pattern surface; the W108 destination-aware force-push classification stays a shell-lane context check, not part of the blind content scan."
+      "note": "Destructive-command patterns in shell-policy.ts; the liveMutationIn scan over WRITTEN file content (extractEditContent + the file_write content lane in policy.ts) ported in W214 (residual #27, issue #540, 2026-10-17). The content scan unifies the port's own destructive pattern surface; the W108 destination-aware force-push classification stays a shell-lane context check, not part of the blind content scan. One pre-existing pattern divergence is carried forward, not fixed: the port's loopback-exempt remote-DELETE curl pattern excludes 127.0.1 whereas upstream excludes 127.0.0.1 (shell-policy.ts vs vendor src/policies/destructive.ts:48)."
     },
     "docs.ts": {
       "disposition": "host-owned",

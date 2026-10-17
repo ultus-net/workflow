@@ -71,11 +71,15 @@ with behavioral parity to upstream, fail-closed on unresolvable/variable paths.
 - `writeTargetPatterns` completed to the full upstream ten (Ruby File/IO
   writes and opens, two-argument rename/copy forms for node and Python,
   pathlib write/replace forms joined the previously ported four).
-- `checkInterpreterPolicy` per-payload order follows upstream's dispatcher:
-  escape first, then the secret-path lane, then the wider protected-token scan
-  and the write-target loops. Existing `interpreter-secret-path` /
-  `interpreter-guard-tamper` attributions are unchanged (they carry no
-  workspace root, so the root-gated escape check cannot precede them).
+- `checkInterpreterPolicy` per-payload order: escape first, then the
+  secret-path lane, then the protected-token scan and the write-target loops.
+  This is NOT upstream's dispatcher order — upstream runs `secretPathInPayload`
+  LAST, after its write-target and tamper loops. Both orders deny on any secret
+  reference, so no decision differs; the earlier placement is a port
+  simplification stated here, not claimed as parity. Existing
+  `interpreter-secret-path` / `interpreter-guard-tamper` attributions are
+  unchanged (they carry no workspace root, so the root-gated escape check
+  cannot precede them).
 
 ## Copy regeneration (the hard constraint)
 

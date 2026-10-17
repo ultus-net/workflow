@@ -82,10 +82,14 @@ export function secretPathInPayload(payload: string, workspaceRoot?: string): st
 
 export function checkInterpreterPolicy(command: string, workspaceRoot?: string, liveConfigPaths?: readonly string[]): { policy: string; decision: "deny"; reason: string; matched?: string } | undefined {
   for (const payload of interpreterPayloads(command)) {
-    // W214 (residual #27, issue #541): the upstream per-payload order —
-    // workspace escape first, then the secret-path lane, then the wider
-    // protected-token scan and the write-target loops (all fail-closed on
-    // unresolvable destinations via the boundary classifier).
+    // W214 (residual #27, issue #541): the workspace-escape check runs first,
+    // then this port evaluates the secret-path lane. That is NOT upstream's
+    // per-payload order: upstream's dispatcher runs `secretPathInPayload`
+    // LAST, after its write-target and tamper loops. Both orders DENY on a
+    // secret reference, so no decision differs; the earlier placement is a
+    // deliberate port simplification, recorded here rather than claimed as
+    // parity. Every check fails closed on unresolvable destinations via the
+    // boundary classifier.
     if (workspaceRoot !== undefined) {
       const escape = outsideWritePathInPayload(payload, workspaceRoot);
       if (escape) return { decision: "deny", policy: "interpreter-workspace-escape", reason: `Interpreter payload writes path '${escape}' outside workspace '${workspaceRoot}'. All changes must stay within the workspace.`, matched: escape };
