@@ -8,6 +8,10 @@ import { AUDIENCES, isAudience } from "../assistant/style/audience.js";
 import { listStyles, loadStyle } from "../assistant/style/pack.js";
 import { formatFindings, lint } from "../assistant/lint.js";
 import { run, type RunRequest } from "../assistant/run.js";
+import { OpenRouterProvider, resolveProviderTransport } from "../assistant/provider/openrouter.js";
+import { runResearchEntry, resolveRunId } from "../assistant/research/entry.js";
+import { researchBudget } from "../assistant/research/conductor.js";
+import type { ResearchComplexity } from "../assistant/research/types.js";
 import { startDiscordConnector } from "../assistant/discord/connector.js";
 import type { DiscordAllowlist } from "../assistant/discord/allowlist.js";
 
@@ -15,6 +19,7 @@ const USAGE = `augur - turn sources into styled notes
 
 Usage:
   augur note <source> [options]     source: URL, file path, or - for stdin
+  augur research <question>         deep research: plan, dispatch workers, synthesize
   augur lint <file>                 check a note against its style pack
   augur styles list                 list available style packs
   augur discord                     run the Discord connector (outbound-only)
@@ -30,6 +35,10 @@ Options:
   --models <list>    comma-separated OpenRouter model IDs, priority order
   --variant <s>      routing suffix applied to all models (e.g. :nitro)
   --no-lint          skip the post-generation lint
+  --complexity <c>   research only: simple | comparison | complex (default: comparison)
+  --max-cost-usd <n> research only: override the complexity-derived dollar ceiling
+  --max-subagents <n> research only: override the complexity-derived subagent ceiling
+  --run-id <id>      research only: durable run id (default: a hash of the question)
 
 Env:
   OPENROUTER_API_KEY   required for generation
@@ -48,6 +57,8 @@ Examples:
   augur note https://www.youtube.com/watch?v=zjkBMFhNj_g --audience junior
   cat transcript.txt | augur note - --style essay --audience senior
   augur note slides.pdf --lang zh-Hans --style hybrid
+  augur research "state of open-weight coding models" --complexity comparison
+  augur research "compare X and Y" --max-subagents 4 --out answer.md
 `;
 
 async function readStdin(): Promise<string> {
@@ -167,6 +178,80 @@ async function cmdLint(file: string, flags: Record<string, unknown>): Promise<nu
   return res.ok ? 0 : 1;
 }
 
+const COMPLEXITIES: readonly string[] = ["simple", "comparison", "complex"];
+
+function requireComplexity(value: unknown): ResearchComplexity {
+  const raw = value === undefined ? "comparison" : String(value);
+  if (!COMPLEXITIES.includes(raw)) {
+    throw new Error(`unknown complexity '${raw}': expected one of ${COMPLEXITIES.join(", ")}`);
+  }
+  return raw as ResearchComplexity;
+}
+
+/** Parse an optional numeric flag; a non-numeric value fails loudly. */
+function optionalNumber(flags: Record<string, unknown>, key: string): number | undefined {
+  const raw = flags[key];
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) throw new Error(`--${key} must be a number, got '${String(raw)}'`);
+  return parsed;
+}
+
+async function cmdResearch(question: string, flags: Record<string, unknown>): Promise<number> {
+  const cfg = resolveConfig(loadConfigFile(), flags);
+  const wsFlag = typeof flags.workspace === "string" ? flags.workspace : undefined;
+  const ws = ensureWorkspace(resolveWorkspace(cfg, wsFlag));
+  const complexity = requireComplexity(flags.complexity);
+  // A deterministic run id keeps re-running the SAME question on the SAME
+  // durable run: the second invocation resumes from the checkpoint. The plan
+  // and the workers whose artifacts still verify are not re-paid; synthesis
+  // re-runs from the recorded findings.
+  const runId = resolveRunId(flags["run-id"], question);
+  const root = join(ws, "research", runId);
+
+  const transport = resolveProviderTransport();
+  const provider = new OpenRouterProvider({ ...transport, config: cfg.provider });
+
+  const maxCostUsd = optionalNumber(flags, "max-cost-usd");
+  const maxSubagents = optionalNumber(flags, "max-subagents");
+
+  const result = await runResearchEntry({
+    question,
+    complexity,
+    lang: cfg.lang,
+    runId,
+    root,
+    provider,
+    ...(maxCostUsd === undefined ? {} : { maxCostUsd }),
+    ...(maxSubagents === undefined ? {} : { maxSubagents }),
+  });
+
+  if (typeof flags.out === "string") {
+    const outPath = isAbsolute(flags.out) ? flags.out : join(ws, flags.out);
+    mkdirSync(dirname(outPath), { recursive: true });
+    writeFileSync(outPath, result.outcome.answer, "utf8");
+    process.stderr.write(`wrote ${outPath}\n`);
+  } else {
+    process.stdout.write(result.outcome.answer);
+  }
+
+  // Honest one-line status on stderr: the numbers are the run's REAL usage
+  // against its budget, and exhaustion is stated plainly rather than hidden.
+  // The denominator is the EFFECTIVE cap: the conductor re-caps the override
+  // against the complexity's effort ceiling (`conductor.ts` Math.min), so a
+  // `--max-subagents 12` under `--complexity simple` must print /1, not /12.
+  const effortCap = researchBudget(complexity).maxSubagents;
+  const effectiveCap = Math.min(maxSubagents ?? effortCap, effortCap);
+  const usage = result.outcome.usage;
+  process.stderr.write(
+    `research ${runId} [${complexity}]: ${usage.subagents}/${effectiveCap} subagents, ` +
+      `${usage.toolCalls} tool calls, $${usage.costUsd.toFixed(4)}` +
+      `${result.outcome.budgetExhausted ? " (budget exhausted: plan not completed)" : ""}\n` +
+      `answer: ${result.answerPath} | artifacts: ${result.artifactRoot}\n`,
+  );
+  return 0;
+}
+
 async function main(): Promise<number> {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
@@ -179,6 +264,10 @@ async function main(): Promise<number> {
       workspace: { type: "string" },
       models: { type: "string" },
       variant: { type: "string" },
+      complexity: { type: "string" },
+      "max-cost-usd": { type: "string" },
+      "max-subagents": { type: "string" },
+      "run-id": { type: "string" },
       research: { type: "boolean", default: true },
       "no-research": { type: "boolean" },
       verify: { type: "boolean", default: true },
@@ -206,6 +295,9 @@ async function main(): Promise<number> {
     case "note":
       if (!arg) throw new Error("note requires a source (URL, path, or -)");
       return cmdNote(arg, flags);
+    case "research":
+      if (!arg) throw new Error("research requires a question");
+      return cmdResearch(arg, flags);
     case "lint":
       if (!arg) throw new Error("lint requires a file path");
       return cmdLint(arg, flags);
