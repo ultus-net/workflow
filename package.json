@@ -81,7 +81,7 @@
     "remark-gfm": "^4.0.1",
     "tsx": "^4.23.15",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.71.1"
+    "typescript-eslint": "^8.71.2"
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.5.1",
