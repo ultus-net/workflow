@@ -84,7 +84,7 @@
     "typescript-eslint": "^8.71.1"
   },
   "dependencies": {
-    "@agentclientprotocol/sdk": "^1.5.1",
+    "@agentclientprotocol/sdk": "^1.8.0",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "discord.js": "^14.27.0",
     "highlight.js": "^11.12.0",
