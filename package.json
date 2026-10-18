@@ -66,7 +66,7 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@assistant-ui/react": "^0.15.22",
+    "@assistant-ui/react": "^0.15.28",
     "@assistant-ui/react-markdown": "^0.14.19",
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.0.0",
